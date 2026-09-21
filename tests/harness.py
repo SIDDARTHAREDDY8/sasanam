@@ -24,7 +24,7 @@ Tool allowlists are ENFORCED by the executor (R2): the executor rejects any
 tool not listed for the caller's role before policy evaluation.
 
 Works against the current executor API:
-    ToolExecutor(run_dir, policy, log, approvals)
+    ToolExecutor(run_dir, policy, log, approvals, ledger_path=None)
     executor.mint_identity(agent_id, role, principal) -> AgentIdentity
     executor.call(identity, tool, **kwargs) -> {"status": "executed"|"denied"|"queued", ...}
 """
@@ -64,14 +64,23 @@ STANDARD_AGENTS = {
 }
 
 
-def make_run(policy_path=None):
+def make_run(policy_path=None, ledger_path=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
-    approval queue, executor, and harness-minted identities."""
+    approval queue, executor, and harness-minted identities.
+
+    ``ledger_path`` selects the F10 per-principal egress ledger. Default
+    is a ledger INSIDE the run dir, so cross-run campaign detection is
+    inert within a single make_run (existing tests stay hermetic). Pass
+    an explicit shared path to exercise cross-run behavior.
+    """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
     policy = PolicyEngine(str(policy_path or DEFAULT_POLICY))
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
-    executor = ToolExecutor(run_dir, policy, log, approvals)
+    executor = ToolExecutor(run_dir, policy, log, approvals,
+                            ledger_path=(ledger_path
+                                         if ledger_path is not None
+                                         else run_dir / "egress_ledger.jsonl"))
 
     minted = set()
 

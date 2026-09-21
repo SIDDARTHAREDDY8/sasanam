@@ -1,54 +1,92 @@
-"""Policy linter: catch dead, shadowed, and contradictory rules before deploy.
+"""Policy linter: catch dead, shadowed, contradictory, and dangerous rules.
 
 Run ``python -m gov.policy_lint policies/default.yaml`` (or the
 ``gov-policy-lint`` console script). Exits 0 when no findings, 1 otherwise.
 
-Findings kinds:
-  unknown_tool       match.tool names a tool that does not exist
-  unknown_match_key  match uses a key the engine does not understand
-  invalid_effect     effect is not allow/deny/require_approval
-  shadowed_rule      a higher-precedence rule (deny > require_approval >
-                     allow; same effect + earlier in file) matches a superset
-                     of this rule's conditions, so this rule never fires
-  contradictory_rule two rules with identical conditions but different effects
+Finding kinds and severities:
+
+  error:
+    unknown_tool        match.tool names a tool that does not exist
+    unknown_match_key   match uses a key the engine does not understand
+    unknown_role        match.role names a role the policy does not define
+    invalid_effect      effect is not allow/deny/require_approval
+    duplicate_rule_id   two rules share an id (breaks audit traceability)
+    unreachable_rule    an allow/require_approval rule that can never fire
+                        (e.g. its tool is in no role's allowlist, so the
+                        executor rejects the action before policy evaluation)
+    contradictory_rule  two rules with mutually-covering conditions but
+                        different effects
+    overly_broad_allow  (error variant) an allow rule with an EMPTY match:
+                        it allows every action for every role
+
+  warning:
+    overly_broad_allow  allow on tool alone for a dangerous tool
+                        (send_email/http_post/delete_file) with no other
+                        constraints
+    missing_deny_coverage
+                        no deny rule covers a dangerous tool at all: with
+                        deny-by-default this is not an immediate hole, but
+                        an explicit deny with a flag is the auditable
+                        control for exfiltration/destruction shapes
+
+  info:
+    overly_broad_allow  allow on tool alone for a non-dangerous tool:
+                        works, but consider constraining role/path
+
+Design notes (from OPA/Cedar validation practice, applied to our simpler
+YAML engine):
+
+* The engine evaluates denies first (forbid priority), then
+  require_approval, then allow. The linter mirrors that: a rule is
+  "shadowed" only by a rule that is evaluated before it.
+* Unknown names fail closed: a match on an unknown tool/role never matches
+  anything the engine understands, so the rule is dead config.
 """
 
 import json
 import sys
 from pathlib import Path
 
-from .policy import (KNOWN_MATCH_KEYS, KNOWN_TOOLS, VALID_EFFECTS,
-                     _EFFECT_RANK, _as_list)
+from .policy import (DEFAULT_ROLES, KNOWN_MATCH_KEYS, KNOWN_TOOLS,
+                     VALID_EFFECTS, _EFFECT_RANK, _as_list)
 from .yamlmini import load as yaml_load
+
+DANGEROUS_TOOLS = {"send_email", "http_post", "delete_file"}
 
 
 def _covers(sup, sub):
-    """Conservative superset check: does *sup*'s match cover *sub*'s?"""
-    for key, sub_val in sub.items():
+    """Implication check: is every action matched by *sub* also matched by
+    *sup*? In other words, do *sub*'s conditions imply *sup*'s conditions?
+
+    A key that *sup* constrains but *sub* does not is a coverage failure:
+    *sub* matches actions with any value for that key, and *sup* does not
+    match all of them.
+    """
+    for key, sup_val in sup.items():
         if key not in KNOWN_MATCH_KEYS:
             return False  # unknown semantics: do not claim coverage
+        if key not in sub:
+            return False  # sub leaves this unconstrained: cannot imply sup
+        sub_val = sub[key]
         if key == "tool":
-            sup_tools = set(_as_list(sup.get("tool"))) if "tool" in sup else None
-            sub_tools = set(_as_list(sub_val))
-            if sup_tools is not None and not sub_tools <= sup_tools:
+            if not (set(_as_list(sub_val)) <= set(_as_list(sup_val))):
                 return False
         elif key in ("role", "agent"):
-            sup_v = set(_as_list(sup.get(key))) if key in sup else None
-            sub_v = set(_as_list(sub_val))
-            if sup_v is not None and not sub_v <= sup_v:
+            if not (set(_as_list(sub_val)) <= set(_as_list(sup_val))):
                 return False
         elif key == "path_contains_any":
-            if "path_contains_any" in sup and set(_as_list(sup["path_contains_any"])) != set(_as_list(sub_val)):
+            if set(_as_list(sup_val)) != set(_as_list(sub_val)):
                 return False
         elif key in ("min_external_calls", "min_sends", "min_writes", "min_deletes"):
-            if key in sup and int(sup[key]) > int(sub_val):
-                return False  # higher threshold fires less often
+            # sub's higher threshold fires on a subset of sup's actions.
+            if int(sub_val) < int(sup_val):
+                return False
         elif key in ("path_outside_sandbox", "domain_allowlisted",
                      "carries_read_content", "source_untrusted"):
-            if key in sup and bool(sup[key]) != bool(sub_val):
+            if bool(sub_val) != bool(sup_val):
                 return False
         elif key == "when":
-            if "when" in sup and sup["when"] != sub_val:
+            if sup_val != sub_val:
                 return False
     return True
 
@@ -58,59 +96,213 @@ def _precedes(a, b, ia, ib):
     return ra > rb or (ra == rb and ia < ib)
 
 
+def _policy_roles(cfg):
+    """Role -> tool allowlist the engine would enforce (R2)."""
+    roles = cfg.get("roles")
+    if roles:
+        return {r: list(t) for r, t in roles.items()}
+    return {r: list(t) for r, t in DEFAULT_ROLES.items()}
+
+
+def _rule_id(rule, i):
+    return rule.get("id", "rule-%d" % i)
+
+
+def _match_of(rule):
+    """The rule's match mapping, or {} when absent/malformed.
+
+    Malformed (non-mapping) matches are reported by the structural
+    checks; every consumer below must use this helper so one bad rule
+    cannot crash the lint run.
+    """
+    m = rule.get("match", None) or {}
+    return m if isinstance(m, dict) else {}
+
+
 def lint_file(path):
     """Return a list of finding dicts for the policy file at *path*."""
     cfg = yaml_load(str(Path(path))) or {}
     rules = cfg.get("policies") or []
+    roles = _policy_roles(cfg)
     findings = []
 
+    def add(kind, severity, rule_id, detail):
+        findings.append({"kind": kind, "severity": severity,
+                         "rule_id": rule_id, "detail": detail})
+
+    # ---- structural checks ------------------------------------------------
+    seen_ids = {}
     for i, rule in enumerate(rules):
-        rid = rule.get("id", "rule-%d" % i)
+        rid = _rule_id(rule, i)
+        if rid in seen_ids:
+            add("duplicate_rule_id", "error", rid,
+                "rule id %r is also used by %s; ids must be unique for "
+                "audit traceability" % (rid, seen_ids[rid]))
+        else:
+            seen_ids[rid] = "rule-%d" % i
+
         effect = rule.get("effect")
         if effect not in VALID_EFFECTS:
-            findings.append({"kind": "invalid_effect", "rule_id": rid,
-                             "detail": "effect %r is not one of %s"
-                                       % (effect, sorted(VALID_EFFECTS))})
-        match = rule.get("match") or {}
+            add("invalid_effect", "error", rid,
+                "effect %r is not one of %s" % (effect, sorted(VALID_EFFECTS)))
+        match = _match_of(rule)
+        raw_match = rule.get("match")
+        if raw_match is not None and not isinstance(raw_match, dict):
+            add("invalid_match", "error", rid,
+                "match block is not a mapping (got %r); the engine cannot "
+                "evaluate this rule" % (raw_match,))
         for tool in _as_list(match.get("tool")):
             if tool not in KNOWN_TOOLS:
-                findings.append({"kind": "unknown_tool", "rule_id": rid,
-                                 "detail": "tool %r does not exist" % tool})
+                add("unknown_tool", "error", rid,
+                    "tool %r does not exist (known: %s)"
+                    % (tool, sorted(KNOWN_TOOLS)))
         for key in match:
             if key not in KNOWN_MATCH_KEYS:
-                findings.append({"kind": "unknown_match_key", "rule_id": rid,
-                                 "detail": "match key %r is not understood "
-                                           "by the engine" % key})
+                add("unknown_match_key", "error", rid,
+                    "match key %r is not understood by the engine" % key)
+        for role in _as_list(match.get("role")):
+            if role not in roles:
+                add("unknown_role", "error", rid,
+                    "role %r is not defined in the policy's roles section "
+                    "(known: %s)" % (role, sorted(roles)))
 
+    # ---- auto_approve section ------------------------------------------------
+    # Low-risk auto-approval is a loaded control: flag a section that looks
+    # intended but would silently not fire (fail-closed normalization in
+    # the engine means "almost enabled" is the same as "disabled").
+    auto_cfg = cfg.get("auto_approve")
+    if auto_cfg is not None:
+        if not isinstance(auto_cfg, dict):
+            add("invalid_auto_approve", "warning", "(policy)",
+                "auto_approve section is not a mapping; the engine treats "
+                "it as disabled")
+        elif auto_cfg.get("enabled") not in (True, False, None):
+            add("invalid_auto_approve", "warning", "(policy)",
+                "auto_approve.enabled should be true/false; got %r "
+                "(treated as disabled)" % (auto_cfg.get("enabled"),))
+        elif auto_cfg.get("enabled") is True:
+            try:
+                cap = int(auto_cfg.get("max_risk_score", 25))
+                if not 0 <= cap <= 100:
+                    raise ValueError
+            except (TypeError, ValueError):
+                add("invalid_auto_approve", "warning", "(policy)",
+                    "auto_approve.max_risk_score must be 0-100; got %r "
+                    "(treated as disabled)"
+                    % (auto_cfg.get("max_risk_score"),))
+
+    # ---- reachability: can this rule ever fire through the executor? ------
+    # The executor rejects any tool not in the caller's role allowlist
+    # BEFORE policy evaluation, so an allow/require_approval rule for a
+    # tool no role may use is dead config. (A deny rule on such a tool is
+    # harmless belt-and-braces: the action is already rejected.)
+    union_tools = set()
+    for tools in roles.values():
+        union_tools.update(tools)
     for i, rule in enumerate(rules):
-        rid = rule.get("id", "rule-%d" % i)
-        match = rule.get("match") or {}
+        rid = _rule_id(rule, i)
+        effect = rule.get("effect")
+        if effect not in ("allow", "require_approval"):
+            continue
+        match = _match_of(rule)
+        tools = set(_as_list(match.get("tool"))) if "tool" in match else set(KNOWN_TOOLS)
+        known = tools & KNOWN_TOOLS
+        if known and not (known & union_tools):
+            add("unreachable_rule", "error", rid,
+                "effect %s can never fire: tool(s) %s are in no role's "
+                "allowlist, so the executor rejects the action before "
+                "policy evaluation" % (effect, sorted(known)))
+            continue
+        mroles = set(_as_list(match.get("role"))) if "role" in match else None
+        if mroles is not None and not (mroles & set(roles)):
+            add("unreachable_rule", "error", rid,
+                "effect %s can never fire: match.role names only unknown "
+                "roles %s" % (effect, sorted(mroles)))
+
+    # ---- overly broad allows ---------------------------------------------
+    for i, rule in enumerate(rules):
+        rid = _rule_id(rule, i)
+        if rule.get("effect") != "allow":
+            continue
+        match = _match_of(rule)
+        if not match:
+            add("overly_broad_allow", "error", rid,
+                "allow rule with an EMPTY match allows EVERY action for "
+                "every role. Add match constraints or delete this rule.")
+            continue
+        if set(match) == {"tool"}:
+            tools = set(_as_list(match["tool"]))
+            dangerous = tools & DANGEROUS_TOOLS
+            if dangerous:
+                add("overly_broad_allow", "warning", rid,
+                    "allows dangerous tool(s) %s constrained by tool name "
+                    "only: no role, path, or context limits. Any role "
+                    "permitted the tool can use it freely."
+                    % sorted(dangerous))
+            else:
+                add("overly_broad_allow", "info", rid,
+                    "allow constrained by tool name only (%s): works, but "
+                    "prefer constraining role and path/context too."
+                    % sorted(tools))
+
+    # ---- missing deny coverage for dangerous tools ------------------------
+    for tool in sorted(DANGEROUS_TOOLS):
+        covered = False
+        cover_id = None
+        for i, rule in enumerate(rules):
+            if rule.get("effect") != "deny":
+                continue
+            match = _match_of(rule)
+            if "tool" not in match or tool in _as_list(match.get("tool")):
+                covered = True
+                cover_id = _rule_id(rule, i)
+                break
+        if not covered:
+            add("missing_deny_coverage", "warning", "(policy)",
+                "no deny rule covers dangerous tool %r. Deny-by-default "
+                "still fails closed, but add an explicit deny (with a "
+                "flag) so exfiltration/destruction attempts are auditable."
+                % tool)
+
+    # ---- shadowed rules (evaluated-later, covered-conditions) -------------
+    for i, rule in enumerate(rules):
+        rid = _rule_id(rule, i)
+        match = _match_of(rule)
         for j, other in enumerate(rules):
             if i == j:
                 continue
-            oid = other.get("id", "rule-%d" % j)
+            oid = _rule_id(other, j)
             if not _precedes(other, rule, j, i):
                 continue
-            if _covers(other.get("match") or {}, match):
-                findings.append({"kind": "shadowed_rule", "rule_id": rid,
-                                 "detail": "never fires: %s (effect %s) "
-                                           "matches a superset of its "
-                                           "conditions"
-                                           % (oid, other.get("effect"))})
+            if _covers(_match_of(other), match):
+                add("shadowed_rule", "error", rid,
+                    "never fires: %s (effect %s) is evaluated first and "
+                    "matches a superset of its conditions"
+                    % (oid, other.get("effect")))
                 break
 
-    seen = {}
+    # ---- contradictory rules ----------------------------------------------
+    # Mutually-covering conditions with different effects: forbid priority
+    # makes the deny win, but the pair is almost certainly a config bug
+    # (the identical-match case is the most common instance).
+    reported = set()
     for i, rule in enumerate(rules):
-        rid = rule.get("id", "rule-%d" % i)
-        key = json.dumps(rule.get("match") or {}, sort_keys=True, default=str)
-        if key in seen and seen[key][1] != rule.get("effect"):
-            findings.append({"kind": "contradictory_rule", "rule_id": rid,
-                             "detail": "identical conditions to %s (%s) but "
-                                       "a different effect (%s)"
-                                       % (seen[key][0], seen[key][1],
-                                          rule.get("effect"))})
-        elif key not in seen:
-            seen[key] = (rid, rule.get("effect"))
+        for j in range(i + 1, len(rules)):
+            other = rules[j]
+            if rule.get("effect") == other.get("effect"):
+                continue
+            m1, m2 = _match_of(rule), _match_of(other)
+            if _covers(m1, m2) and _covers(m2, m1):
+                pair = tuple(sorted((_rule_id(rule, i), _rule_id(other, j))))
+                if pair in reported:
+                    continue
+                reported.add(pair)
+                detail = ("conditions mutually cover %s (%s) vs %s (%s); "
+                          "forbid priority resolves this today, but the "
+                          "overlap is almost certainly unintended")
+                add("contradictory_rule", "error", _rule_id(rule, i),
+                    detail % (pair[0], rule.get("effect"),
+                              pair[1], other.get("effect")))
     return findings
 
 
@@ -121,9 +313,14 @@ def main(argv=None):
         return 0 if argv and argv[0] in ("-h", "--help") else 2
     findings = lint_file(argv[0])
     for f in findings:
-        print("%-18s %-28s %s" % (f["kind"], f["rule_id"], f["detail"]))
+        sev = f.get("severity", "?")
+        print("[%-7s] %-20s %-28s %s" % (sev, f["kind"], f["rule_id"],
+                                         f["detail"]))
     if findings:
-        print("%d finding(s)" % len(findings))
+        n_err = sum(1 for f in findings if f.get("severity") == "error")
+        n_warn = sum(1 for f in findings if f.get("severity") == "warning")
+        print("%d finding(s): %d error(s), %d warning(s)"
+              % (len(findings), n_err, n_warn))
         return 1
     print("no findings")
     return 0

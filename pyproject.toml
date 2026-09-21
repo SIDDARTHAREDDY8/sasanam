@@ -21,7 +21,7 @@ gov-policy-lint = "gov.policy_lint:main"
 gov-report = "demo.make_report:main"
 
 [tool.setuptools]
-packages = ["gov", "demo"]
+packages = ["gov", "gov.adapters", "demo"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"*" = ["*.yaml", "data/*.yaml"]

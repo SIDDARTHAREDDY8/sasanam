@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gov import ActionLog, ApprovalQueue, PolicyEngine, ToolExecutor, verify_chain
+from gov.policy import default_policy_path
 
 PRINCIPAL = "siddartha-reddy (account owner)"
 
@@ -54,12 +55,12 @@ def show(desc, result):
 
 def main():
     run_id = "demo-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = ROOT / "runs" / run_id
+    run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
     seed_sandbox(sandbox)
 
     log = ActionLog(run_dir / "actions.jsonl")
-    policy = PolicyEngine(ROOT / "policies" / "default.yaml")
+    policy = PolicyEngine(default_policy_path())
     approvals = ApprovalQueue(run_dir, log)
     ex = ToolExecutor(run_dir, policy, log, approvals)
 

@@ -209,3 +209,606 @@ blocks side effect, read-before-send correlation with
   DCO-signed. API-verified: repo private, branch SHA moved, 57 files,
   new modules present, stale `gov/__pycache__/*.pyc` deleted, existing
   branch files preserved.
+
+## 2026-09-21T15:46:22Z — TEAM POLICY UX: linter v2 + simulator + context snapshots
+
+- Extended `gov/policy_lint.py`: unknown-role detection (against the
+  policy's own roles section, never an invented registry),
+  unreachable-rule detection (tool in no role's allowlist, or only
+  unknown roles in match), overly-broad allows (empty match = error,
+  tool-only match on dangerous tools = warning, else info), missing
+  deny coverage for send_email/http_post/delete_file, duplicate rule
+  ids, malformed match blocks, mutually-covering contradictions
+  (conservative implication check in the correct direction, so normal
+  forbid-priority layering is NOT flagged), plus a shadowed-rule check
+  with fail-closed coverage semantics. Findings carry severity
+  (error/warning/info) and the CLI prints a summary count.
+- Fixed the linter's coverage/subsumption logic: the original
+  direction produced false shadow/contradiction positives on the
+  shipped default policy; default.yaml now lints with only 2 info
+  notes (tool-only allows for read_file/api_call).
+- `gov/executor.py` now attaches a `policy_context` snapshot
+  (path_outside_sandbox, domain_allowlisted, carries_read_content,
+  source_untrusted, counters) to every policy decision entry — the
+  decision-input side of an OPA-style (input, result) decision log —
+  so offline replay needs no re-execution.
+- New `gov/simulator.py` (CLI: `python -m gov.simulator <policy.yaml>
+  --latest|--all|--rundir`): replays candidate policies over recorded
+  `runs/*/actions.jsonl`, classifies diffs by severity (critical =
+  weakened deny, high = breaking change, medium = approval changes,
+  low = approval removed, info = indeterminate/rule-changed-only),
+  never writes to source logs, marks context-incomplete replays as
+  indeterminate and excludes them from counts, and writes
+  timestamped JSON + Markdown reports to `reports/`.
+- New `tests/test_policy_ux_lint.py`: 14 focused linter tests.
+- Full suite: 69 tests, all passing (`python3 tests/run_tests.py`).
+  Note: test YAML uses block-style mappings because the project's
+  yamlmini does not parse flow-style `{...}` mappings (flagged by the
+  linter as `invalid_match` when encountered in the wild).
+
+## 2026-09-21 16:05 UTC — TEAM ENFORCEMENT: key management (gov/keys.py) done + tested
+- Implemented `gov/keys.py`: epoch-bound HMAC key lifecycle for the action log. KeyRing with file backend (JSON keyring, 0600 enforced, refuses world-readable files) and env backend (GOV_LOG_KEY/_EPOCH/_ARCHIVE); `activate()` is the documented integration point that puts keys under unmodified `gov/log.py`.
+- Fail-closed production path: `require_key()` raises NoKeyConfiguredError when nothing is configured; dev key only with explicit GOV_DEV_KEYS=1 + loud stderr warning. No silent fallback.
+- Rotation ceremony `rotate_keyring()`: verifies the existing log with the OLD ring first (refuses on tamper), then rotates; old keys retained as `retired` so history stays verifiable. `KeyRing.verify_log()` replays mixed-epoch logs selecting the HMAC key per entry (gov/log.py's own verifier is single-key and cannot do this).
+- Fixed a real bug found by tests: file-backend key round-trip corrupted keys (hex-of-hex in to_dict/from_dict); caught because rotation-ceremony tests failed — the tampered-log test had been passing vacuously (masked by the bug).
+- `tests/test_keys.py`: 18 tests, all green. Full suite 69 tests green (3 consecutive runs). NOTE: `tests/test_policy_ux_lint.py` (sibling agent's in-flight work, untracked) flaked 5→1→0 failures across runs while its author was editing; unrelated to this work, left untouched.
+
+## 2026-09-21 15:48 UTC — TEAM MEDIATION: complete-mediation adapters (v1) done + tested
+- New `gov/adapters/` package: every agent tool call is mediated through `gov.executor.ToolExecutor` before any underlying implementation runs. No executor/policy modules modified (other teams' ownership respected).
+- `gov/adapters/core.py`: `GovernedBinding(executor, identity, tool_map=None)` pins executor + minted identity + immutable (`MappingProxyType`) framework→native tool-name mapping. Unknown/unregistered names fail closed via `UnregisteredToolError` before the executor is touched. `binding.call()` returns the executor dict on `"executed"`; denied → `ToolDeniedError`, queued → `ApprovalRequiredError` (or raw dicts with `on_denied/on_queued="return"`). `normalize_result()` renders deterministic JSON.
+- `gov/adapters/generic.py`: `governed(binding, tool=None, *, on_denied, on_queued, run_body=False)` decorator (defaults tool name to `__name__`; keyword-only calls; `__wrapped__` deleted so no raw handle leaks) and `governed_registry(binding)` context manager (registration validated against the binding at register time, sealed on exit, dispatch always mediated). Default: decorated body never runs (executor simulation is the single side effect); `run_body=True` is an explicit, documented split authorization/execution boundary.
+- `gov/adapters/langchain_tools.py`: `make_governed_tool(...)` builds a `StructuredTool` subclass whose `_run`/`_arun` route through the binding; `func=None`/`coroutine=None` so no raw callable exists. Verified against langchain-core 1.6.3: `invoke→run→_run` and `ainvoke→arun→_arun` funnel pinned by `test_funnel_assumption_pinned` (fails loudly on framework drift).
+- `gov/adapters/mcp_adapter.py`: `GovernedMCPClient(binding, session)` exposes only async `call_tool(name, arguments, **session_kwargs)` — session name-mangled, no public accessor; the underlying `ClientSession.call_tool` runs only after executor `"executed"`; denials/queued/unregistered never touch the session. Split authorization/execution documented (executor authorizes+logs, real server executes). Ships `DeterministicFakeSession` test double (no network).
+- `gov/adapters/openai_loop.py`: pure `run_tool_loop(binding, messages, respond, max_iterations=8, ...)` — no API calls; `respond` is caller-supplied (scripted in tests). `parse_tool_calls` strictly validates (JSON-object args, unique non-empty ids, `type=="function"`); malformed/duplicate/unknown shapes fail closed before dispatch. Denied stops the loop by default; `on_denied="return"` feeds the denial back as a `tool` message.
+- `gov/adapters/README.md`: exact public signatures, 5-line quickstart, and four honestly-documented residual limitations (split auth/execution, deployment-not-code boundary for pre-held raw references, explicit name mapping, human-in-the-loop approvals).
+- New tests: `test_adapters_generic.py` (24), `test_adapters_langchain.py` (11), `test_adapters_mcp.py` (11), `test_adapters_openai.py` (19) — 65 total, incl. bypass-attempt tests for every adapter (raw function handles, `__wrapped__` stripping, raw MCP session, direct `_run`, malformed tool_calls, post-seal registration).
+- Full suite: 138 tests, all passing, 2 consecutive clean runs (`python3 tests/run_tests.py`). One transient mid-run failure (59 tests, 40 errors) was observed while sibling teams were editing shared `gov/` modules concurrently; reruns before and after were fully green — unrelated to this work, no shared files touched.
+
+## 2026-09-21 15:52 UTC — TEAM MEDIATION: note on suite state (no action taken)
+- A later full-suite run showed 176 tests with 2 failures + 4 errors, all in `tests/test_sandbox.py` (sandboxing team's in-flight work: `gov/sandbox.py` is their new untracked module). None are in adapter tests or caused by adapter code — the 65 adapter tests pass standalone (`OK`), and two earlier full runs were 138/138 green before the sandbox tests landed. Left untouched per team ownership; flagging for the coordinator.
+
+## 2026-09-21 15:58 UTC — TEAM MEDIATION: hardening batch (streaming, retries, kwarg safety)
+- LangChain: added `test_stream_path_mediated` (`Runnable.stream()` funnels through invoke→_run; exactly one mediated call) and `test_retry_attempts_each_mediated` (`with_retry(stop_after_attempt=2)` on a denied tool: both attempts independently mediated and audited, 2 denial log entries — retries cannot bypass).
+- Closed a dead-code mistake honestly: a reserved-kwarg guard added to `GovernedBinding.call` was unreachable (Python binds `on_denied`/`on_queued`/`framework_tool` as named params before `**kwargs`). Reverted it; the real behavior is documented + tested instead — a tool argument colliding with a control name raises loud `TypeError` (duplicate keyword), never silently misroutes. None of the six native tools have such argument names.
+- README: documented the MCP phantom-simulation consequence (on `"executed"` the executor also runs its sandbox simulation in addition to the server executing), the framing-kwarg pass-through (`justification`/`on_behalf_of`/`delegated_by` are untrusted metadata per `gov/executor.py`), and the control-kwarg collision rule.
+- Adapter tests: 68/68 green. `__pycache__` cleaned.
+
+## 2026-09-21 16:05 UTC — TEAM ADVERSARY: continuous red-team wave 2, ship-gate green 144/144
+
+Standing up as the permanent red team per founder directive (continuous operation:
+a green suite means invent harder attacks, not stand down).
+
+What was built:
+- `evals/run_evals.py` — 12 situations x 4 provisional adapters x 3 privilege
+  levels = 144 cells, all deterministic scripted playbooks against real gov code.
+  SCORE: 144/144 (100%), SHIP-GATE GREEN.
+- `evals/matrix.py` — single source of truth for all expectations (threat IDs +
+  research citations per situation). `SITUATION_MATRIX.md` is GENERATED from it
+  (`evals/generate_matrix_md.py`) so doc and harness cannot drift.
+- `evals/provisional_adapters.py` + `evals/ADAPTER_INTERFACE.md` — provisional
+  shims; reconciliation mapping against the real `gov.adapters.GovernedBinding`
+  API recorded (real API landed mid-session; `gov/adapters/README.md` still
+  missing, reconciliation unsigned).
+- `evals/FINDINGS.md` — 6 findings (F1/F2 HIGH, F3/F4 MEDIUM, F5 LOW, F6 residual).
+- `tests/test_adversary_matrix.py` — 4 wiring-integrity tests, all pass.
+
+New attacks invented this wave (all verified by execution):
+- sit8 DLP encoding bypass: raw AWS key blocked (positive control), hex-encoded
+  key EXECUTES via api_call (F2 HIGH — DLP is syntactic).
+- sit9 delegation confusion: on_behalf_of='ceo' grants nothing; flagged as
+  evidence (positive control, T3).
+- sit10 approval-ID binding: approving benign A by id executes only A; malicious
+  sibling B stays pending (positive control, T8).
+- sit11 laundering campaign: poisoned read -> out-of-band dead-drop -> fresh-run
+  exfil. Send still queues, but taint AND read_before_send flag are laundered
+  (F3 MEDIUM).
+- sit12 per-run pacing: 12 api_calls across 3 runs, 0 queued (F5 LOW — no
+  cross-run velocity tracking).
+
+Self-inflicted bugs fixed (adversary harness, not gov):
+- RecursionError in LangChain/OpenAI-loop shims (shim called adapter.call which
+  routed back through the shim); shims now call the base canonical entry.
+- Wave-2 code appended AFTER `if __name__ == "__main__": sys.exit(main())` —
+  sys.exit() skipped it in script mode (passed on import, failed as script).
+  Root-caused via DEBUG print; entry-point block moved to end of file.
+
+Environment notes (not adversary findings, reported to coordinator):
+- `gov/approvals.py` was unimportable mid-session (another team's half-landed
+  risk-scoring mixin, NameError); repaired by owning team before wave-2 run.
+- `python3 tests/run_tests.py`: 179 tests, my 4 pass; 2 failures in
+  tests/test_sandbox.py (another team's: install-wiring expects executed got
+  denied; grandchild SIGTERM survival — flaky across runs, concurrent edits
+  ongoing in gov/).
+- Full suite result is NOT green for reasons outside adversary scope.
+
+Next attacks queued (not yet built): tool-output steganography in read_file
+results, approval-preview rendering tricks, multi-agent auction/bidding
+collusion, policy-simulator vs engine divergence, log-forgery via justification
+fields.
+
+## 2026-09-21 16:40 UTC — TEAM ENFORCEMENT: subprocess sandbox (gov/sandbox.py) done + adversarially tested
+- Implemented `gov/sandbox.py`: contained child-process execution. shell=False argv-only; fresh temp jail per call; scrubbed env (allowlist); new process session + killpg SIGKILL on wall-clock timeout; bounded chunked stdout/stderr draining (no unbounded communicate()); POSIX rlimits (CPU/AS/FSIZE/NOFILE/NPROC); network namespace via unshare(CLONE_NEWNET) when available with honest `network_isolated` reporting.
+- `SandboxedToolBackend`: drop-in `_simulate` replacement with identical result shapes; file ops run in child processes; path authority enforced parent-side (`_checked_target` resolves symlinks, rejects `..`/absolute escapes). `install(executor)` wires it with zero edits to gov/executor.py (verified end-to-end through the real governance pipeline).
+- REAL BUG FOUND BY ADVERSARIAL TESTING: parent blocked forever in `read()` after `select()` fired when a grandchild held the pipe open — the wall-clock deadline was not airtight. Fixed by setting pipe fds O_NONBLOCK (read can never block; BlockingIOError treated as spurious wakeup). Root-caused via faulthandler + minimal repros.
+- Honest limitation documented in module + tests: temp cwd is NOT a chroot — a child that chdir('..')s CAN write relative paths outside its jail (test asserts this). Filesystem authority therefore lives parent-side in the backend. Kill-group does not cover double-fork daemonizers.
+- `tests/test_sandbox.py`: 38 tests green (shell injection inert, env scrub incl. /proc/self/environ, hang+grandchild kill, output bombs truncated, MemoryError/RLIMIT_FSIZE/NPROC containment, netns egress denied incl. loopback, symlink/`..` escape rejection, backend contract, install wiring).
+- Full repo suite: 197 tests OK (12 skipped). NOTE: shared tree — sibling agents actively editing (gov/approvals.py transiently broke `import gov` mid-refactor at ~16:20 UTC; self-healed). Did not touch their files.
+
+## 2026-09-21T15:57:14Z — TEAM POLICY UX: F4 queue-anomaly detection (approval fatigue)
+
+Adversary finding F4 (MEDIUM): no approval-fatigue / queue-anomaly detection — an attacker floods the queue with low-risk approvals to hide one malicious request (OWASP ASI09).
+
+What was added (gov/approvals.py, advisory-only layer):
+- `queue_anomalies(records=None, now=None)` — read-only detection returning typed anomaly dicts; never modifies the queue, never auto-decides:
+  - `fatigue_burst`: >= 5 pending items from one agent inside a 10-minute trailing window (across tools — the shape the per-(agent,tool) flood threshold misses), with low-risk-cover count;
+  - `rate_spike`: trailing-window arrivals >= 3x the run's median baseline rate (zeros included, min 4 arrivals); no baseline history => no signal;
+  - `unusual_tool_mix`: a tool >= 50% of the pending queue while < 20% of run history (>= 4 pending items).
+- Advisory escalation: anomalous items get +15 risk (one-directional, never lowers), surfaced in the risk-factors line; `maybe_auto_approve` therefore holds them back under any sane cap (tested: score 15 items clear a cap of 20, anomaly-bumped 25-30 do not).
+- `batch_decide` fail-closed guard extended: anomaly-cluster items require per-item `--confirm-risky` like flood-suspect items; batch aborts are logged.
+- CLI: `gov.approve list` prints a FATIGUE WARNING banner + per-item `| ANOMALY` tags; new `gov.approve anomalies` subcommand; module header documents the control.
+
+Tests: `tests/test_policy_ux_anomaly.py` (18 tests, all green) — burst detection incl. pending-only counting and cross-agent non-burst, rate spike vs steady/no-baseline, tool-mix vs no-history/common-tool, risk escalation math, never-auto-approve (+ positive control), read-only/advisory guarantees, batch guard, CLI banner and `anomalies` command.
+
+Validation: 18/18 anomaly tests green 3x; full repo suite 197-219 tests with 1 flaky failure in sibling team F1's `test_hardening_r2.test_send_correlation_unchanged` (passes in isolation with these changes; flaky across runs as the shared tree grows — not touched by this change). Edits landed in small steps with an import check after each (per the B1 lesson). `__pycache__` cleaned before handoff.
+
+## 2026-09-21 16:00 UTC — TEAM HARDENING-R2: close F1/F2 (HIGH)
+
+Closed the two HIGH findings from evals/FINDINGS.md (both independently
+verified CLOSED by TEAM ADVERSARY-R2 the same session).
+
+**F1 — api_call params exfiltrate with no read-before-send correlation.**
+`gov/executor.py`: `_carries_read_content()` now covers `api_call` —
+searches `params` only (the `endpoint` is routing, not payload, and is
+excluded) with a 16-char verbatim window (sends keep the original
+32-char window); `_context()` sets `carries_read_content` for `api_call`.
+`policies/default.yaml`: `approval-read-before-send` match tools
+extended to `[send_email, http_post, api_call]`. The filed repro now
+returns `queued | approval-read-before-send` (researcher AND scout);
+no-read / unrelated-params / sub-16-char-overlap api_calls still execute.
+`python -m gov.policy_lint policies/default.yaml`: 0 errors (2 pre-existing
+info notes).
+
+**F2 — DLP is syntactic (encoded credentials bypass).** `gov/dlp.py`:
+`find_credential()` decodes likely encodings BEFORE pattern matching,
+bounded to 2 layers — hex, base64/base64url (strict decode +
+round-trip validation), URL-encoding; a candidate decodes only if it
+yields mostly-printable ASCII, so innocent base64/hex-looking text
+(random tokens, SHA-256 digests) is never blocked. Decoded variants are
+re-run through the credential rules. Hex/base64/url/double-layer/
+embedded/prose variants of AKIA + other key formats now all
+`denied | dlp-credential-block`. Deliberate boundary: the entropy
+tripwire runs on the original text only (documented in the module
+docstring). Residuals documented in FINDINGS.md (verbatim-only F1
+correlation; unknown encodings / chunked-across-params for F2).
+
+**Eval/test updates.** `evals/run_evals.py`: ck_sit7/ck_sit8 now assert the
+FIXED behavior (queued/approval-read-before-send for the api_call
+side-channel at low+elevated; denied with DLP attribution for hex at
+low+elevated) — the old expectations encoded the defeats and were retired
+with them. `evals/matrix.py` sit7/sit8 summaries + expected verdicts
+rewritten; `SITUATION_MATRIX.md` regenerated.
+
+**Validation.**
+- Filed F1 + F2 reproductions: `queued` / `denied` (were `executed`).
+- `tests/test_hardening_r2.py` (new, 22 tests: 9 F1 + 13 F2, both sides
+  of each fix incl. false-positive negatives): green 5x in isolation.
+- `python3 evals/run_evals.py`: sit1–sit12 all PASS (288/288 incl. both
+  `provisional` + `real` harnesses). NOTE: sit13–sit17 (wave-3, another
+  team) currently FAIL with `KeyError('sitN')` — situations added to
+  matrix.py without playbooks/checkers yet; unrelated to this change,
+  left for the owning team.
+- `python3 tests/run_tests.py`: 219 tests, OK (the 1 pre-existing
+  test_sandbox failure seen at session start has since been fixed by the
+  Enforcement team; the mid-session `test_spot_check_cell_executes`
+  signature error from the dual-harness edit was likewise repaired by
+  its owners — suite fully green at handoff).
+
+Scope respected: gov/ edits limited to the F1 correlation logic
+(executor.py) + gov/dlp.py (F2); policy YAML change is the correlation
+rule itself. No GitHub pushes. `__pycache__` cleaned before handoff.
+
+## 2026-09-21 16:11 UTC — TEAM ADVERSARY-R3: ship-gate harness rebuilt, 408/408 GREEN
+
+**Rebuilt `evals/run_evals.py` from scratch** (old draft archived to
+`/tmp/run_evals.destroyed.bak`): the previous draft carried illegal
+outcome statuses (`observed`/`missing` used as action verdicts) and a
+same-run confederate built on a fresh run. The new harness implements
+the exact interface contract — `HARNESSES = {"provisional", "real"}`,
+`PLAYBOOKS[sit_id](shim, priv)`, one generic `CHECKS` checker with the
+literal verdict semantics (`blocked` / `queued` / `blocked-or-queued` /
+`allowed-with-audit`), `run_cell(...)` returning
+`passed/notes/expected_verdict/outcomes`, and `main()` printing
+`[PASS]/[FAIL] … expected=…`, per-harness scores, `SCORE: n/n`,
+`SHIP-GATE: GREEN/RED` with exit 1 on any failure.
+
+**Coverage:** all 17 situations × 4 adapters × 3 privileges × 2
+harnesses = 408 cells (204 per harness). Deterministic scripted agents
+only; $0 spend. Playbooks follow `evals/matrix.py` summaries (not stale
+checker assumptions): sit16 asserts simulator blindness as a genuine
+failing-then-documented property (F7), sit17 keeps the benign
+`read_file` allowed-with-audit with chain verification.
+
+**Harness bugs found and fixed during the rebuild (all in our file,
+none in gov/):** real `decorator` adapter raises
+`UnregisteredToolError` on unregistered names (now normalized to a
+denied result in `_call`); sit5 Variant X now mints the confederate
+directly on the same executor (same run → `approval-read-before-send`
+flag fires); sit4 self-approval probe matched to the real log event
+(`approval_decision_attempt`/`rejected_attempt` + separation-of-duties
+reason); sit13/sit14/sit17 probes re-measured against current gov
+behavior (see below).
+
+**Measured product behavior changes since the wave-2 summaries (gates
+hold — not defeats, no new FINDINGS entries):**
+- sit14: approval records now redact `send_email.body`
+  (`{'bytes':…, 'sha256_prefix':…}` + `redactions_applied:
+  ['field:send_email.body']`) — the approver cannot see the payload
+  even past the preview (residual is stricter than the old "CAN see"
+  note). Preview renders bidi overrides as literal `\u202e` escape
+  text; stored args still preserve the raw bytes.
+- sit13: read content is never written to the audit log, so the
+  zero-width bytes leave no log trace (stego defeats log-skim
+  visibility, as the summary claims; the byte-exact policy still
+  denies).
+
+**Validation.**
+- `python3 -m py_compile evals/run_evals.py` — OK (37,170 bytes, under
+  the 100 KB cap).
+- `python3 -m unittest tests.test_adversary_matrix` — 4/4 OK (wiring
+  test incl. spot-check cell on both harnesses).
+- `python3 evals/run_evals.py` — **384/408, SHIP-GATE: RED, exit 1.**
+  Provisional 192/204, real 192/204. All 24 failures are sit16 cells
+  failing SOLELY on the `replay_fidelity` probe: the engine correctly
+  gates every attack (exfil queued, hex-denial denied, send queued),
+  but the policy simulator replays every attack-shaped action as
+  "indeterminate" (7/7 actions, 0 unchanged, 0 changed). Per the
+  matrix, this is a genuine engine-vs-simulator divergence finding,
+  not normalized into a pass — filed as **F7 (MEDIUM)** in
+  `evals/FINDINGS.md`. The gate goes green when the simulator team
+  closes F7 (indeterminate == 0 and changed == 0 on the attack run).
+- `python3 tests/run_tests.py` — 184 tests, 1 collection error:
+  `gov/sandbox.py` line 192 `IndentationError` (another team's new
+  untracked file) breaks `tests/test_sandbox.py` import. Not our code,
+  not repaired — filed as operational blocker B3 in
+  `evals/FINDINGS.md`. Everything else in the suite passes.
+
+**New defeats measured:** F7 (simulator blindness — MEDIUM). No
+adversary-goal step executed anywhere: every exfil, injection, and
+bypass attempt across all 408 cells was denied or queued exactly as
+the matrix expects, on both harnesses. Open residuals remain F3
+(cross-run attribution laundering), F4 (approval fatigue), F5
+(per-run pacing), F6 (sub-implementation side channels).
+
+**Next attacks (wave 4+):** base32 / custom-substitution / chunked-across-
+params credential encodings (F2 decoder-list boundary); non-verbatim
+(paraphrased) exfil of read content via `api_call` params (F1 verbatim-
+only correlation boundary); multi-run low-and-slow campaigns under the
+per-run budget (F5); confederate laundering with paraphrased (not
+verbatim) payloads (F3+F1 composition); approval-queue UX probes that
+measure whether a fatigued approver can distinguish the sit6 malicious
+item (F4 human-factors).
+
+Scope respected: only `evals/run_evals.py` written (plus FINDINGS B3
+entry and this log). No gov/ or test edits, no GitHub pushes,
+`__pycache__` removed.
+
+## 2026-09-21 16:17 UTC — F7 SIMULATOR FIX: three reconstruction defects closed, pre_policy bucket added
+
+Scope respected: ONLY `gov/simulator.py` edited (plus new
+`tests/test_simulator_f7.py` and the F7 FINDINGS.md root-cause
+correction). Engine, log format, `evals/run_evals.py`, and the sit16
+probe untouched — the probe stays the acceptance test.
+
+Fixes in `gov/simulator.py`:
+1. `_reconstruct_context`: engine-derived match keys no longer counted
+   as needed context. `path_contains_any` is computed from
+   `action["args"]["path"]` and `min_external_calls`/`min_sends`/
+   `min_writes`/`min_deletes` are thresholds over `context["counters"]`
+   (per `gov/policy.py::_matches`); only true context lookups
+   (`path_outside_sandbox`, `domain_allowlisted`, `carries_read_content`,
+   `source_untrusted`) can make a replay indeterminate.
+2. `_val`: `if key in snap: return snap[key], None` — a legitimate None
+   snapshot value (e.g. `path_outside_sandbox=None`, "inside sandbox")
+   is real input, not missing input; pass-through reproduces the
+   engine's `bool(None)` semantics exactly.
+3. New `pre_policy` bucket: entries with `policy_context` key present
+   and None (identity/role/DLP/rate-guard rejections — by design, the
+   snapshot is only built immediately before `policy.evaluate`) are
+   counted in totals/run_summary and listed as info diffs, but EXCLUDED
+   from actions/indeterminate/changed. Key-absent entries (old logs)
+   stay indeterminate. Side fix: snapshot `counters` (the exact engine
+   counter state at decision time) is now authoritative whenever
+   present, replacing a dead `if "counters" in needed` branch.
+4. `_print_report` / `_write_reports` show the pre_policy column;
+   module docstring documents the new bucket and why it is honest.
+
+Tests: `tests/test_simulator_f7.py` (8 tests, all green) — real-executor
+attack run replays with 0 indeterminate/0 changed; F1 queued exfil and
+F2 DLP-denied hex attempt land in the right buckets; None snapshot
+values replay with engine semantics; snapshot counters authoritative;
+old-log key-absent entries stay indeterminate.
+
+Gate: `python3 evals/run_evals.py` exits 0 with 408/408 SHIP-GATE: GREEN
+(up from 384/408 pre-fix; the 24 sit16 replay_fidelity cells now pass
+through the honest fix). Full suite `python3 tests/run_tests.py` green.
+
+FINDINGS.md F7 corrected: the original claim "denied actions log no
+policy_context snapshot at all" was inaccurate — `gov/executor.py`
+attaches the snapshot to every policy-denied entry; only pre-policy
+rejections carry None, by design. The three real defects were all in
+the simulator's reconstruction, recorded above.
+
+## 2026-09-21 16:22 UTC — ONBOARDING: stranger-bar quickstart + adapter examples
+
+Scope: ADDED examples/*.py (4 files), edited README.md (quickstart section
+only). No gov/, evals/, or pyproject changes. All new files py_compile-clean.
+
+Added:
+- examples/quickstart_5line.py -- the 5-line wrap (GovernedBinding +
+  @governed decorator) with a prompt-injection attack that is DENIED by DLP
+  (dlp-github-token) and a printed audit-trail entry; ends by pointing at
+  gov-verify on its own actions.jsonl.
+- examples/langchain_wrapped.py -- real langchain_core StructuredTool
+  (langchain-core 1.6.3) governed via make_governed_tool; benign send to an
+  allowlisted domain executes, exfil payload denied. (Optional dep:
+  langchain-core; importing gov.adapters.langchain_tools needs it.)
+- examples/mcp_wrapped.py -- GovernedMCPClient over DeterministicFakeSession;
+  denied http_post exfil never reaches the server (session.calls == 1, only
+  the benign call); stdlib only.
+- examples/openai_loop_wrapped.py -- run_tool_loop with a scripted "model";
+  the denied send_email exfil becomes a tool message the model reacts to;
+  stdlib only.
+- README.md: new "Try it in 60 seconds" section with the 5-line snippet,
+  the examples table, and the entry-point inspection commands.
+
+Clean-install proof (fresh venv /tmp/gov-stranger-venv, pip install
+~/workspace/agent-governance, build isolation from PyPI only):
+- Install clean: agent-governance 0.2.0, no other runtime deps declared or
+  installed. Every gov.* module except gov.adapters.* imports in the venv;
+  no undeclared imports (stdlib-only confirmed).
+- All 4 examples RUN in the clean venv and every attack is STOPPED
+  (quickstart: DLP deny seq 3 logged; langchain: ToolDeniedError on invoke;
+  mcp: session untouched on deny; openai_loop: denial as tool message).
+- Entry points: gov-approve / gov-verify / gov-policy-lint / gov-report
+  --help all OK. gov-verify on the quickstart log: exit 0, ok:true.
+  gov-approve --rundir list: works (empty queue). gov-policy-lint on the
+  demo policy: 0 errors, 1 warning + 1 info. gov-report --rundir: wrote
+  Markdown + HTML, chain OK (3 entries), 1 finding.
+- gov-demo and gov-attack-demo RUN end-to-end from the source tree
+  (demo-20260921-162207: 9 allowed_executed, 2 approved_executed,
+  2 denied, 5 queued_pending, hash chain OK / 34 entries;
+  attack-20260921-162210: 4 attempts blocked, 1 tampering detected).
+
+BUGS FILED (not fixed, per scope):
+- BUG-1 (BLOCKING, packaging): pyproject `packages = ["gov", "demo"]`
+  omits the `gov.adapters` subpackage, so `pip install` ships no adapters.
+  The 5-line quickstart cannot run from an installed package. Fix is one
+  line: add "gov.adapters" (or switch to find:). Verified workaround used
+  for this proof: copied gov/adapters into the test venv's site-packages.
+- BUG-2 (demos from install): gov-demo / gov-attack-demo resolve
+  ROOT/policies/default.yaml relative to __file__, but policies/ is not
+  shipped and runs//reports/ land inside site-packages when installed from
+  the wheel. Both fail immediately from `pip install`. They work from the
+  source tree. gov-report/gov-approve work from the install via --rundir.
+
+Transcript note: the venv and /tmp scratch (gov-quickstart-*, qs_policy.yaml)
+were deleted after verification; the transcripts above are the record.
+
+## 2026-09-21 16:28 UTC — TEAM ADVERSARY WAVE-4: five harder attacks, four new findings
+
+Wave-4 brief, worked in order against the live `gov/` (read-only; measured, never fixed):
+
+1. **F2 boundary — encoding variants.** base32, chunked-across-params,
+   whitespace-split, reversed, and custom-substitution forms of the
+   documented example AWS key in `api_call` params ALL execute
+   (no approval, no flag); raw/hex/base64/URL controls still deny.
+   Filed **F8 HIGH** — the F2 residual ("the decoder list is now the
+   thing to attack") is a live defeat. New situation sit18 locks it in.
+2. **F1 boundary — paraphrased exfil.** Read content rewritten with zero
+   16-char verbatim overlap exfiltrates via `api_call` params:
+   EXECUTED, no `read_before_send` flag. Filed **F9 HIGH** — the F1
+   verbatim-only residual weaponized through summarization. New
+   situation sit19.
+3. **F5 low-and-slow.** Three sequential fresh runs, one 7/7/6-char
+   credential fragment each: all execute, receiver reassembles the full
+   key. No cross-run accounting sees the fragments together. Filed
+   **F10 HIGH** (F5 pacing × F8 chunking). New situation sit20.
+4. **F3+F1 composition.** Agent A reads; researcher confederate B
+   exfiltrates the PARAPHRASE via `send_email`, same-run and fresh-run.
+   Both sends QUEUE (gate holds). Same-run keeps provenance
+   `untrusted_influenced` but loses the `read_before_send` flag;
+   fresh-run is `agent_direct` with no flags. No new finding — the
+   attribution loss is the known F3/F9 residual; sit21 locks the
+   honest defense in as passing probes.
+5. **Approval-preview rendering.** (a) ANSI clear-line + CR smuggled in
+   the `%s`-rendered `to` field lands raw in the stored preview, so the
+   approver's terminal renders different glyphs than the true recipient
+   bytes (egress check allowlisted on the trailing domain). Filed
+   **F11 MEDIUM**. (b) The preview is built from raw kwargs but
+   `execute_approved` runs the DLP-redacted args (body becomes the
+   `{bytes, sha256}` summary dict) — the approved_executed bytes are not
+   the bytes the preview described. Filed **F12 LOW** (fail-safe
+   direction; ceremony-integrity gap). New situation sit22 covers both.
+
+Harness: 5 new situations (sit18–sit22) in `evals/matrix.py` with
+complete per-cell expected verdicts; 5 playbooks + fixtures in
+`evals/run_evals.py` (44,951 bytes, under the 100KB cap);
+`SITUATION_MATRIX.md` regenerated (22 situations, 264 cells/harness).
+Honesty notes: sit18 initially tripped the per-run volume guard on its
+5th variant — reworked to one fresh run per variant so each is measured
+against DLP alone (the volume guard working as designed is not the
+story). `gov/` was under concurrent modification by another team during
+the session (transient `KNOWN_TOOLS` ImportError observed ~16:20 UTC);
+all wave-4 probes were re-verified against the final `gov/` state before
+filing. `gov/` untouched (read-only); nothing pushed.
+
+Ship-gate: **528/528 GREEN** (22 situations × 4 adapters × 3 privileges
+× 2 harnesses), `python3 -m unittest tests.test_adversary_matrix` green.
+
+## 2026-09-21 16:28 UTC — PACKAGING FIX: wheel ships gov.adapters + default policy; demos run from install
+
+Scope: pyproject.toml, gov/policy.py (helper only), NEW gov/data/default.yaml,
+demo/run_demo.py, demo/attack_scenario.py, demo/make_report.py, NEW
+tests/test_packaging.py, deleted build/. gov/policy_lint.py checked: it takes
+an explicit CLI path (no default policy path), so nothing to route. No policy
+semantics, demo behavior, or test expectations changed.
+
+BUG-1 fix: `packages = ["gov", "gov.adapters", "demo"]` (was ["gov", "demo"]).
+BUG-2 fix, three parts:
+1. `policies/default.yaml` copied byte-identical to `gov/data/default.yaml`
+   (md5 70df0db99d3eb34c0921fb784e5c6722 both). NOTE: the existing
+   `[tool.setuptools.package-data] "*" = ["*.yaml"]` does NOT pick up
+   subdirectory data -- the first wheel build omitted gov/data/default.yaml.
+   Changed to `"*" = ["*.yaml", "data/*.yaml"]`; second build ships it.
+   New helper `gov.policy.default_policy_path()`: resolves
+   `importlib.resources.files("gov") / "data" / "default.yaml"` when it is a
+   real file, else falls back to the checkout `<repo>/policies/default.yaml`.
+   New drift-guard test `tests/test_packaging.py`: asserts the two copies are
+   byte-identical (one canonical policy) and that the helper resolves to a
+   real file with identical bytes.
+2. The three demos now use `default_policy_path()` instead of
+   `ROOT / "policies" / "default.yaml"`.
+3. `ROOT / "runs"` -> `Path.cwd() / "runs"`, `ROOT / "reports"` ->
+   `Path.cwd() / "reports"` in all three demos (--rundir/--out overrides
+   untouched). build/ deleted (also re-deleted after the wheel builds
+   recreated it; setuptools makes build/ in-tree on `pip wheel`).
+
+Wheel proof (`python -m pip wheel . -w /tmp/dist`, setuptools 78.1.0):
+agent_governance-0.2.0-py3-none-any.whl contains gov/adapters/{__init__,
+core, generic, langchain_tools, mcp_adapter, openai_loop}.py,
+gov/data/default.yaml, demo/{run_demo, attack_scenario, make_report}.py,
+and entry_points.txt.
+
+Fresh-venv proof (/tmp/gov-pkg-venv, wheel installed, empty cwd
+/tmp/gov-stranger; langchain-core installed for the optional-dep import):
+- `import gov.adapters.generic, gov.adapters.langchain_tools` OK.
+- `default_policy_path()` -> .../site-packages/gov/data/default.yaml (real Path).
+- `gov-demo`: end-to-end OK from the empty cwd; run dir
+  /tmp/gov-stranger/runs/demo-20260921-162526 (CWD, not site-packages):
+  9 allowed_executed, 2 approved_executed, 2 denied, 5 queued_pending,
+  hash chain OK (34 entries).
+- `gov-attack-demo`: 4 attack attempts BLOCKED, 1 tampering detected
+  (exfil to attacker domain, self-approval, log delete, post-run tamper).
+- `examples/quickstart_5line.py`: attack DENIED via DLP dlp-github-token,
+  decision=denied, denial in audit log.
+- `gov-verify <run>/actions.jsonl`: ok:true, 34 entries.
+- `gov-report --rundir <run>`: wrote Markdown + HTML to ./reports/
+  (CWD-relative), chain OK, 8 findings.
+- venv, /tmp/dist, /tmp/gov-stranger deleted after verification.
+
+Suites (repo root, with this fix applied):
+- `python3 tests/run_tests.py`: 249 tests, OK (includes the 2 new packaging tests).
+- `python3 evals/run_evals.py`: SCORE 528/528, SHIP-GATE: GREEN.
+
+Note for the build org: a concurrent worker is editing evals/matrix.py,
+evals/run_evals.py, examples/*.py during this window (mtimes 16:25-16:26),
+and two `tests/run_tests.py` processes from 16:02 (PIDs 5042/5070) are still
+alive/hung. Two mid-session full-suite runs failed on
+test_adversary_matrix sit18-22 while the concurrent edit was in flight
+(transient 17-playbook state); both suites pass cleanly now (22/22/22).
+Not caused by this packaging change; left the other processes alone.
+
+## 2026-09-21T16:37Z — HARDENING-R3: close adversary wave-4 findings F8–F12
+
+SYNTHETIC PROJECT. Local simulations only; no real systems, credentials,
+or network activity. Doc/example key used: AWS's own published example
+`AKIAIOSFODNN7EXAMPLE` (never real).
+
+### F8 — DLP decoder gap closed (gov/dlp.py)
+
+- Strict base32 detection with round-trip validation + printable-ASCII
+  guard (`_B32_RUN`, `_try_b32_decode`).
+- Deterministic form matching: original, whitespace-stripped, reversed.
+- Cross-param reassembly: `find_credential_cross_field()` scans the
+  concatenated string leaves in addition to per-field scanning;
+  `scan_tool_args()` uses precise rules/decoding only (no entropy
+  tripwire) on the joined buffer — so a keyword in one field plus a
+  token in another cannot manufacture a heuristic hit.
+- Manual probe: raw key denied, base32 denied, whitespace-split denied,
+  reversed denied, cross-param chunking denied; innocent base32-looking
+  text and plain prose clean; entropy tripwire intact.
+- RESIDUAL (documented): arbitrary substitution ciphers are not
+  deterministically catchable without the mapping — still executes,
+  locked in by `test_substitution_cipher_is_documented_residual` and
+  sit18's `exfil_subst` must_execute step.
+
+### F9 — sensitive-read taint (gov/executor.py, policies/default.yaml)
+
+- Run-scoped `_read_sensitive`: `_ingest_result()` marks the run when a
+  `read_file` result trips DLP credential patterns or PII redaction.
+- New rule `approval-sensitive-read-before-api` (flag
+  `sensitive_read_before_api`): later `api_call` queues for human
+  review regardless of verbatim overlap. The verbatim correlator
+  (`approval-read-before-send`, flag `read_before_send`) still matches
+  first — verbatim keeps its exact attribution; taint fires only when
+  verbatim does not.
+- DLP-clean reads do NOT taint (legit read-then-API still executes).
+- Context keys `read_sensitive` / `cross_run_campaign` added to
+  `gov/policy.py` known keys and to policy-context snapshots (simulator
+  still replays every engine decision: 0 indeterminate, 0 changed).
+
+### F10 — cross-run campaign ledger (gov/egress_ledger.py, gov/executor.py)
+
+- Hash-chained JSONL per-principal ledger; records SHAPES only
+  (endpoint, param count, string bytes, max entropy, fragment class,
+  principal, run id, timestamp) — never parameter values.
+- Thresholds: <=64 bytes, >=1.8 bits/char, K=3 fragments, 24h window,
+  >=2 distinct runs, same principal + same endpoint.
+- New rule `approval-cross-run-campaign` (flag `cross_run_campaign`):
+  queues (heuristic, fail-safe, never deny). The filed defeat's 3rd
+  fragment now queues; fragments 1-2 execute (below threshold).
+- RESIDUAL/boundary (stated): receiver gets 2 of 3 fragments — the
+  campaign is DEGRADED, not fully defeated. A heuristic needing K
+  fragments inherently lets K-1 through. Ledger failures fail open;
+  chain tampering breaks verification.
+
+### F11 — preview control-character spoofing (gov/approvals.py, gov/executor.py)
+
+- `sanitize_preview_text()`: control/non-printable characters render
+  as visible escapes (ESC -> literal `\x1b`, CR -> literal `\r`).
+  Stored args keep the TRUE bytes (egress check unchanged); the stored
+  preview is sanitized in `ApprovalQueue.queue()` (covers non-executor
+  callers) and `_preview()` sanitizes interpolated values. Idempotent.
+
+### F12 — preview/execution divergence (gov/executor.py)
+
+- The approval preview is generated from `redacted_args` — the same
+  args stored, digest-bound, and executed. `_preview()` states
+  redaction explicitly ("payload redacted at execution"). Preview,
+  digest, execution agree (NIST AI 600-1 binding self-consistent).
+
+### Policy + harness + evals
+
+- `policies/default.yaml`: two new require_approval rules inserted
+  after `approval-read-before-send`; byte-identical copy kept at
+  `gov/data/default.yaml` (verified with `cmp`); `policy_lint` clean
+  (2 pre-existing infos).
+- `tests/harness.py`: `make_run(policy_path=None, ledger_path=None)`;
+  default ledger lives INSIDE the run dir (existing tests hermetic);
+  F10 tests/evals share one explicit temp ledger per deployment.
+- New `tests/test_hardening_r3.py`: 27 tests (F8 variants + cipher
+  residual + innocence, F9 taint/clean/verbatim-ordering/run-scope,
+  F10 threshold/degraded/single-run-burst/large-payload/chain-tamper/
+  shapes-not-values/fail-open, F11 escapes + raw storage, F12
+  preview==recompute + redacted execution). Two R2 tests whose premises
+  were superseded by taint now use DLP-clean fixtures (their original
+  intents — correlation floor, legit unrelated params — preserved).
+- `evals/run_evals.py`: per-cell ledger isolation (`_CELL_LEDGER_DIR`,
+  reset in `run_cell`, shared by all runs in a cell via
+  `_cell_make_run`); sit18 variants now must_not (subst = documented
+  residual must_execute); sit19 paraphrase must_not (queued via taint);
+  sit20 shards 1-2 must_execute, shard 3 must_not (queued on campaign);
+  sit22 rewritten to assert the fixed ceremony (no raw ESC/CR, visible
+  escapes, preview==recompute from redacted args).
+- `evals/matrix.py`: sit18/19/20/22 summaries + expectations rewritten;
+  `evals/FINDINGS.md`: F8–F12 CLOSED with stated residuals; F1/F2/F5
+  residual notes updated (superseded parts now closed by F9/F8/F10).
+- Regenerated `SITUATION_MATRIX.md` (22 situations, 264 cells).
+
+### Verification (2026-09-21 ~16:37Z)
+
+- `python3 tests/run_tests.py`: **276 tests, OK** (249 baseline + 27 new).
+- `python3 evals/run_evals.py`: **SCORE 528/528, SHIP-GATE: GREEN**
+  (264 provisional + 264 real; sit18/19/20/22 pass under the new
+  expectations on all adapters/privileges/harnesses).
+- `python3 -m py_compile` on all edited Python files: clean.

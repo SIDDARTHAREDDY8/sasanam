@@ -14,7 +14,8 @@ Match keys (all optional; every listed key must hold for the rule to match):
 
   tool, role, agent, path_contains_any, path_outside_sandbox,
   min_external_calls, min_sends, min_writes, min_deletes,
-  domain_allowlisted, carries_read_content, source_untrusted, when
+  domain_allowlisted, carries_read_content, source_untrusted,
+  read_sensitive, cross_run_campaign, when
 
 ``when`` is a list of ``{path, gte|lte|gt|lt|eq|neq}`` conditions resolved
 against the evaluation context (e.g. ``counters.send_email``).
@@ -38,6 +39,7 @@ KNOWN_MATCH_KEYS = {
     "path_contains_any", "path_outside_sandbox",
     "min_external_calls", "min_sends", "min_writes", "min_deletes",
     "domain_allowlisted", "carries_read_content", "source_untrusted",
+    "read_sensitive", "cross_run_campaign",
     "when",
 }
 
@@ -56,6 +58,26 @@ DEFAULT_ROLES = {
     "approver": [],
     "orchestrator": [],
 }
+
+
+def default_policy_path():
+    """Filesystem path of the canonical default policy.
+
+    The policy ships as package data (``gov/data/default.yaml``) inside the
+    wheel and is resolved through ``importlib.resources`` when installed.
+    When running from a source checkout, falls back to the repo-local
+    ``policies/default.yaml``. There is exactly one canonical policy: a
+    drift-guard test keeps the shipped copy byte-identical to the checkout
+    copy, and the engine's policy hash pins whichever copy was loaded.
+    """
+    try:
+        from importlib.resources import files
+        candidate = files("gov") / "data" / "default.yaml"
+        if isinstance(candidate, Path) and candidate.is_file():
+            return candidate
+    except (ImportError, OSError, TypeError, ValueError):
+        pass
+    return Path(__file__).resolve().parent.parent / "policies" / "default.yaml"
 
 
 class PolicyDecision:
@@ -122,12 +144,35 @@ class PolicyEngine:
         self.rate_limit = cfg.get("rate_limit") or {}
         self.egress = cfg.get("egress") or {}
         self.approval_ttl_hours = (cfg.get("approvals") or {}).get("ttl_hours", 24)
+        self.auto_approve = self._normalize_auto_approve(
+            cfg.get("auto_approve"))
         self.policies = []
         for i, rule in enumerate(cfg.get("policies") or []):
             self._validate_rule(rule, i)
             self.policies.append(rule)
 
     # ------------------------------------------------------------ validation
+    @staticmethod
+    def _normalize_auto_approve(cfg):
+        """Normalize the policy's ``auto_approve:`` section.
+
+        Low-risk auto-approval is a loaded control, so the gate is
+        explicit: the section must exist with ``enabled: true``; the risk
+        cap defaults to 25 and is clamped to 0-100. Anything malformed
+        normalizes to disabled (fail closed).
+        """
+        out = {"enabled": False, "max_risk_score": 25}
+        if not isinstance(cfg, dict):
+            return out
+        if cfg.get("enabled") is True:
+            try:
+                cap = int(cfg.get("max_risk_score", 25))
+            except (TypeError, ValueError):
+                return out
+            out["enabled"] = True
+            out["max_risk_score"] = max(0, min(100, cap))
+        return out
+
 
     def _validate_rule(self, rule, index):
         rule_id = rule.get("id", "rule-%d" % index)
@@ -222,6 +267,12 @@ class PolicyEngine:
                 return False
         if "source_untrusted" in match:
             if bool(context.get("source_untrusted")) != bool(match["source_untrusted"]):
+                return False
+        if "read_sensitive" in match:
+            if bool(context.get("read_sensitive")) != bool(match["read_sensitive"]):
+                return False
+        if "cross_run_campaign" in match:
+            if bool(context.get("cross_run_campaign")) != bool(match["cross_run_campaign"]):
                 return False
         if "when" in match:
             if not _check_conditions(match["when"], context):

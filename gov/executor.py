@@ -19,7 +19,15 @@ Pipeline for each call (in order):
    execute.
 7. **Provenance.** Every executed ``read_file``/``api_call`` taints the run
    (tool output is untrusted input); read content fingerprints let the
-   executor detect read-before-send exfiltration.
+   executor detect read-before-send exfiltration. A read whose content
+   trips DLP sensitive patterns additionally sets a run-scoped
+   ``read_sensitive`` flag (F9): later ``api_call`` is approval-gated even
+   for paraphrased payloads. Every DLP-clean ``api_call`` attempt is
+   recorded in the per-principal egress ledger (F10) for cross-run
+   campaign detection (heuristic, queue-only, fail-safe).
+8. **Faithful previews.** The approval preview is built from the same
+   redacted args that will execute (F12), with control characters visibly
+   escaped (F11), so the approver sees exactly what they authorize.
 
 Simulated tools (no network, no real side effects outside the run directory):
   read_file(path)                  read a file (real read only inside the sandbox)
@@ -45,15 +53,30 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
-from .approvals import record_digest
+from .approvals import record_digest, sanitize_preview_text
+from .egress_ledger import (
+    CAMPAIGN_K,
+    CAMPAIGN_WINDOW_SECS,
+    FRAGMENT_MAX_BYTES,
+    FRAGMENT_MIN_ENTROPY,
+    EgressLedger,
+)
 from .identity import AgentIdentity, UnmintedIdentityError
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
 
+# Verbatim-match window (chars) for read-before-send correlation. Sends use
+# the original 32-char window; api_call params use a shorter 16-char window
+# (F1): api_call is the exfil-shaped vector for short payloads (a 28-char
+# customer row must trip the correlation), while sub-16-char query tokens
+# stay non-matching so ordinary read-shaped api_call usage keeps working.
+_CORRELATION_WINDOW_SEND = 32
+_CORRELATION_WINDOW_API = 16
+
 
 class ToolExecutor:
-    def __init__(self, run_dir, policy, log, approvals):
+    def __init__(self, run_dir, policy, log, approvals, ledger_path=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -63,6 +86,13 @@ class ToolExecutor:
         self.quarantine = self.run_dir / "quarantine"
         self.sandbox.mkdir(parents=True, exist_ok=True)
         self._sandbox_resolved = self.sandbox.resolve()
+        # F10: per-principal egress ledger for cross-run campaign
+        # detection. Default lives NEXT TO the runs directory (shared by
+        # all runs of a deployment); pass an explicit path to isolate
+        # (tests) or relocate it.
+        if ledger_path is None:
+            ledger_path = self.run_dir.parent / "egress_ledger.jsonl"
+        self._ledger = EgressLedger(ledger_path)
         self.api_calls = 0  # external api_call executions this run
         self.counters = {}  # attempted calls per tool this run
         self._repeats = {}  # (tool, canonical args) -> count
@@ -70,6 +100,8 @@ class ToolExecutor:
         self._tainted = False  # True once tool output entered this run
         self._taint_sources = []
         self._read_contents = []  # fingerprints of executed read results
+        self._read_sensitive = False  # F9: a read returned DLP-sensitive
+        # content this run; api_call afterwards is taint-gated.
 
     # -- identity ---------------------------------------------------------
 
@@ -119,12 +151,49 @@ class ToolExecutor:
                 total = sum(len(c) for c in self._read_contents)
                 while total > _MAX_READ_STORE and self._read_contents:
                     total -= len(self._read_contents.pop(0))
+                if tool == "read_file" and self._content_is_sensitive(content):
+                    # F9: taint, not similarity. A read whose content trips
+                    # DLP sensitive patterns (credential regexes or PII)
+                    # marks the run: later api_call is approval-gated even
+                    # when the payload shares no verbatim text with the
+                    # read (paraphrase/summary exfil). Reads whose content
+                    # is DLP-clean do NOT taint.
+                    self._read_sensitive = True
             self._tainted = True
             if tool not in self._taint_sources:
                 self._taint_sources.append(tool)
 
+    @staticmethod
+    def _content_is_sensitive(content):
+        """True when read content trips DLP sensitive patterns."""
+        if dlp.find_credential(content):
+            return True
+        _redacted, hits = dlp.scrub_pii(content)
+        return bool(hits)
+
     def _carries_read_content(self, tool, args):
-        if tool not in _SEND_TOOLS or not self._read_contents:
+        """True when an outbound-shaped payload carries verbatim excerpts of
+        content this run previously read (threat T4/R4).
+
+        Covers ``_SEND_TOOLS`` (send_email/http_post) with the original
+        32-char window, and ``api_call`` (F1) with a 16-char window over
+        ``params`` only: api_call is modeled as a READ tool, but its params
+        are an outbound payload to a third-party endpoint, so customer data
+        smuggled there must correlate exactly like a send. The ``endpoint``
+        is routing (an audit field), not payload, and is excluded from the
+        api_call search to avoid flagging destinations.
+        """
+        if tool == "api_call":
+            window = _CORRELATION_WINDOW_API
+            # params is the exfil vector; endpoint is routing, not payload.
+            search_args = {k: v for k, v in (args or {}).items()
+                           if k != "endpoint"}
+        elif tool in _SEND_TOOLS:
+            window = _CORRELATION_WINDOW_SEND
+            search_args = args
+        else:
+            return False
+        if not self._read_contents:
             return False
         # Search the RAW string values (not JSON: json.dumps escapes
         # newlines, which would break verbatim matching of multi-line
@@ -141,18 +210,18 @@ class ToolExecutor:
                 for x in v:
                     _collect(x)
 
-        _collect(args)
+        _collect(search_args)
         corpus = "\x00".join(parts)
-        if len(corpus) < 32:
+        if len(corpus) < window:
             return False
         for c in self._read_contents:
-            if len(c) < 32:
+            if len(c) < window:
                 continue
-            # Any 32-char run of the outbound payload appearing verbatim
-            # in previously read content counts, even if the agent only
-            # exfiltrated an excerpt of a larger file.
-            for i in range(len(corpus) - 31):
-                if corpus[i:i + 32] in c:
+            # Any <window>-char run of the outbound payload appearing
+            # verbatim in previously read content counts, even if the agent
+            # only exfiltrated an excerpt of a larger file.
+            for i in range(len(corpus) - window + 1):
+                if corpus[i:i + window] in c:
                     return True
         return False
 
@@ -172,13 +241,93 @@ class ToolExecutor:
         return any(host == d.lower() or host.endswith("." + d.lower())
                    for d in allow)
 
-    def _context(self, tool, args):
+    def _api_call_shape(self, args):
+        """Summarize an api_call attempt for the egress ledger (F10).
+
+        Records the outbound SHAPE (endpoint, param count, string bytes,
+        max per-value entropy, fragment flag, timestamp) — never param
+        values, so the ledger itself cannot become an exfil store.
+        """
+        params = args.get("params")
+        if not isinstance(params, dict):
+            params = {}
+        strings = []
+
+        def _collect(v):
+            if isinstance(v, str):
+                strings.append(v)
+            elif isinstance(v, dict):
+                for x in v.values():
+                    _collect(x)
+            elif isinstance(v, (list, tuple)):
+                for x in v:
+                    _collect(x)
+
+        _collect(params)
+        total_bytes = sum(len(s) for s in strings)
+        max_entropy = 0.0
+        for s in strings:
+            if s:
+                max_entropy = max(max_entropy, dlp._shannon_entropy(s))
+        fragment = (0 < total_bytes <= FRAGMENT_MAX_BYTES
+                    and max_entropy >= FRAGMENT_MIN_ENTROPY)
+        return {
+            "endpoint": args.get("endpoint") or "",
+            "n_params": len(params),
+            "str_bytes": total_bytes,
+            "max_entropy": round(max_entropy, 3),
+            "fragment": fragment,
+        }
+
+    def _check_cross_run_campaign(self, tool, args, principal):
+        """F10: heuristic cross-run campaign detection (fail-safe).
+
+        Records this api_call attempt's shape in the per-principal egress
+        ledger, then asks whether K small high-entropy-ish fragments to
+        the SAME endpoint from the SAME principal across >= 2 distinct
+        runs fall inside the time window. True -> the policy rule queues
+        (never denies). Any ledger failure fails OPEN (returns False):
+        this is a heuristic signal, not an authorization control.
+        """
+        if tool != "api_call" or not principal:
+            return False
+        shape = self._api_call_shape(args)
+        try:
+            self._ledger.append({
+                "ts": datetime.now(timezone.utc).timestamp(),
+                "run_id": self.run_id,
+                "principal": principal,
+                "tool": "api_call",
+                **shape,
+            })
+            if not shape["fragment"] or not shape["endpoint"]:
+                return False
+            return self._ledger.campaign_hit(
+                principal, shape["endpoint"],
+                window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+        except Exception:
+            return False
+
+    def _context(self, tool, args, principal=None, record_ledger=True):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
         if "path" in args:
             ctx["path_outside_sandbox"] = self._is_outside_sandbox(args["path"])
         if tool in _SEND_TOOLS:
             ctx["domain_allowlisted"] = self._domain_allowlisted(tool, args)
             ctx["carries_read_content"] = self._carries_read_content(tool, args)
+        elif tool == "api_call":
+            # F1: api_call params are an outbound-shaped payload to a
+            # third-party endpoint; correlate them against prior reads the
+            # same way sends are correlated. (No egress-allowlist check here:
+            # api_call destinations are not allowlisted by policy.)
+            ctx["carries_read_content"] = self._carries_read_content(tool, args)
+            # F9: run-scoped taint — a read returned DLP-sensitive content.
+            ctx["read_sensitive"] = self._read_sensitive
+            # F10: heuristic cross-run campaign signal (fail-safe). Not
+            # re-recorded on approval re-evaluation: the attempt was
+            # already ledgered when first queued.
+            ctx["cross_run_campaign"] = self._check_cross_run_campaign(
+                tool, args, principal) if record_ledger else False
         ctx["source_untrusted"] = self._tainted
         return ctx
 
@@ -235,21 +384,36 @@ class ToolExecutor:
 
     @staticmethod
     def _preview(tool, args):
+        """Human-facing preview of what the action would do.
+
+        F12: built from the SAME (redacted) args that execute, so the
+        preview faithfully represents the authorized action. Payload
+        fields are summaries (``{bytes, sha256}``) — the preview says
+        so explicitly.
+        F11: every interpolated agent-controlled value passes through
+        ``sanitize_preview_text`` so ANSI escapes / carriage returns /
+        bidi overrides render as visible escapes, never raw glyphs.
+        """
+        safe = sanitize_preview_text
         if tool == "send_email":
             return "would send email to %s (subject: %r)" % (
-                args.get("to"), args.get("subject"))
+                safe(args.get("to")), args.get("subject"))
         if tool == "http_post":
-            return "would POST to %s" % args.get("url")
+            return "would POST to %s" % safe(args.get("url"))
         if tool == "write_file":
             content = args.get("content", "")
+            if isinstance(content, dict) and "bytes" in content:
+                return ("would write %d bytes (payload redacted at "
+                        "execution) to %s"
+                        % (content["bytes"], safe(args.get("path"))))
             n = len(content if isinstance(content, str) else str(content))
-            return "would write %d bytes to %s" % (n, args.get("path"))
+            return "would write %d bytes to %s" % (n, safe(args.get("path")))
         if tool == "delete_file":
-            return "would delete %s" % args.get("path")
+            return "would delete %s" % safe(args.get("path"))
         if tool == "read_file":
-            return "would read %s" % args.get("path")
+            return "would read %s" % safe(args.get("path"))
         if tool == "api_call":
-            return "would call API endpoint %s" % args.get("endpoint")
+            return "would call API endpoint %s" % safe(args.get("endpoint"))
         return "would invoke %s" % tool
 
     # -- main entry points --------------------------------------------------
@@ -272,6 +436,14 @@ class ToolExecutor:
         blocked, blocking_rule, redacted_args, redactions = dlp.scan_tool_args(
             tool, kwargs)
 
+        # Evaluation-context snapshot (the "decision input"): attached to
+        # every downstream decision entry so offline tools (the policy
+        # simulator, incident review) can replay exactly what the engine
+        # saw, without re-running the run. Mirrors OPA decision logs'
+        # (input, result) pairing. Entries logged before policy evaluation
+        # (identity/role/DLP/rate-guard rejections) carry None.
+        policy_ctx_snapshot = None
+
         def _base(extra):
             entry = {
                 "event": "tool_call",
@@ -285,6 +457,7 @@ class ToolExecutor:
                 "provenance": ("untrusted_influenced" if self._tainted
                                else "agent_direct"),
                 "delegation_attempted": delegation_attempted,
+                "policy_context": policy_ctx_snapshot,
             }
             if self._tainted:
                 entry["taint_detail"] = (
@@ -382,7 +555,16 @@ class ToolExecutor:
         action = {"tool": tool, "args": kwargs,
                   "identity": identity.as_dict(),
                   "role": identity.role, "agent_id": identity.agent_id}
-        ctx = self._context(tool, kwargs)
+        ctx = self._context(tool, kwargs, principal=identity.principal)
+        policy_ctx_snapshot = {
+            "path_outside_sandbox": ctx.get("path_outside_sandbox"),
+            "domain_allowlisted": ctx.get("domain_allowlisted"),
+            "carries_read_content": ctx.get("carries_read_content"),
+            "read_sensitive": ctx.get("read_sensitive"),
+            "cross_run_campaign": ctx.get("cross_run_campaign"),
+            "source_untrusted": ctx.get("source_untrusted"),
+            "counters": dict(ctx.get("counters") or {}),
+        }
         decision = self.policy.evaluate(action, ctx)
 
         if decision.effect == "allow":
@@ -428,9 +610,12 @@ class ToolExecutor:
                            "redactions": redactions}
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
-            self._preview(tool, kwargs),
+            # F12: the preview is built from the SAME redacted args that
+            # will execute — preview, digest, and execution all agree.
+            self._preview(tool, redacted_args),
             policy_hash=self.policy.policy_hash,
-            delegation_attempted=delegation_attempted)
+            delegation_attempted=delegation_attempted,
+            policy_context=policy_ctx_snapshot)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -438,6 +623,19 @@ class ToolExecutor:
             "flag": decision.flag,
             "approval_id": approval_id,
         }))
+        # Low-risk auto-approval: only fires when the ACTIVE policy
+        # explicitly opts in (auto_approve.enabled + risk cap). The audit
+        # record is identical to a human approval.
+        auto = self.approvals.maybe_auto_approve(
+            approval_id, self.policy.auto_approve)
+        if auto is not None:
+            executed = self.execute_approved()
+            return {"status": "auto_approved_executed",
+                    "approval_id": approval_id,
+                    "policy_id": decision.policy_id,
+                    "reason": auto.get("decision_reason"),
+                    "seq": entry["seq"],
+                    "executed": [d["seq"] for d in executed]}
         return {"status": "queued", "approval_id": approval_id,
                 "policy_id": decision.policy_id,
                 "reason": decision.reason, "seq": entry["seq"]}
@@ -519,7 +717,10 @@ class ToolExecutor:
                         "approval_policy_stale")
                 continue
             # 4. fresh policy evaluation (TOCTOU guard)
-            ctx = self._context(rec["tool"], rec["args"])
+            ctx = self._context(rec["tool"], rec["args"],
+                                principal=(rec.get("identity") or {}).get(
+                                    "principal"),
+                                record_ledger=False)
             action = {"tool": rec["tool"], "args": rec["args"],
                       "identity": rec.get("identity"),
                       "role": rec.get("role"), "agent_id": rec.get("agent_id")}
@@ -533,6 +734,15 @@ class ToolExecutor:
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched.
+            _exec_ctx_snapshot = {
+                "path_outside_sandbox": ctx.get("path_outside_sandbox"),
+                "domain_allowlisted": ctx.get("domain_allowlisted"),
+                "carries_read_content": ctx.get("carries_read_content"),
+                "read_sensitive": ctx.get("read_sensitive"),
+                "cross_run_campaign": ctx.get("cross_run_campaign"),
+                "source_untrusted": ctx.get("source_untrusted"),
+                "counters": dict(ctx.get("counters") or {}),
+            }
             auth_entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),
@@ -545,6 +755,7 @@ class ToolExecutor:
                 "decision": "execution_authorized",
                 "policy_id": rec.get("policy_id"),
                 "approval_id": aid,
+                "policy_context": _exec_ctx_snapshot,
                 "reason": "Human approval %s authorized execution." % aid,
             })
             result = self._simulate(rec["tool"], rec["args"], ctx)
@@ -564,6 +775,7 @@ class ToolExecutor:
                 "decision": "approved_executed",
                 "policy_id": rec.get("policy_id"),
                 "approval_id": aid,
+                "policy_context": _exec_ctx_snapshot,
                 "reason": "Executed after human approval %s: %s"
                           % (aid, rec.get("decision_reason")),
                 "result_summary": self._summarize(rec["tool"], result),

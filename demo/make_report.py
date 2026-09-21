@@ -22,7 +22,7 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
 def latest_run_dir():
-    runs = ROOT / "runs"
+    runs = Path.cwd() / "runs"
     cands = [d for d in runs.iterdir() if d.is_dir()] if runs.exists() else []
     if not cands:
         raise SystemExit("no runs found; run python demo/run_demo.py first")
@@ -291,7 +291,7 @@ def main():
     })
 
     generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    reports = ROOT / "reports"
+    reports = Path.cwd() / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     md_path = reports / ("%s_audit_report.md" % run_id)
     html_path = reports / ("%s_audit_report.html" % run_id)

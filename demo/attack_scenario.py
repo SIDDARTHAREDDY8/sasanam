@@ -35,7 +35,7 @@ for p in (ROOT, ROOT / "tests"):
 from gov.approvals import ApprovalQueue
 from gov.executor import ToolExecutor
 from gov.log import ActionLog, read_entries, verify_chain
-from gov.policy import PolicyEngine
+from gov.policy import PolicyEngine, default_policy_path
 
 PRINCIPAL = "synthetic-corp"
 
@@ -75,12 +75,12 @@ def verdict(ok, what):
 
 def main():
     run_id = "attack-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-    run_dir = ROOT / "runs" / run_id
+    run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
     seed(sandbox)
 
     log = ActionLog(run_dir / "actions.jsonl")
-    policy = PolicyEngine(ROOT / "policies" / "default.yaml")
+    policy = PolicyEngine(default_policy_path())
     approvals = ApprovalQueue(run_dir, log)
     ex = ToolExecutor(run_dir, policy, log, approvals)
 
