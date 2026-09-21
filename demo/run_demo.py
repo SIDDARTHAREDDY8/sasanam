@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gov import ActionLog, AgentIdentity, ApprovalQueue, PolicyEngine, ToolExecutor, verify_chain
+from gov import ActionLog, ApprovalQueue, PolicyEngine, ToolExecutor, verify_chain
 
 PRINCIPAL = "siddartha-reddy (account owner)"
 
@@ -63,14 +63,11 @@ def main():
     approvals = ApprovalQueue(run_dir, log)
     ex = ToolExecutor(run_dir, policy, log, approvals)
 
-    def ident(agent_id, role):
-        return AgentIdentity(agent_id=agent_id, role=role,
-                             run_id=run_id, principal=PRINCIPAL)
-
-    scout = ident("scout-01", "scout")
-    triage = ident("triage-01", "triage")
-    builder = ident("builder-01", "builder")
-    publisher = ident("publisher-01", "publisher")
+    # Identities are minted by the executor: the only identities it honors.
+    scout = ex.mint_identity("scout-01", "scout", PRINCIPAL)
+    triage = ex.mint_identity("triage-01", "triage", PRINCIPAL)
+    builder = ex.mint_identity("builder-01", "builder", PRINCIPAL)
+    publisher = ex.mint_identity("publisher-01", "publisher", PRINCIPAL)
 
     log.append({"event": "run_started", "run_id": run_id, "agent_id": "orchestrator",
                 "role": "orchestrator", "principal": PRINCIPAL,

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-governance"
+version = "0.2.0"
+description = "Policy enforcement, human approvals, and tamper-evident audit logs for AI agent tool use (synthetic demo)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Siddartha Reddy Chinthala" }]
+keywords = ["ai-agents", "governance", "policy", "audit", "red-team"]
+
+[project.scripts]
+gov-demo = "demo.run_demo:main"
+gov-attack-demo = "demo.attack_scenario:main"
+gov-approve = "gov.approvals:main"
+gov-verify = "gov.verify:main"
+gov-policy-lint = "gov.policy_lint:main"
+gov-report = "demo.make_report:main"
+
+[tool.setuptools]
+packages = ["gov", "demo"]
+
+[tool.setuptools.package-data]
+"*" = ["*.yaml"]

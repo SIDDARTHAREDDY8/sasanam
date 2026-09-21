@@ -3,6 +3,10 @@
 from dataclasses import asdict, dataclass
 
 
+class UnmintedIdentityError(Exception):
+    """Raised when an identity object was not issued by the executor."""
+
+
 @dataclass(frozen=True)
 class AgentIdentity:
     """Who acted.

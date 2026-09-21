@@ -1,0 +1,19 @@
+{
+  "repo": "synthetic-repo",
+  "issues": [
+    {
+      "id": 42,
+      "title": "Crash on empty config file",
+      "labels": [
+        "bug"
+      ]
+    },
+    {
+      "id": 43,
+      "title": "Add retry to flaky sync step",
+      "labels": [
+        "enhancement"
+      ]
+    }
+  ]
+}

@@ -1,16 +1,44 @@
-# Default governance policies for the synthetic agent-governance demo.
-# Evaluated top to bottom; the first matching policy wins.
+# Default governance policy for the agent-governance demo (synthetic).
+#
+# SEMANTICS: deny-by-default with forbid priority. All "deny" rules are
+# evaluated before "require_approval" rules, which are evaluated before
+# "allow" rules. If no rule matches, the action is DENIED (fail-closed).
+# Rule order inside a pass matters only for which matching rule is reported.
+#
+# Run `python -m gov.policy_lint policies/default.yaml` after editing.
 
-version: 1
+version: 2
 
+# Least-privilege role -> tool allowlist, enforced by the executor before
+# policy evaluation. A role can never use a tool not listed here, no matter
+# what the rules below say.
+roles:
+  support: [read_file, send_email]
+  coder: [read_file, write_file, delete_file, api_call]
+  researcher: [read_file, api_call, http_post, send_email]
+  scout: [read_file, api_call]
+  triage: [read_file, write_file]
+  builder: [read_file, write_file, delete_file]
+  publisher: [read_file, http_post, send_email]
+  approver: []
+  orchestrator: []
+
+# Per-run budgets enforced by the executor (independent of the rules below).
 rate_limit:
-  max_external_calls_per_run: 5
+  max_identical_calls: 10
+  max_sends_per_run: 10
+  max_writes_per_run: 50
+  max_deletes_per_run: 20
 
-defaults:
-  effect: allow
-  reason: No policy matched; action allowed by default.
+# Outbound destinations. Sends/posts to anything else are denied outright.
+egress:
+  domain_allowlist: [synthetic.local, localhost, 127.0.0.1]
+
+approvals:
+  ttl_hours: 24
 
 policies:
+  # ------------------------------- DENY (forbid priority) -------------------------------
   - id: deny-secret-reads
     description: Deny reads of secret-like paths.
     effect: deny
@@ -28,25 +56,100 @@ policies:
       path_outside_sandbox: true
     reason: File deletes outside the run sandbox are denied.
 
-  - id: approval-outbound-sends
-    description: Outbound sends require human approval.
-    effect: require_approval
+  - id: deny-egress-unallowlisted
+    description: Deny outbound sends/posts to non-allowlisted domains.
+    effect: deny
+    flag: egress_violation
     match:
-      tool: [send_email, http_post, send_message]
-    reason: Outbound communication requires human approval before it leaves the sandbox.
+      tool: [send_email, http_post]
+      domain_allowlisted: false
+    reason: Outbound destination is not on the egress allowlist.
 
-  - id: approval-write-outside-sandbox
-    description: File writes outside the run sandbox require human approval.
+  - id: deny-tainted-delete
+    description: Deny deletes once the run has ingested tool output.
+    effect: deny
+    flag: tainted_delete
+    match:
+      tool: [delete_file]
+      source_untrusted: true
+    reason: Delete requested after untrusted tool output entered the run.
+
+  # --------------------------- REQUIRE APPROVAL ---------------------------
+  - id: quarantine-outside-writes
+    description: Outside-sandbox writes need approval and are quarantined.
     effect: require_approval
     match:
       tool: [write_file]
       path_outside_sandbox: true
-    reason: File writes outside the run sandbox require human approval.
+    reason: Write outside the sandbox requires approval; even approved, it is quarantined inside the run dir.
 
-  - id: approval-external-rate-guard
-    description: More than 5 external API calls per run require human approval.
+  - id: approval-high-volume-api
+    description: Slow down high-volume external reads.
     effect: require_approval
     match:
       tool: [api_call]
       min_external_calls: 5
-    reason: External API call budget exceeded; further calls require human approval.
+    reason: High volume of external API calls requires approval.
+
+  - id: approval-read-before-send
+    description: Sending data that came from a file read needs approval.
+    effect: require_approval
+    flag: read_before_send
+    match:
+      tool: [send_email, http_post]
+      carries_read_content: true
+    reason: Payload carries content previously read from a file; possible exfiltration.
+
+  - id: approval-tainted-action
+    description: Actions on untrusted-influenced runs need a human.
+    effect: require_approval
+    match:
+      tool: [delete_file, send_email, http_post]
+      source_untrusted: true
+    reason: Run has ingested untrusted tool output; human review required.
+
+  - id: approval-outbound-sends
+    description: All outbound sends and posts need a human.
+    effect: require_approval
+    match:
+      tool: [send_email, http_post]
+    reason: Outbound communication requires human approval.
+
+  # -------------------------------- ALLOW --------------------------------
+  - id: allow-sandbox-writes
+    description: Writes inside the sandbox are allowed.
+    effect: allow
+    match:
+      tool: [write_file]
+      path_outside_sandbox: false
+    reason: Write inside the run sandbox.
+
+  - id: allow-sandbox-deletes
+    description: Deletes inside the sandbox are allowed.
+    effect: allow
+    match:
+      tool: [delete_file]
+      path_outside_sandbox: false
+    reason: Delete inside the run sandbox.
+
+  - id: allow-sandbox-reads
+    description: Non-secret reads inside the sandbox are allowed.
+    effect: allow
+    match:
+      tool: [read_file]
+      path_outside_sandbox: false
+    reason: Read inside the run sandbox.
+
+  - id: allow-reads
+    description: Reads that are neither secret-like nor outside the sandbox.
+    effect: allow
+    match:
+      tool: [read_file]
+    reason: Read with no secret or sandbox concerns.
+
+  - id: allow-api
+    description: Ordinary external API reads are allowed.
+    effect: allow
+    match:
+      tool: [api_call]
+    reason: External API read within normal volume.
