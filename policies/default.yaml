@@ -110,13 +110,13 @@ policies:
     reason: Run previously read content matching DLP sensitive patterns; this api_call may exfiltrate a paraphrase or summary. Human review required. (api_call destinations are not allowlisted by policy, so this fires regardless of endpoint.)
 
   - id: approval-cross-run-campaign
-    description: Small high-entropy api_call fragments to the same endpoint across runs may be a low-and-slow campaign.
+    description: Small high-entropy api_call fragments — or the same api_call structure repeated thinly across runs — to the same registered domain may be a low-and-slow campaign.
     effect: require_approval
     flag: cross_run_campaign
     match:
       tool: [api_call]
       cross_run_campaign: true
-    reason: Per-principal egress ledger shows K small high-entropy fragments to this endpoint across runs inside the time window; possible credential-sharding campaign. Heuristic — queue for human review, never deny.
+    reason: Per-principal egress ledger shows K small high-entropy fragments, or K same-structured api_calls regardless of payload size or entropy (shape-evading: oversize padding, unary encoding), to this registered domain across runs inside the time window; possible credential-sharding campaign. Heuristic — queue for human review, never deny.
 
   - id: approval-tainted-action
     description: Actions on untrusted-influenced runs need a human.

@@ -19,12 +19,15 @@ Pipeline for each call (in order):
    execute.
 7. **Provenance.** Every executed ``read_file``/``api_call`` taints the run
    (tool output is untrusted input); read content fingerprints let the
-   executor detect read-before-send exfiltration. A read whose content
-   trips DLP sensitive patterns additionally sets a run-scoped
-   ``read_sensitive`` flag (F9): later ``api_call`` is approval-gated even
-   for paraphrased payloads. Every DLP-clean ``api_call`` attempt is
-   recorded in the per-principal egress ledger (F10) for cross-run
-   campaign detection (heuristic, queue-only, fail-safe).
+   executor detect read-before-send exfiltration. Content tripping DLP
+   sensitive patterns sets a ``read_sensitive`` flag (F9), extended to
+   ``api_call`` results (F15a) and persisted principal-scoped with a 24h
+   TTL so a confederate's fresh run inherits it (F15b): later
+   ``api_call`` is approval-gated even for paraphrased payloads. Every
+   DLP-clean ``api_call`` attempt is recorded in the per-principal
+   egress ledger (F10) for cross-run campaign detection — the fragment
+   shape signal keyed on the registered domain (F13) plus a structural
+   same-key-set signal (F14) — heuristic, queue-only, fail-safe.
 8. **Faithful previews.** The approval preview is built from the same
    redacted args that will execute (F12), with control characters visibly
    escaped (F11), so the approver sees exactly what they authorize.
@@ -59,7 +62,9 @@ from .egress_ledger import (
     CAMPAIGN_WINDOW_SECS,
     FRAGMENT_MAX_BYTES,
     FRAGMENT_MIN_ENTROPY,
+    SENSITIVE_TAINT_TTL_SECS,
     EgressLedger,
+    registered_domain,
 )
 from .identity import AgentIdentity, UnmintedIdentityError
 
@@ -143,7 +148,7 @@ class ToolExecutor:
 
     # -- provenance / egress ----------------------------------------------
 
-    def _ingest_result(self, tool, result):
+    def _ingest_result(self, tool, result, principal=None):
         if tool in ("read_file", "api_call"):
             content = result.get("content")
             if content:
@@ -151,14 +156,28 @@ class ToolExecutor:
                 total = sum(len(c) for c in self._read_contents)
                 while total > _MAX_READ_STORE and self._read_contents:
                     total -= len(self._read_contents.pop(0))
-                if tool == "read_file" and self._content_is_sensitive(content):
-                    # F9: taint, not similarity. A read whose content trips
-                    # DLP sensitive patterns (credential regexes or PII)
-                    # marks the run: later api_call is approval-gated even
-                    # when the payload shares no verbatim text with the
-                    # read (paraphrase/summary exfil). Reads whose content
-                    # is DLP-clean do NOT taint.
+                if self._content_is_sensitive(content):
+                    # F9/F15a: taint, not similarity. Content tripping DLP
+                    # sensitive patterns (credential regexes or PII) marks
+                    # the run: a later api_call is approval-gated even when
+                    # the payload shares no verbatim text with the ingested
+                    # content (paraphrase/summary exfil). F15a extends the
+                    # F9 read_file-only check to ANY ingested content —
+                    # the product models api_call as a simulated external
+                    # API read, so a sensitive api_call RESULT taints the
+                    # run exactly like a sensitive file read. DLP-clean
+                    # content does NOT taint.
                     self._read_sensitive = True
+                    # F15b: persist principal-scoped, so a confederate's
+                    # FRESH run for the same principal inherits the taint
+                    # inside the TTL (24h). Different principals stay
+                    # isolated. Fail-open: ledger trouble never blocks
+                    # the call path.
+                    if principal:
+                        try:
+                            self._ledger.taint_mark(principal, self.run_id)
+                        except Exception:
+                            pass
             self._tainted = True
             if tool not in self._taint_sources:
                 self._taint_sources.append(tool)
@@ -273,25 +292,32 @@ class ToolExecutor:
                     and max_entropy >= FRAGMENT_MIN_ENTROPY)
         return {
             "endpoint": args.get("endpoint") or "",
+            # F13: the campaign KEY normalizes to the registered domain;
+            # the exact endpoint string stays for forensics.
+            "campaign_domain": registered_domain(args.get("endpoint") or ""),
             "n_params": len(params),
+            # F14: the structural signal keys on the param KEY SET.
+            "param_keys": sorted({str(k) for k in params.keys()}),
             "str_bytes": total_bytes,
             "max_entropy": round(max_entropy, 3),
             "fragment": fragment,
         }
 
-    def _check_cross_run_campaign(self, tool, args, principal):
-        """F10: heuristic cross-run campaign detection (fail-safe).
+    def _check_cross_run_campaign(self, tool, args, principal, shape=None):
+        """F10/F13: heuristic cross-run campaign detection (fail-safe).
 
         Records this api_call attempt's shape in the per-principal egress
         ledger, then asks whether K small high-entropy-ish fragments to
-        the SAME endpoint from the SAME principal across >= 2 distinct
-        runs fall inside the time window. True -> the policy rule queues
-        (never denies). Any ledger failure fails OPEN (returns False):
-        this is a heuristic signal, not an authorization control.
+        the SAME registered domain (F13: normalized, so subdomain
+        rotation lands in one bucket) from the SAME principal across >=
+        2 distinct runs fall inside the time window. True -> the policy
+        rule queues (never denies). Any ledger failure fails OPEN
+        (returns False): this is a heuristic signal, not an authorization
+        control.
         """
         if tool != "api_call" or not principal:
             return False
-        shape = self._api_call_shape(args)
+        shape = shape if shape is not None else self._api_call_shape(args)
         try:
             self._ledger.append({
                 "ts": datetime.now(timezone.utc).timestamp(),
@@ -300,11 +326,50 @@ class ToolExecutor:
                 "tool": "api_call",
                 **shape,
             })
-            if not shape["fragment"] or not shape["endpoint"]:
+            if not shape["fragment"] or not shape["campaign_domain"]:
                 return False
             return self._ledger.campaign_hit(
                 principal, shape["endpoint"],
                 window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+        except Exception:
+            return False
+
+    def _check_structural_campaign(self, tool, shape, principal):
+        """F14: structural low-and-slow signal (fail-safe, queue-only).
+
+        Same principal + same registered domain + same param KEY SET
+        across >= K distinct runs inside the window -> True, regardless
+        of payload size or entropy. The F10 fragment shape
+        (<=64B, >=1.8 bits/char) is attacker-controlled on both axes —
+        oversize padding and unary encoding both keep this structural
+        signature. Thin-spread only (see
+        ``EgressLedger.structural_campaign_hit``). Never denies; ledger
+        failures fail open. The attempt was already ledgered by
+        ``_check_cross_run_campaign``; this only scans.
+        """
+        if tool != "api_call" or not principal:
+            return False
+        try:
+            return self._ledger.structural_campaign_hit(
+                principal, shape.get("campaign_domain") or "",
+                shape.get("param_keys") or [],
+                window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+        except Exception:
+            return False
+
+    def _principal_taint_active(self, principal):
+        """F15b: is this principal's sensitive-read taint still live?
+
+        A fresh executor for a principal whose run ingested
+        DLP-sensitive content inherits ``read_sensitive`` while the
+        ledger mark is unexpired (24h TTL). Fail-open: ledger trouble
+        means no inherited taint, never a denial.
+        """
+        if not principal:
+            return False
+        try:
+            return self._ledger.taint_active(
+                principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
         except Exception:
             return False
 
@@ -321,13 +386,30 @@ class ToolExecutor:
             # same way sends are correlated. (No egress-allowlist check here:
             # api_call destinations are not allowlisted by policy.)
             ctx["carries_read_content"] = self._carries_read_content(tool, args)
-            # F9: run-scoped taint — a read returned DLP-sensitive content.
-            ctx["read_sensitive"] = self._read_sensitive
-            # F10: heuristic cross-run campaign signal (fail-safe). Not
-            # re-recorded on approval re-evaluation: the attempt was
-            # already ledgered when first queued.
-            ctx["cross_run_campaign"] = self._check_cross_run_campaign(
-                tool, args, principal) if record_ledger else False
+            # F9/F15: run-scoped taint — this run ingested DLP-sensitive
+            # content — OR principal-scoped taint inherited from the
+            # ledger: a fresh run for the same principal whose earlier run
+            # read sensitive content starts tainted inside the 24h TTL.
+            ctx["read_sensitive"] = (
+                self._read_sensitive
+                or self._principal_taint_active(principal))
+            # F10/F13/F14: heuristic cross-run campaign signals
+            # (fail-safe). The fragment-shape signal and the structural
+            # same-key-set signal (F14) both surface as
+            # ``cross_run_campaign`` — one campaign concept, two
+            # detectors; the ledger record keeps which shape each entry
+            # had for forensics. Not re-recorded on approval
+            # re-evaluation: the attempt was already ledgered when first
+            # queued.
+            if record_ledger:
+                shape = self._api_call_shape(args)
+                ctx["cross_run_campaign"] = (
+                    self._check_cross_run_campaign(
+                        tool, args, principal, shape)
+                    or self._check_structural_campaign(
+                        tool, shape, principal))
+            else:
+                ctx["cross_run_campaign"] = False
         ctx["source_untrusted"] = self._tainted
         return ctx
 
@@ -578,7 +660,7 @@ class ToolExecutor:
                 "flag": decision.flag,
             }))
             result = self._simulate(tool, kwargs, ctx)
-            self._ingest_result(tool, result)
+            self._ingest_result(tool, result, identity.principal)
             if tool == "api_call":
                 self.api_calls += 1
             entry = self.log.append(_base({
@@ -759,7 +841,8 @@ class ToolExecutor:
                 "reason": "Human approval %s authorized execution." % aid,
             })
             result = self._simulate(rec["tool"], rec["args"], ctx)
-            self._ingest_result(rec["tool"], result)
+            self._ingest_result(rec["tool"], result,
+                                (rec.get("identity") or {}).get("principal"))
             if rec["tool"] == "api_call":
                 self.api_calls += 1
             self.counters[rec["tool"]] = self.counters.get(rec["tool"], 0) + 1

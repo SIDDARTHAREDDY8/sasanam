@@ -86,9 +86,63 @@ _PII_RULES = [
 
 _CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 
-_CRED_KEYWORDS = re.compile(
-    r"(?i)\b(password|passwd|pwd|secret|api[_-]?key|apikey|token|"
-    r"aws_secret|client_secret|private[_-]?key)\b")
+# F16: the entropy tripwire's keyword list is matched in a NORMALIZED
+# space — lowercase, leet-speak folded, and every whitespace RUN replaced
+# by a \x00 boundary marker (no whitespace survives, but word edges do,
+# so "deploy password" still has a boundary while "private key" and
+# "privatekey" both match). Synonyms ("credentials"), spaced forms
+# ("private key"), and leet ("p4ssw0rd" -> "password") all trip it. The
+# window / token / entropy half still runs on the ORIGINAL text (match
+# positions are mapped back), so the precise-credential regexes and the
+# entropy behavior are untouched.
+_TRIP_KEYWORDS = re.compile(
+    r"\b(password|passwd|passcode|pwd|secret|credentials?|creds|token|"
+    r"api[_\-\x00]?key|private[_\-\x00]?key|key|access|auth|login|"
+    r"aws_secret|client_secret)\b")
+
+_LEET_FOLD = {
+    "0": "o", "1": "l", "3": "e", "4": "a", "5": "s",
+    "7": "t", "8": "b", "@": "a", "$": "s", "!": "i",
+}
+
+
+def _normalize_tripwire(text):
+    """Normalize *text* for keyword matching.
+
+    Returns (normalized, positions): lowercase, leet-speak folded, each
+    whitespace run replaced by one \\x00 boundary marker;
+    ``positions[i]`` is the index in the ORIGINAL text of
+    ``normalized[i]``, so a keyword match in normalized space maps back
+    to the true window for the token/entropy half.
+    """
+    norm, positions = [], []
+    in_ws = False
+    for i, ch in enumerate(text):
+        if ch.isspace():
+            if not in_ws:
+                norm.append("\x00")
+                positions.append(i)
+                in_ws = True
+            continue
+        in_ws = False
+        low = ch.lower()
+        norm.append(_LEET_FOLD.get(low, low))
+        positions.append(i)
+    return "".join(norm), positions
+
+
+def _tripwire_hit(text):
+    """Entropy tripwire: a long high-entropy token sitting near a
+    credential keyword (in normalized space) is an unknown key format."""
+    norm, positions = _normalize_tripwire(text)
+    for m in _TRIP_KEYWORDS.finditer(norm):
+        ws = max(0, m.start() - 10)
+        we = min(len(norm), m.end() + 80)
+        window = text[positions[ws]:positions[we - 1] + 1]
+        for token in re.findall(r"[A-Za-z0-9_+/=-]{20,}", window):
+            if _shannon_entropy(token) > 4.3:
+                return True
+    return False
 
 
 def _luhn_ok(digits):
@@ -305,13 +359,11 @@ def find_credential(text):
     rule = _find_credential_strict(text)
     if rule:
         return rule
-    # Entropy tripwire: a long high-entropy token sitting near a credential
-    # keyword is treated as an unknown key format.
-    for m in _CRED_KEYWORDS.finditer(text):
-        window = text[max(0, m.start() - 10):m.end() + 80]
-        for token in re.findall(r"[A-Za-z0-9_+/=-]{20,}", window):
-            if _shannon_entropy(token) > 4.3:
-                return "dlp-entropy-tripwire"
+    # Entropy tripwire: a long high-entropy token sitting near a
+    # credential keyword (matched in normalized space: synonyms, spaced
+    # forms, leetspeak — F16) is treated as an unknown key format.
+    if _tripwire_hit(text):
+        return "dlp-entropy-tripwire"
     return None
 
 

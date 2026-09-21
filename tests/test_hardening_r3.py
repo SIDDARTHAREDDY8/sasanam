@@ -3,14 +3,17 @@
 F8  — DLP decoder gap closed: base32 (round-trip validated), cross-param
       reassembly, whitespace normalization, and reversed-string scan.
       Custom substitution ciphers remain a documented residual.
-F9  — paraphrased exfil closed with TAINT: a read_file whose content trips
-      DLP sensitive patterns sets a run-scoped read_sensitive flag; later
-      api_call is approval-gated regardless of verbatim overlap.
-      DLP-clean reads do NOT taint.
+F9  — paraphrased exfil closed with TAINT: content tripping DLP
+      sensitive patterns (read_file AND api_call results, F15a) sets a
+      read_sensitive flag that persists principal-scoped (24h TTL, F15b);
+      later api_call is approval-gated regardless of verbatim overlap.
+      DLP-clean content does NOT taint.
 F10 — low-and-slow credential sharding: a per-principal hash-chained
       egress ledger records api_call shapes; K small high-entropy
-      fragments to the same endpoint across runs inside the window queue
-      (heuristic, fail-safe, never deny).
+      fragments to the same REGISTERED DOMAIN (F13) across runs inside
+      the window queue, plus a structural same-param-key-set signal
+      regardless of size/entropy (F14). Heuristic, fail-safe, never
+      deny.
 F11 — approval previews render control characters as visible escapes;
       the stored raw bytes (and the egress check on them) are unchanged.
 F12 — the approval preview is built from the same redacted args that
@@ -181,17 +184,33 @@ class TestF9SensitiveReadTaint(unittest.TestCase):
         self.assertEqual(r.get("policy_id"),
                          "approval-sensitive-read-before-api")
 
-    def test_taint_is_run_scoped(self):
-        """A fresh run without the sensitive read is not tainted."""
-        ctx = make_run()
+    def test_taint_is_principal_scoped_not_run_scoped(self):
+        """F15b supersedes run-scoping: taint persists per principal.
+
+        A fresh run for the SAME principal inherits the sensitive-read
+        taint from the ledger (24h TTL) and queues; a DIFFERENT
+        principal sharing the ledger stays isolated and executes.
+        """
+        ledger = os.path.join(tempfile.mkdtemp(prefix="govtaint-"),
+                              "egress_ledger.jsonl")
+        ctx = make_run(ledger_path=ledger)
         ident = ctx["mint_identity"]("r3", "researcher", "org")
         plant_file(ctx, "data/c.csv", CSV)
         ctx["executor"].call(ident, "read_file", path="data/c.csv")
-        ctx2 = make_run()
-        ident2 = ctx2["mint_identity"]("r3", "researcher", "org")
+        # Same principal, brand-new run: taint inherited -> queued.
+        ctx2 = make_run(ledger_path=ledger)
+        ident2 = ctx2["mint_identity"]("r3b", "researcher", "org")
         r = ctx2["executor"].call(ident2, "api_call", endpoint=ENDPOINT_X,
                                   params={"summary": PARA})
-        self.assertEqual(r["status"], "executed")
+        self.assertEqual(r["status"], "queued")
+        self.assertEqual(r.get("policy_id"),
+                         "approval-sensitive-read-before-api")
+        # Different principal, same ledger: isolated -> executes.
+        ctx3 = make_run(ledger_path=ledger)
+        ident3 = ctx3["mint_identity"]("r3c", "researcher", "org2")
+        r3 = ctx3["executor"].call(ident3, "api_call", endpoint=ENDPOINT_X,
+                                   params={"summary": PARA})
+        self.assertEqual(r3["status"], "executed")
 
 
 class TestF10CrossRunCampaign(unittest.TestCase):
@@ -225,15 +244,21 @@ class TestF10CrossRunCampaign(unittest.TestCase):
         r = self._shard_call(self._ledger(), 0, RAW_KEY_CHUNKS[0])
         self.assertEqual(r["status"], "executed")
 
-    def test_large_payloads_do_not_count(self):
-        """Fragment-shaped only: three runs of large params all execute."""
+    def test_large_payloads_shape_signal_boundary(self):
+        """F14 supersedes: payload size alone no longer exempts a run.
+
+        Three runs of large payloads with DIFFERENT param key sets all
+        execute (the structural signal needs the same key set across
+        runs). Same key set repeated thinly queues on the third — see
+        test_hardening_r4.py.
+        """
         ledger = self._ledger()
         for i in range(3):
             ctx = make_run(ledger_path=ledger)
             ident = ctx["mint_identity"]("big-%d" % i, "researcher", "org")
             r = ctx["executor"].call(
                 ident, "api_call", endpoint=ENDPOINT_X,
-                params={"doc": "x" * 200})
+                params={"doc_%d" % i: "x" * 200})
             self.assertEqual(r["status"], "executed", "run %d" % i)
 
     def test_same_run_burst_does_not_trip(self):
