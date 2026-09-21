@@ -233,11 +233,12 @@ class TestAdvisoryEscalation(AnomalyTestBase):
                                     decided_by="human-operator")
         self.assertIn("anomaly", str(cm.exception).lower())
         # Every item individually confirmed: the batch proceeds.
-        decided, _entry = self.queue.batch_decide(
+        decided, excluded, _entry = self.queue.batch_decide(
             burst_ids, True, "reviewed each one",
             decided_by="human-operator",
             confirm_risky=tuple(burst_ids))
         self.assertEqual(len(decided), 6)
+        self.assertEqual(excluded, [])
         self.assertTrue(all(r["status"] == "approved" for r in decided))
 
 

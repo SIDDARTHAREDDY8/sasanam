@@ -64,7 +64,7 @@ STANDARD_AGENTS = {
 }
 
 
-def make_run(policy_path=None, ledger_path=None):
+def make_run(policy_path=None, ledger_path=None, principal_registry=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -72,6 +72,10 @@ def make_run(policy_path=None, ledger_path=None):
     is a ledger INSIDE the run dir, so cross-run campaign detection is
     inert within a single make_run (existing tests stay hermetic). Pass
     an explicit shared path to exercise cross-run behavior.
+
+    ``principal_registry`` (F17b) installs a deployment-controlled
+    principal allowlist: minting for an unregistered principal raises.
+    Default None = permissive demo mode (any principal string mints).
     """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
     policy = PolicyEngine(str(policy_path or DEFAULT_POLICY))
@@ -80,7 +84,8 @@ def make_run(policy_path=None, ledger_path=None):
     executor = ToolExecutor(run_dir, policy, log, approvals,
                             ledger_path=(ledger_path
                                          if ledger_path is not None
-                                         else run_dir / "egress_ledger.jsonl"))
+                                         else run_dir / "egress_ledger.jsonl"),
+                            principal_registry=principal_registry)
 
     minted = set()
 

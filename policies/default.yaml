@@ -36,6 +36,40 @@ egress:
 
 approvals:
   ttl_hours: 24
+  # F21: queue reasons that may never be batch-approved. Security-queued
+  # items need an individual human decision — even via --confirm-risky.
+  # Records carrying one of these policy_flag values (or, for records
+  # queued before policy_flag existed, a matching policy_id) are
+  # excluded from batch_decide and reported as needs_individual_decision;
+  # decide() them one by one. Lint with gov/policy_lint.py after editing.
+  batch_excluded_queue_reasons:
+    - cross_run_campaign
+    - dlp
+    - sensitive_read_before_api
+    - read_before_send
+    - credential_block
+    - tainted_delete
+    - egress_violation
+    - secret_access_attempt
+    - break_glass
+
+# F18: campaign allowlist — admin-controlled exemptions for benign
+# repetitive api_call traffic (e.g. a health poller). Each entry is
+# [principal, registered_domain, [exact param keys]]. An allowlisted
+# tuple is exempt from campaign QUEUEING only: the attempt is still
+# recorded in the egress ledger for forensics, and every exemption is
+# written to the action log (event "campaign_allowlisted") — never a
+# silent bypass. Empty by default: no exemptions. Malformed entries fail
+# the policy load (fail closed). Lint with gov/policy_lint.py.
+campaign_allowlist: []
+
+# F22: audit-log size guard. Once actions.jsonl reaches max_log_bytes,
+# appends raise and the executor refuses to act (fail closed) rather
+# than act unlogged. Rotation procedure: archive the full log (it stays
+# verifiable later with `python -m gov.verify --keyring <keyring>
+# <archive>`), then start a fresh log. Default 100 MiB.
+log_limits:
+  max_log_bytes: 104857600
 
 policies:
   # ------------------------------- DENY (forbid priority) -------------------------------

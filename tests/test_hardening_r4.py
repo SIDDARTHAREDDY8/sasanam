@@ -4,9 +4,11 @@ F13 — endpoint-rotation campaign closed: the cross-run campaign key is
       the normalized REGISTERED DOMAIN (last two hostname labels), so
       rotating subdomains (shard0/shard1.collector.example) lands in one
       bucket. Exact endpoint strings are still stored for forensics.
-      Residual: the last-two-labels heuristic mishandles public-suffix
-      domains (example.co.uk -> co.uk); rotating the REGISTERED domain
-      itself still evades.
+      F20 (Round 5) hardened the normalization: IP literals are never
+      bucketed and a built-in public-suffix table keeps one registrable
+      label above known multi-label suffixes (evil.co.uk vs good.co.uk
+      are different tenants). Residual: the table is small, not a full
+      PSL; rotating the REGISTERED domain itself still evades.
 F14 — fragment-shape bypass closed with a STRUCTURAL signal: same
       principal + same registered domain + same param KEY SET across >=K
       distinct runs inside the window queues via cross_run_campaign,
@@ -111,10 +113,24 @@ class TestF13RegisteredDomainCampaign(unittest.TestCase):
                          {"collector.example"})
 
     def test_public_suffix_heuristic_boundary_documented(self):
-        # Honest residual: the last-two-labels heuristic treats
-        # example.co.uk as co.uk. Documented, not fixed.
+        # F20 (Round 5): the public-suffix false positive is CLOSED — the
+        # built-in suffix table keeps one registrable label above known
+        # multi-label suffixes, and IP literals are never bucketed.
+        # Residual: the table is intentionally small (not a full PSL).
         self.assertEqual(registered_domain("https://a.example.co.uk/x"),
-                         "co.uk")
+                         "example.co.uk")
+        self.assertEqual(registered_domain("https://evil.co.uk/x"),
+                         "evil.co.uk")
+        self.assertEqual(registered_domain("https://good.co.uk/x"),
+                         "good.co.uk")
+        self.assertNotEqual(registered_domain("https://evil.co.uk/x"),
+                            registered_domain("https://good.co.uk/x"))
+        self.assertEqual(registered_domain("http://10.0.0.1/x"), "10.0.0.1")
+        self.assertEqual(registered_domain("http://[::1]/x"), "::1")
+        # F13 behavior unchanged: subdomain rotation still buckets together.
+        self.assertEqual(
+            registered_domain("https://shard0.collector.example/x"),
+            registered_domain("https://shard1.collector.example/x"))
 
 
 class TestF14StructuralCampaign(unittest.TestCase):

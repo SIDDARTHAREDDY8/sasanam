@@ -64,12 +64,22 @@ from .egress_ledger import (
     FRAGMENT_MIN_ENTROPY,
     SENSITIVE_TAINT_TTL_SECS,
     EgressLedger,
+    LedgerUnverifiableError,
     registered_domain,
 )
-from .identity import AgentIdentity, UnmintedIdentityError
+from .identity import (
+    AgentIdentity,
+    IdentityMintLimitError,
+    UnmintedIdentityError,
+)
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
+
+# F17b: per-run identity issuance budget. Bounds identity sprawl / mint
+# abuse inside one run; deployments that legitimately mint more raise
+# the constant.
+_MAX_IDENTITY_MINTS_PER_RUN = 64
 
 # Verbatim-match window (chars) for read-before-send correlation. Sends use
 # the original 32-char window; api_call params use a shorter 16-char window
@@ -81,7 +91,8 @@ _CORRELATION_WINDOW_API = 16
 
 
 class ToolExecutor:
-    def __init__(self, run_dir, policy, log, approvals, ledger_path=None):
+    def __init__(self, run_dir, policy, log, approvals, ledger_path=None,
+                 principal_registry=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -98,6 +109,26 @@ class ToolExecutor:
         if ledger_path is None:
             ledger_path = self.run_dir.parent / "egress_ledger.jsonl"
         self._ledger = EgressLedger(ledger_path)
+        # F17b: deployment-controlled principal registry. None =
+        # permissive demo mode (any principal string mints); a registry
+        # instance requires pre-registration. The permissive default is
+        # an explicit deployment-trust residual (see gov/identity.py).
+        self._principal_registry = principal_registry
+        self._mint_count = 0  # F17b: per-run identity issuance budget
+        # F18: policy campaign allowlist (normalized by PolicyEngine).
+        self._campaign_allowlist = tuple(
+            getattr(policy, "campaign_allowlist", None) or ())
+        # F21: push the policy's batch-exclusion list into the approval
+        # queue (the queue is constructed before the executor, so the
+        # executor installs the policy-derived controls here).
+        self._batch_excluded = tuple(
+            getattr(policy, "batch_excluded_queue_reasons", None) or ())
+        if hasattr(approvals, "set_batch_excluded_reasons"):
+            approvals.set_batch_excluded_reasons(self._batch_excluded)
+        # F22: policy-configurable audit-log size guard (fail-closed).
+        log_limits = getattr(policy, "log_limits", None) or {}
+        if log_limits.get("max_log_bytes") is not None:
+            log.configure_guard(log_limits["max_log_bytes"])
         self.api_calls = 0  # external api_call executions this run
         self.counters = {}  # attempted calls per tool this run
         self._repeats = {}  # (tool, canonical args) -> count
@@ -111,11 +142,39 @@ class ToolExecutor:
     # -- identity ---------------------------------------------------------
 
     def mint_identity(self, agent_id, role, principal):
-        """Issue the only kind of identity this executor will honor."""
+        """Issue the only kind of identity this executor will honor.
+
+        F17b: issuance is rate-limited (per-run cap,
+        ``_MAX_IDENTITY_MINTS_PER_RUN``) and — when a principal registry
+        is configured — the principal must be pre-registered, otherwise
+        ``UnregisteredPrincipalError``. Registry-mode issuance is
+        audit-logged (``identity_minted``). With no registry (permissive
+        demo default) any principal string mints: an explicit
+        deployment-trust residual, documented in ``gov/identity.py``.
+        """
+        if self._mint_count >= _MAX_IDENTITY_MINTS_PER_RUN:
+            raise IdentityMintLimitError(
+                "identity mint budget exhausted for run %s (%d)" %
+                (self.run_id, _MAX_IDENTITY_MINTS_PER_RUN))
+        if self._principal_registry is not None:
+            self._principal_registry.check(principal)
+        self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal)
         self._minted.add((ident.agent_id, ident.role,
                           ident.run_id, ident.principal))
+        if self._principal_registry is not None:
+            self.log.append({
+                "event": "identity_minted",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "role": role,
+                "principal": principal,
+                "decision": "identity_issued",
+                "policy_id": "principal-registry",
+                "reason": ("Principal %r is registered; identity issued "
+                           "and logged." % principal),
+            })
         return ident
 
     def _check_identity(self, identity):
@@ -303,6 +362,42 @@ class ToolExecutor:
             "fragment": fragment,
         }
 
+    def _campaign_allowlisted(self, principal, campaign_domain, param_keys):
+        """F18: True when (principal, domain, param key set) is allowlisted.
+
+        The allowlist is policy, admin-controlled: all three components
+        must match exactly (the key set as a set — order-insensitive).
+        Exempted traffic is still ledgered; only the campaign QUEUE
+        decision is suppressed, and the suppression itself is logged.
+        """
+        if not principal or not campaign_domain:
+            return False
+        wanted = tuple(sorted(set(param_keys or ())))
+        for ap, ad, ak in self._campaign_allowlist:
+            if ap == principal and ad == campaign_domain and ak == wanted:
+                return True
+        return False
+
+    def _log_campaign_allowlisted(self, tool, principal, campaign_domain,
+                                  param_keys):
+        """F18: audit-log an allowlist exemption (never a silent bypass)."""
+        self.log.append({
+            "event": "campaign_allowlisted",
+            "run_id": self.run_id,
+            "principal": principal,
+            "tool": tool,
+            "campaign_domain": campaign_domain,
+            "param_keys": sorted(set(param_keys or ())),
+            "decision": "signal_suppressed",
+            "policy_id": "campaign-allowlist",
+            "flag": "campaign_allowlisted",
+            "reason": ("Repetitive api_call traffic matches the policy "
+                       "campaign allowlist (principal=%r, domain=%r); "
+                       "exempt from campaign queueing. The attempt is still "
+                       "recorded in the egress ledger for forensics."
+                       % (principal, campaign_domain)),
+        })
+
     def _check_cross_run_campaign(self, tool, args, principal, shape=None):
         """F10/F13: heuristic cross-run campaign detection (fail-safe).
 
@@ -328,9 +423,20 @@ class ToolExecutor:
             })
             if not shape["fragment"] or not shape["campaign_domain"]:
                 return False
-            return self._ledger.campaign_hit(
+            hit = self._ledger.campaign_hit(
                 principal, shape["endpoint"],
                 window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+            if hit and self._campaign_allowlisted(
+                    principal, shape["campaign_domain"],
+                    shape.get("param_keys")):
+                # F18: benign allowlisted traffic (e.g. a health poller)
+                # is exempt from queueing — still ledgered above, and the
+                # exemption itself is audit-logged.
+                self._log_campaign_allowlisted(
+                    tool, principal, shape["campaign_domain"],
+                    shape.get("param_keys"))
+                return False
+            return hit
         except Exception:
             return False
 
@@ -350,28 +456,37 @@ class ToolExecutor:
         if tool != "api_call" or not principal:
             return False
         try:
-            return self._ledger.structural_campaign_hit(
+            hit = self._ledger.structural_campaign_hit(
                 principal, shape.get("campaign_domain") or "",
                 shape.get("param_keys") or [],
                 window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+            if hit and self._campaign_allowlisted(
+                    principal, shape.get("campaign_domain") or "",
+                    shape.get("param_keys") or []):
+                # F18: allowlisted benign structure — exempt from
+                # queueing, still ledgered, exemption audit-logged.
+                self._log_campaign_allowlisted(
+                    tool, principal, shape.get("campaign_domain") or "",
+                    shape.get("param_keys") or [])
+                return False
+            return hit
         except Exception:
             return False
 
     def _principal_taint_active(self, principal):
-        """F15b: is this principal's sensitive-read taint still live?
+        """F15b/F17: is this principal's sensitive-read taint still live?
 
         A fresh executor for a principal whose run ingested
         DLP-sensitive content inherits ``read_sensitive`` while the
-        ledger mark is unexpired (24h TTL). Fail-open: ledger trouble
-        means no inherited taint, never a denial.
+        ledger mark is unexpired (24h TTL). F17: FAIL-CLOSED — ledger
+        trouble (tamper, truncation, forgery) raises
+        ``LedgerUnverifiableError`` instead of returning False; an
+        unverifiable ledger must never read as "no taint".
         """
         if not principal:
             return False
-        try:
-            return self._ledger.taint_active(
-                principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
-        except Exception:
-            return False
+        return self._ledger.taint_active(
+            principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
 
     def _context(self, tool, args, principal=None, record_ledger=True):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
@@ -505,6 +620,30 @@ class ToolExecutor:
         if not isinstance(identity, AgentIdentity):
             raise TypeError("identity must be an AgentIdentity minted by "
                             "this executor, got %r" % type(identity).__name__)
+
+        # F17: fail-closed ledger. The egress ledger is this run's
+        # cross-run taint/campaign memory; if it cannot be authenticated
+        # (tampered, forged, truncated past its checkpoint) the executor
+        # refuses to proceed — an unverifiable ledger must never read as
+        # "no taint". The refusal is audit-logged, then raised: loud, not
+        # a silent policy verdict.
+        try:
+            self._ledger.require_verified()
+        except LedgerUnverifiableError as e:
+            self.log.append({
+                "event": "tool_call",
+                "run_id": identity.run_id,
+                "agent_id": identity.agent_id,
+                "role": identity.role,
+                "principal": identity.principal,
+                "tool": tool,
+                "decision": "denied",
+                "policy_id": "ledger-unverifiable",
+                "flag": "ledger_unverifiable",
+                "reason": "Refusing to act: %s" % e,
+            })
+            raise
+
         # Framing kwargs are agent-supplied metadata, never trusted inputs.
         justification = kwargs.pop("justification", None)
         on_behalf_of = kwargs.pop("on_behalf_of", None)
@@ -697,7 +836,10 @@ class ToolExecutor:
             self._preview(tool, redacted_args),
             policy_hash=self.policy.policy_hash,
             delegation_attempted=delegation_attempted,
-            policy_context=policy_ctx_snapshot)
+            policy_context=policy_ctx_snapshot,
+            # F21: the queue reason travels with the record so batch
+            # approval can refuse security items individually.
+            policy_flag=decision.flag)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -742,6 +884,10 @@ class ToolExecutor:
         fresh policy evaluation. Any failure refuses the execution and logs
         why. Returns the list of executed actions.
         """
+        # F17: an unverifiable ledger refuses even approved executions —
+        # the taint/campaign memory the approval was granted under cannot
+        # be trusted.
+        self._ledger.require_verified()
         done = []
         ttl = self.policy.approval_ttl_hours
         for rec in self.approvals.all():

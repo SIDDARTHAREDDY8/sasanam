@@ -988,3 +988,72 @@ mirror `gov/data/default.yaml`), eval files, new tests. No pushes; $0 spend.
   2 harnesses). One mid-round playbook fix: sit27's slow-stretch domain
   isolated after F13 bucketing contaminated the interleaved mix probe.
 - NOT pushed (private repo; coordinator handles pushes).
+
+## 2026-09-21 17:14 UTC — TEAM ADVERSARY WAVE-6: residual-attack sweep across six brief areas
+
+Added situations sit29–sit34 + playbooks pb_sit29–pb_sit34 (34 situations,
+816 cells). New findings: F17 HIGH (fresh-principal rotation + silent
+taint-mark trim void persistent sensitive-read taint), F18 MEDIUM (benign
+repetitive poller false-positives on campaign detectors), F19 MEDIUM
+(documented `gov verify` unusable after supported key rotation), F20 LOW
+(public-suffix/IP bucketing merges unrelated endpoints), F21 HIGH (batch
+approval bulk-approves a campaign-stopped exfil fragment; policy pinning
+and decide-replay defenses hold), F22 LOW (unbounded log growth, O(n^2)
+append overhead; byte-flip and tail-truncation still detected).
+F13 registered-domain rotation and F15 24h TTL boundary measured as cells,
+not re-filed. Gate: 816/816 GREEN. Full suite: 294 tests OK.
+Env note: langchain-core 1.6.3 vanished mid-session (another process);
+reinstalled via pip --user (free, $0) to restore the known-good state.
+
+## 2026-09-21 21:45 UTC — TEAM BLUE ROUND 5: F17–F22 closed, regression-gated
+
+Closed all six red-team findings; every closure carries regression
+coverage in `tests/test_hardening_r5.py` (44 tests, all green):
+
+- F17 (HIGH): HMAC-authenticated egress ledger (`gov/egress_ledger.py` —
+  key_epoch, seq, chain hashes, authenticated checkpoint sidecar;
+  `require_verified()` recomputes changed bytes, fails closed on missing
+  sidecar; `LedgerUnverifiableError`; executor refuses when verification
+  fails) + deployment-controlled identities (`gov/identity.py` —
+  `PrincipalRegistry`, `UnregisteredPrincipalError`, 64-mint per-run cap,
+  archived-epoch verification via `GOV_LOG_KEY_ARCHIVE`).
+- F18 (MEDIUM): `campaign_allowlist:` `[principal, registered_domain,
+  [exact keys]]` — exact-match suppression of queueing only, traffic
+  still ledgered, exemption logged as `campaign_allowlisted`; malformed
+  entries fail policy load.
+- F19 (MEDIUM): `python -m gov.verify --keyring <file-or-dir>` — rotation-
+  aware verification via `KeyRing.verify_log`; missing/malformed keyring
+  fails closed (exit 1).
+- F20 (LOW): registered-domain isolation — IP literals fully isolated,
+  built-in common multi-label suffix table (`co.uk`, `org.uk`, `com.au`,
+  `co.jp`, `co.in`, `com.br`, ...).
+- F21 (HIGH): security-aware batch approval —
+  `approvals.batch_excluded_queue_reasons`, `policy_flag` on queue
+  records, excluded stay pending and survive `confirm_risky`,
+  3-tuple `(decided, excluded, batch_log_entry)` return contract.
+- F22 (LOW): O(1) append (cached `(size, mtime_ns)` signature; 2000
+  appends 9.04s -> 0.17s, regression bound pinned) + PROJECTED-size guard
+  (`current + len(new_line) > cap` refuses before write, no chain-state
+  mutation on refusal; executor refuses `LogFullError` when full).
+
+Mid-round repairs worth noting: `ActionLog.append` was restructured so
+the guard check runs before `_seq`/`_prev` mutation (a refused append
+leaves no seq gap — the old order would have); the F22 projected guard
+is a real semantic change from "current size >= cap"; sit31's eval cell
+uses low-entropy values so the structural mechanism (the one the
+allowlist exempts) is the signal under test; sit30's registry fixture
+includes the harness's standard principals.
+
+Evals: sit29–sit34 rewritten as closure cells (allowlist exemption +
+controls, mixed-epoch keyring CLI, projected cap, registered-domain
+isolation, batch exclusion, ledger refusal + registry rejection);
+residuals preserved as cells (F13 registered-domain rotation,
+permissive no-registry mode, admin-misconfiguration risk, PSL table
+limits, concurrent-writer/log-rotation gaps).
+
+Gates (2026-09-21): `tests/run_tests.py` 338/338 OK; `evals/run_evals.py`
+816/816 SHIP-GATE GREEN; `policy_lint` 0 errors/0 warnings;
+`policies/default.yaml` and `gov/data/default.yaml` byte-identical;
+`SITUATION_MATRIX.md` regenerated (34 situations, 408 cells per harness).
+`evals/FINDINGS.md`: F17–F22 marked CLOSED with honest residuals.
+- NOT pushed (private repo; coordinator handles pushes).

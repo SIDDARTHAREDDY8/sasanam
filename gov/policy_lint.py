@@ -303,6 +303,57 @@ def lint_file(path):
                 add("contradictory_rule", "error", _rule_id(rule, i),
                     detail % (pair[0], rule.get("effect"),
                               pair[1], other.get("effect")))
+
+    # ---- top-level control sections (F18/F21/F22) -------------------------
+    # These are policy, so they are linted like rules: malformed sections
+    # are errors (the engine would refuse to load them); allowlist
+    # entries are listed as info so reviewers see the exemptions.
+    allowlist = cfg.get("campaign_allowlist")
+    if allowlist is not None:
+        if not isinstance(allowlist, list):
+            add("malformed_campaign_allowlist", "error", "-",
+                "campaign_allowlist must be a list of [principal, "
+                "registered_domain, [param keys]] entries")
+        else:
+            for i, entry in enumerate(allowlist):
+                eid = "campaign_allowlist[%d]" % i
+                if (not isinstance(entry, (list, tuple)) or len(entry) != 3
+                        or not isinstance(entry[0], str) or not entry[0]
+                        or not isinstance(entry[1], str) or not entry[1]
+                        or not isinstance(entry[2], (list, tuple))
+                        or not entry[2]
+                        or any(not isinstance(k, str) or not k
+                               for k in entry[2])):
+                    add("malformed_campaign_allowlist", "error", eid,
+                        "entry must be [principal, registered_domain, "
+                        "[non-empty param keys]], got %r" % (entry,))
+            if allowlist and not any(
+                    f["kind"] == "malformed_campaign_allowlist"
+                    for f in findings):
+                add("campaign_allowlist_entries", "info", "-",
+                    "%d exemption(s): %s" % (
+                        len(allowlist),
+                        ", ".join("%s@%s[%s]" % (e[0], e[1], ",".join(e[2]))
+                                  for e in allowlist)))
+    excluded = (cfg.get("approvals") or {}).get(
+        "batch_excluded_queue_reasons")
+    if excluded is not None:
+        if (not isinstance(excluded, list)
+                or any(not isinstance(r, str) or not r.strip()
+                       for r in excluded)):
+            add("malformed_batch_excluded_reasons", "error", "-",
+                "approvals.batch_excluded_queue_reasons must be a list of "
+                "non-empty strings")
+    log_limits = cfg.get("log_limits")
+    if log_limits is not None:
+        if not isinstance(log_limits, dict):
+            add("malformed_log_limits", "error", "-",
+                "log_limits must be a mapping")
+        elif "max_log_bytes" in log_limits:
+            cap = log_limits["max_log_bytes"]
+            if not isinstance(cap, int) or cap <= 0:
+                add("malformed_log_limits", "error", "-",
+                    "log_limits.max_log_bytes must be a positive integer")
     return findings
 
 

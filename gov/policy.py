@@ -146,12 +146,103 @@ class PolicyEngine:
         self.approval_ttl_hours = (cfg.get("approvals") or {}).get("ttl_hours", 24)
         self.auto_approve = self._normalize_auto_approve(
             cfg.get("auto_approve"))
+        # F18: admin-controlled campaign allowlist — (principal,
+        # registered_domain, param key set) tuples whose repetitive api_call
+        # traffic is exempt from campaign QUEUEING (still ledgered).
+        self.campaign_allowlist = self._normalize_campaign_allowlist(
+            cfg.get("campaign_allowlist"))
+        # F21: queue reasons that may never be batch-approved — security
+        # items need an individual human decision, even via confirm_risky.
+        self.batch_excluded_queue_reasons = self._normalize_batch_excluded(
+            (cfg.get("approvals") or {}).get("batch_excluded_queue_reasons"))
+        # F22: policy-configurable audit-log size guard.
+        self.log_limits = self._normalize_log_limits(cfg.get("log_limits"))
         self.policies = []
         for i, rule in enumerate(cfg.get("policies") or []):
             self._validate_rule(rule, i)
             self.policies.append(rule)
 
     # ------------------------------------------------------------ validation
+    @staticmethod
+    def _normalize_campaign_allowlist(cfg):
+        """Normalize the ``campaign_allowlist:`` section (F18).
+
+        Each entry is a ``[principal, registered_domain, [param keys]]``
+        tuple. Malformed entries raise ValueError (fail closed at load —
+        a bad allowlist must not silently widen into a bypass). The
+        empty section is the default: no exemptions.
+        """
+        if cfg is None:
+            return ()
+        if not isinstance(cfg, (list, tuple)):
+            raise ValueError("campaign_allowlist must be a list of "
+                             "[principal, domain, [keys]] entries")
+        out = []
+        for i, entry in enumerate(cfg):
+            if not isinstance(entry, (list, tuple)) or len(entry) != 3:
+                raise ValueError(
+                    "campaign_allowlist entry %d must be [principal, "
+                    "registered_domain, [param keys]], got %r" % (i, entry))
+            principal, domain, keys = entry
+            if not isinstance(principal, str) or not principal.strip():
+                raise ValueError(
+                    "campaign_allowlist entry %d: principal must be a "
+                    "non-empty string" % i)
+            if not isinstance(domain, str) or not domain.strip():
+                raise ValueError(
+                    "campaign_allowlist entry %d: registered_domain must be "
+                    "a non-empty string" % i)
+            if (not isinstance(keys, (list, tuple))
+                    or not keys
+                    or any(not isinstance(k, str) or not k
+                           for k in keys)):
+                raise ValueError(
+                    "campaign_allowlist entry %d: param keys must be a "
+                    "non-empty list of strings" % i)
+            out.append((principal.strip(), domain.strip().lower(),
+                        tuple(sorted(set(keys)))))
+        return tuple(out)
+
+    @staticmethod
+    def _normalize_batch_excluded(cfg):
+        """Normalize ``approvals.batch_excluded_queue_reasons`` (F21).
+
+        Malformed sections raise ValueError (fail closed at load).
+        """
+        if cfg is None:
+            return ()
+        if (not isinstance(cfg, (list, tuple))
+                or any(not isinstance(r, str) or not r.strip()
+                       for r in cfg)):
+            raise ValueError("approvals.batch_excluded_queue_reasons must "
+                             "be a list of non-empty strings")
+        return tuple(r.strip() for r in cfg)
+
+    @staticmethod
+    def _normalize_log_limits(cfg):
+        """Normalize the ``log_limits:`` section (F22).
+
+        Currently ``max_log_bytes``: once the action log reaches this
+        size, appends raise and the executor refuses to act (fail
+        closed). Malformed sections raise ValueError (fail closed at
+        load). Absent section -> no guard.
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("log_limits must be a mapping")
+        out = {}
+        if "max_log_bytes" in cfg:
+            try:
+                cap = int(cfg["max_log_bytes"])
+            except (TypeError, ValueError):
+                raise ValueError("log_limits.max_log_bytes must be an "
+                                 "integer")
+            if cap <= 0:
+                raise ValueError("log_limits.max_log_bytes must be > 0")
+            out["max_log_bytes"] = cap
+        return out
+
     @staticmethod
     def _normalize_auto_approve(cfg):
         """Normalize the policy's ``auto_approve:`` section.

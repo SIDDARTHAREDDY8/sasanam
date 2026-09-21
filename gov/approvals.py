@@ -137,6 +137,25 @@ FLOOD_THRESHOLD = 5          # pending items from one (agent, tool) ...
 FLOOD_VOLUME_PRESSURE = 3    # ... this many already adds risk pressure
 BATCH_RISK_GUARD = 60        # batch approve refuses items at/above this
 
+# F21: conservative built-in batch-exclusion set. Queue reasons that mark
+# a security-relevant decision — these may never be batch-decided, even
+# via confirm_risky; they need an individual human decision. Used when no
+# policy-derived list was installed (direct/CLI construction); the
+# default policy ships the same list under
+# approvals.batch_excluded_queue_reasons, and ToolExecutor pushes the
+# policy's list into the queue at construction.
+_DEFAULT_BATCH_EXCLUDED_REASONS = (
+    "cross_run_campaign",
+    "dlp",
+    "sensitive_read_before_api",
+    "read_before_send",
+    "credential_block",
+    "tainted_delete",
+    "egress_violation",
+    "secret_access_attempt",
+    "break_glass",
+)
+
 # Queue-anomaly detection (F4: approval fatigue). An attacker floods the
 # queue with low-risk approvals to hide one malicious request; the
 # defense is a statistical signal that protects the operator's
@@ -464,10 +483,21 @@ class ApprovalQueueRiskMixin:
 
         Fail-closed: the whole batch aborts (no partial decisions) when
         any id is unknown, not pending, or — for approvals — high-risk /
-        flood-suspect without explicit per-item confirmation. Rejections
-        are never guarded: refusing is always the safe direction.
+        flood-suspect / anomalous without explicit per-item confirmation.
 
-        Returns (decided_records, batch_log_entry).
+        F21: security-excluded items (see ``_batch_blocked_reason``) are
+        NEVER batch-decided — not even with per-item ``confirm_risky``;
+        they stay pending and are returned as ``excluded``
+        (``needs_individual_decision``), decided individually via
+        ``decide()``. Skipping them is the safe direction, so exclusions
+        do not abort the batch: the atomic no-partial-decision guarantee
+        covers the decided set. Rejections are never guarded (refusing is
+        always safe), but excluded items are still returned separately
+        rather than batch-rejected, so the operator sees they need
+        individual review.
+
+        Returns (decided_records, excluded_records, batch_log_entry).
+        Excluded records carry ``batch_exclusion_reason``.
         """
         if not rationale or not rationale.strip():
             raise ValueError("a batch rationale is required")
@@ -485,12 +515,24 @@ class ApprovalQueueRiskMixin:
             raise ValueError(
                 "separation of duties: %r requested at least one of these "
                 "actions" % decided_by)
+        # F21: partition out security-excluded items first — they are
+        # never decided here, in either direction.
+        excluded = []
+        candidates = []
+        for i in approval_ids:
+            reason = self._batch_blocked_reason(records[i])
+            if reason is not None:
+                rec = dict(records[i])
+                rec["batch_exclusion_reason"] = reason
+                excluded.append(rec)
+            else:
+                candidates.append(i)
         guarded = []
         if approved:
             confirmed = set(confirm_risky or ())
             self.refresh_flood_flags()
             anomaly_ids = self.anomaly_item_ids()
-            for i in approval_ids:
+            for i in candidates:
                 r = self.get(i)  # re-read after flag refresh
                 if r.get("flood_suspect") and i not in confirmed:
                     guarded.append((i, "flood_suspect"))
@@ -519,12 +561,14 @@ class ApprovalQueueRiskMixin:
                 "--confirm-risky for each id you have reviewed individually."
                 % detail)
         decided = []
-        for i in approval_ids:
+        decided_ids = []
+        for i in candidates:
             record, _entry = self.decide(
                 i, approved, "BATCH [%s]: %s" % (
                     "approve" if approved else "reject", rationale),
                 decided_by=decided_by)
             decided.append(record)
+            decided_ids.append(i)
         batch_entry = self.log.append({
             "event": "approval_batch",
             "run_id": self.run_dir.name,
@@ -534,11 +578,14 @@ class ApprovalQueueRiskMixin:
             "tool": "batch",
             "decision": "approved" if approved else "rejected",
             "decided_by": decided_by,
-            "approval_ids": list(approval_ids),
-            "count": len(approval_ids),
+            "approval_ids": decided_ids,
+            "excluded_ids": [r["id"] for r in excluded],
+            "excluded_reasons": {r["id"]: r["batch_exclusion_reason"]
+                                 for r in excluded},
+            "count": len(decided_ids),
             "reason": rationale,
         })
-        return decided, batch_entry
+        return decided, excluded, batch_entry
 
     # -- low-risk auto-approval -------------------------------------------
     def maybe_auto_approve(self, approval_id, auto_cfg):
@@ -717,14 +764,59 @@ class ApprovalQueueRiskMixin:
 
 
 class ApprovalQueue(ApprovalQueueRiskMixin):
-    def __init__(self, run_dir, log):
+    def __init__(self, run_dir, log, batch_excluded_reasons=None):
         self.run_dir = Path(run_dir)
         self.log = log
         self.path = self.run_dir / "approvals.jsonl"
+        # F21: queue reasons that may never be batch-decided. Explicit
+        # policy list wins; otherwise the conservative built-in security
+        # set applies (fail closed for direct/CLI construction without a
+        # policy). ToolExecutor pushes the policy-derived list via the
+        # setter below.
+        self.set_batch_excluded_reasons(batch_excluded_reasons)
+
+    def set_batch_excluded_reasons(self, reasons):
+        """F21: install the policy-derived batch-exclusion list.
+
+        ``reasons=None`` keeps the conservative built-in default; an
+        explicit (possibly empty) list is honored as the deployment's
+        choice.
+        """
+        if reasons is None:
+            self._batch_excluded = tuple(_DEFAULT_BATCH_EXCLUDED_REASONS)
+        else:
+            self._batch_excluded = tuple(r for r in reasons)
+
+    def _batch_blocked_reason(self, record):
+        """F21: why this record may never be batch-decided (None = OK).
+
+        Security-excluded queue reasons always need an individual human
+        decision — batch approval, even with per-item ``confirm_risky``,
+        cannot grant them. Break-glass records are excluded
+        structurally: a break-glass bypass must never be laundered
+        through a batch. Records queued before ``policy_flag`` existed
+        fall back to matching the policy_id (dashes/underscores
+        normalized) against the excluded reasons.
+        """
+        if record.get("break_glass"):
+            return "break_glass record: individual review required"
+        flag = record.get("policy_flag")
+        if flag and flag in self._batch_excluded:
+            return ("excluded queue reason %r: individual decision "
+                    "required" % flag)
+        pid = str(record.get("policy_id") or "")
+        if pid and not flag:
+            norm = pid.lower().replace("-", "_")
+            for reason in self._batch_excluded:
+                rnorm = str(reason).lower().replace("-", "_")
+                if rnorm and rnorm in norm:
+                    return ("excluded queue reason %r (via policy_id %r): "
+                            "individual decision required" % (reason, pid))
+        return None
 
     def queue(self, action, decision, provenance="agent_direct", preview="",
               policy_hash=None, delegation_attempted=False,
-              policy_context=None):
+              policy_context=None, policy_flag=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, identity, the agent's
@@ -733,9 +825,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         (path_outside_sandbox, domain_allowlisted, carries_read_content,
         source_untrusted, counters); it feeds risk scoring and the
         simulator, never the agent.
+        ``policy_flag`` (F21) is the queue reason (the decision's flag,
+        e.g. ``cross_run_campaign``); it travels with the record so
+        batch approval can refuse security items individually. When not
+        passed explicitly it falls back to ``decision.flag``.
         """
         identity = action.get("identity") or {}
         args = action.get("args") or {}
+        if policy_flag is None:
+            policy_flag = getattr(decision, "flag", None)
         # F11: the stored preview is the approver-facing display surface.
         # Sanitize here (in addition to the executor's _preview) so every
         # record is safe no matter which caller queued it.
@@ -756,6 +854,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "delegation_attempted": delegation_attempted,
             "policy_id": decision.policy_id,
             "policy_reason": decision.reason,
+            "policy_flag": policy_flag,  # F21: queue reason; batch
+            # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
             "args_digest": record_digest(action.get("tool"), args,
                                          decision.policy_id),
@@ -1152,7 +1252,7 @@ def main(argv=None):
         confirmed = [i.strip() for i in args.confirm_risky.split(",")
                      if i.strip()]
         try:
-            decided, batch_entry = queue.batch_decide(
+            decided, excluded, batch_entry = queue.batch_decide(
                 ids, args.action == "approve", args.rationale,
                 decided_by=args.by, confirm_risky=confirmed)
         except ValueError as e:
@@ -1163,6 +1263,13 @@ def main(argv=None):
                  len(decided), args.by, batch_entry["seq"]))
         for r in decided:
             print("  %s (%s %s)" % (r["id"], r["agent_id"], r["tool"]))
+        if excluded:
+            # F21: security-excluded items need an individual decision.
+            print("needs individual decision (%d):" % len(excluded))
+            for r in excluded:
+                print("  %s (%s %s): %s"
+                      % (r["id"], r["agent_id"], r["tool"],
+                         r.get("batch_exclusion_reason", "")))
         if args.action == "approve":
             print("approved actions are not yet executed; run the executor "
                   "to execute approved actions.")

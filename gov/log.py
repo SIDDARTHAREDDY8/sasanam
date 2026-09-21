@@ -93,12 +93,67 @@ def _checkpoint_mac(key, key_epoch, seq, entry_hash):
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
+class LogFullError(Exception):
+    """Raised when the audit log reached its configured size cap.
+
+    F22 fail-closed: once the cap is hit, no further entry may be
+    appended — the executor refuses to act rather than act unlogged.
+    Operators archive the full log (``gov verify --keyring`` still
+    verifies archives) and start a fresh one; the rotation procedure is
+    documented in the policy file's ``log_limits`` comment.
+    """
+
+
 class ActionLog:
     """Append-only JSONL log with HMAC chaining and signed checkpoints."""
 
-    def __init__(self, path):
+    def __init__(self, path, max_bytes=None):
         self.path = Path(path)
         self.checkpoint_path = self.path.parent / "checkpoints.jsonl"
+        self._max_bytes = None
+        if max_bytes is not None:
+            self.configure_guard(max_bytes)
+        self._known_sig = None  # (size, mtime_ns) the cached tail matches
+        self.refresh()
+
+    def configure_guard(self, max_bytes):
+        """F22: install the audit-log size guard (bytes); None disables."""
+        if max_bytes is not None:
+            try:
+                max_bytes = int(max_bytes)
+            except (TypeError, ValueError):
+                raise ValueError("max_bytes must be an integer or None")
+            if max_bytes <= 0:
+                raise ValueError("max_bytes must be > 0")
+        self._max_bytes = max_bytes
+
+    def _file_sig(self):
+        """O(1) (size, mtime) signature of the log file, None if absent."""
+        try:
+            st = self.path.stat()
+        except OSError:
+            return None
+        return (st.st_size, st.st_mtime_ns)
+
+    def _refresh_if_changed(self):
+        """Re-read the tail only when another writer changed the file.
+
+        F22: ``append`` used to call ``refresh()`` — a full O(n) scan —
+        every time, making n appends O(n^2) (measured: 2000 appends took
+        ~9s). The cached (size, mtime_ns) signature makes the common
+        case O(1): any write by another process (e.g. the approval CLI)
+        changes the signature and triggers exactly one rescan.
+
+        Concurrency note: same-process sequential writers are always
+        correct (each append re-stats). Two processes appending at the
+        exact same instant can interleave at the byte level — the JSONL
+        lines themselves stay intact (single write() syscalls), but a
+        deployment with truly concurrent writers should serialize
+        appends externally (flock); that is out of scope for this demo.
+        """
+        sig = self._file_sig()
+        if sig is not None and sig == self._known_sig:
+            return
         self.refresh()
 
     def refresh(self):
@@ -114,6 +169,7 @@ class ActionLog:
                 entry = json.loads(line)
                 self._seq = int(entry["seq"])
                 self._prev = entry["hash"]
+        self._known_sig = self._file_sig()
 
     @property
     def checkpoints(self):
@@ -157,27 +213,52 @@ class ActionLog:
         key_epoch) is always set by the log itself: same-named keys in
         ``event`` are dropped, so a caller can never forge or clobber the
         chain bookkeeping.
+
+        F22: appends are O(1) amortized — the tail is re-scanned only when
+        another writer changed the file (see ``_refresh_if_changed``).
+        When the configured size guard is reached, raises
+        ``LogFullError``: fail-closed, no unlogged actions.
         """
         if not isinstance(event, dict):
             raise TypeError("event must be a dict")
-        self.refresh()
+        self._refresh_if_changed()
         key, epoch = _active_key()
-        self._seq += 1
+        # Build the entry (but do not commit chain state yet): the
+        # size guard is enforced on the PROJECTED byte size before
+        # anything is written or mutated, so a refusal leaves no gap
+        # in the chain.
+        new_seq = self._seq + 1
         entry = {}
         entry.update(event)
         # Reserved metadata wins over anything the caller supplied.
         entry.update({
-            "seq": self._seq,
+            "seq": new_seq,
             "ts": _utcnow(),
             "prev_hash": self._prev,
             "format_version": FORMAT_VERSION,
             "key_epoch": epoch,
         })
         entry["hash"] = _compute_mac(key, epoch, self._prev, _canonical(entry))
+        line = json.dumps(entry, ensure_ascii=True, default=str) + "\n"
+        if self._max_bytes is not None:
+            try:
+                size = self.path.stat().st_size
+            except OSError:
+                size = 0
+            if size + len(line.encode("utf-8")) > self._max_bytes:
+                raise LogFullError(
+                    "audit log %s would exceed its size cap (%d bytes "
+                    "projected): archive the log and start a fresh one; "
+                    "refusing to append so no action goes unlogged"
+                    % (self.path, self._max_bytes))
+        self._seq = new_seq
         self._prev = entry["hash"]
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=True, default=str) + "\n")
+            f.write(line)
+        # F22: the file changed under us — record the new signature so
+        # the next append skips the rescan.
+        self._known_sig = self._file_sig()
         # Checkpoint every entry: cheap at this scale, and it is what makes
         # tail truncation detectable.
         self.write_checkpoint()

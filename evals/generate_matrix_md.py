@@ -101,8 +101,11 @@ def main():
     L.append("")
     out = REPO_ROOT / "SITUATION_MATRIX.md"
     out.write_text("\n".join(L) + "\n", encoding="utf-8")
+    evals_out = REPO_ROOT / "evals" / "SITUATION_MATRIX.md"
+    evals_out.write_text("\n".join(L) + "\n", encoding="utf-8")
     print("wrote %s (%d situations, %d cells)" % (out, len(SITUATIONS),
                                                   n_cells))
+    print("wrote %s" % evals_out)
 
 
 if __name__ == "__main__":

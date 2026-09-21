@@ -32,6 +32,7 @@ def _strip_comment(line):
 def _split_flow(inner):
     parts, buf = [], ""
     in_single = in_double = False
+    depth = 0  # bracket nesting: commas inside [...] do not split
     for ch in inner:
         if ch == "'" and not in_double:
             in_single = not in_single
@@ -39,7 +40,15 @@ def _split_flow(inner):
         elif ch == '"' and not in_single:
             in_double = not in_double
             buf += ch
-        elif ch == "," and not in_single and not in_double:
+        elif in_single or in_double:
+            buf += ch
+        elif ch in "[{":
+            depth += 1
+            buf += ch
+        elif ch in "]}":
+            depth = max(0, depth - 1)
+            buf += ch
+        elif ch == "," and depth == 0:
             parts.append(buf.strip())
             buf = ""
         else:
