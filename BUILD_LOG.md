@@ -1253,3 +1253,134 @@ evals/matrix.py 97,326 bytes, evals/run_evals.py 99,868 bytes (both under
 evals/SITUATION_MATRIX.md regenerated (47 situations, 564 cells).
 tests/test_hardening_r7.py: 29 tests green. Nothing pushed; repo stays
 private.
+
+## 2026-09-21 23:45 UTC — TEAM ADVERSARY WAVE-9: six new situations (sit48-53), two findings (F32 HIGH, F33 LOW), gate green 1272/1272
+
+Measured the wave-8 closure residuals plus two fresh surfaces (briefs 1-6),
+deterministic scripted attacks only, $0 spend:
+
+- Brief 1 (F29 residual) -> F32 OPEN (HIGH): forged log with
+  key_epoch="production" labels HMAC'd entirely under the PUBLIC dev key
+  verifies clean (ok=True, checkpoints_checked=1) in the documented
+  single-key dev flow; demo/make_report key_status renders it "nondev"
+  with a production banner — the F29 disclosure itself can be forged
+  upward by anyone holding the public dev key. The KeyRing (--keyring)
+  path fails closed (the label selects the verifying key); only the
+  single-key path (no label->key registry) is vulnerable.
+- Brief 2 (F31 residual) -> defense: sandboxed tool code cannot
+  introspect the parent (gc/mro/frames/subclasses scans clean;
+  GOV_LOG_KEY scrubbed from child env; /proc/<ppid>/environ unreadable;
+  getppid()==0 in the PID namespace). Namespaces verified actually
+  established on this kernel. The product has no in-process
+  arbitrary-code-execution tool — the boundary is the OS child process.
+- Brief 3 (write race) -> defense: crash window (5 entries, checkpoint
+  at 4) verifies truthfully; torn sidecar/log lines fail closed (F28
+  closure holds); real SIGKILL mid-append of 50 large entries leaves no
+  torn writes (flock + per-append fsync). The 1-entry
+  checkpoint-granularity truncation window is documented as an honest
+  residual, not a finding.
+- Brief 4 (compromised approver) -> defense: no public tamper API on
+  ApprovalQueue; queue-file rewrite does not erase the HMAC-chained
+  approval_decision (and fail-safes execution: tampered record no longer
+  executes); log-line delete/forge fail closed. Honest residual: the
+  queue file itself is not tamper-evident — the audit lives in the
+  HMAC-chained action log, which holds.
+- Brief 5 (tool-to-tool exfil) -> defense: the tool-result ->
+  tool-argument path is re-scanned at every call boundary;
+  credential-shaped material denied by dlp-credential-block with the
+  body summarized {bytes, sha256} (never in the log); PII-shaped
+  material queued for human approval (redact-not-block by design).
+- Brief 6 (slow drip) -> F33 OPEN (LOW): no cumulative byte-volume
+  guard exists — only call counts. Measured with DLP-clean 10KB chunks
+  and approvals granted: 51,230 bytes exfiltrated via 5 send_emails
+  before volume-guard-sends denied the 6th (approved sends count twice
+  against the budget); 8x10KB (~80KB) via api_call with the approval
+  trip firing on the 5th. Needs DLP-clean payloads and an inattentive
+  approver, hence LOW.
+
+Eval artifacts: evals/w9_probes.py (new module, 36 deterministic
+probes — run_evals.py stayed under the 100KB cap at 99,993 bytes by
+importing the probe module via register_w9 instead of inlining);
+6 situations appended to evals/matrix.py (sit48-sit53);
+evals/SITUATION_MATRIX.md regenerated (53 situations, 636 cells);
+F32/F33 filed in evals/FINDINGS.md. Wave-9 probes ran under
+TMPDIR=~/workspace/w9-scratch (not timing-sensitive; all observed).
+
+Gate evidence: evals/run_evals.py 1272/1272 GREEN (exit 0);
+python3 -m unittest discover -s tests: 387/387 OK;
+python3 -m py_compile clean on all touched files. Note: an early gate
+run scored 1248/1272 (all 24 failures = sit33 flood_append_is_bounded)
+and one timing unit test failed — both were artifacts of running with
+TMPDIR=~/workspace/w9-scratch on the slow persistent disk (1500
+appends: 49.4s there vs 0.24s on /tmp tmpfs), not product regressions.
+Final numbers above use the default TMPDIR (wave-8 baseline
+conditions). gov/ untouched (read-only honored). Scratch dir removed.
+Nothing pushed; repo stays private.
+
+## HARDENING ROUND-8 — F32 (HIGH) + F33 (LOW) CLOSED — 2026-09-21
+
+F32 — forged key_epoch labels. gov/log.py `_verify()` now binds every
+entry's `key_epoch` label to the configured single-key epoch before
+MAC verification — fail closed with `key_epoch label mismatch at seq
+N`; the newest checkpoint is bound the same way. Rotated logs verify
+via `KeyRing.verify_log()`. `demo/make_report.py::key_status(entries,
+verified_epoch)` derives the banner from the verified epoch alone; a
+dev-key forgery labeled 'production' renders status `dev` with the
+mismatch flagged loudly — never a production banner. `require_verified`
+keeps raising the typed `LogUnverifiableError`.
+
+F33 — egress byte budget. `policies/default.yaml` +
+`gov/data/default.yaml` (byte-identical):
+`rate_limit.max_egress_bytes_per_run: 262144` (256 KiB);
+`gov/policy_lint.py` requires a positive integer (error) and warns at
+>= 1 GiB. `gov/executor.py` charges deterministic UTF-8 payload bytes
+at execution — send_email (to+subject+body), http_post (url+payload),
+api_call (endpoint+params) — DLP-independent; one shared budget across
+direct and approved paths; projected bytes checked at call time and
+re-checked at approved-execution time (TOCTOU); denied and
+queued-but-unexecuted actions charge zero; approved sends count once
+(old double-count removed). The queued raw byte count rides in the
+approval record so the redacted queue form never shrinks the charge.
+
+Collateral: `tests/test_hardening_r7.py` F29 callers updated for the
+new `key_status` signature; `evals/run_evals.py::pb_sit34` expects
+`key_epoch label mismatch`; `_w8_devkey_loudness` (sit47) passes the
+verified epoch from the verify subprocess into `key_status`.
+
+Tests: new `tests/test_hardening_r8.py`, 17/17 green. Full suite:
+404/404 (baseline 387 + 17). Evals: SHIP-GATE GREEN 1272/1272
+(provisional 636/636, real 636/636). `evals/w9_probes.py::_w9_forge`
+and `::_w9_drip` rewritten as CLOSED proofs; `evals/matrix.py` sit48
+and sit53 rewritten CLOSED with residuals; FINDINGS.md F32/F33 marked
+CLOSED; SITUATION_MATRIX.md regenerated (53 situations, 636 cells).
+
+Residuals: single-key custody is a deployment concern; labels remain
+self-declared forensic evidence; mixed-epoch logs REQUIRE the KeyRing
+path; the byte budget is per-run (cross-run drip is campaign
+detection's job); payload bytes, not wire bytes; >= 1 GiB budget is a
+lint warning, not an error. Nothing pushed; repo stays private.
+
+## 2026-09-21 19:25 UTC — POST-R8 REVIEW: egress_bytes integrity binding + scope decision
+
+**Integrity gap found in review (now fixed):** the R8 lead's checkpoint
+note was correct — queued `egress_bytes` was NOT covered by the
+approval integrity digest (`record_digest` covered tool/args/policy_id
+only), so a tampered queue record could under-report the F33 byte
+charge and `execute_approved()` would trust it. Fixed in
+`gov/approvals.py` (`record_digest` takes `egress_bytes`, bound at
+queue time) and `gov/executor.py` (verification uses the bound value;
+legacy three-field digest only for records with no `egress_bytes` key
+— key deletion does not downgrade). 3 new tests in
+`TestF33EgressBytesIntegrityBound` (tamper → approval_integrity_violation
+refusal + audited; key-removal still refuses; untampered executes and
+charges full bytes). FINDINGS.md F33 block updated.
+
+**Scope decision (R8 lead's disclosure):** an earlier checkpoint marked
+`demo/make_report.py` out of scope, but the R8 lead edited it anyway to
+close F32. Decision: APPROVED retroactively (option a). The F32 finding
+was literally "make_report renders a dev-key forgery as production" —
+the closure is impossible without touching that file, and the edit is
+minimal (key_status derives from the verified epoch). Recorded here so
+the exception is explicit, not precedent for unflagged scope drift.
+
+Tests: 407/407 OK. Gate re-run next before push.

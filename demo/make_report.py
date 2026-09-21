@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gov import verify_chain  # noqa: E402
+from gov.log import _verify  # noqa: E402  (verdict carries the key binding)
 
 BANNER = "SYNTHETIC DEMONSTRATION \u2014 no real systems were inspected."
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -27,80 +27,86 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _NON_PROD_EPOCHS = {"dev", "development", "devkey", "test", "unknown"}
 
 
-def key_status(entries):
-    """F29: derive the signing-key status from the loaded entries.
+def key_status(entries, verified_epoch):
+    """F29/F32: derive the signing-key status from the VERIFIED key/epoch
+    binding, never from a self-declared entry label alone.
 
-    The report used to claim a "tamper-evident log" without ever
-    inspecting ``key_epoch``. Returns a dict with:
+    ``verified_epoch`` is the key epoch the verifier bound the log to —
+    the CONFIGURED epoch from the ``gov.log._verify`` verdict, not an
+    entry label. Under the fail-closed single-key verifier (F32), a log
+    that verifies clean carries that epoch on every entry; a forged log
+    (labels != configured epoch) FAILS verification, and the report then
+    renders the configured (dev) status with the label mismatch flagged
+    as forgery evidence — a dev-key forgery can never render a production
+    banner, no matter what the labels claim.
 
-    - ``epochs``: sorted list of distinct ``key_epoch`` values seen.
-    - ``status``: "dev" (all non-production), "mixed", "nondev"
-      (all operator-configured), or "none" (no entries).
-    - ``banner_line``: one-line plain-language status for the header.
-    - ``integrity_note``: qualified integrity language for notes/footers
-      — never an unqualified "tamper-evident" claim.
+    Returns a dict with:
+
+    - ``epochs``: sorted list of distinct ``key_epoch`` labels seen
+      (forensic metadata only — never used for the status).
+    - ``verified_epoch``: the verifier-bound epoch the status derives from.
+    - ``status``: "dev" (verified epoch is non-production), "nondev"
+      (verified epoch is operator-configured), or "none" (no entries).
+    - ``label_mismatch``: labels that differ from the verified epoch —
+      forgery evidence, rendered loudly.
+    - ``banner_line`` / ``integrity_note``: qualified integrity language
+      — never an unqualified "tamper-evident" claim (F29).
     """
     epochs = sorted({str(e.get("key_epoch", "unknown"))
                      for e in entries if isinstance(e, dict)})
+    vepoch = str(verified_epoch) if verified_epoch is not None else "unknown"
+    mismatched = sorted(ep for ep in epochs if ep != vepoch)
     dev_epochs = [ep for ep in epochs if ep.lower() in _NON_PROD_EPOCHS]
     prod_epochs = [ep for ep in epochs if ep.lower() not in _NON_PROD_EPOCHS]
-    if dev_epochs and prod_epochs:
-        status = "mixed"
-    elif dev_epochs:
-        status = "dev"
-    elif prod_epochs:
-        status = "nondev"
-    else:
+    if not entries:
         status = "none"
+    elif vepoch.lower() in _NON_PROD_EPOCHS:
+        status = "dev"
+    else:
+        status = "nondev"
     if status == "dev":
-        banner_line = ("PUBLIC/DEVELOPMENT key (epoch(s) %s) — NOT "
-                       "tamper-evident against anyone with the key"
-                       % ", ".join("`%s`" % ep for ep in epochs))
+        banner_line = (f"PUBLIC/DEVELOPMENT key (verified epoch `{vepoch}`) — NOT "
+                       "tamper-evident against anyone with the key")
         integrity_note = (
             "All agent actions, policy decisions, and human approvals in "
             "this report come from the run's hash-chained action log. The "
-            "log is signed with the PUBLIC/DEVELOPMENT key (epoch %s), "
-            "which is published in the source tree: it is NOT "
-            "tamper-evident against anyone with the key — anyone who read "
-            "the docs can forge entries. The hash-chain replay below is a "
-            "consistency check on this local copy, not tamper-evidence "
+            f"log was verified under key epoch `{vepoch}` "
+            "(PUBLIC/DEVELOPMENT key, published in the source tree): it is "
+            "NOT tamper-evident against anyone with the key — anyone who "
+            "read the docs can forge entries. The hash-chain replay below "
+            "is a consistency check on this local copy, not tamper-evidence "
             "against third parties. Entry sequence numbers cite the exact "
-            "records." % ", ".join("`%s`" % ep for ep in epochs))
-    elif status == "mixed":
-        banner_line = ("MIXED key epochs (dev: %s; operator: %s) — "
-                       "dev-epoch entries are NOT tamper-evident against "
-                       "key holders"
-                       % (", ".join("`%s`" % ep for ep in dev_epochs),
-                          ", ".join("`%s`" % ep for ep in prod_epochs)))
-        integrity_note = (
-            "All agent actions, policy decisions, and human approvals in "
-            "this report come from the run's hash-chained action log. Key "
-            "epochs are MIXED: entries under %s use the "
-            "PUBLIC/DEVELOPMENT key and are NOT tamper-evident against "
-            "anyone with the key; entries under %s use "
-            "operator-configured keys and are tamper-evident only against "
-            "parties that do NOT hold the key. Entry sequence numbers "
-            "cite the exact records."
-            % (", ".join("`%s`" % ep for ep in dev_epochs),
-               ", ".join("`%s`" % ep for ep in prod_epochs)))
+            "records.")
     elif status == "nondev":
-        banner_line = ("Operator-configured key epoch(s) %s — "
-                       "tamper-evident only against parties without the key"
-                       % ", ".join("`%s`" % ep for ep in epochs))
+        banner_line = (f"Operator-configured key (verified epoch `{vepoch}`) — "
+                       "tamper-evident only against parties without the key")
         integrity_note = (
             "All agent actions, policy decisions, and human approvals in "
             "this report come from the run's hash-chained action log, "
-            "signed under key epoch(s) %s. Integrity is qualified: "
+            f"verified under key epoch `{vepoch}`. Integrity is qualified: "
             "tamper-evident only against parties that do NOT hold the "
             "key. Key custody and rotation are outside this report's "
             "scope; epoch labels are self-declared metadata. Entry "
-            "sequence numbers cite the exact records."
-            % ", ".join("`%s`" % ep for ep in epochs))
+            "sequence numbers cite the exact records.")
     else:
         banner_line = "No entries — nothing was signed."
         integrity_note = ("No entries in this run's log; nothing was "
                           "signed and no integrity claim is made.")
+    if mismatched:
+        # F32: the labels lied (or the epoch was misconfigured). Say so
+        # loudly — this is exactly the forgery shape from the wave-9 red
+        # team, and it must never render as a clean production banner.
+        banner_line += (" LABEL MISMATCH: entries declare key_epoch %s but "
+                        "the verifier bound this log to `%s` — treat the "
+                        "labels as forgery evidence, not as key identity." %
+                        (", ".join("`%s`" % m for m in mismatched), vepoch))
+        integrity_note += (" Self-declared labels %s do NOT match the "
+                           "verified epoch; they are forensic evidence of "
+                           "label forgery or misconfiguration, not proof of "
+                           "which key signed the log." %
+                           (", ".join("`%s`" % m for m in mismatched)))
     return {"epochs": epochs, "status": status,
+            "verified_epoch": vepoch, "label_mismatch": mismatched,
             "banner_line": banner_line, "integrity_note": integrity_note,
             "dev_epochs": dev_epochs, "prod_epochs": prod_epochs}
 
@@ -327,7 +333,7 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats,
     parts.append("<h1>Agent Governance Audit Report</h1>")
     # F29: key status is the prominent box right under the title — the
     # report's first substantive content, before the meta list.
-    box_class = "keystatus" if key["status"] in ("dev", "mixed") else "keystatus ok"
+    box_class = "keystatus" if key["status"] == "dev" else "keystatus ok"
     parts.append("<div class=\"%s\"><strong>Signing key status:</strong> %s<p>%s</p></div>"
                  % (box_class, esc(key["banner_line"]),
                     esc(key["integrity_note"])))
@@ -370,7 +376,12 @@ def main():
     run_dir = Path(args.rundir) if args.rundir else latest_run_dir()
     run_id = run_dir.name
     entries = load_entries(run_dir)
-    chain_ok, broken_seq, chain_count = verify_chain(run_dir / "actions.jsonl")
+    # F32: the verdict carries the VERIFIED key/epoch binding (the
+    # configured epoch, never a self-declared label); key_status derives
+    # the production/dev banner from that binding alone.
+    verdict = _verify(run_dir / "actions.jsonl")
+    chain_ok, broken_seq, chain_count = (
+        verdict["ok"], verdict["broken_seq"], verdict["entries"])
 
     tool_entries = [e for e in entries if e.get("event") == "tool_call"]
     stats = []
@@ -380,9 +391,10 @@ def main():
                                            if e.get("event") == "approval_decision")))
 
     findings = build_findings(entries)
-    # F29: integrity language derives from the entries' key_epoch values —
-    # never an unqualified "tamper-evident" claim.
-    key = key_status(entries)
+    # F29/F32: key status derives from the VERIFIED key/epoch binding —
+    # never from a self-declared label alone — and never an unqualified
+    # "tamper-evident" claim.
+    key = key_status(entries, verdict["key_epoch"])
     findings.append({
         "severity": "low",
         "title": "Audit trail integrity verified",

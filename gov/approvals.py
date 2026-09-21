@@ -44,10 +44,24 @@ def _utcnow():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def record_digest(tool, args, policy_id):
-    """Integrity digest binding a queued approval to its exact arguments."""
-    payload = json.dumps({"tool": tool, "args": args, "policy_id": policy_id},
-                         sort_keys=True, separators=(",", ":"), default=str)
+_MISSING = object()
+
+
+def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
+    """Integrity digest binding a queued approval to its exact arguments.
+
+    ``egress_bytes`` (F33) is bound into the digest whenever the caller
+    supplies it, so a tampered queue record cannot under-report the byte
+    charge the execution boundary will apply. Records queued before F33
+    carry no ``egress_bytes`` key; the verifier falls back to the legacy
+    three-field digest for those (a record that HAS the key is always
+    verified with it — removing the key does not downgrade the check).
+    """
+    payload = {"tool": tool, "args": args, "policy_id": policy_id}
+    if egress_bytes is not _MISSING:
+        payload["egress_bytes"] = egress_bytes
+    payload = json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                         default=str)
     return sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -937,7 +951,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
     def queue(self, action, decision, provenance="agent_direct", preview="",
               policy_hash=None, delegation_attempted=False,
-              policy_context=None, policy_flag=None):
+              policy_context=None, policy_flag=None, egress_bytes=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, identity, the agent's
@@ -950,6 +964,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         e.g. ``cross_run_campaign``); it travels with the record so
         batch approval can refuse security items individually. When not
         passed explicitly it falls back to ``decision.flag``.
+        ``egress_bytes`` (F33, HARDENING-R8) is the raw outbound payload
+        byte count computed by the executor at queue time: the redacted
+        queue form of the args may summarize large payloads
+        (``{bytes, sha256_prefix}``), so the execution boundary charges
+        the recorded raw count — never a smaller redacted form.
         """
         identity = action.get("identity") or {}
         args = action.get("args") or {}
@@ -979,7 +998,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
             "args_digest": record_digest(action.get("tool"), args,
-                                         decision.policy_id),
+                                         decision.policy_id,
+                                         egress_bytes),
+            # F33: raw outbound payload bytes at queue time; the execution
+            # boundary charges this (the redacted queue form may summarize
+            # large payloads — it must never shrink the budget charge).
+            "egress_bytes": egress_bytes,
             "status": "pending",
             "decided_by": None,
             "decided_at": None,

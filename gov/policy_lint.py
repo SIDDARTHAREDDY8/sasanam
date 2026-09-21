@@ -28,6 +28,19 @@ Finding kinds and severities:
                         deny-by-default this is not an immediate hole, but
                         an explicit deny with a flag is the auditable
                         control for exfiltration/destruction shapes
+    egress_budget_absurd
+                        rate_limit.max_egress_bytes_per_run is set so high
+                        (>= 1 GiB) it cannot constrain any plausible run:
+                        the knob is effectively "unlimited" without saying
+                        so — lower it or remove it (the 256 KiB default
+                        applies)
+
+  error:
+    invalid_egress_budget
+                        rate_limit.max_egress_bytes_per_run is not a
+                        positive integer (missing/non-integer/<=0): the
+                        executor fails closed to the conservative default,
+                        but the config is not what the deployer wrote
 
   info:
     overly_broad_allow  allow on tool alone for a non-dangerous tool:
@@ -52,6 +65,13 @@ from .policy import (DEFAULT_ROLES, KNOWN_MATCH_KEYS, KNOWN_TOOLS,
 from .yamlmini import load as yaml_load
 
 DANGEROUS_TOOLS = {"send_email", "http_post", "delete_file"}
+
+# F33 (HARDENING-R8): an egress byte budget at or above this no longer
+# constrains any plausible governed run — a single run legitimately
+# moving a gigabyte of outbound tool payloads is not a governed run, it
+# is a data pipeline. The threshold is deterministic and documented so
+# the warning is reproducible, not a vibe.
+_ABSURD_EGRESS_BYTES = 1 << 30  # 1 GiB
 
 
 def _covers(sup, sub):
@@ -200,6 +220,37 @@ def lint_file(path):
                         "a queued campaign exfil fragment or a destructive "
                         "action would execute with no human in the loop. "
                         "Lower the cap or disable auto_approve." % cap)
+
+    # ---- rate_limit section ------------------------------------------------
+    # F33 (HARDENING-R8): the egress byte budget is a security control —
+    # validate it like one. A missing key is fine (the engine's
+    # conservative 256 KiB default applies); a malformed key is an error
+    # because the executor silently falls back to the default, which is
+    # not what the deployer wrote. An absurdly high key is a warning
+    # (F30 pattern): possibly intentional, but the risk must be named.
+    rl_cfg = cfg.get("rate_limit")
+    if rl_cfg is not None:
+        if not isinstance(rl_cfg, dict):
+            add("invalid_rate_limit", "error", "(policy)",
+                "rate_limit section is not a mapping; the engine ignores "
+                "it and applies defaults")
+        else:
+            budget = rl_cfg.get("max_egress_bytes_per_run")
+            if budget is not None:
+                if (isinstance(budget, bool)
+                        or not isinstance(budget, int) or budget <= 0):
+                    add("invalid_egress_budget", "error", "(policy)",
+                        "rate_limit.max_egress_bytes_per_run must be a "
+                        "positive integer (bytes); got %r. The executor "
+                        "fails closed to the conservative default, but "
+                        "fix the config." % (budget,))
+                elif budget >= _ABSURD_EGRESS_BYTES:
+                    add("egress_budget_absurd", "warning", "(policy)",
+                        "rate_limit.max_egress_bytes_per_run=%d (>= 1 GiB): "
+                        "no plausible governed run moves this much outbound "
+                        "payload, so the budget cannot bite — it is "
+                        "'unlimited' without saying so. Lower it or remove "
+                        "it (the 256 KiB default applies)." % budget)
 
     # ---- reachability: can this rule ever fire through the executor? ------
     # The executor rejects any tool not in the caller's role allowlist

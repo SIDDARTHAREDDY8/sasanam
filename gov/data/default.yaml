@@ -26,6 +26,11 @@ roles:
 # Per-run budgets enforced by the executor (independent of the rules below).
 rate_limit:
   max_identical_calls: 10
+  # F33 (HARDENING-R8): cumulative executed egress byte budget per run
+  # across send_email/http_post/api_call (actual outbound payload UTF-8
+  # bytes, DLP-independent). Denies at the call boundary and re-checks
+  # at the approved-execution boundary.
+  max_egress_bytes_per_run: 262144  # 256 KiB
   max_sends_per_run: 10
   max_writes_per_run: 50
   max_deletes_per_run: 20

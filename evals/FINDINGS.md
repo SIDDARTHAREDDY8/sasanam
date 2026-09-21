@@ -1574,3 +1574,112 @@ outside the cell against the real LangChain adapter).
 identity)`; `tool = shim.tool('read_file')`;
 `tool._tool._binding.executor.approvals.set_identity_verifier(lambda _:
 True)`; forged `AgentIdentity(...).queue(...)` succeeds.
+
+## F32 — HIGH — forged `production` key_epoch labels verify clean in the default single-key path; the report renders the forgery as production-signed (Wave 9)
+
+**Status: CLOSED (2026-09-21, HARDENING ROUND-8).** Residual of F29:
+F29 closed the *disclosure* (the report now says when the key is
+public/dev), but the *label itself* was still self-declared metadata,
+and the disclosure could be forged upward by anyone holding the public
+dev key.
+
+**Reproduced 2026-09-21** (same as OPEN entry): 3 entries with
+`key_epoch="production"` HMAC'd under the PUBLIC dev key + dev-key
+sidecar checkpoint verified clean in the documented dev flow, and
+`key_status` rendered a production banner.
+
+**Fix (implemented):**
+- `gov/log.py::_verify()` now binds every entry's `key_epoch` label to
+  the CONFIGURED single-key epoch before checking the MAC: any
+  mismatch fails closed with `key_epoch label mismatch at seq N` and
+  `broken_seq`. The newest checkpoint's `key_epoch` is bound the same
+  way (`checkpoint key_epoch label mismatch`). The verdict keeps
+  reporting the configured epoch. `require_verified()` raises the
+  typed `LogUnverifiableError` (unchanged API).
+- `demo/make_report.py::key_status(entries, verified_epoch)` now takes
+  the verified epoch from the `_verify()` verdict; the banner derives
+  from that binding alone. A forged production-label/dev-key log
+  renders status `dev` with the mismatch flagged loudly
+  (`LABEL MISMATCH: entries declare key_epoch …`) — never a
+  production banner. `main()` reads the verdict instead of
+  `verify_chain()` so the report cannot drift from the binding.
+- `tests/test_hardening_r8.py` (6 F32 tests): forgery fails verify,
+  typed raise, checkpoint mismatch, genuine dev log verifies, report
+  stays dev on the forgery, clean dev banner.
+- `evals/w9_probes.py::_w9_forge()` re-proves closure; `sit34`'s
+  legacy single-key expectation updated from `MAC mismatch` to the new
+  `key_epoch label mismatch` diagnostic; `sit48` rewritten CLOSED.
+
+**Residuals (honest):** (1) single-key custody is still a deployment
+concern — a real production key in `GOV_LOG_KEY` without
+`GOV_LOG_KEY_EPOCH` renders epoch `env`/nondev; (2) labels remain
+self-declared metadata, surfaced as forensic evidence, never as key
+identity; (3) mixed-epoch logs REQUIRE `KeyRing.verify_log()` — the
+single-key path fails closed on them by design.
+**Cells:** sit48 (`forge_fails_single_key`, `forge_typed_api_raises`,
+`forge_closed_realkey`, `forge_closed_keyring`,
+`forge_report_stays_dev` observed).
+
+## F33 — LOW — no cumulative byte-volume guard; paced drip exfiltrates under the call-count caps (Wave 9)
+
+**Status: CLOSED (2026-09-21, HARDENING ROUND-8).**
+
+**Reproduced 2026-09-21** (same as OPEN entry): call-count guards
+only; 5 × 10KB DLP-clean chunks exfiltrated before the send-count
+guard fired; approved sends counted twice; `api_call` volume
+unbounded with approvals.
+
+**Fix (implemented):**
+- `policies/default.yaml` + `gov/data/default.yaml` (byte-identical):
+  `rate_limit.max_egress_bytes_per_run: 262144` (256 KiB).
+- `gov/policy_lint.py`: the knob must be a positive integer
+  (`invalid_egress_budget` error); >= 1 GiB warns
+  (`egress_budget_absurd`); the default does not warn.
+- `gov/executor.py`: new `_egress_bytes_for()` pins deterministic
+  accounting — send_email (to+subject+body), http_post (url+payload),
+  api_call (endpoint+params) as UTF-8 bytes, DLP-independent. New
+  `_executed` counters + `_egress_bytes` accumulator charged exactly
+  once per execution. The call boundary denies on projected bytes;
+  `execute_approved()` re-checks at the actual execution boundary
+  (TOCTOU guard) — denials carry `volume-guard-egress-bytes`. The
+  queued raw byte count travels in the approval record so the
+  redacted queue form never shrinks the charge. Denied and
+  queued-but-unexecuted actions consume zero budget. The old
+  approved-send double-count is removed; the send-count guard now
+  counts executions.
+- `tests/test_hardening_r8.py` (11 F33 tests): cumulative trip,
+  shared direct+approved budget, TOCTOU re-check, counts-once,
+  all-three-tools coverage, DLP-clean still counted, zero-charge for
+  denied/queued, malformed→error, absurd→warning, default clean,
+  policy copies identical.
+- **Integrity binding (post-R8 review, 2026-09-21):** the R8 lead left
+  open whether the queued `egress_bytes` was covered by the approval
+  integrity digest — it was NOT (`record_digest` covered only
+  tool/args/policy_id), so a tampered queue record could under-report
+  the charge. Fixed: `record_digest(tool, args, policy_id,
+  egress_bytes)` now binds the byte count into the digest at queue
+  time (`gov/approvals.py`); `execute_approved()` verifies with the
+  bound value and falls back to the legacy three-field digest only for
+  records that carry no `egress_bytes` key at all — deleting the key
+  does not downgrade the check (`gov/executor.py`). New
+  `TestF33EgressBytesIntegrityBound` (3 tests): tampered charge →
+  `approval_integrity_violation` refusal + audited; key removal still
+  refuses; untampered record executes and charges the full 5000 bytes.
+- `evals/w9_probes.py::_w9_drip()` re-proves closure (2000-byte
+  budget: 1812 bytes then the 7th call denied; shared budget;
+  1466-byte three-tool coverage run); `sit53` rewritten CLOSED.
+
+**Why LOW (unchanged):** every chunk still passes DLP and the default
+policy requires human approval per send — the drip needs an
+inattentive approver and DLP-clean payloads.
+
+**Residuals (honest):** (1) the budget is per-run — a paced
+cross-run drip is campaign-detection (F10/F13/F14) territory, not
+budget territory; (2) the budget counts the executor's payload bytes,
+not wire bytes — a real transport adds framing; (3) raising the
+budget to >= 1 GiB is a lint warning, not an error — a deliberate,
+auditable choice.
+**Cells:** sit53 (`api_call_bytes_deterministic`,
+`byte_budget_trips_predictably`, `direct_and_approved_share_budget`,
+`all_three_tools_covered`, `approved_counts_once`,
+`dlp_clean_still_counted` observed).

@@ -403,6 +403,17 @@ def _verify(path):
     ``ok=True`` is never reported on the strength of zero checked
     checkpoints for a non-empty log; a truncated log never verifies
     clean.
+
+    F32 (HARDENING-R8): the verifier additionally BINDS every entry's
+    ``key_epoch`` label to the CONFIGURED epoch. In single-key mode there
+    is no label->key registry, so a label that is not the configured epoch
+    is either a label forgery (e.g. production labels HMAC'd under the
+    public dev key) or a misconfigured epoch — either way the verifier
+    fails closed with a label-mismatch error rather than blessing it. The
+    newest checkpoint's label is bound the same way. A log that spans a
+    key rotation does NOT verify here by design (fail-closed): use
+    KeyRing.verify_log for those (each label selects its own key there,
+    so a forged label fails the per-epoch MAC instead).
     """
     key, epoch = _active_key()
     p = Path(path)
@@ -445,8 +456,20 @@ def _verify(path):
         if entry.get("prev_hash") != prev:
             return _fail(entries, "chain link broken at seq %s" % seq,
                          broken_seq=seq)
-        mac = _compute_mac(key, entry.get("key_epoch", epoch), prev,
-                           _canonical(entry))
+        # F32 (HARDENING-R8): bind the self-declared label to the
+        # configured key. The MAC was already computed over the label,
+        # but nothing stopped a forger from HMAC'ing production labels
+        # under the public dev key and verifying clean. Now any entry
+        # whose label is not the configured epoch fails closed here.
+        label = entry.get("key_epoch")
+        if label != epoch:
+            return _fail(entries,
+                         "key_epoch label mismatch at seq %s: entry claims "
+                         "%r but the configured key epoch is %r — possible "
+                         "label forgery or misconfigured epoch; refusing "
+                         "to verify (failing closed)" % (seq, label, epoch),
+                         broken_seq=seq)
+        mac = _compute_mac(key, label, prev, _canonical(entry))
         if not hmac.compare_digest(entry.get("hash", ""), mac):
             return _fail(entries,
                          "MAC mismatch at seq %s (history rewritten or "
@@ -494,7 +517,17 @@ def _verify(path):
     if cps:
         latest = max(cps, key=lambda c: c["seq"])
         checked = len(cps)
-        expect = _checkpoint_mac(key, latest.get("key_epoch", epoch),
+        # F32 (HARDENING-R8): bind the checkpoint label too — a checkpoint
+        # is a signed claim about the chain, and its self-declared label
+        # must equal the configured epoch just like every entry's.
+        cp_label = latest.get("key_epoch")
+        if cp_label != epoch:
+            return _fail(entries,
+                         "checkpoint key_epoch label mismatch: checkpoint "
+                         "claims %r but the configured key epoch is %r — "
+                         "refusing to verify (failing closed)"
+                         % (cp_label, epoch), checked=checked)
+        expect = _checkpoint_mac(key, cp_label,
                                  latest["seq"], latest["hash"])
         if not hmac.compare_digest(latest.get("mac", ""), expect):
             return _fail(entries,

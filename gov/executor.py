@@ -58,6 +58,13 @@ from urllib.parse import urlparse
 from . import dlp
 from .approvals import (IdentityVerifierAlreadySetError, record_digest,
                         sanitize_preview_text)
+# F33 (HARDENING-R8): tools whose execution moves bytes across the trust
+# boundary — the byte-budget guard applies to all of them, at every
+# execution boundary (direct allow path AND execute_approved).
+_EGRESS_TOOLS = ("send_email", "http_post", "api_call")
+# F33: conservative default cumulative egress byte budget per run
+# (policy key ``rate_limit.max_egress_bytes_per_run``).
+_DEFAULT_MAX_EGRESS_BYTES_PER_RUN = 256 * 1024
 from .egress_ledger import (
     CAMPAIGN_K,
     CAMPAIGN_WINDOW_SECS,
@@ -147,6 +154,12 @@ class ToolExecutor:
             log.configure_guard(log_limits["max_log_bytes"])
         self.api_calls = 0  # external api_call executions this run
         self.counters = {}  # attempted calls per tool this run
+        self._executed = {}  # F33: EXECUTED calls per tool this run —
+        # the budget basis for send counts and egress bytes. Incremented
+        # exactly once per execution (allow path or execute_approved), so
+        # approved-then-executed sends are counted once, not twice.
+        self._egress_bytes = 0  # F33: cumulative executed egress bytes
+        # this run (actual payload UTF-8 bytes, DLP-independent).
         self._repeats = {}  # (tool, canonical args) -> count
         self._minted = set()  # (agent_id, role, run_id, principal) tuples
         self._tainted = False  # True once tool output entered this run
@@ -645,6 +658,66 @@ class ToolExecutor:
             return "would call API endpoint %s" % safe(args.get("endpoint"))
         return "would invoke %s" % tool
 
+    @staticmethod
+    def _egress_bytes_for(tool, args):
+        """F33: actual payload UTF-8 bytes this execution would move across
+        the trust boundary. Counts the transmitted fields (payload AND
+        routing fields such as the recipient/endpoint — they are bytes
+        that leave the boundary), computed on the RAW args at the call
+        boundary so DLP redaction never reduces the count: a DLP-clean
+        payload moves exactly as many bytes as a flagged one. Non-string
+        structured payloads are counted as their canonical JSON encoding
+        (sort_keys, UTF-8 — the wire form). Tools outside _EGRESS_TOOLS
+        contribute 0.
+        """
+        args = args or {}
+        if tool not in _EGRESS_TOOLS:
+            return 0
+
+        def _b(value):
+            if isinstance(value, str):
+                return value.encode("utf-8")
+            if isinstance(value, (dict, list)):
+                return json.dumps(value, sort_keys=True,
+                                  ensure_ascii=False).encode("utf-8")
+            return str(value).encode("utf-8")
+
+        if tool == "send_email":
+            parts = (args.get("to", ""), args.get("subject", ""),
+                     args.get("body", ""))
+        elif tool == "http_post":
+            parts = (args.get("url", ""), args.get("payload", ""))
+        else:  # api_call
+            parts = (args.get("endpoint", ""), args.get("params", ""))
+        return sum(len(_b(p)) for p in parts)
+
+    def _max_egress_bytes(self):
+        """F33: the configured cumulative egress byte budget for this run."""
+        rl = getattr(self.policy, "rate_limit", None) or {}
+        try:
+            return int(rl.get("max_egress_bytes_per_run",
+                             _DEFAULT_MAX_EGRESS_BYTES_PER_RUN))
+        except (TypeError, ValueError):
+            # Malformed config must not silently disable the budget:
+            # policy_lint flags it as an error; the executor fails closed
+            # to the conservative default.
+            return _DEFAULT_MAX_EGRESS_BYTES_PER_RUN
+
+    @staticmethod
+    def _approved_egress_bytes(rec):
+        """F33: byte charge for an approved record — the raw count recorded
+        at queue time. The redacted queue form of the args may summarize
+        large payloads (``{bytes, sha256_prefix}``), so recomputing from
+        ``rec["args"]`` would under-count the bytes the approved action
+        was authorized to move. Records queued before this field existed
+        fall back to the redacted form.
+        """
+        eb = rec.get("egress_bytes")
+        if isinstance(eb, int) and eb >= 0:
+            return eb
+        return ToolExecutor._egress_bytes_for(rec.get("tool"),
+                                              rec.get("args"))
+
     # -- main entry points --------------------------------------------------
 
     def call(self, identity, tool, **kwargs):
@@ -773,16 +846,44 @@ class ToolExecutor:
             }))
             return {"status": "denied", "reason": entry["reason"],
                     "policy_id": "loop-guard", "seq": entry["seq"]}
-        sends = self.counters.get("send_email", 0) + self.counters.get("http_post", 0)
-        if tool in _SEND_TOOLS and sends > int(rl.get("max_sends_per_run", 10)):
+        # F33 (HARDENING-R8): the send budget counts EXECUTIONS, not
+        # attempts — each approved send is counted exactly once, at
+        # execution time. Queued-but-unexecuted sends consume no budget
+        # (the old code counted an approved send at call() AND at
+        # execute_approved(), making the budget unpredictable).
+        exec_sends = (self._executed.get("send_email", 0)
+                      + self._executed.get("http_post", 0))
+        if tool in _SEND_TOOLS and exec_sends >= int(
+                rl.get("max_sends_per_run", 10)):
             entry = self.log.append(_base({
                 "decision": "denied",
                 "policy_id": "volume-guard-sends",
                 "flag": "volume_guard",
-                "reason": "Per-run send budget exceeded (%d sends)." % sends,
+                "reason": "Per-run send budget exceeded (%d sends executed)."
+                          % exec_sends,
             }))
             return {"status": "denied", "reason": entry["reason"],
                     "policy_id": "volume-guard-sends", "seq": entry["seq"]}
+        # F33: cumulative egress byte budget. Enforced on the PROJECTED
+        # bytes at the call boundary (before queue/execute) and re-checked
+        # at actual execution in execute_approved (TOCTOU guard).
+        if tool in _EGRESS_TOOLS:
+            budget = self._max_egress_bytes()
+            call_bytes = self._egress_bytes_for(tool, kwargs)
+            if self._egress_bytes + call_bytes > budget:
+                entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "volume-guard-egress-bytes",
+                    "flag": "volume_guard",
+                    "reason": ("Per-run egress byte budget exceeded: this "
+                               "call would move %d bytes (projected total "
+                               "%d > budget %d)."
+                               % (call_bytes,
+                                  self._egress_bytes + call_bytes, budget)),
+                }))
+                return {"status": "denied", "reason": entry["reason"],
+                        "policy_id": "volume-guard-egress-bytes",
+                        "seq": entry["seq"]}
         if tool == "write_file" and self.counters.get("write_file", 0) > int(
                 rl.get("max_writes_per_run", 50)):
             entry = self.log.append(_base({
@@ -834,6 +935,10 @@ class ToolExecutor:
             self._ingest_result(tool, result, identity.principal)
             if tool == "api_call":
                 self.api_calls += 1
+            # F33: charge the execution budgets exactly once, at execution
+            # time (the allow path is an execution boundary).
+            self._executed[tool] = self._executed.get(tool, 0) + 1
+            self._egress_bytes += self._egress_bytes_for(tool, kwargs)
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
@@ -871,7 +976,11 @@ class ToolExecutor:
             policy_context=policy_ctx_snapshot,
             # F21: the queue reason travels with the record so batch
             # approval can refuse security items individually.
-            policy_flag=decision.flag)
+            policy_flag=decision.flag,
+            # F33: raw outbound payload bytes at queue time (computed on
+            # the RAW args at the call boundary — DLP redaction of the
+            # queued form must never shrink the budget charge).
+            egress_bytes=self._egress_bytes_for(tool, kwargs))
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -961,9 +1070,19 @@ class ToolExecutor:
                     "reason": "Approval %s expired (TTL %sh)." % (aid, ttl),
                 })
                 continue
-            # 2. integrity: queued arguments must be byte-identical
-            if rec.get("args_digest") != record_digest(
-                    rec["tool"], rec["args"], rec.get("policy_id")):
+            # 2. integrity: queued arguments must be byte-identical. The
+            # digest binds egress_bytes too (F33): a tampered queue record
+            # cannot under-report the byte charge. Legacy records (pre-F33)
+            # carry no egress_bytes key and verify with the legacy digest;
+            # a record that HAS the key is always verified with it.
+            if "egress_bytes" in rec:
+                _expected_digest = record_digest(
+                    rec["tool"], rec["args"], rec.get("policy_id"),
+                    rec["egress_bytes"])
+            else:
+                _expected_digest = record_digest(
+                    rec["tool"], rec["args"], rec.get("policy_id"))
+            if rec.get("args_digest") != _expected_digest:
                 _refuse("Approval %s arguments were modified after queueing; "
                         "integrity digest mismatch." % aid,
                         "approval_integrity_violation")
@@ -990,6 +1109,34 @@ class ToolExecutor:
                         % (aid, decision.reason), decision.flag or "policy_re_eval_deny",
                         policy_id=decision.policy_id or "approval-execution-refused")
                 continue
+
+            # F33 (HARDENING-R8): re-check the volume budgets at the actual
+            # execution boundary (TOCTOU guard) — the budget may have been
+            # consumed by other executions between queue time and approval.
+            # Refusals are logged with flag "volume_guard" and the record
+            # is left approved-but-unexecuted (fail-safe, retriable).
+            _rl = self.policy.rate_limit or {}
+            if rec["tool"] in _SEND_TOOLS:
+                _exec_sends = (self._executed.get("send_email", 0)
+                               + self._executed.get("http_post", 0))
+                if _exec_sends >= int(_rl.get("max_sends_per_run", 10)):
+                    _refuse("Approval %s refused: per-run send budget "
+                            "exhausted (%d sends executed)."
+                            % (aid, _exec_sends),
+                            "volume_guard", policy_id="volume-guard-sends")
+                    continue
+            if rec["tool"] in _EGRESS_TOOLS:
+                _budget = self._max_egress_bytes()
+                _call_bytes = self._approved_egress_bytes(rec)
+                if self._egress_bytes + _call_bytes > _budget:
+                    _refuse("Approval %s refused: per-run egress byte "
+                            "budget exceeded (projected total %d > budget "
+                            "%d)." % (aid,
+                                       self._egress_bytes + _call_bytes,
+                                       _budget),
+                            "volume_guard",
+                            policy_id="volume-guard-egress-bytes")
+                    continue
 
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
@@ -1023,7 +1170,13 @@ class ToolExecutor:
                                 (rec.get("identity") or {}).get("principal"))
             if rec["tool"] == "api_call":
                 self.api_calls += 1
-            self.counters[rec["tool"]] = self.counters.get(rec["tool"], 0) + 1
+            # F33: charge the execution budgets exactly once, at execution
+            # time. (The old code ALSO bumped self.counters here, so an
+            # approved send counted at call() AND here — removed: each
+            # execution is now counted exactly once, in _executed.)
+            self._executed[rec["tool"]] = self._executed.get(
+                rec["tool"], 0) + 1
+            self._egress_bytes += self._approved_egress_bytes(rec)
             entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),

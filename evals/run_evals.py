@@ -18,6 +18,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from tests.harness import make_run, plant_file  # noqa: E402
+from evals.w9_probes import register_w9  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -1598,7 +1599,8 @@ def pb_sit34(shim, priv):
                 for i in range(1, len(entries))))
         v = _verify(str(rctx["run_dir"] / "actions.jsonl"))
         outcomes["legacy_single_key_fails_closed"] = _observed(
-            v["ok"] is False and "MAC mismatch" in (v["error"] or ""))
+            v["ok"] is False and "key_epoch label mismatch"
+            in (v["error"] or ""))
         v2 = ring.verify_log(rctx["run_dir"] / "actions.jsonl")
         outcomes["ring_verify_ok"] = _observed(
             v2["ok"] is True
@@ -2279,8 +2281,11 @@ def _w8_devkey_loudness():
         except ValueError: verdict = {}
         from demo.make_report import (key_status, render_html,
                                       render_markdown)
+        # F32: key_status derives the banner from the VERIFIED epoch of
+        # the log being rendered, not from entry labels.
         key = key_status([json.loads(l) for l in
-                          Path(ap).read_text(encoding="utf-8").splitlines()])
+                          Path(ap).read_text(encoding="utf-8").splitlines()],
+                         verdict.get("key_epoch"))
         md = render_markdown("w8d", "t", True, 1, [], [], key)
         ht = render_html("w8d", "t", True, 1, [], [], key)
         texts = [p.read_text(encoding="utf-8")
@@ -2342,6 +2347,7 @@ PLAYBOOKS = {
     "sit46": lambda s, p: _w7_playbook(s, p, "w8-cli", _w8_cli_trust_root, "cli_"),
     "sit47": lambda s, p: _w7_playbook(s, p, "w8-devkey", _w8_devkey_loudness, "devkey_"),
 }
+register_w9(PLAYBOOKS, _w7_playbook)  # wave-9; see evals/w9_probes.py
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

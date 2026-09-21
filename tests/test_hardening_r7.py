@@ -237,7 +237,7 @@ class TestF29ReportKeyDisclosure(unittest.TestCase):
 
     def test_markdown_dev_key_disclosure(self):
         from demo.make_report import key_status, render_markdown
-        key = key_status(self._dev_entries())
+        key = key_status(self._dev_entries(), "dev")
         md = render_markdown("run-x", "2026-09-21", True, 3, [], [], key)
         self.assertIn("PUBLIC/DEVELOPMENT", md)
         self.assertIn("NOT tamper-evident", md)
@@ -245,7 +245,7 @@ class TestF29ReportKeyDisclosure(unittest.TestCase):
 
     def test_html_dev_key_disclosure(self):
         from demo.make_report import key_status, render_html
-        key = key_status(self._dev_entries())
+        key = key_status(self._dev_entries(), "dev")
         ht = render_html("run-x", "2026-09-21", True, 3, [], [], key)
         self.assertIn("PUBLIC/DEVELOPMENT", ht)
         self.assertIn("NOT tamper-evident", ht)
@@ -253,7 +253,7 @@ class TestF29ReportKeyDisclosure(unittest.TestCase):
 
     def test_production_epoch_qualified_language(self):
         from demo.make_report import key_status, render_markdown
-        key = key_status([{"event": "tool_call", "key_epoch": "env"}])
+        key = key_status([{"event": "tool_call", "key_epoch": "env"}], "env")
         self.assertEqual(key["status"], "nondev")
         md = render_markdown("run-x", "2026-09-21", True, 1, [], [], key)
         self.assertNotIn("tamper-evident log", md)
