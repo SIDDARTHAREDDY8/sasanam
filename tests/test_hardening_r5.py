@@ -737,13 +737,40 @@ class TestF22LogGuard(unittest.TestCase):
 
     def test_2000_appends_are_fast_and_chain_verifies(self):
         log = ActionLog(os.path.join(self.tmp, "a.jsonl"))
-        t0 = time.time()
+        # F22/R9: the regression property is O(1) per append, NOT an
+        # absolute wall-clock bound. Absolute fsync latency is
+        # disk-dependent (~37ms on the workspace disk vs ~0.2ms on
+        # tmpfs), so a fixed seconds bound is invalid on some disks —
+        # the same implementation passes in 0.5s on tmpfs and needs
+        # 70s+ on the workspace disk, purely from fsync cost. The
+        # pre-F22 implementation rescanned the whole log per append
+        # (O(n^2)), making late appends ~10x slower than early ones;
+        # comparing an early window against a late window captures the
+        # actual regression property on any disk. The bound is 3.0, not
+        # 2.0: per-append medians live at ~80us on tmpfs, where a
+        # transient VM scheduling hiccup inside one 200-sample window
+        # can double a median without any systematic slowdown; the
+        # genuine O(n^2) signature was ~10x, so 3.0 keeps full
+        # regression sensitivity with noise margin.
+        per = []
+        t_all = time.time()
         for i in range(2000):
+            t0 = time.perf_counter()
             log.append({"event": "bench", "i": i})
-        dt = time.time() - t0
-        # The pre-F22 implementation took ~9s for 2000 appends (full
-        # rescan per append, O(n^2)).  5s is a strict regression bound.
-        self.assertLess(dt, 5.0, "append curve regressed: %.2fs" % dt)
+            per.append(time.perf_counter() - t0)
+        dt = time.time() - t_all
+        early = sorted(per[100:300])
+        late = sorted(per[1800:2000])
+        early_med = early[len(early) // 2]
+        late_med = late[len(late) // 2]
+        ratio = (late_med + 1e-9) / (early_med + 1e-9)
+        self.assertLess(
+            ratio, 3.0,
+            "append cost grows with log length (O(n^2) regression): "
+            "early-window median %.4fs vs late-window median %.4fs "
+            "(total %.1fs) — bound is 3.0 (pre-F22 signature was ~10x) "
+            "to tolerate transient VM scheduling noise at ~80us "
+            "medians" % (early_med, late_med, dt))
         ok, broken, count = verify_chain(log.path)
         self.assertTrue(ok, broken)
         self.assertEqual(count, 2000)

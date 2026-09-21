@@ -641,6 +641,104 @@ class EgressLedger:
         thin_runs = [r for r, n in per_run.items() if n < k]
         return len(thin_runs) >= k
 
+    @staticmethod
+    def _shape_sketch(shape):
+        """F36: privacy-preserving content/shape sketch for
+        cross-principal correlation. Deterministic and PARAM-NAME-BLIND:
+        (registered domain, parameter count, coarse total-string-byte
+        bucket, coarse entropy bucket, fragment classification). No raw
+        values and no parameter names enter the sketch, so the ledger
+        cannot become an exfil store and key rotation does not change
+        the sketch."""
+        n = shape.get("n_params") or 0
+        try:
+            sb = int(shape.get("str_bytes") or 0)
+        except (TypeError, ValueError):
+            sb = 0
+        try:
+            ent = float(shape.get("max_entropy") or 0.0)
+        except (TypeError, ValueError):
+            ent = 0.0
+        return (
+            shape.get("campaign_domain") or "",
+            n,
+            min(max(sb, 0) // 32, 8),
+            min(max(int(ent * 2), 0), 8),
+            bool(shape.get("fragment")),
+        )
+
+    def cross_principal_campaign_hit(self, shape,
+                                     window_secs=CAMPAIGN_WINDOW_SECS,
+                                     now=None, k=CAMPAIGN_K):
+        """F36: True when >= k DISTINCT principals emit fragment-shaped
+        api_call entries sharing the same content/shape SKETCH inside
+        the window.
+
+        The principal-ROTATION campaign signal: the per-principal
+        detectors never reach K when the attacker mints a fresh
+        principal per run, so the shape is correlated ACROSS principals
+        instead — and the correlation is param-name-blind (see
+        ``_shape_sketch``), so rotating param KEY sets alongside the
+        principal does not evade it. Only fragment-shaped entries
+        count (small + high-entropy — the campaign shape): this keeps
+        benign fleet traffic with large or low-entropy payloads out.
+        Thin-spread only, mirroring ``structural_campaign_hit``: each
+        (principal, run) may contribute FEWER than k matching calls.
+        Param-less calls never match (no exfil payload). Heuristic,
+        queue-only, fail-safe — same contract as the other campaign
+        detectors.
+
+        Residual (documented, not solved): an attacker rotating
+        principal AND content shape per run (fresh identity, fresh
+        shape) is indistinguishable from distinct legitimate users —
+        that is an identity-layer problem (principal registry
+        binding), not a shape-layer one.
+        """
+        self.require_verified()  # F17: verify before trusting any read
+        if not self.path.exists():
+            return False
+        if not isinstance(shape, dict):
+            return False
+        if not shape.get("fragment"):
+            return False
+        if (shape.get("n_params") or 0) < 1:
+            return False
+        now = time.time() if now is None else now
+        wanted = self._shape_sketch(shape)
+        if not wanted[0]:
+            return False
+        per_principal_run = {}
+        for line in self.path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("tool") != "api_call":
+                continue
+            if not entry.get("fragment"):
+                continue
+            if self._shape_sketch(entry) != wanted:
+                continue
+            try:
+                ts = float(entry.get("ts", 0))
+            except (TypeError, ValueError):
+                continue
+            if now - ts > window_secs:
+                continue
+            principal = entry.get("principal")
+            run_id = entry.get("run_id")
+            if not principal or not run_id:
+                continue
+            per_principal_run.setdefault((principal, run_id), 0)
+            per_principal_run[(principal, run_id)] += 1
+        # Thin-spread: drop (principal, run) buckets with >= k calls,
+        # then count the DISTINCT principals that remain.
+        principals = {p for (p, _r), n in per_principal_run.items() if n < k}
+        return len(principals) >= k
+
     # -- principal-scoped sensitive-read taint (F15) ------------------------
 
     def taint_mark(self, principal, run_id, now=None):

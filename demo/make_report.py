@@ -75,8 +75,10 @@ def key_status(entries, verified_epoch):
             "NOT tamper-evident against anyone with the key — anyone who "
             "read the docs can forge entries. The hash-chain replay below "
             "is a consistency check on this local copy, not tamper-evidence "
-            "against third parties. Entry sequence numbers cite the exact "
-            "records.")
+            "against third parties. Approval-queue integrity digests are "
+            "HMAC-keyed to this same key (F34): under the development key "
+            "a docs-reader can forge those too. Entry sequence numbers "
+            "cite the exact records.")
     elif status == "nondev":
         banner_line = (f"Operator-configured key (verified epoch `{vepoch}`) — "
                        "tamper-evident only against parties without the key")
@@ -85,9 +87,11 @@ def key_status(entries, verified_epoch):
             "this report come from the run's hash-chained action log, "
             f"verified under key epoch `{vepoch}`. Integrity is qualified: "
             "tamper-evident only against parties that do NOT hold the "
-            "key. Key custody and rotation are outside this report's "
-            "scope; epoch labels are self-declared metadata. Entry "
-            "sequence numbers cite the exact records.")
+            "key. Approval-queue integrity digests are HMAC-keyed to this "
+            "same key (F34): forging one requires the key. Key custody "
+            "and rotation are outside this report's scope; epoch labels "
+            "are self-declared metadata. Entry sequence numbers cite the "
+            "exact records.")
     else:
         banner_line = "No entries — nothing was signed."
         integrity_note = ("No entries in this run's log; nothing was "

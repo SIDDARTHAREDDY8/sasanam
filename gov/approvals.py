@@ -11,9 +11,13 @@ It is stored as a pending approval with full context. A human reviews it with:
 
 Approval hardening:
 
-* **Integrity binding.** Each record stores ``args_digest``, a SHA-256 over
-  the queued (redacted) arguments plus the policy id. The executor refuses
-  to run an approval whose arguments changed after queueing.
+* **Integrity binding.** Each record stores ``args_digest``, an HMAC-SHA256
+  over the queued (redacted) arguments plus the policy id, keyed to the
+  active log HMAC key with the key epoch bound in (F34; scheme
+  ``hmac-sha256-v1``). The executor refuses to run an approval whose
+  arguments changed after queueing — or whose record predates the keyed
+  scheme (fail-closed upgrade). Under the public development key the MAC
+  gives no forgery resistance to anyone who read the docs (F29 residual).
 * **Policy pinning.** The record stores the ``policy_hash`` it was queued
   under; execution under a different policy version is refused.
 * **Expiry.** Approvals expire ``approvals.ttl_hours`` after the decision
@@ -29,6 +33,7 @@ lifecycle - queued -> approved/rejected -> executed - is auditable.
 """
 
 import argparse
+import hmac
 import json
 import sys
 import uuid
@@ -37,7 +42,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from .identity import AgentIdentity
-from .log import ActionLog
+from .log import ActionLog, _active_key, _approval_record_mac
+from .egress_ledger import _ledger_keyring
 
 
 def _utcnow():
@@ -48,14 +54,12 @@ _MISSING = object()
 
 
 def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
-    """Integrity digest binding a queued approval to its exact arguments.
+    """Legacy UNKEYED integrity digest (pre-R9 attacker primitive).
 
-    ``egress_bytes`` (F33) is bound into the digest whenever the caller
-    supplies it, so a tampered queue record cannot under-report the byte
-    charge the execution boundary will apply. Records queued before F33
-    carry no ``egress_bytes`` key; the verifier falls back to the legacy
-    three-field digest for those (a record that HAS the key is always
-    verified with it — removing the key does not downgrade the check).
+    Kept ONLY so the F34 red-team probe can demonstrate the closed
+    attack: a record carrying this unkeyed digest is refused by
+    :func:`approval_digest_ok` / ``ToolExecutor.execute_approved``. New
+    code must use :func:`approval_record_digest`.
     """
     payload = {"tool": tool, "args": args, "policy_id": policy_id}
     if egress_bytes is not _MISSING:
@@ -63,6 +67,65 @@ def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
     payload = json.dumps(payload, sort_keys=True, separators=(",", ":"),
                          default=str)
     return sha256(payload.encode("utf-8")).hexdigest()
+
+
+# F34: approval records are MACed, not merely hashed. The MAC is keyed to
+# the active log HMAC key (see gov.log._approval_record_mac) with the key
+# epoch bound in and verified against the keyring, so key rotation is
+# explicit. Anything but the keyed scheme is refused at execution
+# (fail-closed upgrade — queued items must be decided before upgrading).
+APPROVAL_DIGEST_SCHEME = "hmac-sha256-v1"
+
+
+def _canonical_record_payload(tool, args, policy_id, egress_bytes=_MISSING):
+    payload = {"tool": tool, "args": args, "policy_id": policy_id}
+    if egress_bytes is not _MISSING:
+        payload["egress_bytes"] = egress_bytes
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      default=str)
+
+
+def approval_record_digest(tool, args, policy_id, egress_bytes=_MISSING):
+    """F34: HMAC-keyed integrity digest binding a queued approval to its
+    exact arguments.
+
+    The F33 ``egress_bytes`` binding is preserved: payload shape — with
+    or without the key — is decided by whether the caller supplies it,
+    exactly as the legacy digest did. The MAC is computed under the
+    active log key with the key epoch bound in; verification tries every
+    epoch in the keyring. Under the PUBLIC development key this gives no
+    forgery resistance to anyone who read the docs (F29/F34 residual).
+    """
+    key, key_epoch = _active_key()
+    return _approval_record_mac(
+        key, key_epoch,
+        _canonical_record_payload(tool, args, policy_id, egress_bytes))
+
+
+def approval_digest_ok(rec):
+    """F34: True when an approval record carries a valid keyed digest.
+
+    Fail-closed: anything without ``digest_scheme == "hmac-sha256-v1"``
+    (pre-R9 unkeyed records, hand-built forgeries) returns False. A
+    record that HAS the ``egress_bytes`` key is always verified with it
+    (F33 rule preserved — removing the key does not downgrade the check);
+    the three-field keyed form is never produced by
+    :meth:`ApprovalQueue.queue` and is not accepted.
+    """
+    if not isinstance(rec, dict):
+        return False
+    if rec.get("digest_scheme") != APPROVAL_DIGEST_SCHEME:
+        return False
+    if "egress_bytes" not in rec:
+        return False
+    canonical = _canonical_record_payload(
+        rec.get("tool"), rec.get("args"), rec.get("policy_id"),
+        rec.get("egress_bytes"))
+    for key_epoch, key in _ledger_keyring().items():
+        candidate = _approval_record_mac(key, key_epoch, canonical)
+        if hmac.compare_digest(rec.get("args_digest", ""), candidate):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -211,12 +274,17 @@ def _base_score(record):
     return TOOL_RISK.get(record.get("tool"), _UNKNOWN_TOOL_RISK)
 
 
-def _score_factors(record, queue_records, anomaly_ids=()):
+def _score_factors(record, queue_records, anomaly_ids=(), ignore_history=False):
     """Return (score, factors) with deterministic, documented factors.
 
     ``anomaly_ids`` are pending ids in a queue-anomaly cluster (see
     queue_anomalies): the bump is ADVISORY and one-directional — it can
     only raise the score, never lower it, and it never approves.
+
+    ``ignore_history`` (F35): score as an unknown agent even when the
+    agent has prior decisions — the history-neutral score used by
+    ``maybe_auto_approve`` so a farmable veteran discount can never flip
+    an auto-approve decision.
     """
     factors = []
     tool = record.get("tool")
@@ -233,8 +301,9 @@ def _score_factors(record, queue_records, anomaly_ids=()):
     if ctx.get("carries_read_content"):
         score += 10
         factors.append("carries previously-read content +10")
-    if (record.get("provenance") == "untrusted_influenced"
-            or ctx.get("source_untrusted")):
+    untrusted = (record.get("provenance") == "untrusted_influenced"
+                 or ctx.get("source_untrusted"))
+    if untrusted:
         score += 15
         factors.append("untrusted-influenced provenance +15")
     if record.get("delegation_attempted"):
@@ -248,9 +317,19 @@ def _score_factors(record, queue_records, anomaly_ids=()):
                        if r.get("id") != record.get("id")
                        and r.get("agent_id") == agent
                        and r.get("status") in ("approved", "rejected")]
-    if agent and not decided_before:
+    if agent and (not decided_before or ignore_history):
         score += 10
         factors.append("unknown agent (no prior decisions) +10")
+    elif agent and untrusted:
+        # F35: approval history is farmable — an untrusted-influenced
+        # item gets NO veteran discount. Benign history must not lower
+        # the score of an item whose provenance is untrusted: veterans
+        # score untrusted items exactly like unknown agents, so history
+        # can never flip an auto-approve decision on untrusted traffic.
+        # (Genuinely benign repeat traffic keeps the discount — only
+        # untrusted provenance withholds it.)
+        score += 10
+        factors.append("untrusted provenance: history discount withheld +10")
     volume = [r for r in queue_records
               if r.get("id") != record.get("id")
               and r.get("agent_id") == agent
@@ -300,6 +379,20 @@ class ApprovalQueueRiskMixin:
             record, records, anomaly_ids=self._anomaly_id_set(records))
         return {"score": score, "level": risk_level(score),
                 "factors": factors}
+
+    def _risk_no_discount(self, record):
+        """F35: history-neutral risk score (scores as an unknown agent).
+
+        Second gate for ``maybe_auto_approve``: the veteran discount is a
+        queue-ordering signal, never an auto-approval justification. When
+        this exceeds the cap the item stays pending for a human even
+        though the discounted score fits under the cap.
+        """
+        records = self.all()
+        score, _ = _score_factors(
+            record, records,
+            anomaly_ids=self._anomaly_id_set(records), ignore_history=True)
+        return score
 
     def pending_risk_sorted(self):
         """Pending records, highest risk first (then oldest first)."""
@@ -640,6 +733,15 @@ class ApprovalQueueRiskMixin:
             return None
         score = self.risk(record)
         if score > cap:
+            return None
+        # F35: the queue-ordering history discount must never FLIP an
+        # auto-approve decision. Re-score history-neutral (as an unknown
+        # agent): when that exceeds the cap, the item stays pending for
+        # a human even though the discounted score fits under it. (For
+        # untrusted-influenced items the discount is already withheld in
+        # _score_factors, so the two scores agree there; this gate covers
+        # trusted items whose veteran history would otherwise flip them.)
+        if self._risk_no_discount(record) > cap:
             return None
         decided, _entry = self.decide(
             approval_id, True,
@@ -997,9 +1099,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_flag": policy_flag,  # F21: queue reason; batch
             # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
-            "args_digest": record_digest(action.get("tool"), args,
-                                         decision.policy_id,
-                                         egress_bytes),
+            "args_digest": approval_record_digest(action.get("tool"), args,
+                                                 decision.policy_id,
+                                                 egress_bytes),
+            # F34: integrity-scheme marker — records without the keyed
+            # scheme are refused at execution (fail-closed upgrade).
+            "digest_scheme": APPROVAL_DIGEST_SCHEME,
             # F33: raw outbound payload bytes at queue time; the execution
             # boundary charges this (the redacted queue form may summarize
             # large payloads — it must never shrink the budget charge).

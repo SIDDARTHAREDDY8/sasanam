@@ -19,6 +19,8 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from tests.harness import make_run, plant_file  # noqa: E402
 from evals.w9_probes import register_w9  # noqa: E402
+from evals.w10_probes import register_w10  # noqa: E402
+from evals.r9_probes import register_r9  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -1455,17 +1457,34 @@ def pb_sit32(shim, priv):
 _FLOOD_CACHE = {}
 
 def _flood_measurement(n=1500):
+    """F22/R9: (count, early_med, late_med, chain_ok) for n appends.
+
+    The F22 regression property is O(1) per append, NOT an absolute
+    wall-clock bound: absolute fsync latency is disk-dependent (~37ms
+    on the workspace disk vs ~0.2ms on tmpfs), so a fixed seconds bound
+    is invalid on some disks. Early/late window medians capture the
+    actual property on any disk — the pre-F22 O(n^2) rescan made late
+    appends ~10x slower than early ones.
+    """
     if n not in _FLOOD_CACHE:
         d = Path(tempfile.mkdtemp(prefix="w6flood-"))
         try:
             log = ActionLog(d / "actions.jsonl")
-            t0 = time.time()
+            early, late = [], []
             for i in range(n):
+                t0 = time.perf_counter()
                 log.append({"event": "tool_call", "tool": "api_call",
                             "decision": "executed", "i": i})
-            secs = time.time() - t0
+                dt = time.perf_counter() - t0
+                if 100 <= i < 300:
+                    early.append(dt)
+                elif n - 200 <= i < n:
+                    late.append(dt)
             ok, _, count = verify_chain(d / "actions.jsonl")
-            _FLOOD_CACHE[n] = (count, secs, ok)
+            early.sort()
+            late.sort()
+            _FLOOD_CACHE[n] = (
+                count, early[len(early) // 2], late[len(late) // 2], ok)
         finally:
             shutil.rmtree(str(d), ignore_errors=True)
     return _FLOOD_CACHE[n]
@@ -1514,10 +1533,19 @@ def pb_sit33(shim, priv):
         and any(q.name == "actions.jsonl" for q in quarantined))
 
 
-    count, secs, ok = _flood_measurement()
+    count, early_med, late_med, ok = _flood_measurement()
     outcomes["flood_all_appended"] = _observed(count == 1500)
     outcomes["flood_chain_verifies"] = _observed(ok is True)
-    outcomes["flood_append_is_bounded"] = _observed(secs < 5)
+    # F22/R9: relative O(1) bound — late-window per-append median must
+    # not exceed 3x the early-window median (disk-independent; the
+    # pre-F22 O(n^2) rescan showed ~10x). Absolute fsync latency is
+    # disk-dependent, so no fixed seconds bound. The bound is 3.0, not
+    # 2.0: medians live at ~80us on tmpfs, where a transient VM
+    # scheduling hiccup inside one window can double a median without
+    # any systematic slowdown; 3.0 keeps full sensitivity to the ~10x
+    # regression signature with noise margin.
+    ratio = (late_med + 1e-9) / (early_med + 1e-9)
+    outcomes["flood_append_is_bounded"] = _observed(ratio < 3.0)
     d3 = Path(tempfile.mkdtemp(prefix="w7cap-"))
     try:
         cap = ActionLog(d3 / "actions.jsonl", max_bytes=4096)
@@ -2348,6 +2376,10 @@ PLAYBOOKS = {
     "sit47": lambda s, p: _w7_playbook(s, p, "w8-devkey", _w8_devkey_loudness, "devkey_"),
 }
 register_w9(PLAYBOOKS, _w7_playbook)  # wave-9; see evals/w9_probes.py
+register_w10(PLAYBOOKS, _w7_playbook)  # wave-10; see evals/w10_probes.py
+# Round-9 closure probes override the wave-10 attack baseline for
+# sit54/sit55/sit58/sit59 (F34-F37 CLOSED); see evals/r9_probes.py.
+register_r9(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

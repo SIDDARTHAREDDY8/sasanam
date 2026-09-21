@@ -101,6 +101,17 @@ def governed(binding, tool=None, *, on_denied="raise", on_queued="raise",
                 **kwargs)
             if result.get("status") == "executed" and run_body:
                 body_result = fn(**kwargs)
+                # F37: the real body ran — ingest its result into the
+                # run's provenance/taint store exactly like the MCP
+                # adapter does: the executor only ingested its simulated
+                # placeholder. Fail-open side channel; the body result
+                # itself is returned unchanged.
+                try:
+                    binding.executor.ingest_foreign_result(
+                        binding.resolve(framework_tool), body_result,
+                        binding.identity.principal)
+                except Exception:
+                    pass
                 result = dict(result)
                 result["body_result"] = body_result
                 result["execution_note"] = (

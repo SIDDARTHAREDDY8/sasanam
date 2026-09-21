@@ -101,8 +101,22 @@ class GovernedMCPClient:
             raise RuntimeError(
                 "binding returned non-executed status without raising; "
                 "refusing to call the MCP session.")
-        return await self.__session.call_tool(
+        server_result = await self.__session.call_tool(
             name, arguments, **session_kwargs)
+        # F37: ingest the REAL server result into the run's
+        # provenance/taint store — the executor's own call() only
+        # ingested its simulated placeholder, so without this a
+        # sensitive server response never taints the run and a follow-up
+        # paraphrase api_call escapes the sensitive-read-before-api
+        # gate. The result is returned verbatim; ingestion is a
+        # fail-open side channel (the call already executed).
+        try:
+            self._binding.executor.ingest_foreign_result(
+                self._binding.resolve(name), server_result,
+                self._binding.identity.principal)
+        except Exception:
+            pass
+        return server_result
 
     async def list_tools(self):
         """Pass through the session's tool listing (read-only metadata).

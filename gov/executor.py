@@ -56,7 +56,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
-from .approvals import (IdentityVerifierAlreadySetError, record_digest,
+from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
+                        APPROVAL_DIGEST_SCHEME, record_digest,
                         sanitize_preview_text)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
@@ -286,6 +287,72 @@ class ToolExecutor:
             if tool not in self._taint_sources:
                 self._taint_sources.append(tool)
 
+    def ingest_foreign_result(self, tool, result, principal=None):
+        """F37: ingest a FOREIGN tool result into the provenance/taint store.
+
+        Adapters that execute a real implementation AFTER authorization
+        (MCP server results, the generic adapter's ``run_body=True``
+        real bodies) must route the REAL result through the same
+        ingestion as the executor's own results:
+        ``ToolExecutor.call()`` only ingests its SIMULATED result, so
+        without this a sensitive server response never taints the run
+        and a follow-up paraphrase api_call escapes the
+        sensitive-read-before-api approval gate. The result itself is
+        NOT modified — ingestion is a side channel into the run's taint
+        store. Foreign dict/str/object results are normalized to a
+        content blob; unparseable results ingest nothing. Fail-open:
+        ingestion trouble never breaks the result path (the call already
+        executed; the signal is heuristic, like the native path's
+        ledger taint-mark).
+        """
+        try:
+            blob = self._foreign_content_blob(result)
+        except Exception:
+            return
+        if not blob:
+            return
+        try:
+            self._ingest_result(tool, {"content": blob}, principal)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _foreign_content_blob(result):
+        """F37: normalize a FOREIGN tool result to an ingestible blob.
+
+        MCP server results and real ``run_body`` bodies are not executor
+        results: they may be dicts, strings, or framework objects (e.g.
+        MCP ``CallToolResult``). Normalize to a single text blob (capped
+        at the same 64K as the native path) or None when nothing
+        ingestible is present. Total: never raises on arbitrary shapes.
+        """
+        if result is None:
+            return None
+        if isinstance(result, str):
+            return result[:65536] or None
+        content = (result.get("content") if isinstance(result, dict)
+                   else getattr(result, "content", None))
+        if isinstance(content, str):
+            return content[:65536] or None
+        if isinstance(content, (list, tuple)):
+            # MCP-style content blocks: [{"type": "text", "text": "..."}]
+            # or real SDK objects (TextContent) exposing a .text attr.
+            texts = []
+            for b in content:
+                t = (b.get("text") if isinstance(b, dict)
+                     else getattr(b, "text", None))
+                if isinstance(t, str):
+                    texts.append(t)
+            if texts:
+                return "\n".join(texts)[:65536]
+        if isinstance(result, dict):
+            try:
+                blob = json.dumps(result, sort_keys=True, default=str)
+            except (TypeError, ValueError):
+                blob = str(result)
+            return blob[:65536] or None
+        return None
+
     @staticmethod
     def _content_is_sensitive(content):
         """True when read content trips DLP sensitive patterns."""
@@ -443,7 +510,8 @@ class ToolExecutor:
                        % (principal, campaign_domain)),
         })
 
-    def _check_cross_run_campaign(self, tool, args, principal, shape=None):
+    def _check_cross_run_campaign(self, tool, args, principal, shape=None,
+                                    agent_id=None):
         """F10/F13: heuristic cross-run campaign detection (fail-safe).
 
         Records this api_call attempt's shape in the per-principal egress
@@ -454,6 +522,12 @@ class ToolExecutor:
         rule queues (never denies). Any ledger failure fails OPEN
         (returns False): this is a heuristic signal, not an authorization
         control.
+
+        F36a: the ledgered entry carries the minted identity's agent_id
+        alongside the principal for forensic attribution — the campaign
+        KEY stays the principal string because cross-run continuity is
+        defined by the principal; stronger identity binding comes from
+        the principal registry (F17b) in non-permissive deployments.
         """
         if tool != "api_call" or not principal:
             return False
@@ -463,6 +537,7 @@ class ToolExecutor:
                 "ts": datetime.now(timezone.utc).timestamp(),
                 "run_id": self.run_id,
                 "principal": principal,
+                "agent_id": agent_id,
                 "tool": "api_call",
                 **shape,
             })
@@ -480,6 +555,47 @@ class ToolExecutor:
                 self._log_campaign_allowlisted(
                     tool, principal, shape["campaign_domain"],
                     shape.get("param_keys"))
+                return False
+            return hit
+        except Exception:
+            return False
+
+    def _check_cross_principal_campaign(self, tool, shape, principal):
+        """F36: principal-rotation campaign signal (fail-safe, queue-only).
+
+        The per-principal detectors never reach K when the attacker mints
+        a fresh principal per run, so this correlates the campaign SHAPE
+        across principals: >= K distinct principals emitting
+        fragment-shaped api_call entries with the same content/shape
+        sketch (see ``EgressLedger._shape_sketch`` — domain, param
+        count, byte/entropy buckets, fragment flag; param-name-blind)
+        inside the window -> True. The attempt was already ledgered by
+        ``_check_cross_run_campaign``; this only scans. Never denies;
+        ledger failures fail open.
+
+        The F18 allowlist IS applied to the CURRENT attempt: when the
+        exact (principal, domain, param key set) is allowlisted, the
+        cross-principal queue is suppressed for that attempt (it is
+        still ledgered, and the suppression is audit-logged) so
+        existing allowlisted monitoring stays green.
+        """
+        if tool != "api_call" or not principal:
+            return False
+        if not (shape or {}).get("fragment"):
+            return False
+        try:
+            hit = self._ledger.cross_principal_campaign_hit(
+                shape or {},
+                window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+            if hit and self._campaign_allowlisted(
+                    principal, (shape or {}).get("campaign_domain"),
+                    (shape or {}).get("param_keys")):
+                # F18: the current attempt is allowlisted — suppress
+                # the cross-principal queue (still ledgered above, and
+                # the exemption itself is audit-logged).
+                self._log_campaign_allowlisted(
+                    tool, principal, (shape or {}).get("campaign_domain"),
+                    (shape or {}).get("param_keys"))
                 return False
             return hit
         except Exception:
@@ -533,7 +649,8 @@ class ToolExecutor:
         return self._ledger.taint_active(
             principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
 
-    def _context(self, tool, args, principal=None, record_ledger=True):
+    def _context(self, tool, args, principal=None, record_ledger=True,
+                 agent_id=None):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
         if "path" in args:
             ctx["path_outside_sandbox"] = self._is_outside_sandbox(args["path"])
@@ -556,17 +673,22 @@ class ToolExecutor:
             # F10/F13/F14: heuristic cross-run campaign signals
             # (fail-safe). The fragment-shape signal and the structural
             # same-key-set signal (F14) both surface as
-            # ``cross_run_campaign`` — one campaign concept, two
+            # ``cross_run_campaign`` — one campaign concept, three
             # detectors; the ledger record keeps which shape each entry
-            # had for forensics. Not re-recorded on approval
-            # re-evaluation: the attempt was already ledgered when first
-            # queued.
+            # had for forensics. F36: the cross-principal detector joins
+            # here — a campaign that rotates principals per run never
+            # trips the per-principal detectors, so the same shape from
+            # >= K distinct principals in the window also queues. Not
+            # re-recorded on approval re-evaluation: the attempt was
+            # already ledgered when first queued.
             if record_ledger:
                 shape = self._api_call_shape(args)
                 ctx["cross_run_campaign"] = (
                     self._check_cross_run_campaign(
-                        tool, args, principal, shape)
+                        tool, args, principal, shape, agent_id=agent_id)
                     or self._check_structural_campaign(
+                        tool, shape, principal)
+                    or self._check_cross_principal_campaign(
                         tool, shape, principal))
             else:
                 ctx["cross_run_campaign"] = False
@@ -909,7 +1031,8 @@ class ToolExecutor:
         action = {"tool": tool, "args": kwargs,
                   "identity": identity.as_dict(),
                   "role": identity.role, "agent_id": identity.agent_id}
-        ctx = self._context(tool, kwargs, principal=identity.principal)
+        ctx = self._context(tool, kwargs, principal=identity.principal,
+                              agent_id=identity.agent_id)
         policy_ctx_snapshot = {
             "path_outside_sandbox": ctx.get("path_outside_sandbox"),
             "domain_allowlisted": ctx.get("domain_allowlisted"),
@@ -1071,20 +1194,30 @@ class ToolExecutor:
                 })
                 continue
             # 2. integrity: queued arguments must be byte-identical. The
-            # digest binds egress_bytes too (F33): a tampered queue record
-            # cannot under-report the byte charge. Legacy records (pre-F33)
-            # carry no egress_bytes key and verify with the legacy digest;
-            # a record that HAS the key is always verified with it.
-            if "egress_bytes" in rec:
-                _expected_digest = record_digest(
-                    rec["tool"], rec["args"], rec.get("policy_id"),
-                    rec["egress_bytes"])
-            else:
-                _expected_digest = record_digest(
-                    rec["tool"], rec["args"], rec.get("policy_id"))
-            if rec.get("args_digest") != _expected_digest:
+            # keyed digest (F34) binds tool, args, policy_id and
+            # egress_bytes (F33) under the active log HMAC key with the
+            # key epoch bound in; verification uses hmac.compare_digest
+            # against every epoch in the keyring, so rotation is
+            # explicit. Records that predate the keyed scheme (no
+            # digest_scheme — the pre-R9 unkeyed digest proved nothing:
+            # anyone with run-dir access could mint it) are refused
+            # FAIL-CLOSED: queued items must be decided before upgrading.
+            # A record that HAS the egress_bytes key is always verified
+            # with it — removing the key does not downgrade the check.
+            if (rec.get("digest_scheme")
+                    != APPROVAL_DIGEST_SCHEME):
+                _refuse("Approval %s refused: the record predates the F34 "
+                        "keyed approval digest (no digest_scheme) — the "
+                        "pre-R9 unkeyed digest could be minted by anyone "
+                        "with run-dir access, so it is never trusted. "
+                        "Drain or decide queued items before upgrading."
+                        % aid,
+                        "approval_integrity_violation")
+                continue
+            if not approval_digest_ok(rec):
                 _refuse("Approval %s arguments were modified after queueing; "
-                        "integrity digest mismatch." % aid,
+                        "integrity digest mismatch (F34 keyed MAC does not "
+                        "verify under any key epoch)." % aid,
                         "approval_integrity_violation")
                 continue
             # 3. policy staleness: approved under a different policy version

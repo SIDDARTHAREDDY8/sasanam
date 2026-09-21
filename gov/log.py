@@ -160,6 +160,23 @@ def _checkpoint_mac(key, key_epoch, seq, entry_hash):
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
+def _approval_record_mac(key, key_epoch, canonical):
+    """F34: domain-separated HMAC for approval-queue integrity digests.
+
+    Approval records live outside the action log's hash chain (they are
+    queued before the approving decision is logged), so the log's MAC
+    cannot cover them. They get their own domain-separated MAC under the
+    SAME active log key: a forger with run-dir access but without the key
+    cannot mint a valid record digest, which closes F34's record-forgery
+    vector. ``key_epoch`` is bound into the MAC and verified against the
+    keyring, so rotation is explicit. Under the PUBLIC development key this
+    gives no forgery resistance to anyone who read the docs — the report
+    says so (F34/F29 residual).
+    """
+    msg = ("approval-record|%s|%s" % (key_epoch, canonical)).encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
 class LogFullError(Exception):
     """Raised when the audit log reached its configured size cap.
 

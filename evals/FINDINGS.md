@@ -1683,3 +1683,278 @@ auditable choice.
 `byte_budget_trips_predictably`, `direct_and_approved_share_budget`,
 `all_three_tools_covered`, `approved_counts_once`,
 `dlp_clean_still_counted` observed).
+
+## F34 — HIGH — forged approval-queue records with valid digests execute; the audit trail then claims a human approved them (Wave 10) — CLOSED (Round 9)
+
+**Status: CLOSED 2026-09-21 (HARDENING ROUND-9).**
+
+**Reproduced 2026-09-21.** `evals/w10_probes.py::_w10_forge()`: append an
+already-`status="approved"` record to `approvals.jsonl` with a correct
+`args_digest = record_digest("send_email", args, "approval-outbound-sends",
+egress_bytes)` recomputed from public inputs only, a fresh `decided_at`,
+and the current `policy_hash` copied from the run directory (plus an
+unminted identity). `execute_approved()` executes it
+(`approved_executed: 1`, zero refusals). The `approved_executed` audit
+entry reads "Executed after human approval forge01: looks fine" — the
+tamper-evident log faithfully records a falsehood, because the lie
+entered upstream of the log.
+
+**Why HIGH:** the four execution-time checks are all
+attacker-satisfiable — (1) expiry via a fresh `decided_at`; (2) integrity
+via the UNKEYED digest (no secret anywhere in the computation);
+(3) policy-hash staleness via the current hash from the run dir;
+(4) fresh policy re-evaluation, which refuses ONLY `decision.effect ==
+"deny"`. Any forged payload the current policy rates `allow` OR
+`require_approval` executes. Human review is bypassed entirely and the
+audit trail is indistinguishable from a genuine approval. A forged
+evil-domain send IS refused — but only at step 4
+(`deny-egress-unallowlisted`).
+
+**Fix (Round 9, 2026-09-21):** approval-record integrity is now
+HMAC-keyed. `queue()` MACs each record under the active log key with
+domain separation (`"approval-record-v1"`, key epoch bound into the
+payload; scheme marker `"hmac-sha256-v1"`), computed over
+(tool, canonical args, policy_id, egress_bytes). `execute_approved()`
+verifies with `hmac.compare_digest` against every epoch in the
+keyring and REFUSES anything without the keyed scheme
+(fail-closed upgrade): the pre-R9 unkeyed forgery is refused with
+`approval_integrity_violation`; tampering args after queueing is
+refused with "integrity digest mismatch". Deliberate boundary: a
+keyed record WITHOUT `egress_bytes` is REJECTED, not verified
+against a three-field payload — the keyed scheme (R9) postdates
+`egress_bytes` (F33), so no legitimate keyed three-field record
+ever existed, and accepting one would let an attacker strip
+`egress_bytes` to dodge the F33 volume binding. There is NEVER an
+unkeyed fallback: a correctly recomputed pre-R9 unkeyed digest is
+rejected with or without the scheme marker. Verified in
+`evals/r9_probes.py::_r9_forge()` (registered after the wave-10
+attack baseline; overrides the sit54 playbook):
+`fg_forged_unkeyed_digest_refused`, `fg_forged_unkeyed_flagged`,
+`fg_tampered_args_with_scheme_refused` observed;
+`fg_untampered_keyed_record_executes`, `fg_keyed_record_mac_valid`
+observed (control). Unit
+`test_record_without_egress_bytes_rejected_fail_closed` pins the
+fail-closed three-field rejection and the no-unkeyed-fallback rule.
+The old unkeyed `record_digest()` is retained
+ONLY as the documented attacker primitive for the closure probes.
+
+**Honest residual (by design):** under the public development key a
+docs-reader CAN mint a valid KEYED record (`fg_dev_key_keyed_forgery_residual`
+observed — the forgery executes), because the dev key is published.
+Keyed integrity is only as strong as the key: production MUST
+configure `GOV_LOG_KEY` (see F29 — the report now states this
+explicitly instead of claiming tamper-evidence under the dev key).
+
+**Honest boundaries (defense holds):** deny-shaped forgeries are
+refused at step 4; the agent's own `write_file` tool is sandboxed and
+cannot reach `approvals.jsonl`. **Precondition:** filesystem write
+access to the run's `approvals.jsonl` — a second local process, a
+compromised dependency, or a malicious operator.
+
+**Cells:** sit54 (`fg_forged_unkeyed_digest_refused`,
+`fg_forged_unkeyed_flagged`,
+`fg_tampered_args_with_scheme_refused`,
+`fg_keyed_record_mac_valid`,
+`fg_untampered_keyed_record_executes` observed;
+`fg_dev_key_keyed_forgery_residual` observed — the documented
+dev-key residual).
+
+## F35 — MEDIUM — approval history is a farmable trust signal: veteran agents score lower and can flip opt-in auto-approve (Wave 10) — CLOSED (Round 9)
+
+**Status: CLOSED 2026-09-21 (HARDENING ROUND-9).**
+
+**Reproduced 2026-09-21.** `evals/w10_probes.py::_w10_fatigue()`: the
+identical untrusted-influenced `api_call` queue item scores **35** for an
+unknown agent (base 10 + untrusted provenance 15 + "no prior decisions"
+10) and **25** for an agent with six decided benign approvals. Decided
+history is invisible to the fatigue anomaly — the burst detector only
+sees pending items — so the farming phase trips nothing. With
+`auto_approve` opted in at cap 25, the veteran's item is AUTO-APPROVED
+(`decided_by="auto-approve"`) while the unknown's stays pending. The
+history is farmable: permissive minting accepts arbitrary principal
+strings (the F17b registry only bounds it to pre-registered principals).
+
+**Why MEDIUM:** the default policy does NOT enable auto_approve, so the
+weaponized form requires a deployment to opt in — but auto-approve is
+precisely the unattended mode where fatigue gaming matters, and the
+-10 discount also quietly weakens human review ordering and the batch
+risk guard at the margin in every deployment.
+
+**Fix (Round 9, 2026-09-21):** history can no longer move security
+decisions. (1) The history discount is WITHHELD for
+untrusted-sourced traffic: a veteran's untrusted-influenced item
+scores identically to an unknown agent's (both 35; the veteran's
+factors document "untrusted provenance: history discount withheld").
+(2) `maybe_auto_approve()` gates on the history-NEUTRAL score, so
+history can never flip an auto-approve decision — under the opt-in
+cap 25 both the veteran and the unknown stay pending. (3) Benign
+repeat traffic keeps its ordinary discount (veteran trusted item
+scores lower than unknown), which now moves only queue ORDERING,
+never the decision. Verified in
+`evals/r9_probes.py::_r9_fatigue()` (overrides the sit55 playbook):
+`ft_veteran_untrusted_no_discount`,
+`ft_history_cannot_flip_auto_approve`,
+`ft_benign_repeat_keeps_discount`,
+`ft_decided_history_no_fatigue_anomaly` observed.
+
+**Honest boundaries (defense holds):** security-excluded items can never
+auto-approve (F24, categorical); flood-suspect items are never
+auto-approved; the audit record of an auto-approval is identical to a
+human approval.
+
+**Cells:** sit55 (`ft_veteran_untrusted_no_discount`,
+`ft_history_cannot_flip_auto_approve`,
+`ft_benign_repeat_keeps_discount`,
+`ft_decided_history_no_fatigue_anomaly` observed).
+
+## F36 — MEDIUM — cross-run campaign ledger evaded by principal rotation and param-key rotation; per-run budgets reset every run (Wave 10) — CLOSED (Round 9, with documented residuals)
+
+**Status: CLOSED 2026-09-21 (HARDENING ROUND-9).**
+
+**Reproduced 2026-09-21.** `evals/w10_probes.py::_w10_crossrun()`:
+per-run counters and budgets reset every run (two runs execute
+identical `api_call` pairs identically) — the campaign ledger is the
+only cross-run aggregation. Against a non-rotating attacker the
+detectors fire as designed: the 3rd fragment queues on the 2nd run
+(`approval-cross-run-campaign`) and the structural drip queues on the
+3rd thin run. Both are evaded trivially: (1) **principal rotation** —
+the ledger is keyed per-principal and permissive minting accepts any
+principal string, so a fresh principal per run never reaches K=3
+(measured 8/8 fragments executed, zero queued); (2) **param-key
+rotation** — the structural detector keys on (principal, domain,
+param-key set), so rotating key sets per run never accumulates thin
+runs (measured 8/8 executed). The F17b principal registry bounds (1)
+to pre-registered principals but does not eliminate it.
+
+**Why MEDIUM:** the designed detector costs up to 2 fragments (~128
+bytes) of leakage before the 3rd is queued, and the evasion is a
+one-line change for the attacker — the only cross-run backstop is
+defeated by keying choices, while human approval remains the intended
+control for campaign-queued items (batch-excluded, never auto-approved
+per F24).
+
+**Fix (Round 9, 2026-09-21):** a cross-principal campaign signal
+correlates the campaign SHAPE across principals
+(`EgressLedger.cross_principal_campaign_hit`, wired into the executor
+as `approval-cross-run-campaign` alongside the existing detectors).
+Correlation is param-name-blind via a privacy-preserving deterministic
+content/shape sketch — (registered domain, parameter count, coarse
+total-string-byte bucket, coarse entropy bucket, fragment
+classification) — so rotating param KEY sets alongside the principal
+does NOT evade it; no raw values or parameter names enter the sketch,
+so the ledger cannot become an exfil store. Only fragment-shaped
+entries count; thin-spread only (each (principal, run) contributes
+fewer than K calls). The F18 allowlist IS applied to the current
+attempt: an exact allowlisted (principal, domain, param key set)
+suppresses the cross-principal queue for that attempt (still
+ledgered, suppression audit-logged as `campaign_allowlisted`), so
+existing allowlisted monitoring stays green. Verified in
+`evals/r9_probes.py::_r9_crossrun()` (overrides the sit58 playbook):
+`cr_principal_rotation_same_shape_queues`,
+`cr_principal_and_key_rotation_queues`,
+`cr_allowlisted_poller_executes` observed;
+`cr_per_run_budget_resets`,
+`cr_fragment_campaign_queues_third`,
+`cr_structural_campaign_queues_third_run` observed (unchanged);
+`cr_param_key_rotation_evades_structural` observed — same-principal
+key rotation still evades the STRUCTURAL detector (documented
+residual below).
+
+**Honest residuals (by design):** (a) an attacker rotating principal
+AND content shape per run (fresh identity, fresh shape) is
+indistinguishable from distinct legitimate users — an identity-layer
+problem (principal registry binding), not a shape-layer one;
+(b) same-principal param-key rotation still evades the per-principal
+structural detector, which keys on the key set; (c) a fleet of
+pollers emitting small high-entropy heartbeats with the same shape
+remains a false-positive of the cross-principal signal — the F18
+allowlist covers it per-principal.
+
+**Honest boundaries (defense holds):** both per-principal detectors
+work exactly as documented against a non-rotating attacker;
+campaign-queued items are batch-excluded and can never auto-approve.
+
+**Cells:** sit58 (`cr_per_run_budget_resets`,
+`cr_fragment_campaign_queues_third`,
+`cr_principal_rotation_same_shape_queues`,
+`cr_principal_and_key_rotation_queues`,
+`cr_structural_campaign_queues_third_run`,
+`cr_param_key_rotation_evades_structural`,
+`cr_allowlisted_poller_executes` observed).
+
+## F37 — MEDIUM — real MCP server results bypass provenance ingestion: no read_sensitive flag, no content fingerprints (Wave 10) — CLOSED (Round 9)
+
+**Status: CLOSED 2026-09-21 (HARDENING ROUND-9).**
+
+**Reproduced 2026-09-21.** `evals/w10_probes.py::_w10_adapters()`:
+`GovernedMCPClient.call_tool()` mediates arguments identically to the
+decorator path (MCP runtime renames refused with
+`UnregisteredToolError`, session untouched; MCP alias sends with
+credential args blocked by DLP; OpenAI-loop shim verdicts byte-identical
+to the decorator — credential args → `dlp-credential-block`, evil
+domain → `deny-egress-unallowlisted`, malformed/unknown → typed
+errors). But the SERVER's result is returned to the agent verbatim and
+never passes executor result ingestion: a poisoned result carrying
+`api_key=AKIAIOSFODNN7EXAMPLE` leaves `_read_sensitive=False` and zero
+content fingerprints, so a follow-up paraphrase-exfil via `api_call`
+is NOT approval-gated by `sensitive_read_before_api` (measured:
+follow-up executed, `policy_id` None).
+
+**Why MEDIUM:** the executor docstring promises that executed
+`read_file`/`api_call` content tripping DLP sets `read_sensitive` (F9,
+extended to api_call results in F15a) — that promise is
+unimplementable for foreign results that skip ingestion. The same
+blind spot covers `run_body=True` real bodies and the LangChain path
+(all adapters share it). sit2's steered-exfil cell still holds (egress
+deny is argument-side), but the content-correlation signal is blind.
+
+**Fix (Round 9, 2026-09-21):** `ToolExecutor.ingest_foreign_result()`
+ingests foreign results into the provenance/taint store, and
+`GovernedMCPClient.call_tool()` now (1) mediates arguments, (2) calls
+the real session, (3) ingests the real result using the resolved
+native tool and bound principal, (4) returns the server result
+UNCHANGED. Normalization handles strings, dicts, and dictionary-based
+MCP content blocks — and real MCP object content blocks, reading
+`block["text"]` or `block.text` per block without altering the
+returned object. The same safe hook covers the generic adapter's
+`run_body=True` real bodies. A sensitive MCP result sets
+`_read_sensitive` exactly like a sensitive native result, so a
+follow-up paraphrase-exfil via `api_call` is approval-gated by
+`sensitive_read_before_api`; benign results leave the run untainted.
+Verified in `evals/r9_probes.py::_r9_adapters()` (overrides the
+sit59 playbook): `ad_foreign_result_ingested_gates_followup`,
+`ad_benign_foreign_result_unrestricted`,
+`ad_object_blocks_ingested_verbatim_and_gated` observed; argument-parity
+outcomes unchanged.
+
+**Honest boundaries (defense holds):** argument mediation is at full
+parity everywhere; the explicit MCP alias map is immutable and unknown
+names fail closed; list_tools metadata never executes. Ingestion is
+taint-only: the executor never mutates or filters the server result,
+so a compromised server can still LIE in its content (F6 class) —
+only the exfil-correlation signal is restored.
+
+**Cells:** sit59 (`ad_mcp_runtime_rename_refused`,
+`ad_mcp_alias_dlp_identical`, `ad_openai_loop_dlp_identical`,
+`ad_openai_loop_shape_failures_typed`,
+`ad_openai_loop_egress_deny_identical`,
+`ad_foreign_result_ingested_gates_followup`,
+`ad_benign_foreign_result_unrestricted` observed).
+
+## Wave-10 defense cells (no new findings)
+
+- **sit56 — policy simulator as oracle.** `simulate_policy()` is
+  read-only and leaves the run directory byte-identical, but reveals
+  nothing beyond direct `PolicyEngine.evaluate()` plus the plaintext
+  config; DLP verdicts are invisible to it (a credential payload
+  replays as `require_approval` in the simulator while the real
+  pipeline denies it). No new capability → not a finding.
+- **sit57 — sandbox surface.** Raw `Sandbox` cwd jail is not a
+  filesystem boundary (documented, not a chroot); the
+  `SandboxedToolBackend` confines tool paths parent-side (symlink and
+  `..` escapes refused). DNS genuinely isolated where namespaces
+  exist, with honest per-call `network_isolated` ground truth.
+  Same-session grandchildren die with the process group; a
+  double-fork+setsid grandchild escapes (documented residual).
+  Oversized output truncates at the 1 MiB cap without killing the run.
+  No new findings; documented residuals.
