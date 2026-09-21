@@ -96,7 +96,7 @@ def summarize_results(blocked, tamper_detected):
             % (n_blocked, n_allowed, 1 if tamper_detected else 0))
 
 
-def main():
+def _run_demo():
     run_id = "attack-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
@@ -214,4 +214,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
+
+
+def main():
+    """F63 (R14): honest-failure wrapper around the demo flow.
+
+    The scenario is a DEMO — its RESULT line is the artifact the
+    matrix probes parse. An unexpected exception must never let the
+    demo die with a bare traceback and no RESULT line (or, worse, an
+    implied success): it prints an honest ``RESULT: FAILURE``
+    summary, claims no verdicts, and returns a nonzero exit code.
+    """
+    try:
+        _run_demo()
+    except Exception as e:
+        print("RESULT: FAILURE — attack scenario aborted before "
+              "completion (%s: %s)" % (type(e).__name__, e))
+        print("no attack verdicts were produced; no successful outcome "
+              "is claimed.")
+        return 1
+    return 0

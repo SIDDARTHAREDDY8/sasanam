@@ -403,6 +403,38 @@ class ActionLog:
         return entry
 
 
+def read_entries_with_stats(path):
+    """Read action-log entries, counting malformed physical lines.
+
+    Returns ``(entries, malformed_count)``. Malformed = a non-blank
+    line that is not valid JSON, or valid JSON that is not an object
+    (F63: the latter used to crash ``_verify`` with AttributeError —
+    see below). Malformed lines are SKIPPED, never trusted.
+
+    Never raises on file CONTENT problems (F28): only real I/O
+    failures (OSError) propagate.
+    """
+    p = Path(path)
+    if not p.exists():
+        return [], 0
+    out = []
+    malformed = 0
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            malformed += 1
+            continue
+        if not isinstance(entry, dict):
+            malformed += 1
+            continue
+        out.append(entry)
+    return out, malformed
+
+
 def read_entries(path):
     p = Path(path)
     if not p.exists():
@@ -439,13 +471,25 @@ def _parse_sidecar_lines(lines):
     return cps, n_bad
 
 
-def _verify(path):
+def _verify(path, _skip_malformed=False):
     """Full verification. Returns a verdict dict.
 
     Never raises on file CONTENT problems (F28): corrupt log lines and
     corrupt checkpoint sidecars are reported as
     ``{"ok": False, "error": ...}``, never as an uncaught exception and
     never as ``ok=True``.
+
+    ``_skip_malformed=True`` (F63) is a TOLERANT mode for
+    reconciliation only: malformed physical lines (non-JSON, or valid
+    JSON that is not an object) are skipped and counted in
+    ``verdict["malformed_skipped"]`` instead of failing the whole
+    verification — while the SIGNED chain (seq continuity, prev_hash
+    links, key_epoch labels, MACs, checkpoints) of every VALID entry
+    is still verified exactly as strictly as the default mode. A
+    malformed line carries no seq and no chain link, so skipping it
+    cannot launder tampering: any alteration of a VALID entry still
+    fails closed. The default (``False``) is unchanged and stays
+    fail-closed on any malformed line, preserving F28.
 
     F27: checkpointing is always enabled for ActionLog (every append
     writes a checkpoint), so a NON-EMPTY log with a missing, empty, or
@@ -472,9 +516,11 @@ def _verify(path):
     def _fail(entries, error, broken_seq=None, checked=0):
         return {"ok": False, "entries": len(entries),
                 "broken_seq": broken_seq, "checkpoints_checked": checked,
+                "malformed_skipped": n_skipped,
                 "key_epoch": epoch, "format_version": FORMAT_VERSION,
                 "error": error}
 
+    n_skipped = 0
     if not p.exists():
         return _fail([], "log file does not exist")
     entries = []
@@ -486,9 +532,23 @@ def _verify(path):
         try:
             entry = json.loads(line)
         except ValueError:
+            if _skip_malformed:
+                n_skipped += 1
+                continue
             return _fail(entries,
                          "log line %d is not valid JSON (corrupt log); "
                          "failing closed" % lineno)
+        if not isinstance(entry, dict):
+            # F63: valid JSON that is not an object (e.g. "[1,2]").
+            # The old code fell through to entry.get() and raised
+            # AttributeError — a latent F28 never-raise hole. Default
+            # mode fails closed on it; tolerant mode skips and counts.
+            if _skip_malformed:
+                n_skipped += 1
+                continue
+            return _fail(entries,
+                         "log line %d is valid JSON but not an object "
+                         "(corrupt log); failing closed" % lineno)
         entries.append(entry)
         seq = entry.get("seq")
         # F27: the full chain walk from genesis runs even when no
@@ -596,7 +656,8 @@ def _verify(path):
                          % latest["seq"], broken_seq=latest["seq"],
                          checked=checked)
     return {"ok": True, "entries": len(entries), "broken_seq": None,
-            "checkpoints_checked": checked, "key_epoch": epoch,
+            "checkpoints_checked": checked, "malformed_skipped": n_skipped,
+            "key_epoch": epoch,
             "format_version": FORMAT_VERSION, "error": None}
 
 

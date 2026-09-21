@@ -19,7 +19,7 @@ SYNTHETIC: the executor simulates tools; no network, no real email.
 import tempfile
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from gov.adapters.core import GovernedBinding, ToolDeniedError
 from gov.adapters.langchain_tools import make_governed_tool
@@ -72,6 +72,11 @@ def _executor():
 
 
 class EmailArgs(BaseModel):
+    # F62: governed tools require extra="allow" so undeclared kwargs
+    # reach mediation instead of being silently dropped by
+    # langchain-core before _run.
+    model_config = ConfigDict(extra="allow")
+
     to: str = Field(description="Recipient email address")
     subject: str = Field(description="Email subject")
     body: str = Field(description="Email body")

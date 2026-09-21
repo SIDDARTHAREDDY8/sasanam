@@ -29,6 +29,8 @@ from evals.w13_probes import register_w13  # noqa: E402
 from evals.r12_probes import register_r12  # noqa: E402
 from evals.w14_probes import register_w14  # noqa: E402
 from evals.r13_probes import register_r13  # noqa: E402
+from evals.r14_probes import register_r14  # noqa: E402
+from evals.w15_probes import register_w15  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -74,6 +76,31 @@ def _cell_make_run():
         _CELL_LEDGER_DIR = tempfile.mkdtemp(prefix="govcell-ledger-")
     return make_run(
         ledger_path=os.path.join(_CELL_LEDGER_DIR, "egress_ledger.jsonl"))
+
+
+def _cleanup_cell_dirs(*paths):
+    """Remove per-cell temp dirs created by this gate run.
+
+    Called in a finally block after each cell completes. Only removes
+    dirs the harness itself created for that cell (basenames starting
+    with ``govcell-ledger-`` or ``govred-``); anything else is left
+    untouched, and missing paths are tolerated. Set
+    ``GOV_KEEP_CELL_DIRS=1`` to retain the dirs for debugging
+    (default: clean). Without this, every gate run leaks hundreds of MB
+    of per-cell run dirs into TMPDIR and can ENOSPC a small /tmp,
+    making the ship-gate verdict environment-dependent.
+    """
+    if os.environ.get("GOV_KEEP_CELL_DIRS") == "1":
+        return
+    for path in paths:
+        if not path:
+            continue
+        p = str(path)
+        base = os.path.basename(p.rstrip(os.sep))
+        if not (base.startswith("govcell-ledger-")
+                or base.startswith("govred-")):
+            continue
+        shutil.rmtree(p, ignore_errors=True)
 
 
 MCP_REGISTRY = dict(DEFAULT_MCP_REGISTRY)
@@ -2197,13 +2224,19 @@ def _w8_verifier_swap():
     from gov.identity import AgentIdentity
     from gov.adapters.core import GovernedBinding, GovernedToolFacade as _F
     from gov.adapters.langchain_tools import make_governed_tool
-    from pydantic import BaseModel
+    from pydantic import BaseModel, ConfigDict
     with _w8run("w8s-") as (d, ctx):
         q = ctx["approvals"]
         forged = AgentIdentity(agent_id="mallory", role="researcher",
                                run_id=ctx["run_dir"].name, principal="mallory")
 
-        class _A(BaseModel): path: str = ""
+        # F62: governed tools require extra="allow" so undeclared
+        # kwargs reach mediation instead of being silently dropped by
+        # langchain-core before _run.
+        class _A(BaseModel):
+            model_config = ConfigDict(extra="allow")
+
+            path: str = ""
         tool = make_governed_tool(
             GovernedBinding(ctx["executor"],
                             ctx["mint_identity"]("t", "researcher", "o")),
@@ -2451,6 +2484,19 @@ register_w14(PLAYBOOKS, _w7_playbook)
 # evals/w14_probes.py stays UNCHANGED as the historical wave-14
 # attack record — its sit81/82/85/86 playbooks are superseded here.
 register_r13(PLAYBOOKS, _w7_playbook)
+# Wave-15 probes attack the Round-13 defenses and the seams they left
+# (session-identity anchor, coalescing shared state, human decision
+# view, cross-adapter enforcement, demo honesty, registry/dev
+# fallback, budget accounting); see evals/w15_probes.py. sit89-sit95
+# are new. evals/w14_probes.py and evals/r13_probes.py stay UNCHANGED
+# as the historical record.
+register_w15(PLAYBOOKS, _w7_playbook)
+
+# Round-14 closure probes override the wave-15 attack baseline for
+# sit89-sit95 (F59-F64 CLOSED; sit95 reconfirmed); see
+# evals/r14_probes.py. evals/w15_probes.py stays UNCHANGED as the
+# historical record.
+register_r14(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 
@@ -2467,15 +2513,22 @@ def run_cell(sit_id, adapter_name, priv, harness_name):
     global _CELL_LEDGER_DIR
     _CELL_LEDGER_DIR = None
     ctx = _cell_make_run()
-    role = PRIV_ROLE[priv]
-    ident = ctx["mint_identity"]("adv-%s-%s" % (sit_id, priv), role,
-                                 "adversary-org")
-    shim = HARNESSES[harness_name](adapter_name, ctx["executor"], ident)
-    outcomes, must_execute, must_not_execute = PLAYBOOKS[sit_id](shim, priv)
-    passed, notes = CHECKS[sit_id](priv, outcomes, must_execute,
-                                   must_not_execute, expected_verdict)
-    return {"passed": passed, "notes": notes,
-            "expected_verdict": expected_verdict, "outcomes": outcomes}
+    # Dirs this cell created: the cell ledger dir and the run's own
+    # govred-* dir. Removed in the finally block so a cell never leaks
+    # disk even when it raises (ENOSPC was flipping gate verdicts).
+    cell_dirs = [_CELL_LEDGER_DIR, ctx["run_dir"]]
+    try:
+        role = PRIV_ROLE[priv]
+        ident = ctx["mint_identity"]("adv-%s-%s" % (sit_id, priv), role,
+                                     "adversary-org")
+        shim = HARNESSES[harness_name](adapter_name, ctx["executor"], ident)
+        outcomes, must_execute, must_not_execute = PLAYBOOKS[sit_id](shim, priv)
+        passed, notes = CHECKS[sit_id](priv, outcomes, must_execute,
+                                       must_not_execute, expected_verdict)
+        return {"passed": passed, "notes": notes,
+                "expected_verdict": expected_verdict, "outcomes": outcomes}
+    finally:
+        _cleanup_cell_dirs(*cell_dirs)
 
 def main():
     results = []

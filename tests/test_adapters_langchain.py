@@ -26,7 +26,7 @@ from gov.adapters.core import (
 )
 
 try:
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, ConfigDict, Field
     from gov.adapters.langchain_tools import (
         GovernedStructuredTool,
         make_governed_tool,
@@ -37,11 +37,19 @@ except ImportError:
 
 
 class WriteArgs(BaseModel):
+    # F62: governed tools require extra="allow" so undeclared kwargs
+    # reach mediation instead of being silently dropped by
+    # langchain-core before _run.
+    model_config = ConfigDict(extra="allow")
+
     path: str = Field(description="Destination path")
     content: str = Field(description="Content to write")
 
 
 class EmailArgs(BaseModel):
+    # F62: see WriteArgs.
+    model_config = ConfigDict(extra="allow")
+
     to: str = Field(description="Recipient")
     subject: str = Field(description="Subject")
     body: str = Field(description="Body")

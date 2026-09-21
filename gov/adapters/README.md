@@ -77,10 +77,27 @@ authorization/execution** boundary (documented in the result's
 
 `invoke` → `run` → `_run` and `ainvoke` → `arun` → `_arun` all funnel into the
 overridden methods (a test pins this funnel assumption against the installed
-langchain-core version and fails loudly on drift). Invalid inputs are rejected
-by LangChain's own schema validation before mediation. Mediation is
-synchronous in `_arun` (the executor is in-memory); no thread-hopping of the
-audit path.
+langchain-core version and fails loudly on drift). Declared-field violations
+(missing/wrongly-typed fields) are rejected by LangChain's own schema
+validation before mediation. **F62:** construction fails closed unless the
+schema declares `extra="allow"` — with pydantic's default `extra="ignore"`,
+langchain-core would silently drop undeclared kwargs *before* `_run`,
+so they never reached mediation, the DLP scan, or the approval record.
+Mediation is synchronous in `_arun` (the executor is in-memory); no
+thread-hopping of the audit path.
+
+### Pre-mediation input audit (F62, R14 follow-up)
+
+Every adapter was audited for the F62 hole — anything that filters or drops
+inputs *before* the executor's DLP scan sees them:
+
+| Adapter | Input path | Verdict |
+|---|---|---|
+| `langchain_tools` | langchain-core `_parse_input` coerces against `args_schema` | **Fixed:** construction (and later reassignment) of `args_schema` raises unless it declares `extra="allow"`; JSON-schema dicts are passed through unchanged by `_parse_input` and are allowed. |
+| `core` (`GovernedBinding.call` / `GovernedToolFacade.call`) | `**kwargs` straight to `executor.call` | Clean: no filtering. The executor pops only documented framing kwargs (`justification`, `on_behalf_of`, `delegated_by` — agent-supplied metadata, not tool inputs); the DLP scan runs on the raw remainder. |
+| `generic` (`governed` wrapper) | `**kwargs` straight to `binding.call`; positional args raise fail-closed | Clean: no schema coercion, no drop. |
+| `mcp_adapter` (`call_tool`) | full `arguments` dict mediated via `binding.call(name, **dict(arguments))` | Clean: no filtering of tool arguments. `session_kwargs` (transport-level, e.g. `read_timeout_seconds`) go only to the session, never the executor — documented above, not a governance drop. |
+| `openai_loop` (`run_tool_loop`) | `parse_tool_calls` strictly parses the raw JSON-object arguments; `binding.call(call.name, **call.arguments)` | Clean: malformed shapes raise `MalformedToolCallError` fail-closed; valid arguments pass through unmodified. |
 
 ### `gov.adapters.mcp_adapter` — MCP client wrapper
 

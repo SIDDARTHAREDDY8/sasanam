@@ -49,7 +49,8 @@ from pathlib import Path
 
 from .identity import AgentIdentity
 from .log import (ActionLog, _active_key, _approval_record_mac,
-                  _break_glass_ticket_mac, _verify, read_entries)
+                  _break_glass_ticket_mac, _verify, read_entries,
+                  read_entries_with_stats)
 from .egress_ledger import _ledger_keyring
 
 
@@ -1272,14 +1273,22 @@ class ApprovalQueueRiskMixin:
         # session identity the pre-R13 F26 behavior is kept (dev
         # mode), with the existing self-asserted warnings.
         if self._session_identity is not None:
-            if operator_identity != self._session_identity:
+            # F59 (R14): TRUE OBJECT IDENTITY (``is``, not ``!=``). A
+            # separately minted identity with identical
+            # (agent_id, role, principal) fields compares structurally
+            # equal (``==``) but is a different object — and is NOT
+            # entitled. The anchor itself is a read-only property (no
+            # setter), so the F59 attribute-swap shape raises
+            # AttributeError before reaching here.
+            if operator_identity is not self._session_identity:
                 self._refuse_break_glass(
                     approval_id,
                     "break-glass refused: operator identity %r is not "
-                    "the deployment-provisioned session identity "
-                    "(provenance=%r, want 'provisioned'): mid-run "
-                    "minted identities are not entitled to consume "
-                    "break-glass tickets (F55)" % (
+                    "the deployment-provisioned session identity OBJECT "
+                    "(F59: identity compared with `is`; provenance=%r, "
+                    "want 'provisioned'): mid-run minted identities are "
+                    "not entitled to consume break-glass tickets (F55)"
+                    % (
                         (operator_identity.agent_id,
                          operator_identity.role,
                          operator_identity.principal),
@@ -1289,8 +1298,47 @@ class ApprovalQueueRiskMixin:
                     operator_principal=operator_identity.principal)
                 raise ValueError(
                     "break-glass refused: mid-run minted identities "
-                    "are not entitled (F55); the deployment-provisioned "
-                    "session identity is required")
+                    "are not entitled (F55/F59); the deployment-"
+                    "provisioned session identity OBJECT is required")
+        elif (self._registry_configured
+                and not self._break_glass_unprotected_warned):
+            # F64 (R14): registry mode WITHOUT a provisioned session
+            # identity is a SILENT weak mode — break-glass runs with NO
+            # identity entitlement checks (the documented F55
+            # residual: any in-process minted operator tuple can consume
+            # tickets). Mirror the F50 dev-mode one-time warning:
+            # loud on stderr AND an audited entry, once per queue.
+            # registry-without-session-identity is explicitly
+            # unsupported for production deployments.
+            self._break_glass_unprotected_warned = True
+            warn_msg = (
+                "GOVERNANCE WARNING: PrincipalRegistry is configured "
+                "but NO session identity was provisioned — break-glass "
+                "is operating WITHOUT identity entitlement checks "
+                "(F64): any in-process minted operator identity can "
+                "consume break-glass tickets. Provision a session "
+                "identity for production deployments; "
+                "registry-without-session-identity is explicitly "
+                "unsupported.")
+            print(warn_msg, file=sys.stderr)
+            self.log.append({
+                "event": "break_glass_unprotected",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "governance",
+                "principal": "system",
+                "decision": "n/a",
+                "policy_id": "break-glass-entitlement",
+                "operator_principal": operator_identity.principal,
+                "ticket_id": ticket_id,
+                "reason": ("break-glass invoked in registry mode with "
+                           "no provisioned session identity: operating "
+                           "WITHOUT identity entitlement checks (F64). "
+                           "Any in-process minted operator identity can "
+                           "consume break-glass tickets; this "
+                           "configuration is explicitly unsupported "
+                           "for production."),
+            })
         if not reason or not reason.strip():
             raise ValueError("break-glass requires a non-empty reason")
         if not ticket_id:
@@ -1667,14 +1715,26 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
         self._identity_verifier_sealed = False
-        # F55 (R13): the deployment-provisioned session identity for
-        # entitlement-sensitive paths (break_glass). Installed
-        # write-once by ToolExecutor at construction (see
+        # F55 (R13) / F59 (R14): the deployment-provisioned session
+        # identity for entitlement-sensitive paths (break_glass).
+        # Installed write-once by ToolExecutor at construction (see
         # set_session_identity). None = no provisioned identity: the
         # pre-R13 behavior (F26 mintedness check) applies, with the
         # existing self-asserted-identity warnings.
-        self._session_identity = None
+        #
+        # F59: the anchor is tamper-resistant — a READ-ONLY property
+        # with no setter (see _session_identity below), backed by the
+        # name-mangled slot __session_identity. Casual in-process
+        # ``queue._session_identity = X`` raises AttributeError instead
+        # of silently swapping the anchor (the F59 attack shape).
+        self.__session_identity = None
         self._session_identity_sealed = False
+        # F64 (R14): True once the executor reports a PrincipalRegistry
+        # is configured (see note_registry_configured). Lets
+        # break_glass warn loudly when it runs in registry mode WITHOUT
+        # a provisioned session identity — a silent weak mode otherwise.
+        self._registry_configured = False
+        self._break_glass_unprotected_warned = False
         # F49 (R11): write-once snapshot of the human-provisioned
         # break-glass ticket store, taken at run start (first
         # ToolExecutor construction). None = not yet snapshotted.
@@ -1713,6 +1773,38 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         self._identity_verifier = verifier
         self._identity_verifier_sealed = True
 
+    @property
+    def _session_identity(self):
+        """F59 (R14): the session-identity anchor as a READ-ONLY property.
+
+        There is deliberately NO setter: ``queue._session_identity = X``
+        raises ``AttributeError`` instead of silently swapping the
+        break-glass entitlement anchor (the F59 confused-deputy attack
+        shape). The value lives in the name-mangled slot
+        ``_ApprovalQueue__session_identity``, written exactly twice:
+        ``None`` in ``__init__`` and the provisioned identity in the
+        write-once ``set_session_identity``.
+
+        Honest residual (documented): an in-process attacker who knows
+        the mangled name can still force-write the slot with
+        ``object.__setattr__`` — the same class of primitive as
+        monkeypatching the module. The anchor covers code with normal
+        attribute access (the realistic confused-deputy shape); it is
+        not a sandbox boundary against hostile in-process code.
+        """
+        return self.__session_identity
+
+    def note_registry_configured(self):
+        """F64 (R14): record that a PrincipalRegistry is configured.
+
+        Called by ``ToolExecutor`` at construction when a registry is
+        present. Idempotent. Lets ``break_glass`` warn loudly when it
+        runs in registry mode WITHOUT a provisioned session identity
+        (the F64 silent weak mode) instead of taking the pre-R13 path
+        silently.
+        """
+        self._registry_configured = True
+
     def set_session_identity(self, identity):
         """F55 (R13): install the deployment-provisioned session identity.
 
@@ -1720,9 +1812,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         provisioned out-of-band for this session (``provenance=
         "provisioned"``), created by ``ToolExecutor`` at construction.
         Entitlement-sensitive paths (``break_glass``) require exactly
-        this object — a mid-run ``mint_identity`` of the same
-        (agent_id, role, principal) tuple carries
-        ``provenance="minted"`` and is therefore not equal to it.
+        this OBJECT — F59 compares with ``is`` (true object identity),
+        so a mid-run ``mint_identity`` of the same (agent_id, role,
+        principal) tuple (``provenance="minted"``) is refused even
+        though it compares structurally equal.
 
         WRITE-ONCE (same pattern as F31): the first call installs the
         session identity and seals the slot; every later call raises
@@ -1742,7 +1835,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "session identity must carry provenance='provisioned' "
                 "(deployment-provisioned at session start); mid-run "
                 "minted identities are never entitled")
-        self._session_identity = identity
+        # F59: write the name-mangled slot directly — the public
+        # _session_identity name is a read-only property (no setter),
+        # so this is the only in-class write path besides __init__.
+        self.__session_identity = identity
         self._session_identity_sealed = True
 
     def _authenticate_caller(self, identity, what):
@@ -2120,11 +2216,45 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         reconciliation to the authorization seq it handled, so a
         repeat interruption is reconciled again but a handled one is
         never re-alerted on every sweep.
+
+        F63 (R14): malformed physical lines in the action log (non-JSON
+        or valid-JSON-but-not-an-object) no longer crash the sweep.
+        They are skipped and counted; the skip is audited ONCE per
+        newly observed malformed-count state (derived from the log
+        itself, so it survives executor rotation); and the signed
+        seq/MAC/checkpoint chain of every VALID entry is still
+        verified strictly before any interruption marker is trusted.
         """
         try:
-            entries = read_entries(self.log.path)
+            entries, n_malformed = read_entries_with_stats(self.log.path)
         except OSError:
             return []
+        if n_malformed:
+            # F63: audit the observation once per newly seen
+            # malformed-count state — not once per sweep. The "already
+            # audited" signal is read from the log itself (the highest
+            # malformed_count previously recorded), so no
+            # cross-instance memory is needed across executor rotation.
+            already = max(
+                (e.get("malformed_count", 0) for e in entries
+                 if e.get("event") == "action_log_malformed_lines_skipped"),
+                default=0)
+            if n_malformed > already:
+                self.log.append({
+                    "event": "action_log_malformed_lines_skipped",
+                    "run_id": self.run_id,
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "n/a",
+                    "policy_id": "action-log-integrity",
+                    "malformed_count": n_malformed,
+                    "reason": ("action log contains %d malformed physical "
+                               "line(s) (non-JSON or valid-JSON-but-not-"
+                               "an-object); skipped for reconciliation — "
+                               "the signed chain of all valid entries is "
+                               "still verified below (F63)" % n_malformed),
+                })
         auth_seq = {}
         done_seq = {}
         for e in entries:
@@ -2151,12 +2281,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # trusting any marker: an unverifiable chain means at least one
         # marker cannot be authenticated, so NO marker is reconciled —
         # fail closed with a loud audited refusal instead of honoring
-        # possibly-forged interruptions. Measured: full-chain
+        # possibly-forged interruptions. F63 (R14): TOLERANT verify —
+        # malformed physical lines are skipped (audited above) while
+        # the signed seq/MAC/checkpoint chain of every VALID entry is
+        # verified exactly as strictly as the default mode; a
+        # malformed line carries no seq and no chain link, so skipping
+        # it cannot launder tampering. Measured: full-chain
         # verification is ~73ms for 2000 entries (2026-09-21), cheap
         # relative to a sweep, so the per-marker-only shortcut is not
         # taken: the chain walk also binds each marker's prev_hash
         # link, which a per-entry MAC recompute would not.
-        verdict = _verify(self.log.path)
+        verdict = _verify(self.log.path, _skip_malformed=True)
         if not verdict["ok"]:
             self.log.append({
                 "event": "reconciliation_marker_invalid",
@@ -2357,6 +2492,34 @@ def _resolve_rundir(args):
     return Path(args.rundir)
 
 
+def _print_decision_target(r):
+    """F61 (R14): the human decision view — the FULL record content the
+    decision will authorize, never truncated.
+
+    Prints the complete canonical args JSON (the exact bytes the
+    approval digest covers and execution will use) plus ``args_sha256``
+    — the sha256 of those exact UTF-8 bytes — so the operator can
+    confirm the content they see is the content that was digested. A
+    marker past the old 400-char cut is visible here verbatim. Any
+    machine/log truncation elsewhere must be explicitly LABELLED
+    truncated; this view never truncates.
+    """
+    canon = _canonical_dumps(r["args"])
+    print("    args (FULL, untruncated — this exact content is what "
+          "the digest covers and execution will use):")
+    print("      %s" % canon)
+    print("    args_sha256: %s" % sha256(
+        canon.encode("utf-8")).hexdigest())
+
+
+def _find_record_by_id(queue, approval_id):
+    """Return the queued record with ``approval_id``, or None."""
+    for r in queue.all():
+        if r["id"] == approval_id:
+            return r
+    return None
+
+
 def _print_records(records, queue=None, anomaly_ids=()):
     if not records:
         print("  (none)")
@@ -2374,8 +2537,11 @@ def _print_records(records, queue=None, anomaly_ids=()):
         print("  ID: %s | agent: %s | tool: %s | status: %s | policy: %s%s%s%s%s"
               % (r["id"], r["agent_id"], r["tool"], r["status"],
                  r["policy_id"], risk_txt, flood_txt, anom_txt, bg_txt))
-        print("    args: %s" % json.dumps(r["args"], ensure_ascii=True,
-                                          default=str)[:400])
+        # F61 (R14): the decision view shows the FULL canonical args —
+        # never truncated — plus args_sha256 over the exact bytes the
+        # digest covers. The agent's justification is NEVER on the
+        # routing line (or anywhere unlabeled): it is unverified input.
+        _print_decision_target(r)
         print("    provenance: %s" % r.get("provenance", "agent_direct"))
         if queue is not None and r.get("status") == "pending":
             detail = queue.risk_detail(r)
@@ -2622,6 +2788,13 @@ def main(argv=None):
         operator_ident = AgentIdentity(agent_id="cli", role="operator",
                                        run_id=run_dir.name,
                                        principal=args.by)
+        # F61 (R14): show the FULL decision target BEFORE the operator
+        # commits to the break-glass — the decision is on the content
+        # below, exactly as digested.
+        target = _find_record_by_id(queue, args.id)
+        if target is not None:
+            print("decision target:")
+            _print_decision_target(target)
         try:
             record, ticket = queue.break_glass(
                 args.id, args.reason, operator_identity=operator_ident,
@@ -2642,6 +2815,14 @@ def main(argv=None):
         ids = [i.strip() for i in args.ids.split(",") if i.strip()]
         confirmed = [i.strip() for i in args.confirm_risky.split(",")
                      if i.strip()]
+        # F61 (R14): show every FULL decision target BEFORE the batch
+        # decision — one rationale covers the whole batch, so the
+        # operator must see each item's exact content first.
+        for i in ids:
+            target = _find_record_by_id(queue, i)
+            if target is not None:
+                print("decision target %s:" % i)
+                _print_decision_target(target)
         try:
             decided, excluded, batch_entry = queue.batch_decide(
                 ids, args.action == "approve", args.rationale,
@@ -2685,6 +2866,13 @@ def main(argv=None):
               "(decided_by=auto-approve)")
         return 0
 
+    # F61 (R14): show the FULL decision target BEFORE the decision is
+    # recorded — the decision is on the content below, exactly as
+    # digested (a marker past the old 400-char cut is visible here).
+    target = _find_record_by_id(queue, args.id)
+    if target is not None:
+        print("decision target:")
+        _print_decision_target(target)
     try:
         record, entry = queue.decide(args.id, args.cmd == "approve",
                                      args.reason, decided_by=args.by)

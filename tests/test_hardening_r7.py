@@ -334,11 +334,14 @@ class TestF31IdentityVerifierHardening(unittest.TestCase):
         return make_run()
 
     def _tool(self, ctx):
-        from pydantic import BaseModel
+        from pydantic import BaseModel, ConfigDict
         from gov.adapters.core import GovernedBinding
         from gov.adapters.langchain_tools import make_governed_tool
 
         class _Args(BaseModel):
+            # F62: governed tools require extra="allow".
+            model_config = ConfigDict(extra="allow")
+
             path: str = ""
 
         ident = ctx["mint_identity"]("r7-agent", "researcher", "org")

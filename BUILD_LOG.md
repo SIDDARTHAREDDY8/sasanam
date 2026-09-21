@@ -2219,3 +2219,306 @@ residuals.
 
 **NOT pushed (per round rules); GitHub repo stays
 private/untouched. /tmp left clean (~4.9 MB used / 508 MB free).**
+
+## 2026-09-21 23:10 UTC — TEAM ADVERSARY WAVE-15: persistent attacks on the Round-13 seams
+
+Permanent red-team wave. New probes in `evals/w15_probes.py`
+(registered via `register_w15()` immediately after `register_r13()`
+in `evals/run_evals.py`); new situations sit89–sit95 in
+`evals/matrix.py`; `evals/SITUATION_MATRIX.md` + root
+`SITUATION_MATRIX.md` regenerated (95 situations, 1140 cells);
+findings filed as F59–F64 in `evals/FINDINGS.md`. `gov/`,
+`evals/w14_probes.py`, `evals/r12_probes.py`, `evals/r13_probes.py`
+untouched (read-only; measure/report only). Deterministic scripted
+attacks, $0 spend, no LLM calls. Full gate green; nothing pushed.
+
+**New findings (all OPEN — defeating playbooks confirmed by this
+wave's probes; closures deferred to a future hardening round):**
+
+- **F59 (MEDIUM):** the R13 session-identity anchor is a mutable
+  private queue attribute checked with structural `!=` — one
+  in-process assignment (`queue._session_identity = <minted>`)
+  fully defeats the F55 break-glass refusal (ticket consumed,
+  `status=approved`); flipping the held identity's `provenance`
+  via `object.__setattr__` defeats it too. Executor-side assignment
+  is inert and the sealed setter's provenance re-check holds
+  (honest cells). sit89.
+- **F60 (LOW):** corrupting or deleting the shared
+  `lock_refusal_coalesce.json` before every sweep defeats F51
+  coalescing — 8 corruptions → 8 `approval_sweep_refused` audit
+  entries (undisturbed: 8 sweeps → 1). sit90.
+- **F61 (LOW):** the human decision view (`_print_records`,
+  400-char args cut; preview shows routing only; `decide()` never
+  redisplays) hides verbatim-stored structured args (e.g.
+  `api_call` params) past the cut while the digest covers them.
+  Summarized payload fields (email body, file content, HTTP
+  payload) are one-way `{bytes, sha256_prefix}` — nothing CAN hide
+  there (honest cell). sit91.
+- **F62 (LOW):** cross-adapter enforcement divergence — the real
+  langchain shim's pydantic schema silently drops undeclared kwargs
+  before mediation, so a credential in `bcc` is DENIED
+  (`dlp-credential-block`) on provisional but QUEUED as routine on
+  real langchain (dropped arg also vanishes from the approval
+  record); the real OpenAI loop violates the provisional fail-fast
+  (`['denied','executed']` vs `['denied']`). sit92.
+- **F63 (MEDIUM):** a single non-JSON line in `actions.jsonl` makes
+  `read_entries` raise `JSONDecodeError`, crashing EVERY future
+  `execute_approved()` in `_reconcile_interrupted_executions`
+  (approved work never executes, no audited refusal) —
+  contradicts F28's never-raise contract; the demo crashes mid-run
+  with no RESULT line. Permissive policy, bad policy section
+  (loud fail-closed), and broken-HMAC chain configs all stay honest
+  (honest cells). sit93.
+- **F64 (LOW):** registry mode WITHOUT a session identity is a
+  SILENT weak fallback — the F55 impersonation still consumes the
+  ticket with no warning anywhere, unlike dev mode's loud F50
+  one-time stderr warning (honest cell). sit94.
+
+**Honest defense cells (no findings):** sit95 (F45 × F33 × 2 —
+crash between claim and effect, reconcile re-queues loudly, a
+second identical approval executes, re-approved first approval
+executes: budget counts exactly 2 sends for 2 actual sends, one
+per approval, independent accounting); sit93's
+permissive/bad-section/broken-HMAC demo configs; sit91's DLP
+one-way summarization; sit94's dev-mode warning; sit89's
+executor-side/sealed-setter defenses; sit90's undisturbed
+coalescing.
+
+**Gates:** `py_compile` on every edited file after each edit;
+`python3 -m unittest tests.test_adversary_matrix` green after every
+change; full gate `mkdir -p /tmp/gov-w15 && TMPDIR=/tmp/gov-w15
+python3 evals/run_evals.py` exit 0. `__pycache__` removed. Do NOT
+push (parent verifies).
+
+## 2026-09-21 — Hardening Round 14: F59–F64 CLOSED
+
+**Scope:** close the six Wave-15 findings F59 (session-identity
+anchor bypass), F60 (coalescing corruption loop), F61 (human decision
+view truncation), F62 (cross-adapter enforcement divergence), F63
+(malformed action-log crash), F64 (silent registry weak fallback);
+reconfirm the sit95 budget-accounting defense. Python 3.12,
+deterministic, no LLM calls, $0 spend. No push (parent verifies
+before any push); repo stays private/untouched.
+`evals/w15_probes.py` preserved UNCHANGED as the historical Wave-15
+attack record.
+
+**F59 — session-identity anchor made read-only + true object
+identity** (`gov/approvals.py`):
+
+- `_session_identity` is now a read-only property backed by the
+  name-mangled `__session_identity` slot — normal
+  `q._session_identity = evil` raises `AttributeError`.
+- `break_glass()` compares with true object identity
+  (`operator_identity is self._session_identity`): a separately
+  minted structurally equal tuple is refused with an audited
+  `break_glass_refused`; the provisioned identity object still
+  consumes.
+- Accepted as-is (documented in the property docstring): the
+  backing slot is initialized to `None` (functionally equivalent
+  to absent — the `is` check only applies when provisioned) and
+  write-once is enforced via `_session_identity_sealed`.
+- Residual: determined in-process code can force-write the
+  mangled slot via `object.__setattr__` — outside the
+  Python-level threat model (same boundary as the F55
+  provenance residual); deployments that never pass
+  `session_identity` get no protection (dev-mode gap, unchanged).
+  sit89.
+
+**F60 — coalescing suppression derived from the tamper-evident log**
+(`gov/executor.py`):
+
+- `_read_lock_refusal_state()` now returns `(state, usable)`,
+  distinguishing missing/corrupt state from valid state.
+- Unusable-state sweeps stay fail-closed and derive suppression
+  from a recent same-flag `approval_sweep_refused` action-log
+  entry (not the corruptible sidecar); clean sidecar state is
+  rewritten best-effort so transient corruption heals.
+- Late in the round, review caught an F63 x F60 interaction: the
+  suppression check used the raising `read_entries`, so a
+  malformed log line PLUS an unusable sidecar could still crash
+  a sweep. Fixed by switching to `read_entries_with_stats`
+  (malformed lines count as no-recent — fail-loud, at most one
+  extra audit).
+- Residual: the suppression check is an ordinary (not
+  chain-verified) read — a planted MAC-invalid refusal line
+  could suppress a re-audit, but the planted line fails
+  `_verify` loudly and the sweep still refuses fail-closed.
+  sit90.
+
+**F61 — full human decision view** (`gov/approvals.py`):
+
+- New `_print_decision_target()` renders the FULL canonical args
+  (no truncation) plus `args_sha256` over the exact UTF-8
+  canonical bytes; shown in list output and redisplayed before
+  every CLI decision (individual approve/reject, batch,
+  break-glass).
+- Residual: the view is CLI-local text — a hostile terminal could
+  hide it; the MAC-verified canonical bytes remain the source
+  of truth. sit91.
+
+**F62 — adapter parity** (`evals/real_adapters.py`):
+
+- `_GovArgsSchema` now `extra="allow"`: undeclared kwargs
+  survive validation and reach mediation/DLP — a synthetic
+  AWS-docs key in `bcc` is DENIED by `dlp-credential-block` on
+  both provisional and real langchain paths.
+- The real OpenAI loop invokes `run_tool_loop` with
+  `on_denied="raise"` (fail-fast), converting the denial into
+  one provisional-shaped denial result (`["denied"]`).
+- The bare-dict payload-shape difference stays documented as
+  honest harness plumbing. sit92.
+
+**F63 — malformed action-log lines tolerated, demo honest**
+(`gov/log.py`, `gov/approvals.py`, `demo/attack_scenario.py`):
+
+- New `read_entries_with_stats()` skips/counts malformed
+  physical lines (non-JSON or non-object JSON);
+  `_verify(..., _skip_malformed=True)` skips them too but stays
+  strict on seq/chain/MAC/checkpoints for every valid entry
+  (also fixes the old `AttributeError` on valid-JSON
+  non-dict lines).
+- Reconciliation uses the tolerant read, audits
+  `action_log_malformed_lines_skipped` once per observed
+  state, and still reconciles genuine interruption claims.
+  Default `_verify()` stays fail-closed (F28 contract
+  preserved).
+- `demo/attack_scenario.py` splits `_run_demo()` from a
+  `main()` wrapper: any unexpected exception yields an honest
+  `RESULT: FAILURE` summary claiming no success, with a
+  nonzero exit (entry-point block moved after `main()`).
+- Residual: the bad-policy loud failure now flows through the
+  wrapper — same loudness, new shape. sit93.
+
+**F64 — registry weak mode warns loudly** (`gov/approvals.py`,
+`gov/executor.py`):
+
+- `ApprovalQueue.note_registry_configured()` records that a
+  `PrincipalRegistry` was supplied (wired from
+  `ToolExecutor.__init__`); the first `break_glass()` in
+  registry mode WITHOUT a session identity emits a stderr
+  `GOVERNANCE WARNING` naming that break-glass operates
+  "WITHOUT identity entitlement checks" and audits
+  `break_glass_unprotected`, once per queue. No warning with a
+  session identity installed.
+- Residual: the documented F55 residual (minted tuple
+  consuming the ticket in registry mode without a session
+  identity) still exists — now disclosed loudly instead of
+  silently. sit94.
+
+**Closure probes** (`evals/r14_probes.py`, wired via
+`register_r14()` in `evals/run_evals.py` after `register_w15`;
+r13 pattern): 7 probes — sit89 (anchor assignment raises,
+minted twin refused, provisioned consumes), sit90 (corrupt/
+delete loops bounded to <=1 audit, undisturbed coalescing),
+sit91 (marker past old cut verbatim, hash matches, pre-decision
+redisplay), sit92 (langchain bcc parity, OpenAI fail-fast),
+sit93 (poisoned sweep proceeds, skip audited once, default
+verify fail-closed, demo honest cells, poisoned demo emits
+`RESULT: FAILURE` rc=1), sit94 (weak-mode stderr + audit,
+silent repeat, no warning with session identity), sit95
+(re-runs the Wave-15 budget cell unchanged — reconfirmed).
+`evals/matrix.py` metadata updated (F59–F64 CLOSED, sit95
+reconfirmed); `SITUATION_MATRIX.md` + `evals/SITUATION_MATRIX.md`
+regenerated (95 situations, 1140 cells); `evals/FINDINGS.md`
+F59–F64 marked CLOSED with fixes + residuals.
+
+**Regression tests** (`tests/test_hardening_r14.py`): 21 tests
+covering all six findings plus the F63 x F60 interaction;
+21/21 green.
+
+**Gates (2026-09-21):** `py_compile` on every edited file after
+each edit; `tests.test_adversary_matrix` 4/4 green after every
+change; tmpfs eval gate
+`mkdir -p /tmp/gov-r14 && TMPDIR=/tmp/gov-r14 python3
+evals/run_evals.py` → **2280/2280, SHIP-GATE: GREEN** (one middle
+run showed 24 RED = a single situation's full cell set, green on
+the runs before and after with no code change in between —
+transient load-dependent flake, retried per protocol; final two
+runs consecutive GREEN); full unit suite
+`TMPDIR=/tmp/gov-r14 python3 tests/run_tests.py` → **536/536
+green**; `cmp policies/default.yaml gov/data/default.yaml`
+identical; `__pycache__` removed. Do NOT push (parent
+verifies).
+
+## R14 follow-up hardening (2026-09-21) — F62 product-layer completion + gate TMPDIR hygiene
+
+**Item 1 — F62 product-layer completion (`gov/adapters/langchain_tools.py`).**
+R14 had fixed only the harness shim (`evals/real_adapters.py::_GovArgsSchema`);
+the product adapter still accepted a deployer-supplied `args_schema` with
+pydantic's default `extra="ignore"`, so in a real deployment langchain-core
+(`BaseTool._parse_input` → `model_validate` → `model_dump`, verified against
+installed langchain-core 1.6.3) silently dropped undeclared kwargs BEFORE
+mediation — the DLP scan and the approval record understated intent, and the
+docstring blessed it ("Invalid inputs are rejected by LangChain's own
+validation *before* mediation"). Now `GovernedStructuredTool` fails closed at
+construction: a `@model_validator(mode="after")` raises `ValueError` naming
+F62 and the `extra="allow"` remedy unless the schema's `model_config` sets
+`extra="allow"` (pydantic v2, pydantic v1 `__config__`, and JSON-schema dicts —
+which `_parse_input` passes through unchanged — handled). The check lives on
+the class itself, so direct `GovernedStructuredTool(...)` construction cannot
+bypass `make_governed_tool`; a `__setattr__` guard holds later
+`tool.args_schema = ...` reassignments to the same rule. Docstring corrected:
+declared-field violations still fail LangChain validation before mediation;
+undeclared kwargs now reach mediation (denied or visibly approval-gated, never
+silently clean). Sibling adapters audited for pre-mediation input
+filtering/dropping — `core` (`GovernedBinding`/`GovernedToolFacade.call`),
+`generic` (`governed` wrapper), `mcp_adapter` (`call_tool`), `openai_loop`
+(`run_tool_loop`): all pass raw kwargs straight to the executor's DLP scan,
+no schema coercion, no drop (the executor pops only documented framing kwargs
+`justification`/`on_behalf_of`/`delegated_by`; MCP `session_kwargs` are
+transport-level and never reach the executor) — documented in
+`gov/adapters/README.md` ("Pre-mediation input audit"). Call-site schemas
+updated to `extra="allow"`: `tests/test_adapters_langchain.py`
+(`WriteArgs`, `EmailArgs`), `tests/test_hardening_r7.py` (`_Args`),
+`evals/run_evals.py` (`_w8_verifier_swap`'s `_A`),
+`examples/langchain_wrapped.py` (`EmailArgs`). `evals/FINDINGS.md` F62 entry
+extended with the product-layer completion and honest residual (a deployer
+mutating the schema class's `model_config` post-construction, or building
+their own plain `StructuredTool` around an unmediated callable — the
+pre-existing deployment-boundary residual).
+
+**Item 2 — gate TMPDIR hygiene (`evals/run_evals.py`).** Every gate run leaked
+hundreds of MB of per-cell run dirs (`govcell-ledger-*`; one run left 261M);
+combined with stale probe scratch, /tmp (512M tmpfs) hit 100% and later runs
+scored RED purely from ENOSPC. Fix: `run_cell` now captures the two dirs the
+harness created for the cell (`_CELL_LEDGER_DIR`, `ctx["run_dir"]`) and
+removes them in a `finally` block via `_cleanup_cell_dirs`, which only
+removes basenames starting with `govcell-ledger-`/`govred-` (never anything
+else; missing paths tolerated). `GOV_KEEP_CELL_DIRS=1` retains dirs for
+debugging (default: clean). Probe semantics unchanged — results are computed
+before the finally runs; `main()` only consumes the returned dicts.
+
+**Regression tests** (`tests/test_hardening_r14_followup.py`): 9 tests —
+strict schema raises at `make_governed_tool` (message names F62/`extra`),
+direct construction raises, `extra="allow"` succeeds, reassignment to a
+strict schema raises, `bcc`-smuggled AWS-docs key is DENIED by
+`dlp-credential-block` and visible (redacted) in the audit record; cleanup
+helper removes only harness dirs, tolerates missing paths, honors
+`GOV_KEEP_CELL_DIRS=1`, and two real gate cells in a fresh subprocess TMPDIR
+leave zero new dirs (proven non-vacuous: with KEEP=1 the same cell leaves
+exactly its 2 dirs). 9/9 green.
+
+**Gates (2026-09-21):** `py_compile` on every edited file after each edit;
+`tests.test_adversary_matrix` 4/4 green after every change. Full gate on
+tmpfs, fresh empty TMPDIR (`rm -rf` stale `govcell-ledger-*`/`govred-*`;
+`mkdir -p /tmp/gov-r14f && TMPDIR=/tmp/gov-r14f python3 evals/run_evals.py`):
+first run 2256/2280 with all 24 RED on sit64
+(`rt_chain_verifies_after_concurrent_writes` — the known transient
+multiprocessing/flock load flake; probe passes standalone, no interaction
+with either change); retry per protocol → **2280/2280, SHIP-GATE: GREEN**.
+/tmp: 1% (140K) before → 8% (36M) after the full green run; the fresh
+TMPDIR holds 34M total and **zero** `govcell-ledger-*` dirs remain — the
+261M per-cell leak is closed; growth is bounded. Full unit suite
+`TMPDIR=/tmp/gov-r14f-unit python3 tests/run_tests.py` → **545/545 green**
+(536 + 9 new); `cmp policies/default.yaml gov/data/default.yaml`
+identical; `__pycache__` removed. Do NOT push (parent verifies).
+
+**Residual (open, wave-16 brief item):** probe-level scratch scattered
+directly under TMPDIR is NOT swept by this task — after the green gate run,
+2111 small `govred-*` dirs (~22M) plus one `gov-r13-demo-*` dir remain, from
+`make_run()`/`tempfile.mkdtemp` calls inside memoized playbooks (`_w7*`),
+one-off verifiers (`_w8_verifier_swap`, w6/w7), and probes that allocate
+their own temp dirs instead of using the cell dir. Bounded (~34M/run) but
+still accumulates across runs sharing one TMPDIR. Wave-16 should give
+probes a cell-scoped scratch dir (or track per-run allocations) so the gate
+is fully hermetic.

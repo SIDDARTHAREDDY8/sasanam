@@ -93,6 +93,7 @@ from .identity import (
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
 )
+from .log import read_entries, read_entries_with_stats
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
@@ -285,6 +286,14 @@ class ToolExecutor:
                     # cannot swap the entitlement anchor by constructing
                     # a fresh executor.
                     pass
+        # F64 (R14): registry mode WITHOUT a session identity is a
+        # silent weak mode for break-glass (the F55 residual with no
+        # entitlement checks at all). Tell the queue a registry is
+        # configured so break_glass warns loudly (stderr + audited
+        # break_glass_unprotected entry) instead of staying silent.
+        if principal_registry is not None and hasattr(
+                approvals, "note_registry_configured"):
+            approvals.note_registry_configured()
         # F51 (R12): lock-refusal audit coalescing — a sustained lock
         # disturbance (e.g. an unlink loop) refuses every sweep; the
         # refusals are fail-closed but the audit entries are
@@ -1583,18 +1592,27 @@ class ToolExecutor:
     # audited entry carries suppressed_repeats, and a storm (>= 10
     # folded repeats) is flagged for the operator.
     #
-    # F56 (R13): the coalescing window is NOT per-instance memory
+    # F60 (R14): the coalescing window is NOT per-instance memory
     # anymore — it lives in a small state file in the run dir
     # (``lock_refusal_coalesce.json``), so it survives executor
     # rotation (a fresh executor per sweep, or multi-process sweeps
     # sharing the run dir). The file is tiny and bounded: one record
     # per known refusal flag. Read-modify-write runs under an
-    # exclusive flock on a sibling lock file. A deleted/corrupt state
-    # file degrades to "audit once and recreate" (the
-    # already-documented lock-DoS, not a new hole) — never an
-    # exception. If the shared state is unreachable at all (OSError),
-    # the old per-instance coalescing is used as a best-effort
-    # fallback, still never raising out of the audit path.
+    # exclusive flock on a sibling lock file.
+    #
+    # A missing/corrupt state file does NOT degrade to "audit once
+    # and recreate" anymore — that let a corruption loop re-audit
+    # every sweep (F60). Instead the suppression decision is derived
+    # from the tamper-evident action log itself (see
+    # _log_shows_recent_lock_refusal): a recent
+    # ``approval_sweep_refused`` entry for the flag means "already
+    # audited within the window" — the sweep still refuses
+    # fail-closed, but the re-audit is suppressed and clean state is
+    # rewritten best-effort. Only a genuinely fresh run (no recent
+    # refusal in the log) audits once. If the shared state is
+    # unreachable at all (OSError), the old per-instance coalescing is
+    # used as a best-effort fallback, still never raising out of the
+    # audit path.
     _LOCK_REFUSAL_AUDIT_COALESCE_SECS = 5.0
     _LOCK_REFUSAL_STORM_THRESHOLD = 10
     _LOCK_REFUSAL_STATE_FILENAME = "lock_refusal_coalesce.json"
@@ -1607,16 +1625,19 @@ class ToolExecutor:
         return self.run_dir / self._LOCK_REFUSAL_STATE_FILENAME
 
     def _read_lock_refusal_state(self, state_path):
-        """Read the shared coalescing state; {} on missing/corrupt.
+        """Read the shared coalescing state.
 
-        Bounded: only known refusal flags are kept, values are coerced
-        to (last_audit float, suppressed int)."""
+        Returns ``(state, usable)``: ``usable`` is False when the file
+        is missing, unreadable, unparseable, or not a dict — the F60
+        corruption shapes. Bounded: only known refusal flags are kept,
+        values are coerced to (last_audit float, suppressed int).
+        """
         try:
             raw = json.loads(state_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return {}
+            return {}, False
         if not isinstance(raw, dict):
-            return {}
+            return {}, False
         state = {}
         for flag in self._LOCK_REFUSAL_KNOWN_FLAGS:
             rec = raw.get(flag)
@@ -1629,7 +1650,7 @@ class ToolExecutor:
                 continue
             state[flag] = {"last_audit": last_audit,
                            "suppressed": max(0, suppressed)}
-        return state
+        return state, True
 
     def _write_lock_refusal_state(self, state_path, state):
         """Atomically persist the shared coalescing state (temp file +
@@ -1658,6 +1679,57 @@ class ToolExecutor:
             # coalescing — best effort, never an exception.
             return self._audit_lock_refusal_local(flag, reason, now)
 
+    def _log_shows_recent_lock_refusal(self, flag):
+        """F60 (R14): True when the tamper-evident action log already
+        holds an ``approval_sweep_refused`` entry for ``flag`` inside
+        the coalesce window.
+
+        The log is append-only and HMAC-chained — the F52 run-dir
+        writer cannot silently erase its refusal entries the way it
+        can corrupt the sidecar state file — so a recent entry is a
+        trustworthy "already audited" signal for the F60 fallback.
+        Malformed lines are skipped (F63); entries with unparseable or
+        missing timestamps count as no-recent (fail-loud: at most one
+        extra audit entry). Future-dated entries never suppress — only
+        genuinely recent ones do.
+
+        Honest residual: a run-dir writer can PLANT a MAC-invalid
+        ``approval_sweep_refused`` line and corrupt the state file to
+        suppress the re-audit. The planted line fails ``_verify``
+        loudly (independent detection), and the sweep still refuses
+        fail-closed — the suppression only quiets the re-audit, and
+        only while the state corruption is actively maintained.
+
+        F63: malformed physical lines are skipped, not fatal — a
+        poisoned log plus an unusable sidecar must not crash the
+        sweep (the skip is counted by the reconciler's tolerant
+        read; here an unparseable line simply counts as no-recent,
+        so the sweep audits once, fail-loud).
+        """
+        try:
+            entries, _malformed = read_entries_with_stats(self.log.path)
+        except OSError:
+            return False
+        window = self._LOCK_REFUSAL_AUDIT_COALESCE_SECS
+        now_wall = time.time()
+        for e in reversed(entries):
+            if not isinstance(e, dict):
+                continue
+            if (e.get("event") != "approval_sweep_refused"
+                    or e.get("flag") != flag):
+                continue
+            try:
+                age = now_wall - datetime.fromisoformat(
+                    e["ts"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if 0 <= age <= window:
+                return True
+            # Entries are chronological: the first match in reverse is
+            # the newest, so an older-than-window match ends the scan.
+            break
+        return False
+
     def _audit_lock_refusal_shared(self, flag, reason, now):
         """F56: file-backed coalescing shared across executor instances
         (and processes) via the run-dir state file."""
@@ -1669,9 +1741,40 @@ class ToolExecutor:
         with open(lock_path, "a", encoding="utf-8") as lf:
             fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
             try:
-                state = self._read_lock_refusal_state(state_path)
-                rec = state.get(flag) or {"last_audit": 0.0,
-                                          "suppressed": 0}
+                state, usable = self._read_lock_refusal_state(state_path)
+                if not usable:
+                    # F60 (R14): missing/corrupt state — the F52
+                    # run-dir writer may be running a corruption loop.
+                    # Treating "no state" as "never audited" re-audits
+                    # every sweep. Derive suppression from the
+                    # tamper-evident log instead: a recent refusal for
+                    # this flag means "already audited within the
+                    # window" — stay silent (the SWEEP still refuses
+                    # fail-closed) and rewrite clean state
+                    # best-effort so a transient corruption heals.
+                    # Only a genuinely fresh run (no recent refusal in
+                    # the log) audits once.
+                    if self._log_shows_recent_lock_refusal(flag):
+                        try:
+                            # Record the refusal as already-audited at
+                            # `now` so coalescing survives the heal:
+                            # the next sweep reads usable state and
+                            # folds instead of re-auditing.
+                            self._write_lock_refusal_state(
+                                state_path,
+                                {flag: {"last_audit": now,
+                                        "suppressed": 0}})
+                        except OSError:
+                            pass
+                        # Mirror on the instance attrs
+                        # (introspection / legacy readers).
+                        self._lock_refusal_last_audit = now
+                        self._lock_refusal_suppressed = 0
+                        return False
+                    rec = {"last_audit": 0.0, "suppressed": 0}
+                else:
+                    rec = state.get(flag) or {"last_audit": 0.0,
+                                              "suppressed": 0}
                 if (now - rec["last_audit"]
                         < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
                     rec["suppressed"] += 1

@@ -18,13 +18,63 @@ Residual limitation: a caller that builds its *own* plain
 bypasses governance entirely -- in-process Python cannot prevent that.
 The deployment rule is: agent code is only ever handed governed tools.
 (See ``gov/adapters/README.md``.)
+
+F62 (R14 follow-up): construction is fail-closed on the input schema.
+langchain-core validates tool input against ``args_schema`` *before*
+``_run`` is reached; with pydantic's default ``extra="ignore"`` any
+undeclared kwarg is silently dropped there -- it never reaches
+mediation, the DLP scan, or the approval record. ``GovernedStructuredTool``
+therefore refuses any ``args_schema`` whose config does not set
+``extra="allow"`` (checked on the class itself, so both
+:func:`make_governed_tool` and direct construction are covered, and on
+later reassignment too).
 """
 
 from typing import Any, Optional
 
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, model_validator
 
 from .core import GovernedBinding, GovernedToolFacade, normalize_result
+
+
+def _args_schema_allows_undeclared(schema):
+    """True iff langchain-core will pass undeclared kwargs through to
+    ``_run`` instead of silently dropping them.
+
+    F62: ``BaseTool._parse_input`` validates with
+    ``args_schema.model_validate(tool_input)`` and keeps
+    ``model_dump()``. With pydantic's default ``extra="ignore"`` the
+    dump contains only declared fields -- undeclared kwargs vanish
+    before mediation. Only ``extra="allow"`` preserves them. A
+    JSON-schema *dict* ``args_schema`` is returned unchanged by
+    ``_parse_input`` (no coercion), so it is safe as well.
+    """
+    if schema is None:
+        return False
+    if isinstance(schema, dict):
+        # JSON-schema dict: _parse_input returns the input unchanged.
+        return True
+    config = getattr(schema, "model_config", None) or {}
+    if str(config.get("extra") or "").lower() == "allow":
+        return True
+    # pydantic v1 models expose the setting as __config__.extra.
+    v1_config = getattr(schema, "__config__", None)
+    if v1_config is not None and str(
+            getattr(v1_config, "extra", "") or "").lower() == "allow":
+        return True
+    return False
+
+
+def _f62_schema_error(schema):
+    return (
+        "F62: GovernedStructuredTool requires args_schema with "
+        "extra='allow' (got %r). langchain-core validates tool input "
+        "against args_schema BEFORE _run is reached; with pydantic's "
+        "default extra='ignore', undeclared kwargs (e.g. a smuggled "
+        "'bcc') are silently dropped and never reach mediation, the DLP "
+        "scan, or the approval record. Declare "
+        "model_config = ConfigDict(extra='allow') on your schema so "
+        "every input reaches mediation." % (type(schema).__name__,))
 
 
 def _structured_tool_base():
@@ -58,6 +108,25 @@ class GovernedStructuredTool(_structured_tool_base()):
     _framework_tool: str = PrivateAttr(default="")
     _on_denied: str = PrivateAttr(default="raise")
     _on_queued: str = PrivateAttr(default="raise")
+
+    @model_validator(mode="after")
+    def _f62_require_extra_allow(self):
+        # F62: fail closed at construction. The check lives on the class
+        # itself (not only in make_governed_tool) so direct
+        # GovernedStructuredTool(...) construction cannot bypass it.
+        if not _args_schema_allows_undeclared(self.args_schema):
+            raise ValueError(_f62_schema_error(self.args_schema))
+        return self
+
+    def __setattr__(self, name, value):
+        # F62: a post-construction `tool.args_schema = <strict schema>`
+        # would re-open the silent-drop hole (langchain clears its cached
+        # input schema on reassignment), so reassignments are held to the
+        # same rule as construction.
+        if name == "args_schema" and not _args_schema_allows_undeclared(
+                value):
+            raise ValueError(_f62_schema_error(value))
+        super().__setattr__(name, value)
 
     def _mediate(self, kwargs):
         if self._facade is None:
@@ -111,8 +180,17 @@ def make_governed_tool(binding, name, description, args_schema,
     description : str
         The LangChain tool description the agent sees.
     args_schema : pydantic.BaseModel
-        Input schema (required by ``StructuredTool``). Invalid inputs
-        are rejected by LangChain's own validation *before* mediation.
+        Input schema (required by ``StructuredTool``). F62: the schema
+        MUST declare ``model_config = ConfigDict(extra="allow")`` --
+        any other config raises here, at construction. langchain-core
+        validates tool input against this schema *before* ``_run`` is
+        reached; with pydantic's default ``extra="ignore"`` undeclared
+        kwargs would be silently dropped there, never reaching
+        mediation, the DLP scan, or the approval record. Declared-field
+        violations (missing or wrongly-typed declared fields) still
+        raise from LangChain validation before mediation; undeclared
+        kwargs now pass through to mediation, where they are denied or
+        visibly approval-gated -- never silently clean.
     framework_tool : str, optional
         Binding-level tool name; defaults to ``name``.
     on_denied, on_queued : {"raise", "return"}

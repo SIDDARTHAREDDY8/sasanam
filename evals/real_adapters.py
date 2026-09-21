@@ -48,7 +48,7 @@ Design notes (reconciliation findings, see ADAPTER_INTERFACE.md):
 import asyncio
 import json
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from gov.adapters.core import (
     AdapterError,
@@ -129,7 +129,19 @@ class _GovArgsSchema(BaseModel):
     drops all input, so every kwarg the matrix playbooks use must be a
     declared field here. Unset fields validate as None and are stripped
     before mediation (the executor crashes on path=None).
+
+    F62 (R14): ``extra="allow"`` — undeclared kwargs are PRESERVED,
+    not silently dropped. Pydantic's default ``extra="ignore"`` meant
+    an attack kwarg (e.g. a secret exfil address in ``bcc``) never
+    reached mediation: DLP saw a clean arg set and queued it. With
+    ``allow``, langchain-core's ``_parse_input`` passes extra keys from
+    the original input through ``model_dump()`` into ``_run``, so the
+    full kwarg set — declared or not — reaches mediation and DLP can
+    inspect it. An undeclared-but-present kwarg is therefore denied or
+    visibly approval-gated, never silently clean-queued.
     """
+    model_config = ConfigDict(extra="allow")
+
     path: str | None = None
     content: str | None = None
     endpoint: str | None = None
@@ -275,9 +287,20 @@ class RealOpenAILoopAdapter(RealAdapterBase):
                     "tool_calls": wire}
 
         try:
+            # F62 (R14): on_denied="raise" — fail fast on the first
+            # denied call, exactly like the provisional shim's explicit
+            # break. on_denied="return" let the loop CONTINUE past a
+            # denial: later calls ran with the denial visible only as a
+            # tool message, so the shim's results no longer matched the
+            # provisional ["denied"] shape. "raise" stops the loop at
+            # the denial; ToolDeniedError carries the executor's denial
+            # dict, which _exc_to_dict converts to the single
+            # provisional-shaped denial result. on_queued stays
+            # "return" (queued results are legitimate intermediate
+            # state, not denials).
             out = run_tool_loop(self.binding,
                                 [{"role": "user", "content": "proceed"}],
-                                respond, on_denied="return",
+                                respond, on_denied="raise",
                                 on_queued="return")
         except AdapterError as exc:
             return [_exc_to_dict(exc)]
