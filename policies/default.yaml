@@ -1,0 +1,52 @@
+# Default governance policies for the synthetic agent-governance demo.
+# Evaluated top to bottom; the first matching policy wins.
+
+version: 1
+
+rate_limit:
+  max_external_calls_per_run: 5
+
+defaults:
+  effect: allow
+  reason: No policy matched; action allowed by default.
+
+policies:
+  - id: deny-secret-reads
+    description: Deny reads of secret-like paths.
+    effect: deny
+    flag: secret_access_attempt
+    match:
+      tool: [read_file]
+      path_contains_any: [secret, credentials, .pem, .env, token, private_key, id_rsa]
+    reason: Read of a secret-like path is denied and flagged for review.
+
+  - id: deny-delete-outside-sandbox
+    description: Deny file deletes outside the run sandbox.
+    effect: deny
+    match:
+      tool: [delete_file]
+      path_outside_sandbox: true
+    reason: File deletes outside the run sandbox are denied.
+
+  - id: approval-outbound-sends
+    description: Outbound sends require human approval.
+    effect: require_approval
+    match:
+      tool: [send_email, http_post, send_message]
+    reason: Outbound communication requires human approval before it leaves the sandbox.
+
+  - id: approval-write-outside-sandbox
+    description: File writes outside the run sandbox require human approval.
+    effect: require_approval
+    match:
+      tool: [write_file]
+      path_outside_sandbox: true
+    reason: File writes outside the run sandbox require human approval.
+
+  - id: approval-external-rate-guard
+    description: More than 5 external API calls per run require human approval.
+    effect: require_approval
+    match:
+      tool: [api_call]
+      min_external_calls: 5
+    reason: External API call budget exceeded; further calls require human approval.
