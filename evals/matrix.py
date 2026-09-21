@@ -1694,3 +1694,226 @@ SITUATIONS["sit41"] = {
                      "As low."),
     }),
 }
+
+# ----------------------------------------------------------------- SIT 42
+SITUATIONS["sit42"] = {
+    "title": "F25 residual — append-lock fallback: unsupported flock, "
+             "lock-holding DoS, crashed holder",
+    "threats": ["T6"],
+    "sources": [
+        "Wave-8 brief item 1, measured 2026-09-21 (residuals of the F25 "
+        "closure, alias W7-3).",
+    ],
+    "summary": (
+        "The F25 closure serializes ActionLog.append with a timed POSIX "
+        "flock (30s, fail closed). Measured residuals: (a) flock raising "
+        "ENOSYS (unsupported filesystem) -> the retry loop exhausts the "
+        "timeout and raises AppendLockError with zero bytes written — "
+        "fail closed, never unlocked; (b) a live process holding the "
+        "lock -> contender appends raise AppendLockError after the "
+        "timeout, the chain verifies, no partial or duplicate entries — "
+        "a fail-closed availability hit, and the executor's write-ahead "
+        "audit means executor.call raises BEFORE the tool executes (no "
+        "executed-but-unlogged action); after release, normal operation "
+        "resumes; (c) a SIGKILLed lock holder -> the kernel releases the "
+        "flock and the next append recovers with the chain verifying. "
+        "Documented residual (unchanged): a no-op-success flock (e.g. "
+        "NFS nolock) would serialize nothing — advisory locks depend on "
+        "filesystem support, so multi-host deployments need a single "
+        "writer or external coordination."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "ENOSYS flock fails closed; lock-DoS fails closed with "
+                "no partial writes; crashed holder recovers. F25 "
+                "residuals measured, no finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ----------------------------------------------------------------- SIT 43
+SITUATIONS["sit43"] = {
+    "title": "F31 CLOSED — identity-verifier swap: exact tool traversal "
+             "blocked, verifier write-once",
+    "threats": ["T5"],
+    "sources": [
+        "Hardening round-7, measured 2026-09-21 (closes F31; residual of "
+        "the F26 closure, alias W7-4).",
+    ],
+    "summary": (
+        "The exact wave-8 traversal is blocked: the LangChain tool now "
+        "holds a restricted GovernedToolFacade (mediation only — no "
+        "executor/identity attributes), so "
+        "tool._binding.executor.approvals.set_identity_verifier(...) "
+        "raises AttributeError. ApprovalQueue.set_identity_verifier is "
+        "write-once: the first executor installs its verifier at "
+        "construction and every later DIRECT call raises "
+        "IdentityVerifierAlreadySetError, so a verifier swap can no "
+        "longer collapse the F26 identity binding after construction; a "
+        "second executor sharing the queue keeps the installed verifier "
+        "(idempotent install) rather than replacing it. Non-callable "
+        "verifiers are refused with TypeError. A forged AgentIdentity still fails "
+        "_authenticate_caller with UnmintedIdentityError, and the tool "
+        "result surface exposes no ApprovalQueue internals. Residual: "
+        "unrestricted hostile same-process Python introspection remains "
+        "a sandbox/deployment boundary, not a tool-surface issue."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Exact traversal blocked (AttributeError); verifier "
+                "write-once enforced; forged identity refused. F31 "
+                "CLOSED."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ----------------------------------------------------------------- SIT 44
+SITUATIONS["sit44"] = {
+    "title": "F27/F28 CLOSED — action log now mirrors the ledger's "
+             "fail-closed checkpoint rule",
+    "threats": ["T6"],
+    "sources": [
+        "Hardening round-7, measured 2026-09-21 (closes F27 HIGH, F28 "
+        "LOW; KeyRing.verify_log hardened to match).",
+    ],
+    "summary": (
+        "The action log now mirrors the egress ledger's fail-closed "
+        "rule. Deleting checkpoints.jsonl and truncating the tail "
+        "(5 entries -> 2) returns ok=False (typed require_verified "
+        "raises LogUnverifiableError); a corrupt sidecar returns "
+        "ok=False without an uncaught JSONDecodeError; an empty "
+        "sidecar fails closed; malformed log JSON fails closed. "
+        "Sequence numbers are walked from genesis, so gaps/reordering "
+        "fail verification. ok=True is never reported on the strength "
+        "of zero checked checkpoints for a non-empty log, and a "
+        "genuinely empty log without a sidecar still verifies clean. "
+        "KeyRing.verify_log (the multi-epoch path) enforces the same "
+        "rule. Residual: checkpoint availability is required — loss of "
+        "both log history and the sidecar is unrecoverable, but never "
+        "silently accepted."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Deleted/corrupt/empty sidecars and truncation all fail "
+                "closed on both verification paths. F27/F28 CLOSED."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ----------------------------------------------------------------- SIT 45
+SITUATIONS["sit45"] = {
+    "title": "F30 CLOSED — policy_lint warns on dangerous-but-valid "
+             "knobs; policy edits stay non-agent-reachable",
+    "threats": ["T5"],
+    "sources": [
+        "Hardening round-7, measured 2026-09-21 (closes F30 LOW).",
+    ],
+    "summary": (
+        "No governed tool edits policy: write_file aimed at the real "
+        "policy file from a write-capable role is queued for human "
+        "approval and would be quarantined even if approved — the file "
+        "is unchanged; there is no policy-reload tool, and the executor "
+        "snapshots campaign_allowlist / batch_excluded_queue_reasons as "
+        "tuples at construction. policy_lint now warns on the "
+        "dangerous-but-valid knobs: an empty "
+        "batch_excluded_queue_reasons warns that individual-review "
+        "protection is disabled; auto_approve enabled with "
+        "max_risk_score >= 90 warns; '*'/'?' wildcards in campaign "
+        "allowlist principals, domains, or parameter keys warn "
+        "(wildcards stay runtime-inert: matching is exact equality). "
+        "The default policy draws none of the new warnings. Residual: "
+        "warnings do not block intentionally risky configuration."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Policy edits are not agent-reachable; knobs are "
+                "construction snapshots. Lint warns on all "
+                "dangerous-but-valid knobs (F30 CLOSED)."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ----------------------------------------------------------------- SIT 46
+SITUATIONS["sit46"] = {
+    "title": "F26 residual — CLI trust root: no non-CLI string path to "
+             "resolve_review",
+    "threats": ["T5"],
+    "sources": [
+        "Wave-8 brief item 5, measured 2026-09-21 (residual of the F26 "
+        "closure, alias W7-4).",
+    ],
+    "summary": (
+        "Every break_glass/resolve_review path requires an AgentIdentity "
+        "object: caller-supplied operator/reviewer strings raise "
+        "TypeError at _authenticate_caller, which runs before any ticket "
+        "logic (measured on both methods, including the pre-F26 ticket "
+        "fallback path). The only production call sites are the CLI's "
+        "break-glass and review-resolve commands, which bind --by into "
+        "an AgentIdentity (terminal-asserted human trust root, "
+        "documented); no gov/, demo/, examples/, or adapter code passes "
+        "a string. The legacy-ticket fallback compares the reviewer's "
+        "AUTHENTICATED principal against the stored operator label — "
+        "the safe direction. decide()'s decided_by label remains a "
+        "plain string, but that is the audited individual human-decision "
+        "path, not the identity-bound SoD control. No string path "
+        "found; defense holds, no finding."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Strings raise TypeError on every break-glass/review "
+                "path; the only string entry is the CLI trust root "
+                "binding into identity objects. F26 residual measured, "
+                "no finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ----------------------------------------------------------------- SIT 47
+SITUATIONS["sit47"] = {
+    "title": "F29 CLOSED — audit report prominently discloses the "
+             "public/dev signing key",
+    "threats": ["T6"],
+    "sources": [
+        "Hardening round-7, measured 2026-09-21 (closes F29 MEDIUM).",
+    ],
+    "summary": (
+        "The audit report now derives a signing-key status banner from "
+        "the entries' actual key_epoch values (demo/make_report.py "
+        "key_status). Dev-key reports prominently display "
+        "PUBLIC/DEVELOPMENT and state the log is NOT tamper-evident "
+        "against anyone with the key; mixed/non-dev reports use "
+        "qualified integrity language. No unqualified 'tamper-evident "
+        "log' claim remains in the Markdown or HTML output — verified "
+        "on rendered text for dev, mixed, non-dev, and empty reports, "
+        "and on the shipped reports under reports/, which were "
+        "regenerated with the disclosure. The CLI still prints the "
+        "dev-key stderr warning with key_epoch 'dev' in the verdict. "
+        "Residual: key_epoch labels are self-declared metadata — the "
+        "disclosure does not prove key custody."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Report discloses the public/dev key and qualifies "
+                "integrity claims; no unqualified tamper-evidence "
+                "claim. F29 CLOSED."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}

@@ -13,7 +13,11 @@ Each entry is one JSON line. Integrity comes from two layers:
    ``{seq, hash}`` authenticated with the same key is written to
    ``checkpoints.jsonl`` next to the log. ``verify_chain`` requires the log
    to be at least as long as the newest checkpoint and to agree with it at
-   that sequence number, which defeats silent tail truncation.
+   that sequence number, which defeats silent tail truncation. A non-empty
+   log whose checkpoint sidecar is missing, empty, or corrupt fails
+   verification CLOSED (F27/F28): ``ok=True`` is never reported on the
+   strength of zero checked checkpoints, and corrupt content is a verdict,
+   never an exception.
 
 Key custody: the HMAC key comes from the ``GOV_LOG_KEY`` environment
 variable (``GOV_LOG_KEY_EPOCH`` optionally names the key version and is
@@ -56,6 +60,18 @@ class AppendLockError(OSError):
     the action as logged. Raised instead of writing unlocked, which is
     what forked the HMAC chain under concurrent writers (W7-3).
     """
+
+
+class LogUnverifiableError(Exception):
+    """Fail-closed: the action log (or its checkpoint sidecar) cannot be
+    authenticated — corrupt, tampered, truncated, or missing its
+    checkpoint anchor.
+
+    Raised by :func:`require_verified`; the dict-returning :func:`_verify`
+    reports the same conditions as ``{"ok": False, "error": ...}``
+    instead of raising, so audit tooling (e.g. report generators) never
+    crashes on a corrupt file (F28). Never treat the log as verified
+    when this is raised."""
 
 
 @contextlib.contextmanager
@@ -225,13 +241,19 @@ class ActionLog:
 
     @property
     def checkpoints(self):
-        """All signed checkpoints, oldest first."""
+        """All signed checkpoints, oldest first.
+
+        F28: unparseable sidecar lines are skipped (counted by
+        ``_parse_sidecar_lines``) instead of crashing the reader —
+        corruption is a verifier verdict (fail closed), not an
+        exception, for in-process readers.
+        """
         out = []
         if self.checkpoint_path.exists():
-            for line in self.checkpoint_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line:
-                    out.append(json.loads(line))
+            cps, _ = _parse_sidecar_lines(
+                self.checkpoint_path.read_text(
+                    encoding="utf-8").splitlines())
+            out.extend(cps)
         return out
 
     def write_checkpoint(self, seq=None, entry_hash=None):
@@ -342,80 +364,169 @@ def read_entries(path):
     return out
 
 
+def _parse_sidecar_lines(lines):
+    """Parse checkpoint sidecar lines. Returns (checkpoints, n_bad).
+
+    Never raises: unparseable or malformed lines are counted, not
+    trusted. ``_verify`` fails closed on any bad line for a non-empty
+    log (F28) — mirroring the egress ledger's fail-closed twin.
+    """
+    cps, n_bad = [], 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cp = json.loads(line)
+        except ValueError:
+            n_bad += 1
+            continue
+        if isinstance(cp, dict) and isinstance(cp.get("seq"), int):
+            cps.append(cp)
+        else:
+            n_bad += 1
+    return cps, n_bad
+
+
 def _verify(path):
-    """Full verification. Returns a verdict dict."""
+    """Full verification. Returns a verdict dict.
+
+    Never raises on file CONTENT problems (F28): corrupt log lines and
+    corrupt checkpoint sidecars are reported as
+    ``{"ok": False, "error": ...}``, never as an uncaught exception and
+    never as ``ok=True``.
+
+    F27: checkpointing is always enabled for ActionLog (every append
+    writes a checkpoint), so a NON-EMPTY log with a missing, empty, or
+    corrupt sidecar fails CLOSED — the egress ledger's rule (non-empty
+    ledger + no sidecar -> unverifiable) now has an action-log twin.
+    ``ok=True`` is never reported on the strength of zero checked
+    checkpoints for a non-empty log; a truncated log never verifies
+    clean.
+    """
     key, epoch = _active_key()
     p = Path(path)
+
+    def _fail(entries, error, broken_seq=None, checked=0):
+        return {"ok": False, "entries": len(entries),
+                "broken_seq": broken_seq, "checkpoints_checked": checked,
+                "key_epoch": epoch, "format_version": FORMAT_VERSION,
+                "error": error}
+
     if not p.exists():
-        return {"ok": False, "entries": 0, "broken_seq": None,
-                "checkpoints_checked": 0, "key_epoch": epoch,
-                "format_version": FORMAT_VERSION,
-                "error": "log file does not exist"}
+        return _fail([], "log file does not exist")
     entries = []
     prev = GENESIS
-    for line in p.read_text(encoding="utf-8").splitlines():
+    for lineno, line in enumerate(
+            p.read_text(encoding="utf-8").splitlines(), 1):
         if not line.strip():
             continue
-        entry = json.loads(line)
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return _fail(entries,
+                         "log line %d is not valid JSON (corrupt log); "
+                         "failing closed" % lineno)
         entries.append(entry)
         seq = entry.get("seq")
+        # F27: the full chain walk from genesis runs even when no
+        # checkpoint exists; any seq gap fails verification here.
+        if seq != len(entries):
+            return _fail(entries,
+                         "sequence gap at log line %d: expected seq %d, "
+                         "got %r (entries deleted or reordered); failing "
+                         "closed" % (lineno, len(entries), seq),
+                         broken_seq=seq)
         if entry.get("format_version") != FORMAT_VERSION:
-            return {"ok": False, "entries": len(entries), "broken_seq": seq,
-                    "checkpoints_checked": 0, "key_epoch": epoch,
-                    "format_version": FORMAT_VERSION,
-                    "error": "unsupported format_version %r at seq %s"
-                             % (entry.get("format_version"), seq)}
+            return _fail(entries,
+                         "unsupported format_version %r at seq %s"
+                         % (entry.get("format_version"), seq),
+                         broken_seq=seq)
         if entry.get("prev_hash") != prev:
-            return {"ok": False, "entries": len(entries), "broken_seq": seq,
-                    "checkpoints_checked": 0, "key_epoch": epoch,
-                    "format_version": FORMAT_VERSION,
-                    "error": "chain link broken at seq %s" % seq}
+            return _fail(entries, "chain link broken at seq %s" % seq,
+                         broken_seq=seq)
         mac = _compute_mac(key, entry.get("key_epoch", epoch), prev,
                            _canonical(entry))
         if not hmac.compare_digest(entry.get("hash", ""), mac):
-            return {"ok": False, "entries": len(entries), "broken_seq": seq,
-                    "checkpoints_checked": 0, "key_epoch": epoch,
-                    "format_version": FORMAT_VERSION,
-                    "error": "MAC mismatch at seq %s (history rewritten or "
-                             "wrong GOV_LOG_KEY)" % seq}
+            return _fail(entries,
+                         "MAC mismatch at seq %s (history rewritten or "
+                         "wrong GOV_LOG_KEY)" % seq, broken_seq=seq)
         prev = entry["hash"]
 
     # Checkpoint comparison defeats tail truncation: the log must reach the
     # newest checkpoint and agree with it there.
     cp_path = p.parent / "checkpoints.jsonl"
     checked = 0
-    if cp_path.exists():
-        cps = [json.loads(l) for l in cp_path.read_text(encoding="utf-8").splitlines()
-               if l.strip()]
-        if cps:
-            latest = max(cps, key=lambda c: c["seq"])
-            checked = len(cps)
-            expect = _checkpoint_mac(key, latest.get("key_epoch", epoch),
-                                     latest["seq"], latest["hash"])
-            if not hmac.compare_digest(latest.get("mac", ""), expect):
-                return {"ok": False, "entries": len(entries),
-                        "broken_seq": None, "checkpoints_checked": checked,
-                        "key_epoch": epoch, "format_version": FORMAT_VERSION,
-                        "error": "checkpoint MAC invalid (checkpoint tampered "
-                                 "or wrong GOV_LOG_KEY)"}
-            if len(entries) < latest["seq"]:
-                return {"ok": False, "entries": len(entries),
-                        "broken_seq": None, "checkpoints_checked": checked,
-                        "key_epoch": epoch, "format_version": FORMAT_VERSION,
-                        "error": "tail truncation: log has %d entries but "
-                                 "newest checkpoint is at seq %d"
-                                 % (len(entries), latest["seq"])}
-            if entries[latest["seq"] - 1]["hash"] != latest["hash"]:
-                return {"ok": False, "entries": len(entries),
-                        "broken_seq": latest["seq"],
-                        "checkpoints_checked": checked,
-                        "key_epoch": epoch, "format_version": FORMAT_VERSION,
-                        "error": "checkpoint mismatch at seq %d "
-                                 "(log rewritten after checkpoint)"
-                                 % latest["seq"]}
+    cps, n_bad = [], 0
+    sidecar_missing = not cp_path.exists()
+    if not sidecar_missing:
+        try:
+            text = cp_path.read_text(encoding="utf-8")
+        except OSError as e:
+            return _fail(entries, "checkpoint sidecar %s unreadable: %s; "
+                                  "failing closed" % (cp_path.name, e))
+        cps, n_bad = _parse_sidecar_lines(text.splitlines())
+    if entries:
+        # F27: non-empty log, so checkpointing anchored every entry.
+        if sidecar_missing:
+            return _fail(entries,
+                         "checkpoint sidecar %s is MISSING for a non-empty "
+                         "log (%d entries): the tail-truncation anchor is "
+                         "gone — truncation cannot be ruled out; failing "
+                         "closed" % (cp_path.name, len(entries)))
+        if n_bad:
+            return _fail(entries,
+                         "checkpoint sidecar %s is CORRUPT (%d unparseable "
+                         "line(s)): refusing to verify — failing closed; "
+                         "restore the sidecar from backup" % (cp_path.name,
+                                                              n_bad))
+        if not cps:
+            return _fail(entries,
+                         "checkpoint sidecar %s is EMPTY for a non-empty "
+                         "log (%d entries): no truncation anchor — "
+                         "failing closed" % (cp_path.name, len(entries)))
+    elif n_bad:
+        # Empty log: nothing to truncate, but a corrupt sidecar is never
+        # acceptable — fail closed rather than bless it.
+        return _fail(entries,
+                     "checkpoint sidecar %s is CORRUPT (%d unparseable "
+                     "line(s)); failing closed" % (cp_path.name, n_bad))
+    if cps:
+        latest = max(cps, key=lambda c: c["seq"])
+        checked = len(cps)
+        expect = _checkpoint_mac(key, latest.get("key_epoch", epoch),
+                                 latest["seq"], latest["hash"])
+        if not hmac.compare_digest(latest.get("mac", ""), expect):
+            return _fail(entries,
+                         "checkpoint MAC invalid (checkpoint tampered "
+                         "or wrong GOV_LOG_KEY)", checked=checked)
+        if len(entries) < latest["seq"]:
+            return _fail(entries,
+                         "tail truncation: log has %d entries but "
+                         "newest checkpoint is at seq %d"
+                         % (len(entries), latest["seq"]), checked=checked)
+        if entries[latest["seq"] - 1]["hash"] != latest["hash"]:
+            return _fail(entries,
+                         "checkpoint mismatch at seq %d "
+                         "(log rewritten after checkpoint)"
+                         % latest["seq"], broken_seq=latest["seq"],
+                         checked=checked)
     return {"ok": True, "entries": len(entries), "broken_seq": None,
             "checkpoints_checked": checked, "key_epoch": epoch,
             "format_version": FORMAT_VERSION, "error": None}
+
+
+def require_verified(path):
+    """Raise :class:`LogUnverifiableError` unless the log fully verifies.
+
+    F27/F28: the programmatic fail-closed twin of the egress ledger's
+    ``require_verified`` — use before trusting a log's contents.
+    Returns the verdict dict on success.
+    """
+    v = _verify(path)
+    if not v["ok"]:
+        raise LogUnverifiableError(v["error"] or "log failed verification")
+    return v
 
 
 def verify_chain(path):

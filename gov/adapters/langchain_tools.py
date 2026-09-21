@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 from pydantic import PrivateAttr
 
-from .core import GovernedBinding, normalize_result
+from .core import GovernedBinding, GovernedToolFacade, normalize_result
 
 
 def _structured_tool_base():
@@ -44,20 +44,29 @@ class GovernedStructuredTool(_structured_tool_base()):
 
     Do not instantiate directly -- use :func:`make_governed_tool`, which
     validates the tool name against the binding up front.
+
+    F31: the tool holds a restricted :class:`GovernedToolFacade`, NOT
+    the full ``GovernedBinding``. A tool object is handed to agent code,
+    so it must not expose the raw ``ToolExecutor`` (from which
+    ``ApprovalQueue.set_identity_verifier`` was reachable via
+    ``.approvals`` — the wave-8 traversal
+    ``tool._binding.executor.approvals.set_identity_verifier(...)`` no
+    longer resolves: the facade has no ``executor`` attribute).
     """
 
-    _binding: Optional[GovernedBinding] = PrivateAttr(default=None)
+    _facade: Optional[GovernedToolFacade] = PrivateAttr(default=None)
     _framework_tool: str = PrivateAttr(default="")
     _on_denied: str = PrivateAttr(default="raise")
     _on_queued: str = PrivateAttr(default="raise")
 
     def _mediate(self, kwargs):
-        if self._binding is None:
+        if self._facade is None:
             # Defensive: a GovernedStructuredTool must always be built via
             # make_governed_tool. Fail closed rather than run unmediated.
             raise RuntimeError(
-                "GovernedStructuredTool has no binding; refusing to run.")
-        result = self._binding.call(
+                "GovernedStructuredTool has no mediation facade; refusing "
+                "to run.")
+        result = self._facade.call(
             self._framework_tool,
             on_denied=self._on_denied,
             on_queued=self._on_queued,
@@ -135,7 +144,9 @@ def make_governed_tool(binding, name, description, args_schema,
         func=None,
         coroutine=None,
         **tool_kwargs)
-    tool._binding = binding
+    # F31: stash the restricted facade, not the full binding — the tool
+    # object is agent-reachable and must not expose the raw executor.
+    tool._facade = binding.facade()
     tool._framework_tool = framework_tool
     tool._on_denied = on_denied
     tool._on_queued = on_queued

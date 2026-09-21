@@ -425,10 +425,19 @@ class KeyRing:
         entries = []
         epochs_seen = []
         prev = _logmod.GENESIS
-        for line in p.read_text(encoding="utf-8").splitlines():
+        for lineno, line in enumerate(
+                p.read_text(encoding="utf-8").splitlines(), 1):
             if not line.strip():
                 continue
-            entry = json.loads(line)
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                # F28: corrupt log JSON fails closed, never raises.
+                return {"ok": False, "entries": len(entries),
+                        "broken_seq": None, "epochs_seen": epochs_seen,
+                        "checkpoints_checked": 0,
+                        "error": "log line %d is not valid JSON (corrupt "
+                                 "log); failing closed" % lineno}
             entries.append(entry)
             seq = entry.get("seq")
             if entry.get("format_version") != _logmod.FORMAT_VERSION:
@@ -464,14 +473,48 @@ class KeyRing:
             prev = entry["hash"]
 
         # Checkpoint comparison defeats tail truncation (same argument as
-        # gov/log.py, but per-epoch keys).
+        # gov/log.py, but per-epoch keys). F27/F28: a non-empty log with a
+        # missing, corrupt, or empty sidecar fails CLOSED — never ok=True
+        # on the strength of zero checked checkpoints.
         cp_path = p.parent / "checkpoints.jsonl"
         checked = 0
-        if cp_path.exists():
-            cps = [json.loads(l)
-                   for l in cp_path.read_text(encoding="utf-8").splitlines()
-                   if l.strip()]
-            if cps:
+        cps, n_bad = [], 0
+        sidecar_missing = not cp_path.exists()
+        if not sidecar_missing:
+            try:
+                text = cp_path.read_text(encoding="utf-8")
+            except OSError as e:
+                return {"ok": False, "entries": len(entries),
+                        "broken_seq": None, "epochs_seen": epochs_seen,
+                        "checkpoints_checked": 0,
+                        "error": "checkpoint sidecar %s unreadable: %s; "
+                                 "failing closed" % (cp_path.name, e)}
+            cps, n_bad = _logmod._parse_sidecar_lines(text.splitlines())
+        if entries:
+            if sidecar_missing:
+                return {"ok": False, "entries": len(entries),
+                        "broken_seq": None, "epochs_seen": epochs_seen,
+                        "checkpoints_checked": 0,
+                        "error": "checkpoint sidecar %s is MISSING for a "
+                                 "non-empty log (%d entries): tail "
+                                 "truncation cannot be ruled out; failing "
+                                 "closed" % (cp_path.name, len(entries))}
+            if n_bad:
+                return {"ok": False, "entries": len(entries),
+                        "broken_seq": None, "epochs_seen": epochs_seen,
+                        "checkpoints_checked": 0,
+                        "error": "checkpoint sidecar %s is CORRUPT (%d "
+                                 "unparseable line(s)); failing closed"
+                                 % (cp_path.name, n_bad)}
+            if not cps:
+                return {"ok": False, "entries": len(entries),
+                        "broken_seq": None, "epochs_seen": epochs_seen,
+                        "checkpoints_checked": 0,
+                        "error": "checkpoint sidecar %s is EMPTY for a "
+                                 "non-empty log (%d entries): no truncation "
+                                 "anchor; failing closed"
+                                 % (cp_path.name, len(entries))}
+        if cps:
                 latest = max(cps, key=lambda c: c["seq"])
                 checked = len(cps)
                 try:

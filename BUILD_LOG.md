@@ -1144,3 +1144,112 @@ Gates (2026-09-21): `tests/run_tests.py` 358/358 OK (338 + 20 new);
 `evals/FINDINGS.md`: F23–F26 marked CLOSED with verification +
 residuals; original reproductions preserved.
 - NOT pushed (private repo; coordinator handles pushes).
+
+## 2026-09-21 22:35 UTC — TEAM ADVERSARY WAVE-8: six new situations (sit42-47), five findings (F27-F31), gate green 1128/1128
+
+Rebuilt the Wave-8 measurement block in evals/run_evals.py (was 105,879 bytes with a
+runtime NameError: the sit42-47 factory wrote into PLAYBOOKS before the dict existed;
+py_compile does not catch it). New block is 10,325 bytes; file now 99,705 bytes
+(under the 100KB cap); sit42-47 register as lambdas inside PLAYBOOKS after declaration.
+All six measurements return all-positive observed conditions; all six wave-8 cells pass
+on the provisional harness; full gate: 1128/1128 GREEN (564 provisional + 564 real),
+exit 0; unit suite 358/358 green; tests.test_adversary_matrix 4/4 green.
+
+Findings filed in evals/FINDINGS.md:
+- F27 HIGH: deleting the action-log checkpoint sidecar lets a truncated log verify
+  clean (ok=True, checkpoints_checked=0) — tamper-evidence bypass, fails OPEN.
+- F28 LOW: corrupt checkpoint sidecar raises uncaught JSONDecodeError — DoS on audit.
+- F29 MEDIUM: shipped audit reports claim "tamper-evident" with no disclosure that
+  entries are HMAC'd under the public development key (key_epoch "dev" hidden).
+- F30 LOW: policy_lint silent on empty batch_excluded_queue_reasons, auto_approve
+  with max_risk_score 100, and wildcard campaign allowlist (runtime-inert today).
+- F31 MEDIUM: LangChain tool._binding.executor.approvals reaches
+  set_identity_verifier — verified end-to-end traversal lets a forged AgentIdentity
+  queue break-glass tickets, defeating the F26 identity binding. Requires code-level
+  tool-object access (not prompt injection alone). Result surface is clean (sit43
+  queue_unreachable observed); the object graph is the open path.
+
+Honest boundaries confirmed: lock ENOSYS fails closed with zero-byte file; live
+lock contention fails closed with chain intact (no partial/duplicate records);
+SIGTERM'd lock holder releases the flock and the next append succeeds; egress
+ledger fails closed on deleted/corrupt/stale checkpoint sidecars
+(LedgerUnverifiableError); wildcard campaign entry is runtime-inert (exact matching).
+NOT covered: deterministic no-op-success flock simulation (flock returns success but
+performs no locking) — concurrent-writer fork under a lying lock remains untested.
+evals/SITUATION_MATRIX.md regenerated (47 situations). Nothing pushed.
+
+## HARDENING ROUND-7 — Wave-8 findings F27-F31 CLOSED (2026-09-21)
+
+Closed all five Wave-8 findings; eval suite SHIP-GATE GREEN at 1128/1128
+(564 provisional + 564 real), unit suite 387/387 OK.
+
+F27/F28 (gov/log.py): ActionLog._verify() now fails closed on the
+action-log path the same way the egress ledger already did — missing,
+empty, or corrupt checkpoint sidecars for a non-empty log return clean
+ok=False (never raise); malformed log lines return ok=False; sequence
+walk from genesis catches gaps/reordering; a genuinely empty log without
+a sidecar still verifies. New typed LogUnverifiableError +
+require_verified(path), exported from gov/__init__.py. The independent
+gov/keys.py::KeyRing.verify_log path (which still had the original gaps)
+was hardened to the identical rule. Regression tests:
+TestF27ActionLogFailClosed (4), TestF28CorruptSidecar (4),
+TestKeyRingVerifyLogFailClosed (6). Eval sit44: log_del_fail_closed,
+log_del_typed, log_corrupt_no_crash, log_corrupt_fail_closed,
+ledger_del_closed, ledger_corrupt_closed, ledger_trunc_closed.
+
+F29 (demo/make_report.py): key_status() derives the signing-key status
+from entries' actual key_epoch; dev-key Markdown/HTML reports banner
+PUBLIC/DEVELOPMENT and state the log is NOT tamper-evident against
+anyone with the key; no unqualified "tamper-evident log" claim remains.
+Both shipped reports regenerated with the disclosure. Regression tests:
+TestF29ReportKeyDisclosure (3). Eval sit47: verify_reports_dev,
+report_discloses_dev, report_no_unqualified_claim,
+shipped_reports_disclose.
+
+F30 (gov/policy_lint.py): three new warnings — empty
+batch_excluded_queue_reasons (states it disables individual-review
+protection and security items could skip per-item human review),
+auto_approve with max_risk_score >= 90, and */? campaign-allowlist
+wildcards (runtime-inert, exact matching). Regression tests:
+TestF30LintWarnings (5). Eval sit45: lint_warns_empty_excl,
+lint_warns_wildcard, lint_warns_max_approve, wildcard_inert,
+policy_write_blocked, knobs_snapshot.
+
+F31 (gov/approvals.py, gov/adapters/core.py,
+gov/adapters/langchain_tools.py): LangChain tools now store a restricted
+GovernedToolFacade (_facade; mediation only) instead of the live binding
+— the exact wave-8 traversal raises AttributeError. set_identity_verifier
+is write-once (IdentityVerifierAlreadySetError on any later direct call),
+refuses non-callables with TypeError, and forged identities still fail
+with UnmintedIdentityError. Regression tests:
+TestF31IdentityVerifierHardening (7). Eval sit43: traversal_blocked,
+verifier_write_once, forged_refused, facade_restricted,
+queue_unreachable.
+
+F31a nuance (caught by the eval suite): the first write-once cut broke
+all 24 sit32 cells — constructing a second ToolExecutor over a shared
+ApprovalQueue (sit32's policy-pinning probe, a legitimate deployment
+pattern) raised IdentityVerifierAlreadySetError. ToolExecutor.__init__
+now installs the verifier idempotently: a sealed slot keeps the
+installed verifier instead of raising; direct set_identity_verifier
+calls still raise, so a hostile re-install gains nothing. Locked in by
+test_second_executor_sharing_queue_keeps_original_verifier.
+
+Residuals (documented in evals/FINDINGS.md and evals/matrix.py):
+- F27/F28: checkpoint availability is required — losing both log history
+  and sidecar backup is unrecoverable, but never silently accepted.
+- F29: key_epoch labels are self-declared metadata; the disclosure does
+  not prove key custody.
+- F30: warnings are advisory; an intentionally risky config is still
+  configurable, now a conscious choice.
+- F31: unrestricted hostile same-process introspection stays a
+  sandbox/deployment boundary; no supported tool surface exposes the
+  chain, and the verifier cannot be swapped after installation.
+
+Gate evidence: policies/default.yaml and gov/data/default.yaml
+byte-identical (sha256 9f015eaa58f69e4fa967f2286bd729d298d72e8ed6e914d2550e4b49ecf166ad);
+evals/matrix.py 97,326 bytes, evals/run_evals.py 99,868 bytes (both under
+100KB cap); python3 -m py_compile clean on all touched files.
+evals/SITUATION_MATRIX.md regenerated (47 situations, 564 cells).
+tests/test_hardening_r7.py: 29 tests green. Nothing pushed; repo stays
+private.

@@ -1289,3 +1289,288 @@ sit40 (`bg_ticket_binds_identity`, `bg_string_identity_refused`,
 trust root, documented — unchanged from every other CLI decision);
 pre-F26 tickets fall back to the stored operator label for the SoD
 check.
+
+---
+
+## F27 — HIGH — deleting the action-log checkpoint sidecar lets a truncated log verify clean (Wave 8)
+
+**Status: CLOSED 2026-09-21 (HARDENING-R7).** Fixed in `gov/log.py`:
+`_verify()` now walks sequence numbers from genesis (gaps/reordering
+fail), returns clean `ok=False` for malformed action-log JSON, rejects
+missing/empty/corrupt checkpoint sidecars for non-empty logs, and never
+returns `ok=True` with zero checkpoints on a non-empty log; a genuinely
+empty log without a sidecar still verifies clean. New typed
+`LogUnverifiableError` + `require_verified(path)` (exported from
+`gov/__init__.py`); the sidecar parser returns valid checkpoints plus a
+malformed-line count without throwing. `gov/keys.py::KeyRing.verify_log`
+(the independent multi-epoch path) was hardened to the identical
+fail-closed rule. Regression tests:
+`TestF27ActionLogFailClosed` (`test_missing_sidecar_after_truncation`,
+`test_missing_sidecar_typed_api_raises`,
+`test_sequence_gap_fails_closed`,
+`test_empty_log_without_sidecar_stays_honest`) and
+`TestKeyRingVerifyLogFailClosed` (6 tests incl. missing/corrupt/empty
+sidecar and corrupt log JSON). Eval sit44:
+`log_del_fail_closed`, `log_del_typed`, `ledger_del_closed`,
+`ledger_corrupt_closed`, `ledger_trunc_closed` — all observed.
+
+**Residual (honest):** checkpoint availability is now required. Loss of
+both the log history and the sidecar backup is unrecoverable — but it
+is never silently accepted; the verifier says so loudly.
+
+**Reproduced 2026-09-21.** `ActionLog.write_checkpoint` stores
+key-authenticated checkpoints in a sidecar file
+(`<log>.checkpoints`, per-directory naming via
+`checkpoint_path`). The offline verifier `_verify()` treats a
+MISSING sidecar as "nothing to check": after deleting
+`actions.jsonl.checkpoints` and truncating a 5-entry log to its
+first 2 entries, `_verify()` returns `ok=True` with
+`checkpoints_checked=0` — the truncation is SILENTLY ACCEPTED.
+The chain itself verifies (each surviving entry's hash links
+correctly), so without the sidecar there is no signal that the
+tail was amputated.
+
+**Why HIGH:** this is a tamper-evidence bypass. An attacker who
+can delete one sidecar file and truncate the log (same privilege
+needed to modify the log at all) produces a log that the
+project's own verifier blesses. The checkpoint mechanism
+presents as a truncation defense but fails OPEN when its own
+file is removed — the exact case a log-tampering attacker
+controls.
+
+**Honest boundaries (defense holds):** the EGRESS ledger
+(`egress_ledger.jsonl`) fails CLOSED on all three tamper cases —
+deleted sidecar, corrupt sidecar, and stale/truncated sidecar all
+raise `LedgerUnverifiableError` (`ledger_del_closed`,
+`ledger_corrupt_closed`, `ledger_trunc_closed` observed). Only
+the action-log sidecar fails open.
+
+**Cells:** sit44 (`log_trunc_silent_ok` observed — the
+vulnerability; `log_corrupt_crashes` observed, see F28;
+`ledger_del_closed`, `ledger_corrupt_closed`,
+`ledger_trunc_closed` observed — the ledger's fail-closed
+behavior).
+
+**Reproduction:** append 5 entries; `write_checkpoint()`;
+`Path("actions.jsonl.checkpoints").unlink()`; truncate
+`actions.jsonl` to first 2 lines; `_verify(path)` ->
+`{"ok": True, "checkpoints_checked": 0}`.
+
+## F28 — LOW — corrupt action-log checkpoint sidecar crashes the offline verifier (Wave 8)
+
+**Status: CLOSED 2026-09-21 (HARDENING-R7).** Fixed in `gov/log.py`:
+`_verify()` never raises on file-content problems — a corrupt sidecar
+returns `{"ok": False, "error": ...}` via the sidecar parser's
+malformed-line count, and malformed log lines return clean `ok=False`
+instead of `JSONDecodeError`. `require_verified()` raises the typed
+`LogUnverifiableError` for the same cases. `gov/keys.py::KeyRing.verify_log`
+hardened identically. Regression tests: `test_corrupt_sidecar_clean_failure`,
+`test_corrupt_sidecar_typed_api_raises`, `test_empty_sidecar_fails_closed`
+(empty sidecar also fails closed), plus the `TestKeyRingVerifyLogFailClosed`
+corrupt/empty-sidecar and corrupt-log-JSON tests. Eval sit44:
+`log_corrupt_no_crash`, `log_corrupt_fail_closed` — observed.
+
+**Residual (honest):** same as F27 — a corrupt sidecar with no backup is
+unrecoverable, but verification now fails closed instead of crashing.
+
+**Reproduced 2026-09-21.** Writing non-JSON bytes to
+`actions.jsonl.checkpoints` makes `_verify()` raise an uncaught
+`json.JSONDecodeError` instead of returning a verdict. A corrupt
+sidecar — whether from attacker tampering, disk corruption, or a
+crashed writer — is a denial-of-service on the audit path: no
+verification result at all, and any tooling that calls the
+verifier without its own try/except (e.g. `demo/make_report.py`)
+crashes with it.
+
+**Cells:** sit44 (`log_corrupt_crashes` observed).
+
+**Reproduction:** `Path("actions.jsonl.checkpoints").write_text("NOT
+JSON{{{\n\x00\n")`; `_verify(path)` -> raises
+`json.JSONDecodeError`.
+
+## F29 — MEDIUM — shipped audit reports claim tamper-evident integrity while signed by the public development key (Wave 8)
+
+**Status: CLOSED 2026-09-21 (HARDENING-R7).** Fixed in
+`demo/make_report.py`: new `key_status(entries)` derives the signing-key
+status from the entries' actual `key_epoch` values, and both the Markdown
+and HTML reports now prominently display it. Dev-key reports banner
+`PUBLIC/DEVELOPMENT` and state the log is `NOT tamper-evident against
+anyone with the key`; mixed/non-dev reports use qualified integrity
+language. No unqualified `tamper-evident log` phrase remains in rendered
+output. Both shipped reports under `reports/` were regenerated with the
+disclosure (the first source run's chain was already broken before
+round-7 — the regenerated report now says so honestly). Regression tests:
+`TestF29ReportKeyDisclosure` (rendered Markdown/HTML dev disclosure,
+qualified production language). Eval sit47: `verify_reports_dev`,
+`report_discloses_dev`, `report_no_unqualified_claim`,
+`shipped_reports_disclose` — all observed.
+
+**Residual (honest):** `key_epoch` labels are self-declared metadata.
+The disclosure tells the reader exactly what key epoch signed the log;
+it does not prove who held the key.
+
+**Reproduced 2026-09-21.** `python -m gov.verify` DOES warn
+loudly on stderr ("WARNING: GOV_LOG_KEY is not set; using the
+public development key. This log is NOT tamper-evident against
+anyone who read the docs.") and the run log carries
+`"key_epoch": "dev"`. But `demo/make_report.py` — the artifact
+that actually SHIPS to a human reader — never inspects the key
+epoch: both `reports/*_audit_report.md` files in the repo claim
+"tamper-evident" integrity with zero disclosure that every entry
+is HMAC'd under a key published in the public documentation.
+Anyone who read the docs can forge arbitrary log entries; the
+report presents the chain as production-grade evidence.
+
+**Why MEDIUM:** the CLI warning exists, so this is not a silent
+cryptographic failure — it is a disclosure failure in the
+human-facing artifact. A report consumer (auditor, customer,
+hiring manager reading the demo) is told "tamper-evident" and is
+given no way to know the key is public. The fix is cheap:
+`make_report.py` must surface `key_epoch` and print a
+development-key banner when `key_epoch == "dev"`.
+
+**Cells:** sit47 (`devkey_warns_loud`, `run_log_marks_dev_epoch`,
+`report_claims_tamper_evident`, `report_hides_dev_key` — all
+observed).
+
+**Reproduction:** `python3 -m gov.verify` (stderr warning +
+`"key_epoch": "dev"`); `grep -i "tamper-evident"
+reports/*_audit_report.md` (claims present);
+`grep -i "development key" reports/*_audit_report.md` (absent).
+
+## F30 — LOW — `policy_lint` is silent on dangerous-but-schema-valid policy settings (Wave 8)
+
+**Status: CLOSED 2026-09-21 (HARDENING-R7).** Fixed in
+`gov/policy_lint.py`: three new warnings — `empty_batch_excluded_reasons`
+(an empty `approvals.batch_excluded_queue_reasons` now warns that it
+disables individual-review protection), `auto_approve_near_max_risk`
+(`auto_approve.enabled: true` with `max_risk_score >= 90`), and
+`campaign_allowlist_wildcard` (`*`/`?` in allowlist principals, domains,
+or parameter keys; wildcards stay runtime-inert — matching is exact
+equality). The default policy draws none of the new warnings.
+Regression tests: `TestF30LintWarnings`
+(`test_empty_batch_excluded_reasons_warns`,
+`test_broad_auto_approve_cap_warns`, `test_narrow_auto_approve_cap_silent`,
+`test_wildcard_campaign_entry_warns`, `test_default_policy_unaffected`).
+Eval sit45: `lint_warns_empty_excl`, `lint_warns_wildcard`,
+`lint_warns_max_approve`, `wildcard_inert`, `policy_write_blocked`,
+`knobs_snapshot` — all observed.
+
+**Residual (honest):** warnings do not block. An operator who
+intentionally configures a risky-but-valid policy still can — the linter
+now makes sure it is a conscious choice, not a silent default.
+
+**Reproduced 2026-09-21.** Three settings that a policy author
+would reasonably expect a linter to flag produce no warning:
+(1) `batch_excluded_queue_reasons: []` — an empty exclusion
+list, likely a misconfiguration that silently disables a batch
+control; (2) `auto_approve.enabled: true` with
+`max_risk_score: 100` — auto-approval of everything including
+maximum-risk actions; (3) `campaign_allowlist: ["*"]` — a
+wildcard allowlist entry (currently runtime-inert because
+campaign matching is exact-string, so the wildcard grants
+nothing — but the linter's silence means a future
+prefix/glob-matching change would silently open it).
+
+**Cells:** sit45 (`lint_silent_empty_excl`,
+`lint_silent_max_approve`, `lint_wildcard_info` — all observed;
+`wildcard_runtime_inert` observed — the wildcard currently
+grants nothing, confirmed by executing a campaign action through
+an executor built from the malicious policy).
+
+**Reproduction:** write the policy YAML above; `policy_lint`
+reports no `malformed_batch_excluded_reasons`-class finding, no
+auto-approve warning, and only an `info`-level note for the
+wildcard.
+
+## F31 — MEDIUM — LangChain tool object exposes the mediation chain: `tool._binding.executor.approvals` reaches the identity-verifier setter (Wave 8)
+
+**Status: CLOSED 2026-09-21 (HARDENING-R7).** Fixed in three places.
+`gov/adapters/core.py`: new `GovernedToolFacade` exposes mediation only
+(no public `executor`/`identity`), plus `GovernedBinding.facade()`.
+`gov/adapters/langchain_tools.py`: the tool now stores `_facade`, not
+`_binding` — the exact wave-8 path
+`tool._binding.executor.approvals.set_identity_verifier(...)` raises
+`AttributeError`. `gov/approvals.py`: `set_identity_verifier()` is
+write-once — the executor installs its verifier at construction and every
+later call raises `IdentityVerifierAlreadySetError` without mutating the
+original; non-callable verifiers are refused with `TypeError`.
+A forged `AgentIdentity` still fails `_authenticate_caller` with
+`UnmintedIdentityError`, and the tool result surface exposes no
+`ApprovalQueue` internals. Regression tests:
+`TestF31IdentityVerifierHardening`
+(`test_exact_wave8_traversal_blocked`,
+`test_tool_holds_restricted_facade`,
+`test_second_verifier_install_raises`,
+`test_original_verifier_still_authenticates`,
+`test_first_install_on_fresh_queue_allowed`,
+`test_non_callable_verifier_refused`). Eval sit43: `traversal_blocked`,
+`verifier_write_once`, `forged_refused`, `facade_restricted`,
+`queue_unreachable` — all observed.
+
+**Residual (honest):** unrestricted hostile same-process Python
+introspection remains a sandbox/deployment boundary — in-process code can
+already read `GOV_LOG_KEY`. What changed: no *supported* tool surface
+exposes the chain anymore, and the verifier can no longer be swapped
+after installation.
+
+**F31a nuance (caught by the eval suite, 2026-09-21):** the initial
+write-once change broke sit32's policy-pinning probe — constructing a
+second `ToolExecutor` over the same `ApprovalQueue` (a legitimate
+deployment pattern) raised `IdentityVerifierAlreadySetError` and
+aborted all 24 sit32 cells. `ToolExecutor.__init__` now installs its
+verifier idempotently: if the slot is already sealed it keeps the
+installed verifier instead of raising; direct calls to
+`set_identity_verifier()` still raise. An attacker constructing their
+own executor over a victim queue gains nothing — the original verifier
+stays. Locked in by
+`test_second_executor_sharing_queue_keeps_original_verifier` and the
+full sit32 re-green.
+
+**Reproduced 2026-09-21.** `make_governed_tool` stashes the live
+`GovernedBinding` directly on the tool object
+(`tool._binding = binding`). `GovernedBinding.executor` is a
+public property; `ToolExecutor.approvals` is a public attribute;
+`ApprovalQueue.set_identity_verifier()` is a public setter.
+Verified end-to-end on the real LangChain adapter: from the
+agent-visible tool object,
+`tool._tool._binding.executor.approvals.set_identity_verifier(lambda _:
+True)` succeeds, after which a forged `AgentIdentity`
+(`agent_id="mallory"`, unminted, wrong principal) queues a
+break-glass ticket without error — collapsing the F26
+identity-binding control from code that holds only a tool
+reference.
+
+**Why MEDIUM, not LOW:** the initial read was LOW ("no governed
+tool RESULT exposes the queue" — sit43 confirms the result
+surface is clean: `queue_unreachable` observed). But the OBJECT
+graph is a different surface, and it is fully traversable in one
+line. Exploitation requires code-level access to the tool object
+(a malicious agent developer, compromised agent code, or a
+code-execution-capable agent) — a pure prompt-injected ReAct LLM
+that only emits tool calls cannot traverse attributes. The
+blast radius is real, though: it defeats the just-hardened F26
+break-glass identity binding and lets forged identities into the
+approval queue, poisoning the audit trail's attribution.
+
+**Not affected (checked):** the decorator adapter closes over
+the binding (`wrapper.__closure__` — noted out-of-scope in
+`gov/adapters/generic.py`); only the LangChain path was
+verified end-to-end. The MCP and openai-loop adapters were not
+traversed.
+
+**Recommended hardening (not implemented — adversary team does
+not fix):** stop stashing `_binding` on the tool object (close
+over it instead); make the identity verifier set-once at
+`ApprovalQueue` construction; document the tool-object trust
+boundary.
+
+**Cells:** sit43 (`swap_collapses` observed — the setter works
+as designed; `queue_unreachable` observed — the RESULT surface
+leaks nothing; the object-graph traversal above was verified
+outside the cell against the real LangChain adapter).
+
+**Reproduction:** `shim = _make_real('langchain', executor,
+identity)`; `tool = shim.tool('read_file')`;
+`tool._tool._binding.executor.approvals.set_identity_verifier(lambda _:
+True)`; forged `AgentIdentity(...).queue(...)` succeeds.

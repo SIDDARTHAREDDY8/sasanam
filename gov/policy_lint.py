@@ -190,6 +190,16 @@ def lint_file(path):
                     "auto_approve.max_risk_score must be 0-100; got %r "
                     "(treated as disabled)"
                     % (auto_cfg.get("max_risk_score"),))
+            else:
+                # F30: a valid-but-dangerous cap. Warning, not error: the
+                # deployer may intend it, but the risk must be named.
+                if cap >= 90:
+                    add("auto_approve_near_max_risk", "warning", "(policy)",
+                        "auto_approve.enabled with max_risk_score=%d: "
+                        "auto-approval covers near-maximum-risk actions, so "
+                        "a queued campaign exfil fragment or a destructive "
+                        "action would execute with no human in the loop. "
+                        "Lower the cap or disable auto_approve." % cap)
 
     # ---- reachability: can this rule ever fire through the executor? ------
     # The executor rejects any tool not in the caller's role allowlist
@@ -327,6 +337,34 @@ def lint_file(path):
                     add("malformed_campaign_allowlist", "error", eid,
                         "entry must be [principal, registered_domain, "
                         "[non-empty param keys]], got %r" % (entry,))
+                else:
+                    # F30: wildcards are schema-valid today and
+                    # runtime-inert (matching is exact-string), but the
+                    # linter's silence would turn a future
+                    # glob/prefix-matching change into a silent
+                    # whole-domain exemption. Warning, not error.
+                    for field, val in (
+                            ("principal", entry[0]), ("domain", entry[1])):
+                        if "*" in val or "?" in val:
+                            add("campaign_allowlist_wildcard", "warning",
+                                eid,
+                                "campaign_allowlist %s %r contains a "
+                                "wildcard: exact-string matching makes it "
+                                "grant nothing today, but if matching ever "
+                                "becomes glob/prefix-based this entry would "
+                                "silently exempt a whole domain/principal. "
+                                "Remove the wildcard or narrow the entry."
+                                % (field, val))
+                    for kval in entry[2]:
+                        if "*" in kval or "?" in kval:
+                            add("campaign_allowlist_wildcard", "warning",
+                                eid,
+                                "campaign_allowlist param key %r contains a "
+                                "wildcard: exact-string matching makes it "
+                                "grant nothing today, but if matching ever "
+                                "becomes glob/prefix-based this entry would "
+                                "silently exempt matching traffic. Remove "
+                                "the wildcard or narrow the entry." % kval)
             if allowlist and not any(
                     f["kind"] == "malformed_campaign_allowlist"
                     for f in findings):
@@ -344,6 +382,18 @@ def lint_file(path):
             add("malformed_batch_excluded_reasons", "error", "-",
                 "approvals.batch_excluded_queue_reasons must be a list of "
                 "non-empty strings")
+        elif not excluded:
+            # F30: an explicitly emptied exclusion list is schema-valid
+            # but silently disables the F21 batch-exclusion control — a
+            # likely misconfiguration. Warning, not error: an explicit
+            # empty list is documented operator authority (see F24).
+            add("empty_batch_excluded_reasons", "warning", "-",
+                "approvals.batch_excluded_queue_reasons is EMPTY: this "
+                "disables individual-review protection — batch approval "
+                "can bulk-approve security items (campaign-queued exfil "
+                "fragments, DLP blocks, break-glass records) without "
+                "per-item human review. Restore the default list unless "
+                "this is intended.")
     log_limits = cfg.get("log_limits")
     if log_limits is not None:
         if not isinstance(log_limits, dict):

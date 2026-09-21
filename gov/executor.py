@@ -56,7 +56,8 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
-from .approvals import record_digest, sanitize_preview_text
+from .approvals import (IdentityVerifierAlreadySetError, record_digest,
+                        sanitize_preview_text)
 from .egress_ledger import (
     CAMPAIGN_K,
     CAMPAIGN_WINDOW_SECS,
@@ -130,8 +131,16 @@ class ToolExecutor:
         # queue authenticates them against this executor's mint set (the
         # queue is constructed before the executor, same pattern as the
         # batch-exclusion list above).
+        # F31: the verifier slot is write-once. A second executor sharing
+        # this queue (e.g. the sit32 policy-pinning probe) keeps the
+        # already-installed verifier instead of replacing it — replacement
+        # is refused, so a hostile re-install cannot swap the binding.
         if hasattr(approvals, "set_identity_verifier"):
-            approvals.set_identity_verifier(self._verify_approval_identity)
+            try:
+                approvals.set_identity_verifier(
+                    self._verify_approval_identity)
+            except IdentityVerifierAlreadySetError:
+                pass
         # F22: policy-configurable audit-log size guard (fail-closed).
         log_limits = getattr(policy, "log_limits", None) or {}
         if log_limits.get("max_log_bytes") is not None:

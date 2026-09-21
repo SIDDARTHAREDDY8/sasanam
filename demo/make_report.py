@@ -20,6 +20,90 @@ from gov import verify_chain  # noqa: E402
 BANNER = "SYNTHETIC DEMONSTRATION \u2014 no real systems were inspected."
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+# F29: epochs that are clearly non-production. Entries signed under these
+# epochs are NOT tamper-evident against anyone who holds the key (the dev
+# key is literally published in the source tree), and the report must say
+# so loudly instead of claiming "tamper-evident" unqualified.
+_NON_PROD_EPOCHS = {"dev", "development", "devkey", "test", "unknown"}
+
+
+def key_status(entries):
+    """F29: derive the signing-key status from the loaded entries.
+
+    The report used to claim a "tamper-evident log" without ever
+    inspecting ``key_epoch``. Returns a dict with:
+
+    - ``epochs``: sorted list of distinct ``key_epoch`` values seen.
+    - ``status``: "dev" (all non-production), "mixed", "nondev"
+      (all operator-configured), or "none" (no entries).
+    - ``banner_line``: one-line plain-language status for the header.
+    - ``integrity_note``: qualified integrity language for notes/footers
+      — never an unqualified "tamper-evident" claim.
+    """
+    epochs = sorted({str(e.get("key_epoch", "unknown"))
+                     for e in entries if isinstance(e, dict)})
+    dev_epochs = [ep for ep in epochs if ep.lower() in _NON_PROD_EPOCHS]
+    prod_epochs = [ep for ep in epochs if ep.lower() not in _NON_PROD_EPOCHS]
+    if dev_epochs and prod_epochs:
+        status = "mixed"
+    elif dev_epochs:
+        status = "dev"
+    elif prod_epochs:
+        status = "nondev"
+    else:
+        status = "none"
+    if status == "dev":
+        banner_line = ("PUBLIC/DEVELOPMENT key (epoch(s) %s) — NOT "
+                       "tamper-evident against anyone with the key"
+                       % ", ".join("`%s`" % ep for ep in epochs))
+        integrity_note = (
+            "All agent actions, policy decisions, and human approvals in "
+            "this report come from the run's hash-chained action log. The "
+            "log is signed with the PUBLIC/DEVELOPMENT key (epoch %s), "
+            "which is published in the source tree: it is NOT "
+            "tamper-evident against anyone with the key — anyone who read "
+            "the docs can forge entries. The hash-chain replay below is a "
+            "consistency check on this local copy, not tamper-evidence "
+            "against third parties. Entry sequence numbers cite the exact "
+            "records." % ", ".join("`%s`" % ep for ep in epochs))
+    elif status == "mixed":
+        banner_line = ("MIXED key epochs (dev: %s; operator: %s) — "
+                       "dev-epoch entries are NOT tamper-evident against "
+                       "key holders"
+                       % (", ".join("`%s`" % ep for ep in dev_epochs),
+                          ", ".join("`%s`" % ep for ep in prod_epochs)))
+        integrity_note = (
+            "All agent actions, policy decisions, and human approvals in "
+            "this report come from the run's hash-chained action log. Key "
+            "epochs are MIXED: entries under %s use the "
+            "PUBLIC/DEVELOPMENT key and are NOT tamper-evident against "
+            "anyone with the key; entries under %s use "
+            "operator-configured keys and are tamper-evident only against "
+            "parties that do NOT hold the key. Entry sequence numbers "
+            "cite the exact records."
+            % (", ".join("`%s`" % ep for ep in dev_epochs),
+               ", ".join("`%s`" % ep for ep in prod_epochs)))
+    elif status == "nondev":
+        banner_line = ("Operator-configured key epoch(s) %s — "
+                       "tamper-evident only against parties without the key"
+                       % ", ".join("`%s`" % ep for ep in epochs))
+        integrity_note = (
+            "All agent actions, policy decisions, and human approvals in "
+            "this report come from the run's hash-chained action log, "
+            "signed under key epoch(s) %s. Integrity is qualified: "
+            "tamper-evident only against parties that do NOT hold the "
+            "key. Key custody and rotation are outside this report's "
+            "scope; epoch labels are self-declared metadata. Entry "
+            "sequence numbers cite the exact records."
+            % ", ".join("`%s`" % ep for ep in epochs))
+    else:
+        banner_line = "No entries — nothing was signed."
+        integrity_note = ("No entries in this run's log; nothing was "
+                          "signed and no integrity claim is made.")
+    return {"epochs": epochs, "status": status,
+            "banner_line": banner_line, "integrity_note": integrity_note,
+            "dev_epochs": dev_epochs, "prod_epochs": prod_epochs}
+
 
 def latest_run_dir():
     runs = Path.cwd() / "runs"
@@ -143,7 +227,11 @@ def build_findings(entries):
     return findings
 
 
-def render_markdown(run_id, generated_at, chain_ok, chain_count, stats, findings):
+def render_markdown(run_id, generated_at, chain_ok, chain_count, stats,
+                    findings, key):
+    """F29: ``key`` is the dict from :func:`key_status` — the report's
+    integrity language is derived from the entries' ``key_epoch``
+    values, never an unqualified "tamper-evident" claim."""
     lines = []
     lines.append("> **%s**" % BANNER)
     lines.append("")
@@ -153,6 +241,12 @@ def render_markdown(run_id, generated_at, chain_ok, chain_count, stats, findings
     lines.append("- Generated: %s" % generated_at)
     lines.append("- Log entries: %d" % chain_count)
     lines.append("- Hash-chain verification: **%s**" % ("OK" if chain_ok else "FAILED"))
+    lines.append("")
+    lines.append("## Signing key status")
+    lines.append("")
+    lines.append("**%s**" % key["banner_line"])
+    lines.append("")
+    lines.append(key["integrity_note"])
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -184,9 +278,7 @@ def render_markdown(run_id, generated_at, chain_ok, chain_count, stats, findings
     lines.append("## Notes")
     lines.append("")
     lines.append("- %s" % BANNER)
-    lines.append("- All agent actions, policy decisions, and human approvals in this "
-                 "report come from the run's tamper-evident log; entry sequence "
-                 "numbers above cite the exact records.")
+    lines.append("- %s" % key["integrity_note"])
     lines.append("")
     return "\n".join(lines)
 
@@ -214,10 +306,17 @@ code{background:#f4f4f4;padding:1px 5px;border-radius:3px;font-size:13px}
   SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
 .finding{margin-bottom:22px}
 .footer{margin-top:36px;color:#555;font-size:13px;border-top:1px solid #eee;padding-top:12px}
+.keystatus{border:2px solid #b00020;background:#fdeceb;padding:12px 16px;
+  border-radius:6px;margin:16px 0;font-size:14px}
+.keystatus.ok{border-color:#1a6fb5;background:#eaf2fb}
+.keystatus p{margin:6px 0}
 """
 
 
-def render_html(run_id, generated_at, chain_ok, chain_count, stats, findings):
+def render_html(run_id, generated_at, chain_ok, chain_count, stats,
+                findings, key):
+    """F29: see :func:`render_markdown` — integrity language derives from
+    the entries' ``key_epoch`` values."""
     esc = htmlmod.escape
     parts = []
     parts.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
@@ -226,6 +325,12 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats, findings):
     parts.append("<style>%s</style></head><body>" % CSS)
     parts.append("<div class=\"banner\">%s</div>" % esc(BANNER))
     parts.append("<h1>Agent Governance Audit Report</h1>")
+    # F29: key status is the prominent box right under the title — the
+    # report's first substantive content, before the meta list.
+    box_class = "keystatus" if key["status"] in ("dev", "mixed") else "keystatus ok"
+    parts.append("<div class=\"%s\"><strong>Signing key status:</strong> %s<p>%s</p></div>"
+                 % (box_class, esc(key["banner_line"]),
+                    esc(key["integrity_note"])))
     parts.append("<ul class=\"meta\">")
     parts.append("<li>Run: <code>%s</code></li>" % esc(run_id))
     parts.append("<li>Generated: %s</li>" % esc(generated_at))
@@ -251,10 +356,8 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats, findings):
         for e in f["evidence"]:
             parts.append("<div class=\"evidence\">%s</div>" % esc(evidence_line(e)))
         parts.append("</div>")
-    parts.append("<div class=\"footer\">%s<br>"
-                 "All agent actions, policy decisions, and human approvals in this report "
-                 "come from the run's tamper-evident log; entry sequence numbers cite "
-                 "the exact records.</div>" % esc(BANNER))
+    parts.append("<div class=\"footer\">%s<br>%s</div>"
+                 % (esc(BANNER), esc(key["integrity_note"])))
     parts.append("</body></html>")
     return "\n".join(parts)
 
@@ -277,6 +380,9 @@ def main():
                                            if e.get("event") == "approval_decision")))
 
     findings = build_findings(entries)
+    # F29: integrity language derives from the entries' key_epoch values —
+    # never an unqualified "tamper-evident" claim.
+    key = key_status(entries)
     findings.append({
         "severity": "low",
         "title": "Audit trail integrity verified",
@@ -284,9 +390,9 @@ def main():
         "policy_id": "n/a (log integrity)",
         "description": (
             "The run's action log is hash-chained: each entry commits to the hash "
-            "of the previous entry. Replaying the chain over %d entries %s. Any "
-            "tampering with a historical entry would break every later hash." %
-            (chain_count, "succeeded" if chain_ok else "failed")),
+            "of the previous entry. Replaying the chain over %d entries %s. %s" %
+            (chain_count, "succeeded" if chain_ok else "failed",
+             key["integrity_note"])),
         "evidence": [],
     })
 
@@ -296,9 +402,9 @@ def main():
     md_path = reports / ("%s_audit_report.md" % run_id)
     html_path = reports / ("%s_audit_report.html" % run_id)
     md_path.write_text(render_markdown(run_id, generated_at, chain_ok, chain_count,
-                                       stats, findings), encoding="utf-8")
+                                       stats, findings, key), encoding="utf-8")
     html_path.write_text(render_html(run_id, generated_at, chain_ok, chain_count,
-                                     stats, findings), encoding="utf-8")
+                                     stats, findings, key), encoding="utf-8")
     print("wrote %s" % md_path)
     print("wrote %s" % html_path)
     print("chain: %s (%d entries)" % ("OK" if chain_ok else "BROKEN", chain_count))

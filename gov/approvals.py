@@ -817,6 +817,19 @@ class ApprovalQueueRiskMixin:
         }
 
 
+class IdentityVerifierAlreadySetError(Exception):
+    """F31: the identity verifier is write-once (deployer-only).
+
+    ``ToolExecutor`` installs its minted-identity check at construction;
+    any later ``set_identity_verifier`` call — including the wave-8
+    traversal ``...approvals.set_identity_verifier(lambda _: True)`` —
+    raises instead of swapping the control out from under the
+    break-glass/review paths. The first-installed verifier keeps
+    authenticating callers; a swap attempt never takes effect and never
+    mutates the installed verifier.
+    """
+
+
 class ApprovalQueue(ApprovalQueueRiskMixin):
     def __init__(self, run_dir, log, batch_excluded_reasons=None):
         self.run_dir = Path(run_dir)
@@ -831,8 +844,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # F26: optional executor-installed identity verifier for the
         # break-glass/review paths (see set_identity_verifier). None =
         # isinstance check only (the CLI path: terminal-access trust
-        # root, documented).
+        # root, documented). F31: write-once — once installed it can
+        # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
+        self._identity_verifier_sealed = False
 
     def set_identity_verifier(self, verifier):
         """F26: install the executor's minted-identity check.
@@ -842,8 +857,25 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         ``UnmintedIdentityError``). ``ToolExecutor`` installs its
         ``_verify_approval_identity`` here at construction; direct/CLI
         queue construction leaves it None.
+
+        F31 WRITE-ONCE: the first call installs the verifier and seals
+        the slot; every later call raises
+        ``IdentityVerifierAlreadySetError``. A verifier swap —
+        including the wave-8 defeat path
+        ``tool._binding.executor.approvals.set_identity_verifier(lambda _:
+        True)`` — can no longer collapse the F26 identity binding after
+        the executor is constructed.
         """
+        if getattr(self, "_identity_verifier_sealed", False):
+            raise IdentityVerifierAlreadySetError(
+                "identity verifier is write-once: a verifier is already "
+                "installed; refusing to swap it out")
+        if not callable(verifier):
+            raise TypeError(
+                "identity verifier must be callable, got %r"
+                % type(verifier).__name__)
         self._identity_verifier = verifier
+        self._identity_verifier_sealed = True
 
     def _authenticate_caller(self, identity, what):
         """F26: authenticate the caller of a break-glass/review method.

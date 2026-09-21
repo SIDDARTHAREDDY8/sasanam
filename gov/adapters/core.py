@@ -201,6 +201,23 @@ class GovernedBinding:
                 "refusing to dispatch." % (framework_tool,)
             )
 
+    def facade(self):
+        """F31: restricted view of this binding for agent-reachable tool
+        objects.
+
+        A LangChain tool object is handed to agent code, so the object
+        the tool holds must not expose the raw ``ToolExecutor`` — from
+        which ``ApprovalQueue.set_identity_verifier`` is reachable via
+        ``.approvals`` (the wave-8 traversal
+        ``tool._binding.executor.approvals.set_identity_verifier(...)``).
+        The tool needs to dispatch calls, not to hold the executor:
+        agent code receives the facade; the full binding stays
+        deployer-side.
+        """
+        return GovernedToolFacade(self)
+
+    # -- mediation ------------------------------------------------------
+
     def call(self, framework_tool, on_denied="raise", on_queued="raise", **kwargs):
         """Mediate one tool call through the executor.
 
@@ -235,6 +252,53 @@ class GovernedBinding:
             "executor returned unexpected status %r for tool %r"
             % (status, framework_tool)
         )
+
+
+class GovernedToolFacade:
+    """Restricted mediation view of a :class:`GovernedBinding` (F31).
+
+    This is what agent-reachable tool objects hold instead of the full
+    binding. It exposes only the dispatch surface a tool needs —
+    ``call``, ``resolve``, ``framework_tools``, ``tool_map`` — and
+    deliberately exposes NO ``executor`` or ``identity``: agent code
+    cannot traverse from a tool object to the raw ``ToolExecutor``,
+    the ``ApprovalQueue``, or the identity-verifier setter.
+
+    Residual (honest): determined in-process introspection (closures,
+    ``gc``) can always reach further — that is out of scope per the
+    adapter README. The write-once identity verifier
+    (``ApprovalQueue.set_identity_verifier`` raising
+    ``IdentityVerifierAlreadySetError`` on any second install) is the
+    backstop that holds even when the queue is reached another way.
+    """
+
+    __slots__ = ("_binding",)
+
+    def __init__(self, binding):
+        if not isinstance(binding, GovernedBinding):
+            raise TypeError("facade requires a GovernedBinding, got %r"
+                            % type(binding).__name__)
+        self._binding = binding
+
+    def call(self, framework_tool, on_denied="raise", on_queued="raise",
+             **kwargs):
+        """Mediate one tool call (same contract as
+        :meth:`GovernedBinding.call`)."""
+        return self._binding.call(framework_tool, on_denied=on_denied,
+                                  on_queued=on_queued, **kwargs)
+
+    def resolve(self, framework_tool):
+        """Map a framework-facing name to its native tool (fail closed)."""
+        return self._binding.resolve(framework_tool)
+
+    def framework_tools(self):
+        """Sorted framework-facing tool names this facade serves."""
+        return self._binding.framework_tools()
+
+    @property
+    def tool_map(self):
+        """The immutable framework-name -> native-name mapping."""
+        return self._binding.tool_map
 
 
 def normalize_result(result):
