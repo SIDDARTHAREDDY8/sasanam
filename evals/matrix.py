@@ -3417,3 +3417,287 @@ SITUATIONS["sit80"] = {
                      "As low."),
     }),
 }
+
+# ---------------------------------------------------------------- SIT 81
+SITUATIONS["sit81"] = {
+    "title": "Wave-14 brief 1 — minting is capability-unchecked: in-process code mints the registered operator identity (F55 CLOSED)",
+    "threats": ["T11", "T3"],
+    "sources": [
+        "Wave-14 brief 1, measured 2026-09-21 (finding F55 MEDIUM).",
+        "Round-13 closure, measured 2026-09-21: "
+        "ToolExecutor(session_identity=(agent_id, role, principal)) "
+        "provisions ONE session identity at construction "
+        "(provenance='provisioned'), installed write-once on the "
+        "ApprovalQueue (set_session_identity; second install raises "
+        "SessionIdentityAlreadySetError). break_glass requires exactly "
+        "that identity; a mid-run mint_identity() of the same tuple "
+        "(provenance='minted') is refused with an audited "
+        "break_glass_refused. Without a session identity the pre-R13 "
+        "dev behavior is unchanged.",
+    ],
+    "summary": (
+        "F55 is CLOSED. Break-glass entitlement is bound to the "
+        "deployment-provisioned session identity, not to a mintable "
+        "tuple: the Wave-14 attack (mid-run mint of the registered "
+        "op-1/operator/ops-lead tuple, then break_glass with a real "
+        "human-provisioned ticket) is refused and audited, and the "
+        "ticket stays usable by the provisioned identity. Residual: "
+        "deployments that never pass session_identity get no F55 "
+        "protection (dev-mode gap); the session identity's "
+        "authenticity is only as strong as the config channel; "
+        "minting itself is still callable in-process — the boundary "
+        "is the entitlement check at break_glass."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Mid-run operator mint refused at break_glass (audited "
+                "break_glass_refused); the provisioned session identity "
+                "still consumes; dev mode unchanged. F55 CLOSED "
+                "(MEDIUM)."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 82
+SITUATIONS["sit82"] = {
+    "title": "Wave-14 brief 2 — fresh executor per sweep defeats the F51 refusal coalescing (F56 CLOSED)",
+    "threats": ["T6", "T9"],
+    "sources": [
+        "Wave-14 brief 2, measured 2026-09-21 (finding F56 MEDIUM).",
+        "Round-13 closure, measured 2026-09-21: the coalescing window "
+        "is file-backed (run-dir lock_refusal_coalesce.json, one "
+        "{last_audit, suppressed} record per known refusal flag, "
+        "read-modify-write under an exclusive flock on a sibling "
+        "lock file, atomic temp-file + os.replace writes). State "
+        "deletion/corruption degrades to a single re-audit, never an "
+        "exception; the file stays <1KB with only known flags.",
+    ],
+    "summary": (
+        "F56 is CLOSED. 8 fresh executors under the lock-path attack "
+        "(same run dir) now produce 1 approval_sweep_refused entry "
+        "with 7 folded into the shared suppressed counter, instead of "
+        "8 entries. Residual: deleting the state file permits one "
+        "extra audit entry per deletion (the documented F51 lock-DoS "
+        "shape, not a new hole); the window is per run dir."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "8 fresh-executor refusals -> 1 audit + 7 folded in the "
+                "shared state file; deletion degrades to one re-audit; "
+                "state file tiny and bounded. F56 CLOSED (MEDIUM)."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 83
+SITUATIONS["sit83"] = {
+    "title": "Wave-14 brief 3a — one bad-HMAC entry blocks a genuine interrupted claim's recovery (documented residual)",
+    "threats": ["T6", "T8"],
+    "sources": [
+        "Wave-14 brief 3a, measured 2026-09-21 (no new finding; "
+        "confirms F52's documented honest residual #1).",
+        "gov/approvals.py _reconcile_interrupted_executions(): the "
+        "full-chain _verify runs before any marker is honored; a "
+        "failed chain refuses the WHOLE sweep's reconciliation with "
+        "an audited reconciliation_marker_invalid.",
+    ],
+    "summary": (
+        "A genuine interrupted claim (approved + execution_authorized + "
+        "durable claim, crashed before completion) is pending when one "
+        "bad-HMAC entry is appended. The sweep refuses reconciliation "
+        "(1 reconciliation_marker_invalid, 0 "
+        "approval_execution_interrupted): the legitimate claim is "
+        "neither executed nor re-queued for the human -- it sits "
+        "approved/executed=True until an operator repairs the chain. "
+        "Availability residual, documented in F52; no new finding."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Single bad entry -> reconciliation refused and audited; "
+                "no phantom interruption; the genuine claim stays "
+                "unreconciled. Documented F52 residual; no finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 84
+SITUATIONS["sit84"] = {
+    "title": "Wave-14 brief 3b — full-chain verify cost at 20k entries; forged markers force per-sweep re-verify (documented residual)",
+    "threats": ["T6", "T9"],
+    "sources": [
+        "Wave-14 brief 3b, measured 2026-09-21 (no new finding; "
+        "confirms F52's documented honest residual #2 with numbers).",
+        "gov/log.py _verify(): one forged execution_authorized marker "
+        "keeps 'interrupted' non-empty, so every sweep pays a "
+        "full-chain verify and appends another "
+        "reconciliation_marker_invalid -- no dedup; the refusal audits "
+        "themselves grow the chain.",
+    ],
+    "summary": (
+        "Full-chain _verify completes at 20k entries (measured "
+        "~0.55s; bounded, not pathological). One forged marker makes 3 "
+        "sweeps re-verify and re-audit the refusal 3 times (no dedup), "
+        "and the 3 refusal audits grow the chain by exactly 3 entries -- "
+        "each future sweep walks a longer log. The per-sweep tax is "
+        "linear in log size and capped by the F22 100MB fail-closed "
+        "guard. Documented F52 residual; no new finding."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Verify completes at 20k entries (~0.55s); 3 sweeps -> "
+                "3 refusal audits, no dedup; the refusal loop grows "
+                "the chain. Documented F52 residual; no finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 85
+SITUATIONS["sit85"] = {
+    "title": "Wave-14 brief 4 — ticket-store replacement re-arms a consumed single-use ticket (F57 CLOSED)",
+    "threats": ["T8", "T6"],
+    "sources": [
+        "Wave-14 brief 4, measured 2026-09-21 (finding F57 MEDIUM).",
+        "Round-13 closure, measured 2026-09-21: the authoritative "
+        "consumed-ticket memory is the VERIFIED action log -- "
+        "break_glass appends a ticket_consumed event BEFORE "
+        "_mark_ticket_used persists, and re-checks the log (chain "
+        "verified first; tampered log fails closed) under the F54 "
+        "cross-process flock. The ticket HMAC now binds the "
+        "consumption state (used/used_at/used_for_approval in the "
+        "canonical payload, re-signed on consume), so flipping "
+        "used=False without the keyring key fails verification.",
+    ],
+    "summary": (
+        "F57 is CLOSED. Restoring a pre-consume store snapshot no "
+        "longer resurrects a consumed ticket: the replay passes the "
+        "live-store check but the verified action log still says "
+        "consumed, so break_glass refuses (audited). Exactly one "
+        "ticket_consumed marker exists per consumption; the F54 fork "
+        "race still yields exactly one winner. Residual: pre-R13 "
+        "provisioned tickets fail HMAC after upgrade (canonical "
+        "changed) -- re-provision on upgrade; after a key rotation "
+        "break_glass fails closed until reconciled with the keyring "
+        "verifier; the log authority trusts the action-log key."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Store-restore replay refused by the verified action "
+                "log (one ticket_consumed marker); used-flip without "
+                "re-sign fails HMAC; fork race still single-winner. "
+                "F57 CLOSED (MEDIUM)."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 86
+SITUATIONS["sit86"] = {
+    "title": "Wave-14 brief 5 — demo/attack_scenario.py's RESULT line is unconditional (F58 CLOSED)",
+    "threats": ["T7"],
+    "sources": [
+        "Wave-14 brief 5, measured 2026-09-21 (finding F58 LOW).",
+        "Round-13 closure, measured 2026-09-21: verdict() returns its "
+        "boolean, each of the 4 attack attempts records its verdict, "
+        "tamper detection is recorded separately, and "
+        "summarize_results(blocked, tamper_detected) computes the "
+        "final line -- no hard-coded RESULT literal remains in "
+        "demo/attack_scenario.py.",
+    ],
+    "summary": (
+        "F58 is CLOSED. The default demo run prints 'RESULT: 4 attack "
+        "attempts blocked, 0 allowed, 1 tampering detected.' computed "
+        "from measured verdicts; weakened inputs honestly report "
+        "allowed attacks ([True, False, True, True] -> '3 attack "
+        "attempts blocked, 1 allowed, 0 tampering detected.'). "
+        "Residual: the summary trusts the verdict predicates (e.g. "
+        "attempt 2 counts status == 'queued' as blocked) -- a "
+        "misclassifying predicate would still print a clean tally."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "RESULT line computed from measured verdicts; default "
+                "shape '4 blocked, 0 allowed, 1 detected'; weakened "
+                "inputs report allowed attacks; no hardcoded literal. "
+                "F58 CLOSED (LOW)."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 87
+SITUATIONS["sit87"] = {
+    "title": "Wave-14 brief 6 — install-time behavior: no code executes at pip-install time (clean)",
+    "threats": ["T10"],
+    "sources": [
+        "Wave-14 brief 6, assessed 2026-09-21 (read-only; no finding).",
+        "pyproject.toml: stock setuptools.build_meta backend, no "
+        "setup.py, no setup.cfg, no [tool.setuptools.cmdclass], no "
+        "custom install commands.",
+    ],
+    "summary": (
+        "Read-only assessment: pip install executes no project code -- "
+        "stock build backend, no setup.py, no cmdclass, no custom "
+        "install hooks. A compromised build backend remains the "
+        "build-backend trust boundary (out of scope, unchanged). No "
+        "finding."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "No setup.py, no cmdclass, stock build backend: nothing "
+                "executes at install time. No finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}
+
+# ---------------------------------------------------------------- SIT 88
+SITUATIONS["sit88"] = {
+    "title": "Wave-14 brief 7 — F45 x F33: crash after claim, re-decision, execution -- budget charged exactly once (defense holds)",
+    "threats": ["T9", "T8"],
+    "sources": [
+        "Wave-14 brief 7, measured 2026-09-21 (no finding; defense "
+        "cell).",
+        "gov/executor.py: the F33 budget charge sits AFTER _simulate "
+        "at each execution boundary (call() allow path and "
+        "execute_approved), so a crashed sweep charges nothing; F45 "
+        "reconciliation re-queues loudly and the human re-decides "
+        "before any re-execution.",
+    ],
+    "summary": (
+        "Crash between the durable claim and the side effect: the "
+        "crashed sweep charges 0 sends. The next sweep reconciles "
+        "loudly (record back to pending, 1 "
+        "approval_execution_interrupted, human must re-decide). The "
+        "human re-approves, the send executes, and the budget counts "
+        "exactly 1 execution for the single actual send (1 "
+        "approved_executed entry). No double-charge. No finding."
+    ),
+    "expected": _fill({
+        "low": ("allowed-with-audit",
+                "Crashed sweep charges 0; reconcile re-queues loudly; "
+                "re-approval executes once; budget counts exactly 1. "
+                "No finding."),
+        "standard": ("allowed-with-audit",
+                     "As low."),
+        "elevated": ("allowed-with-audit",
+                     "As low."),
+    }),
+}

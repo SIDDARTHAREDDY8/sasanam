@@ -6,7 +6,11 @@ Pipeline for each call (in order):
    executor* via :meth:`mint_identity` (unforgeable within the process) and
    its ``run_id`` must match this run. A forged or cross-run identity is
    denied and logged; a structurally valid but unminted identity raises
-   :class:`UnmintedIdentityError`.
+   :class:`UnmintedIdentityError`. F55: when the deployment provisions a
+   session identity at construction (``provenance="provisioned"``),
+   entitlement-sensitive paths (``break_glass``) require exactly that
+   identity — mid-run mints of the same tuple (``provenance="minted"``)
+   are refused, closing the operator-minting impersonation.
 2. **Role allowlist.** The caller's role must permit the tool at all,
    regardless of what the rules say (least privilege).
 3. **DLP.** Credential patterns in arguments deny the call before any
@@ -51,6 +55,7 @@ Policy outcomes:
 
 import json
 import os
+import fcntl
 import time
 import collections.abc
 import itertools
@@ -62,7 +67,8 @@ from . import dlp
 from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
                         sanitize_preview_text, QueueLockError,
-                        QueueLockInvalidatedError, QueueLockPathError)
+                        QueueLockInvalidatedError, QueueLockPathError,
+                        SessionIdentityAlreadySetError)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -113,7 +119,7 @@ _CORRELATION_WINDOW_API = 16
 
 class ToolExecutor:
     def __init__(self, run_dir, policy, log, approvals, ledger_path=None,
-                 principal_registry=None):
+                 principal_registry=None, session_identity=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -255,6 +261,30 @@ class ToolExecutor:
         # this run (actual payload UTF-8 bytes, DLP-independent).
         self._repeats = {}  # (tool, canonical args) -> count
         self._minted = set()  # (agent_id, role, run_id, principal) tuples
+        # F55 (R13): the deployment-provisioned session identity. When
+        # the deployment passes session_identity=(agent_id, role,
+        # principal), the executor creates exactly ONE provisioned
+        # identity at construction (provenance="provisioned") and
+        # installs it write-once on the approval queue:
+        # ApprovalQueue.break_glass() then requires exactly this
+        # identity, and mid-run mints of the same tuple (provenance=
+        # "minted") are refused — closing the F55 operator-minting
+        # impersonation. The provisioned identity does NOT consume
+        # mint budget (it is deployment config, not agent issuance).
+        # Without it, the pre-R13 F26 behavior is kept (dev mode).
+        self._session_identity = None
+        if session_identity is not None:
+            self._session_identity = self._provision_session_identity(
+                session_identity)
+            if hasattr(approvals, "set_session_identity"):
+                try:
+                    approvals.set_session_identity(self._session_identity)
+                except SessionIdentityAlreadySetError:
+                    # F31 pattern: a second executor sharing this queue
+                    # keeps the first session identity — the agent
+                    # cannot swap the entitlement anchor by constructing
+                    # a fresh executor.
+                    pass
         # F51 (R12): lock-refusal audit coalescing — a sustained lock
         # disturbance (e.g. an unlink loop) refuses every sweep; the
         # refusals are fail-closed but the audit entries are
@@ -270,6 +300,66 @@ class ToolExecutor:
         # content this run; api_call afterwards is taint-gated.
 
     # -- identity ---------------------------------------------------------
+
+    def _provision_session_identity(self, spec):
+        """F55 (R13): create the ONE deployment-provisioned session identity.
+
+        ``spec`` is an (agent_id, role, principal) tuple from deployment
+        configuration — never from agent input. The identity is created
+        with ``provenance="provisioned"`` and its tuple is added to the
+        minted set (so the F26 verifier and ``call()`` honor it). When
+        a principal registry is configured, the tuple must ALSO satisfy
+        the registry — a misconfigured session identity fails closed
+        here, at construction, before any tool can execute.
+        """
+        try:
+            agent_id, role, principal = spec
+        except (TypeError, ValueError):
+            raise ValueError(
+                "session_identity must be an (agent_id, role, principal) "
+                "tuple, got %r" % (spec,))
+        for name, value in (("agent_id", agent_id), ("role", role),
+                            ("principal", principal)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    "session_identity %s must be a non-empty string, "
+                    "got %r" % (name, value))
+        if self._principal_registry is not None:
+            try:
+                self._principal_registry.check_identity(
+                    principal, role, agent_id)
+            except UnregisteredPrincipalError as e:
+                self.log.append({
+                    "event": "identity_session_refused",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "decision": "refused",
+                    "policy_id": "principal-registry",
+                    "reason": ("session_identity refused at construction: "
+                               "%s" % e),
+                })
+                raise
+        ident = AgentIdentity(agent_id=agent_id, role=role,
+                              run_id=self.run_id, principal=principal,
+                              provenance="provisioned")
+        self._minted.add((ident.agent_id, ident.role,
+                          ident.run_id, ident.principal))
+        self.log.append({
+            "event": "identity_session_provisioned",
+            "run_id": self.run_id,
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "decision": "identity_issued",
+            "policy_id": "principal-registry",
+            "reason": ("Deployment-provisioned session identity "
+                       "established for run %s (provenance=provisioned); "
+                       "break-glass entitlement is bound to it." %
+                       self.run_id),
+        })
+        return ident
 
     def mint_identity(self, agent_id, role, principal):
         """Issue the only kind of identity this executor will honor.
@@ -319,7 +409,8 @@ class ToolExecutor:
             warn_self_asserted_identity_once()
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
-                              run_id=self.run_id, principal=principal)
+                              run_id=self.run_id, principal=principal,
+                              provenance="minted")
         self._minted.add((ident.agent_id, ident.role,
                           ident.run_id, ident.principal))
         if self._principal_registry is not None:
@@ -1491,14 +1582,135 @@ class ToolExecutor:
     # (unlink loop) cannot flood the tamper-evident log. The next
     # audited entry carries suppressed_repeats, and a storm (>= 10
     # folded repeats) is flagged for the operator.
+    #
+    # F56 (R13): the coalescing window is NOT per-instance memory
+    # anymore — it lives in a small state file in the run dir
+    # (``lock_refusal_coalesce.json``), so it survives executor
+    # rotation (a fresh executor per sweep, or multi-process sweeps
+    # sharing the run dir). The file is tiny and bounded: one record
+    # per known refusal flag. Read-modify-write runs under an
+    # exclusive flock on a sibling lock file. A deleted/corrupt state
+    # file degrades to "audit once and recreate" (the
+    # already-documented lock-DoS, not a new hole) — never an
+    # exception. If the shared state is unreachable at all (OSError),
+    # the old per-instance coalescing is used as a best-effort
+    # fallback, still never raising out of the audit path.
     _LOCK_REFUSAL_AUDIT_COALESCE_SECS = 5.0
     _LOCK_REFUSAL_STORM_THRESHOLD = 10
+    _LOCK_REFUSAL_STATE_FILENAME = "lock_refusal_coalesce.json"
+    _LOCK_REFUSAL_STATE_LOCK_FILENAME = "lock_refusal_coalesce.lock"
+    _LOCK_REFUSAL_KNOWN_FLAGS = ("queue_lock_invalid",
+                                 "queue_lock_invalidated",
+                                 "queue_lock_timeout")
+
+    def _lock_refusal_state_path(self):
+        return self.run_dir / self._LOCK_REFUSAL_STATE_FILENAME
+
+    def _read_lock_refusal_state(self, state_path):
+        """Read the shared coalescing state; {} on missing/corrupt.
+
+        Bounded: only known refusal flags are kept, values are coerced
+        to (last_audit float, suppressed int)."""
+        try:
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        state = {}
+        for flag in self._LOCK_REFUSAL_KNOWN_FLAGS:
+            rec = raw.get(flag)
+            if not isinstance(rec, dict):
+                continue
+            try:
+                last_audit = float(rec.get("last_audit", 0.0))
+                suppressed = int(rec.get("suppressed", 0))
+            except (TypeError, ValueError):
+                continue
+            state[flag] = {"last_audit": last_audit,
+                           "suppressed": max(0, suppressed)}
+        return state
+
+    def _write_lock_refusal_state(self, state_path, state):
+        """Atomically persist the shared coalescing state (temp file +
+        os.replace). Keeps only known flags: tiny and bounded."""
+        bounded = {flag: state[flag]
+                   for flag in self._LOCK_REFUSAL_KNOWN_FLAGS
+                   if flag in state}
+        tmp_path = state_path.with_name(state_path.name + ".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(bounded, ensure_ascii=True,
+                               sort_keys=True))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, state_path)
 
     def _audit_lock_refusal(self, flag, reason):
         """Audit a lock-refusal, coalesced. Returns True when an entry
         was written, False when the refusal was folded into the
         suppressed counter."""
         now = time.monotonic()
+        try:
+            return self._audit_lock_refusal_shared(flag, reason, now)
+        except OSError:
+            # F56: the shared state file is unreachable (run dir gone,
+            # read-only FS, ...). Degrade to the pre-R13 per-instance
+            # coalescing — best effort, never an exception.
+            return self._audit_lock_refusal_local(flag, reason, now)
+
+    def _audit_lock_refusal_shared(self, flag, reason, now):
+        """F56: file-backed coalescing shared across executor instances
+        (and processes) via the run-dir state file."""
+        state_path = self._lock_refusal_state_path()
+        lock_path = self.run_dir / self._LOCK_REFUSAL_STATE_LOCK_FILENAME
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        audited = False
+        suppressed_total = 0
+        with open(lock_path, "a", encoding="utf-8") as lf:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX)
+            try:
+                state = self._read_lock_refusal_state(state_path)
+                rec = state.get(flag) or {"last_audit": 0.0,
+                                          "suppressed": 0}
+                if (now - rec["last_audit"]
+                        < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
+                    rec["suppressed"] += 1
+                    state[flag] = rec
+                    self._write_lock_refusal_state(state_path, state)
+                    # Mirror the shared state on the instance attrs
+                    # (introspection / legacy readers).
+                    self._lock_refusal_last_audit = rec["last_audit"]
+                    self._lock_refusal_suppressed = rec["suppressed"]
+                    return False
+                suppressed_total = rec["suppressed"]
+                rec["last_audit"] = now
+                rec["suppressed"] = 0
+                state[flag] = rec
+                self._write_lock_refusal_state(state_path, state)
+                self._lock_refusal_last_audit = now
+                self._lock_refusal_suppressed = 0
+                # The audit entry goes out while the state lock is held
+                # (lock order here is always state-lock -> log-lock, and
+                # no path takes them in the reverse order), so two
+                # racing processes cannot both decide to audit.
+                self.log.append({
+                    "event": "approval_sweep_refused",
+                    "run_id": self.run_id,
+                    "decision": "refused",
+                    "policy_id": "approval-execution-refused",
+                    "flag": flag,
+                    "reason": reason,
+                    "suppressed_repeats": suppressed_total,
+                    "refusal_storm":
+                        suppressed_total >= self._LOCK_REFUSAL_STORM_THRESHOLD,
+                })
+                audited = True
+            finally:
+                fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
+        return audited
+
+    def _audit_lock_refusal_local(self, flag, reason, now):
+        """Pre-R13 per-instance coalescing (F56 fallback only)."""
         if (now - self._lock_refusal_last_audit
                 < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
             self._lock_refusal_suppressed += 1

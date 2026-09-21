@@ -278,13 +278,22 @@ _BREAK_GLASS_TICKET_LOCK_FILENAME = "break_glass_tickets.lock"
 
 
 def _ticket_canonical(ticket_id, operator_principal, reviewer_principal,
-                      purpose, created_at):
+                      purpose, created_at, used=False, used_at=None,
+                      used_for_approval=None):
     return _canonical_dumps({
         "ticket_id": ticket_id,
         "operator_principal": operator_principal,
         "reviewer_principal": reviewer_principal,
         "purpose": purpose or "",
         "created_at": created_at,
+        # F57 (R13): the consumption state rides the HMAC — flipping
+        # used=False on a consumed ticket without re-signing (which
+        # needs the keyring key) fails verification. used_at /
+        # used_for_approval are bound the same way so a consumed
+        # ticket's audit trail cannot be scrubbed without the key.
+        "used": bool(used),
+        "used_at": used_at,
+        "used_for_approval": used_for_approval,
     })
 
 
@@ -365,7 +374,12 @@ def _read_verified_ticket_store(store_path, audit_log=None):
         canonical = _ticket_canonical(
             entry.get("ticket_id"), entry.get("operator_principal"),
             entry.get("reviewer_principal"), entry.get("purpose"),
-            entry.get("created_at"))
+            entry.get("created_at"),
+            # F57 (R13): the used state is HMAC-bound, so it must be
+            # fed back into the canonical — otherwise a legitimately
+            # consumed (re-signed) ticket would fail verification.
+            used=entry.get("used"), used_at=entry.get("used_at"),
+            used_for_approval=entry.get("used_for_approval"))
         ok = False
         for key_epoch, key in keyring.items():
             candidate = _break_glass_ticket_mac(key, key_epoch, canonical)
@@ -1120,16 +1134,66 @@ class ApprovalQueueRiskMixin:
             return None
         return entry
 
+    def _ticket_consumed_in_log(self, ticket_id):
+        """F57 (R13): has this ticket already been consumed, per the
+        VERIFIED action log?
+
+        The ticket store alone cannot answer this: a pre-consume store
+        snapshot can be replayed over the live store file, making a
+        consumed ticket look fresh again. The action log is
+        append-only and HMAC-chained, so the ``ticket_consumed`` event
+        appended at consumption time survives any store replay. Verify
+        the chain BEFORE trusting the markers: a tampered or
+        unverifiable log fails CLOSED (treated as consumed), as does a
+        missing log handle. Never raises on content problems —
+        ``_verify`` reports them as a verdict dict.
+        """
+        log_path = getattr(self.log, "path", None)
+        if log_path is None:
+            return True
+        verdict = _verify(log_path)
+        if not verdict.get("ok"):
+            return True
+        for entry in read_entries(log_path):
+            if (isinstance(entry, dict)
+                    and entry.get("event") == "ticket_consumed"
+                    and entry.get("ticket_id") == ticket_id):
+                return True
+        return False
+
     def _mark_ticket_used(self, ticket_id, approval_id):
         """F49: single-use — mark a ticket consumed in the snapshot and
         persist the used flag to the store file (under the queue lock)
-        so a second process/CLI invocation cannot reuse it."""
+        so a second process/CLI invocation cannot reuse it.
+
+        F57 (R13): the used state is HMAC-bound — the entry is
+        RE-SIGNED with used=True / used_at / used_for_approval, so a
+        replayed pre-consume store line cannot be spliced back in
+        (flipping used=False without the keyring key fails
+        verification)."""
+        used_at = _utcnow()
+        key, key_epoch = _active_key()
+
+        def _resign(entry):
+            entry["used"] = True
+            entry["used_at"] = used_at
+            entry["used_for_approval"] = approval_id
+            entry["hmac"] = _break_glass_ticket_mac(
+                key, key_epoch,
+                _ticket_canonical(
+                    entry.get("ticket_id"),
+                    entry.get("operator_principal"),
+                    entry.get("reviewer_principal"),
+                    entry.get("purpose"),
+                    entry.get("created_at"),
+                    used=True, used_at=used_at,
+                    used_for_approval=approval_id))
+            return entry
+
         if self._bg_ticket_snapshot is not None:
             entry = self._bg_ticket_snapshot.get(ticket_id)
             if entry is not None:
-                entry["used"] = True
-                entry["used_at"] = _utcnow()
-                entry["used_for_approval"] = approval_id
+                _resign(entry)
         path = self._ticket_store_path()
         if path.exists():
             lines = []
@@ -1142,9 +1206,7 @@ class ApprovalQueueRiskMixin:
                     lines.append(line)
                     continue
                 if isinstance(e, dict) and e.get("ticket_id") == ticket_id:
-                    e["used"] = True
-                    e["used_at"] = _utcnow()
-                    e["used_for_approval"] = approval_id
+                    _resign(e)
                     line = json.dumps(e, ensure_ascii=True, default=str)
                 lines.append(line)
             with open(path, "w", encoding="utf-8") as f:
@@ -1188,6 +1250,12 @@ class ApprovalQueueRiskMixin:
           operator's principal. Tickets the agent minted for itself
           mid-run — including well-formed HMACed ones — are refused.
           Refusals are audited as ``break_glass_refused``.
+        * F57 (R13): single-use is enforced against the VERIFIED action
+          log, not just the ticket store — a replayed pre-consume store
+          snapshot cannot resurrect a consumed ticket, because the
+          append-only ``ticket_consumed`` event survives the replay.
+          The ticket's HMAC binds its used state (re-signed on
+          consume).
         * creates a post-review ticket that keeps the audit status
           UNCLEAN until the PROVISIONED reviewer (bound at provisioning
           time, distinct from the operator) resolves it.
@@ -1195,6 +1263,34 @@ class ApprovalQueueRiskMixin:
         """
         operator_identity = self._authenticate_caller(
             operator_identity, "break_glass")
+        # F55 (R13): when the deployment provisioned a session identity,
+        # break-glass is entitled ONLY to that identity. The F26
+        # verifier checks mintedness, never entitlement — in-process
+        # code holding the executor can mint the registered operator
+        # tuple mid-run, so a merely-minted operator identity is
+        # refused here with an audited entry. Without a provisioned
+        # session identity the pre-R13 F26 behavior is kept (dev
+        # mode), with the existing self-asserted warnings.
+        if self._session_identity is not None:
+            if operator_identity != self._session_identity:
+                self._refuse_break_glass(
+                    approval_id,
+                    "break-glass refused: operator identity %r is not "
+                    "the deployment-provisioned session identity "
+                    "(provenance=%r, want 'provisioned'): mid-run "
+                    "minted identities are not entitled to consume "
+                    "break-glass tickets (F55)" % (
+                        (operator_identity.agent_id,
+                         operator_identity.role,
+                         operator_identity.principal),
+                        getattr(operator_identity, "provenance",
+                                "minted")),
+                    ticket_id=ticket_id,
+                    operator_principal=operator_identity.principal)
+                raise ValueError(
+                    "break-glass refused: mid-run minted identities "
+                    "are not entitled (F55); the deployment-provisioned "
+                    "session identity is required")
         if not reason or not reason.strip():
             raise ValueError("break-glass requires a non-empty reason")
         if not ticket_id:
@@ -1256,6 +1352,27 @@ class ApprovalQueueRiskMixin:
                     raise ValueError(
                         "break-glass refused: ticket %r already used "
                         "(single-use)" % ticket_id)
+                # F57 (R13): the AUTHORITATIVE consumed-ticket memory is
+                # the verified action log, not the ticket store. A
+                # replayed pre-consume store snapshot passes the live
+                # check above (the store genuinely says "unused") —
+                # but the append-only ticket_consumed event survives
+                # the replay and refuses the reuse. Checked under the
+                # cross-process lock so the check and the consume below
+                # are one critical section.
+                if self._ticket_consumed_in_log(ticket_id):
+                    self._refuse_break_glass(
+                        approval_id,
+                        "break-glass ticket %r was already consumed "
+                        "according to the verified action log "
+                        "(single-use; F57 ticket-store replay check: a "
+                        "restored pre-consume store cannot resurrect it)"
+                        % ticket_id,
+                        ticket_id=ticket_id,
+                        operator_principal=operator_identity.principal)
+                    raise ValueError(
+                        "break-glass refused: ticket %r already consumed "
+                        "(verified action log)" % ticket_id)
                 if operator_identity.principal != ticket_entry["operator_principal"]:
                     self._refuse_break_glass(
                         approval_id,
@@ -1286,6 +1403,34 @@ class ApprovalQueueRiskMixin:
                 # F49: single-use — consume the ticket before opening the
                 # post-review ticket, so a crash between the two cannot leave
                 # a reusable ticket behind the consumed authorization.
+                #
+                # F57 (R13): the AUTHORITATIVE consumed marker is the
+                # append-only action-log event, and it is appended
+                # BEFORE the ticket store is mutated. Ordering matters:
+                # if we crash between the log append and the store
+                # mutation, the ticket is burned (the log says consumed,
+                # the next attempt refuses) — a fail-closed residual.
+                # If the order were reversed, a crash would leave the
+                # store consumed but the log silent, and a replayed
+                # pre-consume store snapshot would resurrect the ticket
+                # with no log evidence to refuse it.
+                self.log.append({
+                    "event": "ticket_consumed",
+                    "run_id": record.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "ticket_consumed",
+                    "policy_id": "break-glass-ticket",
+                    "ticket_id": ticket_id,
+                    "approval_id": approval_id,
+                    "operator_principal": operator_label,
+                    "provisioned_reviewer_principal":
+                        ticket_entry["reviewer_principal"],
+                    "reason": ("break-glass ticket %r consumed for "
+                               "approval %r (single-use; F57 authoritative "
+                               "consumed marker)" % (ticket_id, approval_id)),
+                })
                 self._mark_ticket_used(ticket_id, approval_id)
         ticket = {
             "ticket_id": "PRV-%s" % approval_id,
@@ -1490,6 +1635,17 @@ class IdentityVerifierAlreadySetError(Exception):
     """
 
 
+class SessionIdentityAlreadySetError(Exception):
+    """F55 (R13): the provisioned session identity is write-once.
+
+    ``ToolExecutor`` installs the deployment-provisioned session
+    identity at construction; any later ``set_session_identity`` call
+    raises instead of swapping the entitlement anchor out from under
+    ``break_glass``. The first-installed session identity stays the
+    only identity entitled to consume break-glass tickets.
+    """
+
+
 class ApprovalQueue(ApprovalQueueRiskMixin):
     def __init__(self, run_dir, log, batch_excluded_reasons=None):
         self.run_dir = Path(run_dir)
@@ -1511,6 +1667,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
         self._identity_verifier_sealed = False
+        # F55 (R13): the deployment-provisioned session identity for
+        # entitlement-sensitive paths (break_glass). Installed
+        # write-once by ToolExecutor at construction (see
+        # set_session_identity). None = no provisioned identity: the
+        # pre-R13 behavior (F26 mintedness check) applies, with the
+        # existing self-asserted-identity warnings.
+        self._session_identity = None
+        self._session_identity_sealed = False
         # F49 (R11): write-once snapshot of the human-provisioned
         # break-glass ticket store, taken at run start (first
         # ToolExecutor construction). None = not yet snapshotted.
@@ -1548,6 +1712,38 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 % type(verifier).__name__)
         self._identity_verifier = verifier
         self._identity_verifier_sealed = True
+
+    def set_session_identity(self, identity):
+        """F55 (R13): install the deployment-provisioned session identity.
+
+        ``identity`` is the ONE ``AgentIdentity`` the deployment
+        provisioned out-of-band for this session (``provenance=
+        "provisioned"``), created by ``ToolExecutor`` at construction.
+        Entitlement-sensitive paths (``break_glass``) require exactly
+        this object — a mid-run ``mint_identity`` of the same
+        (agent_id, role, principal) tuple carries
+        ``provenance="minted"`` and is therefore not equal to it.
+
+        WRITE-ONCE (same pattern as F31): the first call installs the
+        session identity and seals the slot; every later call raises
+        ``SessionIdentityAlreadySetError``. A swap attempt never takes
+        effect and never mutates the installed identity.
+        """
+        if getattr(self, "_session_identity_sealed", False):
+            raise SessionIdentityAlreadySetError(
+                "session identity is write-once: a provisioned identity "
+                "is already installed; refusing to swap it out")
+        if not isinstance(identity, AgentIdentity):
+            raise TypeError(
+                "session identity must be an AgentIdentity, got %s"
+                % type(identity).__name__)
+        if getattr(identity, "provenance", "minted") != "provisioned":
+            raise ValueError(
+                "session identity must carry provenance='provisioned' "
+                "(deployment-provisioned at session start); mid-run "
+                "minted identities are never entitled")
+        self._session_identity = identity
+        self._session_identity_sealed = True
 
     def _authenticate_caller(self, identity, what):
         """F26: authenticate the caller of a break-glass/review method.

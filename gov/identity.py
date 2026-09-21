@@ -19,6 +19,20 @@ registry does not authorize, and the refusal is audit-logged
 (``identity_mint_refused``). With no registry the executor still mints
 freely but emits a loud one-time stderr warning that identity is
 self-asserted (same disclosure pattern as the dev-key warnings).
+
+F55 (R13): minting authenticates nothing about the CALLER — in-process
+code holding the executor can mint the registered operator tuple and
+consume a human-provisioned break-glass ticket as the operator (the F26
+verifier checks mintedness, never entitlement). The fix separates the
+session identity from mintable identities: the deployment provisions
+exactly ONE session identity at ``ToolExecutor`` construction
+(``session_identity=(agent_id, role, principal)``); it is created with
+``provenance="provisioned"`` while ``mint_identity`` issues
+``provenance="minted"``. ``ApprovalQueue.break_glass`` requires the
+provisioned session identity and refuses mid-run mints with an audited
+``break_glass_refused`` entry. Without a provisioned session identity
+the pre-R13 behavior (F26 mintedness check) is kept, with the existing
+self-asserted warnings.
 """
 
 import sys
@@ -214,31 +228,26 @@ class AgentIdentity:
     role:      the agent's job in the run, e.g. "scout"
     run_id:    the workflow run this agent belongs to
     principal: the human (or org) on whose behalf the agent acts
+
+    F55 (R13): ``provenance`` records HOW the identity came into
+    being. ``"provisioned"`` = the deployment-provisioned session
+    identity, established out-of-band and created exactly once at
+    ``ToolExecutor`` construction; ``"minted"`` = issued mid-run by
+    ``ToolExecutor.mint_identity``. Entitlement-sensitive paths
+    (``ApprovalQueue.break_glass``) require the provisioned session
+    identity — a mid-run mint of the same (agent_id, role,
+    principal) tuple is NOT equal to it, so tuple-equality can no
+    longer impersonate the operator. The field has a default, so
+    existing four-argument constructions keep working (they get
+    ``"minted"``, the honest label for anything the mint path
+    produces).
     """
 
     agent_id: str
     role: str
     run_id: str
     principal: str
-
-    def as_dict(self):
-        return asdict(self)
-
-
-@dataclass(frozen=True)
-class AgentIdentity:
-    """Who acted.
-
-    agent_id:  stable id of the agent instance, e.g. "scout-01"
-    role:      the agent's job in the run, e.g. "scout"
-    run_id:    the workflow run this agent belongs to
-    principal: the human (or org) on whose behalf the agent acts
-    """
-
-    agent_id: str
-    role: str
-    run_id: str
-    principal: str
+    provenance: str = "minted"
 
     def as_dict(self):
         return asdict(self)

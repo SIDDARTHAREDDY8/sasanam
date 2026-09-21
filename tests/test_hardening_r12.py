@@ -259,9 +259,17 @@ class TestF51LockPathHardening(unittest.TestCase):
         self.assertEqual(len(evts), 1)
         self.assertEqual(ex._lock_refusal_suppressed, 2)
         # The next emitted entry reports the folded repeats and flags a
-        # storm at the threshold.
-        ex._lock_refusal_suppressed = 10
-        ex._lock_refusal_last_audit = 0.0
+        # storm at the threshold. F56 (R13): the coalescing window is
+        # file-backed, so the test drives the state file (the new
+        # authority) instead of the old per-instance attrs: reset the
+        # window to "expired" with 10 folded repeats, then the next
+        # refusal audits and reports them.
+        import json as _json
+        state_path = ex._lock_refusal_state_path()
+        state_path.write_text(_json.dumps(
+            {"queue_lock_timeout": {"last_audit": 0.0,
+                                    "suppressed": 10}}),
+            encoding="utf-8")
         self.assertTrue(ex._audit_lock_refusal("queue_lock_timeout", "t4"))
         evts = _refused(read_entries(ctx["run_dir"] / "actions.jsonl"))
         self.assertEqual(evts[-1]["suppressed_repeats"], 10)

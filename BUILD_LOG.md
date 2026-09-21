@@ -2027,3 +2027,195 @@ tests/run_tests.py` → **499/499 OK** (481 baseline + 18 new r12).
 `cmp policies/default.yaml gov/data/default.yaml` — identical.
 `__pycache__` removed. NOT pushed (per round rules); GitHub repo
 stays private/untouched. $0 spend, no LLM calls.
+
+
+## 2026-09-21 22:40 UTC — WAVE-14 RED TEAM (persistent attacks on Round-12 seams)
+
+Permanent red-team wave. New probes in `evals/w14_probes.py`
+(registered via `register_w14()` immediately after `register_r12()`
+in `evals/run_evals.py`, which stays lean); new situations
+sit81–sit88 in `evals/matrix.py`; `evals/SITUATION_MATRIX.md`
+regenerated (88 situations, 1056 cells); findings filed as F55–F58 in
+`evals/FINDINGS.md`; wave-14 honest cells documented. `gov/` and
+`evals/r12_probes.py`/`evals/w13_probes.py` untouched. Deterministic
+scripted attacks, $0 spend, no LLM calls.
+
+**New findings (all OPEN — defeating playbooks confirmed by this
+wave's probes; closures deferred to a future hardening round):**
+
+- **F55 (MEDIUM, sit81)** — minting is capability-unchecked:
+  in-process attack code mints the REGISTERED operator identity
+  (`op-1/operator/ops-lead`), queues an approval stamped as the
+  operator, and consumes a real human-provisioned break-glass ticket
+  as the operator → emergency approval granted. Operationalizes
+  F50's documented honest residual #3 end-to-end; `mint_identity()`
+  gates the tuple but authenticates nothing about the caller, so the
+  anchor is really "code with executor access".
+- **F56 (MEDIUM, sit82)** — the F51 refusal-coalescing window is
+  per-executor-instance state: 8 sweeps on 8 fresh executors (same
+  run dir) log 8 `approval_sweep_refused` audits; control (8 sweeps,
+  1 executor) logs 1 + 7 suppressed. Per-sweep executor
+  construction / multi-process sweeps (the F54 threat shape) flood
+  the tamper-evident log anyway.
+- **F57 (MEDIUM, sit85)** — ticket-store replacement re-arms a
+  consumed single-use break-glass ticket: restoring the pre-consume
+  store snapshot replays as valid (the ticket HMAC covers identity/
+  purpose/created_at but NOT the `used` flag; no generation
+  counter); a fresh process then consumes the same ticket_id a
+  second time → 2 `approval_break_glass` audits for one ticket. The
+  F54 flock is advisory and never consulted by a run-dir writer.
+  Deletion mid-race fails closed (live re-read finds nothing).
+- **F58 (LOW, sit86)** — `demo/attack_scenario.py`'s final
+  `RESULT: 4 attack attempts blocked, 1 tampering detected.` line is
+  a literal print with no dependency on any verdict: against a
+  weakened policy the run prints `ALLOWED?! send to attacker domain`
+  AND the scripted success summary. (Checked `demo/run_demo.py`
+  too — its status display is honest; no false summary there.)
+
+**Honest cells (no new findings):**
+
+- **sit83** — one bad-HMAC entry blocks a GENUINE interrupted claim's
+  recovery (1 `reconciliation_marker_invalid`, 0 phantom
+  interruptions; the legit claim sits unreconciled until an operator
+  repairs the chain). Confirms F52's documented honest residual #1.
+- **sit84** — full-chain `_verify` completes at 20k entries
+  (~0.55s, bounded not pathological); one forged marker makes 3
+  sweeps re-verify + re-audit (no dedup), and the 3 refusal audits
+  grow the chain by exactly 3 entries (self-feeding loop, capped by
+  the F22 100MB fail-closed guard). Confirms F52's documented honest
+  residual #2 with numbers.
+- **sit87** — install-time: stock `setuptools.build_meta`, no
+  setup.py/setup.cfg, no cmdclass, no custom install commands —
+  nothing executes at `pip install`. No finding.
+- **sit88** — F45 x F33 defense holds: crash between claim and side
+  effect charges 0; next sweep reconciles loudly to pending (human
+  must re-decide); re-approval executes once; budget counts exactly
+  1. No double-charge; no finding.
+
+**Verification:** `python3 -m py_compile` after every edit;
+`tests.test_adversary_matrix` 4/4 after every change. Final gates,
+measured 2026-09-21: `mkdir -p /tmp/gov-w14`,
+`TMPDIR=/tmp/gov-w14 python3 evals/run_evals.py` →
+**2112/2112, SHIP-GATE GREEN, exit 0** (88 situations x 4 adapters x
+3 privs x 2 harnesses; the 192 new sit81–sit88 cells all PASS);
+`python3 tests/run_tests.py` → **499/499 OK**. `__pycache__`
+removed. NOT pushed (per round rules); GitHub repo stays
+private/untouched.
+
+## 2026-09-21 — Hardening Round 13: F55–F58 CLOSED
+
+**Scope:** close the four Wave-14 findings F55 (operator mint
+impersonation), F56 (cross-executor refusal coalescing), F57
+(ticket-store replay), F58 (demo summary unconditional). Python
+3.12, deterministic, no LLM calls, $0 spend. No push (parent
+verifies before any push); repo stays private/untouched.
+
+**F55 — break-glass entitlement bound to the provisioned session
+identity** (`gov/identity.py`, `gov/executor.py`,
+`gov/approvals.py`, `tests/harness.py`):
+
+- Consolidated the two `AgentIdentity` definitions; added
+  `provenance` (`"minted"` default).
+- `ToolExecutor(..., session_identity=(agent_id, role, principal))`
+  creates ONE construction-time identity
+  (`provenance="provisioned"`), installed write-once on the
+  `ApprovalQueue` (`set_session_identity`; second install raises
+  `SessionIdentityAlreadySetError`).
+- `break_glass()` requires exactly the session identity
+  (`operator_identity is not self._session_identity` — object
+  identity, not dataclass equality). A mid-run `mint_identity()`
+  of the same tuple (provenance `"minted"`, or a forged
+  `AgentIdentity(..., provenance="provisioned")` built
+  out-of-band) is refused with an audited `break_glass_refused`.
+- Harness accepts `session_identity=`; ctx exposes
+  `ctx["session_identity"]`. Registry/dev mode without a session
+  identity keeps pre-R13 behavior.
+- Verified: mid-run minted operator refused + audited (incl. the
+  forged-provenance variant); provisioned identity consumes the
+  ticket; dev-mode minted operator still works.
+
+**F56 — shared cross-executor refusal coalescing**
+(`gov/executor.py`, `tests/test_hardening_r12.py`):
+
+- The coalescing window is a bounded file-backed state in the run
+  dir: `lock_refusal_coalesce.json` (`{last_audit, suppressed}`
+  per known refusal flag), read-modify-write under an exclusive
+  flock on a sibling `.lock` file, atomic temp-file + `os.replace`
+  writes. Wall-clock (`time.time()`) for the shared state.
+- 8 fresh executors under the lock-path attack: 1
+  `approval_sweep_refused` audit entry (7 folded into the shared
+  suppressed counter), state ~71 bytes. Deleted/corrupt state ->
+  one bounded re-audit, never an exception. Run-dir unreachable ->
+  pre-R13 per-instance fallback. Legacy `_lock_refusal_*` attrs are
+  compatibility mirrors only; the R12 test now drives the
+  authoritative state file.
+
+**F57 — ticket consumption anchored in the verified action log**
+(`gov/approvals.py`):
+
+- `break_glass` appends a `ticket_consumed` event BEFORE
+  `_mark_ticket_used` persists, and — under the F54 cross-process
+  flock — verifies the action-log chain first and refuses if a
+  `ticket_consumed` event for the ticket already exists (audited
+  `break_glass_refused`). A crash between log append and store
+  rewrite burns the ticket (fail-closed).
+- The ticket HMAC now binds consumption state
+  (`used`/`used_at`/`used_for_approval` in the canonical payload,
+  re-signed on consume); flipping `used=False` without the keyring
+  key fails verification.
+- Verified: normal consume emits exactly one `ticket_consumed`;
+  replay of a pre-consume store snapshot (with stale snapshot
+  cleared) is refused by the log; forged `used=False` fails HMAC;
+  the F54 fork race still yields exactly one winner with exactly
+  one marker.
+- Honest residuals: pre-R13 provisioned tickets fail HMAC after
+  upgrade (re-provision on upgrade); after a key rotation
+  `break_glass` fails closed until reconciled with the keyring
+  verifier; the log authority trusts the action-log key (the F52
+  boundary).
+
+**F58 — demo summary computed from measured verdicts**
+(`demo/attack_scenario.py`):
+
+- `verdict()` returns its boolean; the 4 attack attempts' verdicts
+  and tamper detection are recorded; `summarize_results(blocked,
+  tamper_detected)` computes the final line — default run prints
+  `RESULT: 4 attack attempts blocked, 0 allowed, 1 tampering
+  detected.`; no hard-coded RESULT literal remains.
+- Attempt 2 counts both `"queued"` and `"denied"` as blocked.
+- Verified: weakened inputs honestly report (e.g. `[True, False,
+  True, True]` -> "3 attack attempts blocked, 1 allowed, 0
+  tampering detected.").
+- Honest residual: the summary trusts the verdict predicates —
+  a misclassifying predicate would still print a clean tally.
+
+**Regression:** `tests/test_hardening_r13.py` (16 tests),
+`evals/r13_probes.py` (closure probes for sit81/82/85/86) —
+16/16 GREEN, `tests.test_adversary_matrix` 4/4, combined
+adversary+R12 suites 22/22 GREEN. `evals/matrix.py` sit81/82/85/86
+expectations flipped to closure-verifying (R12 pattern);
+`evals/SITUATION_MATRIX.md` + root `SITUATION_MATRIX.md`
+regenerated. `evals/FINDINGS.md` F55–F58 marked CLOSED with honest
+residuals.
+
+**Verification gates (measured 2026-09-21):**
+
+- Gate run 1 (pre-closure-finalization code): 2088/2112 RED — all
+  24 failures were sit64 `decorator`/`langchain` (the known
+  `rt_chain_verifies_after_concurrent_writes` timing flake; the
+  isolated probe passed 15/15 — load-dependent). R13 changes were
+  NOT implicated.
+- Gate reruns 2 and 3 (final code): both **2112/2112,
+  SHIP-GATE GREEN, exit 0** (rerun 1's 2088/2112 was the sit64
+  transient flake: the isolated `rt_chain_verifies_after_concurrent_writes`
+  probe passed 15/15; the failing cells were all sit64
+  decorator/langchain, sharing one cached probe execution).
+- `python3 tests/run_tests.py` → **515/515 OK** (499 baseline +
+  16 new R13 tests). Demo default run: `RESULT: 4 attack attempts
+  blocked, 0 allowed, 1 tampering detected.` (computed).
+  `__pycache__` removed.
+- `cmp policies/default.yaml gov/data/default.yaml` → identical
+  (checked before gate).
+
+**NOT pushed (per round rules); GitHub repo stays
+private/untouched. /tmp left clean (~4.9 MB used / 508 MB free).**

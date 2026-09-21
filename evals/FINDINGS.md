@@ -2843,3 +2843,252 @@ provisioned tickets are refused per F49, unchanged).
   state exists and the docs are honest (F5's aggregate-visibility
   debt: "for a persistent agent the volume guard is a speed bump, not
   a ceiling"). No new finding; confirms the documented residual.
+
+## F55 — MEDIUM — minting is capability-unchecked: in-process code holding the executor mints the registered operator identity (Wave 14)
+
+**Cells:** sit81 (all adapters/privs, both harnesses).
+
+**Reproduction:** registry maps `ops-lead -> {roles: [operator],
+agent_ids: [op-1]}`. Attack code holding the executor calls
+`mint_identity("op-1", "operator", "ops-lead")` — SUCCEEDS (the tuple
+is registered; nothing checks the CALLER is entitled to it). The
+minted identity queues an approval stamped
+`op-1/operator/ops-lead`, then `break_glass(..., ticket_id="T-OP",
+operator_identity=<minted>)` with a real human-provisioned ticket:
+`status=approved`, `break_glass=True` — emergency approval granted
+to the attacker. Every step passes the executor-installed F26
+identity verifier, because the identity WAS minted by this executor
+(the verifier checks mintedness, never entitlement).
+
+**Why it matters:** this operationalizes F50's documented honest
+residual #3 end-to-end. The F42 fix was supposed to narrow the
+trust anchor from "caller-supplied strings" to "executor-minted
+identities" — but the mint authenticates nothing about WHO calls it,
+so the anchor is really "code with executor access", and in the
+demo's threat model the agent IS in-process code. Break-glass is the
+emergency-approval primitive; an agent that can mint the operator
+identity can self-authorize emergency bypasses.
+
+**Fix direction:** bind minting to an authenticated caller — e.g.
+the executor mints only for the agent it was constructed to serve
+(per-agent executor instances, or a deployment-issued capability
+token per mint call); alternatively require the ticket's
+`operator_principal` to match a deployment-bound operator identity
+established out-of-band, not merely an executor-minted one.
+
+**Status: CLOSED (Hardening Round 13, 2026-09-21).** Implemented the
+second fix direction: `ToolExecutor(..., session_identity=(agent_id,
+role, principal))` creates exactly ONE deployment-provisioned session
+identity at construction (`AgentIdentity.provenance="provisioned"`),
+installed write-once on the `ApprovalQueue` (`set_session_identity`;
+a second install raises `SessionIdentityAlreadySetError`, the F31
+pattern — a fresh executor sharing the queue cannot swap the
+entitlement anchor). `ApprovalQueue.break_glass` requires exactly
+that identity whenever one is provisioned: a mid-run
+`mint_identity()` of the same tuple carries
+`provenance="minted"`, is NOT equal to the session identity, and is
+refused with an audited `break_glass_refused` entry. The provisioned
+identity still consumes normally; without a session identity the
+pre-R13 dev behavior is unchanged (registry/dev callers keep
+working, with the existing self-asserted warnings). The provisioned
+identity is also registry-checked at construction when a registry is
+configured (fail-closed on misconfiguration) and does not consume
+mint budget. Harness: `make_run(..., session_identity=...)` exposes
+the identity as `ctx["session_identity"]`.
+
+Honest residuals: (1) in-process code holding the executor can still
+CALL `mint_identity` — the boundary moved to the entitlement check
+at `break_glass`, not the mint itself; (2) deployments that never
+pass `session_identity` get no F55 protection (documented dev-mode
+gap); (3) the session identity arrives as a config tuple — its
+authenticity is only as strong as the config channel; (4) object
+equality (not a forgeable provenance string) is the enforcement
+mechanism — the dataclass field is labeling for auditors, the
+executor-held reference is the trust anchor.
+
+## F56 — MEDIUM — fresh executor per sweep defeats the F51 refusal coalescing; the tamper-evident log floods anyway (Wave 14)
+
+**Cells:** sit82 (all adapters/privs, both harnesses).
+
+**Reproduction:** directory swapped in at `approvals.lock` (the F51
+attack shape). 8 sweeps, each on a FRESH executor sharing the run
+dir: 8 `approval_sweep_refused` (queue_lock_invalid) audit entries.
+Control: 8 sweeps on ONE executor: 1 entry + 7 suppressed (the R12
+fix works in-process). A second executor's sweep does not touch the
+first executor's coalescing window (`_lock_refusal_last_audit`
+stays 0.0) — the window is pure per-instance state initialized in
+`ToolExecutor.__init__`.
+
+**Why it matters:** F51's stated goal was "a sustained disturbance
+(unlink loop) cannot flood the tamper-evident log". The coalescing
+holds only while the victim reuses one executor. Per-sweep executor
+construction, or multi-process sweeps sharing the run dir (the F54
+threat shape — forked workers are in-model), each log their own
+refusal: the audit log still floods, feeding the F22 size guard
+toward fail-closed.
+
+**Fix direction:** make the coalescing window shared, not
+per-instance — e.g. a small state file in the run dir (last-audit
+timestamp + suppressed count) updated under the sweep lock, or move
+the refusal audit onto the queue lock's own cross-process
+serialization so repeats from any process coalesce.
+
+**Status: CLOSED (Hardening Round 13, 2026-09-21).** Implemented the
+state-file direction: the coalescing window is now a small bounded
+state file in the run dir (`lock_refusal_coalesce.json`, one
+`{last_audit, suppressed}` record per known refusal flag), with
+read-modify-write under an exclusive flock on a sibling lock file.
+Eight fresh executors under the lock-path attack now produce 1
+`approval_sweep_refused` entry (7 folded into the shared suppressed
+counter) instead of 8. A deleted or corrupt state file degrades to
+a single re-audit — never an exception; if the run dir itself is
+unreachable, the pre-R13 per-instance coalescing is the best-effort
+fallback (still fail-closed, still audited). The state file stays
+<1KB: only the three known flags are stored, and long reasons never
+reach it (atomic temp-file + os.replace writes). The legacy
+`_lock_refusal_last_audit` / `_lock_refusal_suppressed` attrs are
+kept as mirrors for the R12 test contract. One executor still
+coalesces exactly as before.
+
+Honest residuals: (1) deleting the state file still permits one
+extra audit entry per deletion — the documented F51 lock-DoS shape,
+not a new hole; (2) the window is per run dir — independent run
+dirs coalesce independently (by design); (3) the audit entry itself
+is emitted while the state lock is held (lock order is always
+state-lock -> log-lock, no reverse path) so two racing processes
+cannot both decide to audit.
+
+## F57 — MEDIUM — ticket-store replacement re-arms a consumed single-use break-glass ticket (Wave 14)
+
+**Cells:** sit85 (all adapters/privs, both harnesses).
+
+**Reproduction:** ticket T-1 provisioned for ops-lead. Process A
+consumes it (`used=True` persisted; 1 `approval_break_glass`
+audit). A run-dir writer (F52's in-model attacker) restores the
+pre-consume store snapshot — valid HMACs, `used=False`; NO key
+needed, it is a pure replay, because the ticket HMAC covers
+(ticket_id, operator/reviewer principals, purpose, created_at) but
+NOT the `used` flag. The first post-review is legitimately resolved
+(so the stacked-break-glass gate cannot mask the ticket check).
+Process B, a fresh executor constructed AFTER the restore (its
+run-start snapshot seals the replayed ticket as unused), consumes
+T-1 again: `status=approved`, `break_glass=True` — 2
+`approval_break_glass` audits for one ticket_id. The F54 flock does
+not help: it is advisory and the attacker never takes the lock. The
+resolve→consume sequence performs no substitution detection (no
+generation counter, no MAC over `used`).
+
+**Why it matters:** single-use is the ticket's core property; the
+F54 fix closed the simultaneous cross-process race, but the ticket
+remains re-armable by anyone who can write the run dir — one ticket
+becomes N emergency approvals across resolved reviews.
+
+**Fix direction:** bind `used` into the ticket's integrity envelope
+(e.g. MAC the full ticket dict including `used`, or a monotonic
+per-ticket generation counter persisted alongside and checked under
+the flock), or move consumption state out of the replayable store
+file (e.g. consume by renaming/appending to a write-once journal
+the live re-read treats as authoritative).
+
+**Status: CLOSED (Hardening Round 13, 2026-09-21).** Implemented both
+directions as defense in depth. (a) The AUTHORITATIVE
+consumed-ticket memory is now the verified action log:
+`break_glass` appends a `ticket_consumed` event (append-only,
+HMAC-chained) BEFORE `_mark_ticket_used` persists, and — while
+holding the F54 cross-process flock — verifies the action-log
+chain and refuses if a `ticket_consumed` event for the ticket
+already exists. A replayed pre-consume store passes the live-store
+check but the log still says consumed, so the reuse is refused
+(with an audited `break_glass_refused`). Crash between the log
+append and the store mutation burns the ticket (log says consumed,
+next attempt refuses) — an accepted fail-closed residual.
+(b) The ticket HMAC now binds the consumption state:
+`used`/`used_at`/`used_for_approval` are in the canonical payload
+and the entry is RE-SIGNED on consume, so flipping `used=False`
+without the keyring key fails verification. The F54 fork race
+still yields exactly one winner with exactly one
+`ticket_consumed` marker.
+
+Honest residuals: (1) tickets provisioned before R13 fail HMAC
+verification after upgrade (the canonical changed) — deployments
+must re-provision break-glass tickets on upgrade; (2) after a key
+rotation `_verify` fails closed, so `break_glass` refuses until the
+deployment reconciles with the keyring-aware verifier (same
+fail-closed behavior as `gov verify` without `--keyring`); (3) the
+log authority trusts the action-log key — a run-dir writer who
+also holds `GOV_LOG_KEY` could forge a clean log, the same boundary
+as every other log-backed control (F52's documented boundary).
+
+## F58 — LOW — demo/attack_scenario.py's RESULT line is unconditional: it can report "attacks stopped" while its own verdicts say ALLOWED (Wave 14)
+
+**Cells:** sit86 (all adapters/privs, both harnesses).
+
+**Reproduction:** run `demo/attack_scenario.py` against a weakened
+policy (attacker.example allowlisted, outbound sends allowed; DLP
+neutered to simulate a weakened control plane). Attempt 1 prints
+`ALLOWED?! send to attacker domain` — the demo's own verdict()
+standard for "not stopped" — and the run still prints the literal
+line `RESULT: 4 attack attempts blocked, 1 tampering detected.`
+The per-attempt verdict() calls DO check the real returned status;
+the final summary has no dependency on any verdict.
+
+**Why it matters:** `demo/attack_scenario.py` and `demo/run_demo.py`
+are the stranger-facing entry points — the primary sales artifact.
+A prospect running the attack scenario against a misconfigured
+deployment gets a success story printed over a real exfil.
+`run_demo.py` was checked too: its `show()` prints per-result
+status honestly and its audit summary counts real log decisions —
+no false summary there; the gap is specific to
+attack_scenario.py's final RESULT line.
+
+**Fix direction:** derive the summary from the verdicts — count
+blocked vs allowed attempts during the run and print the measured
+tally (and a non-zero exit / prominent warning when any attempt was
+not stopped).
+
+**Status: CLOSED (Hardening Round 13, 2026-09-21).** `verdict()`
+now returns its boolean; each of the 4 attack attempts records its
+verdict, tamper detection is recorded separately, and the final line
+is computed by `summarize_results(blocked, tamper_detected)` —
+`RESULT: 4 attack attempts blocked, 0 allowed, 1 tampering
+detected.` on the default run. No hard-coded RESULT literal remains
+in `demo/attack_scenario.py`; weakened inputs honestly report
+allowed attacks (verified: `[True, False, True, True]` -> "3
+attack attempts blocked, 1 allowed, 0 tampering detected.").
+
+Honest residual: the summary trusts the verdict booleans'
+predicates (e.g. attempt 2 counts `status == "queued"` as blocked) —
+a predicate that misclassified a real bypass would still print a
+clean tally. The predicates are the demo's pre-existing per-attempt
+checks, now wired into the summary instead of floating beside it.
+
+## Wave-14 honest cells (no new findings)
+
+- **sit83 — one bad-HMAC entry blocks genuine recovery.** A genuine
+  interrupted claim (approved + execution_authorized + durable claim)
+  pending when one bad-HMAC line is appended: the sweep refuses the
+  WHOLE reconciliation (1 `reconciliation_marker_invalid`, 0
+  `approval_execution_interrupted`); the legitimate claim sits
+  approved/executed=True, neither executed nor re-queued, until an
+  operator repairs the chain. Confirms F52's documented honest
+  residual #1 (availability); no new finding.
+- **sit84 — verify cost at 20k entries.** Full-chain `_verify`
+  completes at 20k entries (measured ~0.55s on this VM; bounded, not
+  pathological). One forged marker makes 3 sweeps re-verify and
+  re-audit the refusal 3 times (no dedup), and the 3 refusal audits
+  grow the chain by exactly 3 entries — each future sweep walks a
+  longer log, linearly, capped by the F22 100MB fail-closed guard.
+  Confirms F52's documented honest residual #2 with numbers; no new
+  finding.
+- **sit87 — install-time behavior.** Read-only assessment:
+  `pyproject.toml` uses stock `setuptools.build_meta`, no setup.py,
+  no setup.cfg, no `[tool.setuptools.cmdclass]`, no custom install
+  commands — `pip install` executes no project code. No finding.
+- **sit88 — F45 x F33 budget integrity.** Crash between the durable
+  claim and the side effect: the crashed sweep charges 0 sends (the
+  F33 charge sits after `_simulate`). The next sweep reconciles
+  loudly (record back to pending, 1
+  `approval_execution_interrupted`, human must re-decide). The human
+  re-approves, the send executes once: budget counts exactly 1
+  execution for the single actual send (1 `approved_executed`
+  entry). No double-charge; no finding.

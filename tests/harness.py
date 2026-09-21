@@ -66,7 +66,7 @@ STANDARD_AGENTS = {
 
 
 def make_run(policy_path=None, ledger_path=None, principal_registry=None,
-             break_glass_tickets=()):
+             break_glass_tickets=(), session_identity=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -86,6 +86,14 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
     mirroring the out-of-band human provisioning workflow. Default
     empty (no tickets; break_glass without a provisioned ticket is
     refused).
+
+    ``session_identity`` (F55, R13): an
+    ``(agent_id, role, principal)`` tuple the deployment provisions
+    out-of-band as the session's ONE entitled identity
+    (``provenance="provisioned"``). ``ctx["session_identity"]`` returns
+    the provisioned ``AgentIdentity`` object (None when not given);
+    ``ApprovalQueue.break_glass`` then requires exactly it and refuses
+    mid-run minted identities. Default None = pre-R13 dev behavior.
     """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
     policy = PolicyEngine(str(policy_path or DEFAULT_POLICY))
@@ -102,7 +110,8 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             ledger_path=(ledger_path
                                          if ledger_path is not None
                                          else run_dir / "egress_ledger.jsonl"),
-                            principal_registry=principal_registry)
+                            principal_registry=principal_registry,
+                            session_identity=session_identity)
 
     minted = set()
 
@@ -136,6 +145,7 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
         "identities": identities,
         "mint_identity": mint_identity,
         "is_minted": is_minted,
+        "session_identity": executor._session_identity,
         "read_log": lambda: read_entries(run_dir / "actions.jsonl"),
     }
 
