@@ -177,6 +177,20 @@ def _approval_record_mac(key, key_epoch, canonical):
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
+def _break_glass_ticket_mac(key, key_epoch, canonical):
+    """F49: domain-separated HMAC for human-provisioned break-glass tickets.
+
+    Tickets are provisioned out-of-band by the human operator BEFORE the
+    run starts and verified (never trusted) at run start. Same key as the
+    log, distinct domain string, so a ticket MAC cannot be confused with
+    an approval-record MAC. Under the PUBLIC development key this gives no
+    forgery resistance — the honest residual is documented at the F49
+    entry: the boundary is key custody (same trust anchor as GOV_LOG_KEY).
+    """
+    msg = ("break-glass-ticket|%s|%s" % (key_epoch, canonical)).encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
 class LogFullError(Exception):
     """Raised when the audit log reached its configured size cap.
 

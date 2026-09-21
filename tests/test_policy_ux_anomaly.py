@@ -33,8 +33,13 @@ from harness import make_run  # shared sibling harness (tests/harness.py)
 from gov.approvals import main as approve_main
 
 
-def _queue_item(queue, agent_id, tool, ts=None, decided=False):
-    """Queue one pending item directly; optionally backdate its ts."""
+def _queue_item(run, agent_id, tool, ts=None, decided=False):
+    """Queue one pending item directly; optionally backdate its ts.
+
+    F42 (R11): queue() requires a minted caller identity; the
+    action["identity"] dict is ignored by the queue.
+    """
+    queue = run["approvals"]
     action = {
         "tool": tool,
         "args": {"path": "notes.txt"},
@@ -51,7 +56,9 @@ def _queue_item(queue, agent_id, tool, ts=None, decided=False):
                         "domain_allowlisted": True,
                         "carries_read_content": False,
                         "source_untrusted": False,
-                        "counters": {}})
+                        "counters": {}},
+        caller_identity=run["mint_identity"](
+            agent_id, "support", "customer-org"))
     if ts is not None:
         queue._rewrite(lambda rs: [
             dict(r, ts=ts) if r["id"] == aid else r for r in rs])
@@ -82,7 +89,7 @@ class TestFatigueBurst(AnomalyTestBase):
         # Spread across tools so the per-(agent,tool) flood detector does
         # NOT fire: this is the anomaly layer's own shape.
         tools = ["read_file", "log_note", "sleep"]
-        return [_queue_item(self.queue, agent, tools[i % 3],
+        return [_queue_item(self.run, agent, tools[i % 3],
                             ts=self.ts(i))
                 for i in range(n)]
 
@@ -108,8 +115,8 @@ class TestFatigueBurst(AnomalyTestBase):
 
     def test_burst_spread_across_agents_is_not_a_burst(self):
         for i in range(3):
-            _queue_item(self.queue, "agent-a", "read_file", ts=self.ts(i))
-            _queue_item(self.queue, "agent-b", "read_file", ts=self.ts(i))
+            _queue_item(self.run, "agent-a", "read_file", ts=self.ts(i))
+            _queue_item(self.run, "agent-b", "read_file", ts=self.ts(i))
         self.assertNotIn("fatigue_burst", self.types())
 
 
@@ -117,11 +124,11 @@ class TestRateSpike(AnomalyTestBase):
     def test_rate_spike_detected(self):
         # Quiet history: one arrival in each of three prior windows.
         for m in (35, 48, 55):
-            _queue_item(self.queue, "hist-agent", "read_file",
+            _queue_item(self.run, "hist-agent", "read_file",
                         ts=self.ts(m), decided=True)
         # Sudden burst: five arrivals in the trailing window.
         for i in range(5):
-            _queue_item(self.queue, "spike-agent", "read_file",
+            _queue_item(self.run, "spike-agent", "read_file",
                         ts=self.ts(i))
         anoms = [a for a in self.anomalies()
                  if a["type"] == "rate_spike"]
@@ -132,13 +139,13 @@ class TestRateSpike(AnomalyTestBase):
     def test_no_spike_without_history(self):
         # Arrivals only in the current window: no baseline, no spike.
         for i in range(5):
-            _queue_item(self.queue, "new-agent", "read_file",
+            _queue_item(self.run, "new-agent", "read_file",
                         ts=self.ts(i))
         self.assertNotIn("rate_spike", self.types())
 
     def test_steady_rate_is_not_a_spike(self):
         for m in (5, 15, 25, 35, 45, 55):
-            _queue_item(self.queue, "steady-agent", "read_file",
+            _queue_item(self.run, "steady-agent", "read_file",
                         ts=self.ts(m))
         self.assertNotIn("rate_spike", self.types())
 
@@ -148,11 +155,11 @@ class TestToolMix(AnomalyTestBase):
         # History is all read_file; the pending queue is dominated by
         # api_call — the odd tool out (e.g. the hidden malicious send).
         for i in range(16):
-            _queue_item(self.queue, "hist-agent", "read_file",
+            _queue_item(self.run, "hist-agent", "read_file",
                         ts=self.ts(60 + i), decided=True)
-        api_ids = [_queue_item(self.queue, "mix-agent", "api_call",
+        api_ids = [_queue_item(self.run, "mix-agent", "api_call",
                                ts=self.ts(i)) for i in range(4)]
-        _queue_item(self.queue, "mix-agent", "read_file", ts=self.ts(0))
+        _queue_item(self.run, "mix-agent", "read_file", ts=self.ts(0))
         anoms = [a for a in self.anomalies()
                  if a["type"] == "unusual_tool_mix"]
         self.assertEqual(len(anoms), 1)
@@ -163,16 +170,16 @@ class TestToolMix(AnomalyTestBase):
         # Nothing to compare against: a uniform pending queue is not
         # "unusual".
         for i in range(4):
-            _queue_item(self.queue, "mix-agent", "api_call",
+            _queue_item(self.run, "mix-agent", "api_call",
                         ts=self.ts(i))
         self.assertNotIn("unusual_tool_mix", self.types())
 
     def test_common_tool_is_not_unusual(self):
         for i in range(6):
-            _queue_item(self.queue, "hist-agent", "read_file",
+            _queue_item(self.run, "hist-agent", "read_file",
                         ts=self.ts(60 + i), decided=True)
         for i in range(4):
-            _queue_item(self.queue, "mix-agent", "read_file",
+            _queue_item(self.run, "mix-agent", "read_file",
                         ts=self.ts(i))
         self.assertNotIn("unusual_tool_mix", self.types())
 
@@ -180,9 +187,9 @@ class TestToolMix(AnomalyTestBase):
 class TestAdvisoryEscalation(AnomalyTestBase):
     def _burst_and_loner(self):
         tools = ["read_file", "log_note", "sleep"]
-        burst_ids = [_queue_item(self.queue, "burst-agent", tools[i % 3],
+        burst_ids = [_queue_item(self.run, "burst-agent", tools[i % 3],
                                  ts=self.ts(i)) for i in range(6)]
-        loner_id = _queue_item(self.queue, "loner-agent", "read_file",
+        loner_id = _queue_item(self.run, "loner-agent", "read_file",
                                ts=self.ts(0))
         return burst_ids, loner_id
 
@@ -253,7 +260,7 @@ class TestAnomalyCLI(AnomalyTestBase):
     def test_list_shows_fatigue_warning(self):
         tools = ["read_file", "log_note", "sleep"]
         for i in range(6):
-            _queue_item(self.queue, "burst-agent", tools[i % 3],
+            _queue_item(self.run, "burst-agent", tools[i % 3],
                         ts=self.ts(i))
         rc, out = self._run_cli("list")
         self.assertEqual(rc, 0)
@@ -262,7 +269,7 @@ class TestAnomalyCLI(AnomalyTestBase):
         self.assertIn("| ANOMALY", out)
 
     def test_list_without_anomalies_shows_no_warning(self):
-        _queue_item(self.queue, "calm-agent", "read_file", ts=self.ts(0))
+        _queue_item(self.run, "calm-agent", "read_file", ts=self.ts(0))
         rc, out = self._run_cli("list")
         self.assertEqual(rc, 0)
         self.assertNotIn("FATIGUE WARNING", out)
@@ -271,7 +278,7 @@ class TestAnomalyCLI(AnomalyTestBase):
     def test_anomalies_command(self):
         tools = ["read_file", "log_note", "sleep"]
         for i in range(6):
-            _queue_item(self.queue, "burst-agent", tools[i % 3],
+            _queue_item(self.run, "burst-agent", tools[i % 3],
                         ts=self.ts(i))
         rc, out = self._run_cli("anomalies")
         self.assertEqual(rc, 0)
@@ -279,7 +286,7 @@ class TestAnomalyCLI(AnomalyTestBase):
         self.assertIn("advisory only", out)
 
     def test_anomalies_command_quiet(self):
-        _queue_item(self.queue, "calm-agent", "read_file", ts=self.ts(0))
+        _queue_item(self.run, "calm-agent", "read_file", ts=self.ts(0))
         rc, out = self._run_cli("anomalies")
         self.assertEqual(rc, 0)
         self.assertIn("no queue-anomaly signals", out)

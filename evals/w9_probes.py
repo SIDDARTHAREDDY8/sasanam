@@ -297,6 +297,9 @@ def _w9_approver_tamper():
         from types import SimpleNamespace
         ctx = make_run()
         ex, q, run_dir = ctx["executor"], ctx["approvals"], ctx["run_dir"]
+        # F42 (R11): queue() now requires a minted caller identity and
+        # ignores the caller-supplied action["identity"] dict.
+        ident = ex.mint_identity("a1", "researcher", "ro")
         dec = SimpleNamespace(policy_id="egress-unverified-domain",
                               reason="r", flag="unverified_egress_domain")
         aid = q.queue(
@@ -306,7 +309,8 @@ def _w9_approver_tamper():
              "identity": {"agent_id": "a1", "role": "researcher",
                           "run_id": run_dir.name, "principal": "ro"},
              "agent_justification": "need"},
-            dec, preview="p")
+            dec, preview="p",
+            caller_identity=ident)
         pub = [m for m in dir(q) if not m.startswith("_")]
         o["no_public_tamper_api"] = not any(
             k in m for m in pub

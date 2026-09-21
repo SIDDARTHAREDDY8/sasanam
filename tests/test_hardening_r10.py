@@ -86,8 +86,12 @@ class _R10Case(unittest.TestCase):
         self._restore_env()
 
 
-def _queue_send(q, ex, principal="org"):
-    """Queue a send_email (policy-queued) directly through the queue."""
+def _queue_send(ctx, q, ex, principal="org"):
+    """Queue a send_email (policy-queued) directly through the queue.
+
+    F42 (R11): queue() requires a minted caller identity; the
+    action["identity"] dict is ignored by the queue.
+    """
     action = {"tool": "send_email",
               "args": {"to": "x@synthetic.local", "subject": "s",
                        "body": "b" * 100},
@@ -97,7 +101,9 @@ def _queue_send(q, ex, principal="org"):
     return q.queue(action,
                    _QueueDecision("approval-test", "test queue"),
                    policy_hash=ex.policy.policy_hash,
-                   egress_bytes=500)
+                   egress_bytes=500,
+                   caller_identity=ctx["mint_identity"](
+                       "a1", "researcher", principal))
 
 
 class _QueueDecision:
@@ -129,7 +135,7 @@ class TestF38RunBinding(_R10Case):
         # the execution-boundary run_id check refuses it fail-closed.
         ctx_a = make_run()
         qa, exa = ctx_a["approvals"], ctx_a["executor"]
-        aid = _queue_send(qa, exa)
+        aid = _queue_send(ctx_a, qa, exa)
         qa.decide(aid, True, "looks fine", decided_by="human-operator")
         rec = qa.get(aid)
         self.assertTrue(approval_digest_ok(rec))
@@ -156,7 +162,7 @@ class TestF38RunBinding(_R10Case):
         # record invalidates the digest.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "looks fine", decided_by="human-operator")
         q._rewrite(lambda rs: [dict(r, decided_by="attacker-agent")
                                if r["id"] == aid else r for r in rs])
@@ -172,38 +178,38 @@ class TestF38RunBinding(_R10Case):
         # and execute in the SAME run works unchanged.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "looks fine", decided_by="human-operator")
         done = ex.execute_approved()
         self.assertEqual(len(done), 1)
         self.assertTrue(q.get(aid).get("executed"))
 
     def test_embedded_identity_run_mismatch_refused(self):
-        # The identity dict is not a MAC input, so rewriting only the
-        # embedded identity's run_id does not break the digest — the
-        # execution-boundary identity check must still refuse
-        # fail-closed with approval_run_mismatch.
+        # F43 (R11) changed this: the identity dict IS now a MAC input
+        # (the authenticated attribution is bound). Rewriting the
+        # embedded identity's run_id breaks the digest — execution
+        # refuses fail-closed with approval_integrity_violation.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "looks fine", decided_by="human-operator")
         q._rewrite(lambda rs: [
             dict(r, identity=dict(r.get("identity") or {},
                                  run_id="some-other-run"))
             if r["id"] == aid else r for r in rs])
-        self.assertTrue(approval_digest_ok(q.get(aid)),
-                        "identity is not a MAC input: digest still verifies")
+        self.assertFalse(approval_digest_ok(q.get(aid)),
+                         "F43: identity is a MAC input — the rewrite "
+                         "breaks the digest")
         done = ex.execute_approved()
         rec = q.get(aid)
         self.assertEqual(done, [])
         self.assertFalse(rec.get("executed"))
         refusals = _refusal_entries(ctx)
-        self.assertTrue(any(e.get("flag") == "approval_run_mismatch"
+        self.assertTrue(any(e.get("flag") == "approval_integrity_violation"
                             and e.get("approval_id") == aid
-                            and e.get("run_id") == q.run_dir.name
                             for e in refusals),
-                        "identity/run mismatch must be refused under the "
-                        "CURRENT run's id")
+                        "identity rewrite must be refused as an integrity "
+                        "violation")
 
     def test_rotation_epoch_still_verifies_with_run_binding(self):
         # Key rotation does not invalidate in-flight approvals: a
@@ -212,7 +218,7 @@ class TestF38RunBinding(_R10Case):
         import gov.log as L
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "ok", decided_by="human-operator")
         rec = q.get(aid)
         old_key, old_epoch = L._active_key()
@@ -240,7 +246,7 @@ class TestF39QueueSweepLock(_R10Case):
     def test_concurrent_sweeps_execute_exactly_once(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aids = [_queue_send(q, ex, principal="p%d" % i)
+        aids = [_queue_send(ctx, q, ex, principal="p%d" % i)
                 for i in range(3)]
         for aid in aids:
             q.decide(aid, True, "ok", decided_by="human-operator")
@@ -275,7 +281,7 @@ class TestF39QueueSweepLock(_R10Case):
     def test_sequential_resweep_skips(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "ok", decided_by="human-operator")
         self.assertEqual(len(ex.execute_approved()), 1)
         # second sweep re-reads under the lock and skips the marked record
@@ -294,7 +300,7 @@ class TestF39QueueSweepLock(_R10Case):
         # over automatic retry.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "ok", decided_by="human-operator")
 
         def _boom(tool, args, _ctx):
@@ -314,7 +320,7 @@ class TestF39QueueSweepLock(_R10Case):
     def test_lock_timeout_refuses_sweep_and_audits(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = _queue_send(q, ex)
+        aid = _queue_send(ctx, q, ex)
         q.decide(aid, True, "ok", decided_by="human-operator")
         outcome = {}
 
@@ -538,21 +544,33 @@ class TestF41ThrowawayQuorum(_R10Case):
                              "victim's benign heartbeat")
 
     def test_genuine_three_principal_campaign_still_fires(self):
-        # Repeat emitters: each of 3 principals emits twice, so K-1 are
-        # established when the 3rd joins — the signal still fires.
+        # Repeat emitters across DISTINCT RUNS: each of 3 principals
+        # emits in two separate runs, so F46 multi-run establishment
+        # holds — the signal still fires when the 3rd principal's
+        # second run joins the quorum.
         with tempfile.TemporaryDirectory(prefix="govr10-") as td:
             led = str(Path(td) / "ledger.jsonl")
             EP = "https://shard0.collector.example/ingest"
             st = []
-            for run in range(4):
+            # Round 1: each principal's first run.
+            for run in range(3):
                 ctx = make_run(ledger_path=led)
                 ex = ctx["executor"]
                 ident = ex.mint_identity("a", "researcher",
                                          "rot-%d" % run)
-                for _ in range(2):
-                    st.append(self._frag_call(ex, ident, EP)["status"])
+                st.append(self._frag_call(ex, ident, EP)["status"])
+            # Round 2: each principal's second run — now each has
+            # observations across 2 distinct run IDs (F46 established).
+            for run in range(3):
+                ctx = make_run(ledger_path=led)
+                ex = ctx["executor"]
+                ident = ex.mint_identity("a", "researcher",
+                                         "rot-%d" % run)
+                st.append(self._frag_call(ex, ident, EP)["status"])
             self.assertEqual(st[:4], ["executed"] * 4)
-            self.assertIn("queued", st[4:])
+            self.assertIn("queued", st[4:],
+                          "F46: multi-run-established principals must "
+                          "still form a cross-principal quorum")
 
     def test_first_seen_trio_does_not_queue(self):
         # Documents the deliberate bar raise: three first-seen

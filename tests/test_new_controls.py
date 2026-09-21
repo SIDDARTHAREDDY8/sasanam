@@ -42,8 +42,14 @@ class TestReservedLogMetadata(unittest.TestCase):
             "format_version": 99,
             "key_epoch": "evil-epoch",
         })
-        self.assertEqual(entry["seq"], 1)
-        self.assertEqual(entry["prev_hash"], "GENESIS")
+        # F48 (R11): the executor logs policy_loaded + policy_pin_absent
+        # at construction, so the first test-appended entry is seq 3.
+        self.assertEqual(entry["seq"], 3)
+        # F48 (R11): two construction entries precede, so prev_hash
+        # chains from the real previous entry — the forged "FORGED"
+        # value is overridden, not GENESIS.
+        prior = read_entries(log.path)[-2]
+        self.assertEqual(entry["prev_hash"], prior["hash"])
         self.assertEqual(entry["format_version"], 1)
         _, epoch = _active_key()
         self.assertEqual(entry["key_epoch"], epoch)
@@ -68,8 +74,10 @@ class TestWrongKeyDetection(unittest.TestCase):
             ctx["executor"].call(
                 ctx["mint_identity"]("k1", "support", "org"),
                 "read_file", path="notes.txt")
-            # One call = authorization entry + completion entry (write-ahead).
-            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 2)
+            # One call = authorization entry + completion entry
+            # (write-ahead); F48 (R11) adds policy_loaded +
+            # policy_pin_absent at executor construction.
+            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 4)
 
             os.environ["GOV_LOG_KEY"] = "attacker-guessed-key"
             ok, broken, count = verify_chain(ctx["run_dir"] / "actions.jsonl")
@@ -98,13 +106,14 @@ class TestTailTruncation(unittest.TestCase):
             ex.call(ident, "read_file", path="notes.txt")
         log_path = ctx["run_dir"] / "actions.jsonl"
         lines = log_path.read_text(encoding="utf-8").splitlines()
-        # One call = authorization entry + completion entry (write-ahead).
-        self.assertEqual(len(lines), 6)
+        # One call = authorization entry + completion entry (write-ahead);
+        # F48 (R11) adds policy_loaded + policy_pin_absent at construction.
+        self.assertEqual(len(lines), 8)
         # Attacker truncates the tail (newest call's two entries).
-        log_path.write_text("\n".join(lines[:4]) + "\n", encoding="utf-8")
+        log_path.write_text("\n".join(lines[:6]) + "\n", encoding="utf-8")
         ok, broken, count = verify_chain(log_path)
         self.assertFalse(ok, "tail truncation must be detected")
-        self.assertEqual(count, 4)
+        self.assertEqual(count, 6)
 
 
 class TestFailClosedLogging(unittest.TestCase):

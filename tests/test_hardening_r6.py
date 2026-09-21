@@ -290,7 +290,8 @@ class TestF24ExcludedAutoApprove(unittest.TestCase):
                           "run_id": ctx["run_dir"].name, "principal": "org"},
              "agent_justification": "u"},
             type("D", (), {"policy_id": "p", "reason": "r",
-                           "flag": None})(), preview="p")
+                           "flag": None})(), preview="p",
+            caller_identity=ident)
         auto_cfg = PolicyEngine(self.auto_policy).auto_approve
         out = q.maybe_auto_approve(aid, auto_cfg)
         self.assertIsNotNone(out)
@@ -372,6 +373,8 @@ class TestF25ConcurrentAppends(unittest.TestCase):
 
 def _file_approval(ctx, endpoint="https://y.synthetic.local/"):
     q = ctx["approvals"]
+    # F42 (R11): queue() requires a minted caller identity; the
+    # action["identity"] dict is ignored by the queue.
     return q.queue(
         {"tool": "api_call", "args": {"endpoint": endpoint},
          "identity": {"agent_id": "a1", "role": "researcher",
@@ -379,7 +382,9 @@ def _file_approval(ctx, endpoint="https://y.synthetic.local/"):
                       "principal": "adversary-org"},
          "agent_justification": "u"},
         type("D", (), {"policy_id": "p", "reason": "r",
-                       "flag": None})(), preview="p")
+                       "flag": None})(), preview="p",
+        caller_identity=ctx["mint_identity"](
+            "a1", "researcher", "adversary-org"))
 
 
 class TestF26BreakGlassIdentity(unittest.TestCase):
@@ -388,7 +393,10 @@ class TestF26BreakGlassIdentity(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
-        self.ctx = make_run()
+        # F49 (R11): break-glass tickets are human-provisioned BEFORE the
+        # run starts; make_run seals them into the run-start snapshot.
+        self.ctx = make_run(break_glass_tickets=[
+            ("BG-R6-1", "alice", "carol"), ("BG-R6-2", "alice", "carol")])
         mint = self.ctx["mint_identity"]
         self.operator = mint("op-alice", "operator", "alice")
         # Same authenticated PRINCIPAL under an alias agent_id: the
@@ -397,10 +405,12 @@ class TestF26BreakGlassIdentity(unittest.TestCase):
         self.reviewer = mint("op-carol", "reviewer", "carol")
         self.q = self.ctx["approvals"]
 
-    def _break_glass(self, endpoint="https://y.synthetic.local/"):
+    def _break_glass(self, endpoint="https://y.synthetic.local/",
+                     ticket_id="BG-R6-1"):
         aid = _file_approval(self.ctx, endpoint)
         return self.q.break_glass(aid, "incident",
-                                  operator_identity=self.operator)
+                                  operator_identity=self.operator,
+                                  ticket_id=ticket_id)
     def test_ticket_binds_identity_object(self):
         _, ticket = self._break_glass()
         bound = ticket["operator_identity"]

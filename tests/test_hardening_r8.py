@@ -421,17 +421,20 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
     under-charge the F33 budget. Control: an untampered record executes
     and charges the full recorded bytes."""
 
-    def _queue_send(self, q, ex, egress_bytes):
+    def _queue_send(self, q, ex, egress_bytes, caller):
         action = {"tool": "send_email",
                   "args": {"to": "x@synthetic.local", "subject": "s",
                            "body": "b" * 100},
                   "identity": {"agent_id": "a1", "role": "researcher",
                                "run_id": q.run_dir.name, "principal": "org"},
                   "redactions": [], "agent_justification": None}
+        # F42 (R11): queue() requires a minted caller identity; the
+        # action["identity"] dict is ignored by the queue.
         return q.queue(action,
                        _QueueDecision("approval-test", "test queue"),
                        policy_hash=ex.policy.policy_hash,
-                       egress_bytes=egress_bytes)
+                       egress_bytes=egress_bytes,
+                       caller_identity=caller)
 
     def _refusal_entries(self, ctx):
         from gov.log import read_entries
@@ -445,7 +448,9 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
     def test_tampered_egress_bytes_refuses_execution(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex, 5000)
+        aid = self._queue_send(
+            q, ex, 5000,
+            ctx["mint_identity"]("a1", "researcher", "org"))
         # attacker rewrites the queue record to under-report the charge
         q._rewrite(lambda rs: [dict(r, egress_bytes=1) if r["id"] == aid
                                else r for r in rs])
@@ -474,7 +479,9 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
         # closed at execution with approval_integrity_violation.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex, 5000)
+        aid = self._queue_send(
+            q, ex, 5000,
+            ctx["mint_identity"]("a1", "researcher", "org"))
         q.decide(aid, True, "looks fine", decided_by="ciso")
         q._rewrite(lambda rs: [dict(r, egress_bytes=1) if r["id"] == aid
                                else r for r in rs])
@@ -493,7 +500,9 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
     def test_key_removal_does_not_downgrade_digest(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex, 5000)
+        aid = self._queue_send(
+            q, ex, 5000,
+            ctx["mint_identity"]("a1", "researcher", "org"))
         # attacker deletes the egress_bytes key entirely: the stored
         # digest was computed WITH it, so the legacy fallback must not
         # match. F38 (R10): decide() verifies the pending digest before
@@ -513,7 +522,9 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
     def test_untampered_record_executes_and_charges_full_bytes(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
-        aid = self._queue_send(q, ex, 5000)
+        aid = self._queue_send(
+            q, ex, 5000,
+            ctx["mint_identity"]("a1", "researcher", "org"))
         q.decide(aid, True, "legit", decided_by="ciso")
         done = ex.execute_approved()
         rec = next(r for r in q.all() if r["id"] == aid)

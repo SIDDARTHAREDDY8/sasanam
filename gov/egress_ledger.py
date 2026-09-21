@@ -669,7 +669,8 @@ class EgressLedger:
 
     def cross_principal_campaign_hit(self, shape,
                                      window_secs=CAMPAIGN_WINDOW_SECS,
-                                     now=None, k=CAMPAIGN_K):
+                                     now=None, k=CAMPAIGN_K,
+                                     principal_registry=None):
         """F36: True when >= k DISTINCT principals emit fragment-shaped
         api_call entries sharing the same content/shape SKETCH inside
         the window.
@@ -693,23 +694,33 @@ class EgressLedger:
         plant two throwaway look-alikes and have the VICTIM's next
         same-shaped call be the Kth — queueing a benign call (a
         false-positive weapon). The quorum now ALSO requires at least
-        K-1 ESTABLISHED principals: a principal counts as established
-        only with >= 2 matching observations of this shape in the
-        window (the current attempt is already ledgered when the
-        executor checks, so "established" means history beyond the
-        current attempt). Two throwaways + one victim (2 observations)
-        give a single established principal — no fire; a genuine
-        multi-principal campaign, where each participant emits
-        repeatedly, still fires once K-1 of them are established.
+        K-1 ESTABLISHED principals.
+
+        F46 (R11): establishment is now MULTI-RUN continuity — a
+        principal counts as established only with matching
+        observations across >= 2 DISTINCT RUN IDs in the window. The
+        F41 rule (>= 2 observations) let ONE run's two calls prime a
+        throwaway into "established" (same-run four-call priming);
+        that no longer establishes. When a deployment principal
+        registry is passed (registry mode), establishment is
+        registry-backed instead: a registered principal is
+        deployment-vetted out-of-band, so it counts as established
+        without behavioral history — throwaways cannot register,
+        which is what made the F41 plant attack possible in
+        permissive mode. In both modes the quorum needs k distinct
+        principals AND k-1 established ones.
 
         Residual (documented, not solved): an attacker rotating
         principal AND content shape per run (fresh identity, fresh
         shape) is indistinguishable from distinct legitimate users —
         that is an identity-layer problem (principal registry
-        binding), not a shape-layer one. And patient throwaways that
-        emit twice each before joining the quorum can still poison it:
-        behavioral history is not identity trust, which needs
-        deployment identity controls.
+        binding), not a shape-layer one. Patient throwaways that emit
+        in TWO runs each before joining the quorum can still poison
+        it in permissive mode — the cost is raised (distinct runs over
+        time, not one burst) but behavioral history is still not
+        identity trust. In registry mode the residual is a compromised
+        REGISTERED principal: quorum still needs k distinct
+        principals, so one compromised principal alone cannot fire it.
         """
         self.require_verified()  # F17: verify before trusting any read
         if not self.path.exists():
@@ -752,19 +763,31 @@ class EgressLedger:
             per_principal_run.setdefault((principal, run_id), 0)
             per_principal_run[(principal, run_id)] += 1
         # Thin-spread: drop (principal, run) buckets with >= k calls,
-        # then count the DISTINCT principals that remain.
-        thin_principal_counts = {}
-        for (p, _r), n in per_principal_run.items():
+        # then count the DISTINCT principals that remain — and the
+        # distinct RUN IDs each principal was seen in.
+        thin_principal_runs = {}
+        for (p, r), n in per_principal_run.items():
             if n < k:
-                thin_principal_counts[p] = thin_principal_counts.get(p, 0) + n
-        # F41: establishment — a principal counts as established only
-        # with >= 2 matching observations in the window. Counted over
-        # the same thin-spread-filtered observations as the quorum, so
-        # a single-run flood cannot manufacture history. The quorum
-        # needs k distinct principals AND k-1 established ones.
-        established = sum(1 for n in thin_principal_counts.values()
-                          if n >= 2)
-        return (len(thin_principal_counts) >= k
+                thin_principal_runs.setdefault(p, set()).add(r)
+        # F46 (R11): establishment — multi-run continuity. A principal
+        # counts as established only with matching observations across
+        # >= 2 DISTINCT RUN IDs in the window; same-run priming (two
+        # calls in one run) no longer establishes. Counted over the
+        # same thin-spread-filtered observations as the quorum, so a
+        # single-run flood cannot manufacture history. In registry mode
+        # the deployment registry backs establishment: registered
+        # principals are deployment-vetted, so they count as
+        # established without behavioral history (permissive mode falls
+        # back to the multi-run rule). The quorum needs k distinct
+        # principals AND k-1 established ones.
+        if principal_registry is not None:
+            registered = principal_registry.registered()
+            established = sum(1 for p in thin_principal_runs
+                              if p in registered)
+        else:
+            established = sum(1 for runs in thin_principal_runs.values()
+                              if len(runs) >= 2)
+        return (len(thin_principal_runs) >= k
                 and established >= max(1, k - 1))
 
     # -- principal-scoped sensitive-read taint (F15) ------------------------

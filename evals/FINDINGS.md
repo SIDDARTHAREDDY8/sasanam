@@ -2182,3 +2182,372 @@ cross-principal than per-principal signals.
   `GOV_LOG_KEY_ARCHIVE` raises without echoing the key;
   `KeyRing.describe()` (the object that lands in rotation audit
   entries) carries no key material. No finding.
+
+## F42 — HIGH — queue-MAC oracle: ApprovalQueue.queue() mints keyed digests over caller-supplied identity fields (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** `ApprovalQueue.queue()` now requires a verifier-authenticated
+`caller_identity` (executor-minted `AgentIdentity`); missing, unminted, or
+wrong-run identities fail closed. Queue authority fields (`agent_id`,
+`role`, `principal`, `run_id`, `identity`) are stamped from the
+authenticated identity — `action["identity"]` is ignored, closing the
+oracle. `ToolExecutor.call()` passes its minted identity. Closure probe:
+`evals/r11_probes.py::_r11_queue_oracle` (sit67); regression tests:
+`tests/test_hardening_r11.py::TestF42QueueCallerIdentity`.
+
+**Residual:** the oracle is closed at the queue entry point; an attacker
+holding legitimate minted-identity issuance for a victim principal
+(compromised executor) is outside this boundary.
+
+**Cells:** sit67 (`qo_forged_runid_call_denied`,
+`qo_attacker_runid_minted_by_oracle`,
+`qo_attacker_runid_digest_verifies`,
+`qo_planted_oracle_record_executes` observed).
+
+The Round-10 MAC binds `run_id` and `decided_by` — but only whatever
+`queue()` is handed. `ToolExecutor.call()` refuses a forged run_id
+(`identity-run-mismatch`), yet `ApprovalQueue.queue()` accepts a
+caller-supplied identity dict verbatim and mints a valid keyed digest
+over it. Measured: direct `queue()` with
+`run_id="VICTIM-RUN-CHOSEN-BY-ATTACKER"`, `agent_id="scout-x"`,
+`role="researcher"` is accepted, and `approval_digest_ok()` verifies
+the minted digest over the attacker-chosen run_id. End to end: an
+oracle record minted for the victim's REAL run name, planted as a raw
+line into the victim's `approvals.jsonl`, survives a human decision
+and is executed by the victim's own sweep. The run_id binding is only
+as strong as `queue()`'s input validation — which is none. Reach
+assumption: in-process queue reach (the binding-object traversal
+`tool._binding.executor.approvals` documented in
+`gov/adapters/core.py`) or run-dir write; the normal issuance path
+stays closed. Fix direction: `queue()` must bind the identity from an
+executor-authenticated (minted) identity object, not a caller-supplied
+dict.
+
+## F43 — MEDIUM — pending MAC omits security metadata: preview, provenance, policy_context, attribution rewritten pre-decision (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** the pending MAC now binds the full security record —
+`tool`, `args`, `policy_id`, `egress_bytes`, `run_id`, `decided_by`,
+`agent_id`, `role`, `principal`, `identity`, `preview`, `provenance`,
+`policy_context`, `policy_flag`, `delegation_attempted`
+(`_SECURITY_PAYLOAD_FIELDS`). `decide()` re-verifies the pending digest
+before recording a decision (fail-closed `ValueError`, audited
+`approval_decision_attempt`/`rejected_attempt`); `execute_approved()`
+re-verifies and refuses tampered records with
+`approval_integrity_violation`. Closure probe:
+`evals/r11_probes.py::_r11_pending_mac_metadata` (sit68); regression
+tests: `tests/test_hardening_r11.py::TestF43PendingMacMetadata`.
+
+**Residual:** under the public development key a docs-reader can still
+mint a valid keyed record (F29/F34 residual); production MUST configure
+`GOV_LOG_KEY`.
+
+**Cells:** sit68 (`pm_decide_rejects_tool_mutation`,
+`pm_decide_rejects_args_mutation`,
+`pm_decide_rejects_policy_id_mutation`,
+`pm_decide_rejects_egress_bytes_mutation`,
+`pm_decide_rejects_run_id_mutation`,
+`pm_decide_rejects_egress_deletion`,
+`pm_preview_rewritten_at_decision`,
+`pm_attribution_rewritten_at_decision`,
+`pm_provenance_rewritten_to_force_autoapprove` observed).
+
+The pending digest binds (tool, args, policy_id, egress_bytes,
+run_id, decided_by): `decide()` refuses mutations of all of those
+fail-closed (controls hold). But `preview`, `provenance`,
+`policy_context`, `policy_flag`, `agent_id`, `role` are NOT MAC-bound,
+and `risk()`/`maybe_auto_approve()` read the unbound fields.
+Measured consequences with queue-file write: (1) the approver-facing
+preview rewritten to "would send weekly summary to
+ops@synthetic.local" while the real recipient stays
+`evil@exfil.example` — decided and approved; (2) `agent_id`/`role`
+rewritten so the decision audit's `related_agent` reads
+`innocent-victim` while the real requester was `real-attacker`;
+(3) `provenance`/`policy_context` rewritten from tainted to benign,
+dropping the risk score from 75 to 50 — flipping
+`maybe_auto_approve()` at `max_risk_score=60` from refuse to approve,
+and the send executes. The MAC covers executable content but not the
+metadata driving risk, auto-approval, human presentation, and audit
+attribution. Fix direction: extend the pending digest over the risk
+and presentation inputs (or re-derive them at decide() time from
+trusted sources).
+
+## F44 — HIGH — F39 sweep lock bypassed by deleting approvals.lock: double execution returns (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** `_queue_locked()` verifies the locked file is still the
+path's file after acquiring the flock: `os.fstat(fd)` must match
+`os.stat(path)` on `(st_dev, st_ino)` and `st_nlink > 0`. A deleted or
+replaced lock raises `QueueLockInvalidatedError`; `execute_approved()`
+catches it before `QueueLockError` and audits a DISTINCT
+`approval_sweep_refused`/`queue_lock_invalidated` event (not
+`queue_lock_timeout`). Closure probe:
+`evals/r11_probes.py::_r11_execute_boundary` (sit69, F44 half);
+regression tests:
+`tests/test_hardening_r11.py::TestF44QueueLockInvalidation`.
+
+**Residual:** the check is TOCTOU between fstat and use, but the window
+is a single syscall pair under the held flock; a lock deleted AFTER a
+successful validation but before sweep start is not re-checked.
+
+**Cells:** sit69 (`eb_lock_held_serializes_sweeps`,
+`eb_lock_deletion_breaks_serialization`,
+`eb_lock_deletion_double_executes` observed).
+
+The F39 fix serializes sweeps with an flock on
+`<run_dir>/approvals.lock` — a name-resolved sidecar inside the
+attacker-writable run dir, opened by name on every acquisition.
+Deleting the file while a sweep holds it gives the next opener a
+fresh, uncontended inode. Measured: with the lock intact a second
+sweep blocks (control holds); deleting `approvals.lock` mid-sweep
+lets a second sweep acquire in 0.00s; two public
+`execute_approved()` sweeps, each holding its own inode, each execute
+the same approval — 2 `approved_executed` audit entries. The
+exactly-once guarantee is only as strong as the lock file's
+undeletability, and the run dir is attacker-writable by design. Fix
+direction: lock the queue file itself (or a dir fd), not a
+name-resolved sidecar; or make the sweep atomic via claim-then-verify
+on a single inode.
+
+## F45 — MEDIUM — crash-after-claim burns the approval: F39's durable claim converts execute-window crashes into silent loss (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** every sweep starts with `_reconcile_interrupted_executions()`
+(under the queue lock): an `execution_authorized` log entry with no later
+matching `approved_executed` is an interrupted execution. It is audited
+LOUDLY as `approval_execution_interrupted`, the integrity-valid record is
+reset to `pending`/`unexecuted` with decision fields cleared and re-MACed,
+and reconciliation NEVER auto-executes — a new human decision is
+mandatory. The authorization-seq pin
+(`execution_interrupted_reconciled_seq`) prevents repeat alerts.
+Closure probe: `evals/r11_probes.py::_r11_execute_boundary` (sit69, F45
+half); regression tests:
+`tests/test_hardening_r11.py::TestF45InterruptedReconciliation`.
+
+**Residual:** local state cannot determine whether the side effect ran
+before the crash — the warning says so plainly, and re-approval +
+re-execution could double-apply the effect. The human must investigate
+before re-approving.
+
+**Cells:** sit69 (`eb_crash_after_claim_burns_approval`,
+`eb_preplanted_fault_burns_approval`,
+`eb_postclaim_queue_corruption_fails_loud` observed).
+
+F39's fix claims durably (`mark_executed()`) BEFORE the effect, so
+any crash in the execute window leaves `executed=True` with only the
+`execution_authorized` write-ahead marker: 0 `approved_executed`
+entries, no retry on later sweeps, no alert. Measured: a simulated
+tool-host crash post-claim burns the approval permanently. The burn
+is attacker-inducible with run-dir write: replacing the run's
+`sandbox` directory with a file makes the sweep crash with
+`FileExistsError` AFTER the claim, burning the victim's approved
+`write_file` (the fault persists, burning subsequent approvals
+too). Honest negative: corrupting `approvals.jsonl` AFTER the claim
+does not affect the in-flight sweep (the queue is not re-read
+post-claim); the NEXT sweep fails LOUDLY with `JSONDecodeError` — a
+brick, not a silent burn. Availability finding: the F39 fix trades
+double-execution for silent approval loss. Fix direction: claim and
+effect in one atomic step, or a crash-recovery sweep that retries
+claimed-but-unaudited approvals.
+
+## F46 — MEDIUM — F41 quorum costs 4 benign calls: the campaign false positive is resurrected (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** campaign establishment now requires multi-run continuity:
+in permissive mode a principal is established only after matching
+observations across at least two distinct run IDs; in registry mode,
+registered principals count as deployment-established.
+`EgressLedger.cross_principal_campaign_hit()` accepts an optional
+`principal_registry`; `ToolExecutor` passes the deployment registry.
+Same-run multi-call priming no longer establishes a principal, so the
+4-benign-call false positive is gone; a genuine multi-run campaign
+still fires the quorum. Closure probe:
+`evals/r11_probes.py::_r11_quorum_cost` (sit70); regression tests:
+`tests/test_hardening_r11.py::TestF46CampaignEstablishment`.
+
+**Residual:** patient attackers can still establish throwaway
+principals across two runs in permissive mode; registry mode is only
+as trustworthy as the registry's own integrity.
+
+**Cells:** sit70 (`qc_victim_unprimed_executes`,
+`qc_four_benign_calls_prime_quorum`,
+`qc_victim_call_queued_after_priming`,
+`qc_thinspread_drops_flooder` observed).
+
+The F41 establishment bar (>= 2 matching thin-spread observations
+per principal) is behavioral history, not deployment identity trust
+(the documented residual) — and it is cheap. Measured: with the
+victim's own heartbeat history in the 24h ledger, 2 throwaway
+principals emitting 2 fragment-shaped `api_call`s each (4 benign
+calls, 3 executing silently — the 4th may itself queue as the 3rd
+distinct principal, but throwaways are disposable) prime the
+quorum, and the victim's NEXT same-shaped call queues under
+`approval-cross-run-campaign`. Precision constraint the attacker
+must respect: more than 2 observations in a single
+(principal, run) bucket are thin-spread-dropped (measured: a
+throwaway emitting 3 in one run is excluded and the victim stays
+green). The F41 fix raised the wave-11 attack's cost from 2 calls
+to 4, not to infeasible. Fix direction: bind the quorum to
+deployment-registered principals (F17b registry), or exempt
+long-lived allowlisted (principal, domain, param-shape) triples.
+
+## F47 — HIGH — cross-privilege smuggling: the R2 role allowlist is not re-checked at execute_approved() time (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** `execute_approved()` checks
+`policy.role_allows(rec["role"], rec["tool"])` BEFORE policy evaluation
+or side effects. A record whose role is not allowed the tool is refused
+with `role_allowlist_violation` / policy `role-allowlist`; attribution
+stays the F42-authenticated queued role. Closure probe:
+`evals/r11_probes.py::_r11_privilege_smuggle` (sit71); regression tests:
+`tests/test_hardening_r11.py::TestF47RoleAllowlistExecution`.
+
+**Residual:** the check binds the role AT QUEUE TIME; a policy whose
+role allowlist is loosened between queue and execution could permit a
+previously-smuggled pair — the stale-policy re-check is a separate
+boundary.
+
+**Cells:** sit71 (`ps_sweeper_identity_not_consulted`,
+`ps_scout_write_file_denied_at_call`,
+`ps_oracle_scout_write_file_executes` observed).
+
+The R2 least-privilege role->tool allowlist is enforced only in
+`executor.call()`; `execute_approved()` takes no sweeper identity
+and its fresh policy evaluation never consults
+`policy.role_allows` — execution privilege comes solely from the
+record's embedded role. Measured: a different-identity sweeper
+executes an approved record under the RECORD's identity
+(scout-1/scout/low-org); the sweeper's privilege never enters
+execution (passing cell). Control: scout calling `write_file`
+directly is denied (`role-allowlist`). Attack: the F42 queue oracle
+mints a (scout, write_file) record; a human decides it;
+`execute_approved()` executes it and the file is written. Chains
+F42 with the missing execution-time allowlist check: a low-privilege
+role obtains execution of a tool it is denied. Fix direction:
+re-enforce `policy.role_allows(record.role, record.tool)` inside
+`execute_approved()`'s re-validation (refuse with a
+`role_allowlist_violation` audit event).
+
+## F48 — HIGH — policy-file substitution across runs: no hash pinning, no load audit (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** `ToolExecutor.__init__` always audits `policy_loaded` with
+the normalized path and content hash. When `GOV_POLICY_HASH` is set,
+the loaded hash MUST match — on mismatch the executor audits
+`policy_pin_mismatch` and refuses construction fail-closed
+(`PolicyPinMismatchError`), before any tool can execute. Without a pin,
+an explicit `policy_pin_absent` warning is logged. Closure probe:
+`evals/r11_probes.py::_r11_policy_substitution` (sit72); regression
+tests: `tests/test_hardening_r11.py::TestF48PolicyPin`.
+
+**Residual:** the pin is only as trustworthy as the environment that
+sets it; an attacker who controls `GOV_POLICY_HASH` AND the policy
+file defeats the check — it guards substitution, not a fully
+compromised host.
+
+**Cells:** sit72 (`pl_default_policy_queues_sends`,
+`pl_lint_clean_weak_policy_accepted`,
+`pl_substituted_policy_executes_sends`,
+`pl_substitution_unaudited` observed).
+
+The policy file is reloaded per run with no deployment-side hash
+pin and no policy-load audit entry. Measured: under the default
+policy the test send queues (`approval-outbound-sends`); after the
+policy FILE is replaced between runs with a weaker variant that
+flips `approval-outbound-sends` from `require_approval` to `allow`
+(constrained by tool + `domain_allowlisted`, so `policy_lint`
+reports 0 errors/warnings — the same 2 info notes the default
+carries), the next run loads it fresh and the identical send
+executes (`allowed_executed`). The audit log records nothing about
+the policy load, its hash, or the substitution — the control
+downgrade is silent. New cross-run substitution evidence beyond
+F30's policy-weakening finding (which covered a weaker policy being
+loaded, not the silent cross-run swap of a live control). Fix
+direction: pin the expected policy hash in deployment config and
+refuse to run on mismatch; audit-log the policy hash at run start.
+
+## F49 — HIGH — break-glass authenticates no human: minted identity only, review dischargeable by a confederate (Wave 12)
+
+**Status: CLOSED (2026-09-21, Hardening Round 11).**
+
+**Closure:** break-glass now requires a HUMAN-PROVISIONED ticket:
+`provision_break_glass_ticket()` (out-of-band, before run start) writes
+a domain-separated HMAC ticket binding `ticket_id`,
+`operator_principal`, and `reviewer_principal` (operator != reviewer
+enforced; ticket IDs unique). The executor snapshots the verified
+ticket store at run start; mid-run provisioned tickets are outside the
+snapshot and refused. `break_glass()` requires `ticket_id`; the ticket
+must be provisioned, unused (single-use, consumed before the
+post-review ticket opens), and bound to the caller's operator
+principal. Post-review requires the provisioned reviewer principal
+(exact match, operator/reviewer separation). CLI: `provision-ticket`
+provisions; break-glass requires `--ticket`. Closure probe:
+`evals/r11_probes.py::_r11_breakglass_lifecycle` (sit73); regression
+tests: `tests/test_hardening_r11.py::TestF49BreakGlassTickets`.
+
+**Residual:** cross-PROCESS ticket consumption is not atomic — two
+separate processes (or CLI invocations) racing `break_glass()` with
+the same ticket could both pass the unused check before either
+persists the used flag. Within a single process, the
+`_bg_ticket_lock` mutex serializes the resolve→consume sequence
+(`test_concurrent_ticket_use_single_winner`). The file-based used-flag
+provides last-writer-wins persistence; review before relying on
+single-use across processes.
+
+**Cells:** sit73
+(`bg_breakglass_with_minted_nonhuman_identity`,
+`bg_side_effect_before_review`,
+`bg_confederate_review_cleans_audit`,
+`bg_stacked_breakglass_refused`,
+`bg_self_resolution_refused` observed).
+
+`break_glass()` authenticates only that the operator identity was
+executor-minted (F26) — no human or operator role is required, and
+in the permissive demo deployment any principal string mints.
+Measured: break-glass succeeds with an attacker-minted non-human
+identity (researcher/attacker-org) and opens a pending ticket; the
+send executes BEFORE any review, leaving the audit unclean only via
+the pending ticket; a confederate minted identity
+(attacker-partner-org) then resolves the ticket, and
+`audit_status()` reports clean — the separation-of-duties check
+enforces only principal-inequality between two self-minted
+identities. Controls that hold: stacked break-glass while a ticket
+is unresolved is refused, and the operator cannot resolve their own
+ticket. "Executor-minted" is not human-authorized: the emergency
+path's only human is a post-hoc review that the attacker can staff.
+Fix direction: require a human/operator-role credential (or an
+out-of-band second factor) for break-glass, and require the reviewer
+to be a human-authenticated principal distinct from the operator's
+organization.
+
+## Wave-12 defense cells (no new findings)
+
+- **sit67 — forged run_id at call().** The normal issuance path
+  refuses a forged run_id with `identity-run-mismatch`. No finding;
+  the oracle finding (F42) is about `queue()` itself.
+- **sit68 — decide() MAC-bound fields.** Mutations of tool, args,
+  policy_id, egress_bytes, run_id, and deletion of egress_bytes are
+  refused fail-closed at decide(). No finding; F43 covers the
+  unbound metadata.
+- **sit69 — lock serialization intact; loud corruption.** With the
+  lock file intact a second sweep blocks; post-claim queue-file
+  corruption fails loudly on the next sweep rather than burning
+  silently. No finding; F44/F45 cover the deletion and crash cases.
+- **sit70 — thin-spread.** A throwaway emitting 3 observations in one
+  (principal, run) bucket is dropped and the victim stays green. No
+  finding; F46 covers the patient quorum.
+- **sit71 — sweeper privilege.** The sweeper's own identity never
+  enters execution; the record's identity governs. No finding; F47
+  covers the missing execution-time allowlist check.
+- **sit72 — default policy.** Under the default policy the send
+  queues. No finding; F48 covers the substitution.
+- **sit73 — stacked break-glass; self-resolution.** Both refused
+  fail-closed. No finding; F49 covers the missing human
+  authentication.

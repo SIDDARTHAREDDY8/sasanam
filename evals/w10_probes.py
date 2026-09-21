@@ -207,25 +207,29 @@ def _w10_fatigue():
                 "identity": identity, "agent_justification": "lookup",
                 "redactions": []}
 
-        def _queue_untrusted(q, identity):
+        def _queue_untrusted(q, identity, caller):
             d_ = PolicyDecision("require_approval", "r",
                                 policy_id="approval-outbound-sends",
                                 flag=None)
             return q.queue(_api_action(identity), d_,
                            "untrusted_influenced", "would call API",
                            policy_hash="h",
-                           policy_context={"source_untrusted": True})
+                           policy_context={"source_untrusted": True},
+                           # F42 (R11): minted caller identity required;
+                           # the action["identity"] dict is ignored.
+                           caller_identity=caller)
 
         # Unknown agent: one untrusted-influenced api_call item.
         ctx = make_run(ledger_path=led)
         q = ctx["approvals"]
         ident = ctx["mint_identity"]("adv-new", "support", "p")
-        aid_new = _queue_untrusted(q, ident.as_dict())
+        aid_new = _queue_untrusted(q, ident.as_dict(), ident)
         det_new = q.risk_detail(q.get(aid_new))
         # Veteran: six decided benign approvals, then the identical
         # untrusted item.
         ctx2 = make_run(ledger_path=led)
         q2 = ctx2["approvals"]
+        ident_vet = ctx2["mint_identity"]("adv-vet", "support", "p")
         for i in range(6):
             action = {
                 "tool": "api_call",
@@ -239,10 +243,11 @@ def _w10_fatigue():
                                 flag=None)
             aid = q2.queue(action, d2, "agent_direct", "would call API",
                            policy_hash="h",
-                           policy_context={"domain_allowlisted": True})
+                           policy_context={"domain_allowlisted": True},
+                           caller_identity=ident_vet)
             q2.decide(aid, True, "routine ok", decided_by="human-operator")
-        ident2 = ctx2["mint_identity"]("adv-vet", "support", "p")
-        aid_vet = _queue_untrusted(q2, ident2.as_dict())
+        ident2 = ident_vet
+        aid_vet = _queue_untrusted(q2, ident2.as_dict(), ident2)
         det_vet = q2.risk_detail(q2.get(aid_vet))
         # The farmable trust signal: the veteran scores 10 points lower
         # on the IDENTICAL untrusted item (35 -> 25).

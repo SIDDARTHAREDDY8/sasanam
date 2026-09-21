@@ -23,6 +23,8 @@ from evals.w10_probes import register_w10  # noqa: E402
 from evals.r9_probes import register_r9  # noqa: E402
 from evals.w11_probes import register_w11  # noqa: E402
 from evals.r10_probes import register_r10  # noqa: E402
+from evals.w12_probes import register_w12  # noqa: E402
+from evals.r11_probes import register_r11  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -1426,6 +1428,10 @@ def pb_sit32(shim, priv):
     fid = fr["approval_id"]
     dec = SimpleNamespace(policy_id="send-gate", reason="triage")
     benign_ids = []
+    # F42 (R11): queue() requires a minted caller identity; the
+    # action["identity"] dict is ignored by the queue.
+    triage_ident = frag_ctx["mint_identity"](
+        "batch-triage", "scout", "adversary-org")
     for i in range(2):
         benign_ids.append(faq.queue(
             {"tool": "read_file", "args": {"path": "standup-%d.md" % i},
@@ -1433,7 +1439,8 @@ def pb_sit32(shim, priv):
                           "run_id": frag_ctx["run_dir"].name,
                           "principal": "adversary-org"},
              "agent_justification": "morning triage"},
-            dec, preview="read standup-%d.md" % i))
+            dec, preview="read standup-%d.md" % i,
+            caller_identity=triage_ident))
     outcomes["batch_frag_risk_below_guard"] = _observed(
         faq.risk(faq.get(fid)) < 60)
     decided, excluded, batch = faq.batch_decide(
@@ -1995,14 +2002,22 @@ def _w7_breakglass():
         dec = SimpleNamespace(policy_id="p", reason="r")
 
         def queue_item(c, ep):
+            # F42 (R11): queue() requires a minted caller identity; the
+            # action["identity"] dict is ignored by the queue.
             return c["approvals"].queue(
                 {"tool": "api_call", "args": {"endpoint": ep},
                  "identity": {"agent_id": "a1", "role": "researcher",
                               "run_id": c["run_dir"].name,
                               "principal": "adversary-org"},
-                 "agent_justification": "u"}, dec, preview="p")
+                 "agent_justification": "u"}, dec, preview="p",
+                caller_identity=c["mint_identity"](
+                    "a1", "researcher", "adversary-org"))
 
-        ctx = make_run(ledger_path=str(d / "ledger.jsonl"))
+        # F49 (R11): break-glass tickets are human-provisioned BEFORE the
+        # run starts; make_run seals them into the run-start snapshot.
+        ctx = make_run(ledger_path=str(d / "ledger.jsonl"),
+                       break_glass_tickets=[("BG-W7-1", "alice", "carol"),
+                                            ("BG-W7-2", "alice", "carol")])
         q = ctx["approvals"]
         mint = ctx["mint_identity"]
         alice = mint("op-alice", "operator", "alice")
@@ -2010,12 +2025,14 @@ def _w7_breakglass():
         carol = mint("op-carol", "reviewer", "carol")
         bound = q.break_glass(
             queue_item(ctx, "https://x.synthetic.local/"),
-            "incident-1", operator_identity=alice)[1]
+            "incident-1", operator_identity=alice,
+            ticket_id="BG-W7-1")[1]
         bound_ok = (bound["operator_identity"]["principal"] == "alice"
                     and bound["operator_identity"]["agent_id"] == "op-alice")
         stacking_refused = _w8raises(lambda: q.break_glass(
             queue_item(ctx, "https://y.synthetic.local/"),
-            "second", operator_identity=alice), ValueError)
+            "second", operator_identity=alice,
+            ticket_id="BG-W7-2"), ValueError)
         string_refused = _w8raises(lambda: q.resolve_review(
             bound["ticket_id"], "x", reviewer_identity="bob"), TypeError)
         alias_refused = _w8raises(lambda: q.resolve_review(
@@ -2026,13 +2043,15 @@ def _w7_breakglass():
         distinct_resolves = (
             t["status"] == "resolved"
             and t["reviewer_identity"]["principal"] == "carol")
-        ctx2 = make_run(ledger_path=str(d / "ledger2.jsonl"))
+        ctx2 = make_run(ledger_path=str(d / "ledger2.jsonl"),
+                        break_glass_tickets=[("BG-W7-3", "alice", "carol")])
         q2 = ctx2["approvals"]
         clean = q2.pending_reviews() == []
         alice2 = ctx2["mint_identity"]("op-alice", "operator", "alice")
         _, ticket3 = q2.break_glass(
             queue_item(ctx2, "https://z.synthetic.local/"),
-            "new incident", operator_identity=alice2)
+            "new incident", operator_identity=alice2,
+            ticket_id="BG-W7-3")
         no_lockout = ticket3["status"] == "pending"
         self_refused = _w8raises(lambda: q2.resolve_review(
             ticket3["ticket_id"], "self",
@@ -2101,9 +2120,10 @@ def _w8raises(fn, exc=Exception):
     except exc: return True
 
 @contextlib.contextmanager
-def _w8run(p):
+def _w8run(p, break_glass_tickets=()):
     with _w8tmp(p) as d:
-        yield d, make_run(ledger_path=str(d / "ledger.jsonl"))
+        yield d, make_run(ledger_path=str(d / "ledger.jsonl"),
+                          break_glass_tickets=break_glass_tickets)
 
 @contextlib.contextmanager
 def _w8key(key="w8key"):
@@ -2276,7 +2296,8 @@ def _w8_policy_edit():
 def _w8_cli_trust_root():
     import gov.approvals as _appr
     import inspect
-    with _w8run("w8c-") as (d, ctx):
+    with _w8run("w8c-",
+               break_glass_tickets=[("BG-W8-1", "alice", "carol")]) as (d, ctx):
         q = ctx["approvals"]
         alice = ctx["mint_identity"]("op-alice", "operator", "alice")
         dec = SimpleNamespace(policy_id="p", reason="r")
@@ -2286,8 +2307,11 @@ def _w8_cli_trust_root():
              "identity": {"agent_id": "a1", "role": "researcher",
                           "run_id": ctx["run_dir"].name,
                           "principal": "adversary-org"},
-             "agent_justification": "u"}, dec, preview="p")
-        ticket = q.break_glass(item, "incident", operator_identity=alice)[1]
+             "agent_justification": "u"}, dec, preview="p",
+            caller_identity=ctx["mint_identity"](
+                "a1", "researcher", "adversary-org"))
+        ticket = q.break_glass(item, "incident", operator_identity=alice,
+                               ticket_id="BG-W8-1")[1]
         src = inspect.getsource(_appr.main)
         return {"str_reviewer_refused": _w8raises(lambda: q.resolve_review(
                     ticket_id=ticket["ticket_id"], resolution="x",
@@ -2390,6 +2414,16 @@ register_w11(PLAYBOOKS, _w7_playbook)
 # Round-10 closure probes override the wave-11 attack baseline for
 # sit61/sit62/sit63/sit65 (F38-F41 CLOSED); see evals/r10_probes.py.
 register_r10(PLAYBOOKS, _w7_playbook)
+# Wave-12 probes attack the new defenses and the seams they created
+# (queue-MAC oracle, pending-MAC metadata, sweep-lock deletion,
+# claim-burn, F41 quorum cost, privilege smuggling, policy
+# substitution, break-glass lifecycle); see evals/w12_probes.py.
+register_w12(PLAYBOOKS, _w7_playbook)
+# Round-11 closure probes override the wave-12 attack baseline for
+# sit67-sit73 (F42-F49 CLOSED); see evals/r11_probes.py.
+# evals/w12_probes.py stays UNCHANGED as the historical wave-12
+# attack record — its sit67-73 playbooks are superseded here.
+register_r11(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

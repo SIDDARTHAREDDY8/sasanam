@@ -82,6 +82,9 @@ def _r10_forge():
         pol = ctx["policy"]
         q = ctx["approvals"]
         run_dir = Path(ctx["run_dir"])
+        # F42 (R11): queue() requires a minted caller identity; the
+        # action["identity"] dict is ignored by the queue.
+        forge_ident = ex.mint_identity("adv-x", "support", "adversary-org")
 
         def _qid():
             return q.queue(
@@ -97,7 +100,8 @@ def _r10_forge():
                                policy_id="approval-outbound-sends",
                                flag=None),
                 policy_hash=pol.policy_hash,
-                policy_context={"domain_allowlisted": True})
+                policy_context={"domain_allowlisted": True},
+                caller_identity=forge_ident)
 
         def _audit():
             return [json.loads(l) for l in
@@ -177,9 +181,8 @@ def _r10_forge():
             "policy_hash": pol.policy_hash,
             # docs-reader computes the KEYED digest with the F38
             # bindings: the dev key is public, so no secret is needed.
-            "args_digest": approval_record_digest(
-                "send_email", args, "approval-outbound-sends", eb,
-                run_id=run_dir.name, decided_by="human-operator"),
+            # F43 (R11): the digest covers the full security payload;
+            # the forger passes the whole record.
             "digest_scheme": APPROVAL_DIGEST_SCHEME,
             "egress_bytes": eb,
             "status": "approved", "decided_by": "human-operator",
@@ -189,6 +192,7 @@ def _r10_forge():
             "flood_suspect": False,
             "break_glass": False, "break_glass_reason": None,
         }
+        forged["args_digest"] = approval_record_digest(forged)
         with open(run_dir / "approvals.jsonl", "a") as f:
             f.write(json.dumps(forged, ensure_ascii=True) + "\n")
         ex.execute_approved()
@@ -217,7 +221,10 @@ def _r10_crossrun_replay():
         pol_a = ctx_a["policy"]
         q_a = ctx_a["approvals"]
         run_a = Path(ctx_a["run_dir"])
-        aid = _queue_allowlisted_send(q_a, pol_a, run_a, agent_id="agent-a")
+        ex_a = ctx_a["executor"]
+        aid = _queue_allowlisted_send(
+            q_a, pol_a, run_a, agent_id="agent-a",
+            caller_identity=ex_a.mint_identity("agent-a", "support", "adversary-org"))
         q_a.decide(aid, True, "weekly summary looks fine",
                    decided_by="human-operator")
         rec_a = q_a.get(aid)
@@ -249,30 +256,33 @@ def _r10_crossrun_replay():
             and e.get("approval_id") == aid
             for e in _read_actions(run_b))
 
-        # Identity-run mismatch: a genuine run-D record whose embedded
-        # identity.run_id was rewritten after queueing (the identity
-        # dict is not a MAC input, so the digest still verifies) is
-        # refused with approval_run_mismatch — execution never
-        # attributes the action to the wrong run.
+        # Identity-run mismatch (F43, R11): a genuine run-D record whose
+        # embedded identity.run_id was rewritten after queueing. The
+        # full-record MAC now BINDS the identity, so the digest NO
+        # LONGER verifies after tampering — execution is refused with
+        # approval_integrity_violation (fail-closed at the MAC, before
+        # the run-mismatch check). Execution never attributes the
+        # action to the wrong run.
         ctx_d = make_run()
         ex_d = ctx_d["executor"]
         q_d = ctx_d["approvals"]
         run_d = Path(ctx_d["run_dir"])
         aid_d = _queue_allowlisted_send(
-            q_d, ctx_d["policy"], run_d, agent_id="agent-d")
+            q_d, ctx_d["policy"], run_d, agent_id="agent-d",
+            caller_identity=ex_d.mint_identity("agent-d", "support", "adversary-org"))
         q_d.decide(aid_d, True, "looks fine", decided_by="human-operator")
         q_d._rewrite(lambda rs: [
             dict(r, identity=dict(r.get("identity") or {},
                                  run_id="some-other-run"))
             if r["id"] == aid_d else r for r in rs])
-        o["identity_tamper_digest_still_verifies"] = approval_digest_ok(
+        o["identity_tamper_digest_still_verifies"] = not approval_digest_ok(
             q_d.get(aid_d))
         ex_d.execute_approved()
         got_d = q_d.get(aid_d)
         o["identity_run_mismatch_refused"] = (
             got_d.get("executed") is not True)
         o["identity_mismatch_audited_with_run_mismatch_flag"] = (
-            _refused_flagged(run_d, aid_d, "approval_run_mismatch"))
+            _refused_flagged(run_d, aid_d, "approval_integrity_violation"))
 
         # Control: the same genuine approval workflow inside one run
         # still executes.
@@ -280,7 +290,8 @@ def _r10_crossrun_replay():
         q_c = ctx_c["approvals"]
         ex_c = ctx_c["executor"]
         aid_c = _queue_allowlisted_send(
-            q_c, ctx_c["policy"], Path(ctx_c["run_dir"]), agent_id="agent-c")
+            q_c, ctx_c["policy"], Path(ctx_c["run_dir"]), agent_id="agent-c",
+            caller_identity=ex_c.mint_identity("agent-c", "support", "adversary-org"))
         q_c.decide(aid_c, True, "looks fine", decided_by="human-operator")
         done = ex_c.execute_approved()
         o["same_run_approval_still_executes"] = (
@@ -307,7 +318,10 @@ def _r10_doubleexec():
         pol = ctx["policy"]
         q = ctx["approvals"]
         run_dir = Path(ctx["run_dir"])
-        aid = _queue_allowlisted_send(q, pol, run_dir)
+        ex = ctx["executor"]
+        aid = _queue_allowlisted_send(
+            q, pol, run_dir,
+            caller_identity=ex.mint_identity("adv-x", "support", "adversary-org"))
         q.decide(aid, True, "looks fine", decided_by="human-operator")
         eb = ToolExecutor._egress_bytes_for(
             "send_email", {"to": "ops@synthetic.local",

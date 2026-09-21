@@ -60,7 +60,8 @@ from urllib.parse import urlparse
 from . import dlp
 from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
-                        sanitize_preview_text, QueueLockError)
+                        sanitize_preview_text, QueueLockError,
+                        QueueLockInvalidatedError)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -87,6 +88,12 @@ from .identity import (
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
 
+
+class PolicyPinMismatchError(Exception):
+    """F48 (R11): the loaded policy's content hash does not match the
+    GOV_POLICY_HASH pin. Raised by ToolExecutor.__init__ — construction
+    is refused fail-closed, before any tool can execute."""
+
 # F17b: per-run identity issuance budget. Bounds identity sprawl / mint
 # abuse inside one run; deployments that legitimately mint more raise
 # the constant.
@@ -109,6 +116,79 @@ class ToolExecutor:
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # F48 (R11): policy pin/load audit. The policy this executor
+        # will enforce is pinned at construction: ALWAYS audit
+        # ``policy_loaded`` with the normalized source path and the
+        # content hash. When the GOV_POLICY_HASH pin is set, the loaded
+        # hash MUST match it — on mismatch, audit
+        # ``policy_pin_mismatch`` and REFUSE construction fail-closed
+        # (PolicyPinMismatchError), before any tool can execute. A
+        # swapped policy file can therefore never silently govern a
+        # run. Without a pin, an explicit ``policy_pin_absent`` warning
+        # is audited — the deployment is knowingly running unpinned.
+        _policy_path = getattr(policy, "yaml_path", None)
+        try:
+            _policy_norm = (str(Path(_policy_path).resolve())
+                            if _policy_path else "<unknown>")
+        except OSError:
+            _policy_norm = str(_policy_path)
+        _policy_hash = getattr(policy, "policy_hash", None) or "<unknown>"
+        _pin = os.environ.get("GOV_POLICY_HASH")
+        self.log.append({
+            "event": "policy_loaded",
+            "run_id": self.run_id,
+            "agent_id": "system",
+            "role": "system",
+            "decision": "policy_loaded",
+            "policy_id": "policy-pin",
+            "policy_path": _policy_norm,
+            "policy_hash": _policy_hash,
+            "pinned": bool(_pin),
+            "reason": ("Policy loaded for run %s: %s (sha256 %s)%s."
+                       % (self.run_id, _policy_norm, _policy_hash,
+                          " — hash pin GOV_POLICY_HASH is set"
+                          if _pin else " — NO hash pin set")),
+        })
+        if _pin:
+            if _policy_hash != _pin:
+                self.log.append({
+                    "event": "policy_pin_mismatch",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "decision": "refused",
+                    "policy_id": "policy-pin",
+                    "policy_path": _policy_norm,
+                    "policy_hash": _policy_hash,
+                    "expected_hash": _pin,
+                    "reason": ("Policy pin mismatch: loaded policy "
+                               "%s has sha256 %s but GOV_POLICY_HASH "
+                               "pins %s — refusing executor "
+                               "construction fail-closed." %
+                               (_policy_norm, _policy_hash, _pin)),
+                })
+                raise PolicyPinMismatchError(
+                    "policy pin mismatch: loaded policy %s (sha256 %s) "
+                    "does not match GOV_POLICY_HASH pin %s; executor "
+                    "construction refused" % (_policy_norm, _policy_hash,
+                                              _pin))
+        else:
+            self.log.append({
+                "event": "policy_pin_absent",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "warning",
+                "policy_id": "policy-pin",
+                "policy_path": _policy_norm,
+                "policy_hash": _policy_hash,
+                "reason": ("WARNING: GOV_POLICY_HASH is not set — the "
+                           "policy governing this run (%s, sha256 %s) "
+                           "is NOT pinned. A swapped policy file would "
+                           "govern silently. Set GOV_POLICY_HASH in "
+                           "production deployments." %
+                           (_policy_norm, _policy_hash)),
+            })
         self.sandbox = self.run_dir / "sandbox"
         self.quarantine = self.run_dir / "quarantine"
         self.sandbox.mkdir(parents=True, exist_ok=True)
@@ -151,6 +231,13 @@ class ToolExecutor:
                     self._verify_approval_identity)
             except IdentityVerifierAlreadySetError:
                 pass
+        # F49 (R11): seal the human-provisioned break-glass ticket set
+        # at run start (write-once). A second executor sharing this
+        # queue keeps the first snapshot — the agent cannot re-open
+        # the provisioning window by constructing a fresh executor.
+        # Guarded by hasattr: the snapshot exists from R11 on.
+        if hasattr(approvals, "snapshot_break_glass_tickets"):
+            approvals.snapshot_break_glass_tickets()
         # F22: policy-configurable audit-log size guard (fail-closed).
         log_limits = getattr(policy, "log_limits", None) or {}
         if log_limits.get("max_log_bytes") is not None:
@@ -721,11 +808,16 @@ class ToolExecutor:
         count let an attacker plant two throwaway look-alikes and have
         the VICTIM's next same-shaped call be the Kth, queueing a benign
         call (a false-positive weapon). The quorum now ALSO requires at
-        least K-1 ESTABLISHED principals (>= 2 matching thin-spread
-        observations in the window); see
-        ``EgressLedger.cross_principal_campaign_hit``. Patient
-        throwaways that emit repeatedly can still poison the quorum —
-        behavioral history is not deployment identity trust
+        least K-1 ESTABLISHED principals; see
+        ``EgressLedger.cross_principal_campaign_hit``.
+
+        F46 (R11): establishment is multi-run continuity (>= 2 distinct
+        run IDs) in permissive mode, registry-backed in registry mode
+        (the deployment's principal registry is passed through, so
+        registered principals count as established). Patient
+        throwaways that emit across two runs each can still poison the
+        quorum in permissive mode — the cost is raised (distinct runs
+        over time) but behavioral history is not identity trust
         (documented residual).
 
         The F18 allowlist IS applied to the CURRENT attempt: when the
@@ -741,7 +833,10 @@ class ToolExecutor:
         try:
             hit = self._ledger.cross_principal_campaign_hit(
                 shape or {},
-                window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K)
+                window_secs=CAMPAIGN_WINDOW_SECS, k=CAMPAIGN_K,
+                # F46 (R11): registry-backed establishment in registry
+                # mode; multi-run fallback in permissive mode (None).
+                principal_registry=self._principal_registry)
             if hit and self._campaign_allowlisted(
                     principal, (shape or {}).get("campaign_domain"),
                     (shape or {}).get("param_keys")):
@@ -1258,7 +1353,12 @@ class ToolExecutor:
             # F33: raw outbound payload bytes at queue time (computed on
             # the RAW args at the call boundary — DLP redaction of the
             # queued form must never shrink the budget charge).
-            egress_bytes=self._egress_bytes_for(tool, kwargs))
+            egress_bytes=self._egress_bytes_for(tool, kwargs),
+            # F42 (R11): the queue no longer trusts action["identity"]
+            # (attacker-controlled dict) — the executor passes the real
+            # minted AgentIdentity it received in call(). The queue
+            # authenticates it and stamps the record from it.
+            caller_identity=identity)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -1320,6 +1420,20 @@ class ToolExecutor:
         try:
             with self.approvals._queue_locked():
                 return self._execute_approved_locked()
+        except QueueLockInvalidatedError as e:
+            # F44 (R11): the lock file was deleted or replaced while we
+            # waited — the lock may be guarding a different queue state.
+            # Fail closed with a DISTINCT audit event so operators can
+            # tell invalidation apart from a mere timeout.
+            self.log.append({
+                "event": "approval_sweep_refused",
+                "run_id": self.run_id,
+                "decision": "refused",
+                "policy_id": "approval-execution-refused",
+                "flag": "queue_lock_invalidated",
+                "reason": "execute_approved() refused: %s" % e,
+            })
+            raise
         except QueueLockError as e:
             # Fail closed AND audited: the sweep is refused, nothing
             # executed, the lock holder keeps its atomicity.
@@ -1339,7 +1453,18 @@ class ToolExecutor:
         Records are re-read from disk AFTER the lock is held, so the
         read-claim-execute-mark sequence is atomic: a concurrent sweep
         can only re-read once this sweep has marked its records.
+
+        F45 (R11): the first step under the lock is
+        ``_reconcile_interrupted_executions`` — any record authorized
+        and claimed by a previous sweep that crashed before recording
+        completion is reset to pending with a loud audit event and an
+        explicit may-have-already-happened warning, requiring a NEW
+        human decision. Nothing is auto-executed during
+        reconciliation.
         """
+        # F45: reconcile interrupted executions before sweeping — runs
+        # under the queue lock held by execute_approved().
+        self.approvals._reconcile_interrupted_executions()
         done = []
         ttl = self.policy.approval_ttl_hours
         for rec in self.approvals.all():
@@ -1443,6 +1568,24 @@ class ToolExecutor:
                         % (aid, (rec.get("policy_hash") or "")[:12],
                            self.policy.policy_hash[:12]),
                         "approval_policy_stale")
+                continue
+            # F47 (R11): cross-privilege smuggling — an approval whose
+            # recorded role is not allowed the recorded tool is refused
+            # BEFORE any policy evaluation or side effect. The role is
+            # the F42 session-authenticated attribution (stamped by the
+            # queue from the minted identity, never from
+            # action["identity"]), so this check binds the approval to
+            # the least-privilege contract of the role that actually
+            # requested it. A record planted with a victim's approval
+            # but an attacker's privileged role/tool pair dies here.
+            # Same-role approved actions are unaffected.
+            if not self.policy.role_allows(rec["role"], rec["tool"]):
+                _refuse("Approval %s refused: role %r is not allowed to "
+                        "execute tool %r under the active policy's "
+                        "role allowlist (cross-privilege smuggling "
+                        "guard)." % (aid, rec["role"], rec["tool"]),
+                        "role_allowlist_violation",
+                        policy_id="role-allowlist")
                 continue
             # 4. fresh policy evaluation (TOCTOU guard)
             ctx = self._context(rec["tool"], rec["args"],

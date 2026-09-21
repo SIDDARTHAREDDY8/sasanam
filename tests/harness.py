@@ -32,7 +32,8 @@ Works against the current executor API:
 import tempfile
 from pathlib import Path
 
-from gov.approvals import ApprovalQueue
+from gov.approvals import (ApprovalQueue, BREAK_GLASS_TICKET_FILENAME,
+                            provision_break_glass_ticket)
 from gov.executor import ToolExecutor
 from gov.log import ActionLog, read_entries
 from gov.policy import PolicyEngine
@@ -64,7 +65,8 @@ STANDARD_AGENTS = {
 }
 
 
-def make_run(policy_path=None, ledger_path=None, principal_registry=None):
+def make_run(policy_path=None, ledger_path=None, principal_registry=None,
+             break_glass_tickets=()):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -76,11 +78,26 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None):
     ``principal_registry`` (F17b) installs a deployment-controlled
     principal allowlist: minting for an unregistered principal raises.
     Default None = permissive demo mode (any principal string mints).
+
+    ``break_glass_tickets`` (F49, R11): iterable of
+    ``(ticket_id, operator_principal, reviewer_principal)`` tuples,
+    provisioned into the run's ticket store BEFORE executor
+    construction — the run-start snapshot seals exactly these tickets,
+    mirroring the out-of-band human provisioning workflow. Default
+    empty (no tickets; break_glass without a provisioned ticket is
+    refused).
     """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
     policy = PolicyEngine(str(policy_path or DEFAULT_POLICY))
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
+    # F49: human out-of-band provisioning happens BEFORE the run
+    # starts; the executor's run-start snapshot seals this set.
+    for ticket_id, operator_principal, reviewer_principal in \
+            break_glass_tickets:
+        provision_break_glass_ticket(
+            run_dir / BREAK_GLASS_TICKET_FILENAME,
+            ticket_id, operator_principal, reviewer_principal)
     executor = ToolExecutor(run_dir, policy, log, approvals,
                             ledger_path=(ledger_path
                                          if ledger_path is not None

@@ -112,8 +112,14 @@ def _refused_flagged(run_dir, aid, flag):
 
 
 def _queue_allowlisted_send(q, pol, run_dir, agent_id="adv-x",
-                            body="customer rows: Alice 555-0101"):
-    """Queue (not decide) a benign allowlisted send_email; return its id."""
+                            body="customer rows: Alice 555-0101",
+                            caller_identity=None):
+    """Queue (not decide) a benign allowlisted send_email; return its id.
+
+    F42 (R11): the caller passes a minted identity (from the
+    harness/executor that owns ``q``); the action["identity"] dict is
+    ignored by the queue.
+    """
     args = {"to": "ops@synthetic.local", "subject": "weekly summary",
             "body": body}
     eb = ToolExecutor._egress_bytes_for("send_email", args)
@@ -127,7 +133,8 @@ def _queue_allowlisted_send(q, pol, run_dir, agent_id="adv-x",
                        policy_id="approval-outbound-sends", flag=None),
         policy_hash=pol.policy_hash,
         policy_context={"domain_allowlisted": True},
-        egress_bytes=eb)
+        egress_bytes=eb,
+        caller_identity=caller_identity)
 
 
 def _w11_keyseams():
@@ -152,7 +159,10 @@ def _w11_keyseams():
             pol = ctx["policy"]
             q = ctx["approvals"]
             run_dir = Path(ctx["run_dir"])
-            aid = _queue_allowlisted_send(q, pol, run_dir)
+            aid = _queue_allowlisted_send(
+                q, pol, run_dir,
+                caller_identity=ctx["mint_identity"](
+                    "adv-x", "support", "adversary-org"))
             q.decide(aid, True, "looks fine", decided_by="human-operator")
 
             # (a1) rotation WITHOUT the old epoch archived: fail-closed.
@@ -185,7 +195,10 @@ def _w11_keyseams():
             pol2 = ctx2["policy"]
             q2 = ctx2["approvals"]
             run_dir2 = Path(ctx2["run_dir"])
-            aid2 = _queue_allowlisted_send(q2, pol2, run_dir2)
+            aid2 = _queue_allowlisted_send(
+                q2, pol2, run_dir2,
+                caller_identity=ctx2["mint_identity"](
+                    "adv-x", "support", "adversary-org"))
             q2._rewrite(lambda rs: [
                 dict(r, digest_scheme="sha256-v0")
                 if r["id"] == aid2 else r for r in rs])
@@ -220,7 +233,10 @@ def _w11_crossrun_replay():
         pol_a = ctx_a["policy"]
         q_a = ctx_a["approvals"]
         run_a = Path(ctx_a["run_dir"])
-        aid = _queue_allowlisted_send(q_a, pol_a, run_a, agent_id="agent-a")
+        aid = _queue_allowlisted_send(
+            q_a, pol_a, run_a, agent_id="agent-a",
+            caller_identity=ctx_a["mint_identity"](
+                "agent-a", "support", "adversary-org"))
         q_a.decide(aid, True, "weekly summary looks fine",
                    decided_by="human-operator")
         rec_a = q_a.get(aid)
@@ -280,7 +296,10 @@ def _w11_doubleexec():
         pol = ctx["policy"]
         q = ctx["approvals"]
         run_dir = Path(ctx["run_dir"])
-        aid = _queue_allowlisted_send(q, pol, run_dir)
+        aid = _queue_allowlisted_send(
+            q, pol, run_dir,
+            caller_identity=ctx["mint_identity"](
+                "adv-x", "support", "adversary-org"))
         q.decide(aid, True, "looks fine", decided_by="human-operator")
         eb = ToolExecutor._egress_bytes_for(
             "send_email", {"to": "ops@synthetic.local",
@@ -506,7 +525,10 @@ def _w11_rundir_toctou():
         target = d / "external-approvals.jsonl"
         (run_dir / "approvals.jsonl").unlink(missing_ok=True)
         (run_dir / "approvals.jsonl").symlink_to(target)
-        aid = _queue_allowlisted_send(q, pol, run_dir)
+        aid = _queue_allowlisted_send(
+            q, pol, run_dir,
+            caller_identity=ctx["mint_identity"](
+                "adv-x", "support", "adversary-org"))
         o["queue_follows_symlink"] = target.exists()
         q.decide(aid, True, "ok", decided_by="human-operator")
         ctx["executor"].execute_approved()
@@ -518,8 +540,10 @@ def _w11_rundir_toctou():
         run_dir2 = Path(ctx2["run_dir"])
         (run_dir2 / "approvals.jsonl").unlink(missing_ok=True)
         (run_dir2 / "approvals.jsonl").symlink_to("/dev/null")
-        aid2 = _queue_allowlisted_send(ctx2["approvals"],
-                                      ctx2["policy"], run_dir2)
+        aid2 = _queue_allowlisted_send(
+            ctx2["approvals"], ctx2["policy"], run_dir2,
+            caller_identity=ctx2["mint_identity"](
+                "adv-x", "support", "adversary-org"))
         o["devnull_symlink_silently_drops_approval"] = (
             ctx2["approvals"].get(aid2) is None)
 
@@ -534,10 +558,15 @@ def _w11_rundir_toctou():
         q3 = ctx3["approvals"]
         pol3 = ctx3["policy"]
         run_dir3 = Path(ctx3["run_dir"])
-        aid3 = _queue_allowlisted_send(q3, pol3, run_dir3)
+        aid3 = _queue_allowlisted_send(
+            q3, pol3, run_dir3,
+            caller_identity=ctx3["mint_identity"](
+                "adv-x", "support", "adversary-org"))
         aid4 = _queue_allowlisted_send(
             q3, pol3, run_dir3, agent_id="adv-y",
-            body="customer rows: Bob 555-0199")
+            body="customer rows: Bob 555-0199",
+            caller_identity=ctx3["mint_identity"](
+                "adv-y", "support", "adversary-org"))
         q3.decide(aid3, True, "ok", decided_by="human-operator")
         # Attacker replaces the policy file between approval and
         # execution.

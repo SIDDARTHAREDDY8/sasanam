@@ -37,7 +37,9 @@ import contextlib
 import fcntl
 import hmac
 import json
+import os
 import sys
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -45,7 +47,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from .identity import AgentIdentity
-from .log import ActionLog, _active_key, _approval_record_mac
+from .log import (ActionLog, _active_key, _approval_record_mac,
+                  _break_glass_ticket_mac, read_entries)
 from .egress_ledger import _ledger_keyring
 
 
@@ -77,6 +80,20 @@ class QueueLockError(OSError):
     """
 
 
+class QueueLockInvalidatedError(QueueLockError):
+    """F44 (R11): the sweep lock was invalidated mid-acquisition.
+
+    Raised by ``ApprovalQueue._queue_locked`` when the lock file was
+    deleted or replaced between open() and flock() (inode/device
+    mismatch or unlinked path). A deleted lock file lets a second
+    opener lock a DIFFERENT inode while the first sweeper still holds
+    the old one — silent double execution. This is a distinct,
+    louder failure than a timeout: the executor audits it as
+    ``queue_lock_invalidated`` and refuses the sweep. Never retried
+    silently.
+    """
+
+
 def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
     """Legacy UNKEYED integrity digest (pre-R9 attacker primitive).
 
@@ -101,91 +118,275 @@ def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
 APPROVAL_DIGEST_SCHEME = "hmac-sha256-v1"
 
 
-def _canonical_record_payload(tool, args, policy_id, egress_bytes=_MISSING,
-                              run_id=None, decided_by=None):
-    """F38 (R10): the canonical payload binds the run and the decider.
+def _canonical_json(obj):
+    """F43 (R11): deterministic canonical JSON with normalization.
 
-    Beyond (tool, args, policy_id, egress_bytes), the payload binds
-    ``run_id`` — the run the approval was queued in — and
-    ``decided_by`` — the identity that decided it (None while pending;
-    ``ApprovalQueue.decide()`` re-MACs with the decider bound). A MAC
-    minted for run A can never verify for run B, and a decision cannot
-    be relabeled to a different decider without re-MACing under the
-    log key. Records MACed before this binding (pre-R10) fail
-    verification automatically — fail-closed upgrade, same precedent as
-    F34.
+    Dicts sort by key; sets/frozensets become lists sorted by their
+    canonical form (``str(set)`` is NOT deterministic across runs —
+    hash randomization — so sets must be normalized before hashing);
+    tuples are treated as lists; anything else falls back to
+    ``str()``. The MAC input is therefore stable for equal security
+    records and never depends on in-memory iteration order.
     """
-    payload = {"tool": tool, "args": args, "policy_id": policy_id,
-               "run_id": run_id, "decided_by": decided_by}
-    if egress_bytes is not _MISSING:
-        payload["egress_bytes"] = egress_bytes
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"),
-                      default=str)
+    if isinstance(obj, dict):
+        return {str(k): _canonical_json(v)
+                for k, v in sorted(obj.items(), key=lambda kv: str(kv[0]))}
+    if isinstance(obj, (set, frozenset)):
+        return sorted(
+            (_canonical_json(v) for v in obj),
+            key=lambda x: json.dumps(x, sort_keys=True,
+                                     separators=(",", ":"), default=str,
+                                     ensure_ascii=True))
+    if isinstance(obj, (list, tuple)):
+        return [_canonical_json(v) for v in obj]
+    return obj
 
 
-def approval_record_digest(tool, args, policy_id, egress_bytes=_MISSING,
-                           run_id=None, decided_by=None):
-    """F34: HMAC-keyed integrity digest binding a queued approval to its
-    exact arguments.
+def _canonical_dumps(obj):
+    return json.dumps(_canonical_json(obj), sort_keys=True,
+                      separators=(",", ":"), default=str, ensure_ascii=True)
 
-    The F33 ``egress_bytes`` binding is preserved: payload shape — with
-    or without the key — is decided by whether the caller supplies it,
-    exactly as the legacy digest did. F38 (R10): ``run_id`` and
-    ``decided_by`` are now MAC inputs too, so a genuinely-approved
-    record cannot replay into another run (or be relabeled to another
-    decider) without the log key. The MAC is computed under the
-    active log key with the key epoch bound in; verification tries every
-    epoch in the keyring. Under the PUBLIC development key this gives no
-    forgery resistance to anyone who read the docs (F29/F34 residual).
+
+# F43 (R11): every record field that influences the approver's display,
+# the risk/auto-approval decision, the policy reason attribution, or the
+# identity the action executes as. Tampering with ANY of these between
+# queue() and decide()/execute_approved() breaks the MAC. This is the
+# single payload definition — _pending_record_content_ok() and
+# approval_digest_ok() both verify against it, so the two checks cannot
+# drift apart.
+_SECURITY_PAYLOAD_FIELDS = (
+    "tool", "args", "policy_id", "egress_bytes", "run_id", "decided_by",
+    "agent_id", "role", "principal", "identity",
+    "preview", "provenance", "policy_context", "policy_flag",
+    "delegation_attempted",
+)
+
+
+def _security_record_payload(rec):
+    """F43 (R11): extract the canonical security payload from a record.
+
+    Every field in ``_SECURITY_PAYLOAD_FIELDS`` is bound; missing
+    fields bind as None (a record that drops a security field does not
+    verify against a record that has it — fail closed).
+    ``delegation_attempted`` normalizes to bool.
+    """
+    payload = {f: rec.get(f) for f in _SECURITY_PAYLOAD_FIELDS}
+    payload["delegation_attempted"] = bool(rec.get("delegation_attempted"))
+    return _canonical_dumps(payload)
+
+
+def approval_record_digest(rec):
+    """F34/F38/F43: HMAC-keyed integrity digest binding a queued approval
+    to its full security record.
+
+    R11 changed the payload: beyond (tool, args, policy_id,
+    egress_bytes, run_id, decided_by) the MAC now binds the
+    authenticated identity (agent_id/role/principal/identity dict),
+    the approver-facing ``preview``, ``provenance``,
+    ``policy_context``, ``policy_flag``, and ``delegation_attempted``.
+    Rewriting the preview, swapping the attribution, or relabeling
+    the identity between queue() and decide()/execute_approved()
+    breaks the digest. Records MACed under the pre-R11 narrow payload
+    fail verification automatically — fail-closed upgrade, same
+    precedent as F34/F38. The MAC is computed under the active log key
+    with the key epoch bound in; verification tries every epoch in the
+    keyring. Under the PUBLIC development key this gives no forgery
+    resistance to anyone who read the docs (F29/F34 residual).
     """
     key, key_epoch = _active_key()
-    return _approval_record_mac(
-        key, key_epoch,
-        _canonical_record_payload(tool, args, policy_id, egress_bytes,
-                                  run_id, decided_by))
+    return _approval_record_mac(key, key_epoch,
+                                _security_record_payload(rec))
 
 
 def _pending_record_content_ok(rec):
-    """F38 (R10): True when a PENDING record's keyed digest verifies over
-    the approved content — (tool, args, policy_id, egress_bytes,
-    run_id) with decided_by=None — regardless of the digest_scheme
-    label. This is the decide()-time tamper check: it detects rewrites
-    of what was approved between queue() and decide(). The scheme
-    label itself is deliberately NOT checked here — a scheme-label
-    rewrite keeps the documented wave-11 behavior: decide() proceeds,
-    and the verifier fails closed on the unknown scheme at execution
-    (audited as approval_integrity_violation; see
-    evals/w11_probes.py::_w11_keyseams part (b)). The scheme label is
-    not a MAC input, so rewriting it cannot launder tampered content
-    through the decision re-MAC.
+    """F38 (R10) / F43 (R11): True when a PENDING record's keyed digest
+    verifies over the full security payload — with decided_by=None —
+    regardless of the digest_scheme label. This is the decide()-time
+    tamper check: it detects rewrites of what was approved between
+    queue() and decide(), now including preview swaps, provenance or
+    policy_context edits, policy_flag changes, and identity
+    relabeling. The scheme label itself is deliberately NOT checked
+    here — a scheme-label rewrite keeps the documented wave-11
+    behavior: decide() proceeds, and the verifier fails closed on the
+    unknown scheme at execution (audited as
+    approval_integrity_violation; see evals/w11_probes.py::_w11_keyseams
+    part (b)). The scheme label is not a MAC input, so rewriting it
+    cannot launder tampered content through the decision re-MAC.
     """
     if not isinstance(rec, dict):
         return False
     if "egress_bytes" not in rec:
         return False
-    canonical = _canonical_record_payload(
-        rec.get("tool"), rec.get("args"), rec.get("policy_id"),
-        rec.get("egress_bytes"), rec.get("run_id"), None)
     for key_epoch, key in _ledger_keyring().items():
-        candidate = _approval_record_mac(key, key_epoch, canonical)
+        candidate = _approval_record_mac(
+            key, key_epoch, _security_record_payload(rec))
         if hmac.compare_digest(rec.get("args_digest", ""), candidate):
             return True
     return False
 
 
+# -- F49 (R11): human-provisioned break-glass tickets ----------------------
+#
+# Break-glass is the emergency path around human approval. Before R11,
+# break_glass() authenticated only an executor-minted identity — any
+# permissively-minted identity qualified, and the post-review ticket
+# could be discharged by a distinct attacker-minted confederate
+# (wave-12 sit73). Now break-glass additionally requires a
+# HUMAN-PROVISIONED ticket:
+#
+# * The operator provisions tickets OUT-OF-BAND before the run, via
+#   provision_break_glass_ticket() (or the `gov.approve
+#   provision-break-glass` CLI): each ticket binds an operator
+#   principal and a DISTINCT reviewer principal, is HMAC-signed under
+#   the active log key at provisioning time, and is appended to
+#   <run_dir>/break_glass_tickets.jsonl.
+# * At run start (first ToolExecutor construction) the queue takes a
+#   write-once snapshot of the ticket store, verifying every HMAC.
+#   Tickets planted AFTER the snapshot — including well-formed ones
+#   the agent forges with a compromised dev key — are never in the
+#   snapshot and can never authorize break-glass.
+# * break_glass() requires a ticket id, verifies it is provisioned,
+#   unused, HMAC-valid, and bound to the calling operator's principal;
+#   the post-review ticket inherits the PROVISIONED reviewer
+#   principal, and resolve_review() refuses anyone else.
+# * Honest residual: there is no live human channel in this product —
+#   the guarantee is that no ticket the agent minted for itself
+#   mid-run can ever authorize break-glass. An attacker who steals the
+#   operator's provisioning key (same trust anchor as GOV_LOG_KEY)
+#   and constructs a fresh executor mid-run could provision to
+#   itself; key custody is the boundary, exactly as for the log key.
+
+BREAK_GLASS_TICKET_FILENAME = "break_glass_tickets.jsonl"
+
+
+def _ticket_canonical(ticket_id, operator_principal, reviewer_principal,
+                      purpose, created_at):
+    return _canonical_dumps({
+        "ticket_id": ticket_id,
+        "operator_principal": operator_principal,
+        "reviewer_principal": reviewer_principal,
+        "purpose": purpose or "",
+        "created_at": created_at,
+    })
+
+
+def provision_break_glass_ticket(store_path, ticket_id, operator_principal,
+                                 reviewer_principal, purpose=""):
+    """F49: human-operator provisioning of a break-glass ticket.
+
+    Appends an HMAC-signed ticket to the ticket store. This is the
+    ONLY way to create a ticket the queue will honor, and it must run
+    out-of-band (operator terminal / deployment tooling) BEFORE the
+    run starts — never from agent code, never mid-run. Provisioning
+    validates: non-empty ids/principals, operator != reviewer, and
+    ticket_id uniqueness (no overwriting an existing ticket).
+    Returns the ticket dict.
+    """
+    if not ticket_id or not str(ticket_id).strip():
+        raise ValueError("ticket_id must be non-empty")
+    if not operator_principal or not str(operator_principal).strip():
+        raise ValueError("operator_principal must be non-empty")
+    if not reviewer_principal or not str(reviewer_principal).strip():
+        raise ValueError("reviewer_principal must be non-empty")
+    if operator_principal == reviewer_principal:
+        raise ValueError(
+            "separation of duties: the provisioned reviewer principal "
+            "must differ from the operator principal")
+    store_path = Path(store_path)
+    existing = _read_verified_ticket_store(store_path, audit_log=None)
+    if ticket_id in existing:
+        raise ValueError("ticket_id %r is already provisioned" % ticket_id)
+    created_at = _utcnow()
+    key, key_epoch = _active_key()
+    ticket = {
+        "ticket_id": ticket_id,
+        "operator_principal": operator_principal,
+        "reviewer_principal": reviewer_principal,
+        "purpose": purpose or "",
+        "created_at": created_at,
+        "created_by": "human-operator",
+        "key_epoch": key_epoch,
+        "used": False,
+        "used_at": None,
+        "used_for_approval": None,
+        "hmac": _break_glass_ticket_mac(
+            key, key_epoch,
+            _ticket_canonical(ticket_id, operator_principal,
+                              reviewer_principal, purpose, created_at)),
+    }
+    store_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(store_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(ticket, ensure_ascii=True, default=str) + "\n")
+    return ticket
+
+
+def _read_verified_ticket_store(store_path, audit_log=None):
+    """F49: read the ticket store, verifying every entry's HMAC.
+
+    Returns {ticket_id: entry} for entries with a valid HMAC under a
+    keyring epoch. Entries with missing/invalid HMACs are SKIPPED —
+    never trusted — and, when audit_log is provided, each is reported
+    as a ``break_glass_ticket_invalid`` audit event (loud, not
+    silent). Duplicate ticket_ids: the first valid entry wins.
+    """
+    store_path = Path(store_path)
+    if not store_path.exists():
+        return {}
+    keyring = _ledger_keyring()
+    valid = {}
+    for line in store_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or "ticket_id" not in entry:
+            continue
+        canonical = _ticket_canonical(
+            entry.get("ticket_id"), entry.get("operator_principal"),
+            entry.get("reviewer_principal"), entry.get("purpose"),
+            entry.get("created_at"))
+        ok = False
+        for key_epoch, key in keyring.items():
+            candidate = _break_glass_ticket_mac(key, key_epoch, canonical)
+            if hmac.compare_digest(entry.get("hmac", ""), candidate):
+                ok = True
+                break
+        if not ok:
+            if audit_log is not None:
+                audit_log.append({
+                    "event": "break_glass_ticket_invalid",
+                    "run_id": store_path.parent.name,
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "ticket_rejected",
+                    "policy_id": "break-glass-ticket",
+                    "ticket_id": entry.get("ticket_id"),
+                    "reason": ("break-glass ticket store entry failed "
+                               "HMAC verification; it is skipped and can "
+                               "never authorize break-glass"),
+                })
+            continue
+        valid.setdefault(entry["ticket_id"], entry)
+    return valid
+
+
 def approval_digest_ok(rec):
-    """F34: True when an approval record carries a valid keyed digest.
+    """F34/F43: True when an approval record carries a valid keyed digest.
 
     Fail-closed: anything without ``digest_scheme == "hmac-sha256-v1"``
     (pre-R9 unkeyed records, hand-built forgeries) returns False. A
     record that HAS the ``egress_bytes`` key is always verified with it
-    (F33 rule preserved — removing the key does not downgrade the check);
-    the three-field keyed form is never produced by
-    :meth:`ApprovalQueue.queue` and is not accepted. F38 (R10): the
-    verified payload includes the record's ``run_id`` and
-    ``decided_by`` — a digest minted for another run (or another
-    decider) does not verify for this one, and pre-R10 digests (no
-    run_id bound) fail closed automatically.
+    (F33 rule preserved — removing the key does not downgrade the check).
+    F38 (R10): the verified payload includes the record's ``run_id``
+    and ``decided_by``. F43 (R11): the verified payload is the full
+    security record — identity, preview, provenance, policy_context,
+    policy_flag, delegation_attempted — so tampering with any of them
+    after queue() is detected here at execution time. Pre-R11 digests
+    (narrow payload) fail closed automatically.
     """
     if not isinstance(rec, dict):
         return False
@@ -193,11 +394,9 @@ def approval_digest_ok(rec):
         return False
     if "egress_bytes" not in rec:
         return False
-    canonical = _canonical_record_payload(
-        rec.get("tool"), rec.get("args"), rec.get("policy_id"),
-        rec.get("egress_bytes"), rec.get("run_id"), rec.get("decided_by"))
     for key_epoch, key in _ledger_keyring().items():
-        candidate = _approval_record_mac(key, key_epoch, canonical)
+        candidate = _approval_record_mac(
+            key, key_epoch, _security_record_payload(rec))
         if hmac.compare_digest(rec.get("args_digest", ""), candidate):
             return True
     return False
@@ -839,7 +1038,97 @@ class ApprovalQueueRiskMixin:
                 if line.strip() and
                 json.loads(line).get("status") == "pending"]
 
-    def break_glass(self, approval_id, reason, operator_identity):
+    def _ticket_store_path(self):
+        return self.run_dir / BREAK_GLASS_TICKET_FILENAME
+
+    def snapshot_break_glass_tickets(self):
+        """F49 (R11): write-once snapshot of the human-provisioned
+        break-glass ticket store, taken at run start.
+
+        Called by ``ToolExecutor.__init__`` (guarded by hasattr): the
+        first executor to construct seals the ticket set this run will
+        honor. Every entry's HMAC is verified here; invalid entries
+        are skipped loudly (``break_glass_ticket_invalid`` audit
+        events). Tickets provisioned AFTER this snapshot — including
+        well-formed tickets the agent forges mid-run — are never in
+        the snapshot and can never authorize break-glass. A second
+        executor sharing this queue keeps the first snapshot (the
+        agent cannot re-open the provisioning window by constructing
+        a fresh executor).
+        """
+        if self._bg_ticket_snapshot is not None:
+            return self._bg_ticket_snapshot
+        self._bg_ticket_snapshot = _read_verified_ticket_store(
+            self._ticket_store_path(), audit_log=self.log)
+        return self._bg_ticket_snapshot
+
+    def _resolve_break_glass_ticket(self, ticket_id):
+        """F49: resolve a ticket id to its provisioned entry.
+
+        Executor path: from the run-start snapshot (tickets planted
+        mid-run are invisible here). CLI path (no executor ever
+        constructed — the human operator's terminal): read and verify
+        the store file live. Returns None for unknown/invalid/used
+        tickets.
+        """
+        if self._bg_ticket_snapshot is not None:
+            entry = self._bg_ticket_snapshot.get(ticket_id)
+        else:
+            entry = _read_verified_ticket_store(
+                self._ticket_store_path(), audit_log=self.log).get(ticket_id)
+        if not entry or entry.get("used"):
+            return None
+        return entry
+
+    def _mark_ticket_used(self, ticket_id, approval_id):
+        """F49: single-use — mark a ticket consumed in the snapshot and
+        persist the used flag to the store file (under the queue lock)
+        so a second process/CLI invocation cannot reuse it."""
+        if self._bg_ticket_snapshot is not None:
+            entry = self._bg_ticket_snapshot.get(ticket_id)
+            if entry is not None:
+                entry["used"] = True
+                entry["used_at"] = _utcnow()
+                entry["used_for_approval"] = approval_id
+        path = self._ticket_store_path()
+        if path.exists():
+            lines = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    lines.append(line)
+                    continue
+                if isinstance(e, dict) and e.get("ticket_id") == ticket_id:
+                    e["used"] = True
+                    e["used_at"] = _utcnow()
+                    e["used_for_approval"] = approval_id
+                    line = json.dumps(e, ensure_ascii=True, default=str)
+                lines.append(line)
+            with open(path, "w", encoding="utf-8") as f:
+                for line in lines:
+                    f.write(line + "\n")
+
+    def _refuse_break_glass(self, approval_id, reason, ticket_id=None,
+                            operator_principal=None):
+        self.log.append({
+            "event": "break_glass_refused",
+            "run_id": self.run_id,
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "decision": "refused",
+            "approval_id": approval_id,
+            "policy_id": "break-glass-ticket",
+            "ticket_id": ticket_id,
+            "operator_principal": operator_principal,
+            "reason": reason,
+        })
+
+    def break_glass(self, approval_id, reason, operator_identity,
+                    ticket_id=None):
         """Emergency-approve a pending item with a mandatory post-review.
 
         * reason must be non-empty (the emergency justification);
@@ -851,30 +1140,80 @@ class ApprovalQueueRiskMixin:
           ``TypeError``; when the queue has an executor-installed
           identity verifier, unminted identities raise
           ``UnregisteredPrincipalError``/``UnmintedIdentityError``.
+        * F49 (R11): ``ticket_id`` is REQUIRED — a human-provisioned
+          break-glass ticket (see ``provision_break_glass_ticket``)
+          that pre-existed the run. The ticket must be provisioned
+          (in the run-start snapshot, or the live store on the CLI
+          path), unused, HMAC-valid, and bound to the calling
+          operator's principal. Tickets the agent minted for itself
+          mid-run — including well-formed HMACed ones — are refused.
+          Refusals are audited as ``break_glass_refused``.
         * creates a post-review ticket that keeps the audit status
-          UNCLEAN until a different reviewer resolves it.
+          UNCLEAN until the PROVISIONED reviewer (bound at provisioning
+          time, distinct from the operator) resolves it.
         Returns (record, ticket).
         """
         operator_identity = self._authenticate_caller(
             operator_identity, "break_glass")
         if not reason or not reason.strip():
             raise ValueError("break-glass requires a non-empty reason")
-        unresolved = self.pending_reviews()
-        if unresolved:
+        if not ticket_id:
+            self._refuse_break_glass(
+                approval_id,
+                "break-glass requires a human-provisioned ticket id "
+                "(F49): no ticket the agent minted for itself can "
+                "authorize break-glass",
+                ticket_id=None,
+                operator_principal=operator_identity.principal)
             raise ValueError(
-                "break-glass refused: %d post-review ticket(s) unresolved "
-                "(%s). Resolve reviews before another break-glass."
-                % (len(unresolved),
-                   ", ".join(t["ticket_id"] for t in unresolved)))
-        operator_label = operator_identity.principal
-        record, _entry = self.decide(
-            approval_id, True,
-            "BREAK-GLASS by %s: %s" % (operator_label, reason.strip()),
-            decided_by=operator_label)
-        record["break_glass"] = True
-        record["break_glass_reason"] = reason.strip()
-        self._rewrite(lambda records: [
-            record if r["id"] == record["id"] else r for r in records])
+                "break-glass requires a human-provisioned ticket id: "
+                "provision one out-of-band before the run (F49)")
+        # F49: the ticket resolve -> consume sequence is guarded by
+        # the cross-thread mutex so two concurrent break_glass calls
+        # cannot both observe an unused ticket (single-use atomicity).
+        with self._bg_ticket_lock:
+            ticket_entry = self._resolve_break_glass_ticket(ticket_id)
+            if ticket_entry is None:
+                self._refuse_break_glass(
+                    approval_id,
+                    "unknown, HMAC-invalid, or already-used break-glass "
+                    "ticket %r: not provisioned before this run" % ticket_id,
+                    ticket_id=ticket_id,
+                    operator_principal=operator_identity.principal)
+                raise ValueError(
+                    "break-glass refused: ticket %r is not a valid unused "
+                    "human-provisioned ticket for this run" % ticket_id)
+            if operator_identity.principal != ticket_entry["operator_principal"]:
+                self._refuse_break_glass(
+                    approval_id,
+                    "ticket %r is provisioned for operator principal %r, "
+                    "not %r" % (ticket_id, ticket_entry["operator_principal"],
+                                operator_identity.principal),
+                    ticket_id=ticket_id,
+                    operator_principal=operator_identity.principal)
+                raise ValueError(
+                    "break-glass refused: ticket %r is bound to a different "
+                    "operator principal" % ticket_id)
+            unresolved = self.pending_reviews()
+            if unresolved:
+                raise ValueError(
+                    "break-glass refused: %d post-review ticket(s) unresolved "
+                    "(%s). Resolve reviews before another break-glass."
+                    % (len(unresolved),
+                       ", ".join(t["ticket_id"] for t in unresolved)))
+            operator_label = operator_identity.principal
+            record, _entry = self.decide(
+                approval_id, True,
+                "BREAK-GLASS by %s: %s" % (operator_label, reason.strip()),
+                decided_by=operator_label)
+            record["break_glass"] = True
+            record["break_glass_reason"] = reason.strip()
+            self._rewrite(lambda records: [
+                record if r["id"] == record["id"] else r for r in records])
+            # F49: single-use — consume the ticket before opening the
+            # post-review ticket, so a crash between the two cannot leave
+            # a reusable ticket behind the consumed authorization.
+            self._mark_ticket_used(ticket_id, approval_id)
         ticket = {
             "ticket_id": "PRV-%s" % approval_id,
             "approval_id": approval_id,
@@ -884,6 +1223,12 @@ class ApprovalQueueRiskMixin:
             # the separation-of-duty check enforces.
             "operator": operator_label,
             "operator_identity": operator_identity.as_dict(),
+            # F49: the reviewer is the principal provisioned out-of-band
+            # before the run — never whoever happens to hold a minted
+            # identity mid-run.
+            "provisioned_reviewer_principal":
+                ticket_entry["reviewer_principal"],
+            "provision_ticket_id": ticket_id,
             "break_glass_reason": reason.strip(),
             "tool": record.get("tool"),
             "agent_id": record.get("agent_id"),
@@ -909,6 +1254,10 @@ class ApprovalQueueRiskMixin:
             "decided_by": operator_label,
             # F26: the full authenticated identity rides the audit log.
             "operator_identity": operator_identity.as_dict(),
+            # F49: the authorizing provisioned ticket rides the audit log.
+            "provision_ticket_id": ticket_id,
+            "provisioned_reviewer_principal":
+                ticket_entry["reviewer_principal"],
             "reason": "BREAK-GLASS: %s (post-review ticket %s opened)"
                       % (reason.strip(), ticket["ticket_id"]),
             "post_review_ticket": ticket["ticket_id"],
@@ -928,6 +1277,12 @@ class ApprovalQueueRiskMixin:
         identity object bound to the ticket at ``break_glass`` time).
         Comparing caller-supplied name strings is not acceptable, so the
         old ``reviewer="bob"`` alias path now fails closed.
+
+        F49 (R11): the reviewer must ADDITIONALLY be the principal
+        provisioned out-of-band on the break-glass ticket
+        (``provisioned_reviewer_principal``) — a distinct minted
+        confederate can no longer discharge the review. Tickets without
+        a provisioned reviewer (pre-R11) fail closed.
         """
         reviewer_identity = self._authenticate_caller(
             reviewer_identity, "resolve_review")
@@ -961,6 +1316,47 @@ class ApprovalQueueRiskMixin:
                 "(principal %r) cannot resolve their own post-review "
                 "ticket — a different authenticated principal must "
                 "review" % (operator_principal,))
+        # F49: the reviewer must be the principal provisioned
+        # out-of-band before the run — a distinct attacker-minted
+        # confederate is refused even though it is not the operator.
+        provisioned = target.get("provisioned_reviewer_principal")
+        if not provisioned:
+            self.log.append({
+                "event": "post_review_resolve_refused",
+                "run_id": target.get("run_id") or self.run_dir.name,
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "decision": "refused",
+                "approval_id": target.get("approval_id"),
+                "post_review_ticket": ticket_id,
+                "reviewer_principal": reviewer_identity.principal,
+                "reason": ("ticket has no provisioned reviewer "
+                           "(pre-R11); fail closed"),
+            })
+            raise ValueError(
+                "post-review ticket %s has no provisioned reviewer "
+                "(pre-R11 ticket): fail closed — re-provision through "
+                "the break-glass ticket flow" % ticket_id)
+        if reviewer_identity.principal != provisioned:
+            self.log.append({
+                "event": "post_review_resolve_refused",
+                "run_id": target.get("run_id") or self.run_dir.name,
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "decision": "refused",
+                "approval_id": target.get("approval_id"),
+                "post_review_ticket": ticket_id,
+                "reviewer_principal": reviewer_identity.principal,
+                "reason": ("reviewer principal %r is not the provisioned "
+                           "reviewer %r"
+                           % (reviewer_identity.principal, provisioned)),
+            })
+            raise ValueError(
+                "post-review ticket %s must be resolved by the "
+                "provisioned reviewer (principal %r), not %r"
+                % (ticket_id, provisioned, reviewer_identity.principal))
         target["status"] = "resolved"
         target["resolved_at"] = _utcnow()
         target["resolved_by"] = reviewer_identity.principal
@@ -1024,6 +1420,9 @@ class IdentityVerifierAlreadySetError(Exception):
 class ApprovalQueue(ApprovalQueueRiskMixin):
     def __init__(self, run_dir, log, batch_excluded_reasons=None):
         self.run_dir = Path(run_dir)
+        # F42 (R11): the queue's authoritative run id — records stamp
+        # THIS, never a caller-supplied run_id.
+        self.run_id = self.run_dir.name
         self.log = log
         self.path = self.run_dir / "approvals.jsonl"
         # F21: queue reasons that may never be batch-decided. Explicit
@@ -1039,6 +1438,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
         self._identity_verifier_sealed = False
+        # F49 (R11): write-once snapshot of the human-provisioned
+        # break-glass ticket store, taken at run start (first
+        # ToolExecutor construction). None = not yet snapshotted.
+        self._bg_ticket_snapshot = None
+        # F49 (R11): cross-thread mutex for ticket check-and-consume.
+        # The ticket resolve (unused?) -> mark-used sequence must be
+        # atomic within the process; without the lock two threads can
+        # both observe an unused ticket and both consume it.
+        self._bg_ticket_lock = threading.Lock()
 
     def set_identity_verifier(self, verifier):
         """F26: install the executor's minted-identity check.
@@ -1128,10 +1536,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
     def queue(self, action, decision, provenance="agent_direct", preview="",
               policy_hash=None, delegation_attempted=False,
-              policy_context=None, policy_flag=None, egress_bytes=None):
+              policy_context=None, policy_flag=None, egress_bytes=None,
+              caller_identity=None):
         """Store a pending approval; returns the approval id.
 
-        ``action`` carries tool, redacted args, identity, the agent's
+        ``action`` carries tool, redacted args, the agent's
         justification (unverified), and the redaction list.
         ``policy_context`` is the executor's evaluation-context snapshot
         (path_outside_sandbox, domain_allowlisted, carries_read_content,
@@ -1146,8 +1555,34 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         queue form of the args may summarize large payloads
         (``{bytes, sha256_prefix}``), so the execution boundary charges
         the recorded raw count — never a smaller redacted form.
+
+        F42 (R11): ``caller_identity`` is REQUIRED — an
+        ``AgentIdentity`` minted by the executor for the calling
+        agent, authenticated here against the executor-installed
+        verifier (the session binding; installed write-once at
+        ``ToolExecutor`` construction). The record's run_id, agent_id,
+        role, principal, and identity are stamped from this
+        AUTHENTICATED object — ``action["identity"]``, when present,
+        is never used as the authority (it was the wave-12 oracle:
+        the queue MACed an attacker-supplied run_id). Missing
+        identity, a non-AgentIdentity, an unminted identity, or an
+        identity for another run is refused fail-closed.
         """
-        identity = action.get("identity") or {}
+        if caller_identity is None:
+            raise TypeError(
+                "queue() requires caller_identity: an AgentIdentity "
+                "minted by the executor for the calling agent (F42); "
+                "caller-supplied identity fields are never trusted")
+        if self._identity_verifier is None:
+            raise ValueError(
+                "queue() refused: no identity verifier installed on "
+                "this queue — the executor installs its minted-identity "
+                "check at construction (F42 fail-closed)")
+        caller = self._authenticate_caller(caller_identity, "queue")
+        if caller.run_id != self.run_id:
+            raise ValueError(
+                "queue() refused: caller identity run_id %r does not "
+                "match this queue's run %r" % (caller.run_id, self.run_id))
         args = action.get("args") or {}
         if policy_flag is None:
             policy_flag = getattr(decision, "flag", None)
@@ -1155,13 +1590,16 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # Sanitize here (in addition to the executor's _preview) so every
         # record is safe no matter which caller queued it.
         preview = sanitize_preview_text(preview or "")
+        # F42: every authority field below comes from the authenticated
+        # caller object or the queue itself — never from action[].
         record = {
             "id": uuid.uuid4().hex[:8],
             "ts": _utcnow(),
-            "run_id": identity.get("run_id"),
-            "agent_id": identity.get("agent_id"),
-            "role": identity.get("role"),
-            "identity": identity,
+            "run_id": self.run_id,
+            "agent_id": caller.agent_id,
+            "role": caller.role,
+            "principal": caller.principal,
+            "identity": caller.as_dict(),
             "tool": action.get("tool"),
             "args": args,
             "redactions_applied": action.get("redactions") or [],
@@ -1174,20 +1612,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_flag": policy_flag,  # F21: queue reason; batch
             # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
-            # F38 (R10): the keyed digest binds the run this record was
-            # queued in (record["run_id"], from the requesting identity)
-            # as well as the decider (None while pending — decide()
-            # re-MACs with decided_by bound). A genuinely-approved
-            # record planted into another run's queue cannot verify
-            # there, and the execution-time run_id check below is the
-            # second gate.
-            "args_digest": approval_record_digest(action.get("tool"), args,
-                                                 decision.policy_id,
-                                                 egress_bytes,
-                                                 run_id=identity.get("run_id"),
-                                                 decided_by=None),
-            # F34: integrity-scheme marker — records without the keyed
-            # scheme are refused at execution (fail-closed upgrade).
+            # F38 (R10) / F43 (R11): the keyed digest binds the run this
+            # record was queued in (the QUEUE's run_id — never a
+            # caller-supplied value) and the decider (None while
+            # pending — decide() re-MACs with decided_by bound). F43
+            # binds the full security record: identity, preview,
+            # provenance, policy_context, policy_flag,
+            # delegation_attempted.
             "digest_scheme": APPROVAL_DIGEST_SCHEME,
             # F33: raw outbound payload bytes at queue time; the execution
             # boundary charges this (the redacted queue form may summarize
@@ -1203,6 +1634,9 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "break_glass": False,
             "break_glass_reason": None,
         }
+        # F43: the digest covers the record's security fields, computed
+        # here from the stamped record itself.
+        record["args_digest"] = approval_record_digest(record)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
@@ -1334,16 +1768,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
         target["decision_reason"] = reason
-        # F38 (R10): the decision binds the decider into the keyed
-        # digest — the approval's integrity now covers WHO decided it,
-        # not just what was approved. Re-MAC here (queue time bound
+        # F38 (R10) / F43 (R11): the decision binds the decider into the
+        # keyed digest — the approval's integrity now covers WHO decided
+        # it, not just what was approved. Re-MAC here (queue time bound
         # decided_by=None); approval_digest_ok() verifies against the
         # record's current decided_by, so pending and decided records
-        # each verify exactly one way.
-        target["args_digest"] = approval_record_digest(
-            target.get("tool"), target.get("args"), target.get("policy_id"),
-            target.get("egress_bytes"), run_id=target.get("run_id"),
-            decided_by=decided_by)
+        # each verify exactly one way. F43: the re-MAC covers the full
+        # security payload of the (possibly tamper-checked) record.
+        target["args_digest"] = approval_record_digest(target)
         # NOTE: all() re-parses from disk, so the mutated `target` dict
         # must be spliced into the rewritten records explicitly.
         self._rewrite(lambda records: [
@@ -1381,6 +1813,129 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             dict(r, executed=True) if r["id"] == approval_id else r
             for r in records])
 
+    def _reconcile_interrupted_executions(self):
+        """F45 (R11): reconcile executions interrupted between claim and
+        mark — called at sweep start, under the queue lock.
+
+        The execution sequence is: write ``execution_authorized`` to
+        the action log, ``mark_executed(aid)`` (durable claim),
+        side effect, write ``approved_executed``. A crash between the
+        claim and the completion marker leaves ``executed=True`` with
+        no ``approved_executed`` — and the old sweep silently skipped
+        such records forever (the approval was consumed with no
+        verifiable outcome).
+
+        This sweep detects them: for each approval id, the LATEST
+        ``execution_authorized`` log seq is compared against the
+        latest ``approved_executed`` seq. An authorization strictly
+        newer than any completion is an interrupted execution. Each
+        is:
+
+        * audited LOUDLY as ``approval_execution_interrupted`` (never
+          silently skipped);
+        * reset to ``status="pending"``, ``executed=False``, decision
+          fields cleared, with an explicit
+          ``execution_interrupted_warning`` for the approver — a NEW
+          human decision is mandatory. The record is NEVER executed
+          automatically here.
+        * re-MACed as pending (decided_by=None) ONLY if its approved
+          digest still verifies (content intact as approved); a
+          tampered record keeps its broken digest, is flagged, and
+          stays unexecutable for operator intervention.
+
+        Honest residual: local state cannot tell whether the side
+        effect ran before the crash. The warning says so plainly —
+        the human must investigate before re-approving, because
+        re-approval + re-execution could double-apply the effect.
+        ``execution_interrupted_reconciled_seq`` pins each
+        reconciliation to the authorization seq it handled, so a
+        repeat interruption is reconciled again but a handled one is
+        never re-alerted on every sweep.
+        """
+        try:
+            entries = read_entries(self.log.path)
+        except OSError:
+            return []
+        auth_seq = {}
+        done_seq = {}
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            if e.get("event") != "tool_call":
+                continue
+            aid = e.get("approval_id")
+            if not aid or not isinstance(e.get("seq"), int):
+                continue
+            if e.get("decision") == "execution_authorized":
+                auth_seq[aid] = max(auth_seq.get(aid, 0), e["seq"])
+            elif e.get("decision") == "approved_executed":
+                done_seq[aid] = max(done_seq.get(aid, 0), e["seq"])
+        interrupted = {aid: s for aid, s in auth_seq.items()
+                       if s > done_seq.get(aid, 0)}
+        if not interrupted:
+            return []
+        reconciled = []
+
+        def fix(records):
+            for r in records:
+                seq = interrupted.get(r["id"])
+                if seq is None:
+                    continue
+                if r.get("execution_interrupted_reconciled_seq") == seq:
+                    continue  # already reconciled; do not re-alert
+                integrity_ok = bool(approval_digest_ok(r))
+                if integrity_ok:
+                    r["status"] = "pending"
+                    r["executed"] = False
+                    r["decided_by"] = None
+                    r["decided_at"] = None
+                    r["decision_reason"] = None
+                    r["break_glass"] = False
+                    r["break_glass_reason"] = None
+                    r["args_digest"] = approval_record_digest(r)
+                r["execution_interrupted_reconciled_seq"] = seq
+                r["execution_interrupted_integrity_ok"] = integrity_ok
+                r["execution_interrupted_warning"] = (
+                    "A previous sweep authorized and claimed this "
+                    "approval (log seq %d) but never recorded "
+                    "completion — the process may have crashed "
+                    "mid-execution. THE SIDE EFFECT MAY ALREADY HAVE "
+                    "HAPPENED; local state cannot determine this. "
+                    "Investigate before re-approving: re-approval and "
+                    "re-execution could apply the effect twice. This "
+                    "record will NEVER execute without a new human "
+                    "decision." % seq)
+                reconciled.append((r["id"], seq, integrity_ok))
+            return records
+
+        self._rewrite(fix)
+        for aid, seq, integrity_ok in reconciled:
+            self.log.append({
+                "event": "approval_execution_interrupted",
+                "run_id": self.run_id,
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "decision": "reconciled" if integrity_ok
+                            else "reconciled_integrity_failed",
+                "approval_id": aid,
+                "policy_id": "execution-reconciliation",
+                "authorization_seq": seq,
+                "integrity_ok": integrity_ok,
+                "reason": (
+                    "Interrupted execution reconciled: approval %s was "
+                    "authorized (log seq %d) but never marked complete; "
+                    "%s. Reset to pending with an explicit warning — a "
+                    "new human decision is mandatory; nothing was "
+                    "executed automatically."
+                    % (aid, seq,
+                       "record integrity intact, re-MACed as pending"
+                       if integrity_ok else
+                       "RECORD INTEGRITY FAILED — left unexecutable "
+                       "for operator intervention")),
+            })
+        return [aid for aid, _, _ in reconciled]
+
     def _lock_path(self):
         """Sidecar lock file for the queue (mirrors gov/keys.py's
         ``<path>.lock`` pattern). A sidecar — not the queue file
@@ -1400,6 +1955,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         ``APPROVAL_QUEUE_LOCK_TIMEOUT_SECS``), then raises
         ``QueueLockError`` — the sweep never runs unlocked.
 
+        F44 (R11): after acquiring the flock, the queue verifies the
+        locked file is still the path's file: ``os.fstat(fd)`` must
+        match ``os.stat(path)`` on (st_dev, st_ino) and the path must
+        still be linked (st_nlink > 0). Deleting ``approvals.lock``
+        mid-acquisition lets a second opener flock a DIFFERENT inode
+        while the first sweeper still holds the old one — silent
+        double execution. On mismatch the lock is released, the fd
+        closed, and ``QueueLockInvalidatedError`` raised: a loud
+        refusal the executor audits as ``queue_lock_invalidated``,
+        never a silent double sweep.
+
         LOCK ORDERING (deadlock avoidance): the queue lock is the OUTER
         lock; the action-log append lock (F25, gov/log.py) is only ever
         taken INSIDE it (execute_approved's audit writes). No code path
@@ -1409,7 +1975,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         if timeout is None:
             timeout = APPROVAL_QUEUE_LOCK_TIMEOUT_SECS
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        f = open(self._lock_path(), "a", encoding="utf-8")
+        lock_path = self._lock_path()
+        f = open(lock_path, "a", encoding="utf-8")
         try:
             deadline = time.monotonic() + timeout
             while True:
@@ -1421,8 +1988,30 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                         raise QueueLockError(
                             "could not acquire the approval-queue lock on "
                             "%s within %ss; refusing to sweep unlocked"
-                            % (self._lock_path(), timeout))
+                            % (lock_path, timeout))
                     time.sleep(_QUEUE_LOCK_POLL_SECS)
+            # F44: the lock file may have been deleted/replaced between
+            # open() and flock(). Verify the fd we locked is still the
+            # path's file — otherwise a second sweeper could hold an
+            # exclusive lock on a different inode concurrently.
+            try:
+                fd_stat = os.fstat(f.fileno())
+                path_stat = os.stat(lock_path)
+                valid = (fd_stat.st_dev == path_stat.st_dev
+                         and fd_stat.st_ino == path_stat.st_ino
+                         and path_stat.st_nlink > 0)
+            except OSError:
+                valid = False
+            if not valid:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                except OSError:
+                    pass
+                raise QueueLockInvalidatedError(
+                    "approval-queue lock invalidated: %s was deleted or "
+                    "replaced while acquiring the lock (inode mismatch); "
+                    "refusing to sweep — a second sweeper may hold a "
+                    "lock on a different inode" % (lock_path,))
             try:
                 yield
             finally:
@@ -1540,15 +2129,39 @@ def main(argv=None):
     p_bg.add_argument("id", help="approval id")
     p_bg.add_argument("--reason", required=True,
                       help="non-empty emergency justification")
+    p_bg.add_argument("--ticket", required=True,
+                      help="F49: human-provisioned break-glass ticket id "
+                           "(provisioned out-of-band BEFORE the run with "
+                           "provision-ticket; bound to the operator "
+                           "principal)")
     p_bg.add_argument("--by", default="human-operator",
                       help="operator principal pulling the break-glass (bound as the operator identity's principal; the CLI is the terminal-access trust root)")
+
+    p_pt = sub.add_parser(
+        "provision-ticket",
+        help="F49: provision a human break-glass ticket OUT-OF-BAND "
+             "before the run starts (operator terminal only — never "
+             "from agent code). The ticket is HMAC-signed and bound to "
+             "an operator principal and a DIFFERENT reviewer principal.")
+    p_pt.add_argument("--ticket", required=True, help="ticket id, e.g. BG-001")
+    p_pt.add_argument("--operator", required=True,
+                      help="operator principal authorized to pull "
+                           "break-glass with this ticket")
+    p_pt.add_argument("--reviewer", required=True,
+                      help="provisioned reviewer principal who must "
+                           "resolve the post-review ticket (must differ "
+                           "from --operator)")
+    p_pt.add_argument("--purpose", default="",
+                      help="human-readable purpose note")
 
     sub.add_parser("reviews", help="list post-review tickets")
 
     p_rr = sub.add_parser("review-resolve",
-                          help="resolve a post-review ticket (the reviewer's "
-                               "authenticated principal must differ from "
-                               "the break-glass operator's principal)")
+                          help="resolve a post-review ticket (F49: the "
+                               "reviewer's authenticated principal must be "
+                               "the provisioned reviewer bound to the "
+                               "break-glass ticket, and differ from the "
+                               "break-glass operator's principal)")
     p_rr.add_argument("ticket", help="ticket id, e.g. PRV-<approval-id>")
     p_rr.add_argument("--resolution", required=True,
                       help="resolution record")
@@ -1662,13 +2275,34 @@ def main(argv=None):
               % (ticket["ticket_id"], args.by, entry["seq"]))
         return 0
 
+    if args.cmd == "provision-ticket":
+        # F49: human out-of-band provisioning. The store lives in the
+        # run dir so the run-start snapshot seals exactly these
+        # tickets; provision BEFORE the run starts.
+        try:
+            ticket = provision_break_glass_ticket(
+                run_dir / BREAK_GLASS_TICKET_FILENAME,
+                args.ticket, args.operator, args.reviewer,
+                purpose=args.purpose)
+        except (ValueError, TypeError) as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 1
+        print("provisioned break-glass ticket %s" % ticket["ticket_id"])
+        print("  operator principal: %s" % ticket["operator_principal"])
+        print("  reviewer principal: %s (must resolve the post-review)"
+              % ticket["reviewer_principal"])
+        print("provision this BEFORE the run starts; the run-start "
+              "snapshot seals the ticket set.")
+        return 0
+
     if args.cmd == "break-glass":
         operator_ident = AgentIdentity(agent_id="cli", role="operator",
                                        run_id=run_dir.name,
                                        principal=args.by)
         try:
-            record, ticket = queue.break_glass(args.id, args.reason,
-                                               operator_identity=operator_ident)
+            record, ticket = queue.break_glass(
+                args.id, args.reason, operator_identity=operator_ident,
+                ticket_id=args.ticket)
         except (ValueError, TypeError) as e:
             print("error: %s" % e, file=sys.stderr)
             return 1

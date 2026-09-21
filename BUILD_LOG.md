@@ -1748,3 +1748,160 @@ a production-side accommodation, not a probe change: `decide()`'s new
 tamper check now verifies the MAC over the approved content only
 (`_pending_record_content_ok`), preserving the documented
 scheme-label fail-closed-at-execution seam.
+
+---
+
+## Wave 12 — permanent red team vs the Round-10 closures (2026-09-21)
+
+**Scope:** six briefs against the R10 defenses (run_id/decided_by MAC
+binding, F39 sweep lock + durable claim, F41 campaign quorum,
+least-privilege execution, policy integrity, break-glass).
+Deterministic scripted probes only; $0 spend; product code untouched
+(`gov/`, `policies/` read-only).
+
+**New files/registrations:** `evals/w12_probes.py` (7 probes, 35
+observation keys, all deterministic) with `register_w12()` registered
+in `evals/run_evals.py` immediately after `register_r10()`.
+`evals/matrix.py`: sit67–sit73 added (73 situations, 876 cells).
+`SITUATION_MATRIX.md` + `evals/SITUATION_MATRIX.md` regenerated.
+`evals/FINDINGS.md`: new findings F42–F49 (all OPEN) + Wave-12
+defense-cells section. Wave-11 defense-cells section moved ahead of
+the Wave-12 findings for chronological order (content unchanged).
+
+**Findings (all measured 2026-09-21, hermetic temp-dir probes):**
+- F42 HIGH (brief 1a): `ApprovalQueue.queue()` is a MAC oracle —
+  mints keyed digests over caller-supplied run_id/agent_id/role;
+  a planted oracle record for the victim's run is decided and
+  executed. Reach: in-process queue reach (binding traversal
+  documented in gov/adapters/core.py) or run-dir write.
+- F43 MEDIUM (brief 1b): pending MAC omits preview/provenance/
+  policy_context/agent_id/role. Measured: approver-preview lie,
+  audit misattribution to innocent-victim, risk 75→50 flipping
+  auto-approve at max_risk_score=60. decide() still refuses
+  tool/args/policy_id/egress_bytes/run_id mutations (controls hold).
+- F44 HIGH (brief 2): deleting `approvals.lock` mid-sweep breaks the
+  F39 serialization — second sweep locks a fresh inode in 0.00s;
+  two public `execute_approved()` sweeps each execute the same
+  approval (2 approved_executed entries). Double execution returns.
+- F45 MEDIUM (brief 2): crash-after-claim burns the approval
+  (executed=True, only the write-ahead marker, no retry, no alert);
+  attacker-inducible via pre-planted fault (sandbox dir → file).
+  Honest negative: post-claim queue corruption fails LOUD on the
+  next sweep (brick, not burn).
+- F46 MEDIUM (brief 3): F41 quorum costs 4 benign calls (2
+  throwaways × 2 observations) given victim heartbeat history;
+  victim's next same-shape call queues. ≤2 obs per (principal,run)
+  required (thin-spread drops flooders — measured control).
+- F47 HIGH (brief 4): R2 role allowlist enforced only in
+  `executor.call()`; `execute_approved()` never re-checks it — an
+  oracle-minted (scout, write_file) record is decided and executed.
+- F48 HIGH (brief 5): no policy-hash pinning, no load audit; a
+  lint-clean (0 errors/warnings) weaker policy flipping
+  `approval-outbound-sends` to allow silently downgrades the next
+  run. Related to F30; new cross-run substitution evidence.
+- F49 HIGH (brief 6): break-glass authenticates only
+  executor-minted identity — no human required; side effects run
+  before post-review; a confederate minted identity discharges the
+  review and `audit_status()` reports clean. Stacked break-glass
+  and self-resolution properly refused (controls hold).
+
+**Verification (2026-09-21):** `python3 -m py_compile` on all edited
+files OK; `python3 -m unittest tests.test_adversary_matrix` 4/4 OK;
+14 real gate cells (sit67–sit73 × decorator/low × both harnesses)
+all PASS; `TMPDIR=/tmp/gov-w12 python3 tests/run_tests.py` →
+**451/451 OK**. Full `evals/run_evals.py` gate NOT run: a safety
+notice on this task prohibits running it without user approval —
+escalated to parent. NOT pushed; repo visibility unchanged
+(private); `__pycache__` removed.
+
+## 2026-09-21 — Hardening Round 11: F42–F49 CLOSED
+
+**Scope:** Wave-12 findings F42 (HIGH), F43 (MEDIUM), F44 (HIGH), F45
+(MEDIUM), F46 (MEDIUM), F47 (HIGH), F48 (HIGH), F49 (HIGH) — all
+CLOSED. Deterministic implementation, $0 spend, no LLM calls, no
+browser work. `evals/w12_probes.py` UNCHANGED (historical wave-12
+attack record); `evals/r11_probes.py` added as the closure evidence
+overriding sit67–sit73. No commit, no push (awaiting independent
+verification); repo visibility untouched (private).
+
+**Mechanisms:**
+- F42: `ApprovalQueue.queue()` requires verifier-authenticated
+  `caller_identity`; authority fields stamped from the minted identity,
+  `action["identity"]` ignored. `ToolExecutor.call()` passes its
+  minted identity.
+- F43: pending MAC binds the full security record
+  (`_SECURITY_PAYLOAD_FIELDS`); `decide()` re-verifies before
+  recording; execution re-verifies (`approval_integrity_violation`).
+- F44: `_queue_locked()` validates fd vs path (dev/ino, nlink);
+  `QueueLockInvalidatedError` → distinct `queue_lock_invalidated`
+  audit (not `queue_lock_timeout`).
+- F45: sweep-start `_reconcile_interrupted_executions()` — authorized
+  but uncompleted executions reset to pending with a loud
+  `approval_execution_interrupted` audit and may-have-happened
+  warning; never auto-executes; seq-pinned against re-alerts.
+- F46: establishment needs ≥2 distinct run IDs (permissive) or
+  registry membership; same-run priming no longer establishes.
+- F47: `execute_approved()` checks `policy.role_allows(rec["role"],
+  rec["tool"])` before evaluation/side effects
+  (`role_allowlist_violation` / `role-allowlist`).
+- F48: `policy_loaded` always audited (path+hash); `GOV_POLICY_HASH`
+  mismatch → `policy_pin_mismatch` + `PolicyPinMismatchError`;
+  absent pin → explicit `policy_pin_absent` warning.
+- F49: human-provisioned HMAC tickets (`provision_break_glass_ticket`,
+  CLI `provision-ticket`); run-start snapshot; mandatory `ticket_id`;
+  operator binding; single-use; provisioned reviewer enforcement;
+  mid-run tickets refused.
+
+**Tests:** `tests/test_hardening_r11.py` (28 tests, all green);
+`evals/r11_probes.py` (7 probes, 26/26 assertions green).
+Historical suites migrated: R5/R6/R8/R9/R10 + policy-UX + new-controls
+(queue caller identities, F43 full-record digests, F46 multi-run
+establishment, F48 constructor log counts, F49 pre-provisioned
+tickets); F36 campaign tests updated for F46.
+
+**Residuals (documented in FINDINGS.md):** F42 — compromised executor
+with legitimate issuance outside boundary; F43 — dev-key forgeability
+(F29/F34); F44 — post-validation deletion window; F45 — side effect
+may already have happened; F46 — patient 2-run throwaways, registry
+integrity; F47 — policy loosened between queue/execution; F48 —
+attacker controlling both pin and file; F49 — ticket consumption not
+atomic under concurrent use.
+
+**Verification (2026-09-21):** full unit suite 479/479 green;
+adversary matrix 4/4 green; R11 probes 26/26 green. Policy twins
+byte-identical; `evals/w12_probes.py` unchanged; `__pycache__`
+removed. NOT pushed; awaiting independent verification.
+
+---
+
+## Round 11 — Final Verification (2026-09-21, post-gate)
+
+**CORRECTION to the entry above:** the "Verification" line was written
+before the full eval gate was green. The gate initially scored
+1680/1752 (RED) on Wave/Round-9 sit58 campaign probes (F46 establishment
+semantics), then 1704/1752 (RED) on sit61 (R10 F38 probes needed F42
+caller_identity + F43 full-record MAC semantics). Both were fixed by
+updating the historical probes to the Round-11 semantics — NOT by
+weakening assertions.
+
+**F49 concurrency:** the mandatory concurrent-ticket test exposed a
+real race (both threads won). Fixed with `_bg_ticket_lock` mutex
+serializing the resolve→consume sequence in `break_glass()`.
+`test_concurrent_ticket_use_single_winner` and
+`test_wrong_reviewer_cannot_resolve` added (30 tests total, all green).
+FINDINGS.md residual updated: cross-thread atomic; cross-process
+remains a documented residual.
+
+**Final gates (2026-09-21):**
+- Full evals: **1752/1752, SHIP-GATE GREEN**
+- Unit suite: 481 tests (479 + 2 new F49), 1 flaky perf failure
+  (`test_2000_appends_are_fast_and_chain_verifies` — passes solo in
+  0.4s; VM scheduling noise, unrelated to R11 changes)
+- Adversary matrix: 4/4 green
+- R11 probes: 26/26 green
+- Policy twins byte-identical; `evals/w12_probes.py` unchanged from
+  baseline; root/evals SITUATION_MATRIX.md synchronized (73 situations,
+  876 cells); `__pycache__` removed.
+
+**NOT pushed; awaiting independent verification per user directive.**
+Visibility untouched (repo remains PRIVATE).

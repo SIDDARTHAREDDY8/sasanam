@@ -591,7 +591,7 @@ class TestF21BatchExclusion(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="govr5f21-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def _queue(self, q, tool, args, policy_id, reason, flag):
+    def _queue(self, q, tool, args, policy_id, reason, flag, caller):
         action = {
             "tool": tool, "args": args,
             "identity": {"agent_id": "a1", "role": "researcher",
@@ -599,21 +599,25 @@ class TestF21BatchExclusion(unittest.TestCase):
             "redactions": [], "agent_justification": None,
         }
         return q.queue(action, _Decision(policy_id, reason, flag=flag),
-                       policy_flag=flag)
+                       policy_flag=flag, caller_identity=caller)
 
     def _ctx_with_items(self):
         ctx = make_run()
         q = ctx["approvals"]
+        # F42 (R11): queue() requires a minted caller identity; the
+        # action["identity"] dict is ignored by the queue.
+        caller = ctx["mint_identity"]("a1", "researcher", "org")
         benign = self._queue(q, "read_file", {"path": "notes.txt"},
-                            "approval-read", "low risk read", None)
+                            "approval-read", "low risk read", None, caller)
         campaign = self._queue(
             q, "api_call",
             {"endpoint": "https://x.example/o", "params": {"q": "1"}},
-            "approval-cross-run-campaign", "campaign", "cross_run_campaign")
+            "approval-cross-run-campaign", "campaign", "cross_run_campaign",
+            caller)
         dlp = self._queue(
             q, "send_email",
             {"to": "x@y.z", "body": "AKIAIOSFODNN7EXAMPLE"},
-            "approval-dlp", "dlp", "dlp")
+            "approval-dlp", "dlp", "dlp", caller)
         return ctx, benign, campaign, dlp
 
     def _all(self, ctx):
