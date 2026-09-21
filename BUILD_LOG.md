@@ -204,5 +204,8 @@ blocks side effect, read-before-send correlation with
 
 ## Push record
 
-- (pending) push to `SIDDARTHAREDDY8/agent-governance-demo`, existing
-  branch; repo stays PRIVATE; API-verify branch SHA moved afterwards.
+- 2026-09-21: pushed commit `0a09a18beb43` to
+  `SIDDARTHAREDDY8/agent-governance-demo@main` (parent `df786304051c`),
+  DCO-signed. API-verified: repo private, branch SHA moved, 57 files,
+  new modules present, stale `gov/__pycache__/*.pyc` deleted, existing
+  branch files preserved.
