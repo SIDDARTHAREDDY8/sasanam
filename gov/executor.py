@@ -51,6 +51,8 @@ Policy outcomes:
 
 import json
 import os
+import collections.abc
+import itertools
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -58,7 +60,7 @@ from urllib.parse import urlparse
 from . import dlp
 from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
-                        sanitize_preview_text)
+                        sanitize_preview_text, QueueLockError)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -299,59 +301,201 @@ class ToolExecutor:
         and a follow-up paraphrase api_call escapes the
         sensitive-read-before-api approval gate. The result itself is
         NOT modified — ingestion is a side channel into the run's taint
-        store. Foreign dict/str/object results are normalized to a
-        content blob; unparseable results ingest nothing. Fail-open:
-        ingestion trouble never breaks the result path (the call already
-        executed; the signal is heuristic, like the native path's
-        ledger taint-mark).
+        store. F40 (R10): normalization is TOTAL and recursive —
+        nested blocks, arbitrary sequences, and defensive per-property
+        probing mean one hostile block cannot discard benign siblings.
+        A result with opaque/unparseable parts is conservatively
+        treated as sensitive (the taint bit gates a later api_call;
+        nothing is fabricated into the read store). ``result=None``
+        stays a clean no-op. Fail-open: ingestion trouble never breaks
+        the result path (the call already executed; the signal is
+        heuristic, like the native path's ledger taint-mark).
         """
         try:
-            blob = self._foreign_content_blob(result)
+            blob, opaque = self._foreign_normalize(result)
         except Exception:
             return
-        if not blob:
-            return
-        try:
-            self._ingest_result(tool, {"content": blob}, principal)
-        except Exception:
-            pass
+        if blob:
+            try:
+                self._ingest_result(tool, {"content": blob}, principal)
+            except Exception:
+                pass
+        if opaque:
+            # F40: some part of the result was opaque to the text scan
+            # (hostile property, reference cycle, over-deep nesting, a
+            # non-text leaf such as bytes, or content missed by a
+            # bound). DLP had no text to clear, so conservatively mark
+            # the result sensitive AND tainted: a later api_call is
+            # approval-gated (read_sensitive) even when the opaque bytes
+            # carried nothing, and the run carries source_untrusted
+            # provenance. Nothing is fabricated — no text is added to
+            # the read store, only the taint bits gate.
+            try:
+                self._read_sensitive = True
+                self._tainted = True
+                if tool not in self._taint_sources:
+                    self._taint_sources.append(tool)
+                if principal:
+                    self._ledger.taint_mark(principal, self.run_id)
+            except Exception:
+                pass
+
+    # F40 (R10): bounds for the total foreign-result normalizer.
+    _FOREIGN_BLOB_MAX = 65536  # same cap as the native read path
+    _FOREIGN_WALK_MAX_DEPTH = 6  # nesting depth before a node counts opaque
+    _FOREIGN_WALK_MAX_FRAGS = 4096  # text fragments before truncating
+    _FOREIGN_WALK_MAX_ITEMS = 4096  # container items walked before truncating
 
     @staticmethod
-    def _foreign_content_blob(result):
-        """F37: normalize a FOREIGN tool result to an ingestible blob.
+    def _is_foreign_sequence(node):
+        return (isinstance(node, collections.abc.Sequence)
+                and not isinstance(node, (str, bytes, bytearray)))
 
-        MCP server results and real ``run_body`` bodies are not executor
-        results: they may be dicts, strings, or framework objects (e.g.
-        MCP ``CallToolResult``). Normalize to a single text blob (capped
-        at the same 64K as the native path) or None when nothing
-        ingestible is present. Total: never raises on arbitrary shapes.
+    @classmethod
+    def _foreign_normalize(cls, result):
+        """F40: TOTAL recursive normalization of a foreign result.
+
+        Returns ``(blob, opaque)``: ``blob`` is the extracted text
+        (capped at 64K) or None when nothing textual is present;
+        ``opaque`` is True when some part of the result could not be
+        textually interpreted (a hostile property, a reference cycle,
+        over-deep nesting, a non-text leaf such as bytes, or content
+        missed by a bound).
+
+        Total: never raises on arbitrary shapes. Each block and each
+        property is probed in its own try/except, so one hostile block
+        cannot discard benign siblings. Dicts, ``Mapping``s, and
+        arbitrary ``collections.abc.Sequence`` instances (not just
+        list/tuple) are traversed — mappings over VALUES ONLY (keys
+        are schema labels, not foreign text: ``{"content": None}``
+        stays clean); objects are probed for text-bearing attributes
+        (content/text/data/resource/body/value/payload/output/result),
+        recursing into NESTED blocks — an image block's ``.data``, a
+        resource wrapper's text, a dict inside a block's ``content``
+        list. Depth, fragment count, per-container item count, and
+        reference cycles are bounded; containers are consumed with
+        bounded iterators (never an eager ``list()``), and string
+        memory is capped WHILE collecting (not only after the join) —
+        truncation of any kind marks the result opaque. ``result=None``
+        stays a clean ``(None, False)`` boundary; benign strings and
+        clean dicts extract text that DLP clears exactly like the
+        native path.
         """
-        if result is None:
-            return None
-        if isinstance(result, str):
-            return result[:65536] or None
-        content = (result.get("content") if isinstance(result, dict)
-                   else getattr(result, "content", None))
-        if isinstance(content, str):
-            return content[:65536] or None
-        if isinstance(content, (list, tuple)):
-            # MCP-style content blocks: [{"type": "text", "text": "..."}]
-            # or real SDK objects (TextContent) exposing a .text attr.
-            texts = []
-            for b in content:
-                t = (b.get("text") if isinstance(b, dict)
-                     else getattr(b, "text", None))
-                if isinstance(t, str):
-                    texts.append(t)
-            if texts:
-                return "\n".join(texts)[:65536]
-        if isinstance(result, dict):
+        frags = []
+        opaque = False
+        seen = set()
+        blob_len = 0
+        _MISS = object()  # sentinel: iterator still had items after the cap
+
+        def emit(text):
+            nonlocal opaque, blob_len
+            if not isinstance(text, str) or not text:
+                return
+            # Bound memory WHILE collecting: never hold more than the
+            # blob cap (text plus one "\n" separator per fragment, as
+            # the final join adds). Truncation means foreign text was
+            # missed -> conservative opaque.
+            if frags:
+                blob_len += 1
+            if blob_len >= cls._FOREIGN_BLOB_MAX:
+                opaque = True
+                return
+            chunk = text[:cls._FOREIGN_BLOB_MAX - blob_len]
+            frags.append(chunk)
+            blob_len += len(chunk)
+            if len(chunk) < len(text):
+                opaque = True
+
+        def walk(node, depth):
+            nonlocal opaque
+            if node is None or isinstance(node, (bool, int, float)):
+                return
+            if isinstance(node, str):
+                emit(node)
+                return
+            if isinstance(node, (bytes, bytearray)):
+                # Non-text leaf: unparseable by the DLP text scan.
+                opaque = True
+                return
+            if depth > cls._FOREIGN_WALK_MAX_DEPTH:
+                opaque = True
+                return
+            if len(frags) >= cls._FOREIGN_WALK_MAX_FRAGS:
+                opaque = True
+                return
+            nid = id(node)
+            if nid in seen:  # reference cycle: not textually meaningful
+                opaque = True
+                return
+            seen.add(nid)
             try:
-                blob = json.dumps(result, sort_keys=True, default=str)
-            except (TypeError, ValueError):
-                blob = str(result)
-            return blob[:65536] or None
-        return None
+                if isinstance(node, collections.abc.Mapping):
+                    # VALUES ONLY — see docstring.
+                    try:
+                        it = iter(node.items())
+                    except Exception:
+                        opaque = True
+                        return
+                    for pair in itertools.islice(
+                            it, cls._FOREIGN_WALK_MAX_ITEMS):
+                        try:
+                            _key, value = pair
+                        except Exception:
+                            opaque = True
+                            continue
+                        walk(value, depth + 1)
+                    try:
+                        if next(it, _MISS) is not _MISS:
+                            opaque = True  # items missed: truncated
+                    except Exception:
+                        opaque = True
+                    return
+                if cls._is_foreign_sequence(node):
+                    try:
+                        it = iter(node)
+                    except Exception:
+                        opaque = True
+                        return
+                    for item in itertools.islice(
+                            it, cls._FOREIGN_WALK_MAX_ITEMS):
+                        walk(item, depth + 1)
+                    try:
+                        if next(it, _MISS) is not _MISS:
+                            opaque = True  # items missed: truncated
+                    except Exception:
+                        opaque = True
+                    return
+                # Object: probe each text-bearing attribute in its own
+                # try/except so one hostile property cannot poison the
+                # pass; recurse into whatever they return (nested
+                # blocks, resource wrappers, image .data, ...).
+                got_text_attr = False
+                for attr in ("content", "text", "data", "resource",
+                             "body", "value", "payload", "output",
+                             "result"):
+                    try:
+                        val = getattr(node, attr, None)
+                    except Exception:
+                        opaque = True
+                        continue
+                    if val is not None and val is not node:
+                        got_text_attr = True
+                        walk(val, depth + 1)
+                if not got_text_attr:
+                    # No text-bearing attribute at all: the object is
+                    # opaque to the text scan.
+                    opaque = True
+            finally:
+                seen.discard(nid)
+
+        try:
+            walk(result, 0)
+        except Exception:
+            # Belt and suspenders: walk() is already total, but the
+            # normalizer must never raise into the ingestion path.
+            opaque = True
+        blob = "\n".join(frags) or None
+        return blob, opaque
 
     @staticmethod
     def _content_is_sensitive(content):
@@ -572,6 +716,17 @@ class ToolExecutor:
         inside the window -> True. The attempt was already ledgered by
         ``_check_cross_run_campaign``; this only scans. Never denies;
         ledger failures fail open.
+
+        F41 (R10): throwaway-planted quorum — a bare distinct-principal
+        count let an attacker plant two throwaway look-alikes and have
+        the VICTIM's next same-shaped call be the Kth, queueing a benign
+        call (a false-positive weapon). The quorum now ALSO requires at
+        least K-1 ESTABLISHED principals (>= 2 matching thin-spread
+        observations in the window); see
+        ``EgressLedger.cross_principal_campaign_hit``. Patient
+        throwaways that emit repeatedly can still poison the quorum —
+        behavioral history is not deployment identity trust
+        (documented residual).
 
         The F18 allowlist IS applied to the CURRENT attempt: when the
         exact (principal, domain, param key set) is allowlisted, the
@@ -1144,14 +1299,47 @@ class ToolExecutor:
         """Execute approved-but-not-yet-executed actions.
 
         Each approval is re-validated at execution time: expiry, integrity
-        of the queued arguments, the policy it was approved under, and a
-        fresh policy evaluation. Any failure refuses the execution and logs
-        why. Returns the list of executed actions.
+        of the queued arguments, the run it was approved for (F38), the
+        policy it was approved under, and a fresh policy evaluation. Any
+        failure refuses the execution and logs why. Returns the list of
+        executed actions.
+
+        F39: the whole sweep runs under the approval queue's exclusive
+        lock (``ApprovalQueue._queue_locked``) — the read-claim-
+        execute-mark sequence is atomic across threads and processes, so
+        a second concurrent sweep re-reads the queue only after the first
+        has marked its records and skips them. Lock ordering: queue lock
+        (outer) -> action-log lock (inner), never reversed. A lock
+        timeout refuses the sweep fail-closed (``QueueLockError``) and is
+        audited — the sweep never runs unlocked.
         """
         # F17: an unverifiable ledger refuses even approved executions —
         # the taint/campaign memory the approval was granted under cannot
         # be trusted.
         self._ledger.require_verified()
+        try:
+            with self.approvals._queue_locked():
+                return self._execute_approved_locked()
+        except QueueLockError as e:
+            # Fail closed AND audited: the sweep is refused, nothing
+            # executed, the lock holder keeps its atomicity.
+            self.log.append({
+                "event": "approval_sweep_refused",
+                "run_id": self.run_id,
+                "decision": "refused",
+                "policy_id": "approval-execution-refused",
+                "flag": "queue_lock_timeout",
+                "reason": "execute_approved() refused: %s" % e,
+            })
+            raise
+
+    def _execute_approved_locked(self):
+        """The sweep body; runs under ``ApprovalQueue._queue_locked``.
+
+        Records are re-read from disk AFTER the lock is held, so the
+        read-claim-execute-mark sequence is atomic: a concurrent sweep
+        can only re-read once this sweep has marked its records.
+        """
         done = []
         ttl = self.policy.approval_ttl_hours
         for rec in self.approvals.all():
@@ -1196,7 +1384,8 @@ class ToolExecutor:
             # 2. integrity: queued arguments must be byte-identical. The
             # keyed digest (F34) binds tool, args, policy_id and
             # egress_bytes (F33) under the active log HMAC key with the
-            # key epoch bound in; verification uses hmac.compare_digest
+            # key epoch bound in; F38 (R10) adds run_id and decided_by
+            # to the MAC payload. Verification uses hmac.compare_digest
             # against every epoch in the keyring, so rotation is
             # explicit. Records that predate the keyed scheme (no
             # digest_scheme — the pre-R9 unkeyed digest proved nothing:
@@ -1219,6 +1408,33 @@ class ToolExecutor:
                         "integrity digest mismatch (F34 keyed MAC does not "
                         "verify under any key epoch)." % aid,
                         "approval_integrity_violation")
+                continue
+            # F38 (R10): cross-run replay — the record's run_id must
+            # match the executing run. The keyed digest binds run_id
+            # (so a planted record cannot be re-labeled without the log
+            # key), and this check refuses a genuinely-approved record
+            # replayed into another run's queue. Fail-closed, audited.
+            if rec.get("run_id") != self.run_id:
+                _refuse("Approval %s was approved for run %r but is "
+                        "being executed in run %r; cross-run replay "
+                        "refused." % (aid, rec.get("run_id"), self.run_id),
+                        "approval_run_mismatch")
+                continue
+            # F38 (R10): the embedded identity's run_id must ALSO match
+            # the executing run. The keyed digest does not cover the
+            # identity dict, so a queue-file writer could rewrite
+            # identity.run_id on a genuine record without breaking the
+            # MAC — executing it would then attribute the action to the
+            # wrong run. queue() always mints both from the same
+            # identity, so any mismatch here is tampering or a plant:
+            # fail-closed, audited under the CURRENT run.
+            if (rec.get("identity") or {}).get("run_id") != self.run_id:
+                _refuse("Approval %s carries embedded identity run %r "
+                        "but is being executed in run %r; identity/run "
+                        "mismatch refused."
+                        % (aid, (rec.get("identity") or {}).get("run_id"),
+                           self.run_id),
+                        "approval_run_mismatch")
                 continue
             # 3. policy staleness: approved under a different policy version
             if rec.get("policy_hash") != self.policy.policy_hash:
@@ -1298,6 +1514,19 @@ class ToolExecutor:
                 "policy_context": _exec_ctx_snapshot,
                 "reason": "Human approval %s authorized execution." % aid,
             })
+            # F39 (R10): DURABLE CLAIM BEFORE SIDE EFFECT. The record is
+            # marked executed (queue-file rewrite — the durable claim)
+            # BEFORE _simulate() runs. Under the queue sweep lock this
+            # makes the read-claim-execute sequence atomic across
+            # threads/processes; and if this process crashes after the
+            # claim but before/during the side effect, a later sweep
+            # re-reads executed=True and skips the record — the approval
+            # is consumed without a duplicate execution. This favors no
+            # duplicate execution over automatic retry (documented
+            # residual). The write-ahead "execution_authorized" audit
+            # entry above stays as the forensic marker that the
+            # authorization was granted before the claim.
+            self.approvals.mark_executed(aid)
             result = self._simulate(rec["tool"], rec["args"], ctx)
             self._ingest_result(rec["tool"], result,
                                 (rec.get("identity") or {}).get("principal"))
@@ -1328,7 +1557,8 @@ class ToolExecutor:
                 "result_summary": self._summarize(rec["tool"], result),
                 "authorization_seq": auth_entry["seq"],
             })
-            self.approvals.mark_executed(aid)
+            # F39: the durable claim (mark_executed) happened BEFORE the
+            # side effect above — nothing to mark here.
             done.append({"agent_id": rec.get("agent_id"),
                          "tool": rec["tool"], "seq": entry["seq"]})
         return done

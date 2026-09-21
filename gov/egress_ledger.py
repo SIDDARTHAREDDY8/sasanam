@@ -688,11 +688,28 @@ class EgressLedger:
         queue-only, fail-safe — same contract as the other campaign
         detectors.
 
+        F41 (R10): throwaway-planted quorum. A fresh principal per run
+        is cheap, so a bare distinct-principal count lets an attacker
+        plant two throwaway look-alikes and have the VICTIM's next
+        same-shaped call be the Kth — queueing a benign call (a
+        false-positive weapon). The quorum now ALSO requires at least
+        K-1 ESTABLISHED principals: a principal counts as established
+        only with >= 2 matching observations of this shape in the
+        window (the current attempt is already ledgered when the
+        executor checks, so "established" means history beyond the
+        current attempt). Two throwaways + one victim (2 observations)
+        give a single established principal — no fire; a genuine
+        multi-principal campaign, where each participant emits
+        repeatedly, still fires once K-1 of them are established.
+
         Residual (documented, not solved): an attacker rotating
         principal AND content shape per run (fresh identity, fresh
         shape) is indistinguishable from distinct legitimate users —
         that is an identity-layer problem (principal registry
-        binding), not a shape-layer one.
+        binding), not a shape-layer one. And patient throwaways that
+        emit twice each before joining the quorum can still poison it:
+        behavioral history is not identity trust, which needs
+        deployment identity controls.
         """
         self.require_verified()  # F17: verify before trusting any read
         if not self.path.exists():
@@ -736,8 +753,19 @@ class EgressLedger:
             per_principal_run[(principal, run_id)] += 1
         # Thin-spread: drop (principal, run) buckets with >= k calls,
         # then count the DISTINCT principals that remain.
-        principals = {p for (p, _r), n in per_principal_run.items() if n < k}
-        return len(principals) >= k
+        thin_principal_counts = {}
+        for (p, _r), n in per_principal_run.items():
+            if n < k:
+                thin_principal_counts[p] = thin_principal_counts.get(p, 0) + n
+        # F41: establishment — a principal counts as established only
+        # with >= 2 matching observations in the window. Counted over
+        # the same thin-spread-filtered observations as the quorum, so
+        # a single-run flood cannot manufacture history. The quorum
+        # needs k distinct principals AND k-1 established ones.
+        established = sum(1 for n in thin_principal_counts.values()
+                          if n >= 2)
+        return (len(thin_principal_counts) >= k
+                and established >= max(1, k - 1))
 
     # -- principal-scoped sensitive-read taint (F15) ------------------------
 

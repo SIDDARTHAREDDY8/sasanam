@@ -438,6 +438,10 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
         return [e for e in read_entries(ctx["run_dir"] / "actions.jsonl")
                 if e.get("event") == "approval_execution_refused"]
 
+    def _all_entries(self, ctx):
+        from gov.log import read_entries
+        return read_entries(ctx["run_dir"] / "actions.jsonl")
+
     def test_tampered_egress_bytes_refuses_execution(self):
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
@@ -445,7 +449,35 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
         # attacker rewrites the queue record to under-report the charge
         q._rewrite(lambda rs: [dict(r, egress_bytes=1) if r["id"] == aid
                                else r for r in rs])
+        # F38 (R10): decide() verifies the PENDING digest before
+        # re-MACing, so a pre-decision rewrite can never be laundered by
+        # the decision — the tamper fails closed HERE (fail even
+        # earlier than the old execution-time refusal), audit-logged.
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            q.decide(aid, True, "looks fine", decided_by="ciso")
+        done = ex.execute_approved()
+        rec = next(r for r in q.all() if r["id"] == aid)
+        self.assertEqual(done, [])
+        self.assertFalse(rec.get("executed"))
+        self.assertEqual(rec.get("status"), "pending")
+        attempts = [e for e in self._all_entries(ctx)
+                    if e.get("event") == "approval_decision_attempt"]
+        self.assertTrue(any(e.get("decision") == "rejected_attempt"
+                            and e.get("approval_id") == aid
+                            for e in attempts))
+        # the budget was not charged for the refused execution
+        self.assertEqual(ex._egress_bytes, 0)
+
+    def test_tampered_egress_bytes_after_decision_refuses_execution(self):
+        # F38 (R10) companion: the digest guards everything AFTER the
+        # decision too — a rewrite of a DECIDED record still fails
+        # closed at execution with approval_integrity_violation.
+        ctx = make_run()
+        q, ex = ctx["approvals"], ctx["executor"]
+        aid = self._queue_send(q, ex, 5000)
         q.decide(aid, True, "looks fine", decided_by="ciso")
+        q._rewrite(lambda rs: [dict(r, egress_bytes=1) if r["id"] == aid
+                               else r for r in rs])
         done = ex.execute_approved()
         rec = next(r for r in q.all() if r["id"] == aid)
         self.assertEqual(done, [])
@@ -456,7 +488,6 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
         self.assertTrue(any(e.get("flag") == "approval_integrity_violation"
                             and e.get("approval_id") == aid
                             for e in refusals))
-        # the budget was not charged for the refused execution
         self.assertEqual(ex._egress_bytes, 0)
 
     def test_key_removal_does_not_downgrade_digest(self):
@@ -465,16 +496,19 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
         aid = self._queue_send(q, ex, 5000)
         # attacker deletes the egress_bytes key entirely: the stored
         # digest was computed WITH it, so the legacy fallback must not
-        # match and execution must still refuse.
+        # match. F38 (R10): decide() verifies the pending digest before
+        # re-MACing, so the downgrade attempt fails closed HERE —
+        # execution is never reached, and no weaker check is consulted.
         q._rewrite(lambda rs: [dict({k: v for k, v in r.items()
                                      if k != "egress_bytes"})
                                if r["id"] == aid else r for r in rs])
-        q.decide(aid, True, "looks fine", decided_by="ciso")
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            q.decide(aid, True, "looks fine", decided_by="ciso")
         done = ex.execute_approved()
         rec = next(r for r in q.all() if r["id"] == aid)
         self.assertEqual(done, [])
-        self.assertIn("integrity digest mismatch",
-                      rec.get("execution_refused_reason") or "")
+        self.assertFalse(rec.get("executed"))
+        self.assertEqual(rec.get("status"), "pending")
 
     def test_untampered_record_executes_and_charges_full_bytes(self):
         ctx = make_run()

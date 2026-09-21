@@ -1582,3 +1582,169 @@ and new R9 probe outcome
 `__pycache__` sweep pending at close. No push performed; no network
 spend; deterministic (no LLM calls). Residuals unchanged from the
 20:06 entry.
+
+## 2026-09-21 20:24 UTC — TEAM ADVERSARY WAVE-11: seven scripted briefs, four new findings
+
+New `evals/w11_probes.py` (seven hermetic probes, read-only on `gov/`),
+seven matrix situations sit60–sit66, wired via `register_w11()` in
+`evals/run_evals.py`. Wave-11 cells: 168/168 PASS (all probe booleans
+measured truthy, keyed to assert the documented behavior per the
+wave-10 convention). Full tmpfs gate: 1584/1584 cells GREEN, exit 0
+(66 situations × 4 adapters × 3 privileges × 2 harnesses).
+`evals/SITUATION_MATRIX.md` regenerated (66 situations, 792 cells). Adversary-matrix unit test green; full unit
+suite 430/430 green. No repo code changed outside evals/ (read-only
+mandate); no push.
+
+Findings (all measured, no fixes — read-only mandate):
+- **F38 HIGH (sit61)** — cross-run replay: a genuinely approved record
+  (valid keyed digest) planted into another run's queue still verifies
+  and EXECUTES there, because the F34 MAC does not bind run_id; the
+  audit entry claims run A's run_id for a run-B execution. Approval
+  smuggling across runs.
+- **F39 HIGH (sit62)** — double execution: two concurrent
+  execute_approved() calls both read the record as
+  approved-and-unexecuted, both execute it (deterministic barrier in
+  _simulate) — two approved_executed entries for one approval id and
+  the egress budget charged twice. The read-check-execute-mark sequence
+  holds no lock; sequential re-sweeps correctly skip.
+- **F40 MEDIUM (sit63)** — MCP ingestion bypass round 2: four
+  normalizer-miss shapes (nested blocks, object-form image blocks with
+  text in .data, a .text property that raises and poisons the whole
+  ingestion pass, custom non-list/tuple sequences) reach the agent with
+  no provenance taint; call_tool() is fail-open, so follow-up
+  paraphrase-exfil is not approval-gated. content=None stays clean; the
+  R9-covered flat shape still ingests.
+- **F41 MEDIUM (sit65)** — campaign-detector induced false positive:
+  two attacker throwaway principals emitting the victim's fragment
+  shape suffice to get the victim's legitimate heartbeat calls QUEUED
+  under approval-cross-run-campaign (the victim's own principal
+  completes the 3-distinct-principal set). Availability degradation of
+  legitimate automation, fail-safe (queue-only).
+
+Defense cells (no findings): sit60 (keyed-digest rotation seams all
+hold — unarchived rotation refused fail-closed and audited, legacy
+digest_scheme label rejected with no legacy path, archived rotation
+keeps verifying by design), sit64 (symlinked queue followed — target
+mutated, /dev/null symlink silently drops approvals; live executor
+ignores policy-file replacement and executes under the original
+in-memory policy; fresh executor refuses fail-closed with
+approval_policy_stale and audited; 4-process concurrent appends stay
+chain-green; policy_hash-not-MAC-covered residual not exploitable
+alone), sit66 (no raw-key exfiltration: child environ and
+/proc/self/environ scrubbed, parent environ unreachable under pid/net
+namespaces, key errors and KeyRing.describe() carry no key material).
+
+Notes: the F38/F40/F41 probes required small measurement corrections
+along the way — the fresh-executor refusal reason string, object-form
+MCP results needing structural flattening for the "agent receives"
+check, and the campaign attacker's second throwaway being itself
+queued (disposable by design). All captured in the probe docstrings.
+
+## 2026-09-21 20:57 UTC — HARDENING ROUND-10: F38–F41 closed, F34 closure strengthened, gates green
+
+**Round 10 fixes (all in-product, deterministic, no LLM calls, $0 spend):**
+
+- **F38 (HIGH, CLOSED)** — cross-run approval replay (`gov/approvals.py`,
+  `gov/executor.py`): `approval_record_digest()` now binds `run_id` and
+  `decided_by` in addition to (tool, args, policy_id, egress_bytes).
+  `queue()` MACs pending records with the requesting identity's run_id
+  and `decided_by=None`; `decide()` verifies the pending digest over the
+  approved CONTENT before modifying/re-MACing (fail-closed ValueError,
+  rejected-attempt audit-logged) — pre-decision tampering can never be
+  laundered by the decision re-MAC, which binds the decider. The
+  decide()-time check deliberately covers content only, not the
+  digest_scheme label: a scheme-label rewrite keeps the documented
+  wave-11 behavior (decide proceeds; the verifier fails closed on the
+  unknown scheme at execution). `execute_approved()` requires both the
+  record's run_id AND the embedded identity's run_id to equal the
+  executing run (the identity dict is not a MAC input, so the second
+  check closes a queue-file rewrite the MAC cannot see), refusing with
+  `approval_run_mismatch`; the refusal is audited under the CURRENT
+  run's id. HONEST RESIDUAL: under the public development key an
+  attacker who read the docs can forge a correctly run-bound MAC —
+  production MUST configure a private GOV_LOG_KEY.
+- **F39 (HIGH, CLOSED)** — concurrent double execution
+  (`gov/executor.py`, `gov/approvals.py`): `execute_approved()` takes
+  `ApprovalQueue._queue_locked()` (flock on stable sidecar
+  `approvals.lock`, 30s timeout, 0.02s poll) before reading the queue;
+  lock order queue-lock -> action-log lock, never reversed. The record
+  is claimed durable (`executed=True` queue-file rewrite) after all
+  validation and BEFORE the side effect, so a crash after the claim can
+  never cause a duplicate execution by a later sweep. A lock timeout
+  raises `QueueLockError`, executes nothing, and audits
+  `approval_sweep_refused` with `queue_lock_timeout` (fail-closed).
+  HONEST RESIDUALS: (a) a crash after the durable claim but
+  before/during the side effect consumes the approval without
+  completing it — later sweeps skip it (no duplicate execution favored
+  over automatic retry; a human must notice the lost side effect);
+  (b) the sidecar flock serializes cooperating processes, not an
+  attacker with direct queue-file write.
+- **F40 (MEDIUM, CLOSED)** — MCP foreign-result ingestion round 2
+  (`gov/executor.py`): `_foreign_normalize()` is now total and bounded —
+  mappings traversed VALUES ONLY (keys are schema labels, never emitted
+  as text, so `{"content": None}` stays clean), arbitrary Sequences
+  consumed with bounded iterators (never an eager `list()`), probed
+  object attributes recursed independently per property/block, with
+  cycle detection and depth / fragment-count / per-container-item /
+  string-memory bounds (memory capped while collecting; any truncation
+  marks the result opaque). Bare generators/iterators are NOT consumed
+  (the result must reach the agent verbatim) and count as opaque. Any
+  opaque content sets `_read_sensitive=True` AND `_tainted=True`, so
+  every missed shape both marks sensitive/tainted and gates a later
+  paraphrase api_call (`approval-sensitive-read-before-api`). HONEST
+  RESIDUAL: bounds can truncate huge results — truncation marks opaque
+  (gate still fires) but DLP never sees the dropped bytes.
+- **F41 (MEDIUM, CLOSED)** — campaign-detector false-positive weapon
+  (`gov/egress_ledger.py`, `gov/executor.py`): the cross-principal quorum
+  now requires >= K distinct thin-spread principals AND >= K-1
+  ESTABLISHED principals (>= 2 matching observations in the window), so
+  two planted throwaways plus the victim's first same-shaped call no
+  longer queue the victim's legitimate traffic. Shape storage stays
+  privacy-preserving and param-name-blind. HONEST RESIDUAL: patient
+  throwaways that emit repeatedly can still establish history and
+  poison the quorum — behavioral history is not deployment identity
+  trust.
+- **F34 closure evidence strengthened (sit54):** F38's decide()-time
+  content verification supersedes the R9 forge probe's measured
+  "decide() proceeds, execution refuses" behavior — tampered/unkeyed
+  records are now refused fail-closed AT DECIDE TIME (ValueError,
+  rejected-attempt audited) and never execute. New closure probe
+  `evals/r10_probes.py::_r10_forge` (8/8 keys); `evals/r9_probes.py`
+  retained unchanged as historical evidence. The dev-key residual is
+  re-documented for the F38 bindings: a docs-reader can still mint a
+  run-bound, decider-bound keyed forgery under the public dev key.
+
+**Eval/test wiring:** `evals/r10_probes.py` adds `_r10_forge` (sit54),
+`_r10_crossrun_replay` (sit61, incl. new embedded-identity-run-mismatch
+cases), `_r10_doubleexec` (sit62), `_r10_mcp_round2` (sit63),
+`_r10_campaign_fp` (sit65); `register_r10()` runs after
+`register_w11()`; `evals/w11_probes.py` and `evals/r9_probes.py`
+unchanged as historical evidence. Matrix cells sit54/sit61/sit62/sit63
+updated; `SITUATION_MATRIX.md` + `evals/SITUATION_MATRIX.md`
+regenerated (66 situations, 792 cells). F38–F41 marked CLOSED in
+`evals/FINDINGS.md` with honest residuals. `cmp policies/default.yaml
+gov/data/default.yaml` identical.
+
+**Verification (2026-09-21):** `python3 -m py_compile` on all edited
+files OK; `python3 -m unittest tests.test_adversary_matrix` 4/4 OK;
+`TMPDIR=/tmp/gov-r10 python3 evals/run_evals.py` → **1584/1584,
+SHIP-GATE GREEN** (792/792 both harnesses); `TMPDIR=/tmp/gov-r10
+python3 tests/run_tests.py` → **451/451 OK**. Closure unit tests in
+`tests/test_hardening_r10.py` (20 tests): cross-run replay, decider
+relabeling, embedded-identity-run mismatch, same-run control, rotation
+epoch, concurrent-sweep exactly-once, durable-claim-precedes-side-effect,
+sequential resweep, lock timeout, lock primitive, normalizer shapes
+(nested/image/raising/custom-seq/generator), benign + content-None
+clean, cycle bounded, campaign quorum (2-throwaway no-fire, genuine
+3-principal fires, first-seen trio quiet). NOT pushed (parent verifies
+first); repo visibility unchanged (private).
+
+**Notes:** one transient gate flake observed mid-round in sit64's
+pre-existing 4-process action-log chain check (`gov/log.py`, not
+touched by this round) — `verify_chain` returned not-ok once under
+gate load; the very next full-gate run was 1584/1584 green and three
+direct probe re-runs passed. The wave-11 keyseams probe (sit60) needed
+a production-side accommodation, not a probe change: `decide()`'s new
+tamper check now verifies the MAC over the approved content only
+(`_pending_record_content_ok`), preserving the documented
+scheme-label fail-closed-at-execution seam.

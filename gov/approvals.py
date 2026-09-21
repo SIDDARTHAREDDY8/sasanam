@@ -33,9 +33,12 @@ lifecycle - queued -> approved/rejected -> executed - is auditable.
 """
 
 import argparse
+import contextlib
+import fcntl
 import hmac
 import json
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -51,6 +54,27 @@ def _utcnow():
 
 
 _MISSING = object()
+
+
+# F39 (R10): how long an execute_approved() sweep waits for the queue's
+# exclusive lock before failing closed. Mirrors the F25 action-log
+# append lock (gov/log.py): a crashed lock holder's flock is released
+# by the kernel on process death, so a timeout means a LIVE sweeper is
+# stuck mid-sweep — refusing to sweep unlocked is the safe direction.
+APPROVAL_QUEUE_LOCK_TIMEOUT_SECS = 30
+_QUEUE_LOCK_POLL_SECS = 0.02
+
+
+class QueueLockError(OSError):
+    """F39: the approval-queue sweep lock could not be acquired in time.
+
+    Raised by ``ApprovalQueue._queue_locked`` when another sweeper
+    holds the queue lock past the timeout. The sweep never runs
+    unlocked: without the lock two concurrent sweeps can both read a
+    record as approved-and-unexecuted and execute it twice (double
+    side effect, double budget charge). Callers must treat this as a
+    fail-closed refusal and audit it.
+    """
 
 
 def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
@@ -77,21 +101,39 @@ def record_digest(tool, args, policy_id, egress_bytes=_MISSING):
 APPROVAL_DIGEST_SCHEME = "hmac-sha256-v1"
 
 
-def _canonical_record_payload(tool, args, policy_id, egress_bytes=_MISSING):
-    payload = {"tool": tool, "args": args, "policy_id": policy_id}
+def _canonical_record_payload(tool, args, policy_id, egress_bytes=_MISSING,
+                              run_id=None, decided_by=None):
+    """F38 (R10): the canonical payload binds the run and the decider.
+
+    Beyond (tool, args, policy_id, egress_bytes), the payload binds
+    ``run_id`` — the run the approval was queued in — and
+    ``decided_by`` — the identity that decided it (None while pending;
+    ``ApprovalQueue.decide()`` re-MACs with the decider bound). A MAC
+    minted for run A can never verify for run B, and a decision cannot
+    be relabeled to a different decider without re-MACing under the
+    log key. Records MACed before this binding (pre-R10) fail
+    verification automatically — fail-closed upgrade, same precedent as
+    F34.
+    """
+    payload = {"tool": tool, "args": args, "policy_id": policy_id,
+               "run_id": run_id, "decided_by": decided_by}
     if egress_bytes is not _MISSING:
         payload["egress_bytes"] = egress_bytes
     return json.dumps(payload, sort_keys=True, separators=(",", ":"),
                       default=str)
 
 
-def approval_record_digest(tool, args, policy_id, egress_bytes=_MISSING):
+def approval_record_digest(tool, args, policy_id, egress_bytes=_MISSING,
+                           run_id=None, decided_by=None):
     """F34: HMAC-keyed integrity digest binding a queued approval to its
     exact arguments.
 
     The F33 ``egress_bytes`` binding is preserved: payload shape — with
     or without the key — is decided by whether the caller supplies it,
-    exactly as the legacy digest did. The MAC is computed under the
+    exactly as the legacy digest did. F38 (R10): ``run_id`` and
+    ``decided_by`` are now MAC inputs too, so a genuinely-approved
+    record cannot replay into another run (or be relabeled to another
+    decider) without the log key. The MAC is computed under the
     active log key with the key epoch bound in; verification tries every
     epoch in the keyring. Under the PUBLIC development key this gives no
     forgery resistance to anyone who read the docs (F29/F34 residual).
@@ -99,7 +141,36 @@ def approval_record_digest(tool, args, policy_id, egress_bytes=_MISSING):
     key, key_epoch = _active_key()
     return _approval_record_mac(
         key, key_epoch,
-        _canonical_record_payload(tool, args, policy_id, egress_bytes))
+        _canonical_record_payload(tool, args, policy_id, egress_bytes,
+                                  run_id, decided_by))
+
+
+def _pending_record_content_ok(rec):
+    """F38 (R10): True when a PENDING record's keyed digest verifies over
+    the approved content — (tool, args, policy_id, egress_bytes,
+    run_id) with decided_by=None — regardless of the digest_scheme
+    label. This is the decide()-time tamper check: it detects rewrites
+    of what was approved between queue() and decide(). The scheme
+    label itself is deliberately NOT checked here — a scheme-label
+    rewrite keeps the documented wave-11 behavior: decide() proceeds,
+    and the verifier fails closed on the unknown scheme at execution
+    (audited as approval_integrity_violation; see
+    evals/w11_probes.py::_w11_keyseams part (b)). The scheme label is
+    not a MAC input, so rewriting it cannot launder tampered content
+    through the decision re-MAC.
+    """
+    if not isinstance(rec, dict):
+        return False
+    if "egress_bytes" not in rec:
+        return False
+    canonical = _canonical_record_payload(
+        rec.get("tool"), rec.get("args"), rec.get("policy_id"),
+        rec.get("egress_bytes"), rec.get("run_id"), None)
+    for key_epoch, key in _ledger_keyring().items():
+        candidate = _approval_record_mac(key, key_epoch, canonical)
+        if hmac.compare_digest(rec.get("args_digest", ""), candidate):
+            return True
+    return False
 
 
 def approval_digest_ok(rec):
@@ -110,7 +181,11 @@ def approval_digest_ok(rec):
     record that HAS the ``egress_bytes`` key is always verified with it
     (F33 rule preserved — removing the key does not downgrade the check);
     the three-field keyed form is never produced by
-    :meth:`ApprovalQueue.queue` and is not accepted.
+    :meth:`ApprovalQueue.queue` and is not accepted. F38 (R10): the
+    verified payload includes the record's ``run_id`` and
+    ``decided_by`` — a digest minted for another run (or another
+    decider) does not verify for this one, and pre-R10 digests (no
+    run_id bound) fail closed automatically.
     """
     if not isinstance(rec, dict):
         return False
@@ -120,7 +195,7 @@ def approval_digest_ok(rec):
         return False
     canonical = _canonical_record_payload(
         rec.get("tool"), rec.get("args"), rec.get("policy_id"),
-        rec.get("egress_bytes"))
+        rec.get("egress_bytes"), rec.get("run_id"), rec.get("decided_by"))
     for key_epoch, key in _ledger_keyring().items():
         candidate = _approval_record_mac(key, key_epoch, canonical)
         if hmac.compare_digest(rec.get("args_digest", ""), candidate):
@@ -1099,9 +1174,18 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_flag": policy_flag,  # F21: queue reason; batch
             # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
+            # F38 (R10): the keyed digest binds the run this record was
+            # queued in (record["run_id"], from the requesting identity)
+            # as well as the decider (None while pending — decide()
+            # re-MACs with decided_by bound). A genuinely-approved
+            # record planted into another run's queue cannot verify
+            # there, and the execution-time run_id check below is the
+            # second gate.
             "args_digest": approval_record_digest(action.get("tool"), args,
                                                  decision.policy_id,
-                                                 egress_bytes),
+                                                 egress_bytes,
+                                                 run_id=identity.get("run_id"),
+                                                 decided_by=None),
             # F34: integrity-scheme marker — records without the keyed
             # scheme are refused at execution (fail-closed upgrade).
             "digest_scheme": APPROVAL_DIGEST_SCHEME,
@@ -1165,6 +1249,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         record that is no longer pending) are also appended to the audit
         log before the ValueError propagates, so abuse of the approval
         workflow itself leaves a trace.
+
+        F38: the pending record's keyed digest is verified BEFORE the
+        decision is recorded — a record tampered with after queueing
+        can never be decided (fail-closed ValueError, audit-logged);
+        the decision then re-MACs the digest with the decider bound.
         """
         records = self.all()
         target = None
@@ -1217,10 +1306,44 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 agent_id=target.get("agent_id"), role=target.get("role"),
                 tool=target.get("tool"))
             raise ValueError("approval %r is already %s" % (approval_id, target["status"]))
+        # F38 (R10): verify the PENDING digest BEFORE re-MACing. The
+        # re-MAC below re-seals whatever fields are present at decision
+        # time — without this check, tampering between queue() and
+        # decide() would be laundered by the decision (the F33
+        # egress_bytes binding would no longer catch a pre-decision
+        # rewrite). A pending record whose digest does not verify is
+        # never decided: fail closed, audit-logged, ValueError — the
+        # same rejected-attempt contract as above. The check covers
+        # the approved CONTENT only (not the digest_scheme label — a
+        # scheme-label rewrite is not content tampering; the verifier
+        # still fails closed on it at execution, per the documented
+        # wave-11 scheme seam). decide() is the human/policy trust
+        # boundary; the digest guards everything after it.
+        if not _pending_record_content_ok(target):
+            _log_attempt(
+                "rejected_attempt",
+                "decision refused: the pending record failed integrity "
+                "verification (tampered after queueing); re-MAC refused",
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "approval %r failed integrity verification: the queued "
+                "record was tampered with after queueing — decision "
+                "refused" % approval_id)
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
         target["decision_reason"] = reason
+        # F38 (R10): the decision binds the decider into the keyed
+        # digest — the approval's integrity now covers WHO decided it,
+        # not just what was approved. Re-MAC here (queue time bound
+        # decided_by=None); approval_digest_ok() verifies against the
+        # record's current decided_by, so pending and decided records
+        # each verify exactly one way.
+        target["args_digest"] = approval_record_digest(
+            target.get("tool"), target.get("args"), target.get("policy_id"),
+            target.get("egress_bytes"), run_id=target.get("run_id"),
+            decided_by=decided_by)
         # NOTE: all() re-parses from disk, so the mutated `target` dict
         # must be spliced into the rewritten records explicitly.
         self._rewrite(lambda records: [
@@ -1257,6 +1380,55 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         self._rewrite(lambda records: [
             dict(r, executed=True) if r["id"] == approval_id else r
             for r in records])
+
+    def _lock_path(self):
+        """Sidecar lock file for the queue (mirrors gov/keys.py's
+        ``<path>.lock`` pattern). A sidecar — not the queue file
+        itself — so queue()/decide() appends and rewrites, which do not
+        take this lock, are unaffected."""
+        return self.run_dir / "approvals.lock"
+
+    @contextlib.contextmanager
+    def _queue_locked(self, timeout=None):
+        """F39: hold an exclusive flock on the queue across a sweep.
+
+        Serializes ``execute_approved()`` sweeps (threads and
+        processes): the read-claim-execute-mark sequence runs under
+        this lock, so a second sweeper re-reads the queue only after
+        the first has marked its records and sees ``executed=True``.
+        Waits up to ``timeout`` (default
+        ``APPROVAL_QUEUE_LOCK_TIMEOUT_SECS``), then raises
+        ``QueueLockError`` — the sweep never runs unlocked.
+
+        LOCK ORDERING (deadlock avoidance): the queue lock is the OUTER
+        lock; the action-log append lock (F25, gov/log.py) is only ever
+        taken INSIDE it (execute_approved's audit writes). No code path
+        takes the action-log lock and then the queue lock, so the
+        order queue -> log is total and cannot deadlock.
+        """
+        if timeout is None:
+            timeout = APPROVAL_QUEUE_LOCK_TIMEOUT_SECS
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        f = open(self._lock_path(), "a", encoding="utf-8")
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except (OSError, BlockingIOError):
+                    if time.monotonic() >= deadline:
+                        raise QueueLockError(
+                            "could not acquire the approval-queue lock on "
+                            "%s within %ss; refusing to sweep unlocked"
+                            % (self._lock_path(), timeout))
+                    time.sleep(_QUEUE_LOCK_POLL_SECS)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            f.close()
 
 
 def _resolve_rundir(args):

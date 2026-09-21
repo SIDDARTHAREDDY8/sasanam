@@ -21,6 +21,8 @@ from tests.harness import make_run, plant_file  # noqa: E402
 from evals.w9_probes import register_w9  # noqa: E402
 from evals.w10_probes import register_w10  # noqa: E402
 from evals.r9_probes import register_r9  # noqa: E402
+from evals.w11_probes import register_w11  # noqa: E402
+from evals.r10_probes import register_r10  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -2380,6 +2382,14 @@ register_w10(PLAYBOOKS, _w7_playbook)  # wave-10; see evals/w10_probes.py
 # Round-9 closure probes override the wave-10 attack baseline for
 # sit54/sit55/sit58/sit59 (F34-F37 CLOSED); see evals/r9_probes.py.
 register_r9(PLAYBOOKS, _w7_playbook)
+# Wave-11 probes attack the new defenses and the seams they created
+# (keyed-digest seams, cross-run replay, double execution, MCP
+# ingestion round 2, run-dir TOCTOU, campaign-detector weaponization,
+# key exfiltration); see evals/w11_probes.py.
+register_w11(PLAYBOOKS, _w7_playbook)
+# Round-10 closure probes override the wave-11 attack baseline for
+# sit61/sit62/sit63/sit65 (F38-F41 CLOSED); see evals/r10_probes.py.
+register_r10(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

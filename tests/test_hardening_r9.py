@@ -117,6 +117,10 @@ class TestF34KeyedApprovalDigest(_R9Case):
     def test_forged_unkeyed_digest_refused(self):
         # The pre-R9 attack: a forger recomputes the UNKEYED digest from
         # public inputs (no key needed) and writes an approved record.
+        # F38 (R10): decide() verifies the pending digest before
+        # re-MACing, so the forgery fails closed at decision time —
+        # fail even earlier than the old execution-time refusal — and
+        # the record stays pending, never executed.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
         aid = self._queue_send(q, ex)
@@ -126,34 +130,34 @@ class TestF34KeyedApprovalDigest(_R9Case):
                                      r["policy_id"], r["egress_bytes"]),
             digest_scheme=None,
         ) if r["id"] == aid else r for r in rs])
-        q.decide(aid, True, "looks fine", decided_by="ciso")
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            q.decide(aid, True, "looks fine", decided_by="ciso")
         done = ex.execute_approved()
         rec = q.get(aid)
         self.assertEqual(done, [])
         self.assertFalse(rec.get("executed"))
-        self.assertIn("keyed", rec.get("execution_refused_reason") or "")
-        from gov.log import read_entries
-        refusals = [e for e in read_entries(ctx["run_dir"] / "actions.jsonl")
-                    if e.get("event") == "approval_execution_refused"]
-        self.assertTrue(any(
-            e.get("flag") == "approval_integrity_violation"
-            and e.get("approval_id") == aid for e in refusals))
+        self.assertEqual(rec.get("status"), "pending")
 
     def test_tampered_args_with_scheme_still_refused(self):
         # The R8 tamper shape under the new scheme: args changed after
         # queueing, scheme marker kept — the MAC no longer verifies.
+        # F38 (R10): decide() verifies the pending digest before
+        # re-MACing, so the tamper fails closed HERE (fail even earlier
+        # than the old execution-time refusal), audit-logged; the
+        # record stays pending and never executes.
         ctx = make_run()
         q, ex = ctx["approvals"], ctx["executor"]
         aid = self._queue_send(q, ex)
         q._rewrite(lambda rs: [dict(
             r, args=dict(r["args"], body="EVIL" * 100),
         ) if r["id"] == aid else r for r in rs])
-        q.decide(aid, True, "looks fine", decided_by="ciso")
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            q.decide(aid, True, "looks fine", decided_by="ciso")
         done = ex.execute_approved()
         rec = q.get(aid)
         self.assertEqual(done, [])
-        self.assertIn("integrity digest mismatch",
-                      rec.get("execution_refused_reason") or "")
+        self.assertEqual(rec.get("status"), "pending")
+        self.assertFalse(rec.get("executed"))
 
     def test_wrong_key_digest_rejected(self):
         # A MAC computed under a key that is not in the keyring never
@@ -164,7 +168,8 @@ class TestF34KeyedApprovalDigest(_R9Case):
         aid = self._queue_send(q, ex)
         rec = q.get(aid)
         canon = _canonical_record_payload(
-            rec["tool"], rec["args"], rec["policy_id"], rec["egress_bytes"])
+            rec["tool"], rec["args"], rec["policy_id"], rec["egress_bytes"],
+            rec.get("run_id"), rec.get("decided_by"))
         forged = L._approval_record_mac(b"wrong-key-bytes", "wrong-epoch",
                                         canon)
         bad = dict(rec, args_digest=forged)
@@ -190,7 +195,8 @@ class TestF34KeyedApprovalDigest(_R9Case):
             # ...but a MAC under a never-configured epoch still fails
             canon = _canonical_record_payload(
                 rec["tool"], rec["args"], rec["policy_id"],
-                rec["egress_bytes"])
+                rec["egress_bytes"], rec.get("run_id"),
+                rec.get("decided_by"))
             forged = L._approval_record_mac(b"never-configured",
                                             "epoch-9", canon)
             self.assertFalse(approval_digest_ok(dict(rec, args_digest=forged)))
@@ -225,17 +231,20 @@ class TestF34KeyedApprovalDigest(_R9Case):
         self.assertFalse(approval_digest_ok(
             dict(rec, args_digest=unkeyed, digest_scheme=None)))
         # 3. execute_approved() refuses (not crashes on) a
-        # scheme-marked record missing egress_bytes.
+        # scheme-marked record missing egress_bytes. F38 (R10):
+        # decide() verifies the pending digest before re-MACing, so
+        # the refusal now happens even earlier — at decision time,
+        # fail-closed ValueError — and execution is never reached.
         aid2 = self._queue_send(q, ex)
         q._rewrite(lambda rs: [
             {k: v for k, v in r.items() if k != "egress_bytes"}
             if r["id"] == aid2 else r for r in rs])
-        q.decide(aid2, True, "ok", decided_by="human-operator")
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            q.decide(aid2, True, "ok", decided_by="human-operator")
         ex.execute_approved()
         got = q.get(aid2)
         self.assertIsNot(got.get("executed"), True)
-        self.assertIn("integrity digest mismatch",
-                      got.get("execution_refused_reason") or "")
+        self.assertEqual(got.get("status"), "pending")
 
     def test_dev_key_forgery_residual_documented(self):        # HONEST RESIDUAL: with GOV_LOG_KEY unset the MAC key is the
         # PUBLIC development key, so a docs-reader CAN mint a valid
@@ -265,8 +274,12 @@ class TestF34KeyedApprovalDigest(_R9Case):
                 "policy_hash": ex.policy.policy_hash,
                 # docs-reader computes the KEYED digest: the dev key is
                 # public, so this is computable from the docs alone.
+                # F38 (R10): the digest binds run_id and decided_by —
+                # the forger must bind the TARGET run and a decider,
+                # exactly like a legitimate record.
                 "args_digest": approval_record_digest(
-                    "send_email", args, "approval-outbound-sends", eb),
+                    "send_email", args, "approval-outbound-sends", eb,
+                    run_id=q.run_dir.name, decided_by="human-operator"),
                 "digest_scheme": APPROVAL_DIGEST_SCHEME,
                 "egress_bytes": eb,
                 "status": "approved", "decided_by": "human-operator",
@@ -437,6 +450,10 @@ class TestF36CrossPrincipalCampaign(_R9Case):
         # attempt is suppressed from cross-principal queueing — still
         # ledgered and audit-logged — while the same shape from other
         # (non-allowlisted) principals queues.
+        # F41 (R10): the quorum now needs K-1 established principals,
+        # so each non-allowlisted principal emits twice (history) and
+        # the 3rd distinct principal's calls queue; the allowlisted
+        # poller still executes even as the 4th distinct principal.
         with tempfile.TemporaryDirectory(prefix="govr9led-") as td:
             td = Path(td)
             led = str(td / "egress_ledger.jsonl")
@@ -454,10 +471,11 @@ class TestF36CrossPrincipalCampaign(_R9Case):
                 ctx = make_run(ledger_path=led)
                 ex = ctx["executor"]
                 ident = ex.mint_identity("agent", "researcher", p)
-                r = ex.call(ident, "api_call", endpoint=EP,
-                            params={"y": frag_val})
-                st.append(r["status"])
-            self.assertEqual(st, ["executed", "executed", "queued"])
+                for _ in range(2):
+                    r = ex.call(ident, "api_call", endpoint=EP,
+                                params={"y": frag_val})
+                    st.append(r["status"])
+            self.assertEqual(st, ["executed"] * 4 + ["queued"] * 2)
             # the allowlisted poller emits the same SHAPE (different key
             # name — the sketch is name-blind) but its exact allowlisted
             # tuple suppresses the queue for its own attempt
@@ -519,29 +537,35 @@ class TestF36CrossPrincipalCampaign(_R9Case):
             return {"campaign_domain": domain, "n_params": n,
                     "str_bytes": sb, "max_entropy": ent, "fragment": frag}
 
+        def _frag_entry(now, principal, run_id, keys=("blob", "seq")):
+            return {"ts": now, "run_id": run_id,
+                    "principal": principal, "tool": "api_call",
+                    "endpoint": "https://c.example/x",
+                    "campaign_domain": "c.example",
+                    "n_params": 2, "param_keys": list(keys),
+                    "str_bytes": 32, "max_entropy": 2.5,
+                    "fragment": True}
+
         with tempfile.TemporaryDirectory(prefix="govr9led-") as td:
             led = EgressLedger(Path(td) / "egress_ledger.jsonl")
             now = 1700000000.0
             for p in ("p1", "p2"):
-                led.append({"ts": now, "run_id": "r-%s" % p,
-                            "principal": p, "tool": "api_call",
-                            "endpoint": "https://c.example/x",
-                            "campaign_domain": "c.example",
-                            "n_params": 2, "param_keys": ["blob", "seq"],
-                            "str_bytes": 32, "max_entropy": 2.5,
-                            "fragment": True})
+                led.append(_frag_entry(now, p, "r-%s" % p))
             self.assertFalse(led.cross_principal_campaign_hit(
                 _shape(), now=now, k=3))
-            led.append({"ts": now, "run_id": "r-p3", "principal": "p3",
-                        "tool": "api_call",
-                        "endpoint": "https://c.example/x",
-                        "campaign_domain": "c.example",
-                        "n_params": 2,
-                        # DIFFERENT key names, same content shape: the
-                        # sketch is name-blind, so this still counts
-                        "param_keys": ["zz", "qq"],
-                        "str_bytes": 40, "max_entropy": 2.6,
-                        "fragment": True})
+            # F41 (R10): three FIRST-SEEN principals no longer form a
+            # quorum — the K-1 establishment bar is not met. This is
+            # the throwaway-planted shape: cheap fresh principals must
+            # not let an attacker queue a victim's call.
+            led.append(_frag_entry(now, "p3", "r-p3", keys=("zz", "qq")))
+            self.assertFalse(led.cross_principal_campaign_hit(
+                _shape(), now=now, k=3))
+            # A genuine campaign — each participant emits repeatedly,
+            # so K-1 of them are established — still fires. Param-key
+            # rotation stays name-blind: p3's different key names still
+            # count toward the same shape.
+            for p in ("p1", "p2", "p3"):
+                led.append(_frag_entry(now, p, "r2-%s" % p))
             self.assertTrue(led.cross_principal_campaign_hit(
                 _shape(), now=now, k=3))
             # non-fragment entries never count, even at K principals

@@ -112,8 +112,13 @@ class TestApprovalRecordIntegrity(ApprovalAbuseBase):
                 r["args"]["to"] = "attacker@evil.example"
         run["approvals"]._rewrite(records)
 
-        run["approvals"].decide(aid, True, reason="ok",
-                                decided_by="human-operator")
+        # F38 (R10): decide() verifies the pending digest before
+        # re-MACing, so the tamper fails closed at decision time (fail
+        # even earlier than the old execution-time refusal) — the
+        # record stays pending and is never executed.
+        with self.assertRaisesRegex(ValueError, "integrity verification"):
+            run["approvals"].decide(aid, True, reason="ok",
+                                    decided_by="human-operator")
         done = run["executor"].execute_approved()
         self.assertEqual(
             done, [],
