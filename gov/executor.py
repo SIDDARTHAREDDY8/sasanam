@@ -51,6 +51,7 @@ Policy outcomes:
 
 import json
 import os
+import time
 import collections.abc
 import itertools
 from datetime import datetime, timezone
@@ -61,7 +62,7 @@ from . import dlp
 from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
                         sanitize_preview_text, QueueLockError,
-                        QueueLockInvalidatedError)
+                        QueueLockInvalidatedError, QueueLockPathError)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -83,6 +84,8 @@ from .identity import (
     AgentIdentity,
     IdentityMintLimitError,
     UnmintedIdentityError,
+    UnregisteredPrincipalError,
+    warn_self_asserted_identity_once,
 )
 
 _SEND_TOOLS = ("send_email", "http_post")
@@ -252,6 +255,14 @@ class ToolExecutor:
         # this run (actual payload UTF-8 bytes, DLP-independent).
         self._repeats = {}  # (tool, canonical args) -> count
         self._minted = set()  # (agent_id, role, run_id, principal) tuples
+        # F51 (R12): lock-refusal audit coalescing — a sustained lock
+        # disturbance (e.g. an unlink loop) refuses every sweep; the
+        # refusals are fail-closed but the audit entries are
+        # rate-limited so the attack cannot flood the tamper-evident
+        # log. _lock_refusal_suppressed counts repeats folded into the
+        # next audited entry.
+        self._lock_refusal_last_audit = 0.0
+        self._lock_refusal_suppressed = 0
         self._tainted = False  # True once tool output entered this run
         self._taint_sources = []
         self._read_contents = []  # fingerprints of executed read results
@@ -267,16 +278,45 @@ class ToolExecutor:
         ``_MAX_IDENTITY_MINTS_PER_RUN``) and — when a principal registry
         is configured — the principal must be pre-registered, otherwise
         ``UnregisteredPrincipalError``. Registry-mode issuance is
-        audit-logged (``identity_minted``). With no registry (permissive
-        demo default) any principal string mints: an explicit
-        deployment-trust residual, documented in ``gov/identity.py``.
+        audit-logged (``identity_minted``).
+
+        F50 (R12): the registry is a real trust anchor — in registry
+        mode the full (principal, role, agent_id) tuple is checked
+        against the registry's per-principal authorization, and any
+        pair the registry does not authorize is REFUSED with an
+        audited ``identity_mint_refused`` entry (the refusal never
+        consumes mint budget). With no registry (permissive demo
+        default) any principal/role/agent_id string still mints — an
+        explicit deployment-trust residual, now disclosed by a loud
+        one-time stderr warning that identity is self-asserted.
         """
         if self._mint_count >= _MAX_IDENTITY_MINTS_PER_RUN:
             raise IdentityMintLimitError(
                 "identity mint budget exhausted for run %s (%d)" %
                 (self.run_id, _MAX_IDENTITY_MINTS_PER_RUN))
         if self._principal_registry is not None:
-            self._principal_registry.check(principal)
+            try:
+                self._principal_registry.check_identity(
+                    principal, role, agent_id)
+            except UnregisteredPrincipalError as e:
+                # F50: audited refusal — a refused mint never consumes
+                # budget and never issues.
+                self.log.append({
+                    "event": "identity_mint_refused",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "decision": "refused",
+                    "policy_id": "principal-registry",
+                    "reason": ("identity_mint refused: %s" % e),
+                })
+                raise
+        else:
+            # F50: dev mode keeps self-assertion working, but says so
+            # loudly, once per process (same disclosure pattern as the
+            # dev-key warnings).
+            warn_self_asserted_identity_once()
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal)
@@ -1420,32 +1460,63 @@ class ToolExecutor:
         try:
             with self.approvals._queue_locked():
                 return self._execute_approved_locked()
+        except QueueLockPathError as e:
+            # F51 (R12): the lock path is not a usable lock file (e.g.
+            # a directory swapped in at approvals.lock). Fail closed
+            # WITH audit — never an uncaught IsADirectoryError — and
+            # absorb as an empty sweep: no exception escapes, approved
+            # work waits for the next sweep instead of starving on an
+            # unaudited crash.
+            self._audit_lock_refusal("queue_lock_invalid",
+                                     "execute_approved() refused: %s" % e)
+            return []
         except QueueLockInvalidatedError as e:
             # F44 (R11): the lock file was deleted or replaced while we
             # waited — the lock may be guarding a different queue state.
             # Fail closed with a DISTINCT audit event so operators can
             # tell invalidation apart from a mere timeout.
-            self.log.append({
-                "event": "approval_sweep_refused",
-                "run_id": self.run_id,
-                "decision": "refused",
-                "policy_id": "approval-execution-refused",
-                "flag": "queue_lock_invalidated",
-                "reason": "execute_approved() refused: %s" % e,
-            })
+            self._audit_lock_refusal("queue_lock_invalidated",
+                                     "execute_approved() refused: %s" % e)
             raise
         except QueueLockError as e:
             # Fail closed AND audited: the sweep is refused, nothing
             # executed, the lock holder keeps its atomicity.
-            self.log.append({
-                "event": "approval_sweep_refused",
-                "run_id": self.run_id,
-                "decision": "refused",
-                "policy_id": "approval-execution-refused",
-                "flag": "queue_lock_timeout",
-                "reason": "execute_approved() refused: %s" % e,
-            })
+            self._audit_lock_refusal("queue_lock_timeout",
+                                     "execute_approved() refused: %s" % e)
             raise
+
+    # F51 (R12): at most one lock-refusal audit entry per
+    # _LOCK_REFUSAL_AUDIT_COALESCE_SECS seconds per run; repeats in
+    # between are counted, not logged, so a sustained disturbance
+    # (unlink loop) cannot flood the tamper-evident log. The next
+    # audited entry carries suppressed_repeats, and a storm (>= 10
+    # folded repeats) is flagged for the operator.
+    _LOCK_REFUSAL_AUDIT_COALESCE_SECS = 5.0
+    _LOCK_REFUSAL_STORM_THRESHOLD = 10
+
+    def _audit_lock_refusal(self, flag, reason):
+        """Audit a lock-refusal, coalesced. Returns True when an entry
+        was written, False when the refusal was folded into the
+        suppressed counter."""
+        now = time.monotonic()
+        if (now - self._lock_refusal_last_audit
+                < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
+            self._lock_refusal_suppressed += 1
+            return False
+        suppressed = self._lock_refusal_suppressed
+        self._lock_refusal_suppressed = 0
+        self._lock_refusal_last_audit = now
+        self.log.append({
+            "event": "approval_sweep_refused",
+            "run_id": self.run_id,
+            "decision": "refused",
+            "policy_id": "approval-execution-refused",
+            "flag": flag,
+            "reason": reason,
+            "suppressed_repeats": suppressed,
+            "refusal_storm": suppressed >= self._LOCK_REFUSAL_STORM_THRESHOLD,
+        })
+        return True
 
     def _execute_approved_locked(self):
         """The sweep body; runs under ``ApprovalQueue._queue_locked``.

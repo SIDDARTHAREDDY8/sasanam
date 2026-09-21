@@ -29,7 +29,7 @@ cover the test/demo roles; an explicit ``roles`` section replaces them.
 from hashlib import sha256
 from pathlib import Path
 
-from .yamlmini import load as load_yaml
+from .yamlmini import parse as parse_yaml
 
 KNOWN_TOOLS = {"read_file", "write_file", "delete_file",
                "api_call", "http_post", "send_email"}
@@ -137,7 +137,13 @@ class PolicyEngine:
         raw = self.yaml_path.read_bytes()
         self.policy_hash = sha256(raw).hexdigest()
         self.source_digest = self.policy_hash
-        cfg = load_yaml(str(self.yaml_path)) or {}
+        # F53 (R12): parse the SAME buffer the pin hashed. A second
+        # read of the path here (the old load_yaml(str(path)) call)
+        # re-opened a TOCTOU window: a policy-file writer winning the
+        # race between the hash read and the parse read got the pin to
+        # attest pristine bytes while the engine enforced attacker
+        # bytes. One read, no window.
+        cfg = parse_yaml(raw.decode("utf-8")) or {}
         self.roles = {r: list(t) for r, t in (cfg.get("roles") or {}).items()}
         if not self.roles:
             self.roles = {r: list(t) for r, t in DEFAULT_ROLES.items()}

@@ -25,6 +25,8 @@ from evals.w11_probes import register_w11  # noqa: E402
 from evals.r10_probes import register_r10  # noqa: E402
 from evals.w12_probes import register_w12  # noqa: E402
 from evals.r11_probes import register_r11  # noqa: E402
+from evals.w13_probes import register_w13  # noqa: E402
+from evals.r12_probes import register_r12  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
     ADAPTER_CLASSES, DEFAULT_MCP_REGISTRY)
@@ -2424,6 +2426,19 @@ register_w12(PLAYBOOKS, _w7_playbook)
 # evals/w12_probes.py stays UNCHANGED as the historical wave-12
 # attack record — its sit67-73 playbooks are superseded here.
 register_r11(PLAYBOOKS, _w7_playbook)
+# Wave-13 probes attack the Round-11 defenses and the seams they created
+# (session-identity origin, lock-validation DoS, reconciliation markers,
+# policy-pin canonicalization/TOCTOU, cross-process ticket replay,
+# report-time forgery, cross-run egress); see evals/w13_probes.py.
+# evals/r11_probes.py stays UNCHANGED as the historical round-11
+# closure record.
+register_w13(PLAYBOOKS, _w7_playbook)
+# Round-12 closure probes override the wave-13 attack baseline for
+# sit74-sit78 (F50-F54 CLOSED) and re-confirm the sit79-sit80 defense
+# cells after the Round-12 changes; see evals/r12_probes.py.
+# evals/w13_probes.py stays UNCHANGED as the historical wave-13
+# attack record — its sit74-80 playbooks are superseded here.
+register_r12(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

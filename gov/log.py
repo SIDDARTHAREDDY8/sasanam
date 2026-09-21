@@ -257,7 +257,19 @@ class ActionLog:
 
     def refresh(self):
         """Re-read the file tail so this instance sees entries written by
-        other processes (e.g. the approval CLI)."""
+        other processes (e.g. the approval CLI).
+
+        F52 (R12): lines that are not valid chained entries
+        (unparseable JSON, or forged/planted lines missing ``seq`` /
+        ``hash`` — e.g. a planted execution_authorized marker written
+        without the HMAC key) are SKIPPED, not trusted and not
+        crashed on. In-process readers never bless log content; the
+        verifier (``_verify``) is the component that fails closed on
+        corrupt lines (F28). Skipping keeps ``append`` chaining onto
+        the last GOOD entry, so a forgery in the file cannot deny the
+        audit trail itself — the refusal audit entry the forgery
+        triggers must itself be appendable.
+        """
         self._seq = 0
         self._prev = GENESIS
         if self.path.exists():
@@ -265,9 +277,17 @@ class ActionLog:
                 line = line.strip()
                 if not line:
                     continue
-                entry = json.loads(line)
-                self._seq = int(entry["seq"])
-                self._prev = entry["hash"]
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                try:
+                    seq = int(entry["seq"])
+                    chain_hash = entry["hash"]
+                except (KeyError, TypeError, ValueError):
+                    continue
+                self._seq = seq
+                self._prev = chain_hash
         self._known_sig = self._file_sig()
 
     @property

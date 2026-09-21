@@ -1905,3 +1905,125 @@ remains a documented residual.
 
 **NOT pushed; awaiting independent verification per user directive.**
 Visibility untouched (repo remains PRIVATE).
+
+## 2026-09-21T22:07:41Z — TEAM ADVERSARY WAVE-13: attack the R11 defenses and the seams they created
+
+Round 11 closed F42–F49. Wave 13 probed each closure and the seams the
+fixes created, in `evals/w13_probes.py` (`register_w13()` runs after
+`register_r11()`; `evals/r11_probes.py` untouched). New situations
+sit74–sit80 in `evals/matrix.py`; `SITUATION_MATRIX.md` regenerated
+(root + evals copies, 80 situations).
+
+**New findings (F50–F54, all measured, filed in `evals/FINDINGS.md`):**
+- **F50 MEDIUM — session identity is self-asserted at mint time.**
+  An in-process attacker mints the victim's exact identity fields;
+  `queue()` stamps them and the digest verifies (attribution-identical
+  to a victim-minted record). Role is self-asserted too: minting
+  `role="coder"` escalates a researcher to `write_file` at `call()`
+  time — even in `PrincipalRegistry` mode (principals constrained,
+  agent_id/role free). F42 moved the oracle from the action dict to the
+  mint; the mint's trust anchor is "code holding the executor".
+- **F51 MEDIUM — F44's loud lock refusal is an availability surface.**
+  Sustained `approvals.lock` deletion refuses most sweeps (8/12 in the
+  probe; every refusal appends an unthrottled audit entry). One op —
+  swapping the lock for a DIRECTORY — kills 3/3 sweeps persistently
+  with an UNAUDITED `IsADirectoryError` (only QueueLockError/
+  QueueLockInvalidatedError are caught/audited) until manual cleanup;
+  approved work starves. Recovery after removal is clean.
+- **F52 MEDIUM — reconciliation honors unauthenticated markers.**
+  The `execution_authorized` marker is HMAC-bound at write time, but
+  `_reconcile_interrupted_executions` consumes it via `read_entries()`
+  (no chain verification — that lives only in `_verify`, used by the
+  report path). A run-dir writer with no key plants forged markers:
+  approved-but-never-executed work pins in pending and never executes;
+  higher seqs re-alert (dedup bypass); even never-decided approvals
+  phantom-reconcile into the human queue (starvation + alert fatigue).
+- **F53 LOW — policy-pin read/parse TOCTOU.** `PolicyEngine` hashes one
+  `read_bytes()` and parses a second `load()` of the same path; a swap
+  between the reads gets the pin to attest pristine bytes while the
+  engine enforces attacker bytes (demonstrated deterministically).
+  Narrow race, policy-file-write capability required. Fix: parse the
+  hashed buffer.
+- **F54 MEDIUM — break-glass ticket double-spend across processes.**
+  The F49 mutex is cross-thread only; per-process snapshots. Two
+  barrier-synced forked processes racing `break_glass()` with one
+  provisioned ticket BOTH win (two `approval_break_glass` audits) —
+  the documented cross-process residual is confirmed exploitable, and
+  `_mark_ticket_used`'s own cross-process single-use claim does not
+  hold under race.
+
+**Defense cells (no new findings):** sit77a (cosmetic policy drift
+correctly refused fail-closed + audited — byte-exact pin is by
+design); sit79 (make_report verifies the chain via `_verify` before
+rendering — forged logs render FAILED, never as fact); sit80 (14 runs
+x 20KB = 280KB exfiltrated with the per-run F33 budget intact each
+run — docs honest, confirms F5's documented aggregate-visibility
+debt).
+
+**Verification:** `python3 -m py_compile` on every edited file after
+every edit; `python3 -m unittest tests.test_adversary_matrix` green;
+full gate `TMPDIR=/tmp/gov-w13 python3 evals/run_evals.py` →
+**1920/1920, SHIP-GATE GREEN, exit 0** (80 situations x 4 adapters x
+3 privs x 2 harnesses). `evals/run_evals.py` kept lean (two-line
+import + register). `__pycache__` removed. NOT pushed (per wave
+rules); GitHub repo stays private/untouched.
+
+## 2026-09-21 — Hardening Round 12: F50–F54 CLOSED
+
+Round 12 closed the five Wave-13 findings against the Round-11
+defenses. Production changes (all in `gov/`):
+
+- **F50 (identity trust anchor)** — `gov/identity.py`:
+  `PrincipalRegistry.check_identity(principal, role, agent_id)`; new
+  `UnregisteredRoleError(UnregisteredPrincipalError)` for role
+  violations (agent-id/unknown-principal violations raise the plain
+  parent type so the two are distinguishable).
+  `gov/executor.py` `mint_identity()` enforces the registry at mint
+  time, audits refusals as `identity_mint_refused` without consuming
+  mint budget; registry-free dev mode mints with exactly one
+  `SELF-ASSERTED` stderr warning per process.
+- **F51 (queue-lock path DoS)** — `gov/approvals.py`: `_queue_locked()`
+  opens with `os.open(O_CREAT|O_RDWR)` and validates the fd is a
+  regular file, else `QueueLockPathError` (new `QueueLockError`
+  subclass). `gov/executor.py` `execute_approved()` audits
+  `approval_sweep_refused`/`queue_lock_invalid` and absorbs the
+  refusal as an empty sweep — no exception escapes. Repeat refusals
+  coalesce in a 5s per-executor window (`suppressed_repeats` +
+  `refusal_storm` flag).
+- **F52 (forged reconciliation markers)** — `gov/approvals.py`
+  `_reconcile_interrupted_executions()` runs `gov/log.py _verify()`
+  over the full chain before honoring any `execution_authorized`
+  marker; failure audits `reconciliation_marker_invalid` and refuses
+  the reconciliation (no phantom interruption, no reset to pending —
+  legitimately-approved work still executes). `gov/log.py`
+  `ActionLog.refresh()` skips malformed/hashless lines.
+- **F53 (policy pin TOCTOU)** — `gov/policy.py`:
+  `PolicyEngine.__init__` reads the file ONCE; the pin hashes and
+  `parse_yaml` decodes the same buffer.
+- **F54 (cross-process break-glass replay)** — `gov/approvals.py`:
+  dedicated `break_glass_tickets.lock` + `fcntl.flock` across
+  snapshot-membership check → live store re-read → validate/decide/
+  persist(`used=True`). Barrier-synced fork race: 5/5 single-winner.
+
+Tests: `tests/test_hardening_r12.py` (18 tests, all green).
+Evals: `evals/r12_probes.py` (7 closure/preserved-defense probes;
+`register_r12()` wired after `register_w13()` in `evals/run_evals.py`,
+which stays lean); `evals/matrix.py` sit74–sit78 marked CLOSED;
+`evals/SITUATION_MATRIX.md` regenerated (80 situations, 960 cells);
+`evals/w13_probes.py` preserved unchanged as the historical attack
+record. `evals/FINDINGS.md` F50–F54 marked CLOSED with fixes and
+honest residuals (dev-mode self-assertion; per-executor coalescing;
+broken-chain blocks whole-sweep reconciliation; byte-exact pin;
+lock-file trust domain = run dir).
+
+**Verification:** `python3 -m py_compile` after every edit;
+`tests.test_hardening_r12` 18/18; `tests.test_adversary_matrix` 4/4;
+`tests.test_hardening_r5` + `tests.test_hardening_r11` 74/74.
+Final gates, measured 2026-09-21: `mkdir -p /tmp/gov-r12`,
+`TMPDIR=/tmp/gov-r12 python3 evals/run_evals.py` →
+**1920/1920, SHIP-GATE GREEN, exit 0** (80 situations x 4 adapters x
+3 privs x 2 harnesses); `TMPDIR=/tmp/gov-r12 python3
+tests/run_tests.py` → **499/499 OK** (481 baseline + 18 new r12).
+`cmp policies/default.yaml gov/data/default.yaml` — identical.
+`__pycache__` removed. NOT pushed (per round rules); GitHub repo
+stays private/untouched. $0 spend, no LLM calls.

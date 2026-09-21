@@ -38,6 +38,7 @@ import fcntl
 import hmac
 import json
 import os
+import stat
 import sys
 import threading
 import time
@@ -48,7 +49,7 @@ from pathlib import Path
 
 from .identity import AgentIdentity
 from .log import (ActionLog, _active_key, _approval_record_mac,
-                  _break_glass_ticket_mac, read_entries)
+                  _break_glass_ticket_mac, _verify, read_entries)
 from .egress_ledger import _ledger_keyring
 
 
@@ -91,6 +92,19 @@ class QueueLockInvalidatedError(QueueLockError):
     louder failure than a timeout: the executor audits it as
     ``queue_lock_invalidated`` and refuses the sweep. Never retried
     silently.
+    """
+
+
+class QueueLockPathError(QueueLockError):
+    """F51 (R12): the lock path itself is unusable — not a regular file.
+
+    Raised by ``ApprovalQueue._queue_locked`` when the lock path
+    cannot be opened for locking at all (e.g. a run-dir writer
+    swapped ``approvals.lock`` for a DIRECTORY — the old code let the
+    resulting ``IsADirectoryError`` escape unaudited) or when the
+    opened lock file is not a regular file. A non-file at the lock
+    path is fail-closed, never an uncaught exception: the executor
+    audits it as ``queue_lock_invalid`` and refuses the sweep.
     """
 
 
@@ -257,6 +271,10 @@ def _pending_record_content_ok(rec):
 #   itself; key custody is the boundary, exactly as for the log key.
 
 BREAK_GLASS_TICKET_FILENAME = "break_glass_tickets.jsonl"
+# F54 (R12): dedicated lock file for cross-process break-glass ticket
+# consumption. NEVER rewritten — opened only to hold an flock — so the
+# lock cannot be invalidated by a replace-write of the ticket store.
+_BREAK_GLASS_TICKET_LOCK_FILENAME = "break_glass_tickets.lock"
 
 
 def _ticket_canonical(ticket_id, operator_principal, reviewer_principal,
@@ -1041,6 +1059,28 @@ class ApprovalQueueRiskMixin:
     def _ticket_store_path(self):
         return self.run_dir / BREAK_GLASS_TICKET_FILENAME
 
+    @contextlib.contextmanager
+    def _break_glass_ticket_locked(self):
+        """F54 (R12): exclusive cross-process lock around break-glass
+        ticket consumption (resolve -> validate -> decide -> consume).
+
+        The lock file is dedicated and never rewritten, so holding its
+        flock is a sound mutex even though the ticket store itself is
+        rewritten in place. Blocking LOCK_EX is safe here: the section
+        is bounded (one decide + two file rewrites), and a crashed
+        holder's flock is released by the kernel.
+        """
+        lock_path = self.run_dir / _BREAK_GLASS_TICKET_LOCK_FILENAME
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        f = open(lock_path, "a", encoding="utf-8")
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            f.close()
+
     def snapshot_break_glass_tickets(self):
         """F49 (R11): write-once snapshot of the human-provisioned
         break-glass ticket store, taken at run start.
@@ -1171,49 +1211,82 @@ class ApprovalQueueRiskMixin:
         # F49: the ticket resolve -> consume sequence is guarded by
         # the cross-thread mutex so two concurrent break_glass calls
         # cannot both observe an unused ticket (single-use atomicity).
+        #
+        # F54 (R12): the mutex above is a threading.Lock — it does NOT
+        # cross fork(). Two sibling processes forked from one run each
+        # carry their own STALE run-start ticket snapshot and their own
+        # copy of the mutex, so both could resolve an unused ticket
+        # from the snapshot and both consume it before either persisted
+        # the used flag (one ticket, two emergency approvals). The
+        # resolve -> validate -> decide -> consume critical section
+        # therefore ALSO holds an exclusive flock on a dedicated lock
+        # file, and inside the lock the LIVE ticket store is re-read:
+        # the winner's _mark_ticket_used has persisted by the time the
+        # loser gets in, and the loser refuses. Lock ordering is always
+        # thread-mutex -> file-lock; the section is bounded and a
+        # crashed holder's flock is released by the kernel.
         with self._bg_ticket_lock:
-            ticket_entry = self._resolve_break_glass_ticket(ticket_id)
-            if ticket_entry is None:
-                self._refuse_break_glass(
-                    approval_id,
-                    "unknown, HMAC-invalid, or already-used break-glass "
-                    "ticket %r: not provisioned before this run" % ticket_id,
-                    ticket_id=ticket_id,
-                    operator_principal=operator_identity.principal)
-                raise ValueError(
-                    "break-glass refused: ticket %r is not a valid unused "
-                    "human-provisioned ticket for this run" % ticket_id)
-            if operator_identity.principal != ticket_entry["operator_principal"]:
-                self._refuse_break_glass(
-                    approval_id,
-                    "ticket %r is provisioned for operator principal %r, "
-                    "not %r" % (ticket_id, ticket_entry["operator_principal"],
-                                operator_identity.principal),
-                    ticket_id=ticket_id,
-                    operator_principal=operator_identity.principal)
-                raise ValueError(
-                    "break-glass refused: ticket %r is bound to a different "
-                    "operator principal" % ticket_id)
-            unresolved = self.pending_reviews()
-            if unresolved:
-                raise ValueError(
-                    "break-glass refused: %d post-review ticket(s) unresolved "
-                    "(%s). Resolve reviews before another break-glass."
-                    % (len(unresolved),
-                       ", ".join(t["ticket_id"] for t in unresolved)))
-            operator_label = operator_identity.principal
-            record, _entry = self.decide(
-                approval_id, True,
-                "BREAK-GLASS by %s: %s" % (operator_label, reason.strip()),
-                decided_by=operator_label)
-            record["break_glass"] = True
-            record["break_glass_reason"] = reason.strip()
-            self._rewrite(lambda records: [
-                record if r["id"] == record["id"] else r for r in records])
-            # F49: single-use — consume the ticket before opening the
-            # post-review ticket, so a crash between the two cannot leave
-            # a reusable ticket behind the consumed authorization.
-            self._mark_ticket_used(ticket_id, approval_id)
+            with self._break_glass_ticket_locked():
+                ticket_entry = self._resolve_break_glass_ticket(ticket_id)
+                if ticket_entry is None:
+                    self._refuse_break_glass(
+                        approval_id,
+                        "unknown, HMAC-invalid, or already-used break-glass "
+                        "ticket %r: not provisioned before this run" % ticket_id,
+                        ticket_id=ticket_id,
+                        operator_principal=operator_identity.principal)
+                    raise ValueError(
+                        "break-glass refused: ticket %r is not a valid unused "
+                        "human-provisioned ticket for this run" % ticket_id)
+                # F54: the snapshot only proves the ticket was
+                # provisioned BEFORE the run (F49's no-mid-run-ticket
+                # rule) — it is a stale per-process copy. Single-use
+                # atomicity across forked processes needs the live
+                # store, re-read under the cross-process lock.
+                live_entry = _read_verified_ticket_store(
+                    self._ticket_store_path()).get(ticket_id)
+                if live_entry is None or live_entry.get("used"):
+                    self._refuse_break_glass(
+                        approval_id,
+                        "break-glass ticket %r was already consumed by "
+                        "another process (single-use; F54 cross-process "
+                        "check on the live ticket store)" % ticket_id,
+                        ticket_id=ticket_id,
+                        operator_principal=operator_identity.principal)
+                    raise ValueError(
+                        "break-glass refused: ticket %r already used "
+                        "(single-use)" % ticket_id)
+                if operator_identity.principal != ticket_entry["operator_principal"]:
+                    self._refuse_break_glass(
+                        approval_id,
+                        "ticket %r is provisioned for operator principal %r, "
+                        "not %r" % (ticket_id, ticket_entry["operator_principal"],
+                                    operator_identity.principal),
+                        ticket_id=ticket_id,
+                        operator_principal=operator_identity.principal)
+                    raise ValueError(
+                        "break-glass refused: ticket %r is bound to a different "
+                        "operator principal" % ticket_id)
+                unresolved = self.pending_reviews()
+                if unresolved:
+                    raise ValueError(
+                        "break-glass refused: %d post-review ticket(s) unresolved "
+                        "(%s). Resolve reviews before another break-glass."
+                        % (len(unresolved),
+                           ", ".join(t["ticket_id"] for t in unresolved)))
+                operator_label = operator_identity.principal
+                record, _entry = self.decide(
+                    approval_id, True,
+                    "BREAK-GLASS by %s: %s" % (operator_label, reason.strip()),
+                    decided_by=operator_label)
+                record["break_glass"] = True
+                record["break_glass_reason"] = reason.strip()
+                self._rewrite(lambda records: [
+                    record if r["id"] == record["id"] else r for r in records])
+                # F49: single-use — consume the ticket before opening the
+                # post-review ticket, so a crash between the two cannot leave
+                # a reusable ticket behind the consumed authorization.
+                self._mark_ticket_used(ticket_id, approval_id)
         ticket = {
             "ticket_id": "PRV-%s" % approval_id,
             "approval_id": approval_id,
@@ -1874,6 +1947,37 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                        if s > done_seq.get(aid, 0)}
         if not interrupted:
             return []
+        # F52 (R12): the write-ahead execution_authorized markers are
+        # HMAC-bound at write time, but read_entries() never verifies
+        # the chain — a run-dir writer with no key could plant forged
+        # markers and the sweep would "reconcile" them into pending
+        # (starvation + alert fatigue). Verify the chain BEFORE
+        # trusting any marker: an unverifiable chain means at least one
+        # marker cannot be authenticated, so NO marker is reconciled —
+        # fail closed with a loud audited refusal instead of honoring
+        # possibly-forged interruptions. Measured: full-chain
+        # verification is ~73ms for 2000 entries (2026-09-21), cheap
+        # relative to a sweep, so the per-marker-only shortcut is not
+        # taken: the chain walk also binds each marker's prev_hash
+        # link, which a per-entry MAC recompute would not.
+        verdict = _verify(self.log.path)
+        if not verdict["ok"]:
+            self.log.append({
+                "event": "reconciliation_marker_invalid",
+                "run_id": self.run_id,
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "decision": "reconciliation_refused",
+                "policy_id": "execution-reconciliation",
+                "reason": ("interrupted-execution reconciliation REFUSED: "
+                           "the action-log chain does not verify (%s) — "
+                           "at least one execution_authorized marker "
+                           "cannot be authenticated, so none are "
+                           "reconciled; approved work is left as-is for "
+                           "operator review" % verdict["error"]),
+            })
+            return []
         reconciled = []
 
         def fix(records):
@@ -1976,8 +2080,31 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             timeout = APPROVAL_QUEUE_LOCK_TIMEOUT_SECS
         self.run_dir.mkdir(parents=True, exist_ok=True)
         lock_path = self._lock_path()
-        f = open(lock_path, "a", encoding="utf-8")
+        # F51 (R12): open the lock path so that ANY failure is an
+        # audited fail-closed refusal, never a bare exception. The
+        # old ``open(lock_path, "a")`` let ``IsADirectoryError`` (a
+        # directory swapped in at the lock path) escape unaudited.
         try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        except OSError as e:
+            raise QueueLockPathError(
+                "approval-queue lock path %s is not lockable (%s); "
+                "refusing to sweep — a non-file at the lock path is "
+                "fail-closed" % (lock_path, e))
+        f = os.fdopen(fd, "a", encoding="utf-8")
+        try:
+            # F51: a non-file at the lock path (directory, FIFO,
+            # socket) is fail-closed with audit, never trusted as a
+            # lock.
+            try:
+                if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                    raise QueueLockPathError(
+                        "approval-queue lock path %s is not a regular "
+                        "file; refusing to sweep" % (lock_path,))
+            except OSError as e:
+                raise QueueLockPathError(
+                    "approval-queue lock path %s cannot be inspected "
+                    "(%s); refusing to sweep" % (lock_path, e))
             deadline = time.monotonic() + timeout
             while True:
                 try:
