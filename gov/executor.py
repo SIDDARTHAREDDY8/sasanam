@@ -125,6 +125,13 @@ class ToolExecutor:
             getattr(policy, "batch_excluded_queue_reasons", None) or ())
         if hasattr(approvals, "set_batch_excluded_reasons"):
             approvals.set_batch_excluded_reasons(self._batch_excluded)
+        # F26: the approval queue's break-glass/review paths bind to
+        # executor-minted identities; install the mint verifier so the
+        # queue authenticates them against this executor's mint set (the
+        # queue is constructed before the executor, same pattern as the
+        # batch-exclusion list above).
+        if hasattr(approvals, "set_identity_verifier"):
+            approvals.set_identity_verifier(self._verify_approval_identity)
         # F22: policy-configurable audit-log size guard (fail-closed).
         log_limits = getattr(policy, "log_limits", None) or {}
         if log_limits.get("max_log_bytes") is not None:
@@ -188,6 +195,22 @@ class ToolExecutor:
             raise UnmintedIdentityError(
                 "Identity %r was not minted by this executor." % (identity,))
         return None
+
+    def _verify_approval_identity(self, identity):
+        """F26: authenticate an identity for the approval queue's
+        break-glass/review paths. Raises ``UnmintedIdentityError`` unless
+        this executor minted it for this run — so a ticket can only bind
+        to, and a review can only be resolved by, executor-authenticated
+        identities, never hand-built ``AgentIdentity`` objects or
+        caller-supplied strings (rejected earlier by the queue's
+        ``TypeError`` check)."""
+        if (identity.run_id != self.run_id or
+                (identity.agent_id, identity.role, identity.run_id,
+                 identity.principal) not in self._minted):
+            raise UnmintedIdentityError(
+                "Identity %r was not minted by this executor for run %r."
+                % (identity, self.run_id))
+        return True
 
     # -- path handling ----------------------------------------------------
 

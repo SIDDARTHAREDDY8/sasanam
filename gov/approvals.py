@@ -596,6 +596,13 @@ class ApprovalQueueRiskMixin:
         enabled is true; flood-suspect items are never auto-approved; the
         full audit record is still written (decided_by="auto-approve").
         Returns the decided record, or None when the gate does not fire.
+
+        F24 (W7-2): security-excluded items (see
+        ``_batch_blocked_reason``) can NEVER be auto-approved — the F21
+        invariant is "security items need an individual human decision",
+        and auto-approve is exactly the zero-human-decision path the
+        exclusion exists to block. Excluded items stay pending for a
+        human, like every other gate refusal here (silent None).
         """
         auto_cfg = auto_cfg or {}
         if not auto_cfg.get("enabled"):
@@ -607,6 +614,11 @@ class ApprovalQueueRiskMixin:
         cap = max(0, min(100, cap))
         record = self.get(approval_id)
         if record is None or record.get("status") != "pending":
+            return None
+        # F24: the exclusion is categorical — check it before the risk
+        # cap, so a low-risk campaign fragment (risk 20 <= cap 25) can
+        # never slip through on score alone.
+        if self._batch_blocked_reason(record) is not None:
             return None
         self.refresh_flood_flags()
         record = self.get(approval_id)
@@ -636,16 +648,24 @@ class ApprovalQueueRiskMixin:
                 if line.strip() and
                 json.loads(line).get("status") == "pending"]
 
-    def break_glass(self, approval_id, reason, operator="human-operator"):
+    def break_glass(self, approval_id, reason, operator_identity):
         """Emergency-approve a pending item with a mandatory post-review.
 
         * reason must be non-empty (the emergency justification);
         * refused while any post-review ticket is unresolved: stacked
           break-glass without review is not allowed (fail-closed);
+        * F26: the ticket binds to ``operator_identity`` — an
+          ``AgentIdentity`` minted by the executor for the caller — not
+          to a caller-supplied string. Bare strings are rejected with
+          ``TypeError``; when the queue has an executor-installed
+          identity verifier, unminted identities raise
+          ``UnregisteredPrincipalError``/``UnmintedIdentityError``.
         * creates a post-review ticket that keeps the audit status
           UNCLEAN until a different reviewer resolves it.
         Returns (record, ticket).
         """
+        operator_identity = self._authenticate_caller(
+            operator_identity, "break_glass")
         if not reason or not reason.strip():
             raise ValueError("break-glass requires a non-empty reason")
         unresolved = self.pending_reviews()
@@ -655,10 +675,11 @@ class ApprovalQueueRiskMixin:
                 "(%s). Resolve reviews before another break-glass."
                 % (len(unresolved),
                    ", ".join(t["ticket_id"] for t in unresolved)))
+        operator_label = operator_identity.principal
         record, _entry = self.decide(
             approval_id, True,
-            "BREAK-GLASS by %s: %s" % (operator, reason.strip()),
-            decided_by=operator)
+            "BREAK-GLASS by %s: %s" % (operator_label, reason.strip()),
+            decided_by=operator_label)
         record["break_glass"] = True
         record["break_glass_reason"] = reason.strip()
         self._rewrite(lambda records: [
@@ -666,7 +687,12 @@ class ApprovalQueueRiskMixin:
         ticket = {
             "ticket_id": "PRV-%s" % approval_id,
             "approval_id": approval_id,
-            "operator": operator,
+            # F26: the ticket binds to the AUTHENTICATED identity object.
+            # "operator" stays as a human-readable label (back-compat for
+            # existing ticket files); "operator_identity" is the binding
+            # the separation-of-duty check enforces.
+            "operator": operator_label,
+            "operator_identity": operator_identity.as_dict(),
             "break_glass_reason": reason.strip(),
             "tool": record.get("tool"),
             "agent_id": record.get("agent_id"),
@@ -674,6 +700,7 @@ class ApprovalQueueRiskMixin:
             "created_at": _utcnow(),
             "resolved_at": None,
             "resolved_by": None,
+            "reviewer_identity": None,
             "resolution": None,
         }
         with open(self._reviews_path(), "a", encoding="utf-8") as f:
@@ -688,7 +715,9 @@ class ApprovalQueueRiskMixin:
             "tool": record.get("tool"),
             "decision": "approved",
             "approval_id": approval_id,
-            "decided_by": operator,
+            "decided_by": operator_label,
+            # F26: the full authenticated identity rides the audit log.
+            "operator_identity": operator_identity.as_dict(),
             "reason": "BREAK-GLASS: %s (post-review ticket %s opened)"
                       % (reason.strip(), ticket["ticket_id"]),
             "post_review_ticket": ticket["ticket_id"],
@@ -697,9 +726,20 @@ class ApprovalQueueRiskMixin:
         })
         return record, ticket
 
-    def resolve_review(self, ticket_id, resolution, reviewer="human-operator"):
-        """Resolve a post-review ticket. The reviewer must differ from the
-        operator who pulled the break-glass (separation of duties)."""
+    def resolve_review(self, ticket_id, resolution, reviewer_identity):
+        """Resolve a post-review ticket.
+
+        F26: ``reviewer_identity`` must be an ``AgentIdentity`` minted by
+        the executor — bare caller-supplied strings are rejected with
+        ``TypeError``. Separation of duties binds to the AUTHENTICATED
+        objects: the reviewer's principal (from their minted identity)
+        must differ from the break-glass actor's principal (from the
+        identity object bound to the ticket at ``break_glass`` time).
+        Comparing caller-supplied name strings is not acceptable, so the
+        old ``reviewer="bob"`` alias path now fails closed.
+        """
+        reviewer_identity = self._authenticate_caller(
+            reviewer_identity, "resolve_review")
         if not resolution or not resolution.strip():
             raise ValueError("a resolution record is required")
         path = self._reviews_path()
@@ -718,13 +758,22 @@ class ApprovalQueueRiskMixin:
         if target["status"] != "pending":
             raise ValueError("ticket %s is already %s"
                              % (ticket_id, target["status"]))
-        if reviewer == target.get("operator"):
+        # F26: the bound operator identity's principal — never a
+        # caller-supplied string. Legacy tickets (pre-F26) carry only the
+        # "operator" label; the fail-closed fallback still refuses when
+        # the reviewer's authenticated principal matches that label.
+        bound = target.get("operator_identity") or {}
+        operator_principal = bound.get("principal") or target.get("operator")
+        if reviewer_identity.principal == operator_principal:
             raise ValueError(
-                "separation of duties: the break-glass operator cannot "
-                "resolve their own post-review ticket")
+                "separation of duties: the break-glass operator "
+                "(principal %r) cannot resolve their own post-review "
+                "ticket — a different authenticated principal must "
+                "review" % (operator_principal,))
         target["status"] = "resolved"
         target["resolved_at"] = _utcnow()
-        target["resolved_by"] = reviewer
+        target["resolved_by"] = reviewer_identity.principal
+        target["reviewer_identity"] = reviewer_identity.as_dict()
         target["resolution"] = resolution.strip()
         with open(path, "w", encoding="utf-8") as f:
             for t in tickets:
@@ -739,7 +788,12 @@ class ApprovalQueueRiskMixin:
             "tool": target.get("tool"),
             "decision": "resolved",
             "approval_id": target.get("approval_id"),
-            "decided_by": reviewer,
+            "decided_by": reviewer_identity.principal,
+            # F26: the full authenticated reviewer identity rides the
+            # audit log, alongside the bound operator identity already
+            # on the ticket.
+            "reviewer_identity": reviewer_identity.as_dict(),
+            "operator_identity": target.get("operator_identity"),
             "reason": "post-review %s resolved: %s"
                       % (ticket_id, resolution.strip()),
             "post_review_ticket": ticket_id,
@@ -774,6 +828,41 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # policy). ToolExecutor pushes the policy-derived list via the
         # setter below.
         self.set_batch_excluded_reasons(batch_excluded_reasons)
+        # F26: optional executor-installed identity verifier for the
+        # break-glass/review paths (see set_identity_verifier). None =
+        # isinstance check only (the CLI path: terminal-access trust
+        # root, documented).
+        self._identity_verifier = None
+
+    def set_identity_verifier(self, verifier):
+        """F26: install the executor's minted-identity check.
+
+        ``verifier(identity)`` must return truthy for identities this
+        deployment's executor minted, or raise (``TypeError`` /
+        ``UnmintedIdentityError``). ``ToolExecutor`` installs its
+        ``_verify_approval_identity`` here at construction; direct/CLI
+        queue construction leaves it None.
+        """
+        self._identity_verifier = verifier
+
+    def _authenticate_caller(self, identity, what):
+        """F26: authenticate the caller of a break-glass/review method.
+
+        Rejects anything that is not an ``AgentIdentity`` — notably the
+        old caller-supplied operator/reviewer strings (``TypeError``) —
+        and, when the executor installed a verifier, rejects identities
+        it did not mint (``UnmintedIdentityError``). Returns the
+        authenticated identity object the ticket binds to.
+        """
+        if not isinstance(identity, AgentIdentity):
+            raise TypeError(
+                "%s requires an AgentIdentity minted by the executor "
+                "(got %s); caller-supplied operator/reviewer strings "
+                "are not accepted" % (
+                    what, type(identity).__name__))
+        if self._identity_verifier is not None:
+            self._identity_verifier(identity)
+        return identity
 
     def set_batch_excluded_reasons(self, reasons):
         """F21: install the policy-derived batch-exclusion list.
@@ -1119,18 +1208,19 @@ def main(argv=None):
     p_bg.add_argument("--reason", required=True,
                       help="non-empty emergency justification")
     p_bg.add_argument("--by", default="human-operator",
-                      help="operator pulling the break-glass")
+                      help="operator principal pulling the break-glass (bound as the operator identity's principal; the CLI is the terminal-access trust root)")
 
     sub.add_parser("reviews", help="list post-review tickets")
 
     p_rr = sub.add_parser("review-resolve",
-                          help="resolve a post-review ticket (reviewer must "
-                               "differ from the break-glass operator)")
+                          help="resolve a post-review ticket (the reviewer's "
+                               "authenticated principal must differ from "
+                               "the break-glass operator's principal)")
     p_rr.add_argument("ticket", help="ticket id, e.g. PRV-<approval-id>")
     p_rr.add_argument("--resolution", required=True,
                       help="resolution record")
     p_rr.add_argument("--by", default="human-operator",
-                      help="reviewer resolving the ticket")
+                      help="reviewer principal (must differ from the break-glass operator's principal)")
 
     sub.add_parser("audit", help="clean/unclean audit status")
     sub.add_parser("floods", help="show approval-fatigue flood clusters")
@@ -1221,21 +1311,32 @@ def main(argv=None):
         return 0
 
     if args.cmd == "review-resolve":
+        # F26: the CLI is the terminal-access trust root — it binds the
+        # human's --by principal into an identity OBJECT so the ticket
+        # and audit log carry authenticated identity fields; the
+        # separation-of-duty check compares bound-object principals.
+        reviewer_ident = AgentIdentity(agent_id="cli", role="reviewer",
+                                       run_id=run_dir.name,
+                                       principal=args.by)
         try:
             ticket, entry = queue.resolve_review(
-                args.ticket, args.resolution, reviewer=args.by)
-        except ValueError as e:
+                args.ticket, args.resolution,
+                reviewer_identity=reviewer_ident)
+        except (ValueError, TypeError) as e:
             print("error: %s" % e, file=sys.stderr)
             return 1
-        print("resolved post-review ticket %s by %s (log seq %d)"
+        print("resolved post-review ticket %s by principal %s (log seq %d)"
               % (ticket["ticket_id"], args.by, entry["seq"]))
         return 0
 
     if args.cmd == "break-glass":
+        operator_ident = AgentIdentity(agent_id="cli", role="operator",
+                                       run_id=run_dir.name,
+                                       principal=args.by)
         try:
             record, ticket = queue.break_glass(args.id, args.reason,
-                                               operator=args.by)
-        except ValueError as e:
+                                               operator_identity=operator_ident)
+        except (ValueError, TypeError) as e:
             print("error: %s" % e, file=sys.stderr)
             return 1
         print("BREAK-GLASS approved %s (%s %s) by %s"

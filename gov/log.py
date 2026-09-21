@@ -27,16 +27,67 @@ checkpoint so key rotations are visible in the log.
 fail-closed.
 """
 
+import contextlib
+import fcntl
 import hashlib
 import hmac
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 GENESIS = "GENESIS"
 FORMAT_VERSION = 1
+
+# F25: how long an append waits for the log's exclusive lock before
+# failing closed. A crashed lock holder's flock is released by the
+# kernel on process death, so a timeout means a LIVE process is stuck
+# mid-append — refusing to write unlocked is the safe direction.
+APPEND_LOCK_TIMEOUT_SECS = 30
+_APPEND_LOCK_POLL_SECS = 0.02
+
+
+class AppendLockError(OSError):
+    """F25: the action-log append lock could not be acquired in time.
+
+    Fail-closed: the entry was NOT written and the caller must not treat
+    the action as logged. Raised instead of writing unlocked, which is
+    what forked the HMAC chain under concurrent writers (W7-3).
+    """
+
+
+@contextlib.contextmanager
+def _append_locked(path):
+    """Hold an exclusive flock on *path* across the critical section.
+
+    F25: serializes ``ActionLog.append`` across processes (POSIX
+    ``fcntl.flock``), so concurrent appends linearize — no two writers
+    can assign the same sequence number or fork ``prev_hash``. Waits up
+    to ``APPEND_LOCK_TIMEOUT_SECS`` for the lock, then raises
+    ``AppendLockError``: the write never happens unlocked.
+    """
+    f = open(path, "a", encoding="utf-8")
+    try:
+        deadline = time.monotonic() + APPEND_LOCK_TIMEOUT_SECS
+        while True:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except (OSError, BlockingIOError):
+                if time.monotonic() >= deadline:
+                    raise AppendLockError(
+                        "could not acquire the append lock on %s within "
+                        "%ds; refusing to write unlocked" % (path,
+                        APPEND_LOCK_TIMEOUT_SECS))
+                time.sleep(_APPEND_LOCK_POLL_SECS)
+        try:
+            yield f
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    finally:
+        f.close()
 
 # Publicly documented development key. Provides NO security; it exists so
 # the synthetic demo and test suite run with zero configuration. The first
@@ -144,12 +195,13 @@ class ActionLog:
         case O(1): any write by another process (e.g. the approval CLI)
         changes the signature and triggers exactly one rescan.
 
-        Concurrency note: same-process sequential writers are always
-        correct (each append re-stats). Two processes appending at the
-        exact same instant can interleave at the byte level — the JSONL
-        lines themselves stay intact (single write() syscalls), but a
-        deployment with truly concurrent writers should serialize
-        appends externally (flock); that is out of scope for this demo.
+        Concurrency note (F25): ``append`` holds an exclusive flock
+        across refresh + seq assignment + write + fsync, so the
+        read-modify-write above is atomic across processes — concurrent
+        writers linearize instead of forking the chain. A bare
+        ``refresh()`` from a non-append path can still observe a torn
+        read only if some writer bypasses ``append`` (none in this
+        codebase); all governed writes go through ``append``.
         """
         sig = self._file_sig()
         if sig is not None and sig == self._known_sig:
@@ -200,6 +252,8 @@ class ActionLog:
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.checkpoint_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(cp, ensure_ascii=True, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
         return cp
 
     def append(self, event):
@@ -218,50 +272,61 @@ class ActionLog:
         another writer changed the file (see ``_refresh_if_changed``).
         When the configured size guard is reached, raises
         ``LogFullError``: fail-closed, no unlogged actions.
+
+        F25: the whole append — tail refresh, seq assignment, write,
+        fsync, checkpoint — runs under an exclusive OS file lock
+        (POSIX ``fcntl.flock``), so concurrent processes linearize and
+        the HMAC chain cannot fork (W7-3). Lock acquisition failure
+        raises ``AppendLockError`` instead of writing unlocked.
         """
         if not isinstance(event, dict):
             raise TypeError("event must be a dict")
-        self._refresh_if_changed()
         key, epoch = _active_key()
-        # Build the entry (but do not commit chain state yet): the
-        # size guard is enforced on the PROJECTED byte size before
-        # anything is written or mutated, so a refusal leaves no gap
-        # in the chain.
-        new_seq = self._seq + 1
-        entry = {}
-        entry.update(event)
-        # Reserved metadata wins over anything the caller supplied.
-        entry.update({
-            "seq": new_seq,
-            "ts": _utcnow(),
-            "prev_hash": self._prev,
-            "format_version": FORMAT_VERSION,
-            "key_epoch": epoch,
-        })
-        entry["hash"] = _compute_mac(key, epoch, self._prev, _canonical(entry))
-        line = json.dumps(entry, ensure_ascii=True, default=str) + "\n"
-        if self._max_bytes is not None:
-            try:
-                size = self.path.stat().st_size
-            except OSError:
-                size = 0
-            if size + len(line.encode("utf-8")) > self._max_bytes:
-                raise LogFullError(
-                    "audit log %s would exceed its size cap (%d bytes "
-                    "projected): archive the log and start a fresh one; "
-                    "refusing to append so no action goes unlogged"
-                    % (self.path, self._max_bytes))
-        self._seq = new_seq
-        self._prev = entry["hash"]
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
+        with _append_locked(self.path) as f:
+            # Re-check the tail UNDER the lock: another process may have
+            # appended between our last stat and lock acquisition; the
+            # lock is what makes the read-modify-write atomic.
+            self._refresh_if_changed()
+            # Build the entry (but do not commit chain state yet): the
+            # size guard is enforced on the PROJECTED byte size before
+            # anything is written or mutated, so a refusal leaves no gap
+            # in the chain.
+            new_seq = self._seq + 1
+            entry = {}
+            entry.update(event)
+            # Reserved metadata wins over anything the caller supplied.
+            entry.update({
+                "seq": new_seq,
+                "ts": _utcnow(),
+                "prev_hash": self._prev,
+                "format_version": FORMAT_VERSION,
+                "key_epoch": epoch,
+            })
+            entry["hash"] = _compute_mac(key, epoch, self._prev,
+                                         _canonical(entry))
+            line = json.dumps(entry, ensure_ascii=True, default=str) + "\n"
+            if self._max_bytes is not None:
+                # True size via fstat on the locked fd (f.tell() in
+                # append mode reports the stream position, not EOF).
+                size = os.fstat(f.fileno()).st_size
+                if size + len(line.encode("utf-8")) > self._max_bytes:
+                    raise LogFullError(
+                        "audit log %s would exceed its size cap (%d bytes "
+                        "projected): archive the log and start a fresh one; "
+                        "refusing to append so no action goes unlogged"
+                        % (self.path, self._max_bytes))
+            self._seq = new_seq
+            self._prev = entry["hash"]
             f.write(line)
-        # F22: the file changed under us — record the new signature so
-        # the next append skips the rescan.
-        self._known_sig = self._file_sig()
-        # Checkpoint every entry: cheap at this scale, and it is what makes
-        # tail truncation detectable.
-        self.write_checkpoint()
+            f.flush()
+            os.fsync(f.fileno())
+            # F22: the file changed under us — record the new signature so
+            # the next append skips the rescan.
+            self._known_sig = self._file_sig()
+            # Checkpoint under the same lock: the (seq, hash) pair it
+            # anchors cannot be interleaved with another writer's.
+            self.write_checkpoint()
         return entry
 
 

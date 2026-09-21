@@ -1057,3 +1057,90 @@ Gates (2026-09-21): `tests/run_tests.py` 338/338 OK; `evals/run_evals.py`
 `SITUATION_MATRIX.md` regenerated (34 situations, 408 cells per harness).
 `evals/FINDINGS.md`: F17–F22 marked CLOSED with honest residuals.
 - NOT pushed (private repo; coordinator handles pushes).
+
+## 2026-09-21 ~21:15 UTC — TEAM ADVERSARY WAVE-7: red-team the F17–F22 closures
+
+Permanent red-team assignment: 6 briefs (F17 registry/ledger, F18
+allowlist, F21 batch exclusion, concurrent writers, break-glass
+lifecycle, adapter identity) -> 7 new situations (sit35–sit41),
+matrix 34→41 situations (816→984 cells). Deterministic scripted
+attacks only; gov/ and product code untouched.
+
+Findings (evals/FINDINGS.md, wave-7 section): W7-1 HIGH —
+utime-restored ledger rewrite evades the stat-signature cache and
+blinds the cross-run campaign detector with no HMAC key (warm-cache
+precondition met by any run with a prior ledgered call; control
+without utime restores fails closed); W7-2 MEDIUM —
+maybe_auto_approve bypasses the F21 exclusion (admin opt-in required);
+W7-3 HIGH — concurrent writers fork the action-log HMAC chain, log
+unverifiable (600/600 bytes land, zero interleaved JSON, 177–347 dup
+seqs, verify fails 4/4 trials); W7-4 LOW — break-glass review binds
+only to caller-supplied operator strings (alias self-resolve).
+
+Defense holds (no findings): sit35 mint-cap per-run economics, sit37
+allowlist malformation/lint, sit38 batch-exclusion honors for
+batch_decide/confirm_risky, sit39 byte/JSON integrity, sit40 no
+abandon-lockout + stacking refusal, sit41 adapter identity keyed on
+native action.
+
+Changes (tracked): evals/matrix.py (7 situations + expectation
+registrations), evals/run_evals.py (7 playbooks with real executions
+via tests/harness.py), SITUATION_MATRIX.md + evals/SITUATION_MATRIX.md
+regenerated, evals/FINDINGS.md appended. .w7scratch/ probe artifacts
+removed. NOT pushed (private repo; coordinator handles pushes).
+
+## 2026-09-21 — HARDENING ROUND-6: wave-7 findings W7-1..W7-4 CLOSED as F23–F26
+
+Closed all four wave-7 findings (renumbered F23–F26; W7 IDs kept as
+aliases in findings/matrix). Deterministic, $0, stdlib-only.
+
+F23 HIGH (alias W7-1) — ledger stat-cache evasion. `gov/egress_ledger.py`:
+`_real_key_available()` (real anchor = GOV_LOG_KEY; public dev key is
+not an anchor); `_sig()` now signs (st_size, st_mtime_ns, st_ctime_ns)
+per file — os.utime cannot restore ctime; `require_verified()` allows
+the O(1) cache fast path only with a real key + full signature match,
+otherwise bypasses the cache and re-reads/fully re-verifies every
+decision. Tamper -> LedgerUnverifiableError, executor refuses and
+audit-logs policy_id=ledger-unverifiable. Residuals: cache-hit trust
+assumes ctime freshness (sub-tick tamper is the theoretical
+remainder); dev-key deployments remain forgeable by design.
+
+F24 MEDIUM (alias W7-2) — excluded item auto-approval. `gov/approvals.py`:
+`maybe_auto_approve()` checks `_batch_blocked_reason()` before the
+risk cap; excluded records stay pending on all three shortcuts
+(batch_decide, confirm_risky, maybe_auto_approve). Residuals:
+explicit empty exclusion list remains documented operator authority;
+auto_approve still requires admin opt-in.
+
+F25 HIGH (alias W7-3) — concurrent ActionLog writers. `gov/log.py`:
+`append()` holds an exclusive POSIX flock across refresh + seq + HMAC
++ size guard + write + fsync + checkpoint (fsync added); timed
+acquisition (LOCK_EX|LOCK_NB, 30s); failure raises AppendLockError and
+writes nothing. Residuals: advisory locks need filesystem support;
+NFS/multi-host needs a single writer or external coordination.
+
+F26 LOW (alias W7-4) — break-glass identity binding. `gov/approvals.py`
++ `gov/executor.py`: break_glass/resolve_review require an
+AgentIdentity (strings -> TypeError); ToolExecutor installs its mint
+verifier on the queue (unminted -> UnmintedIdentityError); tickets bind
+the operator_identity object; SoD compares authenticated principals
+(alias same-principal refused, self refused, distinct resolves);
+ticket + audit log carry full identity fields; CLI --by bound into an
+identity object (documented terminal-access trust root). Residuals:
+CLI --by is terminal-asserted; pre-F26 tickets fall back to the stored
+operator label.
+
+Tests: new tests/test_hardening_r6.py — 20 tests (F23x5, F24x5, F25x2,
+F26x8). Evals: run_evals.py wave-7 probes inverted to defense
+assertions (tamper_refused, auto_approve_refused, seqs_unique +
+chain_verifies, identity-bound break-glass); matrix.py sit36/38/39/40
+rewritten as F23–F26 CLOSED; SITUATION_MATRIX.md + evals copy
+regenerated (41 situations, 492 cells).
+
+Gates (2026-09-21): `tests/run_tests.py` 358/358 OK (338 + 20 new);
+`evals/run_evals.py` 984/984 SHIP-GATE GREEN;
+`policies/default.yaml` and `gov/data/default.yaml` byte-identical
+(cmp clean); F22 perf bound intact (2000 appends, 0.17s).
+`evals/FINDINGS.md`: F23–F26 marked CLOSED with verification +
+residuals; original reproductions preserved.
+- NOT pushed (private repo; coordinator handles pushes).

@@ -49,12 +49,31 @@ or truncated ledger raises ``LedgerUnverifiableError`` instead of
 silently dropping taint — the old behavior failed open, so trimming the
 last taint mark defeated the cross-run control. The executor verifies
 the ledger at the top of every ``call()`` and refuses to proceed when
-it cannot verify. Residuals: (a) if the checkpoint sidecar AND the
-ledger are both replaced with a self-consistent forgery the verifier
-cannot tell — same trust boundary as the action log; (b) entries written
-by pre-Round-5 builds have no MAC and do not verify (fail-closed:
-start a fresh ledger); (c) fresh-principal rotation remains a deployment
-trust boundary — see ``gov/identity.py`` ``PrincipalRegistry``.
+it cannot verify.
+
+F23 (Round 6): the F17 verification fast path — a (size, mtime_ns)
+stat-signature cache — was defeated by W7-1 (rewrite at identical byte
+length + ``os.utime`` mtime restore blinds the campaign detector even
+with a real ``GOV_LOG_KEY``, because the cache short-circuits before
+any MAC check). Two closures: (a) the signature now includes
+``st_ctime_ns`` per file — ``os.utime`` cannot restore ctime (the
+kernel bumps it to "now" on every content/metadata change, including
+the utime call itself, and no userspace API sets it to the past), so
+the filed evasion deterministically misses the cache and falls through
+to full HMAC verification; (b) the cache is NEVER trusted without a
+verified integrity anchor — when only the public dev key is configured
+(``GOV_LOG_KEY`` unset) there is no anchor at all (a T6 attacker who
+read the docs knows the dev key and can forge MACs), so
+``require_verified`` bypasses the cache and re-reads + fully verifies
+on every decision. Residuals: (a) filesystems with coarse timestamp
+granularity weaken the ctime freshness argument — a rewrite inside the
+same ctime tick could still collide; (b) entries written by pre-Round-5
+builds have no MAC and do not verify (fail-closed: start a fresh
+ledger); (c) fresh-principal rotation remains a deployment trust
+boundary — see ``gov/identity.py`` ``PrincipalRegistry``; (d) under the
+dev key a re-MAC'd forgery is undetectable — the pre-existing,
+documented dev-key limitation (``gov/log.py``), not a silent cache
+trust.
 
 F20 (Round 5): ``registered_domain`` no longer uses the naive
 last-two-labels heuristic. IP literals are returned unchanged (never
@@ -199,6 +218,18 @@ def _ledger_keyring():
     return keys
 
 
+def _real_key_available():
+    """True when a real (non-dev) HMAC key is configured.
+
+    F23: the stat-signature cache is only ever trusted when a verified
+    integrity anchor exists. The public dev fallback key (see
+    ``gov/log.py``) is documented in this source tree, so a T6 attacker
+    knows it and can forge MACs with it — under the dev key there is NO
+    integrity anchor, and trusting the cache would be silent trust.
+    """
+    return bool(os.environ.get("GOV_LOG_KEY"))
+
+
 def _ledger_mac(key, key_epoch, prev_hash, canonical):
     """HMAC over one ledger entry (domain-separated from the action log)."""
     return hmac.new(
@@ -233,29 +264,31 @@ class EgressLedger:
         self.path = Path(path)
         self.checkpoint_path = Path(str(self.path) + ".checkpoints")
         self._seq, self._prev = self._tail_state()
-        self._verified_sig = None  # (size, mtime_ns) of last good verify
+        self._verified_sig = None  # (size, mtime_ns, ctime_ns) x2 of the
+        # last good verify; F23: trusted ONLY when a real HMAC key is
+        # configured (see _real_key_available) — never under the dev key.
 
     def _sig(self):
         """Stat signature of the ledger *and* its checkpoint sidecar.
 
-        The trust unit is both files: deleting or replacing the
-        sidecar without touching the data file must still invalidate
-        the verification cache.
+        F23: the signature is (size, mtime_ns, ctime_ns) per file. ctime
+        is the load-bearing component against the W7-1 evasion:
+        ``os.utime`` can restore atime/mtime, but the kernel always
+        bumps ctime to "now" on ANY content or metadata change —
+        including the utime call itself — and no userspace API can set
+        ctime to an arbitrary past value. An in-place rewrite at
+        identical byte length therefore cannot reproduce the cached
+        ctime_ns: the evasion deterministically misses the cache and
+        falls through to full HMAC verification. A cache hit still
+        means "unchanged since the last HMAC-anchored verification".
         """
-        try:
-            st = self.path.stat()
-            data = (st.st_size, st.st_mtime_ns)
-        except OSError:
-            data = None
-        try:
-            cst = self.checkpoint_path.stat()
-            sidecar = (cst.st_size, cst.st_mtime_ns)
-        except OSError:
-            sidecar = None
-        return (data, sidecar)
-
-    def _sig_valid(self):
-        return self._sig() == self._verified_sig
+        def _one(p):
+            try:
+                st = p.stat()
+            except OSError:
+                return None
+            return (st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+        return (_one(self.path), _one(self.checkpoint_path))
 
     # -- authenticated chaining (F17) ----------------------------------
 
@@ -372,14 +405,23 @@ class EgressLedger:
         raise — the caller must then treat taint as ACTIVE or refuse the
         action, never as "no taint".
 
-        Soundness: whenever the file's stat signature changed since the
-        last successful verification, the ledger is re-verified from
+        Soundness (F23): whenever the file's stat signature changed since
+        the last successful verification, the ledger is re-verified from
         genesis (O(n)) — a checkpoint alone never vouches for bytes it
         did not re-read, so same-size modifications before the newest
-        checkpoint cannot slip through. Unchanged files skip the
-        re-read (O(1) stat). An attacker who can rewrite bytes AND
-        restore the exact mtime_ns evades the cache; that is the
-        documented residual of any mtime-based check.
+        checkpoint cannot slip through. The signature now includes
+        ``st_ctime_ns`` per file, which ``os.utime`` cannot restore, so
+        the W7-1 rewrite+utime evasion deterministically misses the
+        cache. And the cache is NEVER trusted without a verified
+        integrity anchor: when no real HMAC key is configured
+        (``GOV_LOG_KEY`` unset — only the public dev key, which a T6
+        attacker knows), the cache is bypassed entirely and the ledger
+        is re-read and fully verified on every decision. No
+        silent-trust path remains: under a real key a cache hit means
+        "no status change since the last HMAC-anchored verification"
+        (ctime freshness); under the dev key every decision re-verifies
+        the bytes (the remaining dev-key forgery residual is the
+        documented dev-key limitation, not a silent trust).
         """
         if not self.path.exists():
             return
@@ -387,7 +429,10 @@ class EgressLedger:
         if sig[0] is None:
             raise LedgerUnverifiableError("cannot stat ledger: %s"
                                           % (self.path,))
-        if sig == self._verified_sig:
+        # F23: the O(1) cache fast path is allowed ONLY with a real key.
+        # Under the dev key there is no integrity anchor, so the cache
+        # is bypassed and the file is re-read + fully verified below.
+        if _real_key_available() and sig == self._verified_sig:
             return
         if not self._verify_full(_ledger_keyring()):
             raise LedgerUnverifiableError(
