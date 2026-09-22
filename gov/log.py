@@ -732,6 +732,22 @@ def verify_chain(path):
 
 _TIP_CACHE_SUFFIX = ".tip.json"
 
+# R17 (F70): bound the incremental tip path's silent window. A
+# length-preserving edit of already-verified (pre-tip) bytes is
+# invisible to the O(new-bytes) incremental walk by construction, so
+# instead of pretending to close that window the tip path forces a
+# full verify_chain() at least every N refused sweeps: the tip cache
+# carries ``full_in`` (refused sweeps remaining before a forced full
+# verification), decremented once per refused sweep on both the
+# tip-path branch (here, in verify_chain_tip) and the healthy-state
+# branch (executor._r17_forced_full_verify). Any pre-tip tamper is
+# therefore detected loudly within at most N refused sweeps; the
+# Nth sweep pays O(n) and steady-state sweeps stay O(new), so the
+# amortized cost is O(1) per sweep. N=8: tight enough that the silent
+# window is small, large enough that the periodic full verify is
+# noise against real sweep cadences.
+TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS = 8
+
 
 def _tip_cache_path(path):
     return Path(str(path) + _TIP_CACHE_SUFFIX)
@@ -755,6 +771,12 @@ def _tip_body(tip):
     tip time: the tip line starts at ``tip_off`` and the file ended at
     ``end_off``. They are authenticated so a run-dir writer cannot
     make the sweep read a different window than the verified one.
+
+    ``full_in`` (R17/F70) is the refused-sweep countdown to the next
+    forced full verification: it is decremented once per refused
+    sweep and the sweep that reads ``full_in <= 1`` forces a full
+    verify_chain() instead of trusting the tip. Authenticated like
+    every other field, so the writer cannot extend the silent window.
     """
     return {
         "seq": tip["seq"],
@@ -766,6 +788,7 @@ def _tip_body(tip):
         "cp_newest": tip["cp_newest"],
         "tip_off": tip["tip_off"],
         "end_off": tip["end_off"],
+        "full_in": tip["full_in"],
     }
 
 
@@ -795,6 +818,7 @@ def _read_tip_cache(path):
             "cp_newest": raw["cp_newest"],
             "tip_off": int(raw["tip_off"]),
             "end_off": int(raw["end_off"]),
+            "full_in": int(raw["full_in"]),
             "mac": raw["mac"],
         }
     except (KeyError, TypeError, ValueError):
@@ -825,6 +849,14 @@ def _read_tip_cache(path):
     if tip["seq"] < 0:
         return None
     if tip["tip_off"] < 0 or tip["end_off"] < tip["tip_off"]:
+        return None
+    if tip["full_in"] < 1 or tip["full_in"] > TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS:
+        # The countdown is MAC-covered and must always be a live
+        # positive budget: 1 means "due now", N the freshly seeded
+        # maximum. Zero/negative/over-large values are corrupt (a
+        # run-dir writer cannot forge them without breaking the MAC,
+        # but a torn write can) -- reject the tip and degrade to full
+        # verification rather than trusting a dead countdown.
         return None
     key, active_epoch = _active_key()
     if tip["key_epoch"] != active_epoch:
@@ -870,12 +902,24 @@ def _parse_checkpoint_newest(cps):
 def verify_chain_tip(path, flags=()):
     """Incrementally verify the chain from the cached tip.
 
-    Returns ``{"ok": True, "entries": n, "refusals": {flag: ts|None}}``
-    when the new segment (entries after the cached tip) fully verifies
-    -- the same per-entry checks as :func:`_verify` (seq continuity,
-    format_version, prev_hash links, key_epoch binding, MACs) plus the
-    checkpoint tail-truncation anchor -- and rewrites the tip cache to
-    the new tail.
+    Returns ``{"ok": True, "entries": n, "refusals": {flag: ts|None},
+    "full_verify_due": bool}`` when the new segment (entries after the
+    cached tip) fully verifies -- the same per-entry checks as
+    :func:`_verify` (seq continuity, format_version, prev_hash links,
+    key_epoch binding, MACs) plus the checkpoint tail-truncation
+    anchor -- and rewrites the tip cache to the new tail.
+
+    R17 (F70): ``full_verify_due`` is True when this sweep consumed
+    the tip's forced-verification countdown (``full_in <= 1`` at
+    entry). The caller MUST then run a full verify_chain() instead of
+    trusting this verdict: the incremental walk cannot see
+    length-preserving edits of already-verified prefix bytes, so the
+    silent window is bounded at TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS
+    refused sweeps rather than closed. The countdown ticks down on
+    every successful incremental verify but never below 1 (a crash
+    between the tick and the forced verify leaves the next sweep due
+    again); it is reseeded to N by write_chain_tip_from_tail after
+    each full verification.
 
     Per-sweep cost: the action-log read is O(new bytes) via the tip's
     MAC-authenticated byte offsets (seek to the tip line, read only
@@ -905,6 +949,12 @@ def verify_chain_tip(path, flags=()):
     seq = tip["seq"]
     tip_off = tip["tip_off"]
     end_off = tip["end_off"]
+    # R17 (F70): this refused sweep consumes one countdown step. When
+    # the countdown is exhausted the caller must force a full
+    # verify_chain() -- the incremental walk is blind to
+    # length-preserving pre-tip edits, so the silent window is
+    # bounded, not closed.
+    full_verify_due = tip["full_in"] <= 1
 
     # Byte-window read: the log bytes are O(new) per sweep, not
     # O(log size). The tip's offsets are MAC-authenticated, so a
@@ -1069,7 +1119,10 @@ def verify_chain_tip(path, flags=()):
     # Advance the tip to the new tail (best-effort: a failed write only
     # costs the next sweep a longer segment, never safety). The byte
     # offsets make the next sweep's read O(new bytes): the tip line
-    # starts at tip_off and the file ended at end_off.
+    # starts at tip_off and the file ended at end_off. The R17 forced-
+    # verification countdown ticks once per refused sweep here; the
+    # healthy-state branch ticks it in executor._r17_forced_full_verify
+    # (each refused sweep takes exactly one of the two branches).
     all_cp = cp_bytes if cp_bytes is not None else b""
     if count == 0:
         new_tip_off = 0
@@ -1102,12 +1155,20 @@ def verify_chain_tip(path, flags=()):
         "cp_newest": new_cp_newest,
         "tip_off": new_tip_off,
         "end_off": new_end_off,
+        # R17 (F70): tick the forced-verification countdown, but never
+        # below 1: the sweep that reads full_in <= 1 forces a full
+        # verification, and retaining 1 (rather than decaying to 0)
+        # means a crash between the tick and the forced verify leaves
+        # the NEXT sweep due again -- the bound degrades to "at most N
+        # sweeps late", never to "silently skipped".
+        "full_in": max(tip["full_in"] - 1, 1),
     }
     try:
         _write_tip_cache(path, new_tip)
     except OSError:
         pass
-    return {"ok": True, "entries": count, "refusals": refusals}
+    return {"ok": True, "entries": count, "refusals": refusals,
+            "full_verify_due": full_verify_due}
 
 
 def newest_refusal_ts_per_flag(path, flags):
@@ -1177,6 +1238,9 @@ def write_chain_tip_from_tail(path, refusals):
     then writes the MAC'd tip. Raises OSError on I/O failure (callers
     treat seeding as best-effort). Must only be called when the chain
     has JUST fully verified -- the tip vouches the whole prefix.
+
+    R17 (F70): the seed (re)starts the forced-verification countdown
+    at TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS refused sweeps.
     """
     key, epoch = _active_key()
     p = Path(path)
@@ -1207,6 +1271,7 @@ def write_chain_tip_from_tail(path, refusals):
                       if newest is not None else None),
         "tip_off": tip_off,
         "end_off": end_off,
+        "full_in": TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS,
     }
     _write_tip_cache(path, new_tip)
 

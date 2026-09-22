@@ -34,6 +34,7 @@ from evals.w16_probes import register_w16  # noqa: E402
 from evals.r15_probes import register_r15  # noqa: E402
 from evals.w17_probes import register_w17  # noqa: E402
 from evals.r16_probes import register_r16  # noqa: E402
+from evals.w18_probes import register_w18  # noqa: E402
 from evals.w15_probes import register_w15  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
@@ -2559,6 +2560,10 @@ register_w17(PLAYBOOKS, _w7_playbook)
 # evals/r16_probes.py. evals/w17_probes.py stays UNCHANGED as the
 # historical record.
 register_r16(PLAYBOOKS, _w7_playbook)
+
+# Wave-18 probes: sit111-sit117 are new situations (no overrides of
+# earlier waves); see evals/w18_probes.py.
+register_w18(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

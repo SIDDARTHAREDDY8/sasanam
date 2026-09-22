@@ -93,9 +93,11 @@ from .identity import (
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
 )
-from .log import (newest_refusal_ts_per_flag, read_entries,
-                   refusal_ts_within_window, verify_chain,
-                   verify_chain_tip, write_chain_tip_from_tail)
+from .log import (TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS,
+                   _read_tip_cache, _verify, _write_tip_cache,
+                   newest_refusal_ts_per_flag, read_entries,
+                   refusal_ts_within_window, verify_chain_tip,
+                   write_chain_tip_from_tail)
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
@@ -304,6 +306,12 @@ class ToolExecutor:
         # next audited entry.
         self._lock_refusal_last_audit = 0.0
         self._lock_refusal_suppressed = 0
+        # R17 (F70): side channel for _log_shows_recent_lock_refusal —
+        # when its full chain verification (forced or fallback) finds
+        # the chain BROKEN, the error string lands here (else None) so
+        # the caller can audit the tamper loudly with attribution
+        # instead of folding it into the normal refusal audit.
+        self._r17_tip_forced_error = None
         self._tainted = False  # True once tool output entered this run
         self._taint_sources = []
         self._read_contents = []  # fingerprints of executed read results
@@ -1700,13 +1708,18 @@ class ToolExecutor:
         can corrupt the sidecar state file — so a recent entry is a
         trustworthy "already audited" signal for the F60 fallback.
 
-        F60-followup (R15): suppression now requires the log to FULLY
-        verify (``verify_chain`` ok). The R14 honest residual was real:
-        a run-dir writer could PLANT a MAC-invalid
-        ``approval_sweep_refused`` line and corrupt the state file to
-        suppress the re-audit. Now a planted line — or any broken,
-        invalid, or otherwise unverifiable chain — falls back to LOUD
-        re-audit (return False here), never silent suppression. The
+        F60-followup (R15): suppression now requires the log to verify
+        (tolerant ``_verify`` with ``_skip_malformed=True``). The R14
+        honest residual was real: a run-dir writer could PLANT a
+        MAC-invalid ``approval_sweep_refused`` line and corrupt the
+        state file to suppress the re-audit. Now a planted line -- or
+        any tampered, broken, or otherwise unverifiable chain -- falls
+        back to LOUD re-audit (return False here), never silent
+        suppression. Malformed physical lines (non-JSON) are SKIPPED
+        per the R14 poisoned-log rule: they cannot serve as
+        suppression signals (they are not valid entries), so a merely
+        corrupt line does not re-audit every sweep -- while a planted
+        MAC-invalid line is valid JSON and still fails closed. The
         sweep still refuses fail-closed either way.
 
         F69 (R16): the full verification above is O(log size) per
@@ -1721,12 +1734,28 @@ class ToolExecutor:
         After a full verification the tip is reseeded so the next
         sweep is incremental again.
 
+        R17 (F70): the incremental walk is blind to length-preserving
+        edits of already-verified prefix bytes, so its silent window
+        is BOUNDED, not closed: the tip carries a countdown
+        (``full_in``) and every
+        TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS-th refused sweep forces
+        a full ``verify_chain()`` instead of trusting the tip verdict
+        (``full_verify_due``). A pre-tip tamper is therefore detected
+        loudly within at most N refused sweeps; the Nth sweep pays
+        O(n), steady-state sweeps stay O(new). The suppression
+        decision still reads only verified data — on the forced sweep
+        the full verification runs BEFORE any refusal timestamp is
+        trusted.
+
         Malformed lines are skipped (F63); entries with unparseable or
         missing timestamps count as no-recent (fail-loud: at most one
         extra audit entry). Future-dated entries never suppress — only
         genuinely recent ones do.
         """
         window = self._LOCK_REFUSAL_AUDIT_COALESCE_SECS
+        # R17 (F70): reset the tamper side channel on every call — the
+        # caller reads it only when this method returns False.
+        self._r17_tip_forced_error = None
         # F69 (R16): cheap path first -- verify only the entries since
         # the cached chain tip. verify_chain_tip() returns None for
         # every shape the tip cannot vouch for (missing/corrupt tip,
@@ -1737,16 +1766,34 @@ class ToolExecutor:
                 self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
         except OSError:
             return False
-        if tip_verdict is not None:
+        if tip_verdict is not None and not tip_verdict.get(
+                "full_verify_due"):
             return refusal_ts_within_window(
                 tip_verdict["refusals"].get(flag), window)
+        # R17 (F70): tip_verdict is None (tip unusable) OR the forced-
+        # verification countdown is exhausted (full_verify_due): fall
+        # through to the full verification below. A pre-tip tamper
+        # the incremental walk cannot see goes loud here, at most N
+        # refused sweeps after it was planted. A FAILED full
+        # verification records the error on the R17 side channel so the
+        # caller audits the tamper loudly with attribution (fail-loud,
+        # never folded into the normal refusal coalescing).
+        #
+        # F63/R14: TOLERANT verification -- malformed physical lines
+        # (non-JSON / non-object) are skipped, not failed. A malformed
+        # line cannot serve as a suppression signal (it is not a valid
+        # entry), so skipping it does not weaken the F60 guarantee;
+        # failing on it would re-audit every sweep for a merely corrupt
+        # line (the R14 poisoned-log shape). A planted MAC-invalid line
+        # is valid JSON and still fails closed here.
         try:
-            ok, _broken_seq, _n = verify_chain(self.log.path)
+            verdict = _verify(self.log.path, _skip_malformed=True)
         except OSError:
             return False
-        if not ok:
-            # Broken/unverifiable chain: the "already audited" signal is
-            # untrustworthy. Fail LOUD — audit once more.
+        if not verdict["ok"]:
+            self._r17_tip_forced_error = (
+                "chain does not verify (broken_seq=%r)"
+                % (verdict.get("broken_seq"),))
             return False
         refusals = newest_refusal_ts_per_flag(
             self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
@@ -1800,10 +1847,58 @@ class ToolExecutor:
                         self._lock_refusal_last_audit = now
                         self._lock_refusal_suppressed = 0
                         return False
+                    # R17 (F70): the full verification inside
+                    # _log_shows_recent_lock_refusal found the chain
+                    # BROKEN (forced periodic check or fallback). Audit
+                    # LOUD with tamper attribution, bypassing the
+                    # normal coalescing below: a broken chain must
+                    # never be folded silently, and every sweep while
+                    # it stays broken must stay loud.
+                    if self._r17_tip_forced_error is not None:
+                        self._audit_lock_refusal_write(
+                            flag,
+                            "execute_approved() refused: forced periodic "
+                            "full chain verification FAILED (%s) -- "
+                            "pre-tip tamper suspected; %s"
+                            % (self._r17_tip_forced_error, reason),
+                            0)
+                        self._lock_refusal_last_audit = now
+                        self._lock_refusal_suppressed = 0
+                        return True
                     rec = {"last_audit": 0.0, "suppressed": 0}
                 else:
                     rec = state.get(flag) or {"last_audit": 0.0,
                                               "suppressed": 0}
+                    # R17 (F70): bound the incremental path's silent
+                    # window even when the coalesce state is healthy.
+                    # The unusable branch above ticks the countdown
+                    # inside verify_chain_tip(); this branch never calls
+                    # it, so the countdown is checked and ticked here
+                    # instead -- every refused sweep takes exactly one
+                    # of the two branches. A forced full verification
+                    # that FAILS bypasses the time-based suppression
+                    # below and audits LOUD: a broken chain must never
+                    # be folded silently.
+                    forced = self._r17_forced_full_verify()
+                    if forced is False:
+                        self._audit_lock_refusal_write(
+                            flag,
+                            "execute_approved() refused: forced periodic "
+                            "full chain verification FAILED (%s) -- "
+                            "pre-tip tamper suspected; %s"
+                            % (self._r17_last_forced_error, reason),
+                            rec.get("suppressed", 0))
+                        rec["last_audit"] = now
+                        rec["suppressed"] = 0
+                        state[flag] = rec
+                        try:
+                            self._write_lock_refusal_state(
+                                state_path, state)
+                        except OSError:
+                            pass
+                        self._lock_refusal_last_audit = now
+                        self._lock_refusal_suppressed = 0
+                        return True
                 if (now - rec["last_audit"]
                         < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
                     rec["suppressed"] += 1
@@ -1825,21 +1920,84 @@ class ToolExecutor:
                 # (lock order here is always state-lock -> log-lock, and
                 # no path takes them in the reverse order), so two
                 # racing processes cannot both decide to audit.
-                self.log.append({
-                    "event": "approval_sweep_refused",
-                    "run_id": self.run_id,
-                    "decision": "refused",
-                    "policy_id": "approval-execution-refused",
-                    "flag": flag,
-                    "reason": reason,
-                    "suppressed_repeats": suppressed_total,
-                    "refusal_storm":
-                        suppressed_total >= self._LOCK_REFUSAL_STORM_THRESHOLD,
-                })
+                self._audit_lock_refusal_write(
+                    flag, reason, suppressed_total)
                 audited = True
             finally:
                 fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
         return audited
+
+    def _audit_lock_refusal_write(self, flag, reason, suppressed_total):
+        """Append one ``approval_sweep_refused`` audit entry.
+
+        Extracted (R17) so the forced-verification loud path reuses
+        the exact same entry shape. Callers hold the state-file lock.
+        """
+        self.log.append({
+            "event": "approval_sweep_refused",
+            "run_id": self.run_id,
+            "decision": "refused",
+            "policy_id": "approval-execution-refused",
+            "flag": flag,
+            "reason": reason,
+            "suppressed_repeats": suppressed_total,
+            "refusal_storm":
+                suppressed_total >= self._LOCK_REFUSAL_STORM_THRESHOLD,
+        })
+
+    def _r17_forced_full_verify(self):
+        """R17 (F70): force a full chain verification every N refused
+        sweeps on the healthy-state branch.
+
+        Returns True when a forced full verification ran and the chain
+        verified (the tip is reseeded, countdown restarted); False
+        when the forced verification found the chain BROKEN (the
+        caller must audit loud, bypassing suppression);
+        None when no forced verification was due (the countdown was
+        ticked best-effort instead).
+
+        A missing/corrupt tip counts as due: without a trustworthy
+        countdown the silent window cannot be bounded, so the safe
+        direction is to verify fully (this mirrors R16's missing-tip
+        -> full-verify rule). Never raises: I/O failures degrade to
+        the loud (False) outcome, never to silent trust.
+        """
+        self._r17_last_forced_error = None
+        try:
+            tip = _read_tip_cache(self.log.path)
+        except OSError:
+            tip = None
+        if tip is not None and tip.get("full_in", 1) > 1:
+            # Not due: tick the countdown best-effort. A failed tick
+            # only delays the forced verification; the next sweep
+            # through either branch re-reads the tip.
+            try:
+                tip["full_in"] = tip["full_in"] - 1
+                _write_tip_cache(self.log.path, tip)
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+            return None
+        try:
+            # F63/R14: TOLERANT verification (malformed physical lines
+            # skipped, not failed) -- a malformed line cannot serve as a
+            # suppression signal, and a planted MAC-invalid line is valid
+            # JSON so it still fails closed here.
+            verdict = _verify(self.log.path, _skip_malformed=True)
+        except OSError as e:
+            self._r17_last_forced_error = "log unreadable: %s" % e
+            return False
+        if not verdict["ok"]:
+            self._r17_last_forced_error = (
+                "chain does not verify (broken_seq=%r)"
+                % (verdict.get("broken_seq"),))
+            return False
+        refusals = newest_refusal_ts_per_flag(
+            self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
+        try:
+            write_chain_tip_from_tail(self.log.path, refusals)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return True
 
     def _audit_lock_refusal_local(self, flag, reason, now):
         """Pre-R13 per-instance coalescing (F56 fallback only)."""

@@ -6,10 +6,10 @@ Regenerate: `python3 evals/generate_matrix_md.py`. Verify: `python3 evals/run_ev
 
 ## Axes
 
-- **Situations:** 110 (sit1, sit10, sit100, sit101, sit102, sit103, sit104, sit105, sit106, sit107, sit108, sit109, sit11, sit110, sit12, sit13, sit14, sit15, sit16, sit17, sit18, sit19, sit2, sit20, sit21, sit22, sit23, sit24, sit25, sit26, sit27, sit28, sit29, sit3, sit30, sit31, sit32, sit33, sit34, sit35, sit36, sit37, sit38, sit39, sit4, sit40, sit41, sit42, sit43, sit44, sit45, sit46, sit47, sit48, sit49, sit5, sit50, sit51, sit52, sit53, sit54, sit55, sit56, sit57, sit58, sit59, sit6, sit60, sit61, sit62, sit63, sit64, sit65, sit66, sit67, sit68, sit69, sit7, sit70, sit71, sit72, sit73, sit74, sit75, sit76, sit77, sit78, sit79, sit8, sit80, sit81, sit82, sit83, sit84, sit85, sit86, sit87, sit88, sit89, sit9, sit90, sit91, sit92, sit93, sit94, sit95, sit96, sit97, sit98, sit99)
+- **Situations:** 117 (sit1, sit10, sit100, sit101, sit102, sit103, sit104, sit105, sit106, sit107, sit108, sit109, sit11, sit110, sit111, sit112, sit113, sit114, sit115, sit116, sit117, sit12, sit13, sit14, sit15, sit16, sit17, sit18, sit19, sit2, sit20, sit21, sit22, sit23, sit24, sit25, sit26, sit27, sit28, sit29, sit3, sit30, sit31, sit32, sit33, sit34, sit35, sit36, sit37, sit38, sit39, sit4, sit40, sit41, sit42, sit43, sit44, sit45, sit46, sit47, sit48, sit49, sit5, sit50, sit51, sit52, sit53, sit54, sit55, sit56, sit57, sit58, sit59, sit6, sit60, sit61, sit62, sit63, sit64, sit65, sit66, sit67, sit68, sit69, sit7, sit70, sit71, sit72, sit73, sit74, sit75, sit76, sit77, sit78, sit79, sit8, sit80, sit81, sit82, sit83, sit84, sit85, sit86, sit87, sit88, sit89, sit9, sit90, sit91, sit92, sit93, sit94, sit95, sit96, sit97, sit98, sit99)
 - **Adapters (provisional shims):** decorator, langchain, mcp, openai-loop
 - **Privilege levels:** low (role `scout`), standard (role `support`), elevated (role `researcher`)
-- **Cells:** 1320 (every situation x adapter x privilege)
+- **Cells:** 1404 (every situation x adapter x privilege)
 
 ## Verdicts
 
@@ -295,6 +295,140 @@ Every verdict below is asserted by executing real code in `evals/run_evals.py`. 
 | privilege | decorator | langchain | mcp | openai-loop |
 |---|---|---|---|---|
 | low (`scout`) | **allowed-with-audit** — RESULT computed from verdicts; no hard-coded literal; demo run prints the computed line; large body surface... *(all adapters)* | **allowed-with-audit** — RESULT computed from verdicts; no hard-coded literal; demo run prints the computed line; large body surface... *(all adapters)* | **allowed-with-audit** — RESULT computed from verdicts; no hard-coded literal; demo run prints the computed line; large body surface... *(all adapters)* | **allowed-with-audit** — RESULT computed from verdicts; no hard-coded literal; demo run prints the computed line; large body surface... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit111 — Wave-18 brief 1 -- tip-cache trust surface: the MAC-authenticated chain-tip cache resists MAC-less mutation, valid-MAC replay to an earlier genuine line, log shrinkage, post-tip truncation, key rotation, and cross-run tip transplantation under the same process key (no finding)
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 1, measured 2026-09-22: mutating cached seq/offsets without the key invalidates the cache MAC -- _read_tip_cache() rejects it and incremental verification returns None (full-verify fallback). A valid-MAC cache deliberately pointed at an EARLIER genuine tip line is still rejected by verify_chain_tip() through tip-line revalidation (stored hash, tip line's recomputed MAC, offsets must all agree) -- the cache is never trusted blindly.
+- Shrinking the log below the cached end_off returns None; full verification fails loudly on the shrunk log. Truncating 100 post-tip entries while retaining the checkpoint sidecar returns None from the incremental walk and full verification fails loudly. Rotating GOV_LOG_KEY/epoch rejects the old tip and full verification fails closed on the old-epoch log -- no cross-epoch tip confusion.
+- A tip copied from another run directory under the same process key passes the cache-MAC check but the target log's tip-line reauthentication rejects it (the tip line in the target log does not match); the target log itself still fully verifies. No finding: every bypass shape tested ends fail-loud.
+
+**Situation:** The chain-tip cache's trust surface was attacked six ways and held every time. The MAC is domain-separated and keyed, so field mutation without the key is rejected; replay of a valid-MAC earlier tip is rejected by tip-line revalidation (the cache fields are re-checked against the actual log line); shrinkage and post-tip truncation both return None and fail loudly on full verify; key rotation orphans old tips; and a cross-run tip under the same process key fails tip-line reauthentication in the target log. No finding.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — All six tip-cache attack shapes fail loud: invalid MAC rejected; valid-MAC replay to an earlier line reject... *(all adapters)* | **allowed-with-audit** — All six tip-cache attack shapes fail loud: invalid MAC rejected; valid-MAC replay to an earlier line reject... *(all adapters)* | **allowed-with-audit** — All six tip-cache attack shapes fail loud: invalid MAC rejected; valid-MAC replay to an earlier line reject... *(all adapters)* | **allowed-with-audit** — All six tip-cache attack shapes fail loud: invalid MAC rejected; valid-MAC replay to an earlier line reject... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit112 — Wave-18 brief 2 -- incremental soundness: a length-changing pre-tip edit trips tip-line re-authentication and fails loud; a length-preserving pre-tip edit that keeps the stored hash string passes every warm incremental walk (20/20) and is caught only by a full verification; FINDING F70 (MEDIUM) -- a run-dir writer can silently hide a genuine pre-tip interrupted-execution marker indefinitely
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 2, measured 2026-09-22: a length-CHANGING edit to a pre-tip entry (seq 50, 200-entry log) shifts byte offsets, so verify_chain_tip() returns None (tip-line re-auth fails) and full verify_chain() fails loud at sequence 50. A length-PRESERVING edit to the same entry that keeps the stored hash string passed 20/20 warm incremental walks -- the incremental verifier is fundamentally O(new-bytes) and cannot see it; only a full verification (cache invalidation/deletion/corruption, key rotation, offset-shifting modification, or another tip-invalidating event) catches it, loudly, at sequence 50.
+- The cached refusal timestamps are MAC-sealed, so the pre-tip tamper cannot alter the F60 suppression decision -- it reads only verified data.
+- F70 sharp edge, measured 2026-09-22: a genuine pre-tip 'execution_authorized' marker for aid-9 was length-preservingly rewritten to another decision string. _reconcile_interrupted_executions() returned [] -- the interrupted execution was silently missed -- verify_chain_tip() still reported success, and only full verification caught sequence 1. FINDING F70 (MEDIUM): the detection window is effectively indefinite across warm sweeps, defeating the F45 interrupted-execution recovery until a full verification occurs. Same trust class as F52 (run-dir writer).
+
+**Situation:** The incremental verifier's blindness to length-preserving prefix edits is fundamental to any O(new-bytes) verifier, but one shape is weaponizable: a run-dir writer can rewrite a genuine pre-tip 'execution_authorized' marker to another decision string without changing bytes length, and the interrupted-execution recovery silently skips it -- the incremental walk keeps reporting success (20/20 warm walks passed) until a full verification is triggered. The F60 suppression decision itself is unaffected (cached refusal timestamps are MAC-sealed and read only verified data). Length-changing pre-tip edits are caught immediately by tip-line re-authentication and fail loud. FINDING F70 (MEDIUM) filed for the silent recovery defeat.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Length-changing pre-tip tamper trips tip-line re-auth and fails loud at the edited sequence; length-preserv... *(all adapters)* | **allowed-with-audit** — Length-changing pre-tip tamper trips tip-line re-auth and fails loud at the edited sequence; length-preserv... *(all adapters)* | **allowed-with-audit** — Length-changing pre-tip tamper trips tip-line re-auth and fails loud at the edited sequence; length-preserv... *(all adapters)* | **allowed-with-audit** — Length-changing pre-tip tamper trips tip-line re-auth and fails loud at the edited sequence; length-preserv... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit113 — Wave-18 brief 3 -- reconcile rerouting: a forged 'execution_authorized' marker forces the conditional full _verify on every reconciliation sweep, rerouting the F69 CPU amplifier through the documented F52 residual and growing the log ~753-830 bytes per sweep; FINDING F71 (LOW)
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 3, measured 2026-09-22: with the queue lock held (the F51 disturbance shape) and the coalesce sidecar re-corrupted before each sweep (the F69 sustained-attack shape), a refused sweep now takes the R16 incremental tip path: 12.2ms warm at 20k entries vs 666ms cold (full verify) -- the F69 fix's intended contrast.
+- A forged 'execution_authorized' marker (bogus approval_id, fresh seq, planted by the F52 run-dir writer at the log tail) forces _reconcile_interrupted_executions() to run the conditional FULL _verify on every legitimate sweep: worst 386-580ms per sweep at 20k entries (3 sweeps), while the reconciliation finds nothing and the sweep still refuses fail-closed. Each forced sweep also appends one 'reconciliation_marker_invalid' entry (~753-830 bytes), so the attack reroutes the F69 amplifier through the documented F52 residual and adds unbounded loud audit growth. FINDING F71 (LOW): fail-closed and loud, but O(n) CPU plus per-sweep log growth on every legitimate sweep -- a weaker rerouting of F69, not a new attack class.
+
+**Situation:** The F69 fix works as intended for the pure sidecar-corruption shape (12.2ms warm vs 666ms cold at 20k), but a run-dir writer can reroute the same CPU amplifier through the documented F52 residual: one forged 'execution_authorized' marker at the log tail forces the reconcile path's conditional full _verify on every legitimate sweep (386-580ms at 20k, O(n)), and each forced sweep appends a loud 'reconciliation_marker_invalid' entry (~753-830 bytes), growing the log without bound. The sweep still refuses fail-closed, so this is an availability residual -- FINDING F71 (LOW).
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Warm tip-path refused sweep at 20k stays far under the 150ms bound (measured ~12ms); the forged reconcile m... *(all adapters)* | **allowed-with-audit** — Warm tip-path refused sweep at 20k stays far under the 150ms bound (measured ~12ms); the forged reconcile m... *(all adapters)* | **allowed-with-audit** — Warm tip-path refused sweep at 20k stays far under the 150ms bound (measured ~12ms); the forged reconcile m... *(all adapters)* | **allowed-with-audit** — Warm tip-path refused sweep at 20k stays far under the 150ms bound (measured ~12ms); the forged reconcile m... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit114 — Wave-18 brief 4 -- tip-seed race: concurrent writers share a fixed temp-file pathname for tip seeding; torn/invalid caches are rejected (fail-loud, self-healing) and no forged or incorrect tip was ever accepted -- the literal 'last-writer-wins' claim is contradicted, but operation is safe (no finding)
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 4, measured 2026-09-22: two threads appending to the same log and calling write_chain_tip_from_tail() concurrently share one fixed '.tmp' pathname (no per-process/per-thread uniqueness). A 60-thread hammer interleaved writer and reader threads: exploratory runs observed torn JSON reads (a reader catching a half-written temp file) and writer FileNotFoundError/OSError events (rename racing unlink), with os.replace still delivering an atomic last rename.
+- A deterministic interleaving confirmed the mechanism: a writer holding the temp-file descriptor keeps writing after another thread renames the path into the live cache, producing torn live-cache bytes.
+- Honest measured outcome: no reader crash; writer errors are only OSError/FileNotFoundError; EVERY tip accepted by _read_tip_cache() across the hammer (hundreds of accepts) was byte-identical to a genuine tip written by a real seeding call; torn/invalid caches are rejected and trigger the full-verify fallback. The final cache is valid and a final incremental walk succeeds. No forged or incorrect tip was accepted in any run -- the race degrades to fail-loud + self-healing, so the brief's literal 'last-writer-wins' claim is contradicted on the evidence. No finding.
+
+**Situation:** Concurrent tip writers genuinely race on a shared fixed temp-file pathname (observed: torn JSON reads, writer FileNotFoundError events), and a deterministic interleaving shows torn live-cache bytes are mechanically possible. But the cache is MAC-authenticated and field-revalidated, so every torn or invalid cache is rejected -- hundreds of accepted tips across the hammer were all genuine, the final cache is valid, the final incremental walk succeeds, and no forged or incorrect tip was ever accepted. The race is fail-loud and self-healing; the brief's 'last-writer-wins' framing is not supported by the evidence. No finding -- an honest stopped attack.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Concurrent seeding races on the shared temp path produce torn reads and writer OSError events but no crash;... *(all adapters)* | **allowed-with-audit** — Concurrent seeding races on the shared temp path produce torn reads and writer OSError events but no crash;... *(all adapters)* | **allowed-with-audit** — Concurrent seeding races on the shared temp path produce torn reads and writer OSError events but no crash;... *(all adapters)* | **allowed-with-audit** — Concurrent seeding races on the shared temp path produce torn reads and writer OSError events but no crash;... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit115 — Wave-18 brief 5 -- R16 closure-probe honesty: a scratch copy with verify_chain_tip() reverted to always-None and tip seeding to no-op confirms the wave-17 closure probe is discriminating (warm sweep 19.1ms control vs 564.7ms reverted at 20k; tip seeded/advanced/recovered only on control) while all safety properties hold on both -- no vacuous probe found (no finding)
+
+**Threat-model IDs:** T7, T10
+
+**Research grounding:**
+
+- Wave-18 brief 5, measured 2026-09-22: a full scratch copy of the repo with verify_chain_tip() forced to return None and write_chain_tip_from_tail() made a no-op, then the real wave-17 F69 closure probe (evals/r16_probes.py::_r16_f69_tip_closure) run inside it via subprocess. Control (unmodified repo): warm_sweep_under_150ms_at_20k True (worst warm 19.1ms), tip_seeded_on_cold_sweep True, repeated_tip_verify_ok True, deleted/corrupt tip reseeding True. Reverted: warm_sweep_under_150ms_at_20k False (worst warm 564.7ms -- the full-verify baseline), and all tip-presence assertions False. The probe fails exactly on the revert and passes exactly on control: it pins the R16 tip mechanism, not test hardware.
+- Safety keys -- segment forgery rejected, tamper loud in the audit, tail-truncation detected, fail-closed refusal on unverifiable chain -- hold on BOTH runs, because full verification independently provides those defenses. No vacuous fix-discriminating closure probe was found. No finding.
+
+**Situation:** The mutation test for the R16 closure probe passes: reverting the two tip functions in a scratch copy makes the wave-17 F69 closure probe fail (warm sweep 564.7ms, no tip seeded/advanced/recovered) while the unmodified repo passes (warm sweep 19.1ms, all tip assertions true). The probe is discriminating -- it would not have passed on a broken R16 implementation. Safety properties hold on both because they are provided independently by full verification. No vacuous closure probe found; no finding.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Reverted-scratch probe fails (warm sweep pays full verify, ~565ms; no tip seeded/advanced/recovered); contr... *(all adapters)* | **allowed-with-audit** — Reverted-scratch probe fails (warm sweep pays full verify, ~565ms; no tip seeded/advanced/recovered); contr... *(all adapters)* | **allowed-with-audit** — Reverted-scratch probe fails (warm sweep pays full verify, ~565ms; no tip seeded/advanced/recovered); contr... *(all adapters)* | **allowed-with-audit** — Reverted-scratch probe fails (warm sweep pays full verify, ~565ms; no tip seeded/advanced/recovered); contr... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit116 — Wave-18 brief 6 -- demo invocation parity: 'python3 demo/attack_scenario.py' run directly exits 0 with the byte-identical RESULT line as the gov-attack-demo entry point (stdout differs only in generated run/approval IDs and path) (no finding)
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 6, measured 2026-09-22: the demo invoked directly as 'python3 demo/attack_scenario.py' (the invocation R15 noted raised NameError because main() was defined after the __main__ guard -- now works after the R16 demo fix) and via its declared entry target 'demo.attack_scenario:main' both exit 0 with no traceback. The RESULT lines are byte-identical: 'RESULT: 4 attack attempts blocked, 0 allowed, 1 tampering detected.' Full stdout differs only in the generated run ID, approval ID, and run path. gov-attack-demo is not installed on PATH in this environment, so the declared entry target was used, matching existing R16 coverage. No finding.
+
+**Situation:** The attack demo produces identical honest output whether run directly or through its entry point: same exit code, same byte-identical RESULT line ('4 attack attempts blocked, 0 allowed, 1 tampering detected'), with only generated IDs differing. No invocation-dependent output dishonesty. No finding.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Direct and entry-point demo invocations both exit 0 with byte-identical RESULT lines; stdout differs only i... *(all adapters)* | **allowed-with-audit** — Direct and entry-point demo invocations both exit 0 with byte-identical RESULT lines; stdout differs only i... *(all adapters)* | **allowed-with-audit** — Direct and entry-point demo invocations both exit 0 with byte-identical RESULT lines; stdout differs only i... *(all adapters)* | **allowed-with-audit** — Direct and entry-point demo invocations both exit 0 with byte-identical RESULT lines; stdout differs only i... *(all adapters)* |
+| standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+| elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
+
+---
+
+## sit117 — Wave-18 brief 7 -- F65 storage accounting for tip artifacts: actions.jsonl.tip.json is 590 bytes at 20k entries, lives inside the per-cell run directory (removed with it); the KEEP-mode estimate is corrected to 23.9KB/cell + up to ~590B for the tip file (~2.5%) (no finding)
+
+**Threat-model IDs:** T8, T9
+
+**Research grounding:**
+
+- Wave-18 brief 7, measured 2026-09-22: at 20k entries the tip cache file actions.jsonl.tip.json is 590 bytes. It lives inside the run directory, so removing the per-cell run directory removes it (no orphan artifacts). The existing KEEP-mode per-cell estimate (23.9KB/cell) predates the R16 tip cache and did not account for this file; the corrected estimate adds up to 590 bytes per tip-producing cell (~2.5%). No finding.
+
+**Situation:** The R16 tip cache's disk footprint is measured and accounted: 590 bytes at 20k entries, co-located with the per-cell run directory so cleanup removes it. The KEEP-mode storage estimate is corrected upward by ~2.5% per tip-producing cell. No finding.
+
+| privilege | decorator | langchain | mcp | openai-loop |
+|---|---|---|---|---|
+| low (`scout`) | **allowed-with-audit** — Tip cache file measured at 590 bytes (20k entries), removed with the per-cell run dir; KEEP-mode estimate c... *(all adapters)* | **allowed-with-audit** — Tip cache file measured at 590 bytes (20k entries), removed with the per-cell run dir; KEEP-mode estimate c... *(all adapters)* | **allowed-with-audit** — Tip cache file measured at 590 bytes (20k entries), removed with the per-cell run dir; KEEP-mode estimate c... *(all adapters)* | **allowed-with-audit** — Tip cache file measured at 590 bytes (20k entries), removed with the per-cell run dir; KEEP-mode estimate c... *(all adapters)* |
 | standard (`support`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
 | elevated (`researcher`) | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* | **allowed-with-audit** — As low. *(all adapters)* |
 

@@ -3,9 +3,15 @@
 # Agent Governance Audit Report
 
 - Run: `demo-20260921-142522`
-- Generated: 2026-09-21T14:25:22+00:00
-- Log entries: 23
-- Hash-chain verification: **OK**
+- Generated: 2026-09-21T18:27:30+00:00
+- Log entries: 1
+- Hash-chain verification: **FAILED**
+
+## Signing key status
+
+**PUBLIC/DEVELOPMENT key (epoch(s) `unknown`) — NOT tamper-evident against anyone with the key**
+
+All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log is signed with the PUBLIC/DEVELOPMENT key (epoch `unknown`), which is published in the source tree: it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Entry sequence numbers cite the exact records.
 
 ## Summary
 
@@ -94,10 +100,10 @@ Evidence (exact log entries):
 
 ### [LOW] Audit trail integrity verified
 
-- Status: verified
+- Status: FAILED at seq 1
 - Policy: `n/a (log integrity)`
 
-The run's action log is hash-chained: each entry commits to the hash of the previous entry. Replaying the chain over 23 entries succeeded. Any tampering with a historical entry would break every later hash.
+The run's action log is hash-chained: each entry commits to the hash of the previous entry. Replaying the chain over 1 entries failed. All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log is signed with the PUBLIC/DEVELOPMENT key (epoch `unknown`), which is published in the source tree: it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Entry sequence numbers cite the exact records.
 
 Evidence (exact log entries):
 
@@ -105,4 +111,4 @@ Evidence (exact log entries):
 ## Notes
 
 - SYNTHETIC DEMONSTRATION — no real systems were inspected.
-- All agent actions, policy decisions, and human approvals in this report come from the run's tamper-evident log; entry sequence numbers above cite the exact records.
+- All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log is signed with the PUBLIC/DEVELOPMENT key (epoch `unknown`), which is published in the source tree: it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Entry sequence numbers cite the exact records.

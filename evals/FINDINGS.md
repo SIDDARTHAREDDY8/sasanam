@@ -3406,3 +3406,28 @@ Measured 2026-09-22 (same shape as the wave-17 baseline, 5 warm sweeps each): 2k
 Residuals: (1) the tip cache lives in the run dir, so the F52 writer can delete/corrupt it per sweep — each such sweep pays one full verification (fail-loud, fail-closed; documented, not fixed — the writer already pays the same to corrupt the coalesce state). (2) A content swap confined to already-verified prefix bytes that keeps hash strings is invisible to the incremental walk (fundamental to any O(new) verifier); it cannot alter the suppression decision (which reads only verified data) and is caught loudly by the next full verification — the `_reconcile_interrupted_executions` full `_verify` on every non-refused sweep, `gov verify`, or any tip-invalidating event. (3) The reconcile path's own per-sweep full `_verify` is intentionally unchanged (it is the tamper-loudness backstop), so F52's residual-#2 cost characterization stands as written.
 
 **Status: CLOSED 2026-09-22 (R16).**
+
+
+## F70 — MEDIUM — Length-preserving pre-tip tamper silently hides a genuine interrupted-execution marker: the incremental verifier cannot see it, so F45 recovery is defeated until the next full verification (Wave 18)
+
+**Cells:** sit112 (all adapters/privs, both harnesses).
+
+**Reproduction:** seed a run log, force a full verification so the R16 tip cache vouches the prefix, then — as the F52 run-dir writer — length-preservingly rewrite a genuine pre-tip `execution_authorized` entry's `decision` string to a different decision value (same byte length, stored hash string untouched). Measured 2026-09-22 (200-entry log, tamper at seq 50): 20/20 warm incremental walks via `verify_chain_tip()` return success; `_reconcile_interrupted_executions()` returns `[]` — the genuine interrupted execution (aid-9) is silently missed; only full `verify_chain()` catches it, loudly, at sequence 1. A length-CHANGING pre-tip edit is caught immediately (tip-line re-authentication returns None, full verify fails loud at the edited sequence).
+
+**Why it matters:** this is the sharp edge of the R16 residual already documented under F69: the incremental verifier is fundamentally O(new-bytes) and cannot re-examine already-verified prefix bytes. The weaponizable shape is not the suppression decision (cached refusal timestamps are MAC-sealed; the F60 decision reads only verified data) but the F45 interrupted-execution recovery: a run-dir writer can erase evidence of an interrupted execution from the reconcile scan indefinitely — across any number of warm sweeps — and the system will never re-notice until some tip-invalidating event forces a full verification (cache deletion/corruption, key rotation, an offset-shifting modification, or an explicit `gov verify`). Same trust class as F52. Severity is MEDIUM rather than LOW because, unlike the F71 CPU rerouting (fail-closed and loud), this defeat is SILENT: nothing in the audit trail marks the missed recovery.
+
+**Fix direction:** make the reconcile scan tamper-evident against length-preserving prefix edits — e.g. a MAC-authenticated, per-run manifest of interrupted-execution markers (approval_id -> seq/hash) written at authorization time and re-checked by reconcile, or include the reconcile-relevant fields in the tip's MAC'd body so any rewrite trips the tip-line re-authentication. Any of these turns the silent miss into a loud failure without giving up the O(new-bytes) fast path.
+
+**Status: OPEN.**
+
+## F71 — LOW — Forged reconcile marker reroutes the F69 CPU amplifier through the documented F52 residual: every legitimate sweep pays a full _verify plus one loud audit entry while the forgery stands (Wave 18)
+
+**Cells:** sit113 (all adapters/privs, both harnesses).
+
+**Reproduction:** with the queue lock held (the F51 disturbance shape) and the coalesce sidecar re-corrupted before each sweep (the F69 sustained-attack shape), plant one forged `execution_authorized` marker (bogus approval_id, fresh seq) at the action-log tail — the F52 run-dir writer's primitive. Measured 2026-09-22 (20k entries, 3 sweeps): refused sweeps pay the reconcile path's conditional FULL `_verify` instead of the R16 incremental tip path (12.2ms warm tip-path refusal vs 386–580ms forced-reconcile worst). The reconciliation finds nothing (the marker is bogus) and each forced sweep appends one `reconciliation_marker_invalid` entry (~753–830 bytes), growing the log without bound while the forgery stands. The sweep still refuses fail-closed.
+
+**Why it matters:** the F69 fix's contrast holds for the pure sidecar-corruption shape, but the same amplifier is reachable through the residual F69 explicitly documented: the reconcile path's per-sweep full `_verify` is intentionally unchanged because it is the tamper-loudness backstop (it is what catches F70-class tampering). A run-dir writer who can plant one marker can therefore tax every legitimate sweep at O(n) CPU plus unbounded loud audit growth — the F69 shape rerouted, not a new attack class. It is fail-closed and loud (unlike F70's silent miss), so LOW.
+
+**Fix direction:** bound the reconcile-path verification the way R16 bounded the refusal path — verify the reconcile scan's inputs incrementally from a MAC'd tip, or cap the conditional full `_verify` to the trailing window the markers could plausibly live in, or skip re-verification when a MAC-authenticated "no genuine markers" assertion from a recent sweep is still fresh. Any of these preserves the tamper-loudness backstop while removing the per-sweep O(n) tax.
+
+**Status: OPEN.**

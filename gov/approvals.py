@@ -49,8 +49,9 @@ from pathlib import Path
 
 from .identity import AgentIdentity
 from .log import (ActionLog, _active_key, _approval_record_mac,
-                  _break_glass_ticket_mac, _verify, read_entries,
-                  read_entries_with_stats)
+                  _break_glass_ticket_mac, _canonical, _verify,
+                  read_entries, read_entries_with_stats,
+                  verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
 
 
@@ -59,6 +60,16 @@ def _utcnow():
 
 
 _MISSING = object()
+
+
+def _reconcile_marker_cache_mac(key, key_epoch, body_canonical):
+    """R17 (F71): domain-separated MAC for the reconcile
+    marker-verdict cache body (everything but ``mac``). The cache
+    lives in the run dir, so only the log key keeps the F52 writer
+    from forging a "valid" verdict and silencing the loud refusal."""
+    msg = ("reconcile-marker-verdict|%s|%s"
+           % (key_epoch, body_canonical)).encode("utf-8")
+    return hmac.new(key, msg, sha256).hexdigest()
 
 
 # F39 (R10): how long an execute_approved() sweep waits for the queue's
@@ -2218,6 +2229,190 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             dict(r, executed=True) if r["id"] == approval_id else r
             for r in records])
 
+    # R17 (F71): the reconcile marker-verdict cache lives in the run
+    # dir next to the log. A forged execution_authorized marker forces
+    # the conditional full _verify on EVERY sweep (O(n) CPU per sweep)
+    # plus one loud reconciliation_marker_invalid audit entry per
+    # sweep while the forgery stands. The full-verify verdict is a
+    # pure function of (log bytes, sidecar bytes, key epoch), so a
+    # MAC-authenticated cache keyed by the markers' content+position
+    # lets later sweeps reuse the "invalid" verdict without
+    # re-verifying -- and the loud audit is coalesced to one entry per
+    # marker per _RECONCILE_MARKER_INVALID_COALESCE_SECS. Only
+    # "invalid" verdicts are cached; any cache miss re-verifies
+    # (fail-closed). First occurrence always audits loud.
+    _RECONCILE_MARKER_CACHE_FILENAME = "reconcile_marker_verdict.json"
+    _RECONCILE_MARKER_INVALID_COALESCE_SECS = 300.0
+
+    def _reconcile_marker_cache_path(self):
+        return self.run_dir / self._RECONCILE_MARKER_CACHE_FILENAME
+
+    def _reconcile_markers_key(self, entries, interrupted):
+        """Fingerprint of the interrupted-execution markers: content
+        hash + log position per marker.
+
+        The entry's stored ``hash`` field is included explicitly
+        because ``_canonical`` excludes it -- a genuine MAC repair
+        changes exactly that field, so it must change the key. Any
+        marker rewrite, or any new/different marker, changes the key
+        and forces a fresh full verification. Appends AFTER the
+        markers cannot repair a broken chain, so they do not
+        invalidate the key; the sidecar pin covers the anchor side.
+        """
+        by_seq = {}
+        for e in entries:
+            if isinstance(e, dict) and isinstance(e.get("seq"), int):
+                by_seq[e["seq"]] = e
+        parts = []
+        for aid in sorted(interrupted):
+            seq = interrupted[aid]
+            e = by_seq.get(seq)
+            if e is None:
+                parts.append("missing-seq:%d" % seq)
+            else:
+                parts.append("%d|%s|%s" % (
+                    seq, e.get("hash", ""), _canonical(e)))
+        return sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+    def _read_reconcile_marker_cache(self):
+        """Return the validated verdict-cache dict, or None.
+
+        Never raises and never returns an unvalidated cache: a
+        missing file, unparseable JSON, wrong shape, epoch mismatch,
+        or MAC failure all yield None (the caller re-verifies --
+        slower but safe, never unverified trust).
+        """
+        try:
+            raw = json.loads(
+                self._reconcile_marker_cache_path().read_text(
+                    encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(raw, dict):
+            return None
+        try:
+            cache = {
+                "key_epoch": raw["key_epoch"],
+                "markers_key": raw["markers_key"],
+                "verdict": raw["verdict"],
+                "error": raw["error"],
+                "broken_seq": raw["broken_seq"],
+                "last_audit": float(raw.get("last_audit", 0.0)),
+                "suppressed": int(raw.get("suppressed", 0)),
+                "mac": raw["mac"],
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not all(isinstance(cache[k], str) for k in
+                   ("key_epoch", "markers_key", "verdict", "error",
+                    "mac")):
+            return None
+        if (cache["broken_seq"] is not None
+                and not isinstance(cache["broken_seq"], int)):
+            return None
+        try:
+            key, epoch = _active_key()
+        except (OSError, ValueError, KeyError):
+            return None
+        if cache["key_epoch"] != epoch:
+            # Key rotation: the cached verdict was computed under a
+            # different key -- do not reuse it.
+            return None
+        body = {k: v for k, v in cache.items() if k != "mac"}
+        expect = _reconcile_marker_cache_mac(
+            key, epoch, _canonical(body))
+        if not hmac.compare_digest(cache["mac"], expect):
+            return None
+        return cache
+
+    def _write_reconcile_marker_cache(self, markers_key, error,
+                                      broken_seq, last_audit, suppressed):
+        """Atomically persist the MAC'd invalid-verdict cache
+        (temp file + os.replace). Best-effort: a failed write only
+        costs the next sweep a redundant re-verification, never
+        safety. The sidecar fingerprint is pinned AFTER our own audit
+        append (callers write the cache after appending), so the pin
+        covers the checkpoint our audit just wrote.
+        """
+        try:
+            key, epoch = _active_key()
+            # Note: the checkpoint sidecar is deliberately NOT pinned.
+            # The cached "invalid" verdict is about the ACTION LOG
+            # chain (a forged marker); the sidecar does not affect
+            # action-log MAC verification, and benign checkpoint
+            # appends occur on ordinary sweeps -- pinning the sidecar
+            # would invalidate the cache every sweep, defeating F71.
+            # A sidecar tamper cannot repair an action-log forgery.
+            doc = {
+                "key_epoch": epoch,
+                "markers_key": markers_key,
+                "verdict": "invalid",
+                "error": str(error),
+                "broken_seq": broken_seq,
+                "last_audit": last_audit,
+                "suppressed": suppressed,
+            }
+            doc["mac"] = _reconcile_marker_cache_mac(
+                key, epoch, _canonical(doc))
+            cache_path = self._reconcile_marker_cache_path()
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_name(cache_path.name + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(doc, ensure_ascii=True,
+                                   sort_keys=True, default=str))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, cache_path)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+
+    def _reconcile_marker_invalid_coalesced(self, markers_key, error,
+                                            broken_seq, cache):
+        """R17 (F71b): audit a refused marker reconciliation, coalesced.
+
+        The first invalid verdict for a marker ALWAYS audits loudly
+        (fail-closed). Repeats for the same marker bytes within
+        _RECONCILE_MARKER_INVALID_COALESCE_SECS are folded into a
+        suppressed counter instead of appending another
+        reconciliation_marker_invalid entry, so a standing forgery
+        cannot grow the tamper-evident log without bound. The next
+        audited entry carries the folded count, so the operator still
+        sees the repeat volume.
+        """
+        now = time.monotonic()
+        if cache is not None and cache.get("markers_key") == markers_key:
+            try:
+                last_audit = float(cache.get("last_audit", 0.0))
+                suppressed = int(cache.get("suppressed", 0))
+            except (TypeError, ValueError):
+                last_audit, suppressed = 0.0, 0
+        else:
+            last_audit, suppressed = 0.0, 0
+        if now - last_audit < \
+                self._RECONCILE_MARKER_INVALID_COALESCE_SECS:
+            self._write_reconcile_marker_cache(
+                markers_key, error, broken_seq, last_audit,
+                suppressed + 1)
+            return
+        self.log.append({
+            "event": "reconciliation_marker_invalid",
+            "run_id": self.run_id,
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "decision": "reconciliation_refused",
+            "policy_id": "execution-reconciliation",
+            "suppressed_repeats": suppressed,
+            "reason": ("interrupted-execution reconciliation REFUSED: "
+                       "the action-log chain does not verify (%s) — "
+                       "at least one execution_authorized marker "
+                       "cannot be authenticated, so none are "
+                       "reconciled; approved work is left as-is for "
+                       "operator review" % error),
+        })
+        self._write_reconcile_marker_cache(
+            markers_key, error, broken_seq, now, 0)
+
     def _reconcile_interrupted_executions(self):
         """F45 (R11): reconcile executions interrupted between claim and
         mark — called at sweep start, under the queue lock.
@@ -2311,43 +2506,120 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 done_seq[aid] = max(done_seq.get(aid, 0), e["seq"])
         interrupted = {aid: s for aid, s in auth_seq.items()
                        if s > done_seq.get(aid, 0)}
-        if not interrupted:
+        # R17 (F70/F71): the candidate scan above is UNTRUSTED --
+        # read_entries() never verifies the chain. The verification
+        # gate below MUST run on every sweep, not just when candidates
+        # exist: it consumes the F70 forced-verification countdown once
+        # per successful-lock sweep (the executor refusal path consumes
+        # it on lock-failure sweeps), bounding the silent window for
+        # length-preserving pre-tip edits. Skipping verification on
+        # idle sweeps would leave that window unbounded.
+        #
+        # F71a: when candidates exist and the MAC-authenticated
+        # invalid verdict matches (marker bytes, checkpoint sidecar,
+        # key epoch, and exact log end all unchanged), reuse it to
+        # deny immediately -- unverified data is used only to remain
+        # fail-closed, never to authorize or reconcile.
+        if interrupted:
+            markers_key = self._reconcile_markers_key(entries,
+                                                      interrupted)
+            cache = self._read_reconcile_marker_cache()
+            # R17 (F71a): reuse the cached invalid verdict when the
+            # marker bytes and key epoch are unchanged. The verdict is
+            # a pure function of (marker bytes, key epoch): the
+            # action-log chain's invalidity comes from the forged
+            # marker, which neither log appends, sidecar appends, nor
+            # sidecar tampering can repair. Any marker rewrite,
+            # removal, or new marker changes markers_key and forces a
+            # fresh verification. Only "invalid" verdicts are cached,
+            # so reuse can only deny, never authorize.
+            use_cached = (
+                cache is not None
+                and cache.get("verdict") == "invalid"
+                and cache.get("markers_key") == markers_key
+            )
+        else:
+            markers_key, cache, use_cached = None, None, False
+        if use_cached:
+            verdict_ok = False
+            verdict_error = (cache.get("error")
+                             or "cached invalid verdict")
+            verdict_broken = cache.get("broken_seq")
+        else:
+            # Verification gate: incremental tip first (O(new bytes),
+            # consumes the F70 countdown); full tolerant _verify when
+            # the tip is unusable or the countdown is due.
+            try:
+                tip_verdict = verify_chain_tip(self.log.path)
+            except OSError:
+                tip_verdict = None
+            if (tip_verdict is not None
+                    and not tip_verdict["full_verify_due"]):
+                verdict_ok, verdict_error = True, ""
+                verdict_broken = None
+            else:
+                # F52 (R12): the write-ahead execution_authorized
+                # markers are HMAC-bound at write time, but
+                # read_entries() never verifies the chain -- a run-dir
+                # writer with no key could plant forged markers and the
+                # sweep would "reconcile" them into pending (starvation
+                # + alert fatigue). Verify the chain BEFORE trusting any
+                # marker: an unverifiable chain means at least one
+                # marker cannot be authenticated, so NO marker is
+                # reconciled -- fail closed with a loud audited refusal
+                # instead of honoring possibly-forged interruptions.
+                # F63 (R14): TOLERANT verify -- malformed physical lines
+                # are skipped (audited above) while the signed seq/MAC/
+                # checkpoint chain of every VALID entry is verified
+                # exactly as strictly as the default mode; a malformed
+                # line carries no seq and no chain link, so skipping it
+                # cannot launder tampering.
+                verdict = _verify(self.log.path, _skip_malformed=True)
+                verdict_ok = verdict["ok"]
+                verdict_error = verdict["error"]
+                verdict_broken = verdict.get("broken_seq")
+                if verdict_ok:
+                    # Reseed the tip so the next sweep verifies
+                    # incrementally; restarts the F70 countdown.
+                    try:
+                        write_chain_tip_from_tail(self.log.path, {})
+                    except (OSError, ValueError, KeyError, TypeError):
+                        pass
+        if not verdict_ok:
+            if interrupted:
+                # R17 (F71b): audit coalescing -- the first invalid
+                # verdict for a marker always audits loud; unchanged
+                # repeats are folded into a suppressed counter so a
+                # standing forgery cannot grow the log (or burn O(n)
+                # per sweep) without bound. The next audited entry
+                # carries the folded count.
+                self._reconcile_marker_invalid_coalesced(
+                    markers_key, verdict_error, verdict_broken, cache)
+            else:
+                # R17 (F70): the chain does not verify but the
+                # (untrusted) scan found no interrupted markers. The
+                # scan cannot be trusted -- a broken chain means at
+                # least one entry cannot be authenticated -- so audit
+                # LOUDLY and reconcile nothing. This is the
+                # tamper-loudness backstop for the no-marker path.
+                self.log.append({
+                    "event": "reconciliation_chain_unverifiable",
+                    "run_id": self.run_id,
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "reconciliation_refused",
+                    "policy_id": "execution-reconciliation",
+                    "broken_seq": verdict_broken,
+                    "reason": ("interrupted-execution reconciliation "
+                               "REFUSED: the action-log chain does not "
+                               "verify (%s) -- no marker is trusted, so "
+                               "none are reconciled; approved work is "
+                               "left as-is for operator review"
+                               % verdict_error),
+                })
             return []
-        # F52 (R12): the write-ahead execution_authorized markers are
-        # HMAC-bound at write time, but read_entries() never verifies
-        # the chain — a run-dir writer with no key could plant forged
-        # markers and the sweep would "reconcile" them into pending
-        # (starvation + alert fatigue). Verify the chain BEFORE
-        # trusting any marker: an unverifiable chain means at least one
-        # marker cannot be authenticated, so NO marker is reconciled —
-        # fail closed with a loud audited refusal instead of honoring
-        # possibly-forged interruptions. F63 (R14): TOLERANT verify —
-        # malformed physical lines are skipped (audited above) while
-        # the signed seq/MAC/checkpoint chain of every VALID entry is
-        # verified exactly as strictly as the default mode; a
-        # malformed line carries no seq and no chain link, so skipping
-        # it cannot launder tampering. Measured: full-chain
-        # verification is ~73ms for 2000 entries (2026-09-21), cheap
-        # relative to a sweep, so the per-marker-only shortcut is not
-        # taken: the chain walk also binds each marker's prev_hash
-        # link, which a per-entry MAC recompute would not.
-        verdict = _verify(self.log.path, _skip_malformed=True)
-        if not verdict["ok"]:
-            self.log.append({
-                "event": "reconciliation_marker_invalid",
-                "run_id": self.run_id,
-                "agent_id": "human-operator",
-                "role": "approver",
-                "principal": "human-operator",
-                "decision": "reconciliation_refused",
-                "policy_id": "execution-reconciliation",
-                "reason": ("interrupted-execution reconciliation REFUSED: "
-                           "the action-log chain does not verify (%s) — "
-                           "at least one execution_authorized marker "
-                           "cannot be authenticated, so none are "
-                           "reconciled; approved work is left as-is for "
-                           "operator review" % verdict["error"]),
-            })
+        if not interrupted:
             return []
         reconciled = []
 
