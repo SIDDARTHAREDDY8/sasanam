@@ -227,7 +227,7 @@ class TestF17aLedgerAuthentication(unittest.TestCase):
         ctx = make_run(ledger_path=os.path.join(self.tmp, "shared.jsonl"))
         ident = ctx["mint_identity"]("alice", "researcher", "org")
         d = ctx["executor"].call(ident, "api_call",
-                                endpoint="https://x.example/ok",
+                                endpoint="https://x.synthetic.local/ok",
                                 params={"check": "ping"})
         self.assertEqual(d["status"], "executed")
         # Attacker forges the ledger file out-of-band.
@@ -241,7 +241,7 @@ class TestF17aLedgerAuthentication(unittest.TestCase):
         # itself is recorded as a denial in the action log.
         with self.assertRaises(LedgerUnverifiableError):
             ctx["executor"].call(ident, "api_call",
-                                endpoint="https://y.example/ok",
+                                endpoint="https://y.synthetic.local/ok",
                                 params={"check": "ping"})
         denied = [e for e in ctx["read_log"]()
                   if e.get("decision") == "denied"
@@ -258,6 +258,10 @@ class TestF17bPrincipalRegistry(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: the strict resolver fails closed without
+        # an explicit key posture (F73) — this class tests production
+        # paths, so configure the fixed test key.
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.tmp = tempfile.mkdtemp(prefix="govr5f17b-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
@@ -315,7 +319,7 @@ class TestF17bPrincipalRegistry(unittest.TestCase):
             ctx2["mint_identity"]("mallory", "researcher", "org-fresh")
         bob = ctx2["mint_identity"]("bob", "researcher", "org")
         d2 = ctx2["executor"].call(bob, "api_call",
-                                  endpoint="https://x.example/out",
+                                  endpoint="https://x.synthetic.local/out",
                                   params={"check": "ping"})
         self.assertEqual(d2["status"], "queued")
         rec = [r for r in ctx2["approvals"].pending()
@@ -340,7 +344,7 @@ class TestF17bPrincipalRegistry(unittest.TestCase):
 
 _ALLOWLIST_POLICY = """
 campaign_allowlist:
-  - [ops-monitor, vendor.example, [check, region]]
+  - [ops-monitor, synthetic.local, [check, region]]
 """
 
 _CAMPAIGN_K = CAMPAIGN_K  # polls beyond this would queue without exemption
@@ -351,6 +355,9 @@ class TestF18CampaignAllowlist(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback).
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.tmp = tempfile.mkdtemp(prefix="govr5f18-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.policy_path = _policy_with(_ALLOWLIST_POLICY)
@@ -378,7 +385,7 @@ class TestF18CampaignAllowlist(unittest.TestCase):
         ledger = os.path.join(self.tmp, "shared.jsonl")
         params = {"check": "ping", "region": "us-east"}
         decisions, _ctx = self._poll(
-            ledger, "ops-monitor", "https://vendor.example/health",
+            ledger, "ops-monitor", "https://vendor.synthetic.local/health",
             params, _CAMPAIGN_K + 2)
         self.assertTrue(all(d["status"] == "executed" for d in decisions),
                         [d["status"] for d in decisions])
@@ -387,20 +394,20 @@ class TestF18CampaignAllowlist(unittest.TestCase):
         ctx = make_run(policy_path=self.policy_path, ledger_path=ledger)
         ident = ctx["mint_identity"]("probe", "researcher", "ops-monitor")
         ctx["executor"].call(ident, "api_call",
-                            endpoint="https://vendor.example/health",
+                            endpoint="https://vendor.synthetic.local/health",
                             params=params)
         allowlisted = [e for e in ctx["read_log"]()
                        if e.get("event") == "campaign_allowlisted"]
         self.assertTrue(allowlisted)
         self.assertEqual(allowlisted[0]["campaign_domain"],
-                         "vendor.example")
+                         "synthetic.local")
 
     def test_non_allowlisted_control_tuple_still_queues(self):
         ledger = os.path.join(self.tmp, "shared.jsonl")
         params = {"check": "ping", "region": "us-east"}
         # Same shape, DIFFERENT principal: not allowlisted -> queues.
         decisions, ctx = self._poll(
-            ledger, "mallory", "https://vendor.example/health",
+            ledger, "mallory", "https://vendor.synthetic.local/health",
             params, _CAMPAIGN_K)
         self.assertEqual(decisions[-1]["status"], "queued")
         self.assertEqual(
@@ -409,7 +416,7 @@ class TestF18CampaignAllowlist(unittest.TestCase):
         # Same shape, DIFFERENT domain: not allowlisted -> queues.
         ledger2 = os.path.join(self.tmp, "shared2.jsonl")
         decisions2, ctx2 = self._poll(
-            ledger2, "ops-monitor", "https://status.evil.example/health",
+            ledger2, "ops-monitor", "https://localhost/health",
             params, _CAMPAIGN_K)
         self.assertEqual(decisions2[-1]["status"], "queued")
 
@@ -417,7 +424,7 @@ class TestF18CampaignAllowlist(unittest.TestCase):
         ledger = os.path.join(self.tmp, "shared.jsonl")
         # Extra key: shape differs -> not allowlisted -> queues.
         decisions, ctx = self._poll(
-            ledger, "ops-monitor", "https://vendor.example/health",
+            ledger, "ops-monitor", "https://vendor.synthetic.local/health",
             {"check": "ping", "region": "us-east", "extra": "1"},
             _CAMPAIGN_K)
         self.assertEqual(decisions[-1]["status"], "queued")
@@ -442,7 +449,7 @@ campaign_allowlist:
     def test_allowlist_lint_reports_and_rejects(self):
         ok = _policy_with("""
 campaign_allowlist:
-  - [ops-monitor, vendor.example, [check, region]]
+  - [ops-monitor, synthetic.local, [check, region]]
 """)
         findings = lint_file(ok)
         kinds = [f for f in findings
@@ -588,6 +595,9 @@ class TestF21BatchExclusion(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback).
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.tmp = tempfile.mkdtemp(prefix="govr5f21-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
@@ -712,7 +722,7 @@ class TestF21BatchExclusion(unittest.TestCase):
             ctx = make_run(ledger_path=ledger)
             ident = ctx["mint_identity"]("s-%d" % i, "researcher", "org")
             d = ctx["executor"].call(
-                ident, "api_call", endpoint="https://x.example/o",
+                ident, "api_call", endpoint="https://x.synthetic.local/o",
                 params={"fragment": "Zx9qW2!vL"})
             if d["status"] == "queued":
                 queued_id = d["approval_id"]
@@ -736,6 +746,9 @@ class TestF22LogGuard(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback).
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.tmp = tempfile.mkdtemp(prefix="govr5f22-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 

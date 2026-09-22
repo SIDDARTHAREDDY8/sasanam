@@ -61,6 +61,13 @@ used only if (a) it is configured via the file or env backend, or (b) the
 operator explicitly opts in with ``GOV_DEV_KEYS=1``, in which case a loud
 multi-line warning is printed to stderr on every resolution. The dev key is
 publicly documented and provides **zero** integrity.
+
+``require_production_key()`` (R6c) is the strictest resolver: configured
+keys only, and configured dev-key material (dev bytes, ``dev`` epoch or
+``dev`` status) is rejected outright — there is no ``GOV_DEV_KEYS``
+fallback on that path at all. ``gov/log.py`` enforces the same posture
+for the live log via its strict ``_active_key()`` (dev keys additionally
+require an in-code ``enable_dev_keys()`` call there).
 """
 
 import hashlib
@@ -296,7 +303,17 @@ class KeyRing:
             for ep, kval in mapping.items():
                 if ep == epoch:
                     continue
-                ring._keys[ep] = KeyMaterial(ep, str(kval).encode("utf-8"),
+                key_bytes = str(kval).encode("utf-8")
+                # F77: the strict resolver screens the ACTIVE key for dev
+                # material; the archive must be screened too, or the
+                # public dev key can be smuggled in under a retired epoch
+                # and used to forge old-epoch history via verify_log.
+                if key_bytes == _DEV_KEY_CANONICAL or ep == _DEV_EPOCH:
+                    raise NoKeyConfiguredError(
+                        "GOV_LOG_KEY_ARCHIVE entry %r is the public "
+                        "development key (bytes or 'dev' epoch); dev keys "
+                        "are rejected in the archive" % (ep,))
+                ring._keys[ep] = KeyMaterial(ep, key_bytes,
                                              status="retired")
         return ring
 
@@ -304,6 +321,18 @@ class KeyRing:
 
     def active(self):
         return self._keys[self._active_epoch]
+
+    def _adopt_material(self, material):
+        """Adopt an already-constructed KeyMaterial (intra-package use by
+        ``gov.kms`` when materializing an envelope ring into memory).
+
+        Only ``KeyMaterial``'s own constructor validation applies; the
+        caller sets ``_active_epoch`` explicitly afterwards.
+        """
+        if not isinstance(material, KeyMaterial):
+            raise TypeError("material must be a KeyMaterial, got %r"
+                            % type(material).__name__)
+        self._keys[material.epoch] = material
 
     def get(self, epoch):
         try:
@@ -570,6 +599,29 @@ def require_key():
     return KeyRing.dev()  # raises unless GOV_DEV_KEYS=1
 
 
+def require_production_key():
+    """Fail-closed PRODUCTION key resolution (R6c).
+
+    Configured keys only (env backend). Dev keys are rejected
+    *structurally*: there is no ``GOV_DEV_KEYS`` fallback on this path at
+    all, and a configured key whose bytes equal the public dev key — or
+    whose epoch/status is ``dev`` — is refused outright (pasting the dev
+    key into ``GOV_LOG_KEY`` does not make it a production key). Raises
+    :class:`NoKeyConfiguredError` otherwise. This closes F73 on the
+    keyring-resolution path; ``gov/log.py`` enforces the same posture on
+    the live-log path.
+    """
+    ring = KeyRing.from_env()  # raises NoKeyConfiguredError when unset
+    active = ring.active()
+    if (active.key == _DEV_KEY_CANONICAL or active.epoch == _DEV_EPOCH
+            or active.status == "dev"):
+        raise NoKeyConfiguredError(
+            "the configured key is the public development key (bytes, "
+            "'dev' epoch, or 'dev' status); dev keys are not usable on "
+            "the production path")
+    return ring
+
+
 @contextmanager
 def _rotation_lock(path):
     """Serialize concurrent rotations of the same keyring.
@@ -594,6 +646,12 @@ def _rotation_lock(path):
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
+
+
+# Public alias for the rotation lock (used by gov/kms.py's envelope
+# rotation ceremony). Same semantics as _rotation_lock: advisory
+# exclusive flock on "<path>.lock" so concurrent rotations serialize.
+rotation_lock = _rotation_lock
 
 
 def rotate_keyring(path, new_epoch=None, log_path=None):

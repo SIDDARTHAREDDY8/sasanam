@@ -8,14 +8,20 @@ Semantics (deny-by-default with forbid priority):
 * If no rule matches, the action is DENIED (``default_deny``). An empty or
   missing policy file therefore fails closed.
 * Every YAML policy is validated at load: unknown tools, unknown match keys,
-  and invalid effects raise ``ValueError`` instead of being silently ignored.
+  invalid effects, unknown rule-level fields (F90: a misspelled ``match:``
+  previously defaulted to {} and matched every action), unknown top-level
+  keys, unknown ``approvals`` subkeys, and malformed ``when`` conditions
+  (unknown operators, missing path, vacuous conditions) raise ``ValueError``
+  instead of being silently ignored.
 
 Match keys (all optional; every listed key must hold for the rule to match):
 
   tool, role, agent, path_contains_any, path_outside_sandbox,
   min_external_calls, min_sends, min_writes, min_deletes,
   domain_allowlisted, carries_read_content, source_untrusted,
-  read_sensitive, cross_run_campaign, when
+  read_sensitive, cross_run_campaign, velocity_exceeded,
+  high_entropy_payload, package_fetch, install_allowlisted,
+  install_integrity_verified, when
 
 ``when`` is a list of ``{path, gte|lte|gt|lt|eq|neq}`` conditions resolved
 against the evaluation context (e.g. ``counters.send_email``).
@@ -30,9 +36,21 @@ from hashlib import sha256
 from pathlib import Path
 
 from .yamlmini import parse as parse_yaml
+# D1-core: delegation/quorum section normalizers live in
+# gov/approvals.py — the single source of truth, so the queue and the
+# engine cannot drift apart. (No import cycle: approvals.py never
+# imports policy.py at module level.)
+from .approvals import (
+    _normalize_authority_delegation_config,
+    _normalize_delegation_config,
+    _normalize_quorum_config,
+)
 
 KNOWN_TOOLS = {"read_file", "write_file", "delete_file",
-               "api_call", "http_post", "send_email"}
+               "api_call", "http_post", "send_email",
+               # P7 (wave-27): the governed package-install tool — the
+               # only sanctioned path for agent-runtime fetches.
+               "install_package"}
 
 KNOWN_MATCH_KEYS = {
     "tool", "role", "agent",
@@ -40,17 +58,67 @@ KNOWN_MATCH_KEYS = {
     "min_external_calls", "min_sends", "min_writes", "min_deletes",
     "domain_allowlisted", "carries_read_content", "source_untrusted",
     "read_sensitive", "cross_run_campaign",
+    # F99: keyword-free framed-secret signal for api_call payloads,
+    # computed by ToolExecutor._context from the call's own params.
+    "high_entropy_payload",
+    # P7 (wave-27): raw registry fetch via api_call/http_post, plus the
+    # governed-install gates for install_package — all computed by
+    # ToolExecutor._context from gov/supplychain_install.py.
+    "package_fetch", "install_allowlisted", "install_integrity_verified",
+    # S5 (K-052): cross-run per-principal velocity signal, computed by
+    # ToolExecutor._context for send/write/egress tools.
+    "velocity_exceeded",
+    # F110 (wave-34): harness-initiated platform egress (non-tool-call
+    # uploads, the ZCode class). Set by gov/platform_egress.py when it
+    # routes a collection upload through the policy engine; the
+    # deny-platform-egress-unallowlisted rule below is the first egress
+    # rule whose match block is NOT keyed on tool:.
+    "platform_egress",
+    # F111 (wave-34): identity-bound egress (GTG-50020 class). Set by
+    # ToolExecutor._context for send/api_call tools when a credential
+    # on the call is not bound to the provisioned session identity;
+    # the credential_identity_mismatch rule denies + audits.
+    "credential_identity_mismatch",
     "when",
 }
 
 VALID_EFFECTS = {"deny", "require_approval", "allow"}
 
+# F90 (Wave 25) — the AGT scope-typo class: a misspelled field must be
+# refused LOUDLY at load, never silently ignored or demoted. Rule-level
+# fields, top-level sections, approvals subkeys, and ``when`` operators
+# are all allowlisted; anything else raises ValueError. (The D3 Cedar
+# export already refuses unknown rule fields — gov/policy_export.py
+# ``_KNOWN_RULE_FIELDS``; the core engine now matches it, plus the
+# top-level and approvals layers the export never sees.)
+KNOWN_RULE_FIELDS = frozenset(
+    {"id", "effect", "match", "reason", "description", "flag", "bridge",
+     # Set programmatically by gov/dsl.apply_dsl BEFORE validation runs.
+     "dsl_rule",
+     # Stamped by apply_dsl AFTER validation; listed so a stamped rule
+     # that is re-validated later is not rejected.
+     "dsl_source_hash"})
+
+KNOWN_TOP_LEVEL_KEYS = frozenset(
+    {"version", "roles", "rate_limit", "egress", "approvals",
+     "auto_approve", "campaign_allowlist", "delegation", "log_limits",
+     "budgets", "run_limits", "velocity", "policies"})
+
+KNOWN_APPROVALS_KEYS = frozenset(
+    {"ttl_hours", "batch_excluded_queue_reasons", "delegation", "quorum"})
+
+KNOWN_WHEN_OPS = frozenset({"gte", "lte", "gt", "lt", "eq", "neq"})
+
 _EFFECT_RANK = {"deny": 2, "require_approval": 1, "allow": 0}
 
 DEFAULT_ROLES = {
     "support": ["read_file", "send_email"],
-    "coder": ["read_file", "write_file", "delete_file", "api_call"],
-    "researcher": ["read_file", "api_call", "http_post", "send_email"],
+    "coder": ["read_file", "write_file", "delete_file", "api_call",
+              # P7 (wave-27): governed installs ride with the roles that
+              # already fetch over the network.
+              "install_package"],
+    "researcher": ["read_file", "api_call", "http_post", "send_email",
+                   "install_package"],
     "scout": ["read_file", "api_call"],
     "triage": ["read_file", "write_file"],
     "builder": ["read_file", "write_file", "delete_file"],
@@ -144,6 +212,16 @@ class PolicyEngine:
         # attest pristine bytes while the engine enforced attacker
         # bytes. One read, no window.
         cfg = parse_yaml(raw.decode("utf-8")) or {}
+        # F90: unknown top-level sections are refused loudly. A misspelled
+        # section (``bugets:`` for ``budgets:``) previously loaded
+        # silently with the control unenforced — the exact shape of the
+        # AGT scope-typo fail-open.
+        unknown_top = sorted(k for k in cfg if k not in KNOWN_TOP_LEVEL_KEYS)
+        if unknown_top:
+            raise ValueError(
+                "policy: unknown top-level key(s) %r (known: %s); "
+                "refusing rather than silently ignoring"
+                % (unknown_top, sorted(KNOWN_TOP_LEVEL_KEYS)))
         self.roles = {r: list(t) for r, t in (cfg.get("roles") or {}).items()}
         if not self.roles:
             self.roles = {r: list(t) for r, t in DEFAULT_ROLES.items()}
@@ -161,8 +239,48 @@ class PolicyEngine:
         # items need an individual human decision, even via confirm_risky.
         self.batch_excluded_queue_reasons = self._normalize_batch_excluded(
             (cfg.get("approvals") or {}).get("batch_excluded_queue_reasons"))
+        # D1-core: delegation/quorum policy sections. Normalized
+        # fail-closed by gov/approvals.py's normalizers — an invalid
+        # section raises ValueError HERE at load (never a silent
+        # mis-shape). Absent delegation = disabled (opt-in); absent
+        # quorum = None (no M-of-N gate).
+        _approvals_cfg = cfg.get("approvals") or {}
+        # F90: unknown approvals subkeys are refused loudly. A misspelled
+        # ``batch_excluded_queue_reasons`` previously normalized to ()
+        # silently, making security-flagged items batch-approvable.
+        unknown_appr = sorted(
+            k for k in _approvals_cfg if k not in KNOWN_APPROVALS_KEYS)
+        if unknown_appr:
+            raise ValueError(
+                "policy approvals: unknown key(s) %r (known: %s); "
+                "refusing rather than silently ignoring"
+                % (unknown_appr, sorted(KNOWN_APPROVALS_KEYS)))
+        self.approvals_delegation = _normalize_delegation_config(
+            _approvals_cfg.get("delegation"))
+        self.approvals_quorum = _normalize_quorum_config(
+            _approvals_cfg.get("quorum"))
+        # P10 (wave-24): TOP-LEVEL authority delegation (agent→agent
+        # grants) — a different primitive from approvals.delegation
+        # (D1-core human approval stewardship) above. Normalized
+        # fail-closed by gov/approvals.py; absent = disabled (opt-in).
+        self.authority_delegation = _normalize_authority_delegation_config(
+            cfg.get("delegation"))
         # F22: policy-configurable audit-log size guard.
         self.log_limits = self._normalize_log_limits(cfg.get("log_limits"))
+        # S2 (K-018): hard spend/token/action budgets. Absent section =
+        # unenforced (never zero); malformed values fail the load.
+        self.budgets = self._normalize_budgets(cfg.get("budgets"))
+        # S4 (K-045): total-step budget per run. Absent = unenforced.
+        self.run_limits = self._normalize_run_limits(cfg.get("run_limits"))
+        # S5 (K-052): cross-run per-principal velocity thresholds.
+        # Absent = guard disabled.
+        self.velocity = self._normalize_velocity(cfg.get("velocity"))
+        # S1: AgentSpec DSL provenance. apply_dsl() fills these in when a
+        # DSL source is promoted; without a DSL they stay null and
+        # behavior is unchanged.
+        self.dsl_source_hash = None
+        self.dsl_pinned = False
+        self.dsl_rule_ids = ()
         self.policies = []
         for i, rule in enumerate(cfg.get("policies") or []):
             self._validate_rule(rule, i)
@@ -250,6 +368,126 @@ class PolicyEngine:
         return out
 
     @staticmethod
+    def _normalize_budgets(cfg):
+        """Normalize the ``budgets:`` section (S2 / K-018).
+
+        Keys: ``max_tokens_per_run`` (non-negative int),
+        ``max_spend_per_run`` (non-negative number),
+        ``max_actions_per_run`` (non-negative int),
+        ``price_per_1k_tokens`` (non-negative number, optional — converts
+        accrued tokens into spend when the adapter reports tokens only).
+        Absent section -> {} (unenforced, never zero). Malformed values
+        raise ValueError (fail closed at load: a misconfigured ceiling
+        must never silently become "unlimited", and values are never
+        silently coerced).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("budgets must be a mapping")
+        _INT_KEYS = ("max_tokens_per_run", "max_actions_per_run")
+        _NUM_KEYS = ("max_spend_per_run", "price_per_1k_tokens")
+        for key in cfg:
+            if key not in _INT_KEYS + _NUM_KEYS:
+                raise ValueError("budgets: unknown key %r" % (key,))
+        out = {}
+        for key in _INT_KEYS:
+            if key in cfg:
+                v = cfg[key]
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    raise ValueError(
+                        "budgets.%s must be a non-negative integer, got %r"
+                        % (key, v))
+                out[key] = v
+        for key in _NUM_KEYS:
+            if key in cfg:
+                v = cfg[key]
+                if (isinstance(v, bool) or not isinstance(v, (int, float))
+                        or v < 0):
+                    raise ValueError(
+                        "budgets.%s must be a non-negative number, got %r"
+                        % (key, v))
+                out[key] = float(v)
+        return out
+
+    @staticmethod
+    def _normalize_run_limits(cfg):
+        """Normalize the ``run_limits:`` section (S4 / K-045).
+
+        Currently ``max_tool_calls_per_run`` (non-negative int): total
+        tool-call attempts per run. Absent section -> {} (unenforced).
+        Malformed values raise ValueError (fail closed at load).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("run_limits must be a mapping")
+        for key in cfg:
+            if key != "max_tool_calls_per_run":
+                raise ValueError("run_limits: unknown key %r" % (key,))
+        out = {}
+        if "max_tool_calls_per_run" in cfg:
+            v = cfg["max_tool_calls_per_run"]
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                raise ValueError(
+                    "run_limits.max_tool_calls_per_run must be a "
+                    "non-negative integer, got %r" % (v,))
+            out["max_tool_calls_per_run"] = v
+        return out
+
+    @staticmethod
+    def _normalize_velocity(cfg):
+        """Normalize the ``velocity:`` section (S5 / K-052).
+
+        Keys: ``window_secs`` (positive number; defaults to 24h when the
+        section is present but the window is omitted),
+        ``max_sends`` / ``max_writes`` (non-negative ints),
+        ``max_egress_bytes`` (non-negative number). A threshold that is
+        absent is unenforced for that dimension (never zero). Absent
+        section -> {} (guard disabled). Malformed values raise
+        ValueError (fail closed at load).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("velocity must be a mapping")
+        for key in cfg:
+            if key not in ("window_secs", "max_sends", "max_writes",
+                           "max_egress_bytes"):
+                raise ValueError("velocity: unknown key %r" % (key,))
+        out = {}
+        if "window_secs" in cfg:
+            v = cfg["window_secs"]
+            if (isinstance(v, bool) or not isinstance(v, (int, float))
+                    or v <= 0):
+                raise ValueError(
+                    "velocity.window_secs must be a positive number, got %r"
+                    % (v,))
+            out["window_secs"] = float(v)
+        else:
+            # The section is configured but no window given: default to
+            # the campaign window (24h) rather than a zero/meaningless
+            # window. Absent *section* still means disabled.
+            out["window_secs"] = 24.0 * 3600.0
+        for key in ("max_sends", "max_writes"):
+            if key in cfg:
+                v = cfg[key]
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    raise ValueError(
+                        "velocity.%s must be a non-negative integer, got %r"
+                        % (key, v))
+                out[key] = v
+        if "max_egress_bytes" in cfg:
+            v = cfg["max_egress_bytes"]
+            if (isinstance(v, bool) or not isinstance(v, (int, float))
+                    or v < 0):
+                raise ValueError(
+                    "velocity.max_egress_bytes must be a non-negative "
+                    "number, got %r" % (v,))
+            out[key] = v
+        return out
+
+    @staticmethod
     def _normalize_auto_approve(cfg):
         """Normalize the policy's ``auto_approve:`` section.
 
@@ -273,11 +511,28 @@ class PolicyEngine:
 
     def _validate_rule(self, rule, index):
         rule_id = rule.get("id", "rule-%d" % index)
+        # F90: unknown rule-level fields are refused loudly. The AGT
+        # scope-typo shape — ``macht:`` for ``match:`` on an allow rule —
+        # previously loaded silently with ``match`` defaulting to {},
+        # i.e. the rule matched EVERY action (deny->allow flip).
+        if not isinstance(rule, dict):
+            raise ValueError("policy rule %d: rule must be a mapping, got %r"
+                             % (index, rule))
+        unknown_fields = sorted(
+            k for k in rule if k not in KNOWN_RULE_FIELDS)
+        if unknown_fields:
+            raise ValueError(
+                "policy %s: unknown rule field(s) %r (known: %s); "
+                "refusing rather than silently ignoring"
+                % (rule_id, unknown_fields, sorted(KNOWN_RULE_FIELDS)))
         effect = rule.get("effect")
         if effect not in VALID_EFFECTS:
             raise ValueError("policy %s: invalid effect %r (must be one of %s)"
                              % (rule_id, effect, sorted(VALID_EFFECTS)))
         match = rule.get("match") or {}
+        if not isinstance(match, dict):
+            raise ValueError("policy %s: match must be a mapping, got %r"
+                             % (rule_id, match))
         for key in match:
             if key not in KNOWN_MATCH_KEYS:
                 raise ValueError("policy %s: unknown match key %r (known: %s)"
@@ -286,6 +541,41 @@ class PolicyEngine:
             if tool not in KNOWN_TOOLS:
                 raise ValueError("policy %s: unknown tool %r (known: %s)"
                                  % (rule_id, tool, sorted(KNOWN_TOOLS)))
+        self._validate_when(rule_id, match.get("when"))
+
+    @staticmethod
+    def _validate_when(rule_id, when):
+        """Validate ``when`` conditions fail-closed (F90).
+
+        A typo'd operator (``gtte`` for ``gte``) previously matched no
+        known op, making the condition vacuously TRUE — an allow rule
+        gated on it then fired unconditionally. A missing ``path`` made
+        the condition always FALSE, so a deny rule gated on it never
+        fired. Both shapes now raise at load.
+        """
+        if when is None:
+            return
+        if not isinstance(when, list):
+            raise ValueError("policy %s: when must be a list of conditions, "
+                             "got %r" % (rule_id, when))
+        for j, cond in enumerate(when):
+            where = "policy %s: when[%d]" % (rule_id, j)
+            if not isinstance(cond, dict):
+                raise ValueError("%s: condition must be a mapping, got %r"
+                                 % (where, cond))
+            if not isinstance(cond.get("path"), str) or not cond["path"]:
+                raise ValueError("%s: condition needs a non-empty string "
+                                 "'path', got %r" % (where, cond.get("path")))
+            ops = [op for op in cond if op != "path"]
+            unknown_ops = sorted(op for op in ops if op not in KNOWN_WHEN_OPS)
+            if unknown_ops:
+                raise ValueError(
+                    "%s: unknown operator(s) %r (known: %s); refusing "
+                    "rather than treating the condition as vacuously true"
+                    % (where, unknown_ops, sorted(KNOWN_WHEN_OPS)))
+            if not ops:
+                raise ValueError("%s: condition has no operator "
+                                 "(vacuously true); refusing" % (where,))
 
     # ---------------------------------------------------------------- roles
 
@@ -370,6 +660,35 @@ class PolicyEngine:
                 return False
         if "cross_run_campaign" in match:
             if bool(context.get("cross_run_campaign")) != bool(match["cross_run_campaign"]):
+                return False
+        if "velocity_exceeded" in match:
+            if bool(context.get("velocity_exceeded")) != bool(match["velocity_exceeded"]):
+                return False
+        # F110 (wave-34): harness-initiated platform egress. Same
+        # bool-compare convention as the other signals; set by
+        # gov/platform_egress.py, never by ToolExecutor._context.
+        if "platform_egress" in match:
+            if bool(context.get("platform_egress")) != bool(match["platform_egress"]):
+                return False
+        # F111 (wave-34): identity-bound egress. Same bool-compare
+        # convention; set by ToolExecutor._context for send/api_call
+        # tools via the run's CredentialManifest.
+        if "credential_identity_mismatch" in match:
+            if bool(context.get("credential_identity_mismatch")) != bool(match["credential_identity_mismatch"]):
+                return False
+        # P7 (wave-27): raw registry fetch, and the governed-install
+        # gates. Same bool-compare convention as the other signals.
+        if "package_fetch" in match:
+            if bool(context.get("package_fetch")) != bool(match["package_fetch"]):
+                return False
+        if "install_allowlisted" in match:
+            if bool(context.get("install_allowlisted")) != bool(match["install_allowlisted"]):
+                return False
+        if "install_integrity_verified" in match:
+            if bool(context.get("install_integrity_verified")) != bool(match["install_integrity_verified"]):
+                return False
+        if "high_entropy_payload" in match:
+            if bool(context.get("high_entropy_payload")) != bool(match["high_entropy_payload"]):
                 return False
         if "when" in match:
             if not _check_conditions(match["when"], context):

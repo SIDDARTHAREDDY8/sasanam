@@ -43,9 +43,6 @@ class TestStaleApprovalTOCTOU(ApprovalAbuseBase):
 
     TIGHTENED = """\
 version: 1
-defaults:
-  effect: deny
-  reason: locked down after review
 policies:
   - id: deny-outbound
     effect: deny

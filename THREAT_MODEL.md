@@ -95,6 +95,24 @@ AgentPoison (>80% ASR at <0.1% poison rate), MINJA. The product has no memory
 yet; when it does, memory writes must be provenance-gated. Recorded here so
 the design doesn't foreclose it.
 
+**T14 — Steganographic / behavioral collusion (A3 ceiling, documented
+residual).**
+The audit log records every authorized action faithfully — timestamps
+included, so timing channels are *visible* in the log (wave-19 sit134) —
+but file content is surfaced as a descriptor (bytes + sha256), and no
+plaintext monitor can *prove* steganographic collusion in otherwise-clean
+actions: information-theoretically secure stego (substitution-cipher
+payloads, inter-call timing) is undetectable by any content monitor.
+This layer bounds what agents can **do**, not what they can **hide** in
+clean actions. Detectable: behavioral anomalies (K-002 EWMA sketch) and
+regret-relative-to-cooperative-optimum probes (sit127). Behavioral
+detection is anomaly/regret evidence, never proof of all collusion.
+Claim scope: we make no claim of total action-visibility anywhere
+(verified sit134). *Status: NOT mitigable in this prototype — readiness gap
+(see workstreams/docs/READINESS_GAPS.md, A3).* Real basis: Motwani et
+al., "Secret Collusion among AI Agents" (ICML 2025); Mathew et al.,
+"Covert coordination" (Colosseum benchmark, 2025).
+
 ## What already exists (don't reinvent)
 
 - Hash-chained JSONL action log with `verify_chain()` replay — keep, upgrade

@@ -3,9 +3,15 @@
 # Agent Governance Audit Report
 
 - Run: `demo-20260921-153035`
-- Generated: 2026-09-21T15:31:48+00:00
+- Generated: 2026-09-22T02:39:23+00:00
 - Log entries: 34
 - Hash-chain verification: **OK**
+
+## Signing key status
+
+**PUBLIC/DEVELOPMENT key (verified epoch `dev`) — NOT tamper-evident against anyone with the key**
+
+All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log was verified under key epoch `dev` (PUBLIC/DEVELOPMENT key, published in the source tree): it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Approval-queue integrity digests are HMAC-keyed to this same key (F34): under the development key a docs-reader can forge those too. Entry sequence numbers cite the exact records.
 
 ## Summary
 
@@ -106,7 +112,7 @@ Evidence (exact log entries):
 - Status: verified
 - Policy: `n/a (log integrity)`
 
-The run's action log is hash-chained: each entry commits to the hash of the previous entry. Replaying the chain over 34 entries succeeded. Any tampering with a historical entry would break every later hash.
+The run's action log is hash-chained: each entry commits to the hash of the previous entry. Replaying the chain over 34 entries succeeded. All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log was verified under key epoch `dev` (PUBLIC/DEVELOPMENT key, published in the source tree): it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Approval-queue integrity digests are HMAC-keyed to this same key (F34): under the development key a docs-reader can forge those too. Entry sequence numbers cite the exact records.
 
 Evidence (exact log entries):
 
@@ -114,4 +120,4 @@ Evidence (exact log entries):
 ## Notes
 
 - SYNTHETIC DEMONSTRATION — no real systems were inspected.
-- All agent actions, policy decisions, and human approvals in this report come from the run's tamper-evident log; entry sequence numbers above cite the exact records.
+- All agent actions, policy decisions, and human approvals in this report come from the run's hash-chained action log. The log was verified under key epoch `dev` (PUBLIC/DEVELOPMENT key, published in the source tree): it is NOT tamper-evident against anyone with the key — anyone who read the docs can forge entries. The hash-chain replay below is a consistency check on this local copy, not tamper-evidence against third parties. Approval-queue integrity digests are HMAC-keyed to this same key (F34): under the development key a docs-reader can forge those too. Entry sequence numbers cite the exact records.

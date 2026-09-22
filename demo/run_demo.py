@@ -11,6 +11,7 @@ credentials, nothing read or written outside this project directory.
 """
 
 import json
+import os
 import subprocess
 import sys
 from collections import Counter
@@ -54,6 +55,13 @@ def show(desc, result):
 
 
 def main():
+    # R6c dev-key opt-in (demo harness only): explicit in-code
+    # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so the
+    # synthetic demo still runs with zero configuration. Production
+    # entry points never do this — they fail closed without a key.
+    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    from gov.log import enable_dev_keys
+    enable_dev_keys()
     run_id = "demo-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
@@ -128,13 +136,21 @@ def main():
     by_tool = {rec["tool"]: rec["id"] for rec in pending}
 
     def decide(cmd, aid, reason):
-        proc = subprocess.run(
-            [sys.executable, "-m", "gov.approve", "--rundir", str(run_dir),
-             cmd, aid, "--reason", reason],
-            cwd=str(ROOT), capture_output=True, text=True)
-        sys.stdout.write(proc.stdout)
-        if proc.returncode != 0:
-            sys.stdout.write(proc.stderr)
+        # R6c: the approval CLI is a production entry point (never enables
+        # dev keys itself), so the demo harness invokes its main()
+        # IN-PROCESS: the in-code enable_dev_keys() opt-in above is
+        # process-local and would not cross a subprocess boundary, while
+        # env vars alone must never enable dev keys.
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        from gov.approvals import main as approve_main
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            rc = approve_main(["--rundir", str(run_dir), cmd, aid,
+                               "--reason", reason])
+        sys.stdout.write(buf_out.getvalue())
+        if rc != 0:
+            sys.stdout.write(buf_err.getvalue())
             raise SystemExit("approval CLI failed")
 
     print("\n  Approving the 6th issue-tracker API call (read-only, needed for triage)...")

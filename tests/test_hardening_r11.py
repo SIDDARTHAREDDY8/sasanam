@@ -338,7 +338,7 @@ class TestF46CampaignEstablishment(unittest.TestCase):
         ex = ctx["executor"]
         ident = ex.mint_identity("agent", "researcher", principal)
         return ex.call(ident, "api_call",
-                       endpoint="https://shard0.collector.example/x",
+                       endpoint="https://shard0.collector.synthetic.local/x",
                        params={"blob": "A1B2C3D4E5F6G7H8!", "seq": 1})
 
     def test_same_run_priming_does_not_establish(self):
@@ -352,7 +352,7 @@ class TestF46CampaignEstablishment(unittest.TestCase):
             ident = ex.mint_identity("agent", "researcher", "primer")
             for _ in range(5):
                 ex.call(ident, "api_call",
-                        endpoint="https://shard0.collector.example/x",
+                        endpoint="https://shard0.collector.synthetic.local/x",
                         params={"blob": "A1B2C3D4E5F6G7H8!", "seq": 1})
             # A different principal with the same shape is NOT queued —
             # the primer was never established (single run ID).
@@ -390,7 +390,7 @@ class TestF46CampaignEstablishment(unittest.TestCase):
                 ex = ctx["executor"]
                 ident = ex.mint_identity("agent", "researcher", p)
                 r = ex.call(ident, "api_call",
-                            endpoint="https://shard0.collector.example/x",
+                            endpoint="https://shard0.collector.synthetic.local/x",
                             params={"blob": "A1B2C3D4E5F6G7H8!", "seq": 1})
                 st.append(r["status"])
             self.assertIn("queued", st,

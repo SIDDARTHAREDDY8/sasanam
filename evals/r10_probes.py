@@ -373,7 +373,7 @@ def _r10_mcp_gates(ctx, result):
     got_agent = POISON in " ".join(_flatten_strings(r, []))
     ident = ctx["mint_identity"]("par", "researcher", "p")
     r2 = executor.call(
-        ident, "api_call", endpoint="https://calm.example/v1",
+        ident, "api_call", endpoint="https://calm.synthetic.local/v1",
         params={"prompt": "paraphrase the summary"})
     gated = (r2["status"] == "queued"
              and r2.get("policy_id") == "approval-sensitive-read-before-api")
@@ -422,7 +422,7 @@ def _r10_mcp_round2():
         o["content_none_provenance_clean"] = not seen_n
         idn = ctx_n["mint_identity"]("par", "researcher", "p")
         rn = ctx_n["executor"].call(
-            idn, "api_call", endpoint="https://calm.example/v1",
+            idn, "api_call", endpoint="https://calm.synthetic.local/v1",
             params={"prompt": "hello"})
         o["content_none_api_call_executes"] = (
             rn["status"] == "executed")
@@ -452,13 +452,19 @@ def _r10_campaign_fp():
     o = {}
     with _tmp("r10cf-") as d:  # noqa: F841 (hermetic; make_run owns dirs)
         lp = str(d / "ledger.jsonl")
-        ep = "https://beat.fleet-heartbeat.example/ping"
+        # F94 (2026-09-22): allowlisted endpoints — deny-egress-
+        # unallowlisted now covers api_call; the quorum measurement is
+        # endpoint-independent.
+        ep = "https://beat.fleet-heartbeat.synthetic.local/ping"
         rng = random.Random("w11")
 
         def tok():
-            return "".join(rng.choice(
-                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-                for _ in range(32))
+            # F99 (2026-09-22): the old 62-alphabet token was exactly the
+            # framed-secret shape the F99 lane fixed in
+            # test_hardening_r10 — draw from the same 12-symbol alphabet
+            # (max entropy ~3.58 < 4.3) so the quorum measurement is not
+            # confounded by approval-api-high-entropy.
+            return "".join(rng.choice("abcdef012345") for _ in range(32))
 
         def one_call(principal, payload):
             ctx = make_run(ledger_path=lp)
@@ -488,7 +494,9 @@ def _r10_campaign_fp():
 
         # Control: a genuine campaign still fires — 3 principals, 2
         # matching observations each, the 3rd principal's call queues.
-        ep2 = "https://shard0.collector.example/ingest"
+        # Allowlisted (F94, 2026-09-22); the 17-char blob does not trip
+        # F99.
+        ep2 = "https://shard0.collector.synthetic.local/ingest"
 
         def rot_call(principal):
             ctx = make_run(ledger_path=lp)

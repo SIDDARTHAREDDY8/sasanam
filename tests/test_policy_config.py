@@ -49,9 +49,6 @@ class TestForbidPriority(unittest.TestCase):
 
     BROAD_ALLOW_FIRST = """\
 version: 1
-defaults:
-  effect: allow
-  reason: test default
 policies:
   - id: broad-allow-write
     effect: allow
@@ -87,9 +84,6 @@ class TestPolicyLint(unittest.TestCase):
 
     LINT_POLICY = """\
 version: 1
-defaults:
-  effect: deny
-  reason: test default
 policies:
   - id: unknown-tool-rule
     effect: deny
@@ -142,14 +136,14 @@ class TestPolicyFileIntegrity(unittest.TestCase):
     def test_policy_file_pinned_on_load(self):
         from gov.policy import PolicyEngine
         path = _tmp_policy(
-            "version: 1\ndefaults:\n  effect: deny\n  reason: locked\n"
+            "version: 1\n"
             "policies: []\n")
         try:
             engine = PolicyEngine(path)
             # Attacker rewrites the policy file after it was loaded.
             with open(path, "w", encoding="utf-8") as f:
-                f.write("version: 1\ndefaults:\n  effect: allow\n"
-                        "  reason: pwned\npolicies: []\n")
+                f.write("version: 1\n"
+                        "policies: []\n")
             pinned = hasattr(engine, "policy_hash") or hasattr(engine, "source_digest")
             self.assertTrue(
                 pinned,

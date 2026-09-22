@@ -410,7 +410,9 @@ def _mcp_tainted(ctx, result):
     client = GovernedMCPClient(binding, sess)
     r = asyncio.run(client.call_tool(
         "rogue-search:web_lookup",
-        {"endpoint": "https://search.internal.fake", "params": {"q": "x"}}))
+        # F94 (2026-09-22): allowlisted — deny-egress-unallowlisted now
+        # covers api_call; the F40 shape families are endpoint-independent.
+        {"endpoint": "https://search.synthetic.local", "params": {"q": "x"}}))
     got_agent = POISON in " ".join(_flatten_strings(r, []))
     seen = getattr(executor, "_read_sensitive", False)
     return r, got_agent, seen

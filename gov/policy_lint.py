@@ -42,6 +42,40 @@ Finding kinds and severities:
                         executor fails closed to the conservative default,
                         but the config is not what the deployer wrote
 
+  error (D1-core, L1-L9: each mirrors the engine's fail-closed
+  normalizer — the engine refuses to load the policy):
+    delegation_invalid_shape
+                        approvals.delegation is present but not a mapping
+                        (L1)
+    delegation_enabled_not_bool
+                        approvals.delegation.enabled is not true/false
+                        (L2: delegation is opt-in; no silent enable)
+    delegation_max_hops_out_of_range
+                        approvals.delegation.max_hops is not an int in
+                        1..5 (L3)
+    quorum_invalid_shape
+                        approvals.quorum is present but not a mapping (L4)
+    quorum_min_approvals_invalid
+                        approvals.quorum.min_approvals is not an int >= 1
+                        (L5)
+    quorum_eligible_principals_invalid
+                        approvals.quorum.eligible_principals is not a
+                        non-empty list of unique non-empty strings (L6:
+                        duplicates would let one human fill two vote slots)
+    quorum_unreachable  approvals.quorum.min_approvals exceeds
+                        len(eligible_principals) (L7): silent starvation
+    quorum_deny_veto_not_true
+                        approvals.quorum.deny_veto is present and not true
+                        (L8): the one-deny veto is non-negotiable
+    quorum_flags_invalid
+                        approvals.quorum.flags is present but not a list
+                        of non-empty strings (L9)
+
+  warning (D1-core, L10: valid-but-dangerous, F30 pattern):
+    delegation_long_chain
+                        approvals.delegation.max_hops > 1: longer chains
+                        let stewardship diffuse across approvers
+
   info:
     overly_broad_allow  allow on tool alone for a non-dangerous tool:
                         works, but consider constraining role/path
@@ -63,6 +97,10 @@ from pathlib import Path
 from .policy import (DEFAULT_ROLES, KNOWN_MATCH_KEYS, KNOWN_TOOLS,
                      VALID_EFFECTS, _EFFECT_RANK, _as_list)
 from .yamlmini import load as yaml_load
+# D1-core: shared delegation ceiling so the linter and the engine's
+# fail-closed normalizer cannot drift apart.
+from .approvals import DELEGATION_MAX_HOPS_CEILING
+from .approvals import AUTHORITY_DELEGATION_MAX_DEPTH_CEILING
 
 DANGEROUS_TOOLS = {"send_email", "http_post", "delete_file"}
 
@@ -102,7 +140,17 @@ def _covers(sup, sub):
             if int(sub_val) < int(sup_val):
                 return False
         elif key in ("path_outside_sandbox", "domain_allowlisted",
-                     "carries_read_content", "source_untrusted"):
+                     "carries_read_content", "source_untrusted",
+                     # P7 (wave-27): the remaining boolean signals were
+                     # missing from this group, so the lint treated them
+                     # as unconstrained and reported false
+                     # shadowed/contradictory pairs for rules that pin
+                     # them to true vs false (e.g. the install_package
+                     # allowlist/integrity gates).
+                     "read_sensitive", "cross_run_campaign",
+                     "velocity_exceeded", "high_entropy_payload",
+                     "package_fetch", "install_allowlisted",
+                     "install_integrity_verified"):
             if bool(sub_val) != bool(sup_val):
                 return False
         elif key == "when":
@@ -220,6 +268,203 @@ def lint_file(path):
                         "a queued campaign exfil fragment or a destructive "
                         "action would execute with no human in the loop. "
                         "Lower the cap or disable auto_approve." % cap)
+
+    # ---- approvals.delegation / approvals.quorum sections (D1-core) --------
+    # L1-L10: the linter mirrors the engine's fail-closed normalizers
+    # (gov/approvals.py::_normalize_delegation_config /
+    # _normalize_quorum_config) as advisory findings, so a broken
+    # section is caught at lint time with a precise reason instead of
+    # only at load time. Severities: anything the engine refuses to
+    # load is an error; L10 (longer-than-default chains) is a warning
+    # in the F30 valid-but-dangerous pattern.
+    approvals_cfg = cfg.get("approvals") or {}
+    if not isinstance(approvals_cfg, dict):
+        add("approvals_invalid_shape", "error", "(policy)",
+            "approvals section is not a mapping; the engine ignores it "
+            "and delegation/quorum stay off")
+    else:
+        del_cfg = approvals_cfg.get("delegation")
+        if del_cfg is not None:
+            if not isinstance(del_cfg, dict):
+                add("delegation_invalid_shape", "error", "(policy)",
+                    "approvals.delegation must be a mapping when present "
+                    "(L1); the engine refuses to load this policy")
+            else:
+                if ("enabled" in del_cfg
+                        and not isinstance(del_cfg["enabled"], bool)):
+                    add("delegation_enabled_not_bool", "error", "(policy)",
+                        "approvals.delegation.enabled must be true/false, "
+                        "got %r (L2: delegation is opt-in; the engine "
+                        "refuses to load a non-bool rather than silently "
+                        "enabling or disabling)" % (del_cfg["enabled"],))
+                if "max_hops" in del_cfg:
+                    hops = del_cfg["max_hops"]
+                    if (isinstance(hops, bool)
+                            or not isinstance(hops, int)
+                            or not 1 <= hops
+                            <= DELEGATION_MAX_HOPS_CEILING):
+                        add("delegation_max_hops_out_of_range", "error",
+                            "(policy)",
+                            "approvals.delegation.max_hops must be an int "
+                            "in 1..%d, got %r (L3); the engine refuses to "
+                            "load this policy"
+                            % (DELEGATION_MAX_HOPS_CEILING, hops))
+                    elif hops > 1:
+                        # L10: valid, but chains beyond one hop let an
+                        # approver launder responsibility ("I just passed
+                        # it on") and complicate forensics. Name the risk.
+                        add("delegation_long_chain", "warning", "(policy)",
+                            "approvals.delegation.max_hops=%d (L10): "
+                            "delegation chains longer than one hop let "
+                            "stewardship diffuse across approvers; keep "
+                            "max_hops=1 unless the deployment genuinely "
+                            "needs re-delegation" % hops)
+        q_cfg = approvals_cfg.get("quorum")
+        if q_cfg is not None:
+            if not isinstance(q_cfg, dict):
+                add("quorum_invalid_shape", "error", "(policy)",
+                    "approvals.quorum must be a mapping when present "
+                    "(L4); the engine refuses to load this policy")
+            else:
+                min_a = q_cfg.get("min_approvals")
+                if (isinstance(min_a, bool)
+                        or not isinstance(min_a, int) or min_a < 1):
+                    add("quorum_min_approvals_invalid", "error", "(policy)",
+                        "approvals.quorum.min_approvals must be an int >= "
+                        "1, got %r (L5); the engine refuses to load this "
+                        "policy" % (min_a,))
+                eligible = q_cfg.get("eligible_principals")
+                if (not isinstance(eligible, (list, tuple)) or not eligible
+                        or any(not isinstance(p, str) or not p.strip()
+                               for p in eligible)):
+                    add("quorum_eligible_principals_invalid", "error",
+                        "(policy)",
+                        "approvals.quorum.eligible_principals must be a "
+                        "non-empty list of non-empty strings (L6); the "
+                        "engine refuses to load this policy")
+                elif len({p.strip() for p in eligible}) != len(eligible):
+                    add("quorum_eligible_principals_invalid", "error",
+                        "(policy)",
+                        "approvals.quorum.eligible_principals lists a "
+                        "principal twice (L6): one human would fill two "
+                        "vote slots; the engine refuses to load this "
+                        "policy")
+                elif (isinstance(min_a, int) and not isinstance(min_a, bool)
+                        and min_a > len(eligible)):
+                    # L7: an unreachable quorum is silent starvation —
+                    # records queue that no vote pattern can ever decide.
+                    add("quorum_unreachable", "error", "(policy)",
+                        "approvals.quorum.min_approvals (%d) exceeds "
+                        "len(eligible_principals) (%d) (L7): the quorum "
+                        "can never be reached; the engine refuses to "
+                        "load this policy" % (min_a, len(eligible)))
+                if "deny_veto" in q_cfg and q_cfg["deny_veto"] is not True:
+                    # L8: the one-deny veto is non-negotiable. An
+                    # M-of-N scheme where dissent can be outvoted is a
+                    # rubber-stamp amplifier, not a safety gate.
+                    add("quorum_deny_veto_not_true", "error", "(policy)",
+                        "approvals.quorum.deny_veto must be true or "
+                        "absent, got %r (L8): the one-deny veto is "
+                        "non-negotiable; the engine refuses to load this "
+                        "policy" % (q_cfg["deny_veto"],))
+                flags = q_cfg.get("flags")
+                if (flags is not None
+                        and (not isinstance(flags, (list, tuple))
+                             or any(not isinstance(f, str) or not f.strip()
+                                    for f in flags))):
+                    add("quorum_flags_invalid", "error", "(policy)",
+                        "approvals.quorum.flags must be a list of "
+                        "non-empty strings when present (L9); the engine "
+                        "refuses to load this policy")
+
+    # ---- top-level delegation section (P10 authority delegation) -----------
+    # Authority delegation (agent→agent grants) is a DIFFERENT primitive
+    # from approvals.delegation (D1-core human approval stewardship)
+    # above — the linter checks both, under distinct finding kinds.
+    # The linter mirrors the engine's fail-closed normalizer
+    # (gov/approvals.py::_normalize_authority_delegation_config) as
+    # advisory findings: anything the engine refuses to load is an
+    # error; unscoped_delegation: flag is a WARNING (the P10 residual:
+    # framing claims without a grant execute labeled, not denied).
+    auth_cfg = cfg.get("delegation")
+    if auth_cfg is not None:
+        if not isinstance(auth_cfg, dict):
+            add("authority_delegation_invalid_shape", "error", "(policy)",
+                "delegation must be a mapping when present; the engine "
+                "refuses to load this policy")
+        else:
+            if ("enabled" in auth_cfg
+                    and not isinstance(auth_cfg["enabled"], bool)):
+                add("authority_delegation_enabled_not_bool", "error",
+                    "(policy)",
+                    "delegation.enabled must be true/false, got %r "
+                    "(opt-in; the engine refuses to load a non-bool "
+                    "rather than silently enabling or disabling)"
+                    % (auth_cfg["enabled"],))
+            for ttl_key in ("default_ttl_minutes", "max_ttl_minutes"):
+                if ttl_key in auth_cfg:
+                    ttl = auth_cfg[ttl_key]
+                    if (isinstance(ttl, bool) or not isinstance(ttl, int)
+                            or ttl < 1):
+                        add("authority_delegation_ttl_invalid", "error",
+                            "(policy)",
+                            "delegation.%s must be a positive int, got %r; "
+                            "the engine refuses to load this policy"
+                            % (ttl_key, ttl))
+            dflt = auth_cfg.get("default_ttl_minutes")
+            maxt = auth_cfg.get("max_ttl_minutes")
+            if (isinstance(dflt, int) and not isinstance(dflt, bool)
+                    and isinstance(maxt, int) and not isinstance(maxt, bool)
+                    and dflt > maxt):
+                add("authority_delegation_ttl_invalid", "error", "(policy)",
+                    "delegation.default_ttl_minutes (%d) exceeds "
+                    "delegation.max_ttl_minutes (%d); the engine refuses "
+                    "to load this policy" % (dflt, maxt))
+            if "max_depth" in auth_cfg:
+                depth = auth_cfg["max_depth"]
+                if (isinstance(depth, bool) or not isinstance(depth, int)
+                        or not 1 <= depth
+                        <= AUTHORITY_DELEGATION_MAX_DEPTH_CEILING):
+                    add("authority_delegation_max_depth_out_of_range",
+                        "error", "(policy)",
+                        "delegation.max_depth must be an int in 1..%d, "
+                        "got %r; the engine refuses to load this policy"
+                        % (AUTHORITY_DELEGATION_MAX_DEPTH_CEILING, depth))
+            rpf = auth_cfg.get("require_provisioned_for")
+            if (rpf is not None
+                    and (not isinstance(rpf, (list, tuple))
+                         or any(not isinstance(x, str) or not x.strip()
+                                for x in rpf))):
+                add("authority_delegation_require_provisioned_invalid",
+                    "error", "(policy)",
+                    "delegation.require_provisioned_for must be a list of "
+                    "non-empty strings when present, got %r; the engine "
+                    "refuses to load this policy" % (rpf,))
+            mode = auth_cfg.get("unscoped_delegation")
+            if mode is not None and mode not in ("flag", "deny"):
+                add("authority_delegation_unscoped_invalid", "error",
+                    "(policy)",
+                    "delegation.unscoped_delegation must be 'flag' or "
+                    "'deny', got %r; the engine refuses to load this "
+                    "policy" % (mode,))
+            elif mode == "flag" and auth_cfg.get("enabled") is True:
+                # P10 residual: framing claims without a grant execute
+                # under the acting agent's authority, labeled only.
+                # Warning, not error: the deployer may intend it, but
+                # the residual must be named. Fires only when the
+                # feature is ENABLED: with enabled:false the flag
+                # default is inert (label-only, no governed
+                # alternative in play — spec §7 non-goal) and the
+                # shipped default must stay warning-free per the
+                # policy-lint regression gate.
+                add("unscoped_delegation_flag_default", "warning",
+                    "(policy)",
+                    "delegation is enabled with "
+                    "unscoped_delegation: 'flag': "
+                    "on_behalf_of/delegated_by claims WITHOUT a grant id "
+                    "execute under the acting agent's authority, labeled "
+                    "only (the P10 residual). Set 'deny' to refuse such "
+                    "calls before execution.")
 
     # ---- rate_limit section ------------------------------------------------
     # F33 (HARDENING-R8): the egress byte budget is a security control —
@@ -462,7 +707,10 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help"):
         print("usage: python -m gov.policy_lint <policy.yaml>")
+        print("       python -m gov.policy_lint --export-check <policy.yaml> [--strict]")
         return 0 if argv and argv[0] in ("-h", "--help") else 2
+    if argv[0] == "--export-check":
+        return _export_check_main(argv[1:])
     findings = lint_file(argv[0])
     for f in findings:
         sev = f.get("severity", "?")
@@ -475,6 +723,44 @@ def main(argv=None):
               % (len(findings), n_err, n_warn))
         return 1
     print("no findings")
+    return 0
+
+
+def _export_check_main(argv):
+    """``--export-check``: fail-closed translation dry-run (D3, A14).
+
+    Runs gov/policy_export.py's translator over the policy and reports
+    the outcome. Exits 0 when the policy translates cleanly, 1 when the
+    exporter refuses (unmappable construct — loud, never silent).
+    """
+    if not argv or argv[0] in ("-h", "--help"):
+        print("usage: python -m gov.policy_lint --export-check "
+              "<policy.yaml> [--strict]")
+        return 0 if argv and argv[0] in ("-h", "--help") else 2
+    strict = "--strict" in argv[1:]
+    policy_path = argv[0]
+    try:
+        from gov import policy_export
+    except ImportError as e:
+        print("export check FAILED: cannot import gov.policy_export (%s)"
+              % e)
+        return 1
+    try:
+        text = policy_export.translate(policy_path, format="auto",
+                                       strict=strict)
+    except policy_export.PolicyExportError as e:
+        print("export check FAILED: %s" % e)
+        return 1
+    except (ValueError, OSError) as e:
+        print("export check FAILED: %s" % e)
+        return 1
+    n_policies = text.count("\npermit (") + text.count("\nforbid (")
+    fmt = "dogwood" if "when temporal" in text else "cedar"
+    limitations = text.count("//   - ")
+    print("export OK: translator v%s, format=%s, %d emitted policies, "
+          "%d export limitation(s)"
+          % (policy_export.TRANSLATOR_VERSION, fmt, n_policies,
+             limitations))
     return 0
 
 

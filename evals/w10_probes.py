@@ -296,6 +296,47 @@ def _w10_oracle():
                  "domain_allowlisted": False,
                  "carries_read_content": False, "read_sensitive": False,
                  "cross_run_campaign": False, "source_untrusted": False,
+                 # Repair lane (2026-09-22, sit56): the Wave-24 default
+                 # policy added a rule matching `velocity_exceeded:
+                 # true`, and the real executor always snapshots this
+                 # key (gov/executor.py). The synthetic oracle context
+                 # must include it (False = no velocity breach here) so
+                 # the simulator can evaluate the policy instead of
+                 # marking the replay indeterminate. Honest probe drift
+                 # fix, not a simulator change.
+                 "velocity_exceeded": False,
+                 # P7 repair lane (2026-09-22, sit56): the wave-27
+                 # default policy added rules matching
+                 # `install_allowlisted`, `install_integrity_verified`,
+                 # and `package_fetch`, and the real executor snapshots
+                 # all three (gov/executor.py: for send_email,
+                 # package_fetch=False and the install keys are None —
+                 # None is real input, not missing input, per the
+                 # simulator's own _val semantics, matching
+                 # path_outside_sandbox=None above). Same honest probe
+                 # drift fix as the velocity_exceeded repair.
+                 "package_fetch": False,
+                 "install_allowlisted": None,
+                 "install_integrity_verified": None,
+                 # F111 repair lane (2026-09-22, sit56): the wave-34
+                 # default policy added a rule matching
+                 # `credential_identity_mismatch`, and the real executor
+                 # snapshots it for every send/api_call tool
+                 # (gov/executor.py). The synthetic oracle context must
+                 # include it (False = no mismatch here — neither entry
+                 # carries a credential_id/owner and the probe's real
+                 # leg provisions no session identity) so the simulator
+                 # can evaluate the policy instead of marking the replay
+                 # indeterminate. Same honest probe drift fix as the
+                 # velocity_exceeded / package_fetch repairs.
+                 "credential_identity_mismatch": False,
+                 # F110 companion (2026-09-22, sit56): the wave-34 policy
+                 # also matches `platform_egress`; the executor never
+                 # sets it on tool calls (only gov/platform_egress.py
+                 # sets it on its own direct policy calls), so None —
+                 # the honest snapshot value, bool(None)==False — keeps
+                 # the replay determinate.
+                 "platform_egress": None,
                  "counters": {}}
             c.update(kw)
             return c
@@ -469,7 +510,7 @@ def _w10_crossrun():
     o = {}
     with _tmp("w10cr-") as d:
         led = str(d / "ledger.jsonl")
-        EP = "https://shard0.collector.example/ingest"
+        EP = "https://shard0.collector.synthetic.local/ingest"
         frag = lambda i: {"x": "a8f3kQ2zX1mP9vB7nL4cD6eF0gH2jK5" + str(i)}
 
         def run_with(principal):

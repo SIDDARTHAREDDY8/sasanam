@@ -334,7 +334,10 @@ class TestF31IdentityVerifierHardening(unittest.TestCase):
         return make_run()
 
     def _tool(self, ctx):
-        from pydantic import BaseModel, ConfigDict
+        try:
+            from pydantic import BaseModel, ConfigDict
+        except ImportError:
+            self.skipTest("pydantic not installed")
         from gov.adapters.core import GovernedBinding
         from gov.adapters.langchain_tools import make_governed_tool
 

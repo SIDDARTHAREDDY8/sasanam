@@ -82,13 +82,51 @@ one registrable label above known suffixes (``evil.co.uk`` and
 ``good.co.uk`` are different tenants again). The table is intentionally
 small — not a full public-suffix list — and rotating the registered
 domain itself still evades (F13 residual).
+
+F74 (Round 18): concurrency. ``EgressLedger.append`` was an unlocked
+read-modify-write: concurrent writers sharing one ledger (threads in
+one process, e.g. N agent threads sharing a run dir doing ``api_call``
+bursts) read the same tail and appended the same next sequence number
+with divergent hashes -- the chain forked, and every later ``call()``
+failed closed with ``LedgerUnverifiableError`` (F-RA1 independently
+confirmed the read side: concurrent ``require_verified()`` torn-reads
+fail-closed legitimate calls). The fix mirrors the F25 ``ActionLog``
+flock discipline: a reentrant per-path read/write lock
+(``_ledger_read_locked`` / ``_ledger_write_locked``) combining an
+in-process RW guard with POSIX ``fcntl.flock`` -- LOCK_SH for readers,
+LOCK_EX across the whole append critical section (verify, tail
+re-read, seq assignment, write, checkpoint). Lock acquisition is
+bounded (``LEDGER_LOCK_TIMEOUT_SECS``); timeout raises
+``LedgerLockError`` and nothing is written or trusted unlocked.
+
+Locking discipline -- scope contract (read before adding locks):
+- ONE lock per absolute ledger path, process-wide (``_ledger_lock_for``),
+  so separate ``EgressLedger`` instances (one per executor thread)
+  serialize on the same lock. The checkpoint sidecar
+  (``<ledger>.checkpoints``) is covered TRANSITIVELY: every sidecar
+  read/write happens under the ledger lock; never lock the sidecar
+  separately.
+- Readers (``require_verified`` and every query method) hold the READ
+  lock across verify+scan, so no reader observes a torn append --
+  in-process (thread guard) or cross-process (flock SH). Readers never
+  block each other.
+- Reentrancy: a write hold implies read (``append`` calls
+  ``require_verified`` under its write hold); read-under-read nests.
+  Read->write UPGRADE is refused with ``LedgerLockError`` rather than
+  deadlocking -- no current code path upgrades.
+- S5 / future work: REUSE ``_ledger_read_locked`` /
+  ``_ledger_write_locked``. Do NOT add a second lock around ledger
+  I/O -- competing locks on the same bytes reintroduce the fork.
 """
 
+import contextlib
+import fcntl
 import hashlib
 import hmac
 import ipaddress
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from urllib.parse import urlparse
@@ -250,6 +288,285 @@ def _checkpoint_mac(key, key_epoch, seq, entry_hash):
     ).hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# F74 locking: reentrant per-path read/write lock (F25 flock discipline)
+# ---------------------------------------------------------------------------
+
+# F74: how long a ledger-lock acquisition waits before failing closed.
+# Mirrors F25's APPEND_LOCK_TIMEOUT_SECS (gov/log.py): a crashed lock
+# holder's flock is released by the kernel on process death, so a timeout
+# means a LIVE holder is stuck -- refusing to proceed unlocked is the
+# safe direction.
+LEDGER_LOCK_TIMEOUT_SECS = 30
+_LEDGER_LOCK_POLL_SECS = 0.02
+
+
+class LedgerLockError(OSError):
+    """F74: the egress-ledger lock could not be acquired in time.
+
+    Fail-closed: the caller must not write to or trust the ledger
+    unlocked. ``append`` lets this propagate (nothing is written);
+    ``require_verified`` converts it to ``LedgerUnverifiableError``
+    (refuse to act). Mirrors F25's ``AppendLockError`` for the action
+    log.
+    """
+
+
+class _LedgerMissing(Exception):
+    """F74: the ledger path is missing or unusable (parent missing,
+    not-a-directory, ...), so there is no file to lock.
+
+    Internal sentinel only: every public reader converts it to its
+    missing-ledger default -- exactly the pre-F74 behavior, where
+    readers checked ``path.exists()`` and treated an unusable path as
+    "no ledger" (fail open for the heuristic signal). An EXISTING but
+    unreadable ledger still fails closed (``LedgerLockError`` ->
+    ``LedgerUnverifiableError``), never as "clean".
+    """
+
+
+class _LedgerRWLock:
+    """Reentrant read/write lock for one ledger path (F74).
+
+    Two layers, one acquisition:
+    - In-process: a condition-variable RW guard with writer preference.
+      Reentrant for the owning thread: a write hold implies read (so
+      ``append`` can call ``require_verified`` under its write hold),
+      read-under-read nests. Read->write upgrade is REFUSED with
+      ``LedgerLockError`` instead of deadlocking -- no current code path
+      upgrades; fail closed on the programming error.
+    - Cross-process: POSIX ``fcntl.flock`` -- LOCK_SH for readers
+      (readers never block each other, in or across processes, so the
+      hot ``require_verified`` path does not convoy), LOCK_EX for the
+      append critical section (appends linearize across processes; no
+      two writers can assign the same sequence number or fork the
+      chain).
+
+    Each outermost acquisition opens its OWN fd and flocks it; the fd is
+    closed on outermost release. The condition variable is never held
+    across the blocking flock poll, so a stuck flock cannot wedge the
+    in-process guard. All waits are bounded by
+    ``LEDGER_LOCK_TIMEOUT_SECS``: acquisition failure raises
+    ``LedgerLockError`` -- never proceed unlocked.
+    """
+
+    def __init__(self, path):
+        self._path = path
+        self._cond = threading.Condition(threading.Lock())
+        self._depths = {}      # thread ident -> reentrant hold depth
+        self._readers = set()  # idents holding an outermost read
+        self._writer = None    # ident holding the write, if any
+        self._writers_waiting = 0
+        self._fds = {}         # ident -> [fd] (one per outermost hold)
+
+    def _acquire_flock(self, fd, exclusive, deadline, what):
+        op = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+        while True:
+            try:
+                fcntl.flock(fd, op | fcntl.LOCK_NB)
+                return
+            except (OSError, BlockingIOError):
+                if time.monotonic() >= deadline:
+                    raise LedgerLockError(
+                        "could not acquire the %s ledger lock on %s "
+                        "within %ds; refusing to proceed unlocked"
+                        % (what, self._path, LEDGER_LOCK_TIMEOUT_SECS))
+                time.sleep(_LEDGER_LOCK_POLL_SECS)
+
+    def acquire_read(self):
+        me = threading.get_ident()
+        deadline = time.monotonic() + LEDGER_LOCK_TIMEOUT_SECS
+        with self._cond:
+            if me in self._depths:
+                # Reentrant: already hold read or write; write implies
+                # read, so no flock work is needed.
+                self._depths[me] += 1
+                return
+            # Writer preference: once a writer is waiting, new readers
+            # queue behind it (bounded by the deadline).
+            while self._writer is not None or self._writers_waiting:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LedgerLockError(
+                        "timed out waiting for the ledger read lock on "
+                        "%s; refusing to trust the ledger unlocked"
+                        % (self._path,))
+                self._cond.wait(timeout=remaining)
+            self._depths[me] = 1
+            self._readers.add(me)
+        # The condition is NOT held across the blocking flock poll.
+        # Read mode opens "r": readers never create the file (pre-F74
+        # readers didn't either). An unusable path reads as missing
+        # (_LedgerMissing -> the caller's missing-ledger default); an
+        # EXISTING but unopenable path fails closed via LedgerLockError.
+        try:
+            fd = open(self._path, "r", encoding="utf-8")
+        except OSError:
+            with self._cond:
+                del self._depths[me]
+                self._readers.discard(me)
+                self._cond.notify_all()
+            if not os.path.exists(self._path):
+                raise _LedgerMissing(self._path)
+            raise LedgerLockError(
+                "could not open the ledger for a shared lock: %s; "
+                "refusing to trust the ledger unlocked" % (self._path,))
+        try:
+            self._acquire_flock(fd, False, deadline, "shared")
+        except BaseException:
+            with self._cond:
+                del self._depths[me]
+                self._readers.discard(me)
+                self._cond.notify_all()
+            fd.close()
+            raise
+        with self._cond:
+            self._fds.setdefault(me, []).append(fd)
+
+    def acquire_write(self):
+        me = threading.get_ident()
+        deadline = time.monotonic() + LEDGER_LOCK_TIMEOUT_SECS
+        with self._cond:
+            if self._writer == me:
+                self._depths[me] += 1  # reentrant write
+                return
+            if me in self._depths:
+                # Read->write upgrade would deadlock against other
+                # readers; refuse instead of hanging. No caller does this.
+                raise LedgerLockError(
+                    "read->write ledger lock upgrade is not supported "
+                    "for %s; release the read hold first" % (self._path,))
+            self._writers_waiting += 1
+            try:
+                while self._writer is not None or self._readers:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise LedgerLockError(
+                            "timed out waiting for the ledger write lock "
+                            "on %s; refusing to write unlocked"
+                            % (self._path,))
+                    self._cond.wait(timeout=remaining)
+                self._writer = me
+                self._depths[me] = 1
+            finally:
+                self._writers_waiting -= 1
+        # The condition is NOT held across the blocking flock poll.
+        try:
+            fd = open(self._path, "a", encoding="utf-8")
+        except OSError as e:
+            with self._cond:
+                del self._depths[me]
+                self._writer = None
+                self._cond.notify_all()
+            raise LedgerLockError(
+                "could not open the ledger for the exclusive lock: %s "
+                "(%s); refusing to write unlocked" % (self._path, e))
+        try:
+            self._acquire_flock(fd, True, deadline, "exclusive")
+        except BaseException:
+            with self._cond:
+                del self._depths[me]
+                self._writer = None
+                self._cond.notify_all()
+            fd.close()
+            raise
+        with self._cond:
+            self._fds.setdefault(me, []).append(fd)
+
+    def release(self):
+        me = threading.get_ident()
+        with self._cond:
+            depth = self._depths.get(me, 0)
+            if not depth:
+                raise LedgerLockError(
+                    "release of unheld ledger lock for %s" % (self._path,))
+            if depth > 1:
+                self._depths[me] = depth - 1
+                return
+            del self._depths[me]
+            self._readers.discard(me)
+            if self._writer == me:
+                self._writer = None
+            fds = self._fds.get(me)
+            fd = fds.pop() if fds else None
+            if not fds:
+                self._fds.pop(me, None)
+            self._cond.notify_all()
+        if fd is not None:
+            try:
+                fd.close()  # releases the flock
+            except OSError:
+                pass
+
+
+_ledger_locks_guard = threading.Lock()
+_ledger_locks = {}
+
+
+def _ledger_lock_for(path):
+    """The process-wide ``_LedgerRWLock`` for one ledger path (F74).
+
+    Keyed by absolute path so separate ``EgressLedger`` instances (e.g.
+    one per ``ToolExecutor`` thread sharing a run dir) serialize on the
+    same lock. Lazily created under a guard; entries are small and
+    bounded by the number of distinct ledger paths in the process.
+    """
+    key = os.path.abspath(os.path.expanduser(str(path)))
+    with _ledger_locks_guard:
+        lock = _ledger_locks.get(key)
+        if lock is None:
+            lock = _LedgerRWLock(key)
+            _ledger_locks[key] = lock
+        return lock
+
+
+def _reset_ledger_locks_after_fork():
+    # A forked child inherits the registry with lock state belonging to
+    # the parent's threads; drop it so the child rebuilds clean locks.
+    # (The flock itself lives on the parent's fds, which the child no
+    # longer references -- the child re-opens and contends normally.)
+    with _ledger_locks_guard:
+        _ledger_locks.clear()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_ledger_locks_after_fork)
+
+
+@contextlib.contextmanager
+def _ledger_read_locked(path):
+    """Hold the F74 read lock (flock LOCK_SH) across the critical section.
+
+    F74/F-RA1: readers verify and scan under a shared lock, so no reader
+    observes a torn append -- in-process (thread guard) or cross-process
+    (flock). Readers never block each other.
+    """
+    lock = _ledger_lock_for(path)
+    lock.acquire_read()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+@contextlib.contextmanager
+def _ledger_write_locked(path):
+    """Hold the F74 write lock (flock LOCK_EX) across the critical section.
+
+    F74: serializes ``EgressLedger.append`` across threads and processes
+    (the F25 ``ActionLog`` discipline), so concurrent appends linearize
+    -- no two writers can assign the same sequence number or fork the
+    hash chain. Bounded wait; ``LedgerLockError`` on timeout: the write
+    never happens unlocked.
+    """
+    lock = _ledger_lock_for(path)
+    lock.acquire_write()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 class EgressLedger:
     """Append-only HMAC-authenticated JSONL of outbound api_call shapes.
 
@@ -258,6 +575,16 @@ class EgressLedger:
     to the ``<ledger>.checkpoints`` sidecar. All reads verify before
     trusting (``require_verified``): tampering or tail truncation raises
     ``LedgerUnverifiableError`` instead of silently dropping taint.
+
+    F74: ``append`` holds the exclusive ledger lock
+    (``_ledger_write_locked``) across the whole read-modify-write --
+    verify, tail re-read, seq assignment, entry write, checkpoint --
+    so concurrent writers linearize and the chain cannot fork. Readers
+    (``require_verified`` and every query method) hold the shared lock
+    across verify+scan, so no torn reads (F-RA1). ``self._seq`` /
+    ``self._prev`` are per-instance caches only: ``append`` re-reads the
+    tail UNDER the write lock, so a stale instance cache can never fork
+    the chain.
     """
 
     def __init__(self, path):
@@ -363,36 +690,47 @@ class EgressLedger:
         F17: verifies the ledger BEFORE appending — a tampered ledger
         refuses new writes (fail-closed) — then HMACs the entry with the
         active key epoch and writes an HMAC'd checkpoint.
+
+        F74: the whole read-modify-write runs under the exclusive ledger
+        lock (``_ledger_write_locked``) — the F25 ``ActionLog``
+        discipline. The tail is re-read UNDER the lock, so concurrent
+        writers (threads or processes) linearize: no duplicate sequence
+        numbers, no forked chain. ``LedgerLockError`` on lock timeout:
+        nothing is written unlocked.
         """
-        self.require_verified()
-        key, epoch = _logmod._active_key()
-        self._seq, self._prev = self._tail_state()
-        seq = self._seq + 1
-        body = dict(shape)
-        body["v"] = _LEDGER_VERSION
-        body["seq"] = seq
-        body["key_epoch"] = epoch
-        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
-        mac = _ledger_mac(key, epoch, self._prev, canonical)
-        entry_hash = hashlib.sha256(
-            (self._prev + canonical).encode("utf-8")
-        ).hexdigest()
-        record = dict(body)
-        record["prev_hash"] = self._prev
-        record["entry_hash"] = entry_hash
-        record["mac"] = mac
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, sort_keys=True) + "\n")
-            f.flush()
-            end_offset = f.tell()
-        self._write_checkpoint(seq, entry_hash, epoch, end_offset, key)
-        self._seq, self._prev = seq, entry_hash
-        # We verified before writing and know exactly the bytes we
-        # appended, so the new stat signature is known-good: the next
-        # require_verified() stays O(1) without re-reading.
-        self._verified_sig = self._sig()
-        return record
+        with _ledger_write_locked(self.path):
+            self.require_verified()  # nested: write implies read
+            key, epoch = _logmod._active_key()
+            # Re-read the tail UNDER the lock: another writer may have
+            # appended since this instance last looked; the lock is what
+            # makes the read-modify-write atomic.
+            self._seq, self._prev = self._tail_state()
+            seq = self._seq + 1
+            body = dict(shape)
+            body["v"] = _LEDGER_VERSION
+            body["seq"] = seq
+            body["key_epoch"] = epoch
+            canonical = json.dumps(body, sort_keys=True, separators=(",", ":"))
+            mac = _ledger_mac(key, epoch, self._prev, canonical)
+            entry_hash = hashlib.sha256(
+                (self._prev + canonical).encode("utf-8")
+            ).hexdigest()
+            record = dict(body)
+            record["prev_hash"] = self._prev
+            record["entry_hash"] = entry_hash
+            record["mac"] = mac
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, sort_keys=True) + "\n")
+                f.flush()
+                end_offset = f.tell()
+            self._write_checkpoint(seq, entry_hash, epoch, end_offset, key)
+            self._seq, self._prev = seq, entry_hash
+            # We verified before writing and know exactly the bytes we
+            # appended, so the new stat signature is known-good: the next
+            # require_verified() stays O(1) without re-reading.
+            self._verified_sig = self._sig()
+            return record
 
     def require_verified(self):
         """Raise ``LedgerUnverifiableError`` unless the ledger verifies.
@@ -422,9 +760,31 @@ class EgressLedger:
         (ctime freshness); under the dev key every decision re-verifies
         the bytes (the remaining dev-key forgery residual is the
         documented dev-key limitation, not a silent trust).
+
+        F74/F-RA1: the verify runs under the shared ledger lock
+        (``_ledger_read_locked``), so a concurrent append cannot tear
+        the read mid-verify -- the F-RA1 fail-closed refusal of
+        legitimate calls is fixed for threads and processes alike. A
+        read-lock timeout fails closed as ``LedgerUnverifiableError``
+        (refuse to trust), never as "clean".
         """
         if not self.path.exists():
             return
+        try:
+            with _ledger_read_locked(self.path):
+                self._require_verified_locked()
+        except _LedgerMissing:
+            # Unusable path (parent missing, not-a-directory, ...):
+            # pre-F74 readers treated this exactly like a missing ledger
+            # (fail open for the heuristic signal).
+            return
+        except LedgerLockError as e:
+            raise LedgerUnverifiableError(
+                "could not acquire the ledger read lock for %s: %s -- "
+                "refusing to trust the ledger" % (self.path, e))
+
+    def _require_verified_locked(self):
+        """Verify assuming the read (or write) ledger lock is held."""
         sig = self._sig()
         if sig[0] is None:
             raise LedgerUnverifiableError("cannot stat ledger: %s"
@@ -522,10 +882,17 @@ class EgressLedger:
         start a fresh ledger. A non-empty ledger whose checkpoint
         sidecar is missing also does NOT verify: the sidecar is the
         tail-truncation anchor, and its absence is treated as tampering.
+
+        F74: runs under the shared ledger lock, so the scan cannot tear
+        against a concurrent append.
         """
         if not self.path.exists():
             return True
-        return self._verify_full(_ledger_keyring())
+        try:
+            with _ledger_read_locked(self.path):
+                return self._verify_full(_ledger_keyring())
+        except _LedgerMissing:
+            return True
 
     # -- campaign query --------------------------------------------------
 
@@ -550,27 +917,34 @@ class EgressLedger:
         F13: the endpoint is normalized to its registered domain before
         keying, so ``shard0.collector.example`` and
         ``shard1.collector.example`` land in the SAME campaign bucket.
+
+        F74: the verify+scan runs under the shared ledger lock, so the
+        scan cannot tear against a concurrent append (F-RA1).
         """
-        self.require_verified()  # F17: verify before trusting any read
         if not self.path.exists():
             return []
-        now = time.time() if now is None else now
-        domain = registered_domain(endpoint)
-        out = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if (entry.get("principal") == principal
-                    and self._entry_domain(entry) == domain
-                    and entry.get("fragment") is True
-                    and now - float(entry.get("ts", 0)) <= window_secs):
-                out.append(entry)
-        return out
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()  # nested: reentrant under read hold
+                now = time.time() if now is None else now
+                domain = registered_domain(endpoint)
+                out = []
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (entry.get("principal") == principal
+                            and self._entry_domain(entry) == domain
+                            and entry.get("fragment") is True
+                            and now - float(entry.get("ts", 0)) <= window_secs):
+                        out.append(entry)
+                return out
+        except _LedgerMissing:
+            return []
 
     def campaign_hit(self, principal, endpoint,
                      window_secs=CAMPAIGN_WINDOW_SECS, now=None,
@@ -603,43 +977,49 @@ class EgressLedger:
         guard's territory), not low-and-slow. Empty key sets never match
         (a param-less call carries no exfil payload). Heuristic,
         queue-only, fail-safe — same contract as campaign_hit.
+
+        F74: the verify+scan runs under the shared ledger lock (F-RA1).
         """
-        self.require_verified()  # F17: verify before trusting any read
         if not self.path.exists():
             return False
-        if not principal or not domain or not param_keys:
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()  # nested: reentrant under read hold
+                if not principal or not domain or not param_keys:
+                    return False
+                now = time.time() if now is None else now
+                wanted = sorted(param_keys)
+                per_run = {}
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if entry.get("tool") != "api_call":
+                        continue
+                    if entry.get("principal") != principal:
+                        continue
+                    if self._entry_domain(entry) != domain:
+                        continue
+                    keys = entry.get("param_keys")
+                    if not keys or sorted(keys) != wanted:
+                        continue
+                    try:
+                        ts = float(entry.get("ts", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if now - ts > window_secs:
+                        continue
+                    run_id = entry.get("run_id")
+                    per_run.setdefault(run_id, 0)
+                    per_run[run_id] += 1
+                thin_runs = [r for r, n in per_run.items() if n < k]
+                return len(thin_runs) >= k
+        except _LedgerMissing:
             return False
-        now = time.time() if now is None else now
-        wanted = sorted(param_keys)
-        per_run = {}
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if entry.get("tool") != "api_call":
-                continue
-            if entry.get("principal") != principal:
-                continue
-            if self._entry_domain(entry) != domain:
-                continue
-            keys = entry.get("param_keys")
-            if not keys or sorted(keys) != wanted:
-                continue
-            try:
-                ts = float(entry.get("ts", 0))
-            except (TypeError, ValueError):
-                continue
-            if now - ts > window_secs:
-                continue
-            run_id = entry.get("run_id")
-            per_run.setdefault(run_id, 0)
-            per_run[run_id] += 1
-        thin_runs = [r for r, n in per_run.items() if n < k]
-        return len(thin_runs) >= k
 
     @staticmethod
     def _shape_sketch(shape):
@@ -721,8 +1101,22 @@ class EgressLedger:
         identity trust. In registry mode the residual is a compromised
         REGISTERED principal: quorum still needs k distinct
         principals, so one compromised principal alone cannot fire it.
+
+        F74: the verify+scan runs under the shared ledger lock (F-RA1).
         """
-        self.require_verified()  # F17: verify before trusting any read
+        if not self.path.exists():
+            return False
+        try:
+            with _ledger_read_locked(self.path):
+                return self._cross_principal_campaign_hit_locked(
+                    shape, window_secs, now, k, principal_registry)
+        except _LedgerMissing:
+            return False
+
+    def _cross_principal_campaign_hit_locked(self, shape, window_secs, now,
+                                             k, principal_registry):
+        """Scan assuming the read ledger lock is held (F74)."""
+        self.require_verified()  # nested: reentrant under the read hold
         if not self.path.exists():
             return False
         if not isinstance(shape, dict):
@@ -818,25 +1212,31 @@ class EgressLedger:
         F17: verifies the ledger first — a tampered ledger raises
         ``LedgerUnverifiableError`` instead of returning False, so a
         trimmed taint mark fails CLOSED, never open.
+
+        F74: the verify+scan runs under the shared ledger lock (F-RA1).
         """
-        self.require_verified()  # F17: verify before trusting any read
         if not self.path.exists() or not principal:
             return False
-        now = time.time() if now is None else now
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except ValueError:
-                continue
-            if (entry.get("kind") == "sensitive_read"
-                    and entry.get("principal") == principal):
-                try:
-                    ts = float(entry.get("ts", 0))
-                except (TypeError, ValueError):
-                    continue
-                if now - ts <= ttl_secs:
-                    return True
-        return False
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()  # nested: reentrant under read hold
+                now = time.time() if now is None else now
+                for line in self.path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (entry.get("kind") == "sensitive_read"
+                            and entry.get("principal") == principal):
+                        try:
+                            ts = float(entry.get("ts", 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if now - ts <= ttl_secs:
+                            return True
+                return False
+        except _LedgerMissing:
+            return False

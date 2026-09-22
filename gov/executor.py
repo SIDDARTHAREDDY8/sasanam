@@ -56,6 +56,7 @@ Policy outcomes:
 import json
 import os
 import fcntl
+import sys
 import time
 import collections.abc
 import itertools
@@ -64,7 +65,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
-from .approvals import (IdentityVerifierAlreadySetError, approval_digest_ok,
+from . import supplychain_install as sc_install
+from .approvals import (DelegationError, DelegationStore,
+                        IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
                         sanitize_preview_text, QueueLockError,
                         QueueLockInvalidatedError, QueueLockPathError,
@@ -84,6 +87,7 @@ from .egress_ledger import (
     SENSITIVE_TAINT_TTL_SECS,
     EgressLedger,
     LedgerUnverifiableError,
+    _ledger_read_locked,
     registered_domain,
 )
 from .identity import (
@@ -93,13 +97,22 @@ from .identity import (
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
 )
-from .log import (TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS,
-                   _read_tip_cache, _verify, _write_tip_cache,
-                   newest_refusal_ts_per_flag, read_entries,
+from .policy import PolicyDecision
+from .tool_ratings import normalize_tool_ratings
+from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    refusal_ts_within_window, verify_chain_tip,
                    write_chain_tip_from_tail)
 
 _SEND_TOOLS = ("send_email", "http_post")
+# S3 (K-041): tools that mutate state outside the run's read view. A
+# mutating tool with NO rating (not in the core table, not in the
+# deployment dict) is forced to require_approval — never allowed
+# silently. api_call is read-classified (F1); read_file is non-mutating.
+_MUTATING_TOOLS = ("write_file", "delete_file", "send_email", "http_post")
+# S5 (K-052): tools whose executions feed the cross-run velocity ledger
+# (sends, writes, egress bytes). delete_file is out of scope: the
+# velocity thresholds name sends/writes/egress-bytes.
+_VELOCITY_TOOLS = ("send_email", "http_post", "api_call", "write_file")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
 
 
@@ -124,12 +137,22 @@ _CORRELATION_WINDOW_API = 16
 
 class ToolExecutor:
     def __init__(self, run_dir, policy, log, approvals, ledger_path=None,
-                 principal_registry=None, session_identity=None):
+                 principal_registry=None, session_identity=None,
+                 tool_ratings=None, credential_manifest=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # F111 (wave-34): the run's credential manifest (GTG-50020
+        # class). The harness declares every credential it provisions
+        # into the agent's reachable scope; the executor identity-binds
+        # egress credentials against it. Default: an empty manifest
+        # (nothing provisioned, nothing bound).
+        from .credential_manifest import CredentialManifest
+        self._credential_manifest = (
+            credential_manifest if credential_manifest is not None
+            else CredentialManifest())
         # F48 (R11): policy pin/load audit. The policy this executor
         # will enforce is pinned at construction: ALWAYS audit
         # ``policy_loaded`` with the normalized source path and the
@@ -230,6 +253,34 @@ class ToolExecutor:
             getattr(policy, "batch_excluded_queue_reasons", None) or ())
         if hasattr(approvals, "set_batch_excluded_reasons"):
             approvals.set_batch_excluded_reasons(self._batch_excluded)
+        # P10 (wave-26): governed AUTHORITY delegation — agent→agent
+        # grants of tool-call authority via DelegationStore
+        # (gov/approvals.py). This is a DIFFERENT primitive from
+        # D1-core "approval delegation" (human reassignment of approval
+        # stewardship) — the A12 terminology guard applies: docs, code,
+        # and audit events keep the two distinct. The executor owns one
+        # store per run (same run_dir/log discipline as the approval
+        # queue) and installs the live-policy probes the store's
+        # mint-time no-amplification check needs, plus the
+        # executor-minted identity verifier (F26 pattern, write-once).
+        # The store is always constructed but inert while the
+        # authority-delegation policy section is disabled (spec §7
+        # non-goal: no behavior change while disabled).
+        self._delegation_store = DelegationStore(
+            self.run_dir, self.log,
+            config=dict(getattr(self.policy, "authority_delegation",
+                                None) or {}),
+            principal_registry=self._principal_registry)
+        self._delegation_store.set_identity_verifier(
+            self._verify_approval_identity)
+        self._delegation_store.set_policy_probes(
+            self.policy.role_allows, self._delegation_effect_probe)
+        # S3 (K-041): tool reversibility/impact ratings. The deployment
+        # dict overrides the core-tool defaults per field (see
+        # gov/tool_ratings.py); a malformed rating fails construction.
+        # A mutating tool with no rating at all is forced to
+        # require_approval in call() (never allowed silently).
+        self._tool_ratings = normalize_tool_ratings(tool_ratings)
         # F26: the approval queue's break-glass/review paths bind to
         # executor-minted identities; install the mint verifier so the
         # queue authenticates them against this executor's mint set (the
@@ -264,6 +315,19 @@ class ToolExecutor:
         # approved-then-executed sends are counted once, not twice.
         self._egress_bytes = 0  # F33: cumulative executed egress bytes
         # this run (actual payload UTF-8 bytes, DLP-independent).
+        # S2 (K-018): hard budget accrual. Tokens/spend accrue on the
+        # RESULT path only (_ingest_result / ingest_foreign_result via
+        # result["_usage"] — never call kwargs, so an agent cannot forge
+        # its own usage); _budget_actions counts call() invocations that
+        # reach the budget guard.
+        self._tokens_used = 0
+        self._spend_used = 0.0
+        self._budget_actions = 0
+        # S4 (K-045): total-step budget. Counts every call() attempt
+        # after the F17 ledger gate (denied/queued attempts included —
+        # it is a budget on run activity and log growth). Ledger-refused
+        # calls never reach here, so they consume no budget.
+        self._total_calls = 0
         self._repeats = {}  # (tool, canonical args) -> count
         self._minted = set()  # (agent_id, role, run_id, principal) tuples
         # F55 (R13): the deployment-provisioned session identity. When
@@ -278,6 +342,10 @@ class ToolExecutor:
         # mint budget (it is deployment config, not agent issuance).
         # Without it, the pre-R13 F26 behavior is kept (dev mode).
         self._session_identity = None
+        # Wave-40 (F115): one-time flag for the loud warning when the
+        # credential manifest is non-empty but no session identity was
+        # provisioned (identity-bound egress silently unenforced).
+        self._credential_binding_unenforced_warned = False
         if session_identity is not None:
             self._session_identity = self._provision_session_identity(
                 session_identity)
@@ -306,10 +374,10 @@ class ToolExecutor:
         # next audited entry.
         self._lock_refusal_last_audit = 0.0
         self._lock_refusal_suppressed = 0
-        # R17 (F70): side channel for _log_shows_recent_lock_refusal —
-        # when its full chain verification (forced or fallback) finds
-        # the chain BROKEN, the error string lands here (else None) so
-        # the caller can audit the tamper loudly with attribution
+        # R17: side channel for _log_shows_recent_lock_refusal --
+        # when its fallback full chain verification finds the chain
+        # BROKEN, the error string lands here (else None) so the
+        # caller can audit the tamper loudly with attribution
         # instead of folding it into the normal refusal audit.
         self._r17_tip_forced_error = None
         self._tainted = False  # True once tool output entered this run
@@ -473,6 +541,66 @@ class ToolExecutor:
                 "Identity %r was not minted by this executor for run %r."
                 % (identity, self.run_id))
         return True
+
+    def _delegation_effect_probe(self, role, tool):
+        """P10: bare-tool policy effect probe for the delegation store's
+        mint-time no-amplification check. Mirrors how call() evaluates a
+        plain tool invocation, so require_approval flags propagate into
+        the grant scope (delegation never bypasses the approval queue).
+        Returns the policy effect: "allow" | "require_approval" | "deny".
+
+        The probe assumes the most permissive call-shaped context
+        (domain_allowlisted=True): the mint check asks whether the
+        delegator could invoke the tool AT ALL under the policy, not
+        whether a bare arg-less call would be denied. Conditional,
+        arg-dependent denies (the egress domain allowlist) must not
+        refuse the mint — the grant covers the tool, and every actual
+        invocation is still evaluated with its real args, so no
+        authority is amplified. (F94: deny-egress-unallowlisted now
+        covers api_call; probing without domain_allowlisted would read
+        the fail-closed default as an unconditional deny and wrongly
+        refuse grants for a tool the delegator legitimately holds.)
+        """
+        decision = self.policy.evaluate(
+            {"tool": tool, "role": role, "agent_id": "delegation-probe",
+             "args": {}},
+            {"role": role, "agent": "delegation-probe",
+             "domain_allowlisted": True})
+        return decision.effect
+
+    def _delegation_store_error(self, _base, identity, tool, exc):
+        """P10: fail-closed denial when the delegation store raises an
+        unexpected error (anything that is not a DelegationError
+        refusal, which carries its own audited reason). The error is
+        audited loudly as its own event, then the call is denied: an
+        unverifiable delegation state must never read as "no
+        delegation claim", and must never crash the call path into an
+        unlogged state."""
+        self.log.append({
+            "event": "delegation_store_error",
+            "run_id": identity.run_id,
+            "agent_id": identity.agent_id,
+            "role": identity.role,
+            "principal": identity.principal,
+            "tool": tool,
+            "decision": "denied",
+            "policy_id": "delegation-store-error",
+            "flag": "delegation_store_error",
+            "reason": ("Delegation store error (%s: %s): refusing the "
+                       "call fail-closed rather than executing with "
+                       "unverifiable delegation state."
+                       % (type(exc).__name__, exc)),
+        })
+        entry = self.log.append(_base({
+            "decision": "denied",
+            "policy_id": "delegation-store-error",
+            "flag": "delegation_store_error",
+            "reason": ("Delegation store error: call refused fail-closed "
+                       "(see the delegation_store_error event)."),
+        }))
+        return {"status": "denied", "reason": entry["reason"],
+                "policy_id": "delegation-store-error",
+                "seq": entry["seq"]}
 
     # -- path handling ----------------------------------------------------
 
@@ -807,10 +935,78 @@ class ToolExecutor:
         elif tool == "send_email":
             to = args.get("to") or ""
             host = to.rsplit("@", 1)[-1].lower() if "@" in to else None
+        elif tool == "api_call":
+            # F94: api_call is egress-scoped like the other outbound
+            # tools — its destination comes from the ``endpoint`` arg.
+            try:
+                host = (urlparse(args.get("endpoint") or "").hostname
+                        or "").lower()
+            except Exception:
+                host = None
         if not host:
             return False
         return any(host == d.lower() or host.endswith("." + d.lower())
                    for d in allow)
+
+    def _credential_identity_mismatch(self, args):
+        """F111 (wave-34): is a credential on this egress call bound to
+        the provisioned session identity?
+
+        Returns True on mismatch (= the ``credential_identity_mismatch``
+        policy signal; the policy rule denies + audits). Delegates to
+        the run's CredentialManifest; without a provisioned session
+        identity there is nothing to bind to (False, documented).
+
+        Wave-40 (F115): "nothing to bind to" used to be SILENT even
+        when the manifest held declared credentials -- the deployment
+        believed it had identity-bound egress and did not (F64
+        precedent: silent weak modes warn loudly). Now a manifest with
+        declared credentials and no session identity emits a one-time
+        loud warning (stderr + audited ``credential_binding_unenforced``
+        entry). Dev-mode runs with an EMPTY manifest stay quiet: there
+        is nothing provisioned, so nothing is unenforced.
+        """
+        sess = self._session_identity
+        if sess is None:
+            if (len(self._credential_manifest) > 0
+                    and not self._credential_binding_unenforced_warned):
+                self._credential_binding_unenforced_warned = True
+                warn_msg = (
+                    "GOVERNANCE WARNING: the run's credential manifest "
+                    "declares %d credential(s) but NO session identity "
+                    "was provisioned -- identity-bound egress is "
+                    "UNENFORCED (F115): credential_id references are not "
+                    "bound to any principal and foreign-credential "
+                    "references will not be denied. Provision "
+                    "session_identity for production deployments; "
+                    "manifest-without-session-identity is explicitly "
+                    "unsupported." % len(self._credential_manifest))
+                print(warn_msg, file=sys.stderr)
+                try:
+                    self.log.append({
+                        "event": "credential_binding_unenforced",
+                        "run_id": self.run_id,
+                        "agent_id": "system",
+                        "role": "governance",
+                        "principal": "system",
+                        "decision": "warn",
+                        "policy_id": "credential-identity-binding",
+                        "declared_credentials":
+                            len(self._credential_manifest),
+                        "reason": ("identity-bound egress evaluated with "
+                                   "a non-empty credential manifest and "
+                                   "no provisioned session identity "
+                                   "(F115): the credential_identity_"
+                                   "mismatch signal cannot bind; this "
+                                   "configuration is explicitly "
+                                   "unsupported for production."),
+                    })
+                except Exception:
+                    pass  # the stderr warning is the control; log best-effort
+            return False
+        bound = self._credential_manifest.check_egress(
+            args or {}, sess.principal)
+        return not bound
 
     def _api_call_shape(self, args):
         """Summarize an api_call attempt for the egress ledger (F10).
@@ -854,6 +1050,20 @@ class ToolExecutor:
             "max_entropy": round(max_entropy, 3),
             "fragment": fragment,
         }
+
+    def _api_call_high_entropy_payload(self, args):
+        """F99/F106: True when the api_call carries an unknown-format
+        high-entropy token the DLP cannot name — in any nested params
+        string value (F99) or in the endpoint URL's query values /
+        path segments (F106; the F94 allowlist matches hostname only,
+        so the URL is a first-class exfil channel).
+
+        Thin wrapper over ``dlp.api_call_high_entropy_payload`` (the
+        single source of truth, shared with the simulator's replay
+        recomputation). Param KEYS and query keys are not scanned (a
+        key named like a token is not outbound content).
+        """
+        return dlp.api_call_high_entropy_payload(args or {})
 
     def _campaign_allowlisted(self, principal, campaign_domain, param_keys):
         """F18: True when (principal, domain, param key set) is allowlisted.
@@ -1049,6 +1259,177 @@ class ToolExecutor:
         return self._ledger.taint_active(
             principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
 
+    # -- S5 (K-052): cross-run per-principal velocity -----------------------
+    # A per-run guard cannot see a low-and-slow campaign spread over many
+    # runs: each run stays under its own send/write/egress budgets. The
+    # velocity guard keeps cross-run memory in the egress ledger
+    # (``kind: "velocity"`` entries, one per execution of a velocity
+    # tool) and queues — never denies — when a principal's accrued
+    # volume inside the window reaches a configured threshold.
+    #
+    # F74 REBASE — LOCK DISCIPLINE: these helpers reuse the ledger's own
+    # ``_ledger_read_locked`` / ``_ledger_write_locked`` primitives and
+    # add NO competing lock. The query holds the shared read lock across
+    # verify+scan (mirroring ``EgressLedger.fragments`` — reentrancy
+    # makes the nested ``require_verified()`` safe); the record path
+    # goes through ``EgressLedger.append``, which holds the write lock
+    # across its whole read-modify-write internally. A second lock
+    # around the same bytes would reintroduce the F74 fork.
+
+    def _query_velocity(self, principal):
+        """True when the principal's velocity thresholds are reached.
+
+        Sums ``kind: "velocity"`` entries for ``principal`` inside the
+        configured window. Fail-OPEN with a loud ``velocity_check_skipped``
+        audit entry on ANY ledger trouble (lock timeout, unverifiable
+        ledger, I/O error): the velocity signal is heuristic — a ledger
+        outage must never deny legitimate calls, but it must never be
+        silent either. Returns False (not exceeded) when the ``velocity:``
+        policy section is absent (unenforced, never zero) or no ledger
+        history exists yet.
+        """
+        velocity = getattr(self.policy, "velocity", None) or {}
+        if not velocity or not principal:
+            return False
+        ledger = self._ledger
+        if ledger is None:
+            return False
+        try:
+            if not ledger.path.exists():
+                return False  # no history yet: nothing to trip on
+            # Reuse the ledger's read lock — no competing lock (F74).
+            with _ledger_read_locked(ledger.path):
+                # Reentrant under the read hold, exactly like
+                # fragments(): the scan cannot tear against a
+                # concurrent append.
+                ledger.require_verified()
+                now = time.time()
+                window = float(velocity.get("window_secs",
+                                           24.0 * 3600.0))
+                sends = 0
+                writes = 0
+                egress = 0.0
+                text = ledger.path.read_text(encoding="utf-8")
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if entry.get("kind") != "velocity":
+                        continue
+                    if entry.get("principal") != principal:
+                        continue
+                    try:
+                        ts = float(entry.get("ts", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if now - ts > window:
+                        continue
+                    try:
+                        sends += int(entry.get("sends", 0) or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        writes += int(entry.get("writes", 0) or 0)
+                    except (TypeError, ValueError):
+                        pass
+                    try:
+                        egress += float(entry.get("egress_bytes", 0) or 0)
+                    except (TypeError, ValueError):
+                        pass
+            max_sends = velocity.get("max_sends")
+            if max_sends is not None and sends >= max_sends:
+                return True
+            max_writes = velocity.get("max_writes")
+            if max_writes is not None and writes >= max_writes:
+                return True
+            max_egress = velocity.get("max_egress_bytes")
+            if max_egress is not None and egress >= max_egress:
+                return True
+            return False
+        except Exception as e:
+            # Fail open, LOUD. The call is NOT denied — but the missing
+            # cross-run signal is audit-visible.
+            try:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "principal": principal,
+                    "decision": "velocity_check_skipped",
+                    "policy_id": "velocity-guard",
+                    "flag": "velocity_check_skipped",
+                    "reason": ("Cross-run velocity check skipped (fail-open): "
+                               "%s: %s. The call proceeds without cross-run "
+                               "velocity memory." % (type(e).__name__, e)),
+                })
+            except Exception:
+                pass
+            return False
+
+    def _record_velocity(self, tool, principal, agent_id, egress_bytes):
+        """Record one execution of a velocity tool in the cross-run ledger.
+
+        Called at the two F33 execution boundaries (direct-allow and
+        approved execution). ``EgressLedger.append`` holds the F74 write
+        lock across its whole read-modify-write — S5 adds no second
+        lock. Fail-OPEN with a loud ``velocity_check_skipped`` audit
+        entry on ledger trouble: the call already executed, so a ledger
+        outage must not break the result path — but the missing memory
+        must be audit-visible. No-op when the ``velocity:`` section is
+        absent (unenforced: no history to keep).
+        """
+        velocity = getattr(self.policy, "velocity", None) or {}
+        if not velocity:
+            return
+        ledger = self._ledger
+        if ledger is None:
+            return
+        try:
+            egress = float(egress_bytes or 0)
+        except (TypeError, ValueError):
+            egress = 0.0
+        entry = {
+            "kind": "velocity",
+            "ts": time.time(),
+            "run_id": self.run_id,
+            "principal": principal,
+            "agent_id": agent_id,
+            "tool": tool,
+            "sends": 1 if tool in _SEND_TOOLS else 0,
+            "writes": 1 if tool == "write_file" else 0,
+            "egress_bytes": egress,
+        }
+        try:
+            # The write lock is held inside append (F74) — no second
+            # lock here.
+            ledger.append(entry)
+        except Exception as e:
+            # Fail open, LOUD: the execution already happened; audit the
+            # missing cross-run memory instead of breaking the result.
+            try:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "principal": principal,
+                    "tool": tool,
+                    "decision": "velocity_check_skipped",
+                    "policy_id": "velocity-guard",
+                    "flag": "velocity_check_skipped",
+                    "reason": ("Cross-run velocity record skipped "
+                               "(fail-open): %s: %s. The execution is not "
+                               "reflected in cross-run velocity memory."
+                               % (type(e).__name__, e)),
+                })
+            except Exception:
+                pass
+
     def _context(self, tool, args, principal=None, record_ledger=True,
                  agent_id=None):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
@@ -1057,12 +1438,31 @@ class ToolExecutor:
         if tool in _SEND_TOOLS:
             ctx["domain_allowlisted"] = self._domain_allowlisted(tool, args)
             ctx["carries_read_content"] = self._carries_read_content(tool, args)
+            # F111 (wave-34): identity-bound egress. A credential on an
+            # egress call that is not bound to the provisioned session
+            # identity sets credential_identity_mismatch; the policy
+            # rule of the same id denies + audits (GTG-50020 class).
+            ctx["credential_identity_mismatch"] = (
+                self._credential_identity_mismatch(args))
+            # P7 (wave-27): raw registry fetch via http_post is denied
+            # by policy; the governed install_package tool is the only
+            # sanctioned fetch path.
+            ctx["package_fetch"] = sc_install.is_package_fetch(
+                tool, (args or {}).get("url"))
         elif tool == "api_call":
             # F1: api_call params are an outbound-shaped payload to a
             # third-party endpoint; correlate them against prior reads the
-            # same way sends are correlated. (No egress-allowlist check here:
-            # api_call destinations are not allowlisted by policy.)
+            # same way sends are correlated.
+            # F94: api_call destinations ARE allowlisted by policy now —
+            # deny-egress-unallowlisted covers api_call, so the
+            # destination check runs here exactly as it does for sends.
+            ctx["domain_allowlisted"] = self._domain_allowlisted(tool, args)
             ctx["carries_read_content"] = self._carries_read_content(tool, args)
+            # P7 (wave-27): raw registry fetch via api_call is denied by
+            # policy (deny-ungoverned-package-fetch); the governed
+            # install_package tool is the only sanctioned fetch path.
+            ctx["package_fetch"] = sc_install.is_package_fetch(
+                tool, (args or {}).get("endpoint"))
             # F9/F15: run-scoped taint — this run ingested DLP-sensitive
             # content — OR principal-scoped taint inherited from the
             # ledger: a fresh run for the same principal whose earlier run
@@ -1070,6 +1470,25 @@ class ToolExecutor:
             ctx["read_sensitive"] = (
                 self._read_sensitive
                 or self._principal_taint_active(principal))
+            # F111 (wave-34): identity-bound egress (GTG-50020 class).
+            # A credential on the call not bound to the provisioned
+            # session identity -> credential_identity_mismatch; the
+            # policy rule of the same id denies + audits.
+            ctx["credential_identity_mismatch"] = (
+                self._credential_identity_mismatch(args))
+            # F99: keyword-free framed-secret signal — the api_call carries
+            # an unknown-format high-entropy token the DLP cannot name
+            # (no credential keyword nearby). Scanned per string value,
+            # never the cross-field join (the F2/F8 boundary: the
+            # entropy tripwire stays on the original text). F106: the
+            # endpoint URL's query values and path segments are scanned
+            # too (per-segment, so adjacent path parts never join into
+            # a phantom run) — the F94 allowlist matches hostname only.
+            # Only api_call: send_email/http_post are already
+            # blanket-queued by approval-outbound-sends, so they need
+            # no such signal.
+            ctx["high_entropy_payload"] = (
+                self._api_call_high_entropy_payload(args))
             # F10/F13/F14: heuristic cross-run campaign signals
             # (fail-safe). The fragment-shape signal and the structural
             # same-key-set signal (F14) both surface as
@@ -1092,21 +1511,53 @@ class ToolExecutor:
                         tool, shape, principal))
             else:
                 ctx["cross_run_campaign"] = False
+        elif tool == "install_package":
+            # P7 (wave-27): the governed-install gates — allowlist +
+            # exact pin + artifact integrity — computed from
+            # gov/supplychain_install.py so policy can deny the
+            # unallowlisted and integrity-mismatch shapes with distinct
+            # policy_ids. install_package is never a raw "package
+            # fetch" (it IS the sanctioned path).
+            allowlisted, verified, _digest = sc_install.install_context(
+                (args or {}).get("name"), (args or {}).get("version"))
+            ctx["install_allowlisted"] = allowlisted
+            ctx["install_integrity_verified"] = verified
+            ctx["package_fetch"] = False
+        # S5 (K-052): cross-run per-principal velocity signal for
+        # send/write/egress tools. Queried only when record_ledger=True:
+        # the approval re-evaluation passes record_ledger=False, so an
+        # approved execution is never re-queued by its own velocity
+        # record (no approval requeue livelock). Fail-open with a loud
+        # velocity_check_skipped audit on ledger trouble (inside
+        # _query_velocity) — the signal is heuristic, never a deny.
+        if record_ledger and tool in _VELOCITY_TOOLS:
+            ctx["velocity_exceeded"] = self._query_velocity(principal)
+        else:
+            ctx["velocity_exceeded"] = False
         ctx["source_untrusted"] = self._tainted
         return ctx
 
     # -- simulated tools ---------------------------------------------------
 
     def _simulate(self, tool, args, ctx):
+        # Wave-35 (Docker CVE-2026-77179/79994 class): the
+        # path_outside_sandbox verdict in ctx was computed at check
+        # time. The filesystem can change between check and use
+        # (symlink swap), so re-verify at USE time, fail-closed: a
+        # mid-call change quarantines/denies rather than honoring the
+        # stale verdict.
+        use_outside = (ctx.get("path_outside_sandbox")
+                       or ("path" in args
+                           and self._is_outside_sandbox(args["path"])))
         if tool == "read_file":
             p = self._resolve(args["path"])
-            if not ctx.get("path_outside_sandbox") and p.is_file():
+            if not use_outside and p.is_file():
                 return {"source": "sandbox",
                         "content": p.read_text(encoding="utf-8")[:4000]}
             return {"source": "simulated", "content": "[synthetic file contents]"}
         if tool == "write_file":
             content = args.get("content", "")
-            if ctx.get("path_outside_sandbox"):
+            if use_outside:
                 # Even approved, an outside-sandbox write never touches the real
                 # path: it is quarantined inside the run directory.
                 q = self.quarantine / Path(args["path"]).name
@@ -1123,7 +1574,7 @@ class ToolExecutor:
                     "bytes": len(content if isinstance(content, str) else str(content))}
         if tool == "delete_file":
             p = self._resolve(args["path"])
-            if not ctx.get("path_outside_sandbox") and p.is_file():
+            if not use_outside and p.is_file():
                 p.unlink()
                 return {"deleted": True, "path": str(p)}
             return {"deleted": False, "note": "simulated; no file touched"}
@@ -1135,6 +1586,20 @@ class ToolExecutor:
         if tool == "send_email":
             return {"status": "sent (simulated; no real email leaves this machine)",
                     "to": args.get("to")}
+        if tool == "install_package":
+            # P7 (wave-27): policy already gated this call (allowlisted
+            # + integrity-verified) — re-check at execution for
+            # fail-closed defense in depth. A refusal here is reported
+            # as a refused install, never as a success.
+            ok, detail = sc_install.check_install(args.get("name"),
+                                                  args.get("version"))
+            if not ok:
+                return {"installed": False, "refused": detail,
+                        "note": "refused at execution: %s" % detail}
+            return {"installed": True, "name": args.get("name"),
+                    "version": args.get("version"), "sha256": detail,
+                    "note": ("simulated install; artifact integrity "
+                             "verified against pin")}
         return {"note": "unknown tool; simulated no-op"}
 
     @staticmethod
@@ -1178,6 +1643,10 @@ class ToolExecutor:
             return "would read %s" % safe(args.get("path"))
         if tool == "api_call":
             return "would call API endpoint %s" % safe(args.get("endpoint"))
+        if tool == "install_package":
+            return ("would install package %s==%s (governed: allowlist + "
+                    "exact pin + artifact integrity)"
+                    % (safe(args.get("name")), safe(args.get("version"))))
         return "would invoke %s" % tool
 
     @staticmethod
@@ -1275,9 +1744,21 @@ class ToolExecutor:
         justification = kwargs.pop("justification", None)
         on_behalf_of = kwargs.pop("on_behalf_of", None)
         delegated_by = kwargs.pop("delegated_by", None)
+        # P10: a delegation grant id is a server-side handle, never a
+        # tool arg — popped here so it never reaches DLP scanning,
+        # policy matching, or the tool itself.
+        delegation_grant_id = kwargs.pop("delegation_grant_id", None)
         delegation_attempted = bool(on_behalf_of or delegated_by)
+        # P10: the verify_invocation ok-dict for a presented grant,
+        # filled by the delegation gate below; drives dual attribution
+        # in the audit entry. None = no grant presented (or not yet
+        # verified).
+        delegation_verified = None
 
         self.counters[tool] = self.counters.get(tool, 0) + 1
+        # S4: every call() attempt that reaches here consumes step budget
+        # (denied/queued attempts included).
+        self._total_calls += 1
         repeat_key = (tool, json.dumps(kwargs, sort_keys=True, default=str))
         self._repeats[repeat_key] = self._repeats.get(repeat_key, 0) + 1
 
@@ -1305,6 +1786,15 @@ class ToolExecutor:
                 "provenance": ("untrusted_influenced" if self._tainted
                                else "agent_direct"),
                 "delegation_attempted": delegation_attempted,
+                # P10 dual attribution (spec §1.4): a verified grant's
+                # id, delegator, and scope ride on every tool_call entry
+                # for the call. None when no grant was presented.
+                "delegation_grant_id": (delegation_verified["grant_id"]
+                                        if delegation_verified else None),
+                "delegator": (delegation_verified["delegator"]
+                              if delegation_verified else None),
+                "delegation_scope": (delegation_verified["scope_tools"]
+                                     if delegation_verified else None),
                 "policy_context": policy_ctx_snapshot,
             }
             if self._tainted:
@@ -1331,6 +1821,67 @@ class ToolExecutor:
             }))
             return {"status": "denied", "reason": reason,
                     "policy_id": policy_id, "seq": entry["seq"]}
+
+        # P10 (wave-26): governed authority delegation. Runs after
+        # identity verification (the store's delegatee-match check and
+        # its audit attribution need a real minted identity) and before
+        # policy evaluation:
+        # * a presented grant id is verified against the server-side
+        #   store (existence, integrity, expiry, revocation, delegatee
+        #   match, scope, chain, run binding, single-use). Any refusal
+        #   denies the call fail-closed; the store audits the exact
+        #   machine-readable reason (delegation_invocation_refused).
+        # * framing kwargs WITHOUT a grant id are policy-governed:
+        #   unscoped_delegation: deny refuses them here (policy_id
+        #   delegation-unscoped); the flag default keeps today's
+        #   label-only behavior (spec §7 non-goal while disabled).
+        # A store ERROR (not a refusal) also denies the call
+        # fail-closed: an unverifiable delegation state must never
+        # read as "no delegation claim".
+        if delegation_grant_id is not None:
+            try:
+                delegation_verified = (
+                    self._delegation_store.verify_invocation(
+                        delegation_grant_id, identity, tool, kwargs,
+                        tainted=self._tainted,
+                        taint_sources=self._taint_sources))
+            except DelegationError as e:
+                entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "delegation-grant-refused",
+                    "flag": "delegation_refused",
+                    "reason": ("Delegation grant refused: %s (%s)."
+                               % (e, e.reason)),
+                    "delegation_refusal_reason": e.reason,
+                }))
+                return {"status": "denied", "reason": entry["reason"],
+                        "policy_id": "delegation-grant-refused",
+                        "seq": entry["seq"]}
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                return self._delegation_store_error(_base, identity,
+                                                    tool, e)
+        elif delegation_attempted:
+            try:
+                framing = self._delegation_store.check_unscoped_framing(
+                    on_behalf_of=on_behalf_of, delegated_by=delegated_by,
+                    identity=identity)
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                return self._delegation_store_error(_base, identity,
+                                                    tool, e)
+            if not framing.get("allowed", True):
+                entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": framing.get("policy_id",
+                                             "delegation-unscoped"),
+                    "flag": framing.get("flag",
+                                        "unscoped_delegation_denied"),
+                    "reason": framing.get(
+                        "reason",
+                        "Unscoped delegation framing denied by policy."),
+                }))
+                return {"status": "denied", "reason": entry["reason"],
+                        "policy_id": entry["policy_id"],
+                        "seq": entry["seq"]}
 
         # 2. role allowlist ------------------------------------------------
         if not self.policy.role_allows(identity.role, tool):
@@ -1427,6 +1978,94 @@ class ToolExecutor:
             return {"status": "denied", "reason": entry["reason"],
                     "policy_id": "volume-guard-deletes", "seq": entry["seq"]}
 
+        # S4 (K-045): total-step budget per run. Counts attempts
+        # (denied/queued included) — it is a budget on run activity and
+        # log growth, the stated motivation. The `>` (not `>=`) matches
+        # the existing write/delete guard convention: exactly N calls
+        # are allowed. Absent key = unenforced. Checked before policy
+        # evaluation, like every other step-4 guard.
+        _run_limits = getattr(self.policy, "run_limits", None) or {}
+        _max_tool_calls = _run_limits.get("max_tool_calls_per_run")
+        if (_max_tool_calls is not None
+                and self._total_calls > _max_tool_calls):
+            entry = self.log.append(_base({
+                "decision": "denied",
+                "policy_id": "step-budget",
+                "flag": "step_budget_exceeded",
+                "reason": ("Per-run step budget exceeded (%d tool calls, "
+                           "max %d)." % (self._total_calls, _max_tool_calls)),
+            }))
+            return {"status": "denied", "reason": entry["reason"],
+                    "policy_id": "step-budget", "seq": entry["seq"]}
+
+        # S2 (K-018): hard spend/token/action budgets — guard 4b. Sits
+        # after the F33 guards and before policy evaluation, so no
+        # compiled DSL rule or policy allow-rule can override a blown
+        # budget. Token/spend accrue on the RESULT path only (never call
+        # kwargs); ceilings use >= on the accrued totals: the call that
+        # crosses the ceiling completes (you cannot un-call a provider)
+        # and the NEXT call is denied. Absent budgets key = unenforced.
+        _budgets = getattr(self.policy, "budgets", None) or {}
+        if _budgets:
+            # Count every call() invocation that reaches this guard.
+            self._budget_actions += 1
+            _budget_deny_reason = None
+            _max_actions = _budgets.get("max_actions_per_run")
+            if (_max_actions is not None
+                    and self._budget_actions > _max_actions):
+                _budget_deny_reason = (
+                    "Per-run action budget exceeded (%d actions, max %d)."
+                    % (self._budget_actions, _max_actions))
+            _max_tokens = _budgets.get("max_tokens_per_run")
+            if (_budget_deny_reason is None and _max_tokens is not None
+                    and self._tokens_used >= _max_tokens):
+                _budget_deny_reason = (
+                    "Per-run token budget reached (%d tokens accrued, max "
+                    "%d); the call that crossed the ceiling completed, "
+                    "further calls are denied."
+                    % (self._tokens_used, _max_tokens))
+            _max_spend = _budgets.get("max_spend_per_run")
+            if (_budget_deny_reason is None and _max_spend is not None
+                    and self._spend_used >= _max_spend):
+                _budget_deny_reason = (
+                    "Per-run spend budget reached (%.4f accrued, max "
+                    "%.4f); the call that crossed the ceiling completed, "
+                    "further calls are denied."
+                    % (self._spend_used, _max_spend))
+            if _budget_deny_reason is not None:
+                entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "budget-exceeded",
+                    "flag": "budget_exceeded",
+                    "reason": _budget_deny_reason,
+                }))
+                return {"status": "denied", "reason": entry["reason"],
+                        "policy_id": "budget-exceeded", "seq": entry["seq"]}
+
+        # S3 (K-041): an unrated mutating tool is never allowed silently.
+        # _MUTATING_TOOLS names the known mutating tools (api_call is
+        # read-classified per F1; read_file is non-mutating). A tool the
+        # ratings table has never seen is assumed mutating — fail-closed
+        # default: a new tool graduates to autonomous only through an
+        # explicit deployment rating. Force the existing
+        # require_approval path with a synthetic decision (reuses the
+        # queue machinery: F12 preview, F21 flag). Core-tool behavior is
+        # unchanged (their default ratings preserve today's allow
+        # paths, e.g. benign-coder sandbox writes).
+        _forced_require_approval = None
+        if tool not in self._tool_ratings and (
+                tool in _MUTATING_TOOLS
+                or tool not in ("read_file", "api_call")):
+            _forced_require_approval = PolicyDecision(
+                "require_approval",
+                "Tool %r is mutating but has no reversibility/impact "
+                "rating; human review is required before its first "
+                "autonomous use (rate it via the deployment tool_ratings "
+                "to graduate it)." % (tool,),
+                policy_id="tool-rating-default",
+                flag="unrated_mutating_tool",
+            )
+
         # 5. policy evaluation ----------------------------------------------
         action = {"tool": tool, "args": kwargs,
                   "identity": identity.as_dict(),
@@ -1439,10 +2078,45 @@ class ToolExecutor:
             "carries_read_content": ctx.get("carries_read_content"),
             "read_sensitive": ctx.get("read_sensitive"),
             "cross_run_campaign": ctx.get("cross_run_campaign"),
+            "velocity_exceeded": ctx.get("velocity_exceeded"),
             "source_untrusted": ctx.get("source_untrusted"),
+            # F99: the framed-secret signal rides the snapshot so replay
+            # sees exactly what the engine saw (None when the tool is not
+            # api_call — bool(None) == bool(False), the engine's semantics).
+            "high_entropy_payload": ctx.get("high_entropy_payload"),
+            # P7 (wave-27): the governed-install gates ride the same
+            # snapshot so offline replay sees exactly what the engine
+            # saw (None when the tool does not compute them).
+            "package_fetch": ctx.get("package_fetch"),
+            "install_allowlisted": ctx.get("install_allowlisted"),
+            "install_integrity_verified": ctx.get("install_integrity_verified"),
+            # F111 (wave-34): the identity-bound egress signal rides the
+            # snapshot so offline replay sees exactly what the engine
+            # saw (None when the tool is not a send/api_call tool —
+            # bool(None) == bool(False), the engine's semantics).
+            "credential_identity_mismatch": ctx.get(
+                "credential_identity_mismatch"),
+            # F110 (wave-34): the harness-initiated platform-egress
+            # signal. ToolExecutor._context never sets it (it is set
+            # only by gov/platform_egress.py on its own direct policy
+            # calls, which are not tool calls and leave no action-log
+            # snapshot); None here is the honest snapshot — the engine
+            # evaluates it as False for every tool call.
+            "platform_egress": ctx.get("platform_egress"),
             "counters": dict(ctx.get("counters") or {}),
         }
         decision = self.policy.evaluate(action, ctx)
+
+        # S3 (K-041) wired wave-39: S3-GAP-1 closed. An unrated mutating
+        # tool must never execute on a policy allow alone — the forced
+        # require_approval downgrades an allow to queued human review.
+        # Fail-closed direction only: a deny stays denied (already safe)
+        # and an existing require_approval is untouched. The audit trail
+        # shows policy_id "tool-rating-default" + flag
+        # "unrated_mutating_tool" so the forcing is visible in the log.
+        if (_forced_require_approval is not None
+                and decision.effect == "allow"):
+            decision = _forced_require_approval
 
         if decision.effect == "allow":
             # Write-ahead audit (fail-closed): the authorization is durably
@@ -1462,6 +2136,15 @@ class ToolExecutor:
             # time (the allow path is an execution boundary).
             self._executed[tool] = self._executed.get(tool, 0) + 1
             self._egress_bytes += self._egress_bytes_for(tool, kwargs)
+            # S5 (K-052): cross-run velocity memory — record the
+            # execution. EgressLedger.append holds the F74 write lock
+            # internally; S5 adds no competing lock. Fail-open with a
+            # loud velocity_check_skipped audit on ledger trouble (the
+            # call already executed).
+            if tool in _VELOCITY_TOOLS:
+                self._record_velocity(tool, identity.principal,
+                                      identity.agent_id,
+                                      self._egress_bytes_for(tool, kwargs))
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
@@ -1496,6 +2179,28 @@ class ToolExecutor:
             self._preview(tool, redacted_args),
             policy_hash=self.policy.policy_hash,
             delegation_attempted=delegation_attempted,
+            # F101 (wave-26): a grant-verified call queues under the
+            # ACTING (delegatee) identity — the verified grant id and
+            # the delegating party ride on the approval record
+            # (MAC-bound) so decide()/cast_vote() exclude the
+            # intending party alongside the requester. Without this,
+            # the delegator could approve the delegatee's queued
+            # action by proxy, laundering the D1-core
+            # requester-exclusion invariant.
+            delegation_grant_id=(delegation_verified["grant_id"]
+                                 if delegation_verified else None),
+            delegation_delegator=(delegation_verified["delegator"]
+                                  if delegation_verified else None),
+            # F103 (wave-27): the full delegator lineage (root ->
+            # immediate, resolved by verify_invocation from the
+            # re-verified ancestor records) rides on the approval
+            # record MAC-bound alongside the immediate delegator, so
+            # decide()/cast_vote() exclude the whole intending
+            # lineage — the F101 single-hop guard re-opens at
+            # depth >= 2 without this.
+            delegation_delegator_chain=(
+                delegation_verified["delegator_chain"]
+                if delegation_verified else None),
             policy_context=policy_ctx_snapshot,
             # F21: the queue reason travels with the record so batch
             # approval can refuse security items individually.
@@ -1553,6 +2258,13 @@ class ToolExecutor:
         policy it was approved under, and a fresh policy evaluation. Any
         failure refuses the execution and logs why. Returns the list of
         executed actions.
+
+        D1 bridges (wave-24): records queued via
+        ``ApprovalQueue.queue_external`` carry ``bridge_id`` and are
+        FOREIGN-EXECUTED — the bridge's runtime executes on its side, so
+        this sweep never executes them (bridge_expired ones are refused
+        loudly per T12/F85; the rest are skipped after the integrity
+        checks).
 
         F39: the whole sweep runs under the approval queue's exclusive
         lock (``ApprovalQueue._queue_locked``) — the read-claim-
@@ -1734,26 +2446,13 @@ class ToolExecutor:
         After a full verification the tip is reseeded so the next
         sweep is incremental again.
 
-        R17 (F70): the incremental walk is blind to length-preserving
-        edits of already-verified prefix bytes, so its silent window
-        is BOUNDED, not closed: the tip carries a countdown
-        (``full_in``) and every
-        TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS-th refused sweep forces
-        a full ``verify_chain()`` instead of trusting the tip verdict
-        (``full_verify_due``). A pre-tip tamper is therefore detected
-        loudly within at most N refused sweeps; the Nth sweep pays
-        O(n), steady-state sweeps stay O(new). The suppression
-        decision still reads only verified data — on the forced sweep
-        the full verification runs BEFORE any refusal timestamp is
-        trusted.
-
         Malformed lines are skipped (F63); entries with unparseable or
         missing timestamps count as no-recent (fail-loud: at most one
         extra audit entry). Future-dated entries never suppress — only
         genuinely recent ones do.
         """
         window = self._LOCK_REFUSAL_AUDIT_COALESCE_SECS
-        # R17 (F70): reset the tamper side channel on every call — the
+        # R17: reset the tamper side channel on every call — the
         # caller reads it only when this method returns False.
         self._r17_tip_forced_error = None
         # F69 (R16): cheap path first -- verify only the entries since
@@ -1766,18 +2465,16 @@ class ToolExecutor:
                 self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
         except OSError:
             return False
-        if tip_verdict is not None and not tip_verdict.get(
-                "full_verify_due"):
+        if tip_verdict is not None:
             return refusal_ts_within_window(
                 tip_verdict["refusals"].get(flag), window)
-        # R17 (F70): tip_verdict is None (tip unusable) OR the forced-
-        # verification countdown is exhausted (full_verify_due): fall
-        # through to the full verification below. A pre-tip tamper
-        # the incremental walk cannot see goes loud here, at most N
-        # refused sweeps after it was planted. A FAILED full
-        # verification records the error on the R17 side channel so the
-        # caller audits the tamper loudly with attribution (fail-loud,
-        # never folded into the normal refusal coalescing).
+        # tip_verdict is None (tip unusable: missing/corrupt tip, shrunk
+        # log, tip mismatch, segment or anchor failure): fall through to
+        # the full verification below (fail-loud, never silent
+        # suppression). A FAILED full verification records the error on
+        # the R17 side channel so the caller audits the tamper loudly
+        # with attribution (fail-loud, never folded into the normal
+        # refusal coalescing).
         #
         # F63/R14: TOLERANT verification -- malformed physical lines
         # (non-JSON / non-object) are skipped, not failed. A malformed
@@ -1847,17 +2544,16 @@ class ToolExecutor:
                         self._lock_refusal_last_audit = now
                         self._lock_refusal_suppressed = 0
                         return False
-                    # R17 (F70): the full verification inside
+                    # R17: the fallback full verification inside
                     # _log_shows_recent_lock_refusal found the chain
-                    # BROKEN (forced periodic check or fallback). Audit
-                    # LOUD with tamper attribution, bypassing the
-                    # normal coalescing below: a broken chain must
-                    # never be folded silently, and every sweep while
-                    # it stays broken must stay loud.
+                    # BROKEN. Audit LOUD with tamper attribution,
+                    # bypassing the normal coalescing below: a broken
+                    # chain must never be folded silently, and every
+                    # sweep while it stays broken must stay loud.
                     if self._r17_tip_forced_error is not None:
                         self._audit_lock_refusal_write(
                             flag,
-                            "execute_approved() refused: forced periodic "
+                            "execute_approved() refused: fallback "
                             "full chain verification FAILED (%s) -- "
                             "pre-tip tamper suspected; %s"
                             % (self._r17_tip_forced_error, reason),
@@ -1869,36 +2565,6 @@ class ToolExecutor:
                 else:
                     rec = state.get(flag) or {"last_audit": 0.0,
                                               "suppressed": 0}
-                    # R17 (F70): bound the incremental path's silent
-                    # window even when the coalesce state is healthy.
-                    # The unusable branch above ticks the countdown
-                    # inside verify_chain_tip(); this branch never calls
-                    # it, so the countdown is checked and ticked here
-                    # instead -- every refused sweep takes exactly one
-                    # of the two branches. A forced full verification
-                    # that FAILS bypasses the time-based suppression
-                    # below and audits LOUD: a broken chain must never
-                    # be folded silently.
-                    forced = self._r17_forced_full_verify()
-                    if forced is False:
-                        self._audit_lock_refusal_write(
-                            flag,
-                            "execute_approved() refused: forced periodic "
-                            "full chain verification FAILED (%s) -- "
-                            "pre-tip tamper suspected; %s"
-                            % (self._r17_last_forced_error, reason),
-                            rec.get("suppressed", 0))
-                        rec["last_audit"] = now
-                        rec["suppressed"] = 0
-                        state[flag] = rec
-                        try:
-                            self._write_lock_refusal_state(
-                                state_path, state)
-                        except OSError:
-                            pass
-                        self._lock_refusal_last_audit = now
-                        self._lock_refusal_suppressed = 0
-                        return True
                 if (now - rec["last_audit"]
                         < self._LOCK_REFUSAL_AUDIT_COALESCE_SECS):
                     rec["suppressed"] += 1
@@ -1944,60 +2610,6 @@ class ToolExecutor:
             "refusal_storm":
                 suppressed_total >= self._LOCK_REFUSAL_STORM_THRESHOLD,
         })
-
-    def _r17_forced_full_verify(self):
-        """R17 (F70): force a full chain verification every N refused
-        sweeps on the healthy-state branch.
-
-        Returns True when a forced full verification ran and the chain
-        verified (the tip is reseeded, countdown restarted); False
-        when the forced verification found the chain BROKEN (the
-        caller must audit loud, bypassing suppression);
-        None when no forced verification was due (the countdown was
-        ticked best-effort instead).
-
-        A missing/corrupt tip counts as due: without a trustworthy
-        countdown the silent window cannot be bounded, so the safe
-        direction is to verify fully (this mirrors R16's missing-tip
-        -> full-verify rule). Never raises: I/O failures degrade to
-        the loud (False) outcome, never to silent trust.
-        """
-        self._r17_last_forced_error = None
-        try:
-            tip = _read_tip_cache(self.log.path)
-        except OSError:
-            tip = None
-        if tip is not None and tip.get("full_in", 1) > 1:
-            # Not due: tick the countdown best-effort. A failed tick
-            # only delays the forced verification; the next sweep
-            # through either branch re-reads the tip.
-            try:
-                tip["full_in"] = tip["full_in"] - 1
-                _write_tip_cache(self.log.path, tip)
-            except (OSError, ValueError, KeyError, TypeError):
-                pass
-            return None
-        try:
-            # F63/R14: TOLERANT verification (malformed physical lines
-            # skipped, not failed) -- a malformed line cannot serve as a
-            # suppression signal, and a planted MAC-invalid line is valid
-            # JSON so it still fails closed here.
-            verdict = _verify(self.log.path, _skip_malformed=True)
-        except OSError as e:
-            self._r17_last_forced_error = "log unreadable: %s" % e
-            return False
-        if not verdict["ok"]:
-            self._r17_last_forced_error = (
-                "chain does not verify (broken_seq=%r)"
-                % (verdict.get("broken_seq"),))
-            return False
-        refusals = newest_refusal_ts_per_flag(
-            self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
-        try:
-            write_chain_tip_from_tail(self.log.path, refusals)
-        except (OSError, ValueError, KeyError, TypeError):
-            pass
-        return True
 
     def _audit_lock_refusal_local(self, flag, reason, now):
         """Pre-R13 per-instance coalescing (F56 fallback only)."""
@@ -2062,6 +2674,20 @@ class ToolExecutor:
                     "reason": reason,
                 })
 
+            # F85 (D1-core T12): a bridge_expired record can NEVER
+            # execute — late human decisions after a bridge timeout are
+            # audit-only. The check runs on every sweep BEFORE the TTL
+            # check, so a record that becomes bridge_expired between
+            # decision and sweep is still refused. Audited
+            # approval_execution_refused with flag bridge_expired.
+            if rec.get("bridge_expired"):
+                _refuse("Approval %s refused: the bridge wait expired "
+                        "before the human decision (late_decision=%s) — "
+                        "the decision is audit-only and can never "
+                        "execute (D1-core T12)."
+                        % (aid, rec.get("late_decision")),
+                        "bridge_expired")
+                continue
             # 1. expiry
             if self._approval_expired(rec, ttl):
                 self.approvals._rewrite(lambda records: [
@@ -2106,6 +2732,18 @@ class ToolExecutor:
                         "integrity digest mismatch (F34 keyed MAC does not "
                         "verify under any key epoch)." % aid,
                         "approval_integrity_violation")
+                continue
+            # Wave-24 (D1 bridges): bridge-queued records are
+            # FOREIGN-EXECUTED — the bridge's runtime executes on its
+            # side after our human decides, so our own sweep must never
+            # execute them (double execution). The integrity checks
+            # above still apply (a tampered foreign record is refused
+            # loudly); a healthy foreign record is skipped quietly —
+            # bridge_id present is the by-design marker, visible on the
+            # record and in the web UI's future bridge:<id> badge. The
+            # T12 bridge_expired refusal above runs first, so an
+            # expired bridge record is still refused loudly.
+            if rec.get("bridge_id"):
                 continue
             # F38 (R10): cross-run replay — the record's run_id must
             # match the executing run. The keyed digest binds run_id
@@ -2212,7 +2850,10 @@ class ToolExecutor:
                 "carries_read_content": ctx.get("carries_read_content"),
                 "read_sensitive": ctx.get("read_sensitive"),
                 "cross_run_campaign": ctx.get("cross_run_campaign"),
+                "velocity_exceeded": ctx.get("velocity_exceeded"),
                 "source_untrusted": ctx.get("source_untrusted"),
+                # F99: same snapshot contract as the pre-execution path.
+                "high_entropy_payload": ctx.get("high_entropy_payload"),
                 "counters": dict(ctx.get("counters") or {}),
             }
             auth_entry = self.log.append({
@@ -2255,6 +2896,17 @@ class ToolExecutor:
             self._executed[rec["tool"]] = self._executed.get(
                 rec["tool"], 0) + 1
             self._egress_bytes += self._approved_egress_bytes(rec)
+            # S5 (K-052): record the approved execution in the cross-run
+            # velocity ledger — same lock discipline as the allow path
+            # (the write lock lives inside EgressLedger.append; no
+            # second lock here). Fail-open with loud audit on ledger
+            # trouble.
+            if rec["tool"] in _VELOCITY_TOOLS:
+                self._record_velocity(
+                    rec["tool"],
+                    (rec.get("identity") or {}).get("principal"),
+                    rec.get("agent_id"),
+                    self._approved_egress_bytes(rec))
             entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),

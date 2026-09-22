@@ -48,7 +48,18 @@ Design notes (reconciliation findings, see ADAPTER_INTERFACE.md):
 import asyncio
 import json
 
-from pydantic import BaseModel, ConfigDict
+# Optional heavy deps: pydantic + langchain-core are required only for the
+# LangChain adapter path. The module must stay importable without them so
+# the decorator/MCP/OpenAI adapters (and the w15 playbook registrations)
+# work in minimal environments; RealLangChainAdapter raises a clear error
+# if instantiated without the deps.
+try:
+    from pydantic import BaseModel, ConfigDict
+    _HAVE_PYDANTIC = True
+except ImportError:
+    BaseModel = None
+    ConfigDict = None
+    _HAVE_PYDANTIC = False
 
 from gov.adapters.core import (
     AdapterError,
@@ -60,7 +71,12 @@ from gov.adapters.core import (
     normalize_result,
 )
 from gov.adapters.generic import governed
-from gov.adapters.langchain_tools import make_governed_tool
+try:
+    from gov.adapters.langchain_tools import make_governed_tool
+    _HAVE_LANGCHAIN = True
+except ImportError:
+    make_governed_tool = None
+    _HAVE_LANGCHAIN = False
 from gov.adapters.mcp_adapter import (
     DeterministicFakeSession,
     GovernedMCPClient,
@@ -122,38 +138,44 @@ class RealDecoratorAdapter(RealAdapterBase):
                         on_queued="return")(lambda **kw: None)
 
 
-class _GovArgsSchema(BaseModel):
-    """Every native-tool kwarg, declared.
+if _HAVE_PYDANTIC:
+    class _GovArgsSchema(BaseModel):
+        """Every native-tool kwarg, declared.
 
-    langchain-core treats a field-less schema as "no args" and silently
-    drops all input, so every kwarg the matrix playbooks use must be a
-    declared field here. Unset fields validate as None and are stripped
-    before mediation (the executor crashes on path=None).
+        langchain-core treats a field-less schema as "no args" and silently
+        drops all input, so every kwarg the matrix playbooks use must be a
+        declared field here. Unset fields validate as None and are stripped
+        before mediation (the executor crashes on path=None).
 
-    F62 (R14): ``extra="allow"`` — undeclared kwargs are PRESERVED,
-    not silently dropped. Pydantic's default ``extra="ignore"`` meant
-    an attack kwarg (e.g. a secret exfil address in ``bcc``) never
-    reached mediation: DLP saw a clean arg set and queued it. With
-    ``allow``, langchain-core's ``_parse_input`` passes extra keys from
-    the original input through ``model_dump()`` into ``_run``, so the
-    full kwarg set — declared or not — reaches mediation and DLP can
-    inspect it. An undeclared-but-present kwarg is therefore denied or
-    visibly approval-gated, never silently clean-queued.
-    """
-    model_config = ConfigDict(extra="allow")
+        F62 (R14): ``extra="allow"`` — undeclared kwargs are PRESERVED,
+        not silently dropped. Pydantic's default ``extra="ignore"`` meant
+        an attack kwarg (e.g. a secret exfil address in ``bcc``) never
+        reached mediation: DLP saw a clean arg set and queued it. With
+        ``allow``, langchain-core's ``_parse_input`` passes extra keys from
+        the original input through ``model_dump()`` into ``_run``, so the
+        full kwarg set — declared or not — reaches mediation and DLP can
+        inspect it. An undeclared-but-present kwarg is therefore denied or
+        visibly approval-gated, never silently clean-queued.
+        """
+        model_config = ConfigDict(extra="allow")
 
-    path: str | None = None
-    content: str | None = None
-    endpoint: str | None = None
-    params: dict | None = None
-    url: str | None = None
-    payload: dict | None = None
-    to: str | None = None
-    subject: str | None = None
-    body: str | None = None
-    justification: str | None = None
-    on_behalf_of: str | None = None
-    delegated_by: str | None = None
+        path: str | None = None
+        content: str | None = None
+        endpoint: str | None = None
+        params: dict | None = None
+        url: str | None = None
+        payload: dict | None = None
+        to: str | None = None
+        subject: str | None = None
+        body: str | None = None
+        justification: str | None = None
+        on_behalf_of: str | None = None
+        delegated_by: str | None = None
+else:
+    # Pydantic absent: the LangChain adapter cannot be built. The name
+    # stays defined (None) so `from evals.real_adapters import
+    # _GovArgsSchema` keeps working; only RealLangChainAdapter use raises.
+    _GovArgsSchema = None
 
 
 class _RealLangChainTool:
@@ -197,11 +219,18 @@ class _RealLangChainTool:
 
 
 class RealLangChainAdapter(RealAdapterBase):
-    """LangChain StructuredTool path (gov.adapters.langchain_tools)."""
+    """LangChain StructuredTool path (gov.adapters.langchain_tools).
+
+    Requires pydantic and langchain-core; raises a clear ImportError at
+    first use when they are absent (the module itself stays importable).
+    """
 
     name = "langchain"
 
     def tool(self, name):
+        if not (_HAVE_PYDANTIC and _HAVE_LANGCHAIN):
+            raise ImportError(
+                "RealLangChainAdapter requires pydantic and langchain-core")
         try:
             tool = make_governed_tool(
                 self.binding, name,

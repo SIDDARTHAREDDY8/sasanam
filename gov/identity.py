@@ -35,8 +35,10 @@ the pre-R13 behavior (F26 mintedness check) is kept, with the existing
 self-asserted warnings.
 """
 
+import json
 import sys
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 
 
 class UnmintedIdentityError(Exception):
@@ -251,3 +253,172 @@ class AgentIdentity:
 
     def as_dict(self):
         return asdict(self)
+
+
+# ---------------------------------------------------------------------------
+# Remote-attestation evidence for agent identity (Coker et al.,
+# "Principles of Remote Attestation", LITERATURE IMPLEMENT item).
+#
+# Coker's five principles, mapped to this codebase:
+# 1. Fresh evidence -- every attestation carries a verifier-supplied
+#    ``nonce`` (challenge) and an ``issued_at`` timestamp;
+#    ``verify_attestation`` checks both when the caller supplies the
+#    expected nonce / a max age. A replayed attestation fails freshness.
+# 2. Comprehensive measurement -- the claims SHOULD cover what the
+#    deployment can measure (code digest, config digest, tool-policy
+#    digest); this module defines the envelope and verifies the
+#    signature + freshness, it does not invent measurements.
+# 3. Constrained disclosure -- only the claims listed in the
+#    attestation are disclosed, nothing ambient; claims are flat
+#    str->str pairs, never nested blobs.
+# 4. Explicit claim semantics -- ``build_attestation`` documents
+#    exactly what is and is NOT attested (see below).
+# 5. Trustworthy mechanism -- the evidence is Ed25519-signed by the
+#    deployment-held attestation key; verifiers check it against an
+#    out-of-band trusted key set (same trust model as the offline root
+#    in gov/signing.py).
+#
+# WHAT IS ATTESTED: that the holder of the attestation key asserted,
+# at ``issued_at``, the binding (agent identity tuple, claim digests,
+# nonce). WHAT IS NOT: code integrity (a ``code_digest`` claim is a
+# deployment-computed digest, NOT a hardware measured-boot value --
+# there is no TPM here and this module must not imply one); principal
+# authorization (that remains the PrincipalRegistry's job); log
+# integrity (the audit log's job). An attestation says WHO claims to
+# act and WHAT they claim about their configuration, freshly -- it
+# does not say the claims are true.
+# ---------------------------------------------------------------------------
+
+_ATTESTATION_VERSION = 1
+_ATTESTATION_DOMAIN = b"gov-attestation/v1\x00"
+
+
+def build_attestation(identity, claims, nonce, signer):
+    """Build signed attestation evidence for an agent identity.
+
+    ``identity``: AgentIdentity (or its ``as_dict()``). ``claims``: flat
+    dict of str->str, e.g. ``{"code_digest": ..., "config_digest":
+    ..., "tool_policy_digest": ...}`` -- ONLY these claims are
+    disclosed (constrained disclosure). ``nonce``: the verifier's
+    freshness challenge (str). ``signer``: a ``gov.signing.Signer``
+    (the deployment-held attestation key).
+
+    Returns the attestation dict (JSON-serializable). Raises
+    ValueError/TypeError on malformed inputs -- never build evidence
+    over doubtful claims.
+    """
+    from . import signing as _signing  # local import: identity.py is
+    # imported by executor-adjacent modules; keep the dependency lazy.
+    if hasattr(identity, "as_dict"):
+        identity = identity.as_dict()
+    if not isinstance(identity, dict):
+        raise TypeError("identity must be an AgentIdentity or dict")
+    for field in ("agent_id", "role", "run_id", "principal"):
+        if not isinstance(identity.get(field), str) \
+                or not identity[field]:
+            raise ValueError(
+                "identity field %r missing or not a string" % field)
+    if not isinstance(claims, dict) or not claims:
+        raise ValueError("claims must be a non-empty dict")
+    for k, v in claims.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise ValueError(
+                "claims must be flat str->str (constrained disclosure)")
+    if not isinstance(nonce, str) or not nonce:
+        raise ValueError("nonce must be a non-empty string")
+    if not isinstance(signer, _signing.Signer):
+        raise TypeError("signer must be a gov.signing.Signer")
+    body = {
+        "attestation_version": _ATTESTATION_VERSION,
+        "identity": {f: identity[f] for f in
+                     ("agent_id", "role", "run_id", "principal",
+                      "provenance") if f in identity},
+        "claims": dict(claims),
+        "nonce": nonce,
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "attester_key_id": signer.key_id,
+    }
+    body["sig"] = signer.sign(
+        _ATTESTATION_DOMAIN + _canonical_json(body)).hex()
+    return body
+
+
+def _canonical_json(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, default=str).encode("utf-8")
+
+
+def verify_attestation(att, trusted_keys, expected_nonce=None,
+                       max_age_s=None, now=None):
+    """Verify attestation evidence. Returns (ok, error).
+
+    Checks: well-formed envelope (version, flat str->str claims,
+    non-empty nonce); ``attester_key_id`` in ``trusted_keys``
+    ({key_id: 32-byte pubkey or hex}); Ed25519 signature over the
+    canonical body. Freshness: when ``expected_nonce`` is given the
+    attestation's nonce must equal it (challenge-response); when
+    ``max_age_s`` is given, ``issued_at`` must be within that many
+    seconds of ``now`` (defaults to current UTC). Passing NEITHER
+    freshness input explicitly opts out of freshness checking --
+    allowed, but the caller owns the replay risk (documented here so
+    the opt-out is never accidental).
+    """
+    from . import ed25519 as _ed
+    try:
+        if not isinstance(att, dict):
+            return False, "attestation is not an object"
+        if att.get("attestation_version") != _ATTESTATION_VERSION:
+            return False, "unsupported attestation_version"
+        identity = att.get("identity")
+        claims = att.get("claims")
+        nonce = att.get("nonce")
+        issued_at = att.get("issued_at")
+        key_id = att.get("attester_key_id")
+        sig_hex = att.get("sig")
+        if not isinstance(identity, dict):
+            return False, "identity missing"
+        for field in ("agent_id", "role", "run_id", "principal"):
+            if not isinstance(identity.get(field), str) \
+                    or not identity[field]:
+                return False, "identity field %r bad" % field
+        if not isinstance(claims, dict) or not claims:
+            return False, "claims missing or empty"
+        for k, v in claims.items():
+            if not isinstance(k, str) or not isinstance(v, str):
+                return False, "claims not flat str->str"
+        if not isinstance(nonce, str) or not nonce:
+            return False, "nonce missing"
+        pub = trusted_keys.get(key_id) if isinstance(
+            trusted_keys, dict) else None
+        if isinstance(pub, str):
+            try:
+                pub = bytes.fromhex(pub)
+            except ValueError:
+                pub = None
+        if not isinstance(pub, (bytes, bytearray)) or len(pub) != 32:
+            return False, "attester key %r not trusted" % (key_id,)
+        try:
+            sig = bytes.fromhex(sig_hex)
+        except (TypeError, ValueError):
+            return False, "malformed sig"
+        body = {k: v for k, v in att.items() if k != "sig"}
+        if not _ed.verify(bytes(pub),
+                          _ATTESTATION_DOMAIN + _canonical_json(body),
+                          sig):
+            return False, "attestation signature invalid"
+        if expected_nonce is not None and nonce != expected_nonce:
+            return False, "nonce mismatch: replayed or wrong challenge"
+        if max_age_s is not None:
+            ref = now or datetime.now(timezone.utc)
+            try:
+                issued = datetime.fromisoformat(issued_at)
+            except (TypeError, ValueError):
+                return False, "issued_at not parseable"
+            if issued.tzinfo is None:
+                issued = issued.replace(tzinfo=timezone.utc)
+            age = (ref - issued).total_seconds()
+            if age < 0 or age > max_age_s:
+                return False, "attestation not fresh (age %.1fs)" % age
+        return True, None
+    except (TypeError, ValueError, KeyError) as e:
+        return False, "malformed attestation: %s" % (e,)

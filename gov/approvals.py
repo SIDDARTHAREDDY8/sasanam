@@ -34,22 +34,25 @@ lifecycle - queued -> approved/rejected -> executed - is auditable.
 
 import argparse
 import contextlib
+import errno
 import fcntl
 import hmac
 import json
 import os
+import secrets
 import stat
 import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from pathlib import Path
 
-from .identity import AgentIdentity
+from .identity import AgentIdentity, UnregisteredPrincipalError
 from .log import (ActionLog, _active_key, _approval_record_mac,
-                  _break_glass_ticket_mac, _canonical, _verify,
+                  _break_glass_ticket_mac, _canonical, _marker_sets,
+                  _read_tip_cache, _verify,
                   read_entries, read_entries_with_stats,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
@@ -180,11 +183,66 @@ def _canonical_dumps(obj):
 # single payload definition — _pending_record_content_ok() and
 # approval_digest_ok() both verify against it, so the two checks cannot
 # drift apart.
+#
+# D1-core extends the payload with the delegation/quorum/bridge fields
+# (decision_mode, delegated_to, delegation_chain, quorum, votes,
+# bridge_expired, bridge_expired_at, late_decision). FAIL-CLOSED UPGRADE
+# (same precedent as F34/F38/R11): records queued BEFORE D1-core lands
+# do not carry these fields, so their digests fail verification
+# automatically after the upgrade — queued items must be decided or
+# drained before upgrading. There is no migration: post-upgrade,
+# pre-D1 digests are refused, never silently re-MACed. The wrong
+# principal's decision can never be laundered through a re-MAC because
+# the re-MAC is refused first (every state-changing method verifies the
+# pending digest BEFORE mutating and re-MACs AFTER — the F38 pattern).
 _SECURITY_PAYLOAD_FIELDS = (
     "tool", "args", "policy_id", "egress_bytes", "run_id", "decided_by",
     "agent_id", "role", "principal", "identity",
     "preview", "provenance", "policy_context", "policy_flag",
-    "delegation_attempted",
+    "delegation_attempted", "delegation_grant_id", "delegation_delegator",
+    # F101 (wave-26): the grant id and the delegating party are
+    # integrity-bound from birth. A grant-verified approval-gated
+    # call queues under the ACTING (delegatee) identity, so the
+    # requester-exclusion in decide() compares the decider against
+    # the delegatee — binding the delegator on the record lets
+    # decide()/cast_vote() exclude the intending party too, closing
+    # the D1-core requester-exclusion laundering. FAIL-CLOSED
+    # UPGRADE (same precedent as F34/F38/R11/D1/wave-24): records
+    # queued before this change do not carry these fields, so their
+    # digests fail verification after the upgrade — queued items
+    # must be decided or drained before upgrading.
+    # D1-core: delegation/quorum/bridge state is integrity-bound, not
+    # advisory. Rewriting delegated_to reroutes the decision; truncating
+    # delegation_chain erases the requester-loop evidence; lowering
+    # quorum.min_approvals or editing quorum.eligible_principals launders
+    # the M-of-N gate; flipping a vote row edits dissent away; clearing
+    # bridge_expired resurrects a timed-out bridge approval; flipping
+    # decision_mode quorum->single dodges the vote gate via decide().
+    "decision_mode", "delegated_to", "delegation_chain", "quorum", "votes",
+    "bridge_expired", "bridge_expired_at", "late_decision",
+    # F103 (wave-27): the full delegator lineage (root -> immediate,
+    # each {agent_id, role, principal}) is integrity-bound from birth
+    # alongside the F101 immediate-delegator field. Truncating the
+    # lineage breaks the MAC and is refused, never silently re-MACed
+    # (the F101 guard would otherwise degrade to single-hop).
+    # FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/D1/wave-24/
+    # F101): records queued BEFORE this change do not carry this
+    # field, so their digests fail verification automatically after
+    # the upgrade — queued items must be decided or drained before
+    # upgrading.
+    # Wave-24 (D1 bridges): the foreign-ingress fields are integrity-bound
+    # from birth. bridge_id is the web UI's bridge:<id> badge; the
+    # external_request_id idempotency key, the foreign request digest, and
+    # the foreign version pins are attacker-influenced data — binding
+    # them means post-queue tampering (digest swap, id-key rewrite,
+    # badge spoof) breaks the MAC and is refused, never silently
+    # re-MACed. FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/D1):
+    # records queued BEFORE wave-24 do not carry these fields, so their
+    # digests fail verification automatically after the upgrade — queued
+    # items must be decided or drained before upgrading.
+    "bridge_id", "external_request_id", "bridge_request_digest",
+    "bridge_versions",
+    "delegation_delegator_chain",
 )
 
 
@@ -199,6 +257,165 @@ def _security_record_payload(rec):
     payload = {f: rec.get(f) for f in _SECURITY_PAYLOAD_FIELDS}
     payload["delegation_attempted"] = bool(rec.get("delegation_attempted"))
     return _canonical_dumps(payload)
+
+
+def _delegator_lineage_ids(target):
+    """F103 (wave-27): the exclusion set for the D1-core
+    requester-exclusion invariant on a delegated approval — the
+    agent_id and principal of EVERY delegating party in the
+    lineage, not just the immediate delegator.
+
+    Sources: the F101 ``delegation_delegator`` (immediate delegator)
+    plus each hop of ``delegation_delegator_chain`` (full lineage,
+    root -> immediate, stamped at queue time from the verified
+    ``verify_invocation`` lineage and MAC-bound). The union keeps
+    decide() and cast_vote() from drifting apart; both call this.
+    Malformed hop entries are ignored (the MAC would already have
+    failed on a tampered record), None values are dropped.
+    """
+    ids = set()
+    _immediate = target.get("delegation_delegator") or {}
+    ids |= {_immediate.get("agent_id"), _immediate.get("principal")}
+    for _hop in (target.get("delegation_delegator_chain") or []):
+        if isinstance(_hop, dict):
+            ids |= {_hop.get("agent_id"), _hop.get("principal")}
+    ids.discard(None)
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# D1-core: delegation + quorum policy normalization.
+#
+# These normalizers are the ENFORCEMENT point for the
+# ``approvals.delegation`` / ``approvals.quorum`` policy sections: invalid
+# configs raise ValueError at load (fail closed). ``gov/policy_lint.py``
+# mirrors the same rules as advisory findings (L1-L10); ``gov/policy.py``'s
+# ``PolicyEngine`` delegates to these functions so the queue and the
+# policy loader cannot drift apart.
+# ---------------------------------------------------------------------------
+
+# D1-core §11 Q2: the default is a single reassignment. Chains beyond one
+# hop let an approver launder responsibility ("I just passed it on") and
+# complicate forensics; operators who need chains raise max_hops
+# explicitly. The lint ceiling is 5 either way (>5 is a laundering
+# vector, not a feature).
+DELEGATION_DEFAULT_MAX_HOPS = 1
+DELEGATION_MAX_HOPS_CEILING = 5
+
+# D1-core §3.1 / T1(c): the assignee label for unassigned records — the
+# principal that would decide() them today (CLI: the terminal trust
+# root; web: the session operator). Matches decide()'s decided_by
+# default, so delegation on an unassigned record starts exactly where
+# today's decision authority sits.
+DEFAULT_OPERATOR_LABEL = "human-operator"
+# The web console's distinct operator label — mirrors
+# gov.approval_web.WEB_DECIDED_BY, defined here so the core does not
+# import the web module. Both labels denote the SAME human-operator
+# terminal trust root reached through different surfaces; either may
+# initiate delegation on an unassigned record (delegation authority
+# is exactly co-extensive with decision authority).
+WEB_OPERATOR_LABEL = "web/human-operator"
+DEFAULT_ASSIGNEE_LABELS = frozenset(
+    {DEFAULT_OPERATOR_LABEL, WEB_OPERATOR_LABEL})
+
+
+def _normalize_delegation_config(cfg):
+    """Normalize the ``approvals.delegation:`` policy section (D1-core).
+
+    Returns ``{"enabled": bool, "max_hops": int}``. Absent section =
+    ``{"enabled": False, "max_hops": 1}`` — delegation is opt-in, fail
+    closed (L2). Malformed sections raise ValueError (L1/L3): the engine
+    refuses to load them rather than silently disabling or mis-shaping
+    the control.
+    """
+    out = {"enabled": False, "max_hops": DELEGATION_DEFAULT_MAX_HOPS}
+    if cfg is None:
+        return out
+    if not isinstance(cfg, dict):
+        raise ValueError(
+            "approvals.delegation must be a mapping when present (L1)")
+    if "enabled" in cfg:
+        enabled = cfg["enabled"]
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                "approvals.delegation.enabled must be true/false, got %r "
+                "(L2: delegation is opt-in; no silent enable)" % (enabled,))
+        out["enabled"] = enabled
+    if "max_hops" in cfg:
+        hops = cfg["max_hops"]
+        if (isinstance(hops, bool) or not isinstance(hops, int)
+                or not 1 <= hops <= DELEGATION_MAX_HOPS_CEILING):
+            raise ValueError(
+                "approvals.delegation.max_hops must be an int in 1..%d, "
+                "got %r (L3)" % (DELEGATION_MAX_HOPS_CEILING, hops))
+        out["max_hops"] = hops
+    return out
+
+
+def _normalize_quorum_config(cfg):
+    """Normalize the ``approvals.quorum:`` policy section (D1-core).
+
+    Returns ``{"min_approvals": int, "eligible_principals": tuple[str],
+    "deny_veto": True, "flags": tuple[str] | None}`` or None when the
+    section is absent (quorum is opt-in). Malformed sections raise
+    ValueError (L4-L9), fail closed at load:
+
+    * L7: ``min_approvals > len(eligible_principals)`` is an unreachable
+      quorum — silent starvation — so it fails the load instead of
+      queueing records no vote pattern can ever decide.
+    * L8: ``deny_veto`` must be True or absent. The one-deny veto is
+      non-negotiable (§4.3): an M-of-N scheme where dissent can be
+      outvoted is a rubber-stamp amplifier, not a safety gate. Any
+      non-True value (including explicit false) is a load error —
+      never a silent majority-overrides-dissent.
+    """
+    if cfg is None:
+        return None
+    if not isinstance(cfg, dict):
+        raise ValueError(
+            "approvals.quorum must be a mapping when present (L4)")
+    min_approvals = cfg.get("min_approvals")
+    if (isinstance(min_approvals, bool)
+            or not isinstance(min_approvals, int) or min_approvals < 1):
+        raise ValueError(
+            "approvals.quorum.min_approvals must be an int >= 1, got %r "
+            "(L5)" % (min_approvals,))
+    eligible = cfg.get("eligible_principals")
+    if (not isinstance(eligible, (list, tuple)) or not eligible
+            or any(not isinstance(p, str) or not p.strip()
+                   for p in eligible)):
+        raise ValueError(
+            "approvals.quorum.eligible_principals must be a non-empty "
+            "list of non-empty strings (L6)")
+    eligible = tuple(p.strip() for p in eligible)
+    if len(set(eligible)) != len(eligible):
+        raise ValueError(
+            "approvals.quorum.eligible_principals must list unique "
+            "principals (L6: duplicates would let one human fill two "
+            "vote slots)")
+    if min_approvals > len(eligible):
+        raise ValueError(
+            "approvals.quorum.min_approvals (%d) exceeds "
+            "len(eligible_principals) (%d): the quorum is unreachable — "
+            "silent starvation — failing closed at load (L7)"
+            % (min_approvals, len(eligible)))
+    if "deny_veto" in cfg and cfg["deny_veto"] is not True:
+        raise ValueError(
+            "approvals.quorum.deny_veto must be true or absent, got %r: "
+            "the one-deny veto is non-negotiable (L8)" % (cfg["deny_veto"],))
+    flags = cfg.get("flags")
+    if flags is not None:
+        if (not isinstance(flags, (list, tuple))
+                or any(not isinstance(f, str) or not f.strip()
+                       for f in flags)):
+            raise ValueError(
+                "approvals.quorum.flags must be a list of non-empty "
+                "strings when present (L9)")
+        flags = tuple(f.strip() for f in flags)
+    return {"min_approvals": min_approvals,
+            "eligible_principals": eligible,
+            "deny_veto": True,
+            "flags": flags}
 
 
 def approval_record_digest(rec):
@@ -613,7 +830,7 @@ def _score_factors(record, queue_records, anomaly_ids=(), ignore_history=False):
         score += 15
         factors.append("path escapes sandbox +15")
     if (ctx.get("domain_allowlisted") is False
-            and tool in ("send_email", "http_post")):
+            and tool in ("send_email", "http_post", "api_call")):
         score += 20
         factors.append("non-allowlisted egress target +20")
     if ctx.get("carries_read_content"):
@@ -935,8 +1152,14 @@ class ApprovalQueueRiskMixin:
                        if records[i].get("status") != "pending"]
         if not_pending:
             raise ValueError("not pending: %s" % ", ".join(not_pending))
-        if decided_by and any(records[i].get("agent_id") == decided_by
-                              for i in approval_ids):
+        # D1-core: exact match on BOTH agent_id and principal (the alias
+        # shape) — same invariant as decide()'s SoD check, enforced here
+        # up front so the batch fails BEFORE any partial decision.
+        if decided_by and any(
+                decided_by == records[i].get("agent_id")
+                or (records[i].get("principal")
+                    and decided_by == records[i].get("principal"))
+                for i in approval_ids):
             raise ValueError(
                 "separation of duties: %r requested at least one of these "
                 "actions" % decided_by)
@@ -950,8 +1173,23 @@ class ApprovalQueueRiskMixin:
                 rec = dict(records[i])
                 rec["batch_exclusion_reason"] = reason
                 excluded.append(rec)
-            else:
-                candidates.append(i)
+                continue
+            # D1-core: delegated records are batch-opaque — the batch's
+            # decided_by must EXACTLY match the record's assignee (the
+            # T3 guard in decide() enforces this per item too). A batch
+            # by anyone else cannot decide them; they stay pending for
+            # the assignee. Excluded, not aborted — skipping is the safe
+            # direction (F21 pattern).
+            assignee = records[i].get("delegated_to")
+            if assignee is not None and decided_by != assignee:
+                rec = dict(records[i])
+                rec["batch_exclusion_reason"] = (
+                    "delegated to %r: only the assignee may decide it; "
+                    "batch decided_by %r does not match"
+                    % (assignee, decided_by))
+                excluded.append(rec)
+                continue
+            candidates.append(i)
         guarded = []
         if approved:
             confirmed = set(confirm_risky or ())
@@ -1044,6 +1282,14 @@ class ApprovalQueueRiskMixin:
         # cap, so a low-risk campaign fragment (risk 20 <= cap 25) can
         # never slip through on score alone.
         if self._batch_blocked_reason(record) is not None:
+            return None
+        # D1-core: a delegated record's decision stewardship belongs to
+        # its assignee — auto-approve is a machine decider and can never
+        # be the assignee, so the T3 exact-match guard in decide()
+        # would refuse it anyway. Fail closed here with the silent None
+        # every other gate refusal returns, instead of letting decide()
+        # raise.
+        if record.get("delegated_to") is not None:
             return None
         self.refresh_flood_flags()
         record = self.get(approval_id)
@@ -1365,6 +1611,31 @@ class ApprovalQueueRiskMixin:
             raise ValueError(
                 "break-glass requires a human-provisioned ticket id: "
                 "provision one out-of-band before the run (F49)")
+        # D1-core: quorum-collecting records can NEVER be
+        # break-glassed. The M-of-N vote gate is structural: a
+        # single-operator emergency bypass cannot stand in for M
+        # distinct human votes, and the emergency path must never be
+        # the route around a quorum the votes could not reach. Refused
+        # BEFORE the ticket lock so a refused attempt never consumes a
+        # single-use ticket; audited as break_glass_refused.
+        for _bg_rec in self.all():
+            if _bg_rec["id"] == approval_id:
+                if _bg_rec.get("decision_mode") == "quorum":
+                    self._refuse_break_glass(
+                        approval_id,
+                        "break-glass refused: quorum-collecting records "
+                        "can never be break-glassed — the M-of-N vote "
+                        "gate is structural and cannot be bypassed by "
+                        "the single-operator emergency path",
+                        ticket_id=ticket_id,
+                        operator_principal=(
+                            operator_identity.principal))
+                    raise ValueError(
+                        "break-glass refused: quorum-collecting records "
+                        "can never be break-glassed (D1-core: the M-of-N "
+                        "vote gate is structural, not an emergency "
+                        "bypass)")
+                break
         # F49: the ticket resolve -> consume sequence is guarded by
         # the cross-thread mutex so two concurrent break_glass calls
         # cannot both observe an unused ticket (single-use atomicity).
@@ -1675,11 +1946,35 @@ class ApprovalQueueRiskMixin:
         floods = [r["id"] for r in pending if r.get("flood_suspect")]
         reviews = self.pending_reviews()
         clean = not pending and not floods and not reviews
+        # D1-core: surface the pending SUBSTATES in the audit report —
+        # a pending record is never just "pending" anymore: DELEGATED
+        # tells the operator stewardship moved, QUORUM_COLLECTING shows
+        # the live tally against the MACed snapshot.
+        delegated = [r["id"] for r in pending
+                     if r.get("delegated_to") is not None]
+        quorum_collecting = []
+        for r in pending:
+            if r.get("decision_mode") == "quorum":
+                quorum = r.get("quorum") or {}
+                votes = r.get("votes") or []
+                quorum_collecting.append({
+                    "id": r["id"],
+                    "approvals_cast": sum(
+                        1 for v in votes if v.get("approve")),
+                    "min_approvals": quorum.get("min_approvals"),
+                    "eligible_principals": list(
+                        quorum.get("eligible_principals") or []),
+                })
+        late_decisions = [r["id"] for r in self.all()
+                          if r.get("late_decision")]
         return {
             "clean": clean,
             "pending_count": len(pending),
             "flood_suspect_ids": floods,
             "unresolved_break_glass": [t["ticket_id"] for t in reviews],
+            "delegated_ids": delegated,
+            "quorum_collecting": quorum_collecting,
+            "late_decision_ids": late_decisions,
         }
 
 
@@ -1707,8 +2002,81 @@ class SessionIdentityAlreadySetError(Exception):
     """
 
 
+def _fsync_syncable(fd):
+    """F89: fsync, tolerating EINVAL for non-syncable fds.
+
+    ``os.fsync`` raises ``OSError(EINVAL)`` on file descriptors that do
+    not support synchronization (character devices such as /dev/null,
+    pipes, sockets). The queue/ticket store files live in the run dir,
+    which the documented F52 run-dir-writer residual allows an attacker
+    to symlink (the w11 sit64 probe pins the /dev/null symlink shape:
+    the approval is "accepted" but silently vanishes). The F83
+    durability fsync must not turn that documented residual into an
+    unhandled ``OSError`` crashing ``queue()`` — EINVAL means "this
+    object cannot be synced", not "data was lost": the preceding
+    ``write()`` already succeeded. Every other ``OSError`` (EIO,
+    ENOSPC, EBADF, ...) still propagates loud, so the F83 durability
+    guarantee for real files is unchanged.
+    """
+    try:
+        os.fsync(fd)
+    except OSError as exc:
+        if exc.errno != errno.EINVAL:
+            raise
+
+
+def _atomic_write_counter():
+    """Monotonic counter for unique temp-file names (see below)."""
+    _atomic_write_counter.n += 1
+    return _atomic_write_counter.n
+
+
+_atomic_write_counter.n = 0
+
+
+def _atomic_write_text(path, lines):
+    """F83: crash-durable rewrite of a JSONL file.
+
+    Writes ``lines`` (each already newline-terminated) to a temp file
+    in the same directory, flushes + fsyncs it, then ``os.replace``s it
+    over ``path`` and fsyncs the directory so the rename itself is
+    durable. A crash at any point leaves either the complete old file
+    or the complete new file — never a truncation. The old code did
+    ``open(path, "w")`` (truncate-in-place): a crash mid-write
+    destroyed the whole approval queue.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Unique temp name per call: concurrent rewrites (threads) must not
+    # collide on the temp path. (Callers serialize via the queue lock;
+    # this is defense in depth.)
+    tmp = path.with_name("%s.tmp.%d.%d.%d" % (
+        path.name, os.getpid(), threading.get_ident(),
+        _atomic_write_counter()))
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            for line in lines:
+                f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(str(path.parent), os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 class ApprovalQueue(ApprovalQueueRiskMixin):
-    def __init__(self, run_dir, log, batch_excluded_reasons=None):
+    def __init__(self, run_dir, log, batch_excluded_reasons=None,
+                 delegation_config=None, quorum_config=None,
+                 principal_registry=None):
         self.run_dir = Path(run_dir)
         # F42 (R11): the queue's authoritative run id — records stamp
         # THIS, never a caller-supplied run_id.
@@ -1721,6 +2089,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # policy). ToolExecutor pushes the policy-derived list via the
         # setter below.
         self.set_batch_excluded_reasons(batch_excluded_reasons)
+        # D1-core: delegation/quorum policy sections, normalized
+        # fail-closed at install. The raw shapes are the policy file's
+        # ``approvals.delegation`` / ``approvals.quorum`` mappings (or
+        # None = feature off); PolicyEngine installs its normalized
+        # copies. Direct/CLI construction without a policy keeps both
+        # features off — today's single-decider posture.
+        self.set_delegation_config(delegation_config)
+        self.set_quorum_config(quorum_config)
+        # D1-core §11 Q4: the deployment's PrincipalRegistry for the
+        # delegatee registration check. None = no registry: principal
+        # strings are the terminal trust root (documented
+        # localhost-grade limit, same as CLI --by today).
+        self._principal_registry = None
+        if principal_registry is not None:
+            self.set_principal_registry(principal_registry)
         # F26: optional executor-installed identity verifier for the
         # break-glass/review paths (see set_identity_verifier). None =
         # isinstance check only (the CLI path: terminal-access trust
@@ -1923,6 +2306,71 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         else:
             self._batch_excluded = tuple(r for r in reasons)
 
+    def set_delegation_config(self, cfg):
+        """D1-core: install the ``approvals.delegation`` policy section.
+
+        ``cfg`` is the raw policy-file mapping (or None = feature off);
+        it is normalized fail-closed by
+        :func:`_normalize_delegation_config` — invalid shapes raise
+        ValueError here, never silently mis-shape the control. Re-set
+        is allowed (policy reloads happen); the F31 write-once pattern
+        does not apply — this is policy data, not an identity anchor.
+        """
+        self._delegation_cfg = _normalize_delegation_config(cfg)
+
+    @property
+    def delegation_enabled(self):
+        """D1-core: True when the installed ``approvals.delegation``
+        policy section enables delegation. Lets read-only surfaces
+        (e.g. the web console) render the delegate affordance only
+        when the control is actually on."""
+        return bool((self._delegation_cfg or {}).get("enabled"))
+
+    def set_quorum_config(self, cfg):
+        """D1-core: install the ``approvals.quorum`` policy section.
+
+        ``cfg`` is the raw policy-file mapping (or None = feature off);
+        normalized fail-closed by :func:`_normalize_quorum_config`.
+        The installed config only affects records queued AFTER the
+        install — queued records carry their own MACed snapshot
+        (``record["quorum"]``), so a config change can never shrink
+        ``min_approvals`` or swap ``eligible_principals`` under a live
+        collection (quorum-bypass-by-config-edit is structurally
+        impossible).
+        """
+        self._quorum_cfg = _normalize_quorum_config(cfg)
+
+    def set_principal_registry(self, registry):
+        """D1-core §11 Q4: install the deployment's PrincipalRegistry.
+
+        Lets ``delegate()`` refuse unregistered delegatees when a
+        registry is configured. Also marks the registry as configured
+        (same flag ``note_registry_configured()`` sets).
+        """
+        self._principal_registry = registry
+        self._registry_configured = True
+
+    def _delegatee_registered(self, principal):
+        """D1-core §11 Q4: True when *principal* may receive a delegation.
+
+        Without a configured registry, principal strings are the
+        terminal trust root (documented localhost-grade limit) and any
+        non-empty principal passes. With a registry configured, the
+        delegatee must be registry-known; when the registry object
+        itself is missing the check cannot run, so it fails closed
+        (refuse) rather than silently passing.
+        """
+        if not self._registry_configured:
+            return True
+        registry = getattr(self, "_principal_registry", None)
+        if registry is None:
+            return False
+        try:
+            registry.check(principal)
+        except UnregisteredPrincipalError:
+            return False
+        return True
+
     def _batch_blocked_reason(self, record):
         """F21: why this record may never be batch-decided (None = OK).
 
@@ -1936,6 +2384,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         """
         if record.get("break_glass"):
             return "break_glass record: individual review required"
+        # D1-core: quorum-collecting records can never be batch-decided
+        # — the M-of-N vote gate is structural, not a batch exclusion
+        # list entry (which the policy can edit). Nothing in a batch can
+        # stand in for M distinct human votes.
+        if record.get("decision_mode") == "quorum":
+            return ("quorum-collecting record: decided only by "
+                    "cast_vote() finalize — batch cannot stand in for "
+                    "M human votes")
         flag = record.get("policy_flag")
         if flag and flag in self._batch_excluded:
             return ("excluded queue reason %r: individual decision "
@@ -1950,8 +2406,102 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                             "individual decision required" % (reason, pid))
         return None
 
+    def _append_lock_path(self):
+        return self.run_dir / "approvals.append.lock"
+
+    @contextlib.contextmanager
+    def _append_locked(self, timeout=10):
+        """F83: leaf lock serializing the heal+append sequence in
+        ``queue()`` across threads and processes.
+
+        This is deliberately NOT the sweep lock (``_queue_locked``):
+        sweeps hold that lock across tool execution, so ``queue()``
+        must never contend with it (a slow sweep would turn every new
+        queue() into a 30s block or a ``QueueLockError``). The append
+        lock is a leaf — never nested inside or outside any other
+        lock — held only for microseconds around the torn-tail heal,
+        the append, and the fsync. ``QueueLockError`` on timeout:
+        fail closed, never append unlocked.
+        """
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = self._append_lock_path()
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+        except OSError as e:
+            raise QueueLockError(
+                "approval-queue append lock path %s is not lockable "
+                "(%s); refusing to queue" % (lock_path, e))
+        f = os.fdopen(fd, "a", encoding="utf-8")
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(f.fileno(),
+                                fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise QueueLockError(
+                            "approval-queue append lock unavailable "
+                            "after %ds; refusing to queue rather than "
+                            "risk a torn append race" % timeout)
+                    time.sleep(0.01)
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            f.close()
+
+    def _heal_torn_tail(self):
+        """F83: truncate a torn trailing append before writing.
+
+        If the queue file does not end with ``"\\n"``, the final bytes
+        are a torn append from a crash between ``write()`` and fsync
+        (our writers always newline-terminate). The torn bytes are
+        truncated back to the last newline so the new record cannot
+        glue onto them into one unparsable line. Only bytes that were
+        never durably queued are removed: every complete record ends
+        with ``"\\n"`` and is preserved. Caller must hold
+        ``_append_locked``.
+        """
+        try:
+            f = open(self.path, "r+b")
+        except FileNotFoundError:
+            return
+        with f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size == 0:
+                return
+            f.seek(max(0, size - 1))
+            if f.read(1) == b"\n":
+                return  # well-formed tail: nothing to heal
+            # Scan back for the last newline and truncate after it.
+            pos = size - 1
+            chunk = 4096
+            while pos > 0:
+                start = max(0, pos - chunk)
+                f.seek(start)
+                data = f.read(pos - start)
+                idx = data.rfind(b"\n")
+                if idx != -1:
+                    f.truncate(start + idx + 1)
+                    f.flush()
+                    os.fsync(f.fileno())
+                    return
+                pos = start
+            # No newline at all: the whole file is one torn line from
+            # a crash on the very first queue() — nothing durable to
+            # keep.
+            f.truncate(0)
+            f.flush()
+            os.fsync(f.fileno())
+
     def queue(self, action, decision, provenance="agent_direct", preview="",
               policy_hash=None, delegation_attempted=False,
+              delegation_grant_id=None, delegation_delegator=None,
+              delegation_delegator_chain=None,
               policy_context=None, policy_flag=None, egress_bytes=None,
               caller_identity=None):
         """Store a pending approval; returns the approval id.
@@ -1971,6 +2521,26 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         queue form of the args may summarize large payloads
         (``{bytes, sha256_prefix}``), so the execution boundary charges
         the recorded raw count — never a smaller redacted form.
+
+        ``delegation_grant_id`` / ``delegation_delegator`` (F101,
+        wave-26): for a grant-verified call, the executor passes the
+        verified grant id and the delegating party's
+        ``{agent_id, role, principal}`` (as verified by the delegation
+        store — never caller-supplied). Both are stamped on the
+        record and MAC-bound, so ``decide()``/``cast_vote()`` exclude
+        the intending party alongside the requester. Absent (None)
+        for non-delegated calls.
+
+        ``delegation_delegator_chain`` (F103, wave-27): the FULL
+        delegator lineage for the grant — root ``->`` immediate, each
+        ``{agent_id, role, principal}`` as resolved by
+        ``DelegationStore.verify_invocation`` from the re-verified
+        ancestor records (never caller-supplied). Stamped on the
+        record and MAC-bound (see ``_SECURITY_PAYLOAD_FIELDS``) so
+        ``decide()``/``cast_vote()`` exclude every intending party in
+        the chain, closing the depth->=2 single-hop gap in the F101
+        guard. At depth 1 the lineage is just ``[immediate]``. Absent
+        (None) for non-delegated calls.
 
         F42 (R11): ``caller_identity`` is REQUIRED — an
         ``AgentIdentity`` minted by the executor for the calling
@@ -2023,6 +2593,22 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "provenance": provenance,
             "preview": preview,
             "delegation_attempted": delegation_attempted,
+            # F101 (wave-26): a grant-verified call queues under the
+            # ACTING (delegatee) identity — the grant id and the
+            # delegating party (agent_id/role/principal, as verified
+            # by the delegation store) ride on the record, MAC-bound
+            # (see _SECURITY_PAYLOAD_FIELDS), so decide() and
+            # cast_vote() can exclude the intending party alongside
+            # the requester. None for non-delegated calls.
+            "delegation_grant_id": delegation_grant_id,
+            "delegation_delegator": (dict(delegation_delegator)
+                                     if delegation_delegator else None),
+            # F103 (wave-27): the full delegator lineage, root ->
+            # immediate, deep-copied per hop so a caller-side mutation
+            # after queue() cannot reach the MAC-bound record.
+            "delegation_delegator_chain": (
+                [dict(hop) for hop in delegation_delegator_chain]
+                if delegation_delegator_chain else None),
             "policy_id": decision.policy_id,
             "policy_reason": decision.reason,
             "policy_flag": policy_flag,  # F21: queue reason; batch
@@ -2049,23 +2635,199 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "flood_suspect": False,
             "break_glass": False,
             "break_glass_reason": None,
+            # D1-core: delegation/quorum/bridge state. DELEGATED and
+            # QUORUM_COLLECTING are SUBSTATES of pending, derived from
+            # these fields — not new top-level statuses (spec §10,
+            # decision 1) — so the sweep, TTL expiry, audit_status(),
+            # flood/anomaly detection, the CLI, and the web list keep
+            # working untouched. All six fields are MAC-bound (see
+            # _SECURITY_PAYLOAD_FIELDS): absent fields bind as None,
+            # exactly like §F43.
+            "decision_mode": "single",   # "single" | "quorum"
+            "delegated_to": None,        # current assignee principal
+            "delegation_chain": [],      # append-only [{from,to,at,reason}]
+            "quorum": None,              # snapshot {min_approvals,
+                                        #   eligible_principals, deny_veto,
+                                        #   opened_at} — see _open_quorum
+            "votes": [],                 # [{vote_id, voter_principal,
+                                        #   voter_identity, approve, reason,
+                                        #   ts, nonce}] — final, no retraction
+            "bridge_expired": False,     # T10 marker: bridge wait timed out
+            "bridge_expired_at": None,
+            "late_decision": False,      # T11: decided after bridge_expired
+                                         # — audit-only, never executable
+            # Wave-24 (D1 bridges): null bridge state on native records.
+            # Explicit (not merely absent) so the web UI's read-only
+            # foreign-digest/version rendering and the bridge:<id> badge
+            # have a stable schema; MAC-bound as None exactly like the
+            # D1 fields above (see _SECURITY_PAYLOAD_FIELDS).
+            "bridge_id": None,
+            "external_request_id": None,
+            "bridge_request_digest": None,
+            "bridge_versions": None,
         }
+        # D1-core T5: when the active quorum config applies to this
+        # record, snapshot it onto the record NOW and MAC it. Votes are
+        # checked against the snapshot, never the live policy file.
+        if self._quorum_applies(policy_flag):
+            self._open_quorum(record)
         # F43: the digest covers the record's security fields, computed
         # here from the stamped record itself.
         record["args_digest"] = approval_record_digest(record)
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=True, default=str) + "\n")
+        with self._append_locked():
+            # F83: heal a torn tail from a crashed append BEFORE
+            # writing, so the new record cannot glue onto torn bytes
+            # into one unparsable line (which would fail-closed the
+            # whole queue on every later read).
+            self._heal_torn_tail()
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=True,
+                                   default=str) + "\n")
+                # F83: fsync the append so a queued record is durable
+                # once queue() returns — a crash may still tear the
+                # final bytes of the line, which all() treats as a torn
+                # append (drops exactly that line), never as
+                # whole-file corruption.
+                f.flush()
+                # F89: tolerate EINVAL (non-syncable fd, e.g. the
+                # documented /dev/null symlink residual); other
+                # fsync errors still propagate loud.
+                _fsync_syncable(f.fileno())
         return record["id"]
 
+    def _quorum_applies(self, policy_flag):
+        """D1-core T5: does the installed quorum config cover a record
+        with this policy_flag? The section applies when present and
+        valid AND (no ``flags`` list = all require_approval records, or
+        the record's flag is listed)."""
+        cfg = getattr(self, "_quorum_cfg", None)
+        if cfg is None:
+            return False
+        flags = cfg.get("flags")
+        if flags is None:
+            return True
+        return policy_flag in flags
+
+    def _open_quorum(self, record):
+        """D1-core T5: snapshot the quorum config onto a queued record.
+
+        The snapshot — ``{min_approvals, eligible_principals,
+        deny_veto, opened_at}`` — is written onto the record BEFORE its
+        digest is computed, so it is MAC-bound from birth. The runtime
+        eligibility check runs here: if the configured eligible set
+        contains the requesting agent's ``agent_id`` or ``principal``,
+        ``queue()`` raises (audited ``quorum_misconfigured``) — fail
+        closed, no silent downgrade to single-decider. Lint cannot see
+        the requesting agent's identity at policy-load time, so this
+        runtime check (spec §10, decision 3) is the real invariant, not
+        the config file.
+        """
+        cfg = self._quorum_cfg
+        eligible = set(cfg["eligible_principals"])
+        requester_ids = {record.get("agent_id"), record.get("principal")}
+        clash = sorted(eligible & requester_ids)
+        if clash:
+            try:
+                self.log.append({
+                    "event": "quorum_misconfigured",
+                    "run_id": record.get("run_id"),
+                    "agent_id": record.get("agent_id"),
+                    "role": record.get("role"),
+                    "principal": record.get("principal"),
+                    "tool": record.get("tool"),
+                    "decision": "refused",
+                    "policy_id": record.get("policy_id"),
+                    "eligible_principals": list(
+                        cfg["eligible_principals"]),
+                    "requester_ids": sorted(requester_ids),
+                    "reason": ("quorum refused at queue time: the eligible "
+                               "set contains the requesting agent %s — the "
+                               "requester can never vote on its own action "
+                               "and can never be in the eligible set; fix "
+                               "the policy, no silent downgrade to "
+                               "single-decider" % (clash,)),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "queue() refused: approvals.quorum.eligible_principals "
+                "contains the requesting agent %s — the requester can "
+                "never be in the eligible set (fail-closed; audited as "
+                "quorum_misconfigured)" % (clash,))
+        record["decision_mode"] = "quorum"
+        record["quorum"] = {
+            "min_approvals": cfg["min_approvals"],
+            "eligible_principals": list(cfg["eligible_principals"]),
+            "deny_veto": True,
+            "opened_at": _utcnow(),
+        }
+        try:
+            self.log.append({
+                "event": "quorum_opened",
+                "run_id": record.get("run_id"),
+                "agent_id": record.get("agent_id"),
+                "role": record.get("role"),
+                "principal": record.get("principal"),
+                "tool": record.get("tool"),
+                "decision": "quorum_opened",
+                "policy_id": record.get("policy_id"),
+                "approval_id": record.get("id"),
+                "policy_flag": record.get("policy_flag"),
+                "min_approvals": cfg["min_approvals"],
+                "eligible_principals": list(cfg["eligible_principals"]),
+                "deny_veto": True,
+                "reason": ("quorum opened: %d-of-%d authenticated human "
+                           "votes required; one deny vetoes (terminal)"
+                           % (cfg["min_approvals"],
+                              len(cfg["eligible_principals"]))),
+            })
+        except Exception:
+            pass
+
     def all(self):
+        """Read all queue records.
+
+        F83 crash recovery: our writers always terminate every record
+        with ``"\\n"`` and fsync. A file that does NOT end with a
+        newline whose final line does not parse is a torn append from
+        a crash between ``write()`` and fsync — that record was never
+        durably queued, so exactly that one line is dropped (it can
+        never be trusted: it has no verifiable digest). Any other
+        unparsable line — including a torn-looking line in the middle
+        of the file — is corruption and still raises ``ValueError``
+        (fail closed), so tampering cannot hide behind the recovery.
+        """
         if not self.path.exists():
             return []
+        try:
+            text = self.path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise ValueError(
+                "approval queue file is not valid UTF-8: %s" % e)
+        if not text:
+            return []
+        lines = text.split("\n")
+        # A well-formed file ends with "\n" (split leaves a trailing
+        # ""). Anything else means the last line may be a torn append.
+        torn_tail = True
+        if lines and lines[-1] == "":
+            lines.pop()
+            torn_tail = False
         out = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line:
+        last = len(lines) - 1
+        for i, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
                 out.append(json.loads(line))
+            except ValueError:
+                if torn_tail and i == last:
+                    # Torn append: drop the single unparseable tail
+                    # line; the record was never durably queued.
+                    continue
+                raise ValueError(
+                    "approval queue file corrupt at line %d" % (i + 1))
         return out
 
     def pending(self):
@@ -2083,14 +2845,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         Accepts either a list of records (legacy contract) or a function
         fn(records) -> new_records, so callers can do atomic transforms
         without a read-modify-write race in their own code.
+
+        F83: the rewrite is crash-atomic (temp file + fsync +
+        os.replace + directory fsync). A crash mid-rewrite leaves the
+        previous complete file in place — the queue is never
+        truncated, so a crash during a web/CLI decide, delegate, vote,
+        or flood-flag refresh cannot destroy pending approvals.
         """
         if callable(fn_or_records):
             records = fn_or_records(self.all())
         else:
             records = fn_or_records
-        with open(self.path, "w", encoding="utf-8") as f:
-            for r in records:
-                f.write(json.dumps(r, ensure_ascii=True, default=str) + "\n")
+        _atomic_write_text(
+            self.path,
+            [json.dumps(r, ensure_ascii=True, default=str) + "\n"
+             for r in records])
 
     def decide(self, approval_id, approved, reason, decided_by="human-operator"):
         """Record a human decision and log it. Returns (record, log_entry).
@@ -2139,6 +2908,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             raise ValueError("approval id %r not found" % approval_id)
         # Separation of duties: the requesting agent can never approve (or
         # reject) its own action, even via a confused-deputy prompt.
+        # D1-core T4: this guard is UNCHANGED by D1 — the spec's
+        # requester-exclusion invariant (both aliases) applies at
+        # queue()/delegate()/cast_vote() time (§10.3), not here.
+        # Wave-49 RT17 probed extending this to the principal alias:
+        # REVERTED — break_glass() legitimately calls decide() with
+        # decided_by=<operator principal>, and the operator may share
+        # a principal with the requester (dev-mode minted operator
+        # identity; F55 provisioned session identity). The ticket (F49)
+        # + session-identity (F55) authorization on the break-glass
+        # path is the control there, not SoD. Keep the single-alias
+        # check aligned with the documented call-site invariant.
         if decided_by == target.get("agent_id"):
             _log_attempt(
                 "rejected_attempt",
@@ -2149,6 +2929,28 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             raise ValueError(
                 "separation of duties: agent %r cannot decide its own "
                 "approval %s" % (decided_by, approval_id))
+        # F101 (wave-26) + F103 (wave-27): the DELEGATING party is
+        # excluded too — and at depth >= 2, EVERY ancestor in the
+        # delegator lineage. A grant-verified approval-gated call
+        # queues under the ACTING (delegatee) identity, so the check
+        # above compares the decider against the delegatee — the
+        # delegators, who intended the action, must not be able to
+        # approve (or reject) it by proxy, or delegation launders the
+        # D1-core requester-exclusion invariant. Both aliases per
+        # party, via _delegator_lineage_ids() (shared with
+        # cast_vote() so the two exclusion sets cannot drift apart).
+        _deleg_ids = _delegator_lineage_ids(target)
+        if decided_by is not None and decided_by in _deleg_ids:
+            _log_attempt(
+                "rejected_attempt",
+                "separation of duties: delegating agent attempted to decide "
+                "an approval queued under its delegation grant",
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "separation of duties: delegator %r cannot decide approval "
+                "%s (delegation must not launder the requester-exclusion "
+                "invariant)" % (decided_by, approval_id))
         if target["status"] != "pending":
             _log_attempt(
                 "rejected_attempt",
@@ -2180,10 +2982,65 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "approval %r failed integrity verification: the queued "
                 "record was tampered with after queueing — decision "
                 "refused" % approval_id)
+        # D1-core T9: the M-of-N gate cannot be bypassed by the
+        # single-decider path. A quorum-collecting record is decided
+        # ONLY by cast_vote()'s internal finalize (T7/T8) — decide()
+        # always refuses, audited as decision_refused
+        # (quorum_direct_decide). There is no downgrade path from
+        # quorum to single: flipping decision_mode in the JSONL breaks
+        # the MAC, so the tamper check above fires instead.
+        if target.get("decision_mode") == "quorum":
+            try:
+                self.log.append({
+                    "event": "decision_refused",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "refused",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "decided_by": decided_by,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("quorum_direct_decide: record %s is "
+                               "quorum-collecting (M-of-N vote gate); "
+                               "decide() cannot bypass it — cast votes "
+                               "with cast_vote()" % approval_id),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "decision refused (quorum_direct_decide): approval %r "
+                "requires M-of-N human votes; the single-decider path "
+                "cannot decide quorum records" % approval_id)
+        # D1-core T3: a delegated record may be decided ONLY by its
+        # current assignee — exact principal match. No one else,
+        # including the original operator, may decide it.
+        assignee = target.get("delegated_to")
+        if assignee is not None and decided_by != assignee:
+            _log_attempt(
+                "rejected_attempt",
+                "delegated record: decided_by %r is not the current "
+                "assignee %r — only the assignee may decide"
+                % (decided_by, assignee),
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "decision refused: approval %r is delegated to %r; only "
+                "the assignee may decide it" % (approval_id, assignee))
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
         target["decision_reason"] = reason
+        # D1-core T11: a decision recorded after the bridge wait expired
+        # is labeled audit-only HERE and bound into the re-MAC below.
+        # It can never execute (T12 sweep refusal keys off
+        # bridge_expired, not this flag — flipping late_decision in the
+        # JSONL changes nothing executable, and the MAC still binds it
+        # for forensics).
+        late = bool(target.get("bridge_expired"))
+        target["late_decision"] = late
         # F38 (R10) / F43 (R11): the decision binds the decider into the
         # keyed digest — the approval's integrity now covers WHO decided
         # it, not just what was approved. Re-MAC here (queue time bound
@@ -2222,7 +3079,1113 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "decided_by": decided_by,
             "related_agent": target["agent_id"],
         })
+        # D1-core T11: the late decision is a second, distinct audit
+        # entry — the decision above is recorded, but this entry marks
+        # it audit-only. Execution refusal keys off bridge_expired
+        # (T12), so this entry is the forensic label, not the gate.
+        if late:
+            self.log.append({
+                "event": "approval_late_decision",
+                "run_id": target.get("run_id"),
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "tool": target["tool"],
+                "decision": "approved" if approved else "rejected",
+                "policy_id": target["policy_id"],
+                "approval_id": target["id"],
+                "decided_by": decided_by,
+                "related_agent": target["agent_id"],
+                "bridge_expired_at": target.get("bridge_expired_at"),
+                "reason": ("late decision on a bridge_expired record: "
+                           "recorded and audited but NEVER executable — "
+                           "the bridge wait timed out first (T11/T12)"),
+            })
         return target, entry
+
+    def delegate(self, approval_id, to_principal, reason, delegated_by):
+        """D1-core: reassign a pending record's decision stewardship.
+
+        On a single-decider record this transfers DECISION power (T1/T2):
+        afterwards only ``to_principal`` may decide it (T3 exact-match
+        guard). On a quorum-collecting record it transfers one VOTE SLOT
+        (T13): the delegatee takes the delegator's place in the
+        snapshotted eligible set; M is unchanged.
+
+        Guards (all fail-closed, audited as ``delegation_refused``):
+
+        * the record is pending (``not_pending``);
+        * ``approvals.delegation.enabled`` is true (``delegation_disabled``);
+        * the pending digest verifies BEFORE any mutation — a tampered
+          ``delegated_to``/chain/quorum/votes record is never re-MACed
+          (``tamper``; the F38 pattern);
+        * the delegatee is never the requesting agent — exact match on
+          BOTH ``agent_id`` and ``principal`` (``requester_target``);
+        * no self-delegation (``self_delegation``) and no chain loop
+          (``delegation_loop``);
+        * ``len(chain) + 1 <= max_hops`` (``max_hops_exceeded``);
+        * when a PrincipalRegistry is configured, the delegatee is
+          registry-known (``unregistered_delegatee``);
+        * for single-decider records, ``delegated_by`` is exactly the
+          current assignee (``delegated_to``, or the default operator
+          label when unassigned) — ``wrong_delegator``;
+        * for quorum records, ``delegated_by`` holds an uncast vote slot
+          (``wrong_delegator`` / ``vote_already_cast``).
+
+        Refusals never mutate the record (no hop appended, no re-MAC,
+        ``delegated_to`` unchanged). Success appends one chain hop,
+        sets ``delegated_to`` (single-decider) or swaps the vote slot
+        (quorum), re-MACs, and audits ``approval_delegated``.
+        """
+        records = self.all()
+        target = None
+        for r in records:
+            if r["id"] == approval_id:
+                target = r
+                break
+
+        def _refuse(code, note):
+            try:
+                self.log.append({
+                    "event": "delegation_refused",
+                    "run_id": (target or {}).get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": (target or {}).get("tool"),
+                    "decision": "refused",
+                    "policy_id": (target or {}).get("policy_id"),
+                    "approval_id": approval_id,
+                    "delegated_by": delegated_by,
+                    "delegated_to": (to_principal
+                                     if isinstance(to_principal, str)
+                                     else str(to_principal)),
+                    "refusal_code": code,
+                    "related_agent": (target or {}).get("agent_id"),
+                    "reason": note,
+                })
+            except Exception:
+                # The refusal stands regardless; a logging outage must
+                # not turn a refusal into a delegation.
+                pass
+            raise ValueError("delegation refused (%s): %s" % (code, note))
+
+        if target is None:
+            _refuse("not_pending",
+                    "delegation attempted on unknown approval id %r"
+                    % (approval_id,))
+        if target.get("status") != "pending":
+            _refuse("not_pending",
+                    "delegation attempted on %s approval %r"
+                    % (target.get("status"), approval_id))
+        if not reason or not str(reason).strip():
+            _refuse("empty_reason",
+                    "a delegation reason is required (non-empty)")
+        if (not isinstance(to_principal, str) or not to_principal.strip()):
+            _refuse("invalid_target",
+                    "delegatee principal must be a non-empty string")
+        # F38 pattern FIRST: verify the pending digest BEFORE any
+        # mutation. A tampered delegated_to/chain/quorum/votes record is
+        # refused here — the tamper can never be laundered by the
+        # delegation's own re-MAC.
+        if not _pending_record_content_ok(target):
+            _refuse("tamper",
+                    "the pending record failed integrity verification "
+                    "(tampered after queueing); re-MAC refused")
+        cfg = getattr(self, "_delegation_cfg", None) or {}
+        if not cfg.get("enabled"):
+            _refuse("delegation_disabled",
+                    "approvals.delegation.enabled is not true — "
+                    "delegation is opt-in (fail closed)")
+        # D1-core §3.3: NEVER back to the requesting agent. Exact match
+        # on BOTH agent_id and principal: deployments may mint agent
+        # identities whose principal string equals the agent id, so
+        # checking only one leaves the alias shape open.
+        requester_ids = {target.get("agent_id"), target.get("principal")}
+        if to_principal in requester_ids:
+            _refuse("requester_target",
+                    "delegatee %r is the requesting agent "
+                    "(agent_id/principal exact match) — stewardship can "
+                    "never route back to the agent that queued the action"
+                    % (to_principal,))
+        if to_principal == delegated_by:
+            _refuse("self_delegation",
+                    "cannot delegate to yourself — a self-hop would "
+                    "launder the chain, so it is refused, not silently "
+                    "accepted")
+        chain = target.get("delegation_chain") or []
+        seen = set()
+        for hop in chain:
+            if isinstance(hop, dict):
+                if hop.get("from"):
+                    seen.add(hop["from"])
+                if hop.get("to"):
+                    seen.add(hop["to"])
+        if to_principal in seen:
+            _refuse("delegation_loop",
+                    "delegatee %r already appears in the delegation "
+                    "chain — loops are refused" % (to_principal,))
+        max_hops = cfg.get("max_hops", DELEGATION_DEFAULT_MAX_HOPS)
+        if len(chain) + 1 > max_hops:
+            _refuse("max_hops_exceeded",
+                    "delegation chain would exceed max_hops=%d "
+                    "(chains beyond one hop launder responsibility)"
+                    % (max_hops,))
+        # D1-core §11 Q4: when a PrincipalRegistry is configured, the
+        # delegatee must be registry-known.
+        if (getattr(self, "_registry_configured", False)
+                and not self._delegatee_registered(to_principal)):
+            _refuse("unregistered_delegatee",
+                    "delegatee %r is not registered with this "
+                    "deployment's PrincipalRegistry" % (to_principal,))
+        if target.get("decision_mode") == "quorum":
+            return self._delegate_vote_slot(
+                target, to_principal, str(reason).strip(), delegated_by,
+                _refuse, max_hops)
+        # T1/T2: single-decider delegation — delegation authority is
+        # exactly co-extensive with decision authority. The current
+        # assignee is delegated_to once delegated; on an unassigned
+        # record it is the human-operator trust root, reachable via
+        # either the CLI or the web label.
+        current_assignee = target.get("delegated_to")
+        if current_assignee is None:
+            if delegated_by not in DEFAULT_ASSIGNEE_LABELS:
+                _refuse("wrong_delegator",
+                        "delegated_by %r is not the current assignee — "
+                        "on an unassigned record only the human-operator "
+                        "trust root (%s) may delegate"
+                        % (delegated_by,
+                           "/".join(sorted(DEFAULT_ASSIGNEE_LABELS))))
+        elif delegated_by != current_assignee:
+            _refuse("wrong_delegator",
+                    "delegated_by %r is not the current assignee %r — "
+                    "only the assignee may delegate"
+                    % (delegated_by, current_assignee))
+        hop_no = len(chain) + 1
+        target["delegation_chain"] = chain + [{
+            "from": delegated_by,
+            "to": to_principal,
+            "at": _utcnow(),
+            "reason": str(reason).strip(),
+        }]
+        target["delegated_to"] = to_principal
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        entry = self.log.append({
+            "event": "approval_delegated",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "delegated",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "delegated_by": delegated_by,
+            "delegated_to": to_principal,
+            "hop": hop_no,
+            "max_hops": max_hops,
+            "transfer": "decision",
+            "related_agent": target.get("agent_id"),
+            "reason": str(reason).strip(),
+        })
+        return target, entry
+
+    def _delegate_vote_slot(self, target, to_principal, reason,
+                            delegated_by, _refuse, max_hops):
+        """D1-core T13: delegate one VOTE SLOT on a quorum record.
+
+        The delegatee takes the delegator's place in the record's
+        ``quorum.eligible_principals`` SNAPSHOT; ``min_approvals`` is
+        unchanged. The delegator must hold an uncast vote slot — a
+        delegator who already voted cannot delegate (their vote stands;
+        votes are final). All delegate() guards (d)-(h) — requester,
+        self, loop, hops, registry, tamper — were already checked by
+        the caller. Re-MACs after the swap; audits ``approval_delegated``
+        with ``transfer="vote_slot"``.
+        """
+        quorum = target.get("quorum") or {}
+        eligible = list(quorum.get("eligible_principals") or [])
+        votes = target.get("votes") or []
+        voted = {v.get("voter_principal") for v in votes
+                 if isinstance(v, dict)}
+        if delegated_by not in eligible:
+            _refuse("wrong_delegator",
+                    "delegator %r holds no vote slot on this quorum "
+                    "record (not in the snapshotted eligible set)"
+                    % (delegated_by,))
+        if delegated_by in voted:
+            _refuse("vote_already_cast",
+                    "delegator %r already voted — votes are final and "
+                    "cannot be delegated away; the vote stands"
+                    % (delegated_by,))
+        chain = target.get("delegation_chain") or []
+        hop_no = len(chain) + 1
+        target["quorum"] = dict(
+            quorum,
+            eligible_principals=([p for p in eligible
+                                  if p != delegated_by]
+                                 + [to_principal]))
+        target["delegation_chain"] = chain + [{
+            "from": delegated_by,
+            "to": to_principal,
+            "at": _utcnow(),
+            "reason": reason,
+            "transfer": "vote_slot",
+        }]
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        entry = self.log.append({
+            "event": "approval_delegated",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "delegated",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "delegated_by": delegated_by,
+            "delegated_to": to_principal,
+            "hop": hop_no,
+            "max_hops": max_hops,
+            "transfer": "vote_slot",
+            "min_approvals": quorum.get("min_approvals"),
+            "related_agent": target.get("agent_id"),
+            "reason": reason,
+        })
+        return target, entry
+
+    def cast_vote(self, approval_id, approve, reason, voter_identity):
+        """D1-core T6/T7/T8: cast one authenticated human vote on a
+        quorum-collecting record.
+
+        ``voter_identity`` must be an ``AgentIdentity`` (F26 pattern —
+        bare principal strings raise TypeError); when the executor
+        installed an identity verifier, the identity must pass it
+        (minted by this deployment). The vote row stores
+        ``voter_principal`` (the eligibility key, compared against the
+        snapshotted ``eligible_principals``), the full
+        ``voter_identity.as_dict()`` for forensics, ``approve``,
+        ``reason`` (non-empty), ``ts``, a fresh ``nonce``, and
+        ``vote_id = sha256(record_id + voter_principal + nonce)``.
+
+        Guards (fail-closed, audited as ``quorum_vote_refused``): the
+        record is quorum-collecting (pending + ``decision_mode ==
+        "quorum"`` — anything else is ``already_finalized`` /
+        ``not_quorum``); the pending digest verifies (``tamper``); the
+        voter is in the SNAPSHOT's eligible set (``not_eligible``) —
+        never the live policy; the voter is not the requesting agent
+        (``requester_vote`` — checked on both ``voter_principal`` and
+        ``agent_id`` against both record fields); one vote per
+        principal (``duplicate_vote`` — votes are final).
+
+        A deny vote finalizes the record as rejected IMMEDIATELY (T7 —
+        the one-deny veto is terminal and non-negotiable); the M-th
+        approval finalizes it as approved (T8). Finalize re-MACs with
+        ``decided_by="quorum:<M>-of-<N>"`` / ``"quorum/veto:<voter>"``
+        and audits ``quorum_finalized`` + ``approval_decision``.
+
+        Returns (record, entry): ``entry`` is the ``quorum_vote`` entry,
+        or the ``approval_decision`` entry when this vote finalized the
+        record.
+        """
+        if not isinstance(voter_identity, AgentIdentity):
+            raise TypeError(
+                "cast_vote() requires an AgentIdentity minted by the "
+                "executor (got %s); caller-supplied principal strings "
+                "are not accepted" % type(voter_identity).__name__)
+        # F26: authenticate the voter — isinstance above, plus the
+        # executor's minted-identity check when installed.
+        voter = self._authenticate_caller(voter_identity, "cast_vote")
+        voter_principal = voter.principal
+
+        records = self.all()
+        target = None
+        for r in records:
+            if r["id"] == approval_id:
+                target = r
+                break
+
+        def _refuse(code, note):
+            try:
+                self.log.append({
+                    "event": "quorum_vote_refused",
+                    "run_id": (target or {}).get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": (target or {}).get("tool"),
+                    "decision": "refused",
+                    "policy_id": (target or {}).get("policy_id"),
+                    "approval_id": approval_id,
+                    "voter_principal": voter_principal,
+                    "voter_agent_id": voter.agent_id,
+                    "refusal_code": code,
+                    "related_agent": (target or {}).get("agent_id"),
+                    "reason": note,
+                })
+            except Exception:
+                # The refusal stands regardless; a logging outage must
+                # not turn a refusal into a vote.
+                pass
+            raise ValueError("quorum vote refused (%s): %s" % (code, note))
+
+        if target is None:
+            _refuse("unknown_approval",
+                    "vote attempted on unknown approval id %r"
+                    % (approval_id,))
+        if target.get("status") != "pending":
+            _refuse("already_finalized",
+                    "vote attempted on %s approval %r — the record is "
+                    "decided; votes cannot be replayed into it"
+                    % (target.get("status"), approval_id))
+        if target.get("decision_mode") != "quorum":
+            _refuse("not_quorum",
+                    "approval %r is not quorum-collecting "
+                    "(decision_mode=%r) — vote with decide()"
+                    % (approval_id, target.get("decision_mode")))
+        # F38 pattern: verify the pending digest BEFORE appending the
+        # vote — a forged vote row (flipped approve flag, deleted deny)
+        # is refused here and can never reach finalize/execution.
+        if not _pending_record_content_ok(target):
+            _refuse("tamper",
+                    "the pending record failed integrity verification "
+                    "(vote row or quorum config tampered after "
+                    "queueing); vote refused, re-MAC refused")
+        quorum = target.get("quorum")
+        if not isinstance(quorum, dict):
+            _refuse("tamper",
+                    "quorum snapshot missing or malformed on a "
+                    "quorum-mode record")
+        eligible = list(quorum.get("eligible_principals") or [])
+        min_approvals = quorum.get("min_approvals")
+        if voter_principal not in eligible:
+            _refuse("not_eligible",
+                    "voter %r is not in the record's snapshotted "
+                    "eligible set %s — the snapshot is the authority, "
+                    "never the live policy"
+                    % (voter_principal, eligible))
+        # D1-core §4.2 / §10 decision 3: the requesting agent is
+        # excluded TWICE — at queue() time (T5) and here (defense in
+        # depth against a record hand-built before the queue-time check
+        # existed). Both voter_principal and agent_id are checked
+        # against both record fields (the alias shape).
+        requester_ids = {target.get("agent_id"), target.get("principal")}
+        # F101 (wave-26) + F103 (wave-27): the delegating party is
+        # excluded from voting too — and at depth >= 2, EVERY ancestor
+        # in the delegator lineage. The same laundering shape as
+        # decide(): a grant-verified call queues under the delegatee,
+        # so no intending party may vote its own intended action
+        # through quorum either. _delegator_lineage_ids() is shared
+        # with decide() so the two exclusion sets cannot drift apart.
+        requester_ids |= _delegator_lineage_ids(target)
+        requester_ids.discard(None)
+        if (voter_principal in requester_ids
+                or voter.agent_id in requester_ids):
+            _refuse("requester_vote",
+                    "the requesting agent (agent_id/principal exact "
+                    "match) can never vote on its own action")
+        votes = target.get("votes") or []
+        if any(isinstance(v, dict)
+               and v.get("voter_principal") == voter_principal
+               for v in votes):
+            _refuse("duplicate_vote",
+                    "voter %r already cast a vote on this record — "
+                    "votes are final (no retraction, no change); a "
+                    "re-POSTed vote form is refused here"
+                    % (voter_principal,))
+        if not reason or not str(reason).strip():
+            _refuse("empty_reason",
+                    "a vote reason is required (non-empty)")
+        nonce = secrets.token_hex(8)
+        vote = {
+            "vote_id": sha256(
+                ("%s|%s|%s" % (target["id"], voter_principal, nonce))
+                .encode("utf-8")).hexdigest(),
+            "voter_principal": voter_principal,
+            "voter_identity": voter.as_dict(),
+            "approve": bool(approve),
+            "reason": str(reason).strip(),
+            "ts": _utcnow(),
+            "nonce": nonce,
+        }
+        votes = votes + [vote]
+        target["votes"] = votes
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        tally_approve = sum(1 for v in votes if v.get("approve"))
+        vote_entry = self.log.append({
+            "event": "quorum_vote",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "approved" if approve else "denied",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "voter_principal": voter_principal,
+            "voter_identity": voter.as_dict(),
+            "vote_id": vote["vote_id"],
+            "tally": "%d-of-%d" % (tally_approve, min_approvals),
+            "related_agent": target.get("agent_id"),
+            "reason": str(reason).strip(),
+        })
+        # D1-core §4.3: the one-deny veto is terminal. A deny finalizes
+        # the record as rejected IMMEDIATELY (T7) — no veto override,
+        # no re-open, no retraction. Approval finalize on the M-th
+        # approval (T8).
+        if not approve:
+            return self._finalize_quorum_veto(target, vote)
+        if tally_approve >= min_approvals:
+            return self._finalize_quorum_approved(
+                target, votes, min_approvals, len(eligible))
+        return target, vote_entry
+
+    def _finalize_quorum_veto(self, target, vote):
+        """D1-core T7: terminal deny-veto finalize.
+
+        ``decided_by="quorum/veto:<voter_principal>"`` — a
+        human-operator label (never an agent id), forensically distinct
+        from CLI/web single decisions. Re-MACs with the veto bound;
+        audits ``quorum_finalized`` (veto) + ``approval_decision``
+        (rejected). No further votes are accepted afterwards
+        (``already_finalized``).
+        """
+        target["status"] = "rejected"
+        target["decided_by"] = "quorum/veto:%s" % vote["voter_principal"]
+        target["decided_at"] = _utcnow()
+        target["decision_reason"] = (
+            "DENY veto by %s: %s (one-deny veto is terminal; no "
+            "override, no re-open)" % (vote["voter_principal"],
+                                       vote["reason"]))
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        self.log.append({
+            "event": "quorum_finalized",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "rejected",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "finalize": "deny_veto",
+            "veto_voter": vote["voter_principal"],
+            "decided_by": target["decided_by"],
+            "related_agent": target.get("agent_id"),
+            "reason": ("deny veto by %s: dissent is terminal — the "
+                       "record is rejected immediately" %
+                       vote["voter_principal"]),
+        })
+        entry = self.log.append({
+            "event": "approval_decision",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "args": target["args"],
+            "redactions_applied": target.get("redactions_applied", []),
+            "provenance": target.get("provenance", "agent_direct"),
+            "preview": target.get("preview", ""),
+            "policy_hash": target.get("policy_hash"),
+            "decision": "rejected",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "reason": target["decision_reason"],
+            "decided_by": target["decided_by"],
+            "related_agent": target.get("agent_id"),
+        })
+        return target, entry
+
+    def _finalize_quorum_approved(self, target, votes, min_approvals,
+                                  eligible_count):
+        """D1-core T8: M-approvals finalize.
+
+        ``decided_by="quorum:<M>-of-<N>"`` bound into the re-MAC; the
+        ``approval_decision`` audit reason lists every voter's
+        principal. Both labels are human-operator labels (never an
+        agent id), so separation-of-duties semantics are unchanged.
+        """
+        voters = [v.get("voter_principal") for v in votes
+                  if isinstance(v, dict)]
+        target["status"] = "approved"
+        target["decided_by"] = "quorum:%d-of-%d" % (min_approvals,
+                                                   eligible_count)
+        target["decided_at"] = _utcnow()
+        target["decision_reason"] = (
+            "quorum approved %d-of-%d by %s" % (
+                min_approvals, eligible_count, ", ".join(voters)))
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        self.log.append({
+            "event": "quorum_finalized",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "approved",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "finalize": "m_approvals",
+            "voters": voters,
+            "min_approvals": min_approvals,
+            "eligible_count": eligible_count,
+            "decided_by": target["decided_by"],
+            "related_agent": target.get("agent_id"),
+            "reason": target["decision_reason"],
+        })
+        entry = self.log.append({
+            "event": "approval_decision",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "args": target["args"],
+            "redactions_applied": target.get("redactions_applied", []),
+            "provenance": target.get("provenance", "agent_direct"),
+            "preview": target.get("preview", ""),
+            "policy_hash": target.get("policy_hash"),
+            "decision": "approved",
+            "policy_id": target.get("policy_id"),
+            "approval_id": target.get("id"),
+            "reason": target["decision_reason"],
+            "decided_by": target["decided_by"],
+            "related_agent": target.get("agent_id"),
+        })
+        return target, entry
+
+    def mark_bridge_expired(self, approval_id, bridge_id, reason):
+        """D1-core T10 / §6: mark that a bridge's bounded wait timed out.
+
+        Sets the MACed ``bridge_expired``/``bridge_expired_at`` fields
+        (re-MACed) and audits ``bridge_wait_expired``. The record stays
+        in its substate (pending, or approved-but-unexecuted — the exact
+        TOCTOU window). A later human decision is permitted and fully
+        audited (T11: ``late_decision=true``, ``approval_late_decision``
+        event) but can NEVER execute (T12: the sweep refuses
+        ``bridge_expired`` records before the TTL check).
+
+        Fail-closed: the record's digest is verified BEFORE the marker
+        is set (pending records via the pending check, decided records
+        via ``approval_digest_ok``) — a tampered record is refused, not
+        marked. If the record is already executed, the TOCTOU already
+        resolved the other way: audit ``bridge_expired_after_execution``
+        (anomaly — operator investigates) and change nothing. The marker
+        cannot be cleared without the log key, and no API offers
+        clearing.
+        """
+        records = self.all()
+        target = None
+        for r in records:
+            if r["id"] == approval_id:
+                target = r
+                break
+        if target is None:
+            raise ValueError("approval id %r not found" % approval_id)
+        if target.get("executed"):
+            try:
+                self.log.append({
+                    "event": "bridge_expired_after_execution",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "anomaly",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "bridge_id": bridge_id,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("bridge wait expiry reported for an "
+                               "ALREADY-EXECUTED record — the TOCTOU "
+                               "resolved the other way; operator "
+                               "investigates. No state changed."),
+                })
+            except Exception:
+                pass
+            return target
+        # Integrity pre-check appropriate to the record's state: a
+        # tampered record is refused, never marked.
+        if target.get("status") == "pending":
+            integrity_ok = _pending_record_content_ok(target)
+        else:
+            integrity_ok = approval_digest_ok(target)
+        if not integrity_ok:
+            try:
+                self.log.append({
+                    "event": "bridge_expired_refused",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "refused",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "bridge_id": bridge_id,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("mark_bridge_expired refused: the record "
+                               "failed integrity verification (tampered "
+                               "after queueing); the marker was not set"),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "mark_bridge_expired refused: approval %r failed "
+                "integrity verification — marker not set" % approval_id)
+        target["bridge_expired"] = True
+        target["bridge_expired_at"] = _utcnow()
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        entry = self.log.append({
+            "event": "bridge_wait_expired",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "bridge_wait_expired",
+            "policy_id": target.get("policy_id"),
+            "approval_id": approval_id,
+            "bridge_id": bridge_id,
+            "bridge_expired_at": target["bridge_expired_at"],
+            "related_agent": target.get("agent_id"),
+            "reason": ("bridge wait expired: %s. The record stays %s; a "
+                       "later human decision is audit-only and can never "
+                       "execute (T11/T12)."
+                       % (reason, target.get("status"))),
+        })
+        return target, entry
+
+    # ------------------------------------------------------------------
+    # Wave-24 — D1 bridge surface (A12).
+    #
+    # The durable queue becomes addressable from foreign runtimes
+    # (Microsoft AGT, AWS AgentCore) through thin adapters in
+    # gov/bridges/. This section is the ONLY new queue API the bridges
+    # may call: queue_external() / wait_for_decision() / get_record()
+    # (+ the D1-core mark_bridge_expired() above, which bridges own the
+    # timeout call for). Nothing in the existing decision paths changes
+    # shape.
+    #
+    # TERMINOLOGY GUARD (A12, binding): "approval delegation" is the
+    # D1-core primitive — a HUMAN reassigning decision stewardship of a
+    # queued record (delegate()). "Authority delegation" is the P10
+    # primitive — an AGENT granting tool-call authority to another
+    # agent. Bridges do NEITHER: they request a human decision and wait
+    # for it. No bridge code, doc, or audit field may use "delegation"
+    # for bridge behavior.
+    #
+    # EXECUTION OWNERSHIP: a record carrying bridge_id is
+    # FOREIGN-EXECUTED — the bridge's runtime executes on its side after
+    # our human decides. Our own execute_approved() sweep NEVER executes
+    # bridge records (it refuses bridge_expired ones per T12 and skips
+    # the rest); the record is the durable DECISION, not a work item.
+    # ------------------------------------------------------------------
+
+    # Wave-24: fail-safe ceiling for wait_for_decision(). A bounded wait
+    # longer than this is a bridge design bug (the foreign runtime's
+    # own timeout must be longer than OUR wait — e.g. 4 min vs AGT's
+    # 5-min CallbackApproval default — and no in-process wait should
+    # outlive an hour). Bridges needing longer horizons re-issue waits.
+    BRIDGE_WAIT_MAX_TIMEOUT_SECS = 3600.0
+    # Wave-24: file-poll cadence for wait_for_decision(). Polling (not
+    # an in-process Event) is the correct primitive: the human decides
+    # via the CLI or web console, usually in ANOTHER process, so only
+    # the queue file is a trustworthy signal.
+    BRIDGE_WAIT_POLL_SECS = 0.1
+
+    def queue_external(self, tool, args, policy_id, agent_identity,
+                       preview, bridge_id, external_request_id=None,
+                       bridge_request_digest=None, bridge_versions=None,
+                       agent_justification=None, egress_bytes=None):
+        """Wave-24 (A12): queue an approval requested by a FOREIGN runtime.
+
+        This is the bridge ingress: a thin adapter (gov/bridges/) calls
+        it when the foreign runtime pauses for a human decision. It
+        returns the approval id; the bridge then calls
+        wait_for_decision() and returns the human's verdict to its
+        runtime, which executes on ITS side. Our executor never
+        executes bridge records.
+
+        ``tool`` / ``args`` describe the foreign action (args should
+        already be redacted by the bridge — the queue cannot redact
+        what it cannot parse). ``policy_id`` is the FOREIGN policy
+        reference (a string, e.g. the AGT policy id); our own
+        policy_hash pinning does not apply — ``policy_hash`` is None
+        and the record is never sweep-executed. ``agent_identity`` is
+        an executor-minted AgentIdentity (F42: authenticated exactly
+        like queue()'s caller_identity; the bridge mints it in-process
+        from the foreign context — foreign caller claims such as
+        ``did:agentmesh:…`` are recorded VERBATIM as untrusted
+        framing). ``preview`` is the bridge's executor-generated
+        summary — the human sees this, never raw foreign framing
+        (sanitized here per F11). ``bridge_id`` (e.g. "agt-python") is
+        the web UI's future ``bridge:<id>`` badge, MAC-bound.
+
+        ``external_request_id`` is the foreign runtime's request id
+        (.NET ``ApprovalRequestId``) and the IDEMPOTENCY key: a second
+        queue_external with the same key returns the EXISTING record's
+        id — never a second record. The check-and-queue runs under the
+        append leaf lock, so concurrent ingress cannot double-queue.
+        A key claimed by a DIFFERENT bridge_id is refused fail-closed
+        (audited ``bridge_idempotency_conflict``): idempotency keys are
+        per-bridge namespaces.
+
+        ``bridge_request_digest`` is the bridge-computed digest of the
+        foreign request envelope (opaque string, foreign data). It is
+        MAC-BOUND into the record's security payload: post-queue
+        tampering breaks the digest and is refused, never silently
+        re-MACed. Honest residual: the queue cannot VERIFY the digest
+        against the foreign runtime (no shared secret) — the binding
+        is tamper-EVIDENCE, not foreign attestation.
+        ``bridge_versions`` is an optional {name: version} mapping of
+        foreign action/policy/chain versions (.NET schema pinning),
+        likewise MAC-bound.
+
+        Bridge records are single-steward (no quorum snapshot): the
+        foreign wait is bounded in minutes, so M-of-N collection cannot
+        complete in time, and the foreign runtime owns its own
+        ceremony. Human decision/delegate/vote surfaces work unchanged.
+        """
+        # F42 applies unchanged: authority fields come from the
+        # authenticated identity, never from foreign-supplied data.
+        if agent_identity is None:
+            raise TypeError(
+                "queue_external() requires agent_identity: an "
+                "AgentIdentity minted by the executor for the calling "
+                "bridge (F42); foreign-supplied identity fields are "
+                "never trusted")
+        if self._identity_verifier is None:
+            raise ValueError(
+                "queue_external() refused: no identity verifier installed "
+                "on this queue — the executor installs its minted-identity "
+                "check at construction (F42 fail-closed)")
+        caller = self._authenticate_caller(agent_identity,
+                                           "queue_external")
+        if caller.run_id != self.run_id:
+            raise ValueError(
+                "queue_external() refused: caller identity run_id %r does "
+                "not match this queue's run %r"
+                % (caller.run_id, self.run_id))
+        if not tool or not isinstance(tool, str):
+            raise ValueError(
+                "queue_external() refused: tool must be a non-empty string")
+        if args is None:
+            args = {}
+        if not isinstance(args, dict):
+            raise TypeError(
+                "queue_external() refused: args must be a dict, got %r"
+                % type(args).__name__)
+        if not policy_id or not isinstance(policy_id, str):
+            raise ValueError(
+                "queue_external() refused: policy_id must be a non-empty "
+                "string (the foreign policy reference)")
+        if (not bridge_id or not isinstance(bridge_id, str)
+                or not bridge_id.strip() or len(bridge_id) > 64):
+            raise ValueError(
+                "queue_external() refused: bridge_id must be a non-empty "
+                "string (<= 64 chars) — it is the bridge:<id> badge")
+        bridge_id = bridge_id.strip()
+        if external_request_id is not None:
+            if (not isinstance(external_request_id, str)
+                    or not external_request_id.strip()
+                    or len(external_request_id) > 256):
+                raise ValueError(
+                    "queue_external() refused: external_request_id must be "
+                    "a non-empty string (<= 256 chars) or None")
+            external_request_id = external_request_id.strip()
+        if bridge_request_digest is not None:
+            if (not isinstance(bridge_request_digest, str)
+                    or not bridge_request_digest.strip()
+                    or len(bridge_request_digest) > 512):
+                raise ValueError(
+                    "queue_external() refused: bridge_request_digest must "
+                    "be a non-empty string (<= 512 chars) or None")
+            bridge_request_digest = bridge_request_digest.strip()
+        if bridge_versions is not None:
+            if (not isinstance(bridge_versions, dict)
+                    or not all(isinstance(k, str) and isinstance(v, str)
+                               for k, v in bridge_versions.items())):
+                raise TypeError(
+                    "queue_external() refused: bridge_versions must be a "
+                    "{str: str} mapping or None")
+            bridge_versions = {str(k): str(v)
+                               for k, v in bridge_versions.items()}
+        preview = sanitize_preview_text(preview or "")
+
+        def _audit(event, decision, reason, approval_id=None, **extra):
+            try:
+                fields = {
+                    "event": event,
+                    "run_id": self.run_id,
+                    "agent_id": caller.agent_id,
+                    "role": caller.role,
+                    "principal": caller.principal,
+                    "tool": tool,
+                    "decision": decision,
+                    "policy_id": policy_id,
+                    "approval_id": approval_id,
+                    "bridge_id": bridge_id,
+                    "external_request_id": external_request_id,
+                    "related_agent": caller.agent_id,
+                    "reason": reason,
+                }
+                fields.update(extra)
+                self.log.append(fields)
+            except Exception:
+                pass
+
+        with self._append_locked():
+            # Idempotency: the foreign request id may be replayed
+            # (webhook retries). The scan runs inside the append leaf
+            # lock, so two concurrent ingresses with the same key
+            # serialize — exactly one record is ever queued.
+            if external_request_id is not None:
+                for r in self.all():
+                    if (r.get("external_request_id")
+                            == external_request_id):
+                        if r.get("bridge_id") != bridge_id:
+                            _audit("bridge_idempotency_conflict",
+                                   "refused",
+                                   "external_request_id %r is already "
+                                   "claimed by bridge %r — idempotency "
+                                   "keys are per-bridge namespaces; "
+                                   "refusing cross-bridge claim"
+                                   % (external_request_id,
+                                      r.get("bridge_id")),
+                                   approval_id=r.get("id"))
+                            raise ValueError(
+                                "queue_external() refused "
+                                "(bridge_idempotency_conflict): "
+                                "external_request_id %r is already claimed "
+                                "by bridge %r"
+                                % (external_request_id, r.get("bridge_id")))
+                        _audit("bridge_idempotency_replay", "replayed",
+                               "replayed external_request_id returned the "
+                               "existing record %s (status %s) — no "
+                               "duplicate queued"
+                               % (r.get("id"), r.get("status")),
+                               approval_id=r.get("id"))
+                        return r["id"]
+            record = {
+                "id": uuid.uuid4().hex[:8],
+                "ts": _utcnow(),
+                "run_id": self.run_id,
+                "agent_id": caller.agent_id,
+                "role": caller.role,
+                "principal": caller.principal,
+                "identity": caller.as_dict(),
+                "tool": tool,
+                "args": args,
+                "redactions_applied": [],
+                "agent_justification": agent_justification,
+                "provenance": "bridge",
+                "preview": preview,
+                "delegation_attempted": False,
+                "policy_id": policy_id,
+                "policy_reason": ("bridge approval request via %s"
+                                  % bridge_id),
+                "policy_flag": None,
+                # Foreign policy: our policy_hash pinning does not
+                # apply — the record is never executed by our sweep.
+                "policy_hash": None,
+                "digest_scheme": APPROVAL_DIGEST_SCHEME,
+                "egress_bytes": egress_bytes,
+                "status": "pending",
+                "decided_by": None,
+                "decided_at": None,
+                "decision_reason": None,
+                "executed": False,
+                "policy_context": {},
+                "flood_suspect": False,
+                "break_glass": False,
+                "break_glass_reason": None,
+                # D1 state, MAC-bound like native records. Bridge
+                # records are single-steward: no quorum snapshot is
+                # opened here (the foreign wait is bounded in minutes;
+                # the foreign runtime owns its own ceremony).
+                "decision_mode": "single",
+                "delegated_to": None,
+                "delegation_chain": [],
+                "quorum": None,
+                "votes": [],
+                "bridge_expired": False,
+                "bridge_expired_at": None,
+                "late_decision": False,
+                # The bridge badge + MAC-bound foreign data (see
+                # _SECURITY_PAYLOAD_FIELDS): tampering with any of
+                # these after queueing breaks the digest.
+                "bridge_id": bridge_id,
+                "external_request_id": external_request_id,
+                "bridge_request_digest": bridge_request_digest,
+                "bridge_versions": bridge_versions,
+            }
+            record["args_digest"] = approval_record_digest(record)
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            # F83: heal a torn tail before appending (same discipline
+            # as queue()).
+            self._heal_torn_tail()
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=True,
+                                   default=str) + "\n")
+                f.flush()
+                # F89: tolerate EINVAL (non-syncable fd); see queue().
+                _fsync_syncable(f.fileno())
+        _audit("bridge_external_queued", "queued",
+               "foreign approval request queued via bridge %s"
+               % bridge_id,
+               approval_id=record["id"])
+        return record["id"]
+
+    def wait_for_decision(self, approval_id, timeout_s):
+        """Wave-24 (A12): bounded wait for a human decision on a bridge record.
+
+        Returns "approved" | "rejected" | "timeout". Polls the queue
+        file (the human decides via CLI/web, usually in another
+        process — only the file is a trustworthy signal).
+
+        ``timeout_s`` must be positive and within
+        BRIDGE_WAIT_MAX_TIMEOUT_SECS. Bridges MUST choose a wait
+        strictly shorter than the foreign runtime's own timeout (e.g.
+        4 min vs AGT's 5-min CallbackApproval default) — otherwise the
+        foreign runtime gives up first and our wait is pointless.
+
+        On timeout: calls mark_bridge_expired() (the record stays
+        pending; a later human decision is audit-only and NEVER
+        executable — T11/T12) and returns "timeout". The CALLER
+        (bridge) returns deny to its runtime on "timeout". A final
+        read after the deadline closes the last-gap race: a decision
+        that lands in the final poll gap is still honored.
+        """
+        if (isinstance(timeout_s, bool)
+                or not isinstance(timeout_s, (int, float))):
+            raise TypeError(
+                "wait_for_decision() refused: timeout_s must be a number "
+                "of seconds, got %r" % type(timeout_s).__name__)
+        if not (timeout_s == timeout_s) or timeout_s in (
+                float("inf"), float("-inf")):
+            raise ValueError(
+                "wait_for_decision() refused: timeout_s must be finite")
+        if timeout_s <= 0:
+            raise ValueError(
+                "wait_for_decision() refused: timeout_s must be positive")
+        if timeout_s > self.BRIDGE_WAIT_MAX_TIMEOUT_SECS:
+            raise ValueError(
+                "wait_for_decision() refused: timeout_s %s exceeds the "
+                "fail-safe ceiling of %ss — bridges needing longer "
+                "horizons re-issue waits"
+                % (timeout_s, self.BRIDGE_WAIT_MAX_TIMEOUT_SECS))
+        first = self.get(approval_id)
+        if first is None:
+            try:
+                self.log.append({
+                    "event": "bridge_wait_unknown_id",
+                    "run_id": self.run_id,
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "refused",
+                    "approval_id": approval_id,
+                    "reason": ("wait_for_decision refused: unknown approval "
+                               "id %r" % (approval_id,)),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "wait_for_decision() refused: unknown approval id %r"
+                % (approval_id,))
+        deadline = time.monotonic() + timeout_s
+        while True:
+            rec = self.get(approval_id)
+            if rec is None:
+                # The record vanished mid-wait (operator removed the
+                # file, torn-tail drop). Fail-closed toward deny: audit
+                # loudly, report timeout, never approve what we cannot
+                # see.
+                try:
+                    self.log.append({
+                        "event": "bridge_wait_record_missing",
+                        "run_id": self.run_id,
+                        "agent_id": "human-operator",
+                        "role": "approver",
+                        "principal": "human-operator",
+                        "decision": "bridge_wait_record_missing",
+                        "approval_id": approval_id,
+                        "reason": ("bridge record vanished mid-wait; "
+                                   "treating as timeout (deny direction)"),
+                    })
+                except Exception:
+                    pass
+                return "timeout"
+            status = rec.get("status")
+            if status == "approved":
+                return "approved"
+            if status == "rejected":
+                return "rejected"
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            time.sleep(min(self.BRIDGE_WAIT_POLL_SECS, deadline - now))
+        # Last-gap race: re-read once after the deadline before
+        # expiring — a decision that landed in the final poll gap is
+        # still honored.
+        rec = self.get(approval_id)
+        if rec is not None and rec.get("status") == "approved":
+            return "approved"
+        if rec is not None and rec.get("status") == "rejected":
+            return "rejected"
+        if rec is None:
+            try:
+                self.log.append({
+                    "event": "bridge_wait_record_missing",
+                    "run_id": self.run_id,
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "bridge_wait_record_missing",
+                    "approval_id": approval_id,
+                    "reason": ("bridge record vanished at the wait "
+                               "deadline; treating as timeout (deny "
+                               "direction)"),
+                })
+            except Exception:
+                pass
+            return "timeout"
+        # Timeout: mark the bridge wait expired (record stays pending;
+        # late decisions are audit-only, never executable — T11/T12).
+        # A tampered record makes mark_bridge_expired raise fail-closed
+        # (loud); the bridge maps exceptions to deny.
+        self.mark_bridge_expired(
+            approval_id, rec.get("bridge_id"),
+            "bridge wait timed out after %ss" % timeout_s)
+        return "timeout"
+
+    def get_record(self, approval_id):
+        """Wave-24 (A12): read-only status view for bridges.
+
+        Returns a DETACHED deep copy of the record (mutating the
+        returned dict cannot affect the queue file) or None. Bridges
+        must treat every field as informational — the decision flow
+        goes through decide()/wait_for_decision(), never through
+        editing this copy.
+        """
+        rec = self.get(approval_id)
+        if rec is None:
+            return None
+        return json.loads(json.dumps(rec, ensure_ascii=True, default=str))
 
     def mark_executed(self, approval_id):
         self._rewrite(lambda records: [
@@ -2382,13 +4345,20 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         now = time.monotonic()
         if cache is not None and cache.get("markers_key") == markers_key:
             try:
-                last_audit = float(cache.get("last_audit", 0.0))
+                # F76: a None last_audit means "never audited" -- a
+                # 0.0 sentinel breaks on fresh boots, where
+                # time.monotonic() < 300 makes now - 0.0 < 300 True
+                # and wrongly suppresses the first loud audit.
+                raw_audit = cache.get("last_audit")
+                last_audit = (None if raw_audit is None
+                              else float(raw_audit))
                 suppressed = int(cache.get("suppressed", 0))
             except (TypeError, ValueError):
-                last_audit, suppressed = 0.0, 0
+                last_audit, suppressed = None, 0
         else:
-            last_audit, suppressed = 0.0, 0
-        if now - last_audit < \
+            last_audit, suppressed = None, 0
+        if last_audit is not None and \
+                now - last_audit < \
                 self._RECONCILE_MARKER_INVALID_COALESCE_SECS:
             self._write_reconcile_marker_cache(
                 markers_key, error, broken_seq, last_audit,
@@ -2490,22 +4460,64 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                                "the signed chain of all valid entries is "
                                "still verified below (F63)" % n_malformed),
                 })
-        auth_seq = {}
-        done_seq = {}
-        for e in entries:
-            if not isinstance(e, dict):
-                continue
-            if e.get("event") != "tool_call":
-                continue
-            aid = e.get("approval_id")
-            if not aid or not isinstance(e.get("seq"), int):
-                continue
-            if e.get("decision") == "execution_authorized":
-                auth_seq[aid] = max(auth_seq.get(aid, 0), e["seq"])
-            elif e.get("decision") == "approved_executed":
-                done_seq[aid] = max(done_seq.get(aid, 0), e["seq"])
+        auth_seq, done_seq = _marker_sets(entries)
         interrupted = {aid: s for aid, s in auth_seq.items()
                        if s > done_seq.get(aid, 0)}
+        # R18 (F70): the scan above is UNTRUSTED and the incremental
+        # gate below only re-checks the new segment -- a
+        # length-preserving edit of marker bytes BEFORE the cached tip
+        # is invisible to both, so a genuine interrupted marker could
+        # be silently missed (recovery defeated with no audit). The
+        # tip's MAC'd marker manifest vouches the interrupted set over
+        # the verified prefix; compare the scan's prefix-scoped
+        # interrupted set against it BEFORE the gate runs. A mismatch
+        # is positive evidence of pre-tip marker tamper (or a planted
+        # pre-tip marker): audit LOUDLY (coalesced like any standing
+        # marker forgery) and discard the incremental verdict -- only
+        # a full verification can authenticate the prefix now. This
+        # runs under the queue lock, so no concurrent sweep can append
+        # a marker between the scan and the tip read: a mismatch is
+        # never a benign race.
+        manifest_mismatch = False
+        try:
+            _pre_tip = _read_tip_cache(self.log.path)
+        except OSError:
+            _pre_tip = None
+        if _pre_tip is not None:
+            _pauth, _pdone = _marker_sets(
+                e for e in entries
+                if isinstance(e, dict)
+                and isinstance(e.get("seq"), int)
+                and e["seq"] <= _pre_tip["seq"])
+            _prefix_interrupted = {
+                aid: s for aid, s in _pauth.items()
+                if s > _pdone.get(aid, 0)}
+            if _prefix_interrupted != _pre_tip["markers"]:
+                manifest_mismatch = True
+                _mkey_src = {
+                    "missing_from_scan": sorted(
+                        set(_pre_tip["markers"]) - set(_prefix_interrupted)),
+                    "extra_in_scan": sorted(
+                        set(_prefix_interrupted) - set(_pre_tip["markers"])),
+                    "manifest": {a: _pre_tip["markers"][a]
+                                 for a in sorted(_pre_tip["markers"])},
+                }
+                _mismatch_key = sha256(json.dumps(
+                    _mkey_src, sort_keys=True).encode("utf-8")).hexdigest()
+                self._reconcile_marker_invalid_coalesced(
+                    _mismatch_key,
+                    "prefix marker-set mismatch (F70): the MAC'd tip "
+                    "manifest lists interrupted authorizations %s but "
+                    "the log scan finds %s -- the pre-tip prefix's "
+                    "marker bytes disagree with the authenticated "
+                    "manifest (possible length-preserving marker "
+                    "tamper). The unverified scan is REFUSED; the "
+                    "incremental verdict is discarded and a full "
+                    "verification runs below"
+                    % (sorted(_pre_tip["markers"]),
+                       sorted(_prefix_interrupted)),
+                    None,
+                    self._read_reconcile_marker_cache())
         # R17 (F70/F71): the candidate scan above is UNTRUSTED --
         # read_entries() never verifies the chain. The verification
         # gate below MUST run on every sweep, not just when candidates
@@ -2540,23 +4552,38 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             )
         else:
             markers_key, cache, use_cached = None, None, False
+        # The interrupted set the recovery below reconciles. It is
+        # assigned exactly one trusted value per gate outcome -- never
+        # the unverified scan after a merely incremental verification
+        # (F70).
+        trusted = None
         if use_cached:
             verdict_ok = False
             verdict_error = (cache.get("error")
                              or "cached invalid verdict")
             verdict_broken = cache.get("broken_seq")
         else:
-            # Verification gate: incremental tip first (O(new bytes),
-            # consumes the F70 countdown); full tolerant _verify when
-            # the tip is unusable or the countdown is due.
+            # Verification gate: incremental tip first (O(new bytes));
+            # full tolerant _verify when the tip is unusable.
+            #
+            # R18 (F70): the incremental verdict authenticates the new
+            # segment, but the prefix's interrupted set is taken from
+            # the tip's MAC'd marker manifest (folded over the whole
+            # log by the advance) -- never from the unverified scan.
+            # When the pre-gate prefix check above found a mismatch,
+            # the incremental verdict is discarded outright: only a
+            # full verification can authenticate the prefix now.
             try:
                 tip_verdict = verify_chain_tip(self.log.path)
             except OSError:
                 tip_verdict = None
-            if (tip_verdict is not None
-                    and not tip_verdict["full_verify_due"]):
+            _manifest = (tip_verdict.get("markers")
+                         if tip_verdict is not None else None)
+            if (tip_verdict is not None and not manifest_mismatch
+                    and isinstance(_manifest, dict)):
                 verdict_ok, verdict_error = True, ""
                 verdict_broken = None
+                trusted = dict(_manifest)
             else:
                 # F52 (R12): the write-ahead execution_authorized
                 # markers are HMAC-bound at write time, but
@@ -2579,8 +4606,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 verdict_error = verdict["error"]
                 verdict_broken = verdict.get("broken_seq")
                 if verdict_ok:
-                    # Reseed the tip so the next sweep verifies
-                    # incrementally; restarts the F70 countdown.
+                    # Every byte just authenticated, so the scan's
+                    # interrupted set is trustworthy here -- this is
+                    # the ONLY path where the unverified scan becomes
+                    # the trusted set. Reseed the tip (with its marker
+                    # manifest) so the next sweep verifies
+                    # incrementally.
+                    trusted = dict(interrupted)
                     try:
                         write_chain_tip_from_tail(self.log.path, {})
                     except (OSError, ValueError, KeyError, TypeError):
@@ -2619,13 +4651,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                                % verdict_error),
                 })
             return []
-        if not interrupted:
+        if not trusted:
             return []
         reconciled = []
 
         def fix(records):
             for r in records:
-                seq = interrupted.get(r["id"])
+                seq = trusted.get(r["id"])
                 if seq is None:
                     continue
                 if r.get("execution_interrupted_reconciled_seq") == seq:
@@ -2639,6 +4671,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     r["decision_reason"] = None
                     r["break_glass"] = False
                     r["break_glass_reason"] = None
+                    # D1-core: the reset voids the DECISION, not the
+                    # stewardship history or the world-facts. The
+                    # current assignment (delegated_to) is
+                    # decision-scoped like decided_by, so it resets to
+                    # the default operator pool; the append-only
+                    # delegation_chain, the quorum snapshot, and the
+                    # final votes stay intact (MACed) for forensics.
+                    # bridge_expired/bridge_expired_at are world-facts
+                    # about the bridge wait, NOT decision state — they
+                    # are preserved, so a re-decision after the expiry
+                    # is still late_decision=true and the sweep still
+                    # refuses execution (T11/T12). late_decision itself
+                    # describes the voided decision, so it resets.
+                    r["delegated_to"] = None
+                    r["late_decision"] = False
                     r["args_digest"] = approval_record_digest(r)
                 r["execution_interrupted_reconciled_seq"] = seq
                 r["execution_interrupted_integrity_ok"] = integrity_ok
@@ -2789,6 +4836,20 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         finally:
             f.close()
 
+    def locked(self, timeout=None):
+        """Public transaction seam (D1 pluggability).
+
+        Context manager holding the exclusive queue lock across a
+        read-modify-write sequence (the F39/F44 lock with the same
+        timeout and invalidation semantics as ``_queue_locked``).
+        Presentation layers (``gov/approval_web.py``) and external
+        queue drivers (e.g. an AGT/AgentCore adapter implementing the
+        QueuePort surface) must perform multi-step mutations inside
+        ``with queue.locked():`` instead of reaching into the private
+        ``_queue_locked``.
+        """
+        return self._queue_locked(timeout=timeout)
+
 
 def _resolve_rundir(args):
     root = Path(__file__).resolve().parent.parent
@@ -2897,6 +4958,36 @@ def _print_records(records, queue=None, anomaly_ids=()):
                   "(on_behalf_of/delegated_by)")
         if r.get("break_glass"):
             print("    BREAK-GLASS: %s" % r.get("break_glass_reason"))
+        # D1-core: pending SUBSTATE labels (spec §10 decision 1) —
+        # DELEGATED and QUORUM_COLLECTING are substates of pending, not
+        # new statuses, surfaced here for the operator's review.
+        if r.get("status") == "pending":
+            if r.get("decision_mode") == "quorum":
+                quorum = r.get("quorum") or {}
+                votes = r.get("votes") or []
+                approve_votes = sum(1 for v in votes if v.get("approve"))
+                print("    QUORUM COLLECTING: %d-of-%d approvals cast; "
+                      "eligible: %s" % (
+                          approve_votes,
+                          quorum.get("min_approvals", "?"),
+                          ", ".join(
+                              quorum.get("eligible_principals") or [])))
+                for v in votes:
+                    print("      vote: %s %s at %s: %s" % (
+                        v.get("voter_principal"),
+                        "APPROVE" if v.get("approve") else "DENY",
+                        v.get("ts"), v.get("reason")))
+            elif r.get("delegated_to"):
+                chain = r.get("delegation_chain") or []
+                print("    DELEGATED to %s (hop %d of chain)" % (
+                    r.get("delegated_to"), len(chain)))
+        if r.get("bridge_expired"):
+            print("    BRIDGE WAIT EXPIRED at %s: later decisions are "
+                  "audit-only and can NEVER execute"
+                  % r.get("bridge_expired_at"))
+        if r.get("late_decision"):
+            print("    LATE DECISION (audit-only): decided after the "
+                  "bridge wait expired; recorded but not executable")
         if r.get("agent_justification"):
             print("    agent justification (UNVERIFIED, do not trust): %s"
                   % r["agent_justification"])
@@ -3016,6 +5107,41 @@ def main(argv=None):
     p_reject.add_argument("--reason", required=True, help="why this is rejected")
     p_reject.add_argument("--by", default="human-operator",
                           help="who is deciding (default: human-operator)")
+
+    p_delegate = sub.add_parser(
+        "delegate",
+        help="D1-core: reassign a pending approval's decision stewardship "
+             "(single-decider records) or vote slot (quorum records) to "
+             "another principal. Never routes back to the requesting "
+             "agent; no self-delegation, no loops, max_hops bound.")
+    p_delegate.add_argument("id", help="approval id")
+    p_delegate.add_argument("--to", required=True,
+                            help="delegatee principal")
+    p_delegate.add_argument("--reason", required=True,
+                            help="why stewardship is being reassigned")
+    p_delegate.add_argument("--by", default="human-operator",
+                            help="the current assignee delegating "
+                                 "(default: human-operator; quorum: the "
+                                 "vote-slot holder)")
+    p_delegate.add_argument("--policy", required=True,
+                            help="policy YAML file whose "
+                                 "approvals.delegation section governs "
+                                 "this delegation")
+
+    p_vote = sub.add_parser(
+        "vote",
+        help="D1-core: cast one authenticated human vote on a "
+             "quorum-collecting approval. One vote per principal; a deny "
+             "vetoes immediately and is terminal. The CLI is the "
+             "terminal-access trust root: --by is the minted voter "
+             "principal.")
+    p_vote.add_argument("id", help="approval id")
+    p_vote.add_argument("action", choices=["approve", "deny"],
+                        help="the vote")
+    p_vote.add_argument("--reason", required=True,
+                        help="why this vote is being cast")
+    p_vote.add_argument("--by", default="human-operator",
+                        help="voter principal (default: human-operator)")
 
     args = parser.parse_args(argv)
     run_dir = _resolve_rundir(args)
@@ -3209,6 +5335,71 @@ def main(argv=None):
               "(decided_by=auto-approve)")
         return 0
 
+    if args.cmd == "delegate":
+        # D1-core: the delegation policy section governs. The CLI
+        # installs it from the same policy file the run uses, so the
+        # terminal operator cannot delegate under a weaker (or
+        # hand-written) delegation config than the run enforces.
+        from .policy import PolicyEngine
+        policy = PolicyEngine(args.policy)
+        queue.set_delegation_config(policy.approvals_delegation)
+        target = _find_record_by_id(queue, args.id)
+        if target is not None:
+            print("delegation target:")
+            _print_decision_target(target)
+        try:
+            record, entry = queue.delegate(
+                args.id, args.to, args.reason, args.by)
+        except (ValueError, TypeError) as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 1
+        print("delegated approval %s (%s %s)" % (
+            record["id"], record["agent_id"], record["tool"]))
+        if record.get("decision_mode") == "quorum":
+            print("vote slot: %s -> %s (quorum M unchanged)"
+                  % (args.by, args.to))
+        else:
+            print("decision stewardship: %s -> %s; only %s may now "
+                  "decide it" % (args.by, args.to, args.to))
+        print("reason: %s" % args.reason)
+        print("logged as entry seq %d" % entry["seq"])
+        return 0
+
+    if args.cmd == "vote":
+        # F26 / D1-core T6: the CLI is the terminal-access trust root —
+        # it binds the voter's --by principal into an identity OBJECT
+        # (like the other commands); bare strings are never accepted
+        # by cast_vote().
+        voter_ident = AgentIdentity(agent_id="cli", role="voter",
+                                    run_id=run_dir.name,
+                                    principal=args.by)
+        target = _find_record_by_id(queue, args.id)
+        if target is not None:
+            print("vote target:")
+            _print_decision_target(target)
+            quorum = target.get("quorum") or {}
+            votes = target.get("votes") or []
+            print("quorum: %d approvals of %d required; %d cast so far"
+                  % (quorum.get("min_approvals", "?"),
+                     len(quorum.get("eligible_principals") or []),
+                     len(votes)))
+        try:
+            record, entry = queue.cast_vote(
+                args.id, args.action == "approve", args.reason,
+                voter_ident)
+        except (ValueError, TypeError) as e:
+            print("error: %s" % e, file=sys.stderr)
+            return 1
+        if entry.get("event") == "approval_decision":
+            print("vote by %s (%s) FINALIZED the quorum: %s"
+                  % (args.by, args.action, record["status"]))
+            print("decided_by: %s" % record.get("decided_by"))
+        else:
+            print("vote recorded: %s by %s (log seq %d)"
+                  % (args.action, args.by, entry["seq"]))
+        print("reason: %s" % args.reason)
+        return 0
+
     # F61 (R14) / F66 (R15): show the bounded decision target BEFORE
     # the decision is recorded — the decision is on the content below,
     # exactly as digested (a marker past the old 400-char cut is visible
@@ -3237,3 +5428,1083 @@ def main(argv=None):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# ===========================================================================
+# P10 (wave-24): governed authority delegation (agent→agent grants).
+#
+# Terminology (A12, per workstreams/architect/DELEGATION_PRIMITIVE_SPEC.md):
+# "authority delegation" here is agent→agent grants of tool-call
+# authority. It is a DIFFERENT primitive from D1-core "approval
+# delegation" (approvals.delegation: human reassignment of
+# approval-queue stewardship) — docs, code, and audit events keep the
+# two terms distinct.
+#
+# Design (spec §0–§3):
+# * A delegation grant is a SERVER-SIDE record, MAC-bound under the run
+#   log key (F34/F43 discipline), minted ONLY through
+#   DelegationStore.delegate_grant() by a verified AgentIdentity —
+#   never by self-claimed on_behalf_of/delegated_by framing kwargs.
+# * Grants are referenced by id at invocation; the delegatee's identity
+#   must EXACTLY match the grant's delegatee (the delegatee_mismatch
+#   refusal is load-bearing: the grant id is not a bearer token).
+# * Mint enforces no-amplification against the LIVE policy; invocation
+#   re-verifies everything (integrity, expiry, revocation, scope,
+#   chain, run binding, single-use).
+# * require_approval flags propagate into the grant scope: delegation
+#   never bypasses the approval queue.
+# * Human powers (decide/cast_vote/break_glass) are non-delegable.
+# * Unscoped framing (on_behalf_of/delegated_by WITHOUT a grant id) is
+#   policy-governed: unscoped_delegation flag|deny (default flag,
+#   lint-warned); deny refuses before execution.
+#
+# EXECUTOR WIRING (LANDED wave-26 in gov/executor.py::ToolExecutor —
+# the six steps below are the live call-path integration; this comment
+# is kept as the design record of what call() does):
+#   1. pop the delegation_grant_id framing kwarg;
+#   2. call store.verify_invocation(grant_id, identity, tool, kwargs,
+#      tainted=..., taint_sources=...) BEFORE policy evaluation;
+#   3. (F101, wave-26 — landed as an equivalent guard, not literal
+#      delegator-as-requester routing) the verified grant id and the
+#      delegating party (agent_id/role/principal, as verified by the
+#      store) are stamped on the approval record at queue time and
+#      MAC-bound (see _SECURITY_PAYLOAD_FIELDS); decide() and
+#      cast_vote() exclude the delegator alongside the requester
+#      (both aliases). Rationale for the guard shape over
+#      re-routing: the queue record keeps today's attribution
+#      (the ACTING agent is the requester of record — D1-core
+#      queue/delegate/vote semantics, the web UI, and the audit
+#      trail are untouched), while the SoD invariant now covers
+#      the intending party too. Re-routing the record's agent_id
+#      to the delegator would additionally let the DELEGATEE (the
+#      actor) decide the approval — the guard excludes BOTH, which
+#      is strictly stronger for the F101 shape;
+#   4. for framing kwargs WITHOUT a grant id, call
+#      store.check_unscoped_framing(...) and deny when it says deny;
+#   5. taint is per-executor-run state (self._tainted), so a verified
+#      grant invocation inherits it automatically — delegation never
+#      launders taint (the store's taint_inherited flag echoes the
+#      state the executor passed in);
+#   6. add delegation_grant_id / delegator / delegation_scope to the
+#      tool_call audit entry (dual attribution) — wired via _base().
+# While the delegation policy section is disabled, on_behalf_of /
+# delegated_by behave as today (label-only) — spec §7 non-goal.
+# ===========================================================================
+
+# P10 authority-delegation policy defaults (spec §4). Opt-in: the
+# out-of-box posture is today's label-only framing.
+AUTHORITY_DELEGATION_DEFAULT_TTL_MINUTES = 60
+AUTHORITY_DELEGATION_MAX_TTL_MINUTES = 240
+AUTHORITY_DELEGATION_DEFAULT_MAX_DEPTH = 1   # 1 = single hop (A→B), no sub-delegation
+AUTHORITY_DELEGATION_MAX_DEPTH_CEILING = 3
+# Clock-skew grace on expiry: a grant is refused only once it has been
+# expired longer than this. Documented, small, one-directional (it can
+# only DELAY refusal by seconds, never extend a grant's life).
+DELEGATION_CLOCK_SKEW_SECS = 30
+# Human powers that authority grants can NEVER confer (spec §3):
+# approval decisions, quorum votes, and break-glass are human-only.
+NON_DELEGABLE_POWERS = frozenset({"decide", "cast_vote", "break_glass"})
+
+DELEGATION_GRANT_FILENAME = "delegations.jsonl"
+_DELEGATION_LOCK_FILENAME = "delegations.lock"
+# F39-pattern append/rewrite lock timeout: a live holder stuck past
+# this means fail closed, never mutate unlocked.
+_DELEGATION_LOCK_TIMEOUT_SECS = 30
+
+# F34/F43 discipline: every field that influences what the grant
+# authorizes is MAC-bound. Missing fields bind as None (fail closed).
+_DELEGATION_SECURITY_PAYLOAD_FIELDS = (
+    "grant_id", "delegator", "delegatee", "delegatee_kind", "scope",
+    "issued_at", "expires_at", "chain", "run_id", "cross_run",
+    "single_use", "consumed", "revoked", "nonce",
+)
+
+# Scope schema (spec §1.1): v1 allows explicit tool allowlists only —
+# no wildcards. Unknown scope keys are refused (fail closed).
+_DELEGATION_SCOPE_ALLOWED_KEYS = frozenset(
+    {"tools", "max_risk", "arg_constraints", "flags"})
+
+
+class DelegationError(ValueError):
+    """A delegation mint/invocation/revocation refusal.
+
+    Subclasses ValueError (the spec's refusal type) and carries the
+    exact machine-readable ``reason`` (e.g. "delegatee_mismatch",
+    "scope_amplification") that the audit event records.
+    """
+
+    def __init__(self, reason, message):
+        super().__init__(message)
+        self.reason = reason
+
+
+def _normalize_authority_delegation_config(cfg):
+    """Normalize the TOP-LEVEL ``delegation:`` policy section (P10).
+
+    This is authority delegation (agent→agent grants) — NOT
+    ``approvals.delegation`` (D1-core human approval stewardship;
+    see _normalize_delegation_config). Returns a dict with keys
+    ``enabled, default_ttl_minutes, max_ttl_minutes, max_depth,
+    require_provisioned_for, unscoped_delegation``. Absent section =
+    everything off (opt-in, fail closed). Malformed sections raise
+    ValueError at load: the engine refuses to load them rather than
+    silently mis-shaping the control (same precedent as the D1-core
+    normalizers; gov/policy_lint.py mirrors these as advisory
+    findings).
+    """
+    out = {
+        "enabled": False,
+        "default_ttl_minutes": AUTHORITY_DELEGATION_DEFAULT_TTL_MINUTES,
+        "max_ttl_minutes": AUTHORITY_DELEGATION_MAX_TTL_MINUTES,
+        "max_depth": AUTHORITY_DELEGATION_DEFAULT_MAX_DEPTH,
+        "require_provisioned_for": [],
+        "unscoped_delegation": "flag",
+    }
+    if cfg is None:
+        return out
+    if not isinstance(cfg, dict):
+        raise ValueError(
+            "delegation must be a mapping when present (P10 authority "
+            "delegation); got %r" % type(cfg).__name__)
+    if "enabled" in cfg:
+        if not isinstance(cfg["enabled"], bool):
+            raise ValueError(
+                "delegation.enabled must be true/false, got %r "
+                "(opt-in; no silent enable)" % (cfg["enabled"],))
+        out["enabled"] = cfg["enabled"]
+    for key in ("default_ttl_minutes", "max_ttl_minutes"):
+        if key in cfg:
+            val = cfg[key]
+            if isinstance(val, bool) or not isinstance(val, int) or val < 1:
+                raise ValueError(
+                    "delegation.%s must be a positive int, got %r"
+                    % (key, val))
+            out[key] = val
+    if out["default_ttl_minutes"] > out["max_ttl_minutes"]:
+        raise ValueError(
+            "delegation.default_ttl_minutes (%d) exceeds "
+            "delegation.max_ttl_minutes (%d)"
+            % (out["default_ttl_minutes"], out["max_ttl_minutes"]))
+    if "max_depth" in cfg:
+        depth = cfg["max_depth"]
+        if (isinstance(depth, bool) or not isinstance(depth, int)
+                or not 1 <= depth <= AUTHORITY_DELEGATION_MAX_DEPTH_CEILING):
+            raise ValueError(
+                "delegation.max_depth must be an int in 1..%d, got %r"
+                % (AUTHORITY_DELEGATION_MAX_DEPTH_CEILING, depth))
+        out["max_depth"] = depth
+    if "require_provisioned_for" in cfg:
+        rpf = cfg["require_provisioned_for"]
+        if (not isinstance(rpf, (list, tuple))
+                or any(not isinstance(x, str) or not x.strip()
+                       for x in rpf)):
+            raise ValueError(
+                "delegation.require_provisioned_for must be a list of "
+                "non-empty strings, got %r" % (rpf,))
+        out["require_provisioned_for"] = [x for x in rpf]
+    if "unscoped_delegation" in cfg:
+        mode = cfg["unscoped_delegation"]
+        if mode not in ("flag", "deny"):
+            raise ValueError(
+                "delegation.unscoped_delegation must be 'flag' or "
+                "'deny', got %r" % (mode,))
+        out["unscoped_delegation"] = mode
+    return out
+
+
+def _delegation_grant_mac(key, key_epoch, canonical):
+    """P10: domain-separated HMAC for delegation-grant records.
+
+    Grants live outside the action log's hash chain (mutable state:
+    revoke/consume transitions), so like the approval queue they get
+    their own domain-separated MAC under the SAME active log key.
+    The domain string ``delegation-grant`` is distinct from
+    ``approval-record`` and ``break-glass-ticket``: a MAC minted for
+    one record kind can never verify as another. key_epoch is bound
+    in and verified against the keyring. Under the PUBLIC development
+    key this gives no forgery resistance to anyone who read the docs
+    (F29/F34 residual — the boundary is key custody).
+    """
+    msg = ("delegation-grant|%s|%s"
+           % (key_epoch, canonical)).encode("utf-8")
+    return hmac.new(key, msg, sha256).hexdigest()
+
+
+def _delegation_security_payload(rec):
+    payload = {f: rec.get(f)
+               for f in _DELEGATION_SECURITY_PAYLOAD_FIELDS}
+    return _canonical_dumps(payload)
+
+
+def _delegation_record_mac(rec):
+    key, key_epoch = _active_key()
+    return _delegation_grant_mac(
+        key, key_epoch, _delegation_security_payload(rec))
+
+
+def _delegation_record_ok(rec):
+    """True when the grant record's keyed digest verifies.
+
+    Tries every epoch in the keyring (rotation-safe); a tampered or
+    pre-scheme record fails closed. Mirrors _pending_record_content_ok.
+    """
+    if not isinstance(rec, dict):
+        return False
+    for key_epoch, key in _ledger_keyring().items():
+        candidate = _delegation_grant_mac(
+            key, key_epoch, _delegation_security_payload(rec))
+        if hmac.compare_digest(rec.get("grant_mac", ""), candidate):
+            return True
+    return False
+
+
+def _delegation_parse_ts(ts):
+    try:
+        dt = datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+class DelegationStore:
+    """Server-side store for P10 authority-delegation grants.
+
+    Grants are minted only via delegate_grant() by a verified
+    AgentIdentity, persisted MAC-bound in <run_dir>/delegations.jsonl,
+    and verified at invocation via verify_invocation() — the method
+    the executor calls before policy evaluation (see the wiring note
+    at the top of this section).
+
+    Construction mirrors ApprovalQueue: run_dir + ActionLog, run id
+    stamped from the run dir (F42 — never caller-supplied). The live
+    policy probes are installed via set_policy_probes(); without them
+    minting is refused (no-amplification cannot be checked against a
+    policy the store cannot see — fail closed).
+    """
+
+    def __init__(self, run_dir, log, config=None, principal_registry=None,
+                 known_agent_ids=None):
+        self.run_dir = Path(run_dir)
+        self.run_id = self.run_dir.name
+        self.log = log
+        self.path = self.run_dir / DELEGATION_GRANT_FILENAME
+        self._config = _normalize_authority_delegation_config(config)
+        self._principal_registry = None
+        if principal_registry is not None:
+            self.set_principal_registry(principal_registry)
+        # Run-known agent ids for the delegatee eligibility check
+        # (spec §1.2.5). None = no registry of agents: skip the check.
+        self._known_agent_ids = (set(known_agent_ids)
+                                 if known_agent_ids is not None else None)
+        # F26-pattern: executor-installed minted-identity verifier,
+        # write-once (F31). None = isinstance check only (documented
+        # localhost-grade limit, same as the queue's CLI path).
+        self._identity_verifier = None
+        self._identity_verifier_sealed = False
+        # Live-policy probes (installed by the executor wiring):
+        # role_allows(role, tool) -> bool; effect_probe(role, tool) ->
+        # "allow"|"require_approval"|"deny".
+        self._role_allows = None
+        self._effect_probe = None
+        self._lock = threading.Lock()
+
+    # ------------------------------------------------------------ config
+    @property
+    def config(self):
+        return dict(self._config)
+
+    def set_principal_registry(self, registry):
+        self._principal_registry = registry
+
+    def set_identity_verifier(self, verifier):
+        """Install the executor's minted-identity check (write-once)."""
+        if getattr(self, "_identity_verifier_sealed", False):
+            raise IdentityVerifierAlreadySetError(
+                "delegation identity verifier is write-once: a verifier "
+                "is already installed; refusing to swap it out")
+        if not callable(verifier):
+            raise TypeError(
+                "identity verifier must be callable, got %r"
+                % type(verifier).__name__)
+        self._identity_verifier = verifier
+        self._identity_verifier_sealed = True
+
+    def set_policy_probes(self, role_allows, effect_probe):
+        """Install the live-policy probes the no-amplification check
+        needs. ``role_allows(role, tool)`` mirrors
+        PolicyEngine.role_allows; ``effect_probe(role, tool)`` returns
+        the policy effect ("allow"/"require_approval"/"deny") for a
+        bare tool invocation by that role, used to propagate
+        require_approval flags into the grant scope."""
+        if not callable(role_allows) or not callable(effect_probe):
+            raise TypeError("policy probes must be callable")
+        self._role_allows = role_allows
+        self._effect_probe = effect_probe
+
+    def _authenticate(self, identity, what):
+        if not isinstance(identity, AgentIdentity):
+            raise TypeError(
+                "%s requires an AgentIdentity minted by the executor "
+                "(got %s); bare principal/operator strings are never "
+                "accepted" % (what, type(identity).__name__))
+        if self._identity_verifier is not None:
+            self._identity_verifier(identity)
+        return identity
+
+    # ------------------------------------------------------------ store
+    @contextlib.contextmanager
+    def _store_locked(self):
+        """Exclusive inter-process lock around grant-file mutations."""
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = self.run_dir / _DELEGATION_LOCK_FILENAME
+        with self._lock:
+            try:
+                fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+            except OSError as e:
+                raise DelegationError(
+                    "store_lock_unavailable",
+                    "delegation store lock %s is not lockable (%s); "
+                    "refusing to mutate" % (lock_path, e))
+            f = os.fdopen(fd, "a", encoding="utf-8")
+            try:
+                deadline = time.monotonic() + _DELEGATION_LOCK_TIMEOUT_SECS
+                while True:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            raise DelegationError(
+                                "store_lock_unavailable",
+                                "delegation store lock unavailable after "
+                                "%ds; refusing to mutate rather than risk "
+                                "a torn race" % _DELEGATION_LOCK_TIMEOUT_SECS)
+                        time.sleep(0.01)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            finally:
+                f.close()
+
+    def _read_all(self):
+        if not self.path.exists():
+            return []
+        records = []
+        with open(self.path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    records.append(json.loads(line))
+        return records
+
+    def _append_record(self, rec):
+        with self._store_locked():
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=True, default=str)
+                        + "\n")
+                f.flush()
+                # F89: tolerate EINVAL (non-syncable fd); see queue().
+                _fsync_syncable(f.fileno())
+
+    def _rewrite_locked(self, records):
+        # Crash-atomic rewrite assuming the store lock is already
+        # held (the consume path re-reads + mutates + rewrites under
+        # one acquisition so two concurrent consumers cannot both
+        # observe "unconsumed" — the F39 double-execution shape).
+        _atomic_write_text(
+            self.path,
+            [json.dumps(r, ensure_ascii=True, default=str) + "\n"
+             for r in records])
+
+    def _rewrite(self, records):
+        """Rewrite the grant file.
+
+        Crash-atomic (F83 pattern): temp file + fsync + os.replace —
+        a crash mid-rewrite leaves the previous complete file.
+        """
+        with self._store_locked():
+            self._rewrite_locked(records)
+
+    def _find(self, grant_id):
+        for rec in self._read_all():
+            if rec.get("grant_id") == grant_id:
+                return rec
+        return None
+
+    # ------------------------------------------------------------ audit
+    def _audit(self, event, **fields):
+        entry = {"event": event, "run_id": self.run_id}
+        entry.update(fields)
+        return self.log.append(entry)
+
+    def _refuse_mint(self, reason, message, **fields):
+        self._audit("delegation_refused", reason=reason,
+                    detail=message, **fields)
+        raise DelegationError(reason, message)
+
+    def _refuse_invocation(self, reason, message, grant_id=None,
+                           identity=None, tool=None):
+        self._audit(
+            "delegation_invocation_refused", reason=reason, detail=message,
+            grant_id=grant_id,
+            agent_id=getattr(identity, "agent_id", None),
+            role=getattr(identity, "role", None),
+            principal=getattr(identity, "principal", None),
+            tool=tool)
+        raise DelegationError(reason, message)
+
+    # ------------------------------------------------------------ mint
+    @staticmethod
+    def _normalize_scope(scope):
+        """Validate the v1 scope schema; returns a normalized copy."""
+        if not isinstance(scope, dict):
+            return None, "scope must be a mapping"
+        unknown = set(scope) - _DELEGATION_SCOPE_ALLOWED_KEYS
+        if unknown:
+            return None, ("scope carries unknown keys %r (v1 allows %s)"
+                          % (sorted(unknown),
+                             sorted(_DELEGATION_SCOPE_ALLOWED_KEYS)))
+        tools = scope.get("tools")
+        if (not isinstance(tools, (list, tuple)) or not tools
+                or any(not isinstance(t, str) or not t.strip()
+                       for t in tools)):
+            return None, "scope.tools must be a non-empty list of tool names"
+        if any(t.strip() == "*" for t in tools):
+            return None, "scope.tools wildcards are not allowed in v1"
+        if len(set(tools)) != len(tools):
+            return None, "scope.tools contains duplicates"
+        arg_constraints = scope.get("arg_constraints") or {}
+        if not isinstance(arg_constraints, dict):
+            return None, "scope.arg_constraints must be a mapping"
+        for k, v in arg_constraints.items():
+            if not isinstance(v, (list, tuple)) or not v:
+                return None, ("scope.arg_constraints[%r] must be a "
+                              "non-empty list of allowed values" % (k,))
+        flags = scope.get("flags") or []
+        if (not isinstance(flags, (list, tuple))
+                or any(not isinstance(x, str) for x in flags)):
+            return None, "scope.flags must be a list of strings"
+        max_risk = scope.get("max_risk")
+        if max_risk is not None and not isinstance(max_risk, str):
+            return None, "scope.max_risk must be a string"
+        return {
+            "tools": [t.strip() for t in tools],
+            "max_risk": max_risk,
+            "arg_constraints": {k: list(v)
+                                for k, v in arg_constraints.items()},
+            "flags": list(flags),
+            # Filled by the mint-time propagation below:
+            "approval_gated": [],
+        }, None
+
+    def delegate_grant(self, delegator_identity, delegatee, scope,
+                       ttl_minutes=None, single_use=False, cross_run=False,
+                       parent_grant_id=None, delegatee_is_principal=False):
+        """Mint a P10 authority-delegation grant (spec §1.2).
+
+        Only a verified AgentIdentity can mint — bare principal
+        strings raise TypeError, unminted identities raise. Every
+        refusal is audited (delegation_refused) with its exact reason
+        and raises DelegationError (a ValueError).
+        """
+        if not self._config["enabled"]:
+            self._refuse_mint(
+                "delegation_disabled",
+                "authority delegation is not enabled by policy "
+                "(delegation.enabled: false); refusing to mint",
+                delegatee=delegatee)
+        delegator = self._authenticate(delegator_identity, "delegate_grant")
+        if delegator.run_id != self.run_id:
+            self._refuse_mint(
+                "wrong_run_identity",
+                "delegate_grant refused: delegator run_id %r does not "
+                "match this store's run %r"
+                % (delegator.run_id, self.run_id),
+                delegator_agent_id=delegator.agent_id)
+        if not isinstance(delegatee, str) or not delegatee.strip():
+            self._refuse_mint(
+                "bad_delegatee", "delegatee must be a non-empty string",
+                delegator_agent_id=delegator.agent_id)
+        delegatee = delegatee.strip()
+        # No self-delegation laundering (D1-core §3.3 alias check,
+        # reused): neither the agent id nor the principal may name the
+        # delegator itself.
+        if delegatee in (delegator.agent_id, delegator.principal):
+            self._refuse_mint(
+                "self_delegation",
+                "delegate_grant refused: delegatee %r names the "
+                "delegator itself (agent_id/principal alias check)"
+                % delegatee,
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        norm_scope, scope_err = self._normalize_scope(scope)
+        if norm_scope is None:
+            self._refuse_mint(
+                "bad_scope", "delegate_grant refused: %s" % scope_err,
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        # Delegatee eligibility (spec §1.2.5).
+        if delegatee_is_principal:
+            registry = self._principal_registry
+            if registry is not None:
+                try:
+                    registry.check(delegatee)
+                except UnregisteredPrincipalError:
+                    self._refuse_mint(
+                        "unregistered_delegatee",
+                        "delegate_grant refused: delegatee principal %r "
+                        "is not registered with this deployment"
+                        % delegatee,
+                        delegator_agent_id=delegator.agent_id,
+                        delegatee=delegatee)
+        elif self._known_agent_ids is not None:
+            if delegatee not in self._known_agent_ids:
+                self._refuse_mint(
+                    "unknown_delegatee_agent",
+                    "delegate_grant refused: delegatee agent id %r is "
+                    "not known in this run" % delegatee,
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee)
+        # TTL bounds (spec §1.1/§4).
+        ttl = (self._config["default_ttl_minutes"]
+               if ttl_minutes is None else ttl_minutes)
+        if (isinstance(ttl, bool) or not isinstance(ttl, int)
+                or not 1 <= ttl <= self._config["max_ttl_minutes"]):
+            self._refuse_mint(
+                "ttl_out_of_range",
+                "delegate_grant refused: ttl_minutes must be an int in "
+                "1..%d, got %r"
+                % (self._config["max_ttl_minutes"], ttl_minutes),
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        # require_provisioned_for (spec §1.2.1): high-risk scopes need
+        # the F55 provisioned session identity as the delegator.
+        needs_provisioned = [
+            t for t in norm_scope["tools"]
+            if t in self._config["require_provisioned_for"]]
+        if needs_provisioned and delegator.provenance != "provisioned":
+            self._refuse_mint(
+                "provisioned_required",
+                "delegate_grant refused: tools %r require a "
+                "provisioned session identity as delegator (policy "
+                "delegation.require_provisioned_for); got provenance "
+                "%r" % (needs_provisioned, delegator.provenance),
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        # No-amplification against the LIVE policy (spec §1.2.2): every
+        # scoped tool must be in the delegator's own authority, and any
+        # require_approval effect propagates into the grant scope so
+        # the delegatee's invocation still queues approvals.
+        if self._role_allows is None or self._effect_probe is None:
+            self._refuse_mint(
+                "no_amplification_oracle",
+                "delegate_grant refused: no live-policy probes "
+                "installed on this store — the no-amplification check "
+                "cannot run blind (fail closed)",
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        approval_gated = []
+        for tool in norm_scope["tools"]:
+            if not self._role_allows(delegator.role, tool):
+                self._refuse_mint(
+                    "scope_amplification",
+                    "delegate_grant refused: role %r is not allowed "
+                    "tool %r under the active policy — a grant cannot "
+                    "confer authority the delegator does not have"
+                    % (delegator.role, tool),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee, tool=tool)
+            effect = self._effect_probe(delegator.role, tool)
+            if effect == "deny":
+                self._refuse_mint(
+                    "scope_amplification",
+                    "delegate_grant refused: tool %r is denied to role "
+                    "%r by the active policy" % (tool, delegator.role),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee, tool=tool)
+            if effect == "require_approval":
+                approval_gated.append(tool)
+        norm_scope["approval_gated"] = approval_gated
+        # Sub-delegation: narrows only (spec §2).
+        chain = []
+        parent = None
+        if parent_grant_id is not None:
+            parent = self._find(parent_grant_id)
+            if parent is None:
+                self._refuse_mint(
+                    "unknown_parent",
+                    "delegate_grant refused: parent grant %r not found"
+                    % (parent_grant_id,),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee)
+            self._verify_chain_link(parent, delegator, "mint")
+            # The sub-delegator must be the parent's delegatee —
+            # verified identity match (no hop-skipping).
+            if parent.get("delegatee_kind", "agent_id") == "agent_id":
+                if delegator.agent_id != parent["delegatee"]:
+                    self._refuse_mint(
+                        "not_parent_delegatee",
+                        "delegate_grant refused: minter %r is not the "
+                        "parent grant's delegatee %r"
+                        % (delegator.agent_id, parent["delegatee"]),
+                        delegator_agent_id=delegator.agent_id,
+                        delegatee=delegatee)
+            else:
+                if delegator.principal != parent["delegatee"]:
+                    self._refuse_mint(
+                        "not_parent_delegatee",
+                        "delegate_grant refused: minter principal %r is "
+                        "not the parent grant's delegatee %r"
+                        % (delegator.principal, parent["delegatee"]),
+                        delegator_agent_id=delegator.agent_id,
+                        delegatee=delegatee)
+            parent_tools = set((parent.get("scope") or {}).get("tools", []))
+            if not set(norm_scope["tools"]) <= parent_tools:
+                self._refuse_mint(
+                    "scope_widened",
+                    "delegate_grant refused: sub-grant tools %r are not "
+                    "a subset of the parent grant's tools %r "
+                    "(sub-delegation narrows only)"
+                    % (norm_scope["tools"], sorted(parent_tools)),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee)
+            parent_constraints = ((parent.get("scope") or {})
+                                  .get("arg_constraints", {}) or {})
+            for k, allowed in norm_scope["arg_constraints"].items():
+                if k not in parent_constraints or not set(allowed) <= set(
+                        parent_constraints[k]):
+                    self._refuse_mint(
+                        "scope_widened",
+                        "delegate_grant refused: arg_constraints[%r] "
+                        "widens the parent grant's constraint "
+                        "(sub-delegation narrows only)" % (k,),
+                        delegator_agent_id=delegator.agent_id,
+                        delegatee=delegatee)
+            new_depth = len(parent.get("chain", [])) + 2
+            if new_depth > self._config["max_depth"]:
+                self._refuse_mint(
+                    "depth_exceeded",
+                    "delegate_grant refused: sub-grant depth %d exceeds "
+                    "policy delegation.max_depth=%d"
+                    % (new_depth, self._config["max_depth"]),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee)
+            chain = list(parent.get("chain", [])) + [{
+                "grant_id": parent["grant_id"],
+                "delegator": parent["delegator"]["agent_id"],
+                "at": _utcnow(),
+            }]
+        # Depth bound for root grants too (max_depth >= 1 always, so a
+        # root grant at depth 1 is always within bound — checked for
+        # uniformity with sub-grants).
+        if len(chain) + 1 > self._config["max_depth"]:
+            self._refuse_mint(
+                "depth_exceeded",
+                "delegate_grant refused: grant depth %d exceeds policy "
+                "delegation.max_depth=%d"
+                % (len(chain) + 1, self._config["max_depth"]),
+                delegator_agent_id=delegator.agent_id,
+                delegatee=delegatee)
+        issued_at = _utcnow()
+        expires_at = (datetime.fromisoformat(issued_at)
+                      + timedelta(minutes=ttl)).isoformat()
+        if parent is not None:
+            # Sub-grants can only narrow the TTL, never extend it.
+            if _delegation_parse_ts(expires_at) > _delegation_parse_ts(
+                    parent["expires_at"]):
+                self._refuse_mint(
+                    "ttl_extended",
+                    "delegate_grant refused: sub-grant expiry %s is "
+                    "later than the parent grant's expiry %s "
+                    "(sub-delegation narrows only)"
+                    % (expires_at, parent["expires_at"]),
+                    delegator_agent_id=delegator.agent_id,
+                    delegatee=delegatee)
+        nonce = secrets.token_hex(8)
+        grant_id = sha256(
+            ("%s|%s|%s" % (delegator.agent_id, delegatee,
+                           nonce)).encode("utf-8")).hexdigest()
+        rec = {
+            "grant_id": grant_id,
+            "delegator": delegator.as_dict(),
+            "delegatee": delegatee,
+            "delegatee_kind": ("principal" if delegatee_is_principal
+                               else "agent_id"),
+            "scope": norm_scope,
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+            "chain": chain,
+            "run_id": self.run_id,
+            "cross_run": bool(cross_run),
+            "single_use": bool(single_use),
+            "consumed": False,
+            "revoked": False,
+            "nonce": nonce,
+        }
+        rec["grant_mac"] = _delegation_record_mac(rec)
+        self._append_record(rec)
+        self._audit(
+            "delegation_granted",
+            grant_id=grant_id,
+            delegator_agent_id=delegator.agent_id,
+            delegator_role=delegator.role,
+            delegator_principal=delegator.principal,
+            delegator_provenance=delegator.provenance,
+            delegatee=delegatee,
+            delegatee_kind=rec["delegatee_kind"],
+            scope_tools=norm_scope["tools"],
+            approval_gated=approval_gated,
+            ttl_minutes=ttl,
+            depth=len(chain) + 1,
+            single_use=bool(single_use),
+            cross_run=bool(cross_run),
+            parent_grant_id=parent_grant_id)
+        return rec
+
+    # ------------------------------------------------------------ verify
+    def _verify_chain_link(self, rec, identity, where):
+        """Re-verify one grant record (integrity/expiry/revocation).
+
+        Used for parent grants at mint time and for every ancestor at
+        invocation time. Raises DelegationError on any break.
+        """
+        gid = rec.get("grant_id")
+        if not _delegation_record_ok(rec):
+            raise DelegationError(
+                "grant_integrity_violation" if where == "invoke"
+                else "parent_chain_broken",
+                "delegation %s refused: grant %r failed its integrity "
+                "check (tampered store)" % (where, gid))
+        if rec.get("revoked"):
+            raise DelegationError(
+                "grant_revoked" if where == "invoke" else "parent_chain_broken",
+                "delegation %s refused: grant %r is revoked" % (where, gid))
+        exp = _delegation_parse_ts(rec.get("expires_at"))
+        now = datetime.now(timezone.utc)
+        if exp is None or now > exp + timedelta(
+                seconds=DELEGATION_CLOCK_SKEW_SECS):
+            raise DelegationError(
+                "grant_expired" if where == "invoke" else "parent_chain_broken",
+                "delegation %s refused: grant %r is expired" % (where, gid))
+
+    def verify_invocation(self, grant_id, identity, tool, args=None,
+                          tainted=False, taint_sources=()):
+        """Verify a delegatee's invocation against a grant (spec §1.4).
+
+        Runs BEFORE policy evaluation (the executor calls this first).
+        Returns an ok-dict on success; raises DelegationError (audited
+        as delegation_invocation_refused) on any refusal. ``tainted``
+        lets the caller pass the executor's current taint state so the
+        grant invocation INHERITS it for A2 Rule-of-Two purposes —
+        delegation is not a clean-room (S16); the returned
+        ``taint_inherited`` flag is what the executor's Rule-of-Two
+        gate consumes.
+        """
+        if not isinstance(identity, AgentIdentity):
+            raise TypeError(
+                "verify_invocation requires an AgentIdentity (got %s); "
+                "grant ids are not bearer tokens"
+                % type(identity).__name__)
+        args = dict(args or {})
+        rec = self._find(grant_id)
+        if rec is None:
+            self._refuse_invocation(
+                "unknown_grant",
+                "delegation invocation refused: unknown grant id",
+                grant_id=grant_id, identity=identity, tool=tool)
+        if not _delegation_record_ok(rec):
+            self._refuse_invocation(
+                "grant_integrity_violation",
+                "delegation invocation refused: grant %s failed its "
+                "integrity check (tampered store)" % grant_id,
+                grant_id=grant_id, identity=identity, tool=tool)
+        if rec.get("revoked"):
+            self._refuse_invocation(
+                "grant_revoked",
+                "delegation invocation refused: grant %s is revoked"
+                % grant_id,
+                grant_id=grant_id, identity=identity, tool=tool)
+        exp = _delegation_parse_ts(rec.get("expires_at"))
+        now = datetime.now(timezone.utc)
+        if exp is None or now > exp + timedelta(
+                seconds=DELEGATION_CLOCK_SKEW_SECS):
+            self._refuse_invocation(
+                "grant_expired",
+                "delegation invocation refused: grant %s is expired"
+                % grant_id,
+                grant_id=grant_id, identity=identity, tool=tool)
+        # Human powers are non-delegable, always (spec §3) — checked
+        # independent of scope so no scope can ever smuggle them in.
+        if tool in NON_DELEGABLE_POWERS:
+            self._refuse_invocation(
+                "non_delegable_power",
+                "delegation invocation refused: %r is a human power and "
+                "can never be conferred by an authority grant" % tool,
+                grant_id=grant_id, identity=identity, tool=tool)
+        # Delegatee match — the load-bearing check (spec decision 1):
+        # the grant id is a server-side handle, NOT a bearer token.
+        # Presenting it from a non-matching identity is useless.
+        if rec.get("delegatee_kind", "agent_id") == "agent_id":
+            matched = (identity.agent_id == rec.get("delegatee"))
+        else:
+            matched = (identity.principal == rec.get("delegatee"))
+        if not matched:
+            self._refuse_invocation(
+                "delegatee_mismatch",
+                "delegation invocation refused: grant %s names "
+                "delegatee %r; the presenting identity (%r) does not "
+                "match — grants are not bearer tokens"
+                % (grant_id, rec.get("delegatee"), identity.agent_id),
+                grant_id=grant_id, identity=identity, tool=tool)
+        scope = rec.get("scope") or {}
+        if tool not in (scope.get("tools") or []):
+            self._refuse_invocation(
+                "scope_exceeded",
+                "delegation invocation refused: tool %r is outside the "
+                "grant's scope %r" % (tool, scope.get("tools")),
+                grant_id=grant_id, identity=identity, tool=tool)
+        for k, allowed in (scope.get("arg_constraints") or {}).items():
+            if k in args and args[k] not in allowed:
+                self._refuse_invocation(
+                    "arg_constraint_violated",
+                    "delegation invocation refused: arg %r=%r violates "
+                    "the grant's constraint (allowed: %r)"
+                    % (k, args[k], allowed),
+                    grant_id=grant_id, identity=identity, tool=tool)
+        # Chain verify: every ancestor re-verified (integrity, expiry,
+        # revocation). A broken ancestor invalidates the whole
+        # descendant line — revocation propagates downward for free.
+        # F103 (wave-27): while walking the verified chain, resolve the
+        # FULL delegator lineage (root -> immediate parent), each as
+        # {agent_id, role, principal} read from the VERIFIED ancestor
+        # record (never from the chain hop's bare agent_id string, and
+        # never caller-supplied). The immediate delegator is appended
+        # after the loop, so the returned lineage covers every
+        # intending party in order.
+        resolved_chain = []
+        for hop in rec.get("chain", []):
+            ancestor = self._find(hop.get("grant_id"))
+            if ancestor is None:
+                self._refuse_invocation(
+                    "chain_broken",
+                    "delegation invocation refused: ancestor grant %r "
+                    "of %s is missing from the store"
+                    % (hop.get("grant_id"), grant_id),
+                    grant_id=grant_id, identity=identity, tool=tool)
+            try:
+                self._verify_chain_link(ancestor, identity, "invoke")
+            except DelegationError as e:
+                self._refuse_invocation(
+                    "chain_broken",
+                    "delegation invocation refused: ancestor grant %r "
+                    "breaks the chain (%s: %s)"
+                    % (hop.get("grant_id"), e.reason, e),
+                    grant_id=grant_id, identity=identity, tool=tool)
+            _anc_deleg = ancestor.get("delegator") or {}
+            resolved_chain.append({
+                "agent_id": _anc_deleg.get("agent_id"),
+                "role": _anc_deleg.get("role"),
+                "principal": _anc_deleg.get("principal"),
+            })
+        # Run binding (spec §1.4 step 8).
+        if identity.run_id != rec.get("run_id") and not rec.get("cross_run"):
+            self._refuse_invocation(
+                "cross_run_denied",
+                "delegation invocation refused: grant %s is bound to "
+                "run %r and cross_run was not granted"
+                % (grant_id, rec.get("run_id")),
+                grant_id=grant_id, identity=identity, tool=tool)
+        if rec.get("single_use") and rec.get("consumed"):
+            self._refuse_invocation(
+                "grant_consumed",
+                "delegation invocation refused: grant %s is single-use "
+                "and already consumed" % grant_id,
+                grant_id=grant_id, identity=identity, tool=tool)
+        # Success: consume single-use grants (F38 pattern — verify
+        # BEFORE mutate, re-MAC AFTER), then audit dual attribution.
+        # The find + re-verify + consume + rewrite happens under ONE
+        # lock acquisition with the consumed flag re-checked inside:
+        # two concurrent consumers cannot both observe "unconsumed"
+        # (the F39 double-execution shape).
+        consumed_now = False
+        if rec.get("single_use"):
+            with self._store_locked():
+                records = self._read_all()
+                target = None
+                for r in records:
+                    if r.get("grant_id") == grant_id:
+                        target = r
+                        break
+                if target is None or not _delegation_record_ok(target):
+                    self._refuse_invocation(
+                        "grant_integrity_violation",
+                        "delegation invocation refused: grant %s "
+                        "failed its integrity check at consume time"
+                        % grant_id,
+                        grant_id=grant_id, identity=identity,
+                        tool=tool)
+                if target.get("consumed"):
+                    self._refuse_invocation(
+                        "grant_consumed",
+                        "delegation invocation refused: grant %s is "
+                        "single-use and already consumed" % grant_id,
+                        grant_id=grant_id, identity=identity,
+                        tool=tool)
+                target["consumed"] = True
+                target["grant_mac"] = _delegation_record_mac(target)
+                self._rewrite_locked(records)
+                consumed_now = True
+        delegator = rec.get("delegator") or {}
+        # F103 (wave-27): the immediate delegator closes the resolved
+        # lineage — root -> ... -> immediate. At depth 1 the chain
+        # entries above are empty and the lineage is just [immediate],
+        # so depth-1 behavior is unchanged.
+        resolved_chain.append({
+            "agent_id": delegator.get("agent_id"),
+            "role": delegator.get("role"),
+            "principal": delegator.get("principal"),
+        })
+        self._audit(
+            "delegation_invoked",
+            grant_id=grant_id,
+            agent_id=identity.agent_id,
+            role=identity.role,
+            principal=identity.principal,
+            delegator_agent_id=delegator.get("agent_id"),
+            delegator_principal=delegator.get("principal"),
+            delegator_role=delegator.get("role"),
+            tool=tool,
+            delegation_scope_tools=scope.get("tools"),
+            requires_approval=list(scope.get("approval_gated") or []),
+            taint_inherited=bool(tainted),
+            taint_sources=list(taint_sources),
+            single_use_consumed=consumed_now)
+        return {
+            "ok": True,
+            "grant_id": grant_id,
+            "delegator": {
+                "agent_id": delegator.get("agent_id"),
+                "role": delegator.get("role"),
+                "principal": delegator.get("principal"),
+            },
+            # F103 (wave-27): the full delegator lineage, root ->
+            # immediate, each {agent_id, role, principal}, resolved
+            # from the re-verified ancestor records at invocation
+            # time. The executor stamps this on the approval record
+            # (MAC-bound) so decide()/cast_vote() exclude the whole
+            # intending lineage, not just the last hop.
+            "delegator_chain": resolved_chain,
+            "scope_tools": list(scope.get("tools") or []),
+            "requires_approval": list(scope.get("approval_gated") or []),
+            "taint_inherited": bool(tainted),
+            "single_use_consumed": consumed_now,
+        }
+
+    # ------------------------------------------------------------ revoke
+    def revoke_grant(self, grant_id, revoker_identity, reason=""):
+        """Revoke a grant (spec §1.6).
+
+        The revoker must be the delegator or the provisioned session
+        identity (operator). Revocation is an audited, MACed
+        transition; it is checked at every invocation, and descendant
+        grants fail chain verification — revocation propagates down
+        the chain with no per-descendant bookkeeping.
+        """
+        revoker = self._authenticate(revoker_identity, "revoke_grant")
+        if not isinstance(reason, str):
+            raise TypeError("revocation reason must be a string")
+        records = self._read_all()
+        target = None
+        for r in records:
+            if r.get("grant_id") == grant_id:
+                target = r
+                break
+        if target is None:
+            self._audit("delegation_invocation_refused",
+                        reason="unknown_grant",
+                        detail="revoke_grant refused: unknown grant id",
+                        grant_id=grant_id,
+                        agent_id=revoker.agent_id)
+            raise DelegationError(
+                "unknown_grant",
+                "revoke_grant refused: unknown grant id")
+        # F38: verify BEFORE mutating.
+        if not _delegation_record_ok(target):
+            self._audit("delegation_invocation_refused",
+                        reason="grant_integrity_violation",
+                        detail="revoke_grant refused: grant failed its "
+                               "integrity check (tampered store)",
+                        grant_id=grant_id, agent_id=revoker.agent_id)
+            raise DelegationError(
+                "grant_integrity_violation",
+                "revoke_grant refused: grant failed its integrity check")
+        delegator_id = (target.get("delegator") or {}).get("agent_id")
+        is_delegator = (revoker.agent_id == delegator_id)
+        is_operator = (revoker.provenance == "provisioned")
+        if not (is_delegator or is_operator):
+            self._audit("delegation_invocation_refused",
+                        reason="revoke_not_authorized",
+                        detail="revoke_grant refused: %r is neither the "
+                               "delegator nor the provisioned operator"
+                               % revoker.agent_id,
+                        grant_id=grant_id, agent_id=revoker.agent_id)
+            raise DelegationError(
+                "revoke_not_authorized",
+                "revoke_grant refused: only the delegator or the "
+                "provisioned session identity may revoke")
+        if target.get("revoked"):
+            return target  # idempotent
+        target["revoked"] = True
+        target["grant_mac"] = _delegation_record_mac(target)
+        self._rewrite(records)
+        self._audit(
+            "delegation_revoked",
+            grant_id=grant_id,
+            revoker_agent_id=revoker.agent_id,
+            revoker_principal=revoker.principal,
+            revoker_provenance=revoker.provenance,
+            delegator_agent_id=delegator_id,
+            reason_text=reason)
+        return target
+
+    # ------------------------------------------------------------ unscoped framing
+    def check_unscoped_framing(self, on_behalf_of=None, delegated_by=None,
+                               delegation_grant_id=None, identity=None):
+        """Policy-govern the unscoped framing kwargs (spec §1.5).
+
+        ``on_behalf_of``/``delegated_by`` WITHOUT a grant id are
+        untrusted labels. When the authority-delegation feature is
+        enabled and ``unscoped_delegation: deny``, such a call is
+        DENIED (policy_id "delegation-unscoped") before execution and
+        audited. Under the default ``flag`` the call is allowed and
+        labeled (today's behavior); the lint warns about the residual.
+        With the feature disabled, behavior is unchanged (label-only).
+        Returns a verdict dict the executor's call() consumes.
+        """
+        if delegation_grant_id or not (on_behalf_of or delegated_by):
+            return {"unscoped": False, "allowed": True}
+        if not self._config["enabled"]:
+            # Non-goal (spec §7): no behavior change while disabled.
+            return {"unscoped": False, "allowed": True,
+                    "mode": "label-only"}
+        if self._config["unscoped_delegation"] == "deny":
+            self._audit(
+                "unscoped_delegation_denied",
+                agent_id=getattr(identity, "agent_id", None),
+                role=getattr(identity, "role", None),
+                principal=getattr(identity, "principal", None),
+                on_behalf_of=on_behalf_of,
+                delegated_by=delegated_by,
+                policy_id="delegation-unscoped",
+                flag="unscoped_delegation_denied")
+            return {"unscoped": True, "allowed": False,
+                    "policy_id": "delegation-unscoped",
+                    "flag": "unscoped_delegation_denied",
+                    "reason": ("unscoped delegation framing "
+                               "(on_behalf_of/delegated_by without a "
+                               "grant id) is denied by policy")}
+        return {"unscoped": True, "allowed": True, "mode": "flag"}

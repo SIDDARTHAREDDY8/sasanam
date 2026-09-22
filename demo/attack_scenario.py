@@ -223,6 +223,13 @@ def main():
     summary, claims no verdicts, and returns a nonzero exit code.
     """
     try:
+        # R6c dev-key opt-in (demo harness only): explicit in-code
+        # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so the
+        # synthetic attack demo still runs with zero configuration.
+        # Production entry points never do this — they fail closed.
+        os.environ.setdefault("GOV_DEV_KEYS", "1")
+        from gov.log import enable_dev_keys
+        enable_dev_keys()
         _run_demo()
     except Exception as e:
         print("RESULT: FAILURE — attack scenario aborted before "

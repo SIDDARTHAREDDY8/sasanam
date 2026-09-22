@@ -31,12 +31,14 @@ _KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH")
 
 
 def _pin_dev_key_env():
-    """Pin the documented dev flow: GOV_LOG_KEY=<dev key>,
-    GOV_LOG_KEY_EPOCH=dev (exactly the wave-9 probe's dev flow)."""
-    import gov.log as L
+    """Pin the dev flow under R6c: scrub any configured key so the
+    harness double opt-in (tests/__init__: in-code enable_dev_keys() +
+    GOV_DEV_KEYS=1) resolves the public dev key. Explicitly configuring
+    dev material is rejected outright since the KMS milestone (F73) —
+    these tests pin the *dev-key behavior*, not the old config path."""
     saved = {n: os.environ.get(n) for n in _KEY_NAMES}
-    os.environ["GOV_LOG_KEY"] = L._DEV_KEY.decode("utf-8")
-    os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
+    for n in _KEY_NAMES:
+        os.environ.pop(n, None)
 
     def restore():
         for n, v in saved.items():
@@ -188,8 +190,11 @@ def _policy_with_budget(n):
 
 
 def _api_bytes(i=0):
-    # Deterministic: endpoint "/v1/x" (5) + canonical params JSON (297).
-    return 5 + len(json.dumps({"i": i, "q": "y" * 280}, sort_keys=True,
+    # Deterministic: endpoint (allowlisted synthetic.local host — F94
+    # denies api_call to non-allowlisted destinations) + canonical
+    # params JSON.
+    ep = "https://telemetry.synthetic.local/v1/x"
+    return len(ep) + len(json.dumps({"i": i, "q": "y" * 280}, sort_keys=True,
                               ensure_ascii=False).encode("utf-8"))
 
 
@@ -199,21 +204,21 @@ class TestF33EgressByteBudget(unittest.TestCase):
     boundary, DLP-independent, approved sends counted exactly once."""
 
     def test_cumulative_clean_payload_trips_budget(self):
-        # budget 1000; one api_call moves exactly _api_bytes() bytes
+        # budget 1100; one api_call moves exactly _api_bytes() bytes
         # (DLP-clean 'y'*280 params). The 4th call's projection exceeds
         # the budget -> denied at the call boundary.
-        run = make_run(policy_path=_policy_with_budget(1000))
+        run = make_run(policy_path=_policy_with_budget(1100))
         ex = run["executor"]
         ident = run["identities"]["researcher"]
         one = _api_bytes()
         statuses = []
         for i in range(4):
-            r = ex.call(ident, "api_call", endpoint="/v1/x",
+            r = ex.call(ident, "api_call", endpoint="https://telemetry.synthetic.local/v1/x",
                         params={"q": "y" * 280, "i": i})
             statuses.append(r["status"])
         self.assertEqual(statuses[:3], ["executed"] * 3)
         self.assertEqual(statuses[3], "denied")
-        last = ex.call(ident, "api_call", endpoint="/v1/x",
+        last = ex.call(ident, "api_call", endpoint="https://telemetry.synthetic.local/v1/x",
                        params={"q": "y" * 280, "i": 99})
         self.assertEqual(last.get("policy_id"), "volume-guard-egress-bytes")
         self.assertEqual(ex._egress_bytes, 3 * one)
@@ -227,7 +232,7 @@ class TestF33EgressByteBudget(unittest.TestCase):
         ex = run["executor"]
         ident = run["identities"]["researcher"]
         for i in range(2):
-            r = ex.call(ident, "api_call", endpoint="/v1/x",
+            r = ex.call(ident, "api_call", endpoint="https://telemetry.synthetic.local/v1/x",
                         params={"q": "y" * 280, "i": i})
             self.assertEqual(r["status"], "executed")
         send = ex.call(ident, "send_email", to="u@synthetic.local",
@@ -246,18 +251,18 @@ class TestF33EgressByteBudget(unittest.TestCase):
         self.assertEqual(ex._egress_bytes, 2 * _api_bytes() + 218)
 
     def test_approved_execution_rechecks_budget_toctou(self):
-        # Queue a 218-byte send while the budget is empty; consume 906
+        # Queue a 218-byte send while the budget is empty; consume 1002
         # via direct api_calls; the approved execution must REFUSE
-        # (906+218 > 1000) — the budget is re-checked at the actual
+        # (1002+218 > 1100) — the budget is re-checked at the actual
         # execution boundary, not just at queue time.
-        run = make_run(policy_path=_policy_with_budget(1000))
+        run = make_run(policy_path=_policy_with_budget(1100))
         ex = run["executor"]
         ident = run["identities"]["researcher"]
         send = ex.call(ident, "send_email", to="u@synthetic.local",
                        subject="s", body="z" * 200)
         self.assertEqual(send["status"], "queued")
         for i in range(3):
-            r = ex.call(ident, "api_call", endpoint="/v1/x",
+            r = ex.call(ident, "api_call", endpoint="https://telemetry.synthetic.local/v1/x",
                         params={"q": "y" * 280, "i": i})
             self.assertEqual(r["status"], "executed")
         run["approvals"].decide(send["approval_id"], True, "ok")
@@ -292,7 +297,7 @@ class TestF33EgressByteBudget(unittest.TestCase):
         ex = run["executor"]
         ident = run["identities"]["researcher"]
         # api_call: direct execution path.
-        r = ex.call(ident, "api_call", endpoint="/v1/x",
+        r = ex.call(ident, "api_call", endpoint="https://telemetry.synthetic.local/v1/x",
                     params={"q": "1"})
         self.assertEqual(r["status"], "executed")
         # http_post + send_email: approval path.
@@ -312,7 +317,7 @@ class TestF33EgressByteBudget(unittest.TestCase):
         self.assertEqual(
             ex._egress_bytes,
             ex._egress_bytes_for("api_call",
-                                 {"endpoint": "/v1/x",
+                                 {"endpoint": "https://telemetry.synthetic.local/v1/x",
                                   "params": {"q": "1"}})
             + ex._egress_bytes_for(
                 "http_post",

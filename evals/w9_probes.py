@@ -465,25 +465,27 @@ def _w9_drip():
         return _policy_with_budget(n, _track=_pol_dirs)
 
     def _api(i):
-        # Deterministic 302-byte payload: endpoint "/v1/x" (5) +
-        # canonical params JSON (297). DLP-clean.
-        return {"endpoint": "/v1/x",
+        # Deterministic 335-byte payload: allowlisted endpoint
+        # "https://telemetry.synthetic.local/v1/x" (38; F94 denies
+        # api_call to non-allowlisted destinations) + canonical params
+        # JSON (297). DLP-clean.
+        return {"endpoint": "https://telemetry.synthetic.local/v1/x",
                 "params": {"q": "y" * 280, "i": i}}
 
     try:
         with _env("w9key", "w9"):
             # --- direct path: the budget trips predictably ----------------
-            with _owned_run(policy_path=_budget(2000)) as ctx:
+            with _owned_run(policy_path=_budget(2200)) as ctx:
                 ex = ctx["executor"]
                 q = ctx["approvals"]
                 agent = ctx["mint_identity"]("a1", "researcher", "research-org")
                 o["api_call_bytes_deterministic"] = (
-                    _TE._egress_bytes_for("api_call", _api(0)) == 302)
+                    _TE._egress_bytes_for("api_call", _api(0)) == 335)
                 direct = [ex.call(agent, "api_call", **_api(i))["status"]
                           for i in range(4)]
-                # 4 direct executions = 1208 of 2000. The 5th/6th api_calls need
+                # 4 direct executions = 1340 of 2200. The 5th/6th api_calls need
                 # approval (min_external_calls=5): queued, approved, executed ->
-                # 1812. The 7th projects 2114 > 2000 -> denied at the call
+                # 2010. The 7th projects 2345 > 2200 -> denied at the call
                 # boundary with the byte-guard policy id.
                 for i in (4, 5):
                     r = ex.call(agent, "api_call", **_api(i))
@@ -496,17 +498,17 @@ def _w9_drip():
                     direct == ["executed"] * 4
                     and seventh["status"] == "denied"
                     and seventh.get("policy_id") == "volume-guard-egress-bytes"
-                    and ex._egress_bytes == 1812)
+                    and ex._egress_bytes == 2010)
                 # --- approved path shares the SAME budget ---------------------
                 # A 218-byte DLP-clean email (17 + 1 + 200) no longer fits:
-                # 1812 + 218 = 2030 > 2000. Bytes consumed on the direct path
+                # 2010 + 218 = 2228 > 2200. Bytes consumed on the direct path
                 # block the approved path — one shared budget.
                 send = ex.call(agent, "send_email", to="u@synthetic.local",
                                subject="s", body="z" * 200)
                 o["direct_and_approved_share_budget"] = (
                     send["status"] == "denied"
                     and send.get("policy_id") == "volume-guard-egress-bytes"
-                    and ex._egress_bytes == 1812)
+                    and ex._egress_bytes == 2010)
 
             # --- all three tools covered; approved counts exactly once ----
             with _owned_run(policy_path=_budget(2000)) as ctx2:
@@ -525,18 +527,18 @@ def _w9_drip():
                 ex2.execute_approved()
                 for i in range(4):
                     ex2.call(agent2, "api_call", **_api(i))
-                # http_post 40 + send_email 218 + 4x api_call 302 = 1466.
+                # http_post 40 + send_email 218 + 4x api_call 335 = 1598.
                 o["all_three_tools_covered"] = (
                     ex2._executed.get("http_post") == 1
                     and ex2._executed.get("send_email") == 1
                     and ex2._executed.get("api_call") == 4
-                    and ex2._egress_bytes == 40 + 218 + 4 * 302)
+                    and ex2._egress_bytes == 40 + 218 + 4 * 335)
                 o["approved_counts_once"] = (
                     ex2._executed.get("http_post") == 1
                     and ex2._executed.get("send_email") == 1)
                 # Every payload above is DLP-clean, and every byte was counted:
                 # cleanliness never bypasses the accounting.
-                o["dlp_clean_still_counted"] = ex2._egress_bytes == 1466
+                o["dlp_clean_still_counted"] = ex2._egress_bytes == 1598
     finally:
         for d in _pol_dirs:
             shutil.rmtree(d, ignore_errors=True)

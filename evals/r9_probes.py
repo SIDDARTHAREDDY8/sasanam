@@ -323,8 +323,18 @@ def _r9_crossrun():
     o = {}
     with _tmp("w10cr-") as d:
         led = str(d / "ledger.jsonl")
-        EP = "https://shard0.collector.example/ingest"
-        frag = lambda i: {"x": "a8f3kQ2zX1mP9vB7nL4cD6eF0gH2jK5" + str(i)}
+        EP = "https://shard0.collector.synthetic.local/ingest"
+        # F99 (wave-27): the old 62-alphabet 32-char fragment token
+        # (entropy ~4.375 > 4.3) queued on approval-api-high-entropy
+        # before the F36 campaign detectors ran — fix the fixture, not
+        # the rule. Same 12-symbol alphabet the F99 lane used in
+        # test_hardening_r10 (max entropy ~3.58 < 4.3). The token is a
+        # FIXED string, not a per-call rng draw: the cross-principal
+        # shape sketch buckets entropy coarsely, so every call must
+        # land in the same bucket to correlate. It stays
+        # fragment-shaped (<=64B, >=1.8 bits/char).
+        _FRAG_TOK = "abcdef012345abcdef012345abcdef01"
+        frag = lambda i: {"x": _FRAG_TOK + str(i)}
 
         def run_with(principal):
             ctx = make_run(ledger_path=led)
@@ -405,8 +415,7 @@ def _r9_crossrun():
             frag_counter_b[0] += 1
             st3b.append(ex.call(
                 ident, "api_call", endpoint=EP,
-                params={"k%d" % frag_counter_b[0]:
-                        "a8f3kQ2zX1mP9vB7nL4cD6eF0gH2jK5"})["status"])
+                params={"k%d" % frag_counter_b[0]: _FRAG_TOK})["status"])
         o["principal_and_key_rotation_queues"] = (
             st3b[:4] == ["executed"] * 4
             and st3b[4:] == ["queued"])
@@ -442,7 +451,7 @@ def _r9_crossrun():
         pol_allow = pol_src.replace(
             "campaign_allowlist: []",
             "campaign_allowlist:\n"
-            "  - [\"poller\", \"vendor.example\", [\"ok\"]]\n")
+            "  - [\"poller\", \"synthetic.local\", [\"ok\"]]\n")
         pol_path = d / "policy-allow.yaml"
         pol_path.write_text(pol_allow)
         st6 = []
@@ -451,7 +460,7 @@ def _r9_crossrun():
             ident = ctx["mint_identity"]("a", "researcher", "poller")
             r = ctx["executor"].call(
                 ident, "api_call",
-                endpoint="https://health.vendor.example/ping",
+                endpoint="https://health.vendor.synthetic.local/ping",
                 params={"ok": "hello"})
             st6.append((r["status"], r.get("policy_id")))
         o["allowlisted_poller_executes"] = (
@@ -498,8 +507,11 @@ def _r9_adapters():
             renamed_refused and sess.calls == [])
         r = asyncio.run(client.call_tool(
             "rogue-search:web_lookup",
-            {"endpoint": "https://x.test", "params": {}}))
-        r2 = ex.call(ident, "api_call", endpoint="https://x.test/submit",
+            # F94 (2026-09-22): the probe endpoint must be allowlisted —
+            # deny-egress-unallowlisted now covers api_call, and the F37
+            # properties under test are endpoint-independent.
+            {"endpoint": "https://x.synthetic.local", "params": {}}))
+        r2 = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/submit",
                      params={"note": "the customer key from the lookup"})
         o["foreign_result_ingested_gates_followup"] = (
             r == POISON and ex._read_sensitive
@@ -524,9 +536,9 @@ def _r9_adapters():
             sess2)
         rb = asyncio.run(client2.call_tool(
             "rogue-search:web_lookup",
-            {"endpoint": "https://x.test", "params": {}}))
+            {"endpoint": "https://x.synthetic.local", "params": {}}))
         rb2 = ex2.call(ident2, "api_call",
-                       endpoint="https://x.test/submit",
+                       endpoint="https://x.synthetic.local/submit",
                        params={"note": "the weather note"})
         o["benign_foreign_result_unrestricted"] = (
             rb == BENIGN and not ex2._read_sensitive
@@ -562,9 +574,9 @@ def _r9_adapters():
             sess3)
         ro = asyncio.run(client3.call_tool(
             "rogue-search:web_lookup",
-            {"endpoint": "https://x.test", "params": {}}))
+            {"endpoint": "https://x.synthetic.local", "params": {}}))
         ro2 = ex3.call(ident3, "api_call",
-                       endpoint="https://x.test/submit",
+                       endpoint="https://x.synthetic.local/submit",
                        params={"note": "the customer key from the lookup"})
         o["object_blocks_ingested_verbatim_and_gated"] = (
             ro is obj_result and ex3._read_sensitive

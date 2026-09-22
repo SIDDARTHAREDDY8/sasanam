@@ -31,6 +31,23 @@ deferred with an explicit trigger.
   tail truncation, `format_version` frozen, offline verifier CLI
   (`python -m gov.verify`) with structured verdicts, fail-closed emission
   (log failure ⇒ no execution).
+- **R6b Envelope encryption for log keys (KMS).** Data keys are generated
+  locally (32 bytes, `secrets`) and stored only KMS-wrapped; plaintext
+  exists solely in memory after an explicit unwrap via the KMS API, which
+  fails closed on any KMS error (outage, unknown/disabled key, tampered
+  blob, key-id mismatch). Provider-neutral interface
+  (`wrap_data_key`/`unwrap_data_key`/`describe_key`, `gov/kms.py`); real
+  cloud wiring is operator provider-config (AWS KMS / GCP KMS / Azure Key
+  Vault — ambient auth such as IAM roles, never static credentials in the
+  repo). `FakeKmsProvider` is a deterministic local test double only
+  (fixed wrap secret, no network) and is refused by the provider factory
+  outside `GOV_DEV_KEYS=1`.
+- **R6c No dev keys on the production path.** Production key resolution
+  fails closed when no key is configured; dev keys require an explicit
+  in-code `enable_dev_keys()` call *plus* `GOV_DEV_KEYS=1`, so environment
+  variables alone can never enable them, and configured dev-key material
+  is rejected outright. Epochs, rotation, retired-key retention, and
+  archived-key verification are preserved through the KMS path.
 - **R7 Redact-before-log.** Per-tool field allowlists; pattern library +
   entropy tripwire over every logged string; `write_file` content logged as
   `{bytes, sha256_prefix}`; `send_email` bodies never verbatim;
@@ -84,6 +101,9 @@ deferred with an explicit trigger.
 
 - No network calls, no paid APIs, no real credentials; everything synthetic
   and local. Stdlib preferred; a dependency only with written justification.
+- No real cloud KMS credentials, network calls, or paid API usage in tests;
+  all KMS tests run against the deterministic local `FakeKmsProvider`.
+  Real cloud KMS wiring is operator provider-config, not repo code.
 - No ML-based PII detection (regex + entropy covers the threat model).
 - No transparency-log server / gossip / public anchoring (solves operator
   distrust we don't have yet).

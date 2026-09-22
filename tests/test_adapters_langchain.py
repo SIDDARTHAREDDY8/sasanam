@@ -36,38 +36,39 @@ except ImportError:
     LANGCHAIN_AVAILABLE = False
 
 
-class WriteArgs(BaseModel):
-    # F62: governed tools require extra="allow" so undeclared kwargs
-    # reach mediation instead of being silently dropped by
-    # langchain-core before _run.
-    model_config = ConfigDict(extra="allow")
+if LANGCHAIN_AVAILABLE:
+    class WriteArgs(BaseModel):
+        # F62: governed tools require extra="allow" so undeclared kwargs
+        # reach mediation instead of being silently dropped by
+        # langchain-core before _run.
+        model_config = ConfigDict(extra="allow")
 
-    path: str = Field(description="Destination path")
-    content: str = Field(description="Content to write")
-
-
-class EmailArgs(BaseModel):
-    # F62: see WriteArgs.
-    model_config = ConfigDict(extra="allow")
-
-    to: str = Field(description="Recipient")
-    subject: str = Field(description="Subject")
-    body: str = Field(description="Body")
+        path: str = Field(description="Destination path")
+        content: str = Field(description="Content to write")
 
 
-def _coder_binding(ctx):
-    ident = ctx["mint_identity"]("coder-1", "coder", "dev-org")
-    return GovernedBinding(ctx["executor"], ident)
+    class EmailArgs(BaseModel):
+        # F62: see WriteArgs.
+        model_config = ConfigDict(extra="allow")
+
+        to: str = Field(description="Recipient")
+        subject: str = Field(description="Subject")
+        body: str = Field(description="Body")
 
 
-def _make_write_tool(binding, **kwargs):
-    return make_governed_tool(
-        binding,
-        name="write_notes",
-        description="Write a notes file.",
-        args_schema=WriteArgs,
-        framework_tool="write_file",
-        **kwargs)
+    def _coder_binding(ctx):
+        ident = ctx["mint_identity"]("coder-1", "coder", "dev-org")
+        return GovernedBinding(ctx["executor"], ident)
+
+
+    def _make_write_tool(binding, **kwargs):
+        return make_governed_tool(
+            binding,
+            name="write_notes",
+            description="Write a notes file.",
+            args_schema=WriteArgs,
+            framework_tool="write_file",
+            **kwargs)
 
 
 @unittest.skipUnless(LANGCHAIN_AVAILABLE, "langchain-core not installed")

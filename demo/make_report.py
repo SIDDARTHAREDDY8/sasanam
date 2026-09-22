@@ -373,6 +373,14 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats,
 
 
 def main():
+    # R6c dev-key opt-in (demo report tool only): explicit in-code
+    # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so reports
+    # can be generated from synthetic demo runs with zero configuration.
+    # Production entry points never do this — they fail closed.
+    import os
+    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    from gov.log import enable_dev_keys
+    enable_dev_keys()
     parser = argparse.ArgumentParser(description="Generate the audit report for a run.")
     parser.add_argument("--rundir", default=None, help="run directory (default: latest)")
     args = parser.parse_args()

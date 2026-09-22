@@ -225,7 +225,7 @@ def _r11_quorum_cost():
             ident = c["mint_identity"]("agent", "researcher", principal)
             return c["executor"].call(
                 ident, "api_call",
-                endpoint="https://shard0.collector.example/x",
+                endpoint="https://shard0.collector.synthetic.local/x",
                 params={"blob": "A1B2C3D4E5F6G7H8!", "seq": 1})
 
         # Same-run burst: 5 calls, one principal, one run.
@@ -234,7 +234,7 @@ def _r11_quorum_cost():
         for _ in range(5):
             c0["executor"].call(
                 ident0, "api_call",
-                endpoint="https://shard0.collector.example/x",
+                endpoint="https://shard0.collector.synthetic.local/x",
                 params={"blob": "A1B2C3D4E5F6G7H8!", "seq": 1})
         r = _call("fresh")
         o["same_run_priming_does_not_establish"] = (

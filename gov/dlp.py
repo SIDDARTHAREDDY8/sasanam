@@ -54,7 +54,7 @@ import base64
 import hashlib
 import math
 import re
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import unquote, unquote_plus, urlparse
 
 # ---------------------------------------------------------------- patterns
 
@@ -75,16 +75,25 @@ _CREDENTIAL_RULES = [
      re.compile(r"(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^/\s]*@[^/\s]+")),
 ]
 
+# F91 (Wave 25): the PII patterns below use digit-only boundaries
+# (``(?<![0-9])`` / ``(?![0-9])``) instead of ``\b``. The AGT
+# redaction-evasion class — affixing a word character to a sensitive
+# value (``123-45-6789_old``, ``old_123-45-6789``) — defeated ``\b``
+# and leaked the value into logs/approvals in cleartext. Digits and
+# dashes adjacent to the pattern still suppress the match (a longer
+# numeric run is not an SSN/phone/card); letters and underscores are
+# treated as affixes and the sensitive core is still redacted, which
+# is the fail-closed direction for log redaction.
 _PII_RULES = [
     # (rule_id, compiled regex) -- a match is REDACTED in logs/approvals.
-    ("pii-ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("pii-ssn", re.compile(r"(?<![0-9])\d{3}-\d{2}-\d{4}(?![0-9])")),
     ("pii-email",
      re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
     ("pii-phone",
-     re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")),
+     re.compile(r"(?<![0-9])(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}(?![0-9])")),
 ]
 
-_CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
+_CARD_RE = re.compile(r"(?<![0-9])(?:\d[ -]*?){13,19}(?![0-9])")
 
 # F16: the entropy tripwire's keyword list is matched in a NORMALIZED
 # space — lowercase, leet-speak folded, and every whitespace RUN replaced
@@ -95,10 +104,19 @@ _CARD_RE = re.compile(r"\b(?:\d[ -]*?){13,19}\b")
 # window / token / entropy half still runs on the ORIGINAL text (match
 # positions are mapped back), so the precise-credential regexes and the
 # entropy behavior are untouched.
+# F91 (Wave 25): the keyword boundaries are letter-only
+# (``(?<![A-Za-z])`` / ``(?![A-Za-z])``) rather than ``\b``. The
+# affix-evasion class (``password_old``, ``old_password``,
+# ``api_key_backup``) defeated ``\b`` and let unknown-format secrets
+# next to affixed keywords slip past the tripwire. Letters adjacent
+# to a keyword still suppress the match — ``monkey`` / ``keyboard``
+# must not trip — but ``_``/``-``/digits are treated as affixes
+# (rotation-naming conventions like ``key2``), which is the
+# fail-closed direction for a heuristic tripwire.
 _TRIP_KEYWORDS = re.compile(
-    r"\b(password|passwd|passcode|pwd|secret|credentials?|creds|token|"
+    r"(?<![A-Za-z])(password|passwd|passcode|pwd|secret|credentials?|creds|token|"
     r"api[_\-\x00]?key|private[_\-\x00]?key|key|access|auth|login|"
-    r"aws_secret|client_secret)\b")
+    r"aws_secret|client_secret)(?![A-Za-z])")
 
 _LEET_FOLD = {
     "0": "o", "1": "l", "3": "e", "4": "a", "5": "s",
@@ -139,10 +157,139 @@ def _tripwire_hit(text):
         ws = max(0, m.start() - 10)
         we = min(len(norm), m.end() + 80)
         window = text[positions[ws]:positions[we - 1] + 1]
-        for token in re.findall(r"[A-Za-z0-9_+/=-]{20,}", window):
-            if _shannon_entropy(token) > 4.3:
+        for token in _HIGH_ENTROPY_TOKEN_RE.findall(window):
+            if _shannon_entropy(token) > HIGH_ENTROPY_TOKEN_MIN_ENTROPY:
                 return True
     return False
+
+
+# F99 (Wave 27): parameters shared by the keyword-adjacent entropy
+# tripwire (``_tripwire_hit``, DENY effect) and the keyword-free framed
+# secret tripwire (``has_high_entropy_token``, QUEUE effect via the
+# policy engine). 20 chars / entropy > 4.3 is the FP-analyzed boundary
+# inherited from F2/F8: hex digests (~3.7), UUIDs (~3.4) and random
+# base64-of-binary fixtures (~4.26) stay under it, while unknown-format
+# framed secrets (the F99 probe token: 4.375) trip it. Without a
+# credential keyword nearby the signal can only justify human review,
+# never a block.
+#
+# F106 (Wave 27): the signal covers the api_call ENDPOINT URL too
+# (query values + path segments, per-segment so adjacent low-entropy
+# segments never join into a phantom run through '/'/'=' — both in the
+# token alphabet). F105 (Wave 27) is the accepted encoding residual:
+# hex/base32 alphabets cap entropy below 4.3, so decode-and-rescan
+# cannot separate honest from adversarial hex — measured 2026-09-22: an
+# honest SHA-256 digest decodes to per-byte entropy 4.875, an
+# adversarial 32-byte secret to 4.938 (same distribution; no threshold
+# separates them). Queueing decoded-hex hits would FP-collapse on
+# honest digests, which the closure's FP analysis requires to EXECUTE.
+# Low-alphabet encodings of unknown-format secrets are therefore a
+# documented residual of this rule, not a silent bypass.
+HIGH_ENTROPY_TOKEN_MIN_LEN = 20
+HIGH_ENTROPY_TOKEN_MIN_ENTROPY = 4.3
+_HIGH_ENTROPY_TOKEN_RE = re.compile(r"[A-Za-z0-9_+/=-]{%d,}"
+                                    % HIGH_ENTROPY_TOKEN_MIN_LEN)
+
+
+def has_high_entropy_token(text):
+    """Keyword-free framed-secret tripwire (F99).
+
+    True when *text* contains a token-like run of at least
+    ``HIGH_ENTROPY_TOKEN_MIN_LEN`` chars whose Shannon entropy exceeds
+    ``HIGH_ENTROPY_TOKEN_MIN_ENTROPY``. This is the unknown-format /
+    paraphrase exfil channel DLP cannot name (no credential keyword to
+    anchor on), so callers must use it for require_approval (queue)
+    decisions only — never deny. Scans the given text only; callers
+    must not join cross-field buffers (the F2/F8 boundary: the entropy
+    tripwire stays on the original text). Low-alphabet encodings
+    (hex/base32) of secrets never trip by construction (alphabet cap
+    4.0 < 4.3) — the documented F105 residual, not a miss.
+    """
+    if not text:
+        return False
+    for token in _HIGH_ENTROPY_TOKEN_RE.findall(text):
+        if _shannon_entropy(token) > HIGH_ENTROPY_TOKEN_MIN_ENTROPY:
+            return True
+    return False
+
+
+def params_have_high_entropy_token(params):
+    """F99: True when any string inside a (possibly nested) params
+    mapping carries a high-entropy token-like run.
+
+    The params-side half of the executor's ``high_entropy_payload``
+    signal — see ``api_call_high_entropy_payload`` for the full
+    composition (params + endpoint URL), which is what the executor
+    and the simulator's replay recomputation must call. Single source
+    of truth for the params traversal; do not reimplement the
+    traversal elsewhere (a divergent copy would silently desync
+    replay).
+    """
+    stack = [params]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, str):
+            if has_high_entropy_token(v):
+                return True
+        elif isinstance(v, dict):
+            stack.extend(v.values())
+        elif isinstance(v, (list, tuple)):
+            stack.extend(v)
+    return False
+
+
+def endpoint_url_has_high_entropy_token(endpoint):
+    """F106: True when the endpoint URL's query string or path carries
+    a high-entropy token-like run.
+
+    The URL is a first-class exfil channel to the allowlisted host (the
+    F94 allowlist matches hostname only), and DLP's ``find_credential``
+    needs a known pattern or keyword adjacency — an unknown-format
+    token in a query string or path matches neither. Scanned per query
+    VALUE (``k=v`` pairs split on ``&``/``;``; keys are not content,
+    the params-side convention) and per path SEGMENT (split on ``/``),
+    each both raw and percent-decoded: splitting first keeps adjacent
+    low-entropy segments from joining into a phantom run through
+    ``/``/``=`` (both in the token alphabet) — e.g. a git-SHA path
+    ``/repos/x/commits/<sha>`` stays clean — while decoding catches
+    URL-encoded tokens. Fragments are not scanned (never sent to the
+    server); userinfo is out of scope (noted residual).
+    """
+    if not endpoint or not isinstance(endpoint, str):
+        return False
+    try:
+        parts = urlparse(endpoint)
+    except Exception:
+        return False
+    for pair in re.split(r"[&;]", parts.query or ""):
+        if not pair:
+            continue
+        value = pair.split("=", 1)[1] if "=" in pair else pair
+        if (has_high_entropy_token(value)
+                or has_high_entropy_token(unquote_plus(value))):
+            return True
+    for seg in (parts.path or "").split("/"):
+        if not seg:
+            continue
+        if (has_high_entropy_token(seg)
+                or has_high_entropy_token(unquote(seg))):
+            return True
+    return False
+
+
+def api_call_high_entropy_payload(args):
+    """F99/F106: the single source of truth for the executor's
+    ``high_entropy_payload`` policy-context key (and the simulator's
+    deterministic recomputation).
+
+    True when the api_call's params (any nested string value) OR its
+    endpoint URL (query values / path segments) carries a high-entropy
+    token-like run. Do not reimplement this composition elsewhere —
+    a divergent copy would silently desync replay.
+    """
+    args = args or {}
+    return (params_have_high_entropy_token(args.get("params"))
+            or endpoint_url_has_high_entropy_token(args.get("endpoint")))
 
 
 def _luhn_ok(digits):

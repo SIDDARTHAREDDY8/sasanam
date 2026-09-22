@@ -228,7 +228,14 @@ class TestF2EncodingAwareDlp(unittest.TestCase):
             b"the quick brown fox jumps over the lazy dog").decode()
         self.assertIsNone(dlp.find_credential(blob))
         r = self._api_call({"note": blob})
-        self.assertEqual(r["status"], "executed")
+        # F99 (Wave 27) contract change: DLP still does not BLOCK this
+        # (assertIsNone above holds), but an unknown-format
+        # high-entropy token in api_call params can no longer execute
+        # silently — it queues for human review under
+        # approval-api-high-entropy, exactly like the F99 framed secret.
+        # "Not blocked" is now review-gated, not silent.
+        self.assertEqual(r["status"], "queued")
+        self.assertEqual(r.get("policy_id"), "approval-api-high-entropy")
 
     def test_innocent_hex_not_blocked(self):
         """SHA-256-shaped hex decodes to binary: ignored, not blocked."""

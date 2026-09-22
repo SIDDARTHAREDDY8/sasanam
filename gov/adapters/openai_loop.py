@@ -28,8 +28,8 @@ from .core import (
     AdapterError,
     GovernedBinding,
     MalformedToolCallError,
-    normalize_result,
 )
+from .channels import build_tool_message
 
 
 class ParsedToolCall:
@@ -185,12 +185,11 @@ def run_tool_loop(binding, messages, respond, max_iterations=8,
             result = binding.call(
                 call.name, on_denied=on_denied, on_queued=on_queued,
                 **call.arguments)
-            transcript.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "name": call.name,
-                "content": normalize_result(result),
-            })
+            # StruQ: tool results enter the transcript through the
+            # sanctioned data-channel constructor only -- never
+            # interpolated into instruction-position text.
+            transcript.append(
+                build_tool_message(call.name, call.id, result))
     else:
         raise AdapterError(
             "tool loop exceeded max_iterations=%d; refusing to continue "

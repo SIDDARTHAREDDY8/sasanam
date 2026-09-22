@@ -1,17 +1,18 @@
 """Hardening round-17 regression tests: F70 + F71.
 
-F70 (HIGH): the R16 incremental chain-tip verifier is blind to
+F70 (HIGH, OPEN): the R16 incremental chain-tip verifier is blind to
     length-preserving edits of already-verified (pre-tip) bytes -- a
-    fundamental property of any O(new) verifier. R17 bounds (not
-    closes) that silent window: the MAC-authenticated tip carries a
-    ``full_in`` countdown (refused sweeps remaining before a forced
-    full verification), decremented once per refused sweep on both the
-    tip-path branch (verify_chain_tip) and the healthy-state branch
-    (executor._r17_forced_full_verify), and consumed by the
-    reconciliation verification gate on successful-lock sweeps. Every
-    N=8 refused sweeps the chain is fully re-verified; a pre-tip
-    tamper goes loud at most 8 sweeps after planting. The countdown
-    is MAC-covered, so the F52 run-dir writer cannot extend it.
+    fundamental property of any O(new) verifier. R17 originally
+    bounded (not closed) that silent window with a MAC-authenticated
+    ``full_in`` countdown forcing a full verification every 8 refused
+    sweeps; the countdown was REVERTED (red-team wave-19 final R17
+    verdict) because it is replayable by the F52 run-dir writer (F72:
+    a saved valid tip restores the countdown, so the "at most N
+    sweeps" bound does not bind against the in-model attacker). F70
+    therefore stays OPEN; the retired countdown tests below were
+    removed with the mechanism. The F70 fix direction (log-anchored
+    generation counter or MAC'd interrupted-marker manifest at
+    authorization time) remains for a future round.
 
 F71 (HIGH): a forged execution_authorized marker forced a full
     O(n) _verify on EVERY sweep (the F52/F60 CPU amplifier moved to
@@ -37,23 +38,16 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from gov.approvals import ApprovalQueue  # noqa: E402
 from gov.executor import ToolExecutor  # noqa: E402
-from gov.log import (  # noqa: E402
-    ActionLog,
-    TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS,
-    _read_tip_cache,
-    read_entries,
-)
+from gov.log import ActionLog, read_entries  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 
 DEFAULT_POLICY = str(REPO_ROOT / "policies" / "default.yaml")
 
-N = TIP_FORCED_FULL_VERIFY_EVERY_N_SWEEPS
-assert N == 8, "R17 tests pin the F70 interval at 8"
-
 _F71_N = 20000
 # Historical cost of the forged-marker full verify at 20k (R16):
 # 386-580ms per sweep. Cached sweeps must stay far below that.
-_F71_CACHED_SWEEP_BOUND_SECS = 0.150
+# (2026-09-22: absolute wall-clock bounds removed from the F71 perf test
+# in favor of a self-normalizing within-run comparison; see the test.)
 
 
 def _make_run_dir(refused=True):
@@ -70,13 +64,6 @@ def _fresh_executor(run_dir, policy):
                         ledger_path=run_dir / "egress_ledger.jsonl")
 
 
-def _refused_sweep(run_dir, policy):
-    ex = _fresh_executor(run_dir, policy)
-    t0 = time.perf_counter()
-    ret = ex.execute_approved()
-    return ret, time.perf_counter() - t0
-
-
 def _successful_sweep(run_dir, policy):
     # No approvals.lock directory: the queue lock is acquirable, so
     # the sweep body (including reconciliation) runs.
@@ -84,46 +71,6 @@ def _successful_sweep(run_dir, policy):
     t0 = time.perf_counter()
     ret = ex.execute_approved()
     return ret, time.perf_counter() - t0
-
-
-def _tamper_audit_count(run_dir):
-    n = 0
-    for line in (run_dir / "actions.jsonl").read_text(
-            encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if (isinstance(e, dict)
-                and e.get("event") == "approval_sweep_refused"
-                and "pre-tip tamper suspected" in str(
-                    e.get("reason", ""))):
-            n += 1
-    return n
-
-
-def _plant_length_preserving_edit(log_path, target_seq):
-    """Rewrite one valid entry's content keeping the exact byte length.
-
-    The entry's MAC then fails: the incremental tip walk (which starts
-    after the tip) cannot see it, but the forced full verification
-    must catch it loudly.
-    """
-    lines = log_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    idx = target_seq - 1  # seqs are 1-based, lines 0-based here
-    entry = json.loads(lines[idx])
-    # Flip a content character inside the JSON without changing the
-    # byte length: the "event" value is rewritten to the same length.
-    old_event = entry["event"]
-    assert len(old_event) >= 2
-    entry["event"] = "X" + old_event[1:]
-    new_line = json.dumps(entry, ensure_ascii=True, sort_keys=True) + "\n"
-    assert len(new_line.encode("utf-8")) == len(
-        lines[idx].encode("utf-8")), "edit must be length-preserving"
-    lines[idx] = new_line
-    log_path.write_text("".join(lines), encoding="utf-8")
 
 
 def _plant_forged_marker(log_path, aid):
@@ -158,111 +105,13 @@ def _chain_unverifiable_audit_count(run_dir):
     return n
 
 
-class TestF70PreTipTamperBounded(unittest.TestCase):
-    def test_pre_tip_edit_goes_loud_within_n_sweeps(self):
-        """F70: a length-preserving pre-tip edit is loud within <=8 sweeps.
-
-        Healthy coalesce state, refused sweeps: the countdown ticks in
-        _r17_forced_full_verify. Sweeps before the countdown exhausts
-        stay quiet (incremental walk cannot see the edit); the sweep
-        that exhausts it forces a full verification and audits LOUD
-        with tamper attribution.
-        """
-        policy = PolicyEngine(DEFAULT_POLICY)
-        run_dir = _make_run_dir(refused=True)
-        try:
-            log = ActionLog(run_dir / "actions.jsonl")
-            for i in range(1000):
-                log.append({"event": "r17_setup", "i": i})
-            # Sweep 1 seeds the tip (full verify, full_in=N).
-            ret, _dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(ret, [])
-            tip = _read_tip_cache(run_dir / "actions.jsonl")
-            self.assertIsNotNone(tip)
-            self.assertEqual(tip["full_in"], N)
-            # Plant a length-preserving edit well before the tip.
-            _plant_length_preserving_edit(run_dir / "actions.jsonl", 500)
-            loud_at = None
-            for k in range(1, N + 1):
-                ret, _dt = _refused_sweep(run_dir, policy)
-                self.assertEqual(ret, [],
-                                 "refused sweep must fail closed")
-                if _tamper_audit_count(run_dir) > 0:
-                    loud_at = k
-                    break
-            self.assertIsNotNone(
-                loud_at,
-                "pre-tip tamper must go loud within %d sweeps" % N)
-            self.assertLessEqual(loud_at, N)
-            # The countdown was consumed: after the loud sweep the tip
-            # is reseeded only on success; a broken chain never
-            # reseeds, so every later sweep stays loud (fail-loud,
-            # never folded).
-            ret, _dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(_tamper_audit_count(run_dir), 2)
-        finally:
-            shutil.rmtree(run_dir, ignore_errors=True)
-
-    def test_countdown_ticks_once_per_refused_sweep(self):
-        """The tip countdown decrements exactly once per refused sweep."""
-        policy = PolicyEngine(DEFAULT_POLICY)
-        run_dir = _make_run_dir(refused=True)
-        try:
-            log = ActionLog(run_dir / "actions.jsonl")
-            for i in range(200):
-                log.append({"event": "r17_setup", "i": i})
-            ret, _dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(ret, [])
-            seen = []
-            for _ in range(N - 1):
-                tip = _read_tip_cache(run_dir / "actions.jsonl")
-                seen.append(tip["full_in"])
-                ret, _dt = _refused_sweep(run_dir, policy)
-                self.assertEqual(ret, [])
-            # 8,7,6,5,4,3,2: each refused sweep ticks once. The 7th
-            # sweep leaves full_in=1 (due); the 8th forces a full
-            # verification and reseeds to N.
-            self.assertEqual(seen, [8, 7, 6, 5, 4, 3, 2])
-            tip = _read_tip_cache(run_dir / "actions.jsonl")
-            self.assertEqual(tip["full_in"], 1)
-            ret, _dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(ret, [])
-            tip = _read_tip_cache(run_dir / "actions.jsonl")
-            self.assertEqual(tip["full_in"], N)
-        finally:
-            shutil.rmtree(run_dir, ignore_errors=True)
-
-
-class TestF70WarmSweepBounded(unittest.TestCase):
-    def test_warm_sweeps_bounded_periodic_full_verify(self):
-        """Steady refused sweeps stay O(new); only the Nth pays O(n)."""
-        policy = PolicyEngine(DEFAULT_POLICY)
-        run_dir = _make_run_dir(refused=True)
-        try:
-            log = ActionLog(run_dir / "actions.jsonl")
-            for i in range(_F71_N):
-                log.append({"event": "r17_setup", "i": i})
-            ret, _dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(ret, [])
-            warm_times = []
-            for k in range(N - 1):
-                ret, dt = _refused_sweep(run_dir, policy)
-                self.assertEqual(ret, [])
-                warm_times.append(dt)
-                self.assertLess(
-                    dt, _F71_CACHED_SWEEP_BOUND_SECS,
-                    "warm sweep %d took %.1fms at %d entries" % (
-                        k, dt * 1000, _F71_N))
-            # The Nth sweep forces a full verification: slower than
-            # warm, but it must complete and stay fail-closed.
-            ret, dt = _refused_sweep(run_dir, policy)
-            self.assertEqual(ret, [],
-                             "forced full-verify sweep must fail closed")
-            self.assertGreater(
-                dt, max(warm_times),
-                "forced full verify should cost more than a warm sweep")
-        finally:
-            shutil.rmtree(run_dir, ignore_errors=True)
+# NOTE (R17 final verdict, wave-19): the F70 ``full_in`` countdown was
+# REVERTED -- it is replayable by the F52 run-dir writer (F72), so the
+# "pre-tip tamper goes loud within at most N refused sweeps" bound did
+# not bind against the in-model attacker. The countdown tests
+# (TestF70PreTipTamperBounded, TestF70WarmSweepBounded) were retired
+# with the mechanism; F70 stays OPEN. Steady-state refused-sweep cost
+# remains covered by R16's TestF69WarmTipBounded.
 
 
 class TestF71ForgedMarkerCache(unittest.TestCase):
@@ -291,11 +140,26 @@ class TestF71ForgedMarkerCache(unittest.TestCase):
             self.assertEqual(
                 _marker_invalid_audit_count(run_dir), 1,
                 "exactly one invalid-marker audit across 20 sweeps")
-            for k, dt in enumerate(times[1:], start=2):
-                self.assertLess(
-                    dt, _F71_CACHED_SWEEP_BOUND_SECS,
-                    "cached sweep %d took %.1fms (historical full "
-                    "verify: 386-580ms)" % (k, dt * 1000))
+            # Load-robust perf claim (2026-09-22): the old absolute 150ms
+            # bound bit three full-suite runs under concurrent VM load
+            # (150-240ms cached sweeps). The invariant that matters is
+            # self-normalizing: within THIS run, cached sweeps must cost
+            # far less than the first (uncached, full-verify + loud audit)
+            # sweep. No absolute wall-clock, so it cannot flake under load
+            # and cannot mask a real cache regression (a broken cache
+            # would make cached sweeps cost ~times[0]).
+            cached = times[1:]
+            median = sorted(cached)[len(cached) // 2]
+            self.assertLess(
+                median, times[0] / 2,
+                "median cached sweep %.1fms not far below uncached "
+                "%.1fms (cache not saving work)" % (
+                    median * 1000, times[0] * 1000))
+            slowest = max(cached)
+            self.assertLess(
+                slowest, times[0],
+                "a 'cached' sweep took %.1fms >= uncached %.1fms "
+                "(cache bypassed)" % (slowest * 1000, times[0] * 1000))
             self.assertTrue(
                 (run_dir / "reconcile_marker_verdict.json").exists(),
                 "invalid verdict must be cached")
@@ -349,9 +213,9 @@ class TestF71ForgedMarkerCache(unittest.TestCase):
         """F70: no candidates but a broken chain audits loudly.
 
         The reconciliation verification gate runs even with no
-        interrupted markers (it consumes the F70 countdown); a broken
-        chain with no markers produces a loud
-        reconciliation_chain_unverifiable audit and reconciles nothing.
+        interrupted markers; a broken chain with no markers produces a
+        loud reconciliation_chain_unverifiable audit and reconciles
+        nothing.
         """
         policy = PolicyEngine(DEFAULT_POLICY)
         run_dir = _make_run_dir(refused=False)

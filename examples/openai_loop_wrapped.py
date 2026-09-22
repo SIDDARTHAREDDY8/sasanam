@@ -79,6 +79,13 @@ def respond(transcript):
 
 
 def main():
+    # SCAFFOLD dev-key opt-in (R6c): synthetic demo script, not a
+    # production entry point — explicit in-code enable_dev_keys() PLUS
+    # the GOV_DEV_KEYS=1 env factor, so it runs with zero configuration.
+    import os
+    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    from gov.log import enable_dev_keys
+    enable_dev_keys()
     ex = _executor()
     binding = GovernedBinding(ex, ex.mint_identity("agent-1", "support", "demo"))
 

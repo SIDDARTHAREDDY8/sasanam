@@ -69,12 +69,13 @@ def _fresh_utc_z():
 
 
 def _pin_dev_key_env():
-    """Pin the documented dev flow: GOV_LOG_KEY=<dev key>,
-    GOV_LOG_KEY_EPOCH=dev."""
-    import gov.log as L
+    """Pin the dev flow under R6c: scrub any configured key so the
+    harness double opt-in (tests/__init__: in-code enable_dev_keys() +
+    GOV_DEV_KEYS=1) resolves the public dev key. Explicitly configuring
+    dev material is rejected outright since the KMS milestone (F73)."""
     saved = {n: os.environ.get(n) for n in _KEY_NAMES}
-    os.environ["GOV_LOG_KEY"] = L._DEV_KEY.decode("utf-8")
-    os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
+    for n in _KEY_NAMES:
+        os.environ.pop(n, None)
     os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
 
     def restore():
@@ -435,7 +436,7 @@ class TestF36CrossPrincipalCampaign(_R9Case):
     shape across principals; single-principal behavior is unchanged."""
 
     def _run_calls(self, ledger_path, principal, n=2, keys=("blob", "seq"),
-                   endpoint="https://shard0.collector.example/x"):
+                   endpoint="https://shard0.collector.synthetic.local/x"):
         ctx = make_run(ledger_path=ledger_path)
         ex = ctx["executor"]
         ident = ex.mint_identity("agent", "researcher", principal)
@@ -485,10 +486,10 @@ class TestF36CrossPrincipalCampaign(_R9Case):
             pol_allow = base.replace(
                 "campaign_allowlist: []",
                 "campaign_allowlist:\n"
-                "  - [\"poller\", \"collector.example\", [\"x\"]]\n")
+                "  - [\"poller\", \"synthetic.local\", [\"x\"]]\n")
             pol_path = td / "policy-allow.yaml"
             pol_path.write_text(pol_allow)
-            EP = "https://shard0.collector.example/x"
+            EP = "https://shard0.collector.synthetic.local/x"
             frag_val = "A1B2C3D4E5F6G7H8!"
             st = []
             # F46 (R11): establishment needs 2 DISTINCT RUN IDs per
@@ -527,7 +528,7 @@ class TestF36CrossPrincipalCampaign(_R9Case):
                 ex = ctx["executor"]
                 ident = ex.mint_identity("agent", "researcher", "poller")
                 r = ex.call(ident, "api_call",
-                            endpoint="https://health.vendor.example/ping",
+                            endpoint="https://health.vendor.synthetic.local/ping",
                             params={"status": "ok", "m%d" % run: run})
                 st.append(r["status"])
             self.assertEqual(st, ["executed"] * 4)
@@ -542,7 +543,7 @@ class TestF36CrossPrincipalCampaign(_R9Case):
         # runs (same-run priming no longer establishes).
         with tempfile.TemporaryDirectory(prefix="govr9led-") as td:
             led = str(Path(td) / "egress_ledger.jsonl")
-            EP = "https://shard0.collector.example/x"
+            EP = "https://shard0.collector.synthetic.local/x"
             frag_val = "A1B2C3D4E5F6G7H8!"
             st = []
             for _ in range(2):
@@ -655,7 +656,7 @@ class TestF37MCPResultIngestion(_R9Case):
         self.assertTrue(any(secret in c for c in ex._read_contents))
         # a follow-up paraphrase api_call (no verbatim overlap) is
         # approval-gated by the sensitive-read-before-api rule
-        r2 = ex.call(ident, "api_call", endpoint="https://x.example/v1",
+        r2 = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/v1",
                      params={"q": "summarize the db configuration"})
         self.assertEqual(r2["status"], "queued")
         self.assertEqual(r2.get("policy_id"),
@@ -670,7 +671,7 @@ class TestF37MCPResultIngestion(_R9Case):
         res = asyncio.run(client.call_tool("read_file", {"path": "notes.txt"}))
         self.assertEqual(res, {"content": "sunny day, no secrets"})
         self.assertFalse(ex._read_sensitive)
-        r2 = ex.call(ident, "api_call", endpoint="https://x.example/v1",
+        r2 = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/v1",
                      params={"q": "hi"})
         self.assertEqual(r2["status"], "executed")
 
@@ -730,7 +731,7 @@ class TestF37MCPResultIngestion(_R9Case):
         self.assertTrue(ex._read_sensitive)
         self.assertTrue(any(secret in c for c in ex._read_contents))
         # and a follow-up paraphrase api_call is approval-gated
-        r2 = ex.call(ident, "api_call", endpoint="https://x.example/v1",
+        r2 = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/v1",
                      params={"q": "summarize the credentials file"})
         self.assertEqual(r2["status"], "queued")
         self.assertEqual(r2.get("policy_id"),
@@ -754,7 +755,7 @@ class TestF37MCPResultIngestion(_R9Case):
         self.assertEqual(out["status"], "executed")
         self.assertIn("body_result", out)
         self.assertTrue(ex._read_sensitive)
-        r2 = ex.call(ident, "api_call", endpoint="https://x.example/v1",
+        r2 = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/v1",
                      params={"q": "summarize the credentials file"})
         self.assertEqual(r2["status"], "queued")
         self.assertEqual(r2.get("policy_id"),

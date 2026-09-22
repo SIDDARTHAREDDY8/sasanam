@@ -18,6 +18,7 @@ gov-attack-demo = "demo.attack_scenario:main"
 gov-approve = "gov.approvals:main"
 gov-verify = "gov.verify:main"
 gov-policy-lint = "gov.policy_lint:main"
+gov-policy-export = "gov.policy_export:main"
 gov-report = "demo.make_report:main"
 
 [tool.setuptools]

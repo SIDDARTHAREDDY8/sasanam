@@ -110,6 +110,13 @@ class TestF23LedgerStatCache(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: this class pins dev-key BEHAVIOR ("no
+        # GOV_LOG_KEY", "only the public dev key"), so opt into the dev
+        # key explicitly. The in-code half of the double opt-in is set by
+        # tests/__init__.py; GOV_LOG_KEY stays unset here on purpose so
+        # _real_key_available() remains False (the real-key tests below
+        # configure GOV_LOG_KEY themselves and take precedence).
+        os.environ["GOV_DEV_KEYS"] = "1"
         self.dir = tempfile.mkdtemp(prefix="r6f23-")
         self.addCleanup(shutil.rmtree, self.dir, True)
 
@@ -216,6 +223,9 @@ class TestF24ExcludedAutoApprove(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback).
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.dir = tempfile.mkdtemp(prefix="r6f24-")
         self.addCleanup(shutil.rmtree, self.dir, True)
         with open(DEFAULT_POLICY, encoding="utf-8") as f:
@@ -316,6 +326,10 @@ class TestF25ConcurrentAppends(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback). Forked workers inherit this
+        # env, so ActionLog in each child resolves the same test key.
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         self.dir = tempfile.mkdtemp(prefix="r6f25-")
         self.addCleanup(shutil.rmtree, self.dir, True)
 
@@ -393,6 +407,9 @@ class TestF26BreakGlassIdentity(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
+        # R6c harness migration: explicit production key posture (F73
+        # closed the silent dev fallback).
+        os.environ["GOV_LOG_KEY"] = _TEST_KEY
         # F49 (R11): break-glass tickets are human-provisioned BEFORE the
         # run starts; make_run seals them into the run-start snapshot.
         self.ctx = make_run(break_glass_tickets=[

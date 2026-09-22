@@ -56,14 +56,14 @@ _KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
 
 
 def _pin_dev_key_env():
-    """Pin the documented dev flow: GOV_LOG_KEY=<dev key>,
-    GOV_LOG_KEY_EPOCH=dev."""
+    """Pin the dev flow under R6c: scrub any configured key so the
+    harness double opt-in (tests/__init__: in-code enable_dev_keys() +
+    GOV_DEV_KEYS=1) resolves the public dev key. Explicitly configuring
+    dev material is rejected outright since the KMS milestone (F73)."""
     import gov.log as L
     saved = {n: os.environ.get(n) for n in _KEY_NAMES}
     for n in _KEY_NAMES:
         os.environ.pop(n, None)
-    os.environ["GOV_LOG_KEY"] = "dev"
-    os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
     L._LEDGER_KEYRING = None
     L._LEDGER_ACTIVE = None
 
@@ -420,7 +420,7 @@ class TestF40TotalNormalizer(_R10Case):
         return ctx, ex
 
     def _paraphrase_status(self, ex, ident):
-        r = ex.call(ident, "api_call", endpoint="https://x.example/",
+        r = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/",
                     params={"summary": "the results mention a key"})
         return r["status"], r.get("policy_id")
 
@@ -464,7 +464,7 @@ class TestF40TotalNormalizer(_R10Case):
         ctx, ex = self._ingest({"content": "sunny 21C"})
         ident = ctx["mint_identity"]("mcp", "researcher", "p")
         self.assertFalse(ex._read_sensitive)
-        r = ex.call(ident, "api_call", endpoint="https://x.example/",
+        r = ex.call(ident, "api_call", endpoint="https://x.synthetic.local/",
                     params={"q": "weather"})
         self.assertEqual(r["status"], "executed")
 
@@ -512,13 +512,18 @@ class TestF41ThrowawayQuorum(_R10Case):
         import random
         with tempfile.TemporaryDirectory(prefix="govr10-") as td:
             led = str(Path(td) / "ledger.jsonl")
-            EP = "https://shard0.collector.example/ingest"
+            EP = "https://shard0.collector.synthetic.local/ingest"
             rng = random.Random("r10f41")
 
             def tok():
-                return "".join(rng.choice(
-                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                    "0123456789") for _ in range(32))
+                # Fresh random token per call (w11 shape), drawn from a
+                # 12-symbol alphabet so per-call values stay distinct for
+                # the per-principal detector while staying under F99's
+                # high-entropy-payload threshold: this test isolates the
+                # F41 cross-principal quorum and must not trip the
+                # orthogonal F99 framed-secret control (a 62-alphabet
+                # random token would legitimately queue for review).
+                return "".join(rng.choice("abcdef012345") for _ in range(32))
 
             def run_as(principal):
                 ctx = make_run(ledger_path=led)
@@ -550,7 +555,7 @@ class TestF41ThrowawayQuorum(_R10Case):
         # second run joins the quorum.
         with tempfile.TemporaryDirectory(prefix="govr10-") as td:
             led = str(Path(td) / "ledger.jsonl")
-            EP = "https://shard0.collector.example/ingest"
+            EP = "https://shard0.collector.synthetic.local/ingest"
             st = []
             # Round 1: each principal's first run.
             for run in range(3):
@@ -578,7 +583,7 @@ class TestF41ThrowawayQuorum(_R10Case):
         # throwaway attack and no longer form a quorum.
         with tempfile.TemporaryDirectory(prefix="govr10-") as td:
             led = str(Path(td) / "ledger.jsonl")
-            EP = "https://shard0.collector.example/ingest"
+            EP = "https://shard0.collector.synthetic.local/ingest"
             st = []
             for run in range(3):
                 ctx = make_run(ledger_path=led)

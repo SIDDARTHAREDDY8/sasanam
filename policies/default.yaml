@@ -14,8 +14,8 @@ version: 2
 # what the rules below say.
 roles:
   support: [read_file, send_email]
-  coder: [read_file, write_file, delete_file, api_call]
-  researcher: [read_file, api_call, http_post, send_email]
+  coder: [read_file, write_file, delete_file, api_call, install_package]
+  researcher: [read_file, api_call, http_post, send_email, install_package]
   scout: [read_file, api_call]
   triage: [read_file, write_file]
   builder: [read_file, write_file, delete_file]
@@ -57,6 +57,42 @@ approvals:
     - egress_violation
     - secret_access_attempt
     - break_glass
+  # D1-core: human delegation of approval stewardship. Disabled by
+  # default (opt-in): the out-of-box posture is today's single-decider
+  # queue. Set enabled: true (and max_hops, 1-5, default 1) to let a
+  # pending approval's current assignee reassign it to another
+  # principal. Delegation can never route back to the requesting agent
+  # (agent_id/principal exact match); on quorum-collecting records it
+  # transfers one vote slot, never decision power. No quorum section
+  # here: M-of-N gating is opt-in per deployment (approvals.quorum).
+  delegation:
+    enabled: false
+    max_hops: 1
+
+# P10 (wave-24): AUTHORITY delegation — agent→agent grants of tool-call
+# authority via DelegationStore (gov/approvals.py). This is a DIFFERENT
+# primitive from approvals.delegation above (D1-core: human reassignment
+# of approval-queue stewardship); the two must not be confused.
+# Disabled by default (opt-in): the out-of-box posture is today's
+# label-only on_behalf_of/delegated_by framing. Set enabled: true to
+# mint MAC-bound, server-side grants: delegate_grant() enforces
+# no-amplification against the live policy at mint (a grant can never
+# confer authority the delegator lacks), require_approval flags
+# propagate into the grant scope (delegation never bypasses the queue),
+# and the delegatee's identity must exactly match at invocation
+# (delegatee_mismatch refusal is load-bearing: the grant id is not a
+# bearer token). Human powers (decide/cast_vote/break_glass) are never
+# delegable. max_depth 1..3 (1 = single hop, no sub-delegation).
+# unscoped_delegation: flag = today's label-only behavior for framing
+# claims without a grant (lint warns: P10 residual); deny = such calls
+# are refused before execution (recommended past the prototype line).
+delegation:
+  enabled: false
+  default_ttl_minutes: 60
+  max_ttl_minutes: 240
+  max_depth: 1
+  require_provisioned_for: []
+  unscoped_delegation: flag
 
 # F18: campaign allowlist — admin-controlled exemptions for benign
 # repetitive api_call traffic (e.g. a health poller). Each entry is
@@ -96,13 +132,67 @@ policies:
     reason: File deletes outside the run sandbox are denied.
 
   - id: deny-egress-unallowlisted
-    description: Deny outbound sends/posts to non-allowlisted domains.
+    description: Deny outbound sends/posts/API calls to non-allowlisted domains.
     effect: deny
     flag: egress_violation
     match:
-      tool: [send_email, http_post]
+      tool: [send_email, http_post, api_call]
       domain_allowlisted: false
     reason: Outbound destination is not on the egress allowlist.
+
+  - id: deny-platform-egress-unallowlisted
+    description: Deny harness-initiated (non-tool-call) platform egress to non-allowlisted destinations (F110, ZCode class).
+    effect: deny
+    flag: platform_egress_violation
+    match:
+      platform_egress: true
+      domain_allowlisted: false
+    reason: Harness-initiated platform egress to a non-allowlisted destination is denied (F110).
+
+  - id: credential_identity_mismatch
+    description: Deny api_call/http_post carrying a credential not bound to the provisioned session identity (F111, GTG-50020 class).
+    effect: deny
+    flag: credential_identity_mismatch
+    match:
+      tool: [api_call, http_post]
+      credential_identity_mismatch: true
+    reason: Egress carries a credential not bound to the provisioned session identity (F111).
+
+  - id: allow-platform-egress-allowlisted
+    description: Allow harness-initiated platform egress to allowlisted destinations when presented with a valid consent token (F110).
+    effect: allow
+    match:
+      platform_egress: true
+      domain_allowlisted: true
+    reason: Consented platform egress to an allowlisted destination (F110).
+
+  - id: deny-ungoverned-package-fetch
+    description: Deny raw package-registry fetches via api_call/http_post; the governed install_package tool is the only sanctioned install path (P7).
+    effect: deny
+    flag: install_ungoverned_fetch
+    match:
+      tool: [api_call, http_post]
+      package_fetch: true
+    reason: Raw fetch from a package registry is not governed (no allowlist/pin/integrity check). Use the install_package tool, which verifies the package against the agent-runtime pin set.
+
+  - id: deny-install-not-allowlisted
+    description: Deny install_package calls for packages (name+version) not in the agent-runtime pin set.
+    effect: deny
+    flag: install_not_allowlisted
+    match:
+      tool: [install_package]
+      install_allowlisted: false
+    reason: Package name/version is not in the governed allowlist (exact pins only; "latest" never resolves). Dependency-confusion/typosquat shape.
+
+  - id: deny-install-integrity-mismatch
+    description: Deny install_package calls whose fetched artifact does not hash to the pinned digest.
+    effect: deny
+    flag: install_integrity_mismatch
+    match:
+      tool: [install_package]
+      install_allowlisted: true
+      install_integrity_verified: false
+    reason: Fetched artifact bytes do not match the pinned sha256 — possible registry tampering. Install refused.
 
   - id: deny-tainted-delete
     description: Deny deletes once the run has ingested tool output.
@@ -146,7 +236,7 @@ policies:
     match:
       tool: [api_call]
       read_sensitive: true
-    reason: Run previously read content matching DLP sensitive patterns; this api_call may exfiltrate a paraphrase or summary. Human review required. (api_call destinations are not allowlisted by policy, so this fires regardless of endpoint.)
+    reason: Run previously read content matching DLP sensitive patterns; this api_call may exfiltrate a paraphrase or summary. Human review required. (F94: deny-egress-unallowlisted denies non-allowlisted api_call endpoints first, so this fires only for allowlisted endpoints.)
 
   - id: approval-cross-run-campaign
     description: Small high-entropy api_call fragments — or the same api_call structure repeated thinly across runs — to the same registered domain may be a low-and-slow campaign.
@@ -157,6 +247,14 @@ policies:
       cross_run_campaign: true
     reason: Per-principal egress ledger shows K small high-entropy fragments, or K same-structured api_calls regardless of payload size or entropy (shape-evading: oversize padding, unary encoding), to this registered domain across runs inside the time window; possible credential-sharding campaign. Heuristic — queue for human review, never deny.
 
+  - id: approval-velocity-guard
+    description: Cross-run per-principal send/write/egress velocity reached the configured threshold.
+    effect: require_approval
+    flag: velocity_exceeded
+    match:
+      velocity_exceeded: true
+    reason: Per-principal egress ledger shows send/write/egress volume across runs inside the velocity window at or above the configured threshold; possible low-and-slow exfiltration spread over many runs. Heuristic — queue for human review, never deny.
+
   - id: approval-tainted-action
     description: Actions on untrusted-influenced runs need a human.
     effect: require_approval
@@ -164,6 +262,49 @@ policies:
       tool: [delete_file, send_email, http_post]
       source_untrusted: true
     reason: Run has ingested untrusted tool output; human review required.
+
+  # F99 (Wave 27): the api_call-specific sibling of approval-outbound-sends.
+  # http_post/send_email are blanket-queued outbound, but api_call is the
+  # generic tool-call path, so blanket queueing would drown the queue and
+  # kill allow-api's honest-traffic contract. This rule scopes the
+  # approval gate to the DLP-blind channel: a high-entropy token-like
+  # run (>=20 chars, entropy > 4.3 — the F2/F8 tripwire's FP-analyzed
+  # boundary) in the params with no credential keyword nearby. F106:
+  # the endpoint URL's query values and path segments are scanned too
+  # (per query-value / path-segment, raw and percent-decoded — the F94
+  # allowlist matches hostname only, so the URL is a first-class exfil
+  # channel). Effect
+  # is require_approval, never deny: without a keyword the signal can
+  # only justify human review. Honest FP class: agents that routinely
+  # POST opaque tokens (session IDs, bearer tokens) to allowlisted
+  # endpoints will see queue items — review, not block. Measured
+  # 2026-09-22: pagination cursors, Stripe-like path IDs, and
+  # high-entropy tokens under neutral query keys queue; git-SHA/UUID
+  # paths, plain queries, and short oauth codes execute. API keys and
+  # AKIA-style credentials in URLs never reach this rule — the F2
+  # known-pattern / keyword-adjacent DLP block denies first
+  # (pre-existing, unchanged by this rule's F106 extension).
+  # Known residuals:
+  # (1) the secret split into <20-char chunks across params in one call
+  # evades the per-run scan (cross-field join is deliberately not
+  # entropy-scanned, the F2/F8 boundary); (2) heavy low-entropy padding
+  # around the token in the same value lowers the run entropy below 4.3;
+  # (3) low-entropy paraphrase of a secret stays invisible — that shape
+  # is covered only when a read happened (approval-sensitive-read-before-api);
+  # (4) low-alphabet ENCODINGS of a secret (hex, base32) evade by
+  # construction — the hex alphabet caps entropy at 4.0 < 4.3 — and
+  # decode-and-rescan cannot separate honest from adversarial hex
+  # (measured 2026-09-22: honest SHA-256 decodes to per-byte entropy
+  # 4.875, adversarial 32-byte secret to 4.938 — same distribution, no
+  # threshold separates them), so encoding is the accepted price of
+  # the FP boundary (F105, CLOSED as documented residual 2026-09-22).
+  - id: approval-api-high-entropy
+    description: api_call carrying an unknown-format high-entropy token needs approval.
+    effect: require_approval
+    match:
+      tool: [api_call]
+      high_entropy_payload: true
+    reason: api_call params or endpoint URL carry a high-entropy token-like run with no credential keyword nearby — the unknown-format/paraphrase exfil channel DLP cannot name (F99; endpoint URL covered since F106). Same queue semantics as approval-outbound-sends for the http_post twin; ordinary low-entropy API reads still execute via allow-api.
 
   - id: approval-outbound-sends
     description: All outbound sends and posts need a human.
@@ -173,6 +314,15 @@ policies:
     reason: Outbound communication requires human approval.
 
   # -------------------------------- ALLOW --------------------------------
+  - id: allow-verified-install
+    description: Governed package installs (allowlisted name+version, artifact integrity verified) are allowed.
+    effect: allow
+    match:
+      tool: [install_package]
+      install_allowlisted: true
+      install_integrity_verified: true
+    reason: Package is in the governed pin set and the fetched artifact hashes to the pin.
+
   - id: allow-sandbox-writes
     description: Writes inside the sandbox are allowed.
     effect: allow

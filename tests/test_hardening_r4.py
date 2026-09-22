@@ -93,7 +93,7 @@ class TestF13RegisteredDomainCampaign(unittest.TestCase):
 
     def test_rotated_subdomain_campaign_queues_third(self):
         ledger = _ledger()
-        eps = ["https://shard%d.collector.example/x" % i for i in range(3)]
+        eps = ["https://shard%d.collector.synthetic.local/x" % i for i in range(3)]
         rs = [self._rotated_call(ledger, i, ep) for i, ep in enumerate(eps)]
         self.assertEqual([r["status"] for r in rs],
                          ["executed", "executed", "queued"])
@@ -102,7 +102,7 @@ class TestF13RegisteredDomainCampaign(unittest.TestCase):
 
     def test_exact_endpoints_preserved_for_forensics(self):
         ledger = _ledger()
-        eps = ["https://shard%d.collector.example/x" % i for i in range(2)]
+        eps = ["https://shard%d.collector.synthetic.local/x" % i for i in range(2)]
         for i, ep in enumerate(eps):
             self._rotated_call(ledger, i, ep)
         import json
@@ -110,7 +110,7 @@ class TestF13RegisteredDomainCampaign(unittest.TestCase):
                    if line.strip()]
         self.assertEqual([r["endpoint"] for r in records], eps)
         self.assertEqual({r["campaign_domain"] for r in records},
-                         {"collector.example"})
+                         {"synthetic.local"})
 
     def test_public_suffix_heuristic_boundary_documented(self):
         # F20 (Round 5): the public-suffix false positive is CLOSED — the

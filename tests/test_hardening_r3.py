@@ -103,15 +103,28 @@ class TestF8DecoderGapClosed(unittest.TestCase):
             b"the quick brown fox jumps over the lazy dog").decode()
         self.assertIsNone(dlp.find_credential(blob))
         r, _ = _api_call({"note": blob})
-        self.assertEqual(r["status"], "executed")
+        # F99 (Wave 27) contract change: DLP still does not BLOCK this,
+        # but the high-entropy token now queues for human review under
+        # approval-api-high-entropy instead of executing silently.
+        self.assertEqual(r["status"], "queued")
+        self.assertEqual(r.get("policy_id"), "approval-api-high-entropy")
 
     def test_cross_field_join_does_not_tripwire(self):
         """The joined buffer uses strict rules only: a keyword in one
         field plus a token in another must NOT manufacture a heuristic
-        tripwire hit across the join."""
+        tripwire hit across the join.
+
+        F99 (Wave 27) contract change: the token alone in "tok" now
+        queues for human review under approval-api-high-entropy (the
+        keyword-free framed-secret gate) — but the JOIN still
+        manufactures nothing: a manufactured tripwire would DENY via
+        DLP, and this queues instead. The F8 boundary holds at the
+        deny level; review-gating is the new, weaker consequence.
+        """
         token = "Zx9qWv2mNb4Vc8Xk1Lp3Qs7Td5RfG"
         r, _ = _api_call({"note": "my api_key is below", "tok": token})
-        self.assertEqual(r["status"], "executed")
+        self.assertEqual(r["status"], "queued")
+        self.assertEqual(r.get("policy_id"), "approval-api-high-entropy")
 
     def test_cross_field_join_needs_real_credential(self):
         """Joining two innocent halves of nothing stays innocent."""

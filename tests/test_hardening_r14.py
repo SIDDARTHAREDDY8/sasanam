@@ -262,6 +262,10 @@ class TestF62AdapterDivergence(unittest.TestCase):
                         registry=dict(DEFAULT_MCP_REGISTRY))
 
     def test_real_langchain_bcc_credential_reaches_dlp(self):
+        # Requires pydantic + langchain-core; skipped without them.
+        from evals.real_adapters import _HAVE_LANGCHAIN, _HAVE_PYDANTIC
+        if not (_HAVE_LANGCHAIN and _HAVE_PYDANTIC):
+            self.skipTest("pydantic/langchain-core not installed")
         # AWS-docs example key: synthetic, triggers the DLP pattern.
         kw = {"to": "x@synthetic.local", "subject": "s", "body": "routine",
               "bcc": "AKIAIOSFODNN7EXAMPLE"}

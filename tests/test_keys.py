@@ -165,6 +165,33 @@ class DevKeyGatingTest(unittest.TestCase):
         self.assertEqual(ring.active().epoch, "env")
         self.assertNotEqual(ring.active().epoch, "dev")
 
+    def test_require_production_key_unset_fails_closed(self):
+        with self.assertRaises(NoKeyConfiguredError):
+            keys.require_production_key()
+        # The GOV_DEV_KEYS opt-in is irrelevant on this path: dev keys
+        # are structurally unreachable here.
+        os.environ["GOV_DEV_KEYS"] = "1"
+        with self.assertRaises(NoKeyConfiguredError):
+            keys.require_production_key()
+
+    def test_require_production_key_rejects_configured_dev_material(self):
+        os.environ["GOV_LOG_KEY"] = keys._DEV_KEY_CANONICAL.decode("utf-8")
+        with self.assertRaises(NoKeyConfiguredError):
+            keys.require_production_key()
+
+    def test_require_production_key_rejects_dev_epoch(self):
+        os.environ["GOV_LOG_KEY"] = "something-not-dev-bytes"
+        os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
+        with self.assertRaises(NoKeyConfiguredError):
+            keys.require_production_key()
+
+    def test_require_production_key_accepts_configured_key(self):
+        os.environ["GOV_LOG_KEY"] = "prod-key-here"
+        os.environ["GOV_DEV_KEYS"] = "1"
+        ring = keys.require_production_key()
+        self.assertEqual(ring.active().epoch, "env")
+        self.assertEqual(ring.active().key, b"prod-key-here")
+
 
 class RotationCeremonyTest(unittest.TestCase):
     """rotate -> old logs still verify with old epoch keys; tampered log

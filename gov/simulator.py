@@ -48,6 +48,7 @@ from pathlib import Path
 
 from .log import read_entries
 from .policy import PolicyEngine
+from .dlp import api_call_high_entropy_payload
 
 # Recorded log decision -> coarse policy effect.
 _OLD_EFFECT = {
@@ -136,6 +137,50 @@ def _reconstruct_context(entry, counters, policy):
             return _domain_allowlisted_new_policy(policy, action), None
         if key == "source_untrusted":
             return (entry.get("provenance") == "untrusted_influenced"), None
+        if key == "high_entropy_payload":
+            # F99/F106: deterministic from the recorded args — the same
+            # composed scan the executor runs
+            # (dlp.api_call_high_entropy_payload: params strings
+            # recursive + endpoint URL query values / path segments).
+            # No run-time state is involved, so entries recorded before
+            # the key existed stay reconstructible (unlike taint keys
+            # such as carries_read_content, which honestly go
+            # indeterminate). The snapshot, when present, is
+            # authoritative (checked first above).
+            return api_call_high_entropy_payload(
+                action.get("args") or {}), None
+        if key == "platform_egress":
+            # F110 (wave-34): deterministic from the record shape. The
+            # executor never sets platform_egress on tool calls — only
+            # gov/platform_egress.py sets it on its own direct policy
+            # calls, which create no action-log entry. Every replayed
+            # action-log entry is a tool call, so the honest value is
+            # None (bool(None)==False, the engine's semantics). No
+            # run-time state involved; old entries stay reconstructible.
+            return None, None
+        if key == "credential_identity_mismatch":
+            # F111 (wave-34): deterministic False when the recorded args
+            # carry nothing the identity check could trip on. The
+            # executor's check_egress returns bound (False) whenever
+            # there is no credential_id arg, no credential_owner arg,
+            # and no DLP credential-shaped string among the TOP-LEVEL
+            # string args (it does not recurse into nested dicts —
+            # mirrored exactly here) — regardless of whether a session
+            # identity was provisioned or what the manifest held.
+            # Anything credential-bearing in the args honestly goes
+            # indeterminate: the verdict then depended on
+            # manifest/session state the entry does not record. The
+            # snapshot, when present, is authoritative (checked first
+            # above).
+            args = action.get("args") or {}
+            if ("credential_id" in args or "credential_owner" in args):
+                return None, key
+            from gov import dlp as _dlp_mod
+            for value in args.values():
+                if isinstance(value, str) and _dlp_mod.find_credential(
+                        value):
+                    return None, key
+            return False, None
         return None, key
 
     context = {"role": action["role"], "agent": action["agent_id"]}
@@ -168,6 +213,11 @@ def _domain_allowlisted_new_policy(policy, action):
         elif tool == "send_email":
             to = args.get("to") or ""
             host = to.rsplit("@", 1)[-1].lower() if "@" in to else None
+        elif tool == "api_call":
+            # F94: api_call destinations are allowlisted by policy —
+            # evaluate its ``endpoint`` like http_post's ``url``.
+            host = (urlparse(args.get("endpoint") or "").hostname
+                    or "").lower()
     except Exception:
         host = None
     if not host:

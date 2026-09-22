@@ -36,16 +36,17 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RAW_KEY = "AKIAIOSFODNN7EXAMPLE"
 
 
-class _StrictArgs(BaseModel):
-    """pydantic default: extra="ignore" -- the F62 hole."""
+if LANGCHAIN_AVAILABLE:
+    class _StrictArgs(BaseModel):
+        """pydantic default: extra="ignore" -- the F62 hole."""
 
-    to: str
+        to: str
 
 
-class _AllowArgs(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    class _AllowArgs(BaseModel):
+        model_config = ConfigDict(extra="allow")
 
-    to: str
+        to: str
 
 
 def _support_binding(ctx):
@@ -170,6 +171,9 @@ class TestCellDirHygiene(unittest.TestCase):
         # End-to-end: two real gate cells in a FRESH constrained TMPDIR
         # (subprocess, so tempfile picks up the env) must leave zero new
         # govcell-ledger-*/govred-* dirs behind.
+        # Requires pydantic + langchain-core for the real/langchain path.
+        if not LANGCHAIN_AVAILABLE:
+            self.skipTest("langchain-core not installed")
         script = (
             "import sys; sys.path.insert(0, '.');"
             "from evals.run_evals import run_cell;"
