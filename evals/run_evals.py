@@ -30,6 +30,8 @@ from evals.r12_probes import register_r12  # noqa: E402
 from evals.w14_probes import register_w14  # noqa: E402
 from evals.r13_probes import register_r13  # noqa: E402
 from evals.r14_probes import register_r14  # noqa: E402
+from evals.w16_probes import register_w16  # noqa: E402
+from evals.r15_probes import register_r15  # noqa: E402
 from evals.w15_probes import register_w15  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
@@ -70,37 +72,75 @@ HARNESSES = {"provisional": _make_provisional, "real": _make_real}
 
 _CELL_LEDGER_DIR = None
 
+# F65 (R15): explicit per-cell registry of every temp dir the harness
+# creates for the current cell. _cell_make_run() registers the ledger
+# dir and each run dir (so _spawn() confederate dirs are tracked too);
+# run_cell()'s finally removes exactly these via _cleanup_cell_dirs.
+# Probe-internal scratch the registry never sees (direct make_run() /
+# mkdtemp calls inside playbooks) is caught by the _sweep_new_tmpdirs
+# backstop in run_cell(). Reset at the start of every cell.
+_CELL_DIRS = []
+
+
+def _cell_track_dir(path):
+    """Register one harness-created temp dir for per-cell cleanup."""
+    _CELL_DIRS.append(str(path))
+    return path
+
+
 def _cell_make_run():
     global _CELL_LEDGER_DIR
     if _CELL_LEDGER_DIR is None:
         _CELL_LEDGER_DIR = tempfile.mkdtemp(prefix="govcell-ledger-")
-    return make_run(
+        _cell_track_dir(_CELL_LEDGER_DIR)
+    ctx = make_run(
         ledger_path=os.path.join(_CELL_LEDGER_DIR, "egress_ledger.jsonl"))
+    _cell_track_dir(ctx["run_dir"])
+    return ctx
 
 
 def _cleanup_cell_dirs(*paths):
-    """Remove per-cell temp dirs created by this gate run.
+    """Remove exactly the given per-cell temp dirs (explicit tracking).
 
-    Called in a finally block after each cell completes. Only removes
-    dirs the harness itself created for that cell (basenames starting
-    with ``govcell-ledger-`` or ``govred-``); anything else is left
-    untouched, and missing paths are tolerated. Set
-    ``GOV_KEEP_CELL_DIRS=1`` to retain the dirs for debugging
-    (default: clean). Without this, every gate run leaks hundreds of MB
-    of per-cell run dirs into TMPDIR and can ENOSPC a small /tmp,
-    making the ship-gate verdict environment-dependent.
+    Called in a finally block after each cell completes. F65 (R15)
+    replaced the old prefix allowlist (govred-/govcell-ledger- only)
+    with explicit tracking: the caller passes the registry of dirs the
+    harness actually created, and they are removed regardless of
+    prefix. Only directories strictly inside the process temp dir are
+    removed; missing paths are tolerated. Set ``GOV_KEEP_CELL_DIRS=1``
+    to retain the dirs for debugging (default: clean).
     """
     if os.environ.get("GOV_KEEP_CELL_DIRS") == "1":
         return
+    tmp = os.path.realpath(tempfile.gettempdir())
     for path in paths:
         if not path:
             continue
-        p = str(path)
-        base = os.path.basename(p.rstrip(os.sep))
-        if not (base.startswith("govcell-ledger-")
-                or base.startswith("govred-")):
+        p = os.path.realpath(str(path))
+        if p == tmp or not p.startswith(tmp + os.sep):
+            continue
+        if not os.path.isdir(p) or os.path.islink(p):
             continue
         shutil.rmtree(p, ignore_errors=True)
+
+
+def _sweep_new_tmpdirs(tmpdir, before):
+    """Remove directories that appeared in the temp dir during the cell.
+
+    Backstop for probe-internal scratch: tempfile.mkdtemp / make_run()
+    calls inside playbooks that the per-cell registry never sees (the
+    F65 leak was ~2,111 such dirs per gate run). Only directories are
+    removed; files are left alone. This relies on the gate protocol's
+    FRESH empty TMPDIR: anything new during a cell is harness-created.
+    """
+    try:
+        after = set(os.listdir(tmpdir))
+    except OSError:
+        return
+    for name in sorted(after - before):
+        p = os.path.join(tmpdir, name)
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p, ignore_errors=True)
 
 
 MCP_REGISTRY = dict(DEFAULT_MCP_REGISTRY)
@@ -2498,6 +2538,16 @@ register_w15(PLAYBOOKS, _w7_playbook)
 # historical record.
 register_r14(PLAYBOOKS, _w7_playbook)
 
+# Wave-16 probes: sit96-sit103 are new situations (no overrides of
+# earlier waves); see evals/w16_probes.py.
+register_w16(PLAYBOOKS, _w7_playbook)
+
+# Round-15 closure probes override the wave-16 attack baseline for
+# sit96-sit103 (F65-F68 CLOSED; sit96-sit98 reconfirmed); see
+# evals/r15_probes.py. evals/w16_probes.py stays UNCHANGED as the
+# historical record.
+register_r15(PLAYBOOKS, _w7_playbook)
+
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 
 
@@ -2510,13 +2560,18 @@ def run_cell(sit_id, adapter_name, priv, harness_name):
                 "expected_verdict": "unknown", "outcomes": {}}
     expected_verdict = expected_map[(adapter_name, priv)][0]
 
-    global _CELL_LEDGER_DIR
+    global _CELL_LEDGER_DIR, _CELL_DIRS
     _CELL_LEDGER_DIR = None
+    _CELL_DIRS = []
+    # F65 (R15): snapshot the temp dir so the finally block can sweep
+    # probe-internal scratch the registry never sees. Gate protocol
+    # runs on a fresh empty TMPDIR, so new entries are harness-created.
+    tmpdir = tempfile.gettempdir()
+    try:
+        tmp_before = set(os.listdir(tmpdir))
+    except OSError:
+        tmp_before = set()
     ctx = _cell_make_run()
-    # Dirs this cell created: the cell ledger dir and the run's own
-    # govred-* dir. Removed in the finally block so a cell never leaks
-    # disk even when it raises (ENOSPC was flipping gate verdicts).
-    cell_dirs = [_CELL_LEDGER_DIR, ctx["run_dir"]]
     try:
         role = PRIV_ROLE[priv]
         ident = ctx["mint_identity"]("adv-%s-%s" % (sit_id, priv), role,
@@ -2528,7 +2583,14 @@ def run_cell(sit_id, adapter_name, priv, harness_name):
         return {"passed": passed, "notes": notes,
                 "expected_verdict": expected_verdict, "outcomes": outcomes}
     finally:
-        _cleanup_cell_dirs(*cell_dirs)
+        # F65 (R15): remove every dir the harness created for this
+        # cell — the registered cell dirs first, then a sweep for any
+        # probe-internal scratch (mkdtemp/make_run inside playbooks).
+        # A cell never leaks disk even when it raises (ENOSPC was
+        # flipping gate verdicts).
+        _cleanup_cell_dirs(*_CELL_DIRS)
+        if os.environ.get("GOV_KEEP_CELL_DIRS") != "1":
+            _sweep_new_tmpdirs(tmpdir, tmp_before)
 
 def main():
     results = []

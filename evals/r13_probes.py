@@ -20,6 +20,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -360,6 +361,9 @@ def _r13_demo_honesty():
         out = buf.getvalue()
     finally:
         os.chdir(prev)
+        # F65 (R15): the demo scratch dir was never removed (one
+        # gov-r13-demo-* dir leaked per gate run). Clean it here.
+        shutil.rmtree(tmpd, ignore_errors=True)
     result_lines = [l for l in out.splitlines()
                     if l.startswith("RESULT:")]
     o["e2e_default_shape"] = (

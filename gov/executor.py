@@ -93,7 +93,7 @@ from .identity import (
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
 )
-from .log import read_entries, read_entries_with_stats
+from .log import read_entries, read_entries_with_stats, verify_chain
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
@@ -1680,32 +1680,38 @@ class ToolExecutor:
             return self._audit_lock_refusal_local(flag, reason, now)
 
     def _log_shows_recent_lock_refusal(self, flag):
-        """F60 (R14): True when the tamper-evident action log already
-        holds an ``approval_sweep_refused`` entry for ``flag`` inside
-        the coalesce window.
+        """F60 (R14) / F60-followup (R15): True when the tamper-evident
+        action log already holds a CHAIN-VERIFIED
+        ``approval_sweep_refused`` entry for ``flag`` inside the
+        coalesce window.
 
         The log is append-only and HMAC-chained — the F52 run-dir
         writer cannot silently erase its refusal entries the way it
         can corrupt the sidecar state file — so a recent entry is a
         trustworthy "already audited" signal for the F60 fallback.
+
+        F60-followup (R15): suppression now requires the log to FULLY
+        verify (``verify_chain`` ok). The R14 honest residual was real:
+        a run-dir writer could PLANT a MAC-invalid
+        ``approval_sweep_refused`` line and corrupt the state file to
+        suppress the re-audit. Now a planted line — or any broken,
+        invalid, or otherwise unverifiable chain — falls back to LOUD
+        re-audit (return False here), never silent suppression. The
+        sweep still refuses fail-closed either way.
+
         Malformed lines are skipped (F63); entries with unparseable or
         missing timestamps count as no-recent (fail-loud: at most one
         extra audit entry). Future-dated entries never suppress — only
         genuinely recent ones do.
-
-        Honest residual: a run-dir writer can PLANT a MAC-invalid
-        ``approval_sweep_refused`` line and corrupt the state file to
-        suppress the re-audit. The planted line fails ``_verify``
-        loudly (independent detection), and the sweep still refuses
-        fail-closed — the suppression only quiets the re-audit, and
-        only while the state corruption is actively maintained.
-
-        F63: malformed physical lines are skipped, not fatal — a
-        poisoned log plus an unusable sidecar must not crash the
-        sweep (the skip is counted by the reconciler's tolerant
-        read; here an unparseable line simply counts as no-recent,
-        so the sweep audits once, fail-loud).
         """
+        try:
+            ok, _broken_seq, _n = verify_chain(self.log.path)
+        except OSError:
+            return False
+        if not ok:
+            # Broken/unverifiable chain: the "already audited" signal is
+            # untrustworthy. Fail LOUD — audit once more.
+            return False
         try:
             entries, _malformed = read_entries_with_stats(self.log.path)
         except OSError:

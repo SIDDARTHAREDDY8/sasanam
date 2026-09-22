@@ -26,8 +26,11 @@ real bodies — are ingested into the run's provenance/taint store exactly
 like native results, so a sensitive server response taints the run and a
 follow-up paraphrase api_call hits the sensitive-read-before-api gate.
 
-No network, no clock dependence. Deterministic: key env is pinned in
-setUp and restored afterwards.
+No network. Forged approval records use a relative 'now' UTC timestamp
+so they stay inside the 24h approval TTL (a hard-coded date rotted past
+the TTL on 2026-09-22; the forgery residual is what is measured, not
+expiry). Otherwise deterministic: key env is pinned in setUp and
+restored afterwards.
 """
 
 import asyncio
@@ -36,6 +39,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -53,6 +57,15 @@ from gov.approvals import (  # noqa: E402
 from gov.policy import PolicyDecision  # noqa: E402
 
 _KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
+
+
+def _fresh_utc_z():
+    """Relative 'now' UTC timestamp in the Z-suffixed ISO shape forged
+    approval records use. Hard-coded 2026-09-21 dates rot past the 24h
+    approval TTL (wall-clock rot, fixed 2026-09-22): the forged record
+    must be fresher than the TTL for the test to measure the dev-key
+    forgery residual rather than expiry."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _pin_dev_key_env():
@@ -258,7 +271,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
                     "body": "b" * 10}
             eb = 500
             rec = {
-                "id": "devforge1", "ts": "2026-09-21T00:00:01Z",
+                "id": "devforge1", "ts": _fresh_utc_z(),
                 "run_id": q.run_dir.name, "agent_id": "adv-x",
                 "role": "support",
                 "identity": {"agent_id": "adv-x", "role": "support",
@@ -274,7 +287,7 @@ class TestF34KeyedApprovalDigest(_R9Case):
                 "digest_scheme": APPROVAL_DIGEST_SCHEME,
                 "egress_bytes": eb,
                 "status": "approved", "decided_by": "human-operator",
-                "decided_at": "2026-09-21T00:00:01Z",
+                "decided_at": _fresh_utc_z(),
                 "decision_reason": "looks fine", "executed": False,
                 "policy_context": {"domain_allowlisted": True},
                 "flood_suspect": False, "break_glass": False,

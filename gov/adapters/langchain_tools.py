@@ -129,6 +129,17 @@ class GovernedStructuredTool(_structured_tool_base()):
         super().__setattr__(name, value)
 
     def _mediate(self, kwargs):
+        # F68 (R15): re-check the EFFECTIVE args_schema's extra behavior
+        # IMMEDIATELY before mediation. Construction and __setattr__
+        # reassignment are already guarded (F62), but a post-construction
+        # mutation that bypasses __setattr__ — object.__setattr__(tool,
+        # "args_schema", StrictSchema), or model_config["extra"]="ignore"
+        # followed by model_rebuild(force=True) — would otherwise
+        # silently drop undeclared kwargs (e.g. a smuggled credential)
+        # before mediation, the DLP scan, and the approval record. Fail
+        # closed unless undeclared extras are allowed.
+        if not _args_schema_allows_undeclared(self.args_schema):
+            raise ValueError(_f62_schema_error(self.args_schema))
         if self._facade is None:
             # Defensive: a GovernedStructuredTool must always be built via
             # make_governed_tool. Fail closed rather than run unmediated.

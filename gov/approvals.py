@@ -1301,7 +1301,7 @@ class ApprovalQueueRiskMixin:
                     "are not entitled (F55/F59); the deployment-"
                     "provisioned session identity OBJECT is required")
         elif (self._registry_configured
-                and not self._break_glass_unprotected_warned):
+                and self._break_glass_unprotected_warn_once()):
             # F64 (R14): registry mode WITHOUT a provisioned session
             # identity is a SILENT weak mode — break-glass runs with NO
             # identity entitlement checks (the documented F55
@@ -1310,7 +1310,9 @@ class ApprovalQueueRiskMixin:
             # loud on stderr AND an audited entry, once per queue.
             # registry-without-session-identity is explicitly
             # unsupported for production deployments.
-            self._break_glass_unprotected_warned = True
+            # F67 (R15): the flag lives in ApprovalQueue's name-mangled
+            # slot (read-only property, no setter); only the helper
+            # below can transition it, exactly once.
             warn_msg = (
                 "GOVERNANCE WARNING: PrincipalRegistry is configured "
                 "but NO session identity was provisioned — break-glass "
@@ -1734,7 +1736,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # break_glass warn loudly when it runs in registry mode WITHOUT
         # a provisioned session identity — a silent weak mode otherwise.
         self._registry_configured = False
-        self._break_glass_unprotected_warned = False
+        # F67 (R15): the weak-mode warning flag lives in the name-mangled
+        # slot __break_glass_unprotected_warned and is exposed as a
+        # READ-ONLY property (no setter) — see _break_glass_unprotected_warned
+        # below. Internal code transitions it False->True exactly once.
+        self.__break_glass_unprotected_warned = False
         # F49 (R11): write-once snapshot of the human-provisioned
         # break-glass ticket store, taken at run start (first
         # ToolExecutor construction). None = not yet snapshotted.
@@ -1793,6 +1799,40 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         not a sandbox boundary against hostile in-process code.
         """
         return self.__session_identity
+
+    @property
+    def _break_glass_unprotected_warned(self):
+        """F67 (R15): the weak-mode warning flag as a READ-ONLY property.
+
+        There is deliberately NO setter: ``queue._break_glass_unprotected_warned
+        = True`` raises ``AttributeError`` instead of silently disarming
+        the F64 one-time stderr warning and the ``break_glass_unprotected``
+        audit entry while the ticket still consumes (the F67 audit-evasion
+        attack shape). The value lives in the name-mangled slot
+        ``_ApprovalQueue__break_glass_unprotected_warned``, transitioned
+        False->True exactly once by ``break_glass`` itself.
+
+        Honest residual (documented): an in-process attacker who knows
+        the mangled name can still force-write the slot with
+        ``object.__setattr__`` — the same class of primitive as
+        monkeypatching the module, outside the Python-level
+        hostile-in-process threat model (see F59 residual).
+        """
+        return self.__break_glass_unprotected_warned
+
+    def _break_glass_unprotected_warn_once(self):
+        """F67 (R15): check-and-set for the weak-mode warning flag.
+
+        Returns True exactly once per queue (the first call transitions
+        the name-mangled slot False->True); later calls return False.
+        Defined on ApprovalQueue so the mangled slot is unambiguous
+        (break_glass itself lives on ApprovalQueueRiskMixin, which
+        mangles differently) — this helper is the ONLY writer.
+        """
+        if self.__break_glass_unprotected_warned:
+            return False
+        self.__break_glass_unprotected_warned = True
+        return True
 
     def note_registry_configured(self):
         """F64 (R14): record that a PrincipalRegistry is configured.
@@ -2492,24 +2532,52 @@ def _resolve_rundir(args):
     return Path(args.rundir)
 
 
-def _print_decision_target(r):
-    """F61 (R14): the human decision view — the FULL record content the
-    decision will authorize, never truncated.
+_DECISION_TARGET_CAP_BYTES = 65536  # F66 (R15): default human-view cap.
 
-    Prints the complete canonical args JSON (the exact bytes the
-    approval digest covers and execution will use) plus ``args_sha256``
-    — the sha256 of those exact UTF-8 bytes — so the operator can
-    confirm the content they see is the content that was digested. A
-    marker past the old 400-char cut is visible here verbatim. Any
-    machine/log truncation elsewhere must be explicitly LABELLED
-    truncated; this view never truncates.
+
+def _print_decision_target(r, full=None):
+    """F66 (R15): the human decision view, bounded by default.
+
+    Prints the canonical args JSON (the exact bytes the approval
+    digest covers and execution will use) plus ``args_sha256`` — the
+    sha256 over those exact UTF-8 bytes, ALWAYS computed over the
+    full bytes even when the display is truncated, so the operator can
+    confirm the content they see is the content that was digested.
+
+    The default view is capped at 64KB (``_DECISION_TARGET_CAP_BYTES``)
+    with an explicit TRUNCATED marker stating the shown/total byte
+    counts; set ``GOV_FULL_ARGS=1`` (or pass ``full=True``) to render
+    the full exact bytes. A marker past the old 400-char cut is
+    visible here verbatim in the full view. Any machine/log truncation
+    elsewhere must be explicitly LABELLED truncated.
     """
     canon = _canonical_dumps(r["args"])
-    print("    args (FULL, untruncated — this exact content is what "
-          "the digest covers and execution will use):")
-    print("      %s" % canon)
-    print("    args_sha256: %s" % sha256(
-        canon.encode("utf-8")).hexdigest())
+    raw = canon.encode("utf-8")
+    digest = sha256(raw).hexdigest()
+    if full is None:
+        full = os.environ.get("GOV_FULL_ARGS") == "1"
+    if full or len(raw) <= _DECISION_TARGET_CAP_BYTES:
+        shown = canon
+        truncated = False
+    else:
+        # Cut on a byte boundary; drop a trailing partial UTF-8
+        # sequence so the shown text is always valid and deterministic.
+        shown = raw[:_DECISION_TARGET_CAP_BYTES].decode("utf-8",
+                                                       errors="ignore")
+        truncated = True
+    if truncated:
+        print("    args (TRUNCATED: showing %d of %d bytes — set "
+              "GOV_FULL_ARGS=1 for the full exact content):"
+              % (len(shown.encode("utf-8")), len(raw)))
+    else:
+        print("    args (FULL, untruncated — this exact content is what "
+              "the digest covers and execution will use):")
+    print("      %s" % shown)
+    if truncated:
+        print("    [... TRUNCATED — %d bytes shown of %d total; the "
+              "args_sha256 below covers the FULL bytes]"
+              % (len(shown.encode("utf-8")), len(raw)))
+    print("    args_sha256: %s" % digest)
 
 
 def _find_record_by_id(queue, approval_id):
@@ -2537,10 +2605,12 @@ def _print_records(records, queue=None, anomaly_ids=()):
         print("  ID: %s | agent: %s | tool: %s | status: %s | policy: %s%s%s%s%s"
               % (r["id"], r["agent_id"], r["tool"], r["status"],
                  r["policy_id"], risk_txt, flood_txt, anom_txt, bg_txt))
-        # F61 (R14): the decision view shows the FULL canonical args —
-        # never truncated — plus args_sha256 over the exact bytes the
-        # digest covers. The agent's justification is NEVER on the
-        # routing line (or anywhere unlabeled): it is unverified input.
+        # F61 (R14) / F66 (R15): the decision view shows the canonical
+        # args through the bounded _print_decision_target helper (64KB
+        # default cap with explicit marker; GOV_FULL_ARGS=1 for full) —
+        # plus args_sha256 over the exact bytes the digest covers. The
+        # agent's justification is NEVER on the routing line (or anywhere
+        # unlabeled): it is unverified input.
         _print_decision_target(r)
         print("    provenance: %s" % r.get("provenance", "agent_direct"))
         if queue is not None and r.get("status") == "pending":
@@ -2788,9 +2858,9 @@ def main(argv=None):
         operator_ident = AgentIdentity(agent_id="cli", role="operator",
                                        run_id=run_dir.name,
                                        principal=args.by)
-        # F61 (R14): show the FULL decision target BEFORE the operator
-        # commits to the break-glass — the decision is on the content
-        # below, exactly as digested.
+        # F61 (R14) / F66 (R15): show the bounded decision target
+        # BEFORE the operator commits to the break-glass — the decision
+        # is on the content below, exactly as digested.
         target = _find_record_by_id(queue, args.id)
         if target is not None:
             print("decision target:")
@@ -2815,9 +2885,10 @@ def main(argv=None):
         ids = [i.strip() for i in args.ids.split(",") if i.strip()]
         confirmed = [i.strip() for i in args.confirm_risky.split(",")
                      if i.strip()]
-        # F61 (R14): show every FULL decision target BEFORE the batch
-        # decision — one rationale covers the whole batch, so the
-        # operator must see each item's exact content first.
+        # F61 (R14) / F66 (R15): show every bounded decision target
+        # BEFORE the batch decision — one rationale covers the whole
+        # batch, so the operator must see each item's exact content
+        # first.
         for i in ids:
             target = _find_record_by_id(queue, i)
             if target is not None:
@@ -2866,9 +2937,10 @@ def main(argv=None):
               "(decided_by=auto-approve)")
         return 0
 
-    # F61 (R14): show the FULL decision target BEFORE the decision is
-    # recorded — the decision is on the content below, exactly as
-    # digested (a marker past the old 400-char cut is visible here).
+    # F61 (R14) / F66 (R15): show the bounded decision target BEFORE
+    # the decision is recorded — the decision is on the content below,
+    # exactly as digested (a marker past the old 400-char cut is visible
+    # in the full view).
     target = _find_record_by_id(queue, args.id)
     if target is not None:
         print("decision target:")

@@ -63,6 +63,20 @@ def _env(key=None, epoch=None):
             os.environ.pop("GOV_LOG_KEY_EPOCH", None)
         else:
             os.environ["GOV_LOG_KEY_EPOCH"] = old_e
+@contextlib.contextmanager
+def _owned_run(**kw):
+    """make_run() whose temp dir is removed on exit (F65/R15).
+
+    Probe scratch the per-cell registry never sees: the run dir
+    is removed in the finally even when the probe raises.
+    """
+    ctx = make_run(**kw)
+    try:
+        yield ctx
+    finally:
+        shutil.rmtree(str(ctx["run_dir"]), ignore_errors=True)
+
+
 
 
 def _forge_production_labeled_log(d):
@@ -144,6 +158,7 @@ def _w9_forge():
     return o
 
 
+
 _CHILD_PROBE = r'''
 import sys, os, gc, json
 out = {}
@@ -213,6 +228,7 @@ def _w9_sandbox_introspect():
             o[p + "ppid_env_blocked"] = (
                 str(res.get("ppid_env", "")).startswith("blocked"))
     return o
+
 
 
 def _w9_write_race():
@@ -290,12 +306,12 @@ def _w9_write_race():
     return o
 
 
+
 def _w9_approver_tamper():
     """Brief 4: a compromised approver vs the audit trail."""
     o = {}
-    with _env("w9key", "w9"):
+    with _env("w9key", "w9"), _owned_run() as ctx:
         from types import SimpleNamespace
-        ctx = make_run()
         ex, q, run_dir = ctx["executor"], ctx["approvals"], ctx["run_dir"]
         # F42 (R11): queue() now requires a minted caller identity and
         # ignores the caller-supplied action["identity"] dict.
@@ -358,6 +374,7 @@ def _w9_approver_tamper():
     return o
 
 
+
 def _w9_tooltotool():
     """Brief 5: tool-to-tool handoff — is the result re-scanned at the next
     call's argument boundary?"""
@@ -376,8 +393,7 @@ def _w9_tooltotool():
                 return {"status": "sent (simulated)", "to": args.get("to")}
             return {"note": "noop"}
 
-    with _env("w9key", "w9"):
-        ctx = make_run()
+    with _env("w9key", "w9"), _owned_run() as ctx:
         ex = ctx["executor"]
         be = _Be()
         ex._simulate = be
@@ -411,10 +427,18 @@ def _w9_tooltotool():
     return o
 
 
-def _policy_with_budget(n):
-    """Temp copy of the default policy with max_egress_bytes_per_run=n."""
+
+def _policy_with_budget(n, _track=None):
+    """Temp copy of the default policy with max_egress_bytes_per_run=n.
+
+    F65 (R15): the w9pol-* scratch dir is appended to _track when
+    given so the caller can remove it in a finally.
+    """
     base = (REPO_ROOT / "policies" / "default.yaml").read_text()
-    tmp = Path(tempfile.mkdtemp(prefix="w9pol-")) / "policy.yaml"
+    d = Path(tempfile.mkdtemp(prefix="w9pol-"))
+    if _track is not None:
+        _track.append(str(d))
+    tmp = d / "policy.yaml"
     tmp.write_text(base.replace("max_egress_bytes_per_run: 262144",
                                 "max_egress_bytes_per_run: %d" % n),
                    encoding="utf-8")
@@ -432,6 +456,13 @@ def _w9_drip():
     """
     o = {}
     from gov.executor import ToolExecutor as _TE
+    # F65 (R15): every scratch dir this probe creates (the two
+    # w9pol-* policy dirs) is removed in the finally; the two
+    # run dirs are owned by _owned_run.
+    _pol_dirs = []
+
+    def _budget(n):
+        return _policy_with_budget(n, _track=_pol_dirs)
 
     def _api(i):
         # Deterministic 302-byte payload: endpoint "/v1/x" (5) +
@@ -439,72 +470,76 @@ def _w9_drip():
         return {"endpoint": "/v1/x",
                 "params": {"q": "y" * 280, "i": i}}
 
-    with _env("w9key", "w9"):
-        # --- direct path: the budget trips predictably ----------------
-        ctx = make_run(policy_path=_policy_with_budget(2000))
-        ex = ctx["executor"]
-        q = ctx["approvals"]
-        agent = ctx["mint_identity"]("a1", "researcher", "research-org")
-        o["api_call_bytes_deterministic"] = (
-            _TE._egress_bytes_for("api_call", _api(0)) == 302)
-        direct = [ex.call(agent, "api_call", **_api(i))["status"]
-                  for i in range(4)]
-        # 4 direct executions = 1208 of 2000. The 5th/6th api_calls need
-        # approval (min_external_calls=5): queued, approved, executed ->
-        # 1812. The 7th projects 2114 > 2000 -> denied at the call
-        # boundary with the byte-guard policy id.
-        for i in (4, 5):
-            r = ex.call(agent, "api_call", **_api(i))
-            if r["status"] == "queued":
-                q.decide(r["approval_id"], True, "routine",
-                         decided_by="op")
-                ex.execute_approved()
-        seventh = ex.call(agent, "api_call", **_api(6))
-        o["byte_budget_trips_predictably"] = (
-            direct == ["executed"] * 4
-            and seventh["status"] == "denied"
-            and seventh.get("policy_id") == "volume-guard-egress-bytes"
-            and ex._egress_bytes == 1812)
-        # --- approved path shares the SAME budget ---------------------
-        # A 218-byte DLP-clean email (17 + 1 + 200) no longer fits:
-        # 1812 + 218 = 2030 > 2000. Bytes consumed on the direct path
-        # block the approved path — one shared budget.
-        send = ex.call(agent, "send_email", to="u@synthetic.local",
-                       subject="s", body="z" * 200)
-        o["direct_and_approved_share_budget"] = (
-            send["status"] == "denied"
-            and send.get("policy_id") == "volume-guard-egress-bytes"
-            and ex._egress_bytes == 1812)
+    try:
+        with _env("w9key", "w9"):
+            # --- direct path: the budget trips predictably ----------------
+            with _owned_run(policy_path=_budget(2000)) as ctx:
+                ex = ctx["executor"]
+                q = ctx["approvals"]
+                agent = ctx["mint_identity"]("a1", "researcher", "research-org")
+                o["api_call_bytes_deterministic"] = (
+                    _TE._egress_bytes_for("api_call", _api(0)) == 302)
+                direct = [ex.call(agent, "api_call", **_api(i))["status"]
+                          for i in range(4)]
+                # 4 direct executions = 1208 of 2000. The 5th/6th api_calls need
+                # approval (min_external_calls=5): queued, approved, executed ->
+                # 1812. The 7th projects 2114 > 2000 -> denied at the call
+                # boundary with the byte-guard policy id.
+                for i in (4, 5):
+                    r = ex.call(agent, "api_call", **_api(i))
+                    if r["status"] == "queued":
+                        q.decide(r["approval_id"], True, "routine",
+                                 decided_by="op")
+                        ex.execute_approved()
+                seventh = ex.call(agent, "api_call", **_api(6))
+                o["byte_budget_trips_predictably"] = (
+                    direct == ["executed"] * 4
+                    and seventh["status"] == "denied"
+                    and seventh.get("policy_id") == "volume-guard-egress-bytes"
+                    and ex._egress_bytes == 1812)
+                # --- approved path shares the SAME budget ---------------------
+                # A 218-byte DLP-clean email (17 + 1 + 200) no longer fits:
+                # 1812 + 218 = 2030 > 2000. Bytes consumed on the direct path
+                # block the approved path — one shared budget.
+                send = ex.call(agent, "send_email", to="u@synthetic.local",
+                               subject="s", body="z" * 200)
+                o["direct_and_approved_share_budget"] = (
+                    send["status"] == "denied"
+                    and send.get("policy_id") == "volume-guard-egress-bytes"
+                    and ex._egress_bytes == 1812)
 
-        # --- all three tools covered; approved counts exactly once ----
-        ctx2 = make_run(policy_path=_policy_with_budget(2000))
-        ex2 = ctx2["executor"]
-        q2 = ctx2["approvals"]
-        agent2 = ctx2["mint_identity"]("a2", "researcher", "research-org")
-        hp = ex2.call(agent2, "http_post",
-                      url="https://synthetic.local/hook",
-                      payload={"d": "abc"})
-        se = ex2.call(agent2, "send_email", to="u@synthetic.local",
-                      subject="s", body="z" * 200)
-        for r in (hp, se):
-            if r["status"] == "queued":
-                q2.decide(r["approval_id"], True, "routine",
-                          decided_by="op")
-        ex2.execute_approved()
-        for i in range(4):
-            ex2.call(agent2, "api_call", **_api(i))
-        # http_post 40 + send_email 218 + 4x api_call 302 = 1466.
-        o["all_three_tools_covered"] = (
-            ex2._executed.get("http_post") == 1
-            and ex2._executed.get("send_email") == 1
-            and ex2._executed.get("api_call") == 4
-            and ex2._egress_bytes == 40 + 218 + 4 * 302)
-        o["approved_counts_once"] = (
-            ex2._executed.get("http_post") == 1
-            and ex2._executed.get("send_email") == 1)
-        # Every payload above is DLP-clean, and every byte was counted:
-        # cleanliness never bypasses the accounting.
-        o["dlp_clean_still_counted"] = ex2._egress_bytes == 1466
+            # --- all three tools covered; approved counts exactly once ----
+            with _owned_run(policy_path=_budget(2000)) as ctx2:
+                ex2 = ctx2["executor"]
+                q2 = ctx2["approvals"]
+                agent2 = ctx2["mint_identity"]("a2", "researcher", "research-org")
+                hp = ex2.call(agent2, "http_post",
+                              url="https://synthetic.local/hook",
+                              payload={"d": "abc"})
+                se = ex2.call(agent2, "send_email", to="u@synthetic.local",
+                              subject="s", body="z" * 200)
+                for r in (hp, se):
+                    if r["status"] == "queued":
+                        q2.decide(r["approval_id"], True, "routine",
+                                  decided_by="op")
+                ex2.execute_approved()
+                for i in range(4):
+                    ex2.call(agent2, "api_call", **_api(i))
+                # http_post 40 + send_email 218 + 4x api_call 302 = 1466.
+                o["all_three_tools_covered"] = (
+                    ex2._executed.get("http_post") == 1
+                    and ex2._executed.get("send_email") == 1
+                    and ex2._executed.get("api_call") == 4
+                    and ex2._egress_bytes == 40 + 218 + 4 * 302)
+                o["approved_counts_once"] = (
+                    ex2._executed.get("http_post") == 1
+                    and ex2._executed.get("send_email") == 1)
+                # Every payload above is DLP-clean, and every byte was counted:
+                # cleanliness never bypasses the accounting.
+                o["dlp_clean_still_counted"] = ex2._egress_bytes == 1466
+    finally:
+        for d in _pol_dirs:
+            shutil.rmtree(d, ignore_errors=True)
     return o
 
 

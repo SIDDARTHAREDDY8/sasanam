@@ -16,6 +16,7 @@ Read-only on ``gov/`` and everything else.
 import concurrent.futures
 import json
 import random
+from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,6 +51,15 @@ from evals.w11_probes import (  # noqa: E402
     _ObjectResult,
     _CustomSeq,
 )
+
+
+def _fresh_utc_z():
+    """Relative 'now' UTC timestamp in the Z-suffixed ISO shape the
+    forged-record probes use. Hard-coded 2026-09-21 dates rot past the
+    24h approval TTL (wall-clock rot, fixed 2026-09-22): the forged
+    record must be fresher than the TTL for the probe to measure the
+    digest/MAC property rather than expiry."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _r10_forge():
@@ -186,7 +196,7 @@ def _r10_forge():
             "digest_scheme": APPROVAL_DIGEST_SCHEME,
             "egress_bytes": eb,
             "status": "approved", "decided_by": "human-operator",
-            "decided_at": "2026-09-21T00:00:01Z",
+            "decided_at": _fresh_utc_z(),
             "decision_reason": "looks fine", "executed": False,
             "policy_context": {"domain_allowlisted": True},
             "flood_suspect": False,

@@ -131,11 +131,26 @@ class TestCellDirHygiene(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="hy-") as tmp:
             cell, run, other = self._scratch(
                 tmp, "govcell-ledger-abc", "govred-abc", "do-not-touch")
+            # F65 (R15): explicit tracking replaced the old prefix
+            # allowlist — explicitly tracked dirs are removed regardless
+            # of prefix (non-standard probe prefixes must be cleaned).
             _cleanup_cell_dirs(cell, run, other)
             self.assertFalse(Path(cell).exists())
             self.assertFalse(Path(run).exists())
-            self.assertTrue(Path(other).exists(),
-                            "non-harness dirs must never be removed")
+            self.assertFalse(Path(other).exists(),
+                             "tracked dirs are removed even with "
+                             "non-harness prefixes")
+        # Boundary protection (unchanged by F65): an explicitly passed
+        # dir OUTSIDE the active temp root is never removed.
+        with tempfile.TemporaryDirectory(prefix="hy-victim-") as tmp:
+            victim = Path(tmp) / "victim"
+            victim.mkdir()
+            with mock.patch("tempfile.gettempdir",
+                            return_value="/nonexistent-tmp-root-xyz"):
+                _cleanup_cell_dirs(str(victim))
+            self.assertTrue(victim.exists(),
+                            "dirs outside the temp root must never be "
+                            "removed")
 
     def test_cleanup_tolerates_missing_dirs(self):
         from evals.run_evals import _cleanup_cell_dirs
