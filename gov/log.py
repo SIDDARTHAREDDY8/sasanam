@@ -678,3 +678,550 @@ def verify_chain(path):
     """Replay the chain. Returns (ok, broken_seq_or_None, entry_count)."""
     v = _verify(path)
     return v["ok"], v["broken_seq"], v["entries"]
+
+
+# ---------------------------------------------------------------------------
+# F69 (HARDENING-R16): incremental chain-tip verification.
+#
+# The R15 F60 fix requires a full verify_chain() + full log re-read on
+# every refused sweep while the lock-refusal coalescing sidecar is
+# missing/corrupt -- O(n) per sweep, unbounded in log size. A run-dir
+# writer can hold that state with one cheap sidecar-corruption write per
+# sweep, turning every legitimate sweep into a CPU burn (availability
+# only; the sweep still refuses fail-closed).
+#
+# The chain-tip cache makes the repeated case O(new entries): after any
+# successful verification, the (seq, tip hash) of the verified tail is
+# cached next to the log in ``<log>.tip.json``, MAC-authenticated under
+# the log's own HMAC key. The next sweep re-verifies ONLY the entries
+# appended since the cached tip. Anything the cache cannot vouch for --
+# missing/corrupt tip, log shrunk, tip entry mismatch, segment failure --
+# falls back to a FULL verify_chain() (fail-loud, never silent
+# suppression).
+#
+# Soundness notes (why the cached prefix is never blindly trusted):
+#
+# 1. The tip cache is MAC'd (domain-separated "log-tip") under the log
+#    key, so the F52 run-dir writer cannot forge or alter a tip: any
+#    tampering fails the MAC and degrades to full verification.
+# 2. The cached tip only vouches the prefix up to its seq; the sweep's
+#    suppression decision additionally caches the newest verified
+#    ``approval_sweep_refused`` timestamp per flag ("refusals") INSIDE
+#    the MAC'd tip body, and each sweep scans ONLY the freshly
+#    MAC-verified new segment. Prefix entries are never re-read for the
+#    decision, so post-tip content swaps in the prefix (which keep the
+#    hash strings intact) cannot influence it -- and any future full
+#    verification still catches them loudly.
+# 3. The tip entry itself IS re-authenticated every sweep (its MAC is
+#    recomputed), anchoring the new segment's prev_hash chain to
+#    genuinely verified content, not just a matching hash string.
+# 4. The checkpoint (tail-truncation) anchor is re-checked every sweep:
+#    the sidecar prefix bytes are hash-pinned in the tip, new sidecar
+#    lines are fully parsed, and the newest checkpoint's MAC, label,
+#    and log agreement are verified exactly as in _verify.
+# 5. A corrupted tip degrades to full-verify (slower but safe), never
+#    to unverified trust. Residual: an attacker who corrupts the tip
+#    cache itself on every sweep (one extra cheap write) still forces
+#    the full path per sweep -- the tip must live in the attacker-
+#    writable run dir, so this variant is documented, not fixed.
+#
+# Concurrency: tip writes are atomic (temp file + os.replace). Races
+# between concurrent verifiers resolve to last-writer-wins; a stale tip
+# is still a VALID tip (it vouches a genuine prefix), so the next sweep
+# simply verifies a longer segment. Never unsafe, at most slower.
+
+_TIP_CACHE_SUFFIX = ".tip.json"
+
+
+def _tip_cache_path(path):
+    return Path(str(path) + _TIP_CACHE_SUFFIX)
+
+
+def _tip_mac(key, key_epoch, body_canonical):
+    """Domain-separated MAC over the canonical tip body.
+
+    The body covers seq, tip hash, cached refusals, AND the checkpoint
+    anchor state -- every field the incremental decision depends on is
+    authenticated, so none of it is attacker-malleable without the key.
+    """
+    msg = ("log-tip|%s|%s" % (key_epoch, body_canonical)).encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
+
+
+def _tip_body(tip):
+    """The MAC-covered fields of a tip dict (everything but ``mac``).
+
+    ``tip_off``/``end_off`` are byte offsets into the action log at
+    tip time: the tip line starts at ``tip_off`` and the file ended at
+    ``end_off``. They are authenticated so a run-dir writer cannot
+    make the sweep read a different window than the verified one.
+    """
+    return {
+        "seq": tip["seq"],
+        "tip": tip["tip"],
+        "key_epoch": tip["key_epoch"],
+        "refusals": tip["refusals"],
+        "cp_size": tip["cp_size"],
+        "cp_digest": tip["cp_digest"],
+        "cp_newest": tip["cp_newest"],
+        "tip_off": tip["tip_off"],
+        "end_off": tip["end_off"],
+    }
+
+
+def _read_tip_cache(path):
+    """Return the validated tip dict, or None.
+
+    Never raises and never returns an unvalidated tip: a missing file,
+    unparseable JSON, wrong shape, epoch mismatch, or MAC failure all
+    yield None (the caller falls back to full verification -- slower
+    but safe, never unverified trust).
+    """
+    try:
+        raw = json.loads(
+            _tip_cache_path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    try:
+        tip = {
+            "seq": int(raw["seq"]),
+            "tip": raw["tip"],
+            "key_epoch": raw["key_epoch"],
+            "refusals": raw["refusals"],
+            "cp_size": int(raw["cp_size"]),
+            "cp_digest": raw["cp_digest"],
+            "cp_newest": raw["cp_newest"],
+            "tip_off": int(raw["tip_off"]),
+            "end_off": int(raw["end_off"]),
+            "mac": raw["mac"],
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(tip["tip"], str):
+        return None
+    if not isinstance(tip["key_epoch"], str):
+        return None
+    if not isinstance(tip["mac"], str):
+        return None
+    if not isinstance(tip["refusals"], dict):
+        return None
+    if not isinstance(tip["cp_digest"], str):
+        return None
+    if tip["cp_newest"] is not None and not isinstance(
+            tip["cp_newest"], dict):
+        return None
+    if isinstance(tip["cp_newest"], dict):
+        _cpn = tip["cp_newest"]
+        if not isinstance(_cpn.get("seq"), int):
+            return None
+        if not isinstance(_cpn.get("hash"), str):
+            return None
+        if not isinstance(_cpn.get("mac"), str):
+            return None
+        if not isinstance(_cpn.get("key_epoch"), str):
+            return None
+    if tip["seq"] < 0:
+        return None
+    if tip["tip_off"] < 0 or tip["end_off"] < tip["tip_off"]:
+        return None
+    key, active_epoch = _active_key()
+    if tip["key_epoch"] != active_epoch:
+        # Key rotation (or a foreign tip): the cached prefix was
+        # verified under a different key -- do not extend it.
+        return None
+    expect = _tip_mac(key, active_epoch, _canonical(_tip_body(tip)))
+    if not hmac.compare_digest(tip["mac"], expect):
+        return None
+    return tip
+
+
+def _write_tip_cache(path, tip):
+    """Atomically persist a tip dict (temp file + os.replace + fsync).
+
+    Raises OSError on I/O failure (callers treat this as best-effort:
+    verification already succeeded; the next sweep just re-verifies a
+    longer segment).
+    """
+    key, epoch = _active_key()
+    if tip["key_epoch"] != epoch:
+        raise ValueError("tip key_epoch does not match the active key")
+    doc = _tip_body(tip)
+    doc["mac"] = _tip_mac(key, epoch, _canonical(doc))
+    cache_path = _tip_cache_path(path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_name(cache_path.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(json.dumps(doc, ensure_ascii=True, sort_keys=True,
+                           default=str))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_path, cache_path)
+
+
+def _parse_checkpoint_newest(cps):
+    """Newest checkpoint dict from parsed sidecar lines, or None."""
+    if not cps:
+        return None
+    return max(cps, key=lambda c: c["seq"])
+
+
+def verify_chain_tip(path, flags=()):
+    """Incrementally verify the chain from the cached tip.
+
+    Returns ``{"ok": True, "entries": n, "refusals": {flag: ts|None}}``
+    when the new segment (entries after the cached tip) fully verifies
+    -- the same per-entry checks as :func:`_verify` (seq continuity,
+    format_version, prev_hash links, key_epoch binding, MACs) plus the
+    checkpoint tail-truncation anchor -- and rewrites the tip cache to
+    the new tail.
+
+    Per-sweep cost: the action-log read is O(new bytes) via the tip's
+    MAC-authenticated byte offsets (seek to the tip line, read only
+    the tail) -- the full-file read that made the old F60 fallback
+    O(log size) is gone. The checkpoint sidecar is still re-read and
+    hash-pinned in full each sweep (O(sidecar), ~0.6ms/1k measured):
+    its prefix hash is what keeps an already-verified sidecar byte
+    from being rewritten silently, and there is no sublinear way to
+    re-assert that. New sidecar lines are parsed incrementally.
+
+    Returns None when incremental verification is impossible: tip
+    missing/corrupt/foreign (MAC or epoch), log shrunk below the tip,
+    tip entry mismatch, any segment or checkpoint-anchor failure. The
+    caller MUST fall back to full verify_chain() (fail-loud), never
+    treat the log as verified.
+
+    Never returns ok=True on unverified data; never raises on file
+    CONTENT problems (mirrors _verify's F28 contract: content anomalies
+    become None, i.e. "do the loud full verification"). OSError from
+    the log/sidecar reads propagates (callers fail loud on those).
+    """
+    tip = _read_tip_cache(path)
+    if tip is None:
+        return None
+    key, epoch = _active_key()
+    p = Path(path)
+    seq = tip["seq"]
+    tip_off = tip["tip_off"]
+    end_off = tip["end_off"]
+
+    # Byte-window read: the log bytes are O(new) per sweep, not
+    # O(log size). The tip's offsets are MAC-authenticated, so a
+    # run-dir writer cannot aim the window at forged content: any
+    # insertion/deletion before the tip shifts the bytes at tip_off
+    # (tip-line re-auth fails -> full verify), any shrink below
+    # end_off is truncation (-> full verify), and any content swap
+    # that keeps offsets+hashes is the invisible class of soundness
+    # note 2 (it cannot alter the verified decision inputs).
+    # OSError from stat/read propagates: callers fail loud on those.
+    st_size = p.stat().st_size
+    if st_size < end_off:
+        # Log shrank below the cached tip: truncation (or rotation).
+        # Do not extend the tip -- full verification decides loudly.
+        return None
+    with open(p, "rb") as f:
+        if seq == 0:
+            tip_raw = None
+        else:
+            f.seek(tip_off)
+            tip_raw = f.readline()
+            if not tip_raw.endswith(b"\n"):
+                # Torn tip line (concurrent rotation/truncate):
+                # full verification decides loudly.
+                return None
+        f.seek(end_off)
+        tail = f.read()
+    if seq > 0 and tip_raw is None:
+        return None
+    seg_lines = [ln for ln in tail.splitlines() if ln.strip()]
+    count = seq + len(seg_lines)
+
+    if seq == 0:
+        if tip["tip"] != GENESIS:
+            return None
+        prev = GENESIS
+    else:
+        # Re-authenticate the tip entry: its stored hash must match the
+        # cached tip AND recompute to the same value, so the new
+        # segment chains onto genuinely verified content (a content
+        # swap that keeps the hash string is caught here).
+        try:
+            tl = json.loads(tip_raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(tl, dict):
+            return None
+        if tl.get("seq") != seq:
+            return None
+        if tl.get("hash") != tip["tip"]:
+            return None
+        if tl.get("key_epoch") != epoch:
+            return None
+        try:
+            prev_hash = tl["prev_hash"]
+            recomputed = _compute_mac(key, epoch, prev_hash,
+                                      _canonical(tl))
+        except (KeyError, TypeError):
+            return None
+        if not hmac.compare_digest(tip["tip"], recomputed):
+            return None
+        prev = tip["tip"]
+
+    # Strict per-entry verification of the new segment -- the same
+    # checks _verify applies, so a planted/forged/reordered line in the
+    # segment degrades to full verification (loud), never to trust.
+    new_entries = []
+    expected_seq = seq + 1
+    for raw in seg_lines:
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            return None
+        if not isinstance(entry, dict):
+            return None
+        if entry.get("seq") != expected_seq:
+            return None
+        if entry.get("format_version") != FORMAT_VERSION:
+            return None
+        if entry.get("prev_hash") != prev:
+            return None
+        if entry.get("key_epoch") != epoch:
+            return None
+        mac = _compute_mac(key, epoch, prev, _canonical(entry))
+        if not hmac.compare_digest(entry.get("hash", ""), mac):
+            return None
+        new_entries.append(entry)
+        prev = entry["hash"]
+        expected_seq += 1
+
+    # Checkpoint tail-truncation anchor, exactly as strict as _verify:
+    # the sidecar prefix is hash-pinned in the tip (any rewrite of
+    # already-verified sidecar bytes -> full verify), new sidecar lines
+    # are fully parsed (any bad line -> full verify), and the newest
+    # checkpoint's MAC, label, and agreement with the log are checked.
+    cp_path = p.parent / "checkpoints.jsonl"
+    try:
+        cp_bytes = cp_path.read_bytes()
+    except OSError:
+        cp_bytes = None
+    if count > 0 and cp_bytes is None:
+        # F27 twin: non-empty log with no truncation anchor -- never
+        # bless it incrementally.
+        return None
+    if cp_bytes is None:
+        new_cp_lines = []
+    else:
+        if len(cp_bytes) < tip["cp_size"]:
+            # Sidecar shrank: checkpoints were pruned. Do not trust the
+            # remaining anchor incrementally -- full verify decides.
+            return None
+        if (hashlib.sha256(cp_bytes[:tip["cp_size"]]).hexdigest()
+                != tip["cp_digest"]):
+            # Already-verified sidecar bytes were rewritten.
+            return None
+        new_cp_lines = cp_bytes[tip["cp_size"]:].splitlines()
+    new_cps, n_bad = _parse_sidecar_lines(new_cp_lines)
+    if n_bad:
+        # F28: a corrupt sidecar line is a verdict, never trust.
+        return None
+    newest = _parse_checkpoint_newest(new_cps)
+    stored_newest = tip["cp_newest"]
+    if newest is None:
+        newest = stored_newest
+    elif stored_newest is not None and stored_newest["seq"] > newest["seq"]:
+        newest = stored_newest
+    if newest is not None:
+        cp_label = newest.get("key_epoch")
+        if cp_label != epoch:
+            return None
+        expect_cp = _checkpoint_mac(key, cp_label, newest["seq"],
+                                    newest["hash"])
+        if not hmac.compare_digest(newest.get("mac", ""), expect_cp):
+            return None
+        if count < newest["seq"]:
+            # Tail truncation past the newest anchor.
+            return None
+        if newest["seq"] > seq:
+            # The anchor sits inside the freshly verified segment:
+            # check agreement against the verified entries.
+            anchor_entry = new_entries[newest["seq"] - seq - 1]
+            if anchor_entry["hash"] != newest["hash"]:
+                return None
+        # (newest["seq"] <= seq: agreement was established when the tip
+        # was written; the tip's induction covers the prefix.)
+    elif count > 0:
+        # Non-empty log, no checkpoints at all (empty sidecar): the
+        # F27 twin -- never bless incrementally.
+        return None
+
+    # The suppression decision inputs: cached newest-refusal timestamps
+    # (MAC'd in the tip, computed over verified entries) extended with
+    # the freshly verified segment. Prefix entries are never re-read
+    # for the decision (soundness note 2).
+    refusals = {flag: tip["refusals"].get(flag) for flag in flags}
+    for e in new_entries:
+        if e.get("event") == "approval_sweep_refused":
+            fl = e.get("flag")
+            if fl in refusals and isinstance(e.get("ts"), str):
+                refusals[fl] = e["ts"]
+
+    # Advance the tip to the new tail (best-effort: a failed write only
+    # costs the next sweep a longer segment, never safety). The byte
+    # offsets make the next sweep's read O(new bytes): the tip line
+    # starts at tip_off and the file ended at end_off.
+    all_cp = cp_bytes if cp_bytes is not None else b""
+    if count == 0:
+        new_tip_off = 0
+        new_end_off = 0
+    elif seg_lines:
+        # The new tip line is the last non-blank line of the freshly
+        # verified tail window; locate its start exactly.
+        new_end_off = end_off + len(tail)
+        body = tail.rstrip(b"\n")
+        new_tip_off = end_off + body.rfind(b"\n") + 1
+    else:
+        # No new entries: the tip line and file end are unchanged.
+        new_tip_off = tip_off
+        new_end_off = end_off
+    # The stored newest-checkpoint keeps its key_epoch: the re-check
+    # below MACs (epoch, seq, hash), so a cross-epoch anchor is
+    # rejected even when no new sidecar lines arrived this sweep.
+    new_cp_newest = None
+    if newest is not None:
+        new_cp_newest = {"seq": newest["seq"], "hash": newest["hash"],
+                         "mac": newest.get("mac"),
+                         "key_epoch": newest.get("key_epoch")}
+    new_tip = {
+        "seq": count,
+        "tip": prev,
+        "key_epoch": epoch,
+        "refusals": refusals,
+        "cp_size": len(all_cp),
+        "cp_digest": hashlib.sha256(all_cp).hexdigest(),
+        "cp_newest": new_cp_newest,
+        "tip_off": new_tip_off,
+        "end_off": new_end_off,
+    }
+    try:
+        _write_tip_cache(path, new_tip)
+    except OSError:
+        pass
+    return {"ok": True, "entries": count, "refusals": refusals}
+
+
+def newest_refusal_ts_per_flag(path, flags):
+    """Full-log scan: newest ``approval_sweep_refused`` ts per flag.
+
+    O(n): used only by the full-verification fallback (and tip seeding)
+    after the chain has verified. Entries are chronological, so the
+    first match in reverse is the newest; entries with unparseable or
+    missing timestamps are skipped (fail-loud: they never suppress),
+    mirroring the executor's historical scan semantics.
+    """
+    entries, _malformed = read_entries_with_stats(path)
+    out = {flag: None for flag in flags}
+    remaining = set(flags)
+    for e in reversed(entries):
+        if not remaining:
+            break
+        if not isinstance(e, dict):
+            continue
+        if e.get("event") != "approval_sweep_refused":
+            continue
+        fl = e.get("flag")
+        if fl not in remaining:
+            continue
+        ts = e.get("ts")
+        if not isinstance(ts, str):
+            continue
+        try:
+            datetime.fromisoformat(ts)
+        except ValueError:
+            continue
+        out[fl] = ts
+        remaining.discard(fl)
+    return out
+
+
+def _tail_line_offsets(p):
+    """(tip_off, end_off, last_line_bytes) for the log's last line.
+
+    Walks back from EOF in chunks, so finding the tail is O(tail),
+    not O(log size). Returns (0, 0, None) for an empty/blank log.
+    """
+    with open(p, "rb") as f:
+        f.seek(0, 2)
+        end_off = f.tell()
+        buf = b""
+        pos = end_off
+        # Walk back until we hold at least two newlines (the last
+        # line plus its terminator) or reach BOF.
+        while pos > 0 and buf.count(b"\n") < 2:
+            step = min(65536, pos)
+            pos -= step
+            f.seek(pos)
+            buf = f.read(step) + buf
+    body = buf.rstrip(b"\n")
+    if not body.strip():
+        return 0, 0, None
+    ls = body.rfind(b"\n")
+    tip_off = pos + ls + 1
+    return tip_off, end_off, body[ls + 1:]
+
+
+def write_chain_tip_from_tail(path, refusals):
+    """Seed the tip cache from the current tail after a FULL verify.
+
+    Reads the last log entry (seq, hash) and the checkpoint sidecar,
+    then writes the MAC'd tip. Raises OSError on I/O failure (callers
+    treat seeding as best-effort). Must only be called when the chain
+    has JUST fully verified -- the tip vouches the whole prefix.
+    """
+    key, epoch = _active_key()
+    p = Path(path)
+    tip_off, end_off, last_raw = _tail_line_offsets(p)
+    last_seq, last_hash = 0, GENESIS
+    if last_raw is not None:
+        entry = json.loads(last_raw)
+        last_seq = int(entry["seq"])
+        last_hash = entry["hash"]
+    cp_path = p.parent / "checkpoints.jsonl"
+    try:
+        cp_bytes = cp_path.read_bytes()
+    except OSError:
+        cp_bytes = b""
+    cps, _n_bad = _parse_sidecar_lines(cp_bytes.splitlines())
+    newest = _parse_checkpoint_newest(
+        [c for c in cps if isinstance(c.get("seq"), int)])
+    new_tip = {
+        "seq": last_seq,
+        "tip": last_hash,
+        "key_epoch": epoch,
+        "refusals": {flag: refusals.get(flag) for flag in refusals},
+        "cp_size": len(cp_bytes),
+        "cp_digest": hashlib.sha256(cp_bytes).hexdigest(),
+        "cp_newest": ({"seq": newest["seq"], "hash": newest["hash"],
+                       "mac": newest.get("mac"),
+                       "key_epoch": newest.get("key_epoch")}
+                      if newest is not None else None),
+        "tip_off": tip_off,
+        "end_off": end_off,
+    }
+    _write_tip_cache(path, new_tip)
+
+
+def refusal_ts_within_window(ts, window_secs):
+    """True when an ISO refusal timestamp is genuinely recent.
+
+    Future-dated or unparseable timestamps never count (fail-loud:
+    at most one extra audit entry), mirroring the executor's
+    historical scan semantics.
+    """
+    if not isinstance(ts, str):
+        return False
+    try:
+        age = time.time() - datetime.fromisoformat(ts).timestamp()
+    except (TypeError, ValueError):
+        return False
+    return 0 <= age <= window_secs

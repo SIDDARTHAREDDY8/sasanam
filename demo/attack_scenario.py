@@ -213,10 +213,6 @@ def _run_demo():
     print("=" * 70)
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
-
 def main():
     """F63 (R14): honest-failure wrapper around the demo flow.
 
@@ -235,3 +231,7 @@ def main():
               "is claimed.")
         return 1
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

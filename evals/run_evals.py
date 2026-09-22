@@ -32,6 +32,8 @@ from evals.r13_probes import register_r13  # noqa: E402
 from evals.r14_probes import register_r14  # noqa: E402
 from evals.w16_probes import register_w16  # noqa: E402
 from evals.r15_probes import register_r15  # noqa: E402
+from evals.w17_probes import register_w17  # noqa: E402
+from evals.r16_probes import register_r16  # noqa: E402
 from evals.w15_probes import register_w15  # noqa: E402
 from evals.matrix import SITUATIONS, PRIVILEGES, PRIV_ROLE, ADAPTERS  # noqa: E402
 from evals.provisional_adapters import (  # noqa: E402
@@ -2547,6 +2549,16 @@ register_w16(PLAYBOOKS, _w7_playbook)
 # evals/r15_probes.py. evals/w16_probes.py stays UNCHANGED as the
 # historical record.
 register_r15(PLAYBOOKS, _w7_playbook)
+
+# Wave-17 probes: sit104-sit110 are new situations (no overrides of
+# earlier waves); see evals/w17_probes.py.
+register_w17(PLAYBOOKS, _w7_playbook)
+
+# Round-16 closure probes override the wave-17 attack baseline for
+# sit105 (F69 CLOSED) and sit110 (demo direct invocation); see
+# evals/r16_probes.py. evals/w17_probes.py stays UNCHANGED as the
+# historical record.
+register_r16(PLAYBOOKS, _w7_playbook)
 
 CHECKS = {sit_id: _check_generic for sit_id in SITUATIONS}
 

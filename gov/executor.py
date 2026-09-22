@@ -93,7 +93,9 @@ from .identity import (
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
 )
-from .log import read_entries, read_entries_with_stats, verify_chain
+from .log import (newest_refusal_ts_per_flag, read_entries,
+                   refusal_ts_within_window, verify_chain,
+                   verify_chain_tip, write_chain_tip_from_tail)
 
 _SEND_TOOLS = ("send_email", "http_post")
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
@@ -1592,6 +1594,14 @@ class ToolExecutor:
     # audited entry carries suppressed_repeats, and a storm (>= 10
     # folded repeats) is flagged for the operator.
     #
+    # F69 (R16): the F60 fallback's full chain verification is O(log
+    # size) per refused sweep -- a CPU amplifier while the sidecar is
+    # held corrupt. _log_shows_recent_lock_refusal now verifies
+    # incrementally from a MAC-authenticated chain-tip cache
+    # (``actions.jsonl.tip.json``); see gov/log.py verify_chain_tip.
+    # A missing/corrupt tip, a shrunk log, or any segment failure
+    # falls back to full verification (fail-loud, never silent).
+    #
     # F60 (R14): the coalescing window is NOT per-instance memory
     # anymore — it lives in a small state file in the run dir
     # (``lock_refusal_coalesce.json``), so it survives executor
@@ -1680,8 +1690,8 @@ class ToolExecutor:
             return self._audit_lock_refusal_local(flag, reason, now)
 
     def _log_shows_recent_lock_refusal(self, flag):
-        """F60 (R14) / F60-followup (R15): True when the tamper-evident
-        action log already holds a CHAIN-VERIFIED
+        """F60 (R14) / F60-followup (R15) / F69 (R16): True when the
+        tamper-evident action log already holds a CHAIN-VERIFIED
         ``approval_sweep_refused`` entry for ``flag`` inside the
         coalesce window.
 
@@ -1699,11 +1709,37 @@ class ToolExecutor:
         re-audit (return False here), never silent suppression. The
         sweep still refuses fail-closed either way.
 
+        F69 (R16): the full verification above is O(log size) per
+        refused sweep while the sidecar is missing/corrupt — a CPU
+        amplifier. The first attempt is now incremental
+        (``verify_chain_tip``): only entries appended since the cached
+        chain tip are re-verified, O(new entries). The tip cache is
+        MAC-authenticated under the log key, so a run-dir writer
+        cannot forge it; a missing/corrupt tip, a shrunk log, a tip
+        mismatch, or any segment failure falls through to the full
+        verification below (fail-loud, never silent suppression).
+        After a full verification the tip is reseeded so the next
+        sweep is incremental again.
+
         Malformed lines are skipped (F63); entries with unparseable or
         missing timestamps count as no-recent (fail-loud: at most one
         extra audit entry). Future-dated entries never suppress — only
         genuinely recent ones do.
         """
+        window = self._LOCK_REFUSAL_AUDIT_COALESCE_SECS
+        # F69 (R16): cheap path first -- verify only the entries since
+        # the cached chain tip. verify_chain_tip() returns None for
+        # every shape the tip cannot vouch for (missing/corrupt tip,
+        # shrunk log, tip mismatch, segment or anchor failure); those
+        # fall through to full verification below, never to trust.
+        try:
+            tip_verdict = verify_chain_tip(
+                self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
+        except OSError:
+            return False
+        if tip_verdict is not None:
+            return refusal_ts_within_window(
+                tip_verdict["refusals"].get(flag), window)
         try:
             ok, _broken_seq, _n = verify_chain(self.log.path)
         except OSError:
@@ -1712,29 +1748,16 @@ class ToolExecutor:
             # Broken/unverifiable chain: the "already audited" signal is
             # untrustworthy. Fail LOUD — audit once more.
             return False
+        refusals = newest_refusal_ts_per_flag(
+            self.log.path, self._LOCK_REFUSAL_KNOWN_FLAGS)
         try:
-            entries, _malformed = read_entries_with_stats(self.log.path)
-        except OSError:
-            return False
-        window = self._LOCK_REFUSAL_AUDIT_COALESCE_SECS
-        now_wall = time.time()
-        for e in reversed(entries):
-            if not isinstance(e, dict):
-                continue
-            if (e.get("event") != "approval_sweep_refused"
-                    or e.get("flag") != flag):
-                continue
-            try:
-                age = now_wall - datetime.fromisoformat(
-                    e["ts"]).timestamp()
-            except (KeyError, TypeError, ValueError):
-                continue
-            if 0 <= age <= window:
-                return True
-            # Entries are chronological: the first match in reverse is
-            # the newest, so an older-than-window match ends the scan.
-            break
-        return False
+            # Seed the tip cache so the next refused sweep verifies
+            # incrementally. Best-effort: a failed seed only costs the
+            # next sweep a longer segment, never safety.
+            write_chain_tip_from_tail(self.log.path, refusals)
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return refusal_ts_within_window(refusals.get(flag), window)
 
     def _audit_lock_refusal_shared(self, flag, reason, now):
         """F56: file-backed coalescing shared across executor instances
