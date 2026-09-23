@@ -300,7 +300,13 @@ def sit_halt_survives_executor_restart():
     held = False
     if tripped and marker:
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                           run["approvals"], canary_registry=reg)
+                           run["approvals"], canary_registry=reg,
+                           # Wave-85: wave-52 canary battery — raw
+                           # pipeline by design; the bypass is declared
+                           # and chained, never silent.
+                           ungoverned_ack=(
+                               "wave-52 canary battery: raw pipeline by "
+                               "design"))
         ident2 = ex2.mint_identity("agent-9", "researcher", "op-1")
         try:
             ex2.call(ident2, "api_call",

@@ -350,7 +350,13 @@ def sit_executor_recreation_survives():
         _fill(sink, 8, "e%d-" % cycle)
         ex.drain_ack_sink(sink)
     ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                       run["approvals"])
+                       run["approvals"],
+                       # Wave-85: wave-66 ack-budget battery — raw
+                       # pipeline by design; the bypass is declared and
+                       # chained, never silent.
+                       ungoverned_ack=(
+                           "wave-66 ack-budget battery: raw pipeline by "
+                           "design"))
     if ex2._ack_cumulative_used != 16:
         return {"verdict": "break",
                 "note": "marker not re-read: used=%d"

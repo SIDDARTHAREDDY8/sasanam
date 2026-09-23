@@ -152,8 +152,13 @@ def _r13_shared_coalescing():
     ctx = make_run()
 
     def _fresh():
+        # Wave-85: round-13 closure battery — raw pipeline by design;
+        # the bypass is declared and chained, never silent.
         return ToolExecutor(ctx["run_dir"], ctx["policy"], ctx["log"],
-                            ctx["approvals"])
+                            ctx["approvals"],
+                            ungoverned_ack=(
+                                "round-13 closure battery: raw pipeline "
+                                "by design"))
 
     def _refusals():
         return [e for e in read_entries(ctx["run_dir"] / "actions.jsonl")

@@ -127,8 +127,13 @@ def _operator_run(**kwargs):
 def _fresh_executor(run_dir, policy):
     log = ActionLog(run_dir / "actions.jsonl")
     q = ApprovalQueue(run_dir, log)
+    # Wave-85: wave-16 probe battery — raw pipeline by design; the
+    # bypass is declared and chained, never silent.
     return ToolExecutor(run_dir, policy, log, q,
-                        ledger_path=run_dir / "egress_ledger.jsonl")
+                        ledger_path=run_dir / "egress_ledger.jsonl",
+                        ungoverned_ack=(
+                            "wave-16 probe battery: raw pipeline by "
+                            "design"))
 
 
 def _queued(ctx, tool="send_email", args=None, caller=None):

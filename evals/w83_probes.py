@@ -194,7 +194,15 @@ def _executor_with_monitor(run_dir, **kw):
     monitor = det_mod.BehavioralMonitor(run_dir=run_dir)
     ex = ToolExecutor(run_dir, policy, lg, approvals,
                       ledger_path=Path(run_dir) / "egress_ledger.jsonl",
-                      detection_monitor=monitor, **kw)
+                      detection_monitor=monitor,
+                      # Wave-85: wave-83 detection anti-deception
+                      # battery — the monitor is the subject; the
+                      # governed core is not installed, so the bypass is
+                      # declared and chained, never silent.
+                      ungoverned_ack=(
+                          "wave-83 detection battery: the monitor is the "
+                          "subject; governed core not installed"),
+                      **kw)
     return ex, monitor, lg
 
 

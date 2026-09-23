@@ -241,6 +241,11 @@ def _build_stack(run_dir, config):
         ledger_path=run_dir / "egress_ledger.jsonl",
         canary_registry=reg,
         trifecta_floor=bool(config["setup"].get("trifecta_floor")),
+        # Wave-85: the LLM red-team tool shim is a synthetic harness;
+        # the raw pipeline is declared and chained, never silent.
+        ungoverned_ack=(
+            "LLM red-team tool shim: synthetic harness; raw pipeline "
+            "by design"),
     )
     return policy, log, approvals, ex
 

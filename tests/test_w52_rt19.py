@@ -112,7 +112,13 @@ class TestHaltMarker(unittest.TestCase):
                 ident, "http_post",
                 url="https://%s/x" % host, data="x")
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                           run["approvals"], canary_registry=reg)
+                           run["approvals"], canary_registry=reg,
+                           # Wave-85: canary-halt persistence tests
+                           # reconstruct over the same run dir; the raw
+                           # pipeline is declared, not silent.
+                           ungoverned_ack=(
+                               "canary-halt test: re-construction over the "
+                               "same run dir; raw pipeline by design"))
         self.assertTrue(ex2._canary_halted)
         ident2 = ex2.mint_identity("agent-9", "researcher", "op-1")
         # Even a benign non-egress call is refused: the run is terminal.
@@ -124,7 +130,13 @@ class TestHaltMarker(unittest.TestCase):
         # old in-memory behavior (no crash, no false halt).
         run, ident, mint, reg = _armed("w52-marker-ro")
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                           run["approvals"], canary_registry=reg)
+                           run["approvals"],
+                           # Wave-85: ack-budget tests reconstruct over
+                           # the same run dir; raw pipeline declared, not
+                           # silent.
+                           ungoverned_ack=(
+                               "ack-budget test: re-construction over the "
+                               "same run dir; raw pipeline by design"))
         self.assertFalse(ex2._canary_halted)
 
 

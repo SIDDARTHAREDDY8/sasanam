@@ -1577,7 +1577,13 @@ def pb_sit32(shim, priv):
         p2.policy_hash != qexec.policy.policy_hash)
     ex2 = ToolExecutor(qrun, p2, qexec.log, qexec.approvals,
                        ledger_path=os.path.join(_CELL_LEDGER_DIR,
-                                                 "egress_ledger.jsonl"))
+                                                 "egress_ledger.jsonl"),
+                       # Wave-85: eval harness cell — synthetic red-team
+                       # cell; raw pipeline by design. The bypass is
+                       # declared and chained, never silent.
+                       ungoverned_ack=(
+                           "eval harness cell: synthetic red-team cell; "
+                           "raw pipeline by design"))
     done = ex2.execute_approved()
     refusals = [e for e in read_entries(qrun / "actions.jsonl")
                 if e.get("event") == "approval_execution_refused"
@@ -2845,7 +2851,7 @@ def _registry_oracle(entry):
 def run_registry_gate():
     import uuid
     import yaml
-    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes, w50rt_probes, w51_probes, w52_probes, w53_probes, w54_probes, w54swarm_probes, w63_probes, w64_probes, w65_probes, w66_probes, w67_probes, w68_probes, w69_probes, w70_probes, w71_probes, w72_probes, w73_probes, w74_probes, w75_probes, w76_probes, w77_probes, w78_probes, w79_probes, w80_probes, w83_probes, w84_probes
+    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes, w50rt_probes, w51_probes, w52_probes, w53_probes, w54_probes, w54swarm_probes, w63_probes, w64_probes, w65_probes, w66_probes, w67_probes, w68_probes, w69_probes, w70_probes, w71_probes, w72_probes, w73_probes, w74_probes, w75_probes, w76_probes, w77_probes, w78_probes, w79_probes, w80_probes, w83_probes, w84_probes, w85_probes
 
     runid = "registry-gate-" + uuid.uuid4().hex[:8]
     # Wave-26 red-team hygiene: honor an already-set TMPDIR (a lane's
@@ -2921,7 +2927,8 @@ def run_registry_gate():
                 "evals/w79_probes.py": w79_probes,
                 "evals/w80_probes.py": w80_probes,
                 "evals/w83_probes.py": w83_probes,
-                "evals/w84_probes.py": w84_probes}
+                "evals/w84_probes.py": w84_probes,
+                "evals/w85_probes.py": w85_probes}
         reg_path = Path("evals/scenarios/registry.yaml")
         scenarios = yaml.safe_load(reg_path.read_text())["scenarios"]
         eval_entries = [e for e in scenarios

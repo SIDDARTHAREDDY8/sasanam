@@ -550,7 +550,13 @@ class TestExecutorWiring(unittest.TestCase):
         approvals = ApprovalQueue(run_dir, log)
         ex = ToolExecutor(run_dir, policy, log, approvals,
                           ledger_path=run_dir / "egress_ledger.jsonl",
-                          detection_monitor=monitor)
+                          detection_monitor=monitor,
+                          # Wave-85: the detection monitor is the subject
+                          # here; the governed core is not installed, so
+                          # the bypass is declared, not silent.
+                          ungoverned_ack=(
+                              "detection test: the monitor is the "
+                              "subject; governed core not installed"))
         return run_dir, ex
 
     def test_open_breaker_queues_high_risk(self):

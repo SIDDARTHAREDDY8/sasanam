@@ -27,6 +27,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Wave-85: this is a SYNTHETIC attack-narrative script, not a production
+# entry point. Its subject is the attack/defense sequence against the
+# pre-core pipeline (what the attacker sees); the governed core is out
+# of scope, so the bypass is declared explicitly at the construction
+# site below and the run is staging. A real integration installs the
+# full core and runs in production.
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
 ROOT = Path(__file__).resolve().parent.parent
 for p in (ROOT, ROOT / "tests"):
     if str(p) not in sys.path:
@@ -105,7 +113,15 @@ def _run_demo():
     log = ActionLog(run_dir / "actions.jsonl")
     policy = PolicyEngine(default_policy_path())
     approvals = ApprovalQueue(run_dir, log)
-    ex = ToolExecutor(run_dir, policy, log, approvals)
+    ex = ToolExecutor(run_dir, policy, log, approvals,
+                      # Wave-85: synthetic attack narrative — its subject
+                      # is the attack/defense sequence against the
+                      # pre-core pipeline; the governed core is out of
+                      # scope (see the staging declaration at the top).
+                      # The bypass is declared and chained, never silent.
+                      ungoverned_ack=(
+                          "synthetic attack_scenario: attack/defense "
+                          "narrative; governed core out of scope"))
 
     support = ex.mint_identity("support-01", "support", PRINCIPAL)
     log.append({"event": "run_started", "run_id": run_id,

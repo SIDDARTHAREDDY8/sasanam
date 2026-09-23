@@ -480,11 +480,14 @@ class TestF60FollowupChainVerifiedSuppression(unittest.TestCase):
         self.assertEqual(len(self._refusals(run_dir)), 1)
         p = run_dir / "actions.jsonl"
         lines = p.read_text(encoding="utf-8").splitlines()
-        # Tamper the refusal entry (line 2) without touching its flag:
-        # any content change breaks its chain MAC.
-        self.assertIn('"suppressed_repeats": 0', lines[2])
-        lines[2] = lines[2].replace('"suppressed_repeats": 0',
-                                    '"suppressed_repeats": 7', 1)
+        # Tamper the refusal entry (the line carrying suppressed_repeats;
+        # located by content, not index — wave-85 chains the
+        # ungoverned_bypass declaration at seq 1) without touching its
+        # flag: any content change breaks its chain MAC.
+        idx = next(i for i, line in enumerate(lines)
+                   if '"suppressed_repeats": 0' in line)
+        lines[idx] = lines[idx].replace('"suppressed_repeats": 0',
+                                        '"suppressed_repeats": 7', 1)
         p.write_text("\n".join(lines) + "\n", encoding="utf-8")
         (run_dir / "lock_refusal_coalesce.json").write_text(
             '{"broken": true', encoding="utf-8")

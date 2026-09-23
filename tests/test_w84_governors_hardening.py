@@ -16,7 +16,10 @@ Pins the post-fix behavior:
   binding (tier/mode claims are bound into the change id).
 - Authorship replay: a token minted at head H0 is refused once the
   head moves.
-- ToolExecutor.is_governed: True iff a policy_store owns the engine.
+- ToolExecutor.is_governed: True iff the full governed core is
+  installed — a policy_store owns the engine AND a delegation_context
+  is bound (wave-85: half-core construction is a declared bypass,
+  never governed).
 
 Hermetic: temp dirs, explicit test key via tests/__init__, Ed25519
 human stand-ins, no network. Deterministic except wall-clock ts
@@ -39,10 +42,11 @@ for _p in (_TESTS_DIR, _REPO_MAIN):
         sys.path.insert(0, _p)
 
 from gov import policy_change as _pc  # noqa: E402
+from gov import delegation_tokens as _dt  # noqa: E402
 from gov.approvals import ApprovalQueue  # noqa: E402
 from gov.delegation_tokens import DelegationTrust  # noqa: E402
 from gov.executor import ToolExecutor  # noqa: E402
-from gov.log import ActionLog  # noqa: E402
+from gov.log import ActionLog, read_entries  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 import secrets  # noqa: E402
@@ -80,6 +84,35 @@ def _bootstrap(store, author, purpose="initial", approvers=()):
     return store.bootstrap(_BASE_POLICY, author, "alice",
                           purpose, approver_signers=approvers or (author,),
                           now=_T0)
+
+
+def _delegation_context(session_id="sess-w84"):
+    """A real bound three-token delegation context (synthetic keys).
+
+    Mirrors the wave-74/wave-85 test shape: user + agent + delegation
+    tokens, bound at construction. Used to install the second half of
+    the governed core in wiring tests.
+    """
+    human = _human()
+    idp = _human()
+    authority = _human()
+    trust = _dt.DelegationTrust(
+        human_keys={human.key_id: human.public_key},
+        authority_keys={authority.key_id: authority.public_key},
+        user_issuer_keys={idp.key_id: idp.public_key})
+    user_tok = _dt.issue_user_token(
+        idp, "user-7", ("tool:read_file",), session_id, ttl_s=3600)
+    agent_tok = _dt.issue_agent_token(
+        authority, "agent-1", "scout", "user-7",
+        ("tool:read_file",), session_id, ttl_s=3600)
+    deleg_tok = _dt.issue_delegation(
+        human, "user-7", user_tok, agent_tok,
+        ("tool:read_file",), session_id,
+        "https://revoke.example.invalid/deleg", ttl_s=3600)
+    return _dt.DelegationContext(
+        user_token=user_tok, agent_token=agent_tok,
+        delegation_token=deleg_tok, parent_chain=[], trust=trust,
+        session_id=session_id)
 
 
 class TestSecondBootstrapRefused(unittest.TestCase):
@@ -253,13 +286,49 @@ class TestIsGoverned(unittest.TestCase):
         approvals = ApprovalQueue(run_dir, log)
         engine = PolicyEngine.from_text(_BASE_POLICY,
                                         source_label="<w84>")
-        legacy = ToolExecutor(run_dir, engine, log, approvals)
+        legacy = ToolExecutor(run_dir, engine, log, approvals,
+                              # Wave-85: the is_governed wiring test
+                              # deliberately builds the legacy shape; the
+                              # bypass is declared, not silent.
+                              ungoverned_ack=(
+                                  "is_governed test: legacy wiring built "
+                                  "deliberately"))
         self.assertFalse(legacy.is_governed)
         store, (h1,), _ = _store(humans=1)
         _bootstrap(store, h1)
-        governed = ToolExecutor(run_dir, store.current_engine(), log,
-                                approvals, policy_store=store)
+        # Wave-85: the governed core is policy_store +
+        # delegation_context. The fully governed wiring installs both,
+        # so no bypass is declared and none is chained (fresh run_dir
+        # so the legacy declaration above cannot confuse the check).
+        gov_dir = Path(tempfile.mkdtemp(prefix="govred-w84gov-"))
+        gov_log = ActionLog(gov_dir / "actions.jsonl")
+        gov_approvals = ApprovalQueue(gov_dir, gov_log)
+        governed = ToolExecutor(gov_dir, store.current_engine(), gov_log,
+                                gov_approvals, policy_store=store,
+                                delegation_context=_delegation_context())
         self.assertTrue(governed.is_governed)
+        kinds = [e.get("event")
+                 for e in read_entries(gov_dir / "actions.jsonl")]
+        self.assertNotIn("ungoverned_bypass", kinds)
+
+    def test_is_governed_false_for_half_core(self):
+        # Wave-85 pin: a store-owned engine WITHOUT a delegation
+        # context is a declared bypass, not governed — is_governed
+        # must not accept half the core.
+        run_dir = Path(tempfile.mkdtemp(prefix="govred-w84gov-"))
+        log = ActionLog(run_dir / "actions.jsonl")
+        approvals = ApprovalQueue(run_dir, log)
+        store, (h1,), _ = _store(humans=1)
+        _bootstrap(store, h1)
+        half = ToolExecutor(run_dir, store.current_engine(), log,
+                            approvals, policy_store=store,
+                            ungoverned_ack=(
+                                "is_governed test: store-owned engine but "
+                                "delegation identity not installed"))
+        self.assertFalse(half.is_governed)
+        kinds = [e.get("event")
+                 for e in read_entries(run_dir / "actions.jsonl")]
+        self.assertIn("ungoverned_bypass", kinds)
 
 
 if __name__ == "__main__":

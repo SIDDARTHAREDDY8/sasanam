@@ -226,7 +226,12 @@ def bench_s2_queue(n_threads):
         # One executor installs the F42 identity verifier (write-once);
         # identities are pre-minted BEFORE timing (mint budget = 64/run).
         ex = ToolExecutor(run_dir, policy_stub(), log, q,
-                          ledger_path=run_dir / "egress_ledger.jsonl")
+                          ledger_path=run_dir / "egress_ledger.jsonl",
+                          # Wave-85: synthetic benchmark; the raw
+                          # pipeline is declared, not silent.
+                          ungoverned_ack=(
+                              "synthetic benchmark: raw pipeline by "
+                              "design"))
         idents = [ex.mint_identity("agent-%d" % t, "coder",
                                    "bench-principal")
                   for t in range(n_threads)]
@@ -307,7 +312,12 @@ def bench_s4_e2e_isolated(n_threads):
             log = ActionLog(run_dir / "actions.jsonl")
             q = ApprovalQueue(run_dir, log)
             ex = ToolExecutor(run_dir, policy, log, q,
-                              ledger_path=run_dir / "egress_ledger.jsonl")
+                              ledger_path=run_dir / "egress_ledger.jsonl",
+                              # Wave-85: synthetic benchmark; the raw
+                              # pipeline is declared, not silent.
+                              ungoverned_ack=(
+                                  "synthetic benchmark: raw pipeline by "
+                                  "design"))
             ident = ex.mint_identity("agent-%d" % t, "coder",
                                      "bench-principal")
             # warmup calls happen inside _run_threads; the executor is
@@ -361,7 +371,12 @@ def bench_s5_e2e_shared(n_threads):
         log = ActionLog(run_dir / "actions.jsonl")
         q = ApprovalQueue(run_dir, log)
         ex = ToolExecutor(run_dir, policy, log, q,
-                          ledger_path=run_dir / "egress_ledger.jsonl")
+                          ledger_path=run_dir / "egress_ledger.jsonl",
+                          # Wave-85: synthetic benchmark; the raw
+                          # pipeline is declared, not silent.
+                          ungoverned_ack=(
+                              "synthetic benchmark: raw pipeline by "
+                              "design"))
         idents = [ex.mint_identity("agent-%d" % t, "coder",
                                    "bench-principal")
                   for t in range(n_threads)]
@@ -411,7 +426,12 @@ def bench_s6_sweep_race(n_threads, k_records=16):
         log = ActionLog(run_dir / "actions.jsonl")
         q = ApprovalQueue(run_dir, log)
         ex = ToolExecutor(run_dir, policy, log, q,
-                          ledger_path=run_dir / "egress_ledger.jsonl")
+                          ledger_path=run_dir / "egress_ledger.jsonl",
+                          # Wave-85: synthetic benchmark; the raw
+                          # pipeline is declared, not silent.
+                          ungoverned_ack=(
+                              "synthetic benchmark: raw pipeline by "
+                              "design"))
         ident = ex.mint_identity("sweeper", "coder", "bench-principal")
         decision = PolicyDecision("require_approval", "bench",
                                   policy_id="bench-s6")
@@ -521,7 +541,11 @@ def bench_refused_sweeps(sizes=(2000, 10000, 20000), warm=5):
                     ActionLog(run_dir / "actions.jsonl"),
                     ApprovalQueue(run_dir,
                                   ActionLog(run_dir / "actions.jsonl")),
-                    ledger_path=run_dir / "egress_ledger.jsonl")
+                    ledger_path=run_dir / "egress_ledger.jsonl",
+                    # Wave-85: synthetic benchmark; the raw pipeline is
+                    # declared, not silent.
+                    ungoverned_ack=(
+                        "synthetic benchmark: raw pipeline by design"))
                 t0 = time.perf_counter_ns()
                 ret = ex.execute_approved()
                 return ret, (time.perf_counter_ns() - t0) * 1e-9

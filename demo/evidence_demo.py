@@ -3,10 +3,13 @@
 
 One command runs the whole auditor story:
 
-  (a) a governed agent runs REAL benign tasks through the ToolExecutor
+  (a) a synthetic agent runs REAL benign tasks through the ToolExecutor
       (organize files, summarize a doc) plus ONE stopped attack (a canary
       exfiltration attempt -> stopped by the canary tripwire, loudly
-      chained); approvals flow through the real approval queue;
+      chained); approvals flow through the real approval queue. The run
+      is synthetic (staging): the governed core is out of scope and the
+      bypass is declared explicitly in the chain — the export renders
+      it loudly;
   (b) the chain anchors to the witness (two epochs);
   (c) an evidence bundle is exported (chain segment + anchor statements/
       receipts + attribution + the stopped attack's records);
@@ -68,6 +71,14 @@ def provision_demo_keys():
     # Belt and braces: make sure no dev-key opt-in leaks in from the
     # ambient environment for this demo process.
     os.environ.pop("GOV_DEV_KEYS", None)
+    # Wave-85: this is a SYNTHETIC evidence-narrative script, not a
+    # production entry point. The governed core is out of scope for the
+    # narrative, so the bypass is declared explicitly at the
+    # construction site below and the run is staging. The evidence
+    # export renders the declared bypass LOUDLY (that is part of the
+    # demo: declarations are evidence, not silence). A real integration
+    # installs the full core and runs in production.
+    os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
 
 
 def seed_sandbox(sandbox: Path):
@@ -128,6 +139,14 @@ def _run_demo():
 
     ex = ToolExecutor(run_dir, policy, log, approvals,
                       canary_registry=registry,
+                      # Wave-85: synthetic evidence narrative — the
+                      # governed core is out of scope (see
+                      # provision_demo_keys). The bypass is declared and
+                      # chained, and the evidence export renders it
+                      # LOUDLY — declarations are evidence, not silence.
+                      ungoverned_ack=(
+                          "synthetic evidence_demo: auditor-narrative "
+                          "demo; governed core out of scope"),
                       # Per-run ledger: each demo run provisions a fresh
                       # key, so the shared runs/egress_ledger.jsonl from a
                       # previous run (different key) would fail closed on

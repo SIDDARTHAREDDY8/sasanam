@@ -587,7 +587,13 @@ def _w12_privilege_smuggle():
     q.decide(aid, True, "fine", decided_by="human-operator")
     log2 = ActionLog(run_dir / "actions.jsonl")
     ex_sweeper = ToolExecutor(run_dir, pol, log2,
-                              ApprovalQueue(run_dir, log2))
+                              ApprovalQueue(run_dir, log2),
+                              # Wave-85: wave-12 adversary battery —
+                              # raw pipeline by design; the bypass is
+                              # declared and chained, never silent.
+                              ungoverned_ack=(
+                                  "wave-12 adversary battery: raw pipeline "
+                                  "by design"))
     ex_sweeper.mint_identity("sweeper-9", "researcher", "high-org")
     done = ex_sweeper.execute_approved()
     exe = [e for e in _read_actions(run_dir)

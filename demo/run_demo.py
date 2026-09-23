@@ -18,6 +18,13 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+# Wave-85: this is a SYNTHETIC demo script, not a production entry
+# point. The governed core (policy store + delegation context) is out
+# of scope for the demo narrative, so the demo declares its bypass
+# explicitly at the construction site below and runs in staging.
+# A real integration installs the full core and runs in production.
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
@@ -72,7 +79,14 @@ def main():
     log = ActionLog(run_dir / "actions.jsonl")
     policy = PolicyEngine(default_policy_path())
     approvals = ApprovalQueue(run_dir, log)
-    ex = ToolExecutor(run_dir, policy, log, approvals)
+    ex = ToolExecutor(run_dir, policy, log, approvals,
+                      # Wave-85: synthetic demo — the governed core is out
+                      # of scope for the demo narrative (see the staging
+                      # declaration at the top). The bypass is declared
+                      # and chained, never silent.
+                      ungoverned_ack=(
+                          "synthetic run_demo: multi-agent pipeline demo; "
+                          "governed core out of scope for the narrative"))
 
     # Identities are minted by the executor: the only identities it honors.
     scout = ex.mint_identity("scout-01", "scout", PRINCIPAL)

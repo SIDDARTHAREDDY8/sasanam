@@ -631,7 +631,14 @@ def sit_kill_switch_tested():
         # path — without any agent cooperation.
         policy = PolicyEngine.from_text(_BASE_POLICY)
         queue = ApprovalQueue(str(run_dir), lg)
-        ex = ToolExecutor(str(run_dir), policy, lg, queue, recovery=ctl)
+        ex = ToolExecutor(str(run_dir), policy, lg, queue, recovery=ctl,
+                          # Wave-85: wave-77 recovery battery — recovery
+                          # is the subject; the governed core is not
+                          # installed, so the bypass is declared and
+                          # chained, never silent.
+                          ungoverned_ack=(
+                              "wave-77 recovery battery: recovery is the "
+                              "subject; governed core not installed"))
         ident = ex.mint_identity("agent-9", "scout", "u1")
         try:
             ex.call(ident, "read_file", path="/tmp/x")

@@ -485,7 +485,14 @@ class TestF48PolicyPin(unittest.TestCase):
                 q = ApprovalQueue(run_dir, log)
                 policy = PolicyEngine(str(DEFAULT_POLICY))
                 with self.assertRaises(PolicyPinMismatchError):
-                    ToolExecutor(run_dir, policy, log, q)
+                    ToolExecutor(run_dir, policy, log, q,
+                                 # Wave-85: the pin machinery is the
+                                 # subject here; the raw pipeline is
+                                 # declared, not silent.
+                                 ungoverned_ack=(
+                                     "F48 policy-pin test: exercises the "
+                                     "pin-refusal path; raw pipeline by "
+                                     "design"))
                 events = [e["event"] for e in
                           read_entries(run_dir / "actions.jsonl")]
                 self.assertIn("policy_loaded", events)

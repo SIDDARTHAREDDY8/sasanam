@@ -333,7 +333,13 @@ class TestF72ReplayFreshness(unittest.TestCase):
         from gov.approvals import ApprovalQueue
         log = ActionLog(run_dir / "actions.jsonl")
         approvals = ApprovalQueue(run_dir, log)
-        ex = ToolExecutor(run_dir, policy, log, approvals)
+        ex = ToolExecutor(run_dir, policy, log, approvals,
+                          # Wave-85: approval-execution tests exercise the
+                          # raw pipeline; the bypass is declared, not
+                          # silent.
+                          ungoverned_ack=(
+                              "approval-execution test: raw pipeline by "
+                              "design"))
         return ex.execute_approved()
 
     def test_replay_degrades_to_full_verify_not_silent_stale(self):

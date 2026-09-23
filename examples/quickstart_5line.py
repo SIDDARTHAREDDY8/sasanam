@@ -67,13 +67,26 @@ policies:
 
 
 def _executor():
-    """SCAFFOLD: fresh governed executor with a minimal fail-closed policy."""
+    """SCAFFOLD: fresh executor with a minimal fail-closed policy.
+
+    Wave-85: the governed core (policy store + delegation context) is
+    out of scope for the 5-line shape, so the scaffold declares the
+    bypass explicitly below (chained, never silent) and runs in
+    staging. A real integration installs the full core and runs in
+    production.
+    """
+    import os as _os
+    _os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
     run_dir = Path(tempfile.mkdtemp(prefix="gov-quickstart-"))
     (run_dir / "policy.yaml").write_text(_MINIMAL_POLICY, encoding="utf-8")
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
     return ToolExecutor(run_dir, PolicyEngine(str(run_dir / "policy.yaml")),
-                        log, approvals)
+                        log, approvals,
+                        # Wave-85: declared, chained, never silent.
+                        ungoverned_ack=(
+                            "synthetic quickstart example: 5-line shape; "
+                            "governed core out of scope"))
 
 
 # ---------------------------------------------------------------------------

@@ -169,7 +169,13 @@ class TestF55SessionIdentityEntitlement(unittest.TestCase):
 class TestF56SharedRefusalCoalescing(unittest.TestCase):
     def _fresh(self, ctx):
         return ToolExecutor(ctx["run_dir"], ctx["policy"], ctx["log"],
-                            ctx["approvals"])
+                            ctx["approvals"],
+                            # Wave-85: approval-rotation tests exercise the
+                            # raw pipeline; the bypass is declared, not
+                            # silent.
+                            ungoverned_ack=(
+                                "approval-rotation test: raw pipeline by "
+                                "design"))
 
     def _refused(self, ctx):
         return [e for e in read_entries(ctx["run_dir"] / "actions.jsonl")

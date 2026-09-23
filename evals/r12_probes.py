@@ -291,9 +291,16 @@ def _r12_policy_pin_toctou():
         try:
             with mock.patch.dict(os.environ,
                                  {"GOV_POLICY_HASH": orig_hash}):
+                # Wave-85: the pin-refusal cell needs the pin machinery
+                # reached, so the raw pipeline is declared here (the
+                # bypass is chained, never silent).
                 ToolExecutor(run_dir=ctx["run_dir"], policy=engine2,
                              log=ctx["log"],
-                             approvals=ctx["approvals"])
+                             approvals=ctx["approvals"],
+                             ungoverned_ack=(
+                                 "round-12 closure battery: raw pipeline "
+                                 "by design; this cell exercises the "
+                                 "pin-refusal path"))
             o["cosmetic_drift_refused"] = False
         except PolicyPinMismatchError:
             o["cosmetic_drift_refused"] = True

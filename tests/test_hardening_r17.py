@@ -61,7 +61,11 @@ def _fresh_executor(run_dir, policy):
     log = ActionLog(run_dir / "actions.jsonl")
     queue = ApprovalQueue(run_dir, log)
     return ToolExecutor(run_dir, policy, log, queue,
-                        ledger_path=run_dir / "egress_ledger.jsonl")
+                        ledger_path=run_dir / "egress_ledger.jsonl",
+                        # Wave-85: queue-lock tests exercise the raw
+                        # pipeline; the bypass is declared, not silent.
+                        ungoverned_ack=(
+                            "queue-lock test: raw pipeline by design"))
 
 
 def _successful_sweep(run_dir, policy):

@@ -405,7 +405,13 @@ class TestHalt(unittest.TestCase):
         policy = PolicyEngine.from_text(_BASE_POLICY)
         queue = ApprovalQueue(str(run_dir), log)
         ctl = _rec.RecoveryController(log, run_dir)
-        ex = ToolExecutor(str(run_dir), policy, log, queue, recovery=ctl)
+        ex = ToolExecutor(str(run_dir), policy, log, queue, recovery=ctl,
+                          # Wave-85: the recovery halt latch is the subject
+                          # here; the governed core is not installed, so
+                          # the bypass is declared, not silent.
+                          ungoverned_ack=(
+                              "recovery test: the halt latch is the "
+                              "subject; governed core not installed"))
         ident = ex.mint_identity("agent-9", "scout", "u1")
         ctl.halt("agent-9", reason="drill", trip_ids=[],
                  halt_mac_body=ctl.halt_authority.sign_halt(

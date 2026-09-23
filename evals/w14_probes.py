@@ -140,8 +140,13 @@ def _fresh_executor(run_dir, policy):
     process: new in-memory coalescing state, same on-disk state)."""
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
+    # Wave-85: wave-14 attack battery — raw pipeline by design; the
+    # bypass is declared and chained, never silent.
     return ToolExecutor(run_dir, policy, log, approvals,
-                        ledger_path=run_dir / "egress_ledger.jsonl")
+                        ledger_path=run_dir / "egress_ledger.jsonl",
+                        ungoverned_ack=(
+                            "wave-14 attack battery: raw pipeline by "
+                            "design"))
 
 
 def _lock_refusals(run_dir):
@@ -389,7 +394,13 @@ def _fresh_pair(run_dir, policy):
     log = ActionLog(run_dir / "actions.jsonl")
     q = ApprovalQueue(run_dir, log)
     ex = ToolExecutor(run_dir, policy, log, q,
-                      ledger_path=run_dir / "egress_ledger.jsonl")
+                      ledger_path=run_dir / "egress_ledger.jsonl",
+                      # Wave-85: wave-14 attack battery — raw pipeline by
+                      # design; the bypass is declared and chained,
+                      # never silent.
+                      ungoverned_ack=(
+                          "wave-14 attack battery: raw pipeline by "
+                          "design"))
     return ex, q
 
 

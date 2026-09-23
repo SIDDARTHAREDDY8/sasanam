@@ -43,11 +43,13 @@ class TestReservedLogMetadata(unittest.TestCase):
             "key_epoch": "evil-epoch",
         })
         # F48 (R11): the executor logs policy_loaded + policy_pin_absent
-        # at construction, so the first test-appended entry is seq 3.
-        self.assertEqual(entry["seq"], 3)
-        # F48 (R11): two construction entries precede, so prev_hash
-        # chains from the real previous entry — the forged "FORGED"
-        # value is overridden, not GENESIS.
+        # at construction, and wave-85 logs the ungoverned_bypass
+        # declaration at seq 1 — so the first test-appended entry is seq 4.
+        self.assertEqual(entry["seq"], 4)
+        # F48 (R11): two construction entries precede (three with the
+        # wave-85 declaration), so prev_hash chains from the real
+        # previous entry — the forged "FORGED" value is overridden,
+        # not GENESIS.
         prior = read_entries(log.path)[-2]
         self.assertEqual(entry["prev_hash"], prior["hash"])
         self.assertEqual(entry["format_version"], 1)
@@ -74,8 +76,9 @@ class TestWrongKeyDetection(unittest.TestCase):
                 "read_file", path="notes.txt")
             # One call = authorization entry + completion entry
             # (write-ahead); F48 (R11) adds policy_loaded +
-            # policy_pin_absent at executor construction.
-            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 4)
+            # policy_pin_absent at executor construction, and wave-85
+            # adds the ungoverned_bypass declaration at seq 1.
+            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 5)
 
             os.environ["GOV_LOG_KEY"] = "attacker-guessed-key"
             ok, broken, count = verify_chain(ctx["run_dir"] / "actions.jsonl")
@@ -104,13 +107,14 @@ class TestTailTruncation(unittest.TestCase):
         log_path = ctx["run_dir"] / "actions.jsonl"
         lines = log_path.read_text(encoding="utf-8").splitlines()
         # One call = authorization entry + completion entry (write-ahead);
-        # F48 (R11) adds policy_loaded + policy_pin_absent at construction.
-        self.assertEqual(len(lines), 8)
+        # F48 (R11) adds policy_loaded + policy_pin_absent at construction;
+        # wave-85 adds the ungoverned_bypass declaration at seq 1.
+        self.assertEqual(len(lines), 9)
         # Attacker truncates the tail (newest call's two entries).
-        log_path.write_text("\n".join(lines[:6]) + "\n", encoding="utf-8")
+        log_path.write_text("\n".join(lines[:7]) + "\n", encoding="utf-8")
         ok, broken, count = verify_chain(log_path)
         self.assertFalse(ok, "tail truncation must be detected")
-        self.assertEqual(count, 6)
+        self.assertEqual(count, 7)
 
 
 class TestFailClosedLogging(unittest.TestCase):

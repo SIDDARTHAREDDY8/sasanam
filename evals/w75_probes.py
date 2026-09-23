@@ -304,7 +304,15 @@ def sit_silent_rewrite_impossible():
     lg = ActionLog(run_dir / "actions.jsonl")
     store = _store("dev", [h1], log=lg)
     ex = ToolExecutor(run_dir, PolicyEngine(str(policy_file)), lg,
-                      ApprovalQueue(run_dir, lg), policy_store=store)
+                      ApprovalQueue(run_dir, lg), policy_store=store,
+                      # Wave-85: wave-75 governors battery — the policy
+                      # store is the subject; delegation identity not
+                      # installed, so the bypass is declared and chained,
+                      # never silent.
+                      ungoverned_ack=(
+                          "wave-75 governors battery: the policy store is "
+                          "the subject; delegation identity not "
+                          "installed"))
     before = ex._resolve_engine().policy_hash
     verdict_before = ex._resolve_engine().evaluate(
         {"tool": "delete_file", "role": "coder"}, {})
@@ -519,7 +527,15 @@ def sit_inflight_version_pinned():
     lg = ActionLog(run_dir / "actions.jsonl")
     store = _store("dev", [h1], log=lg)
     ex = ToolExecutor(run_dir, store.current_engine(), lg,
-                      ApprovalQueue(run_dir, lg), policy_store=store)
+                      ApprovalQueue(run_dir, lg), policy_store=store,
+                      # Wave-85: wave-75 governors battery — the policy
+                      # store is the subject; delegation identity not
+                      # installed, so the bypass is declared and chained,
+                      # never silent.
+                      ungoverned_ack=(
+                          "wave-75 governors battery: the policy store is "
+                          "the subject; delegation identity not "
+                          "installed"))
     ident = ex.mint_identity("pin-agent", "coder", "alice")
     v1_digest = store.current_engine().policy_hash
     r1 = ex.call(ident, "delete_file", path="notes.txt")

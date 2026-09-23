@@ -27,6 +27,12 @@ Works against the current executor API:
     ToolExecutor(run_dir, policy, log, approvals, ledger_path=None)
     executor.mint_identity(agent_id, role, principal) -> AgentIdentity
     executor.call(identity, tool, **kwargs) -> {"status": "executed"|"denied"|"queued", ...}
+
+Wave-85: the harness deliberately exercises the RAW (pre-wave-74/75)
+pipeline — no policy_store, no delegation_context — so every
+make_run() construction carries an explicit, recorded ungoverned_ack.
+The bypass is declared and chained per construction (better evidence,
+not worse); production-mode runs would refuse it outright.
 """
 
 import os
@@ -275,7 +281,17 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             session_identity=session_identity,
                             credential_manifest=credential_manifest,
                             precommit_gate=precommit_gate,
-                            trifecta_floor=trifecta_floor)
+                            trifecta_floor=trifecta_floor,
+                            # Wave-85: the harness deliberately exercises
+                            # the raw (pre-wave-74/75) pipeline — no
+                            # policy_store, no delegation_context — so
+                            # the bypass is declared and chained per
+                            # construction instead of silent.
+                            ungoverned_ack=(
+                                "synthetic red-team harness: exercises the "
+                                "raw pre-wave-74/75 pipeline by design; "
+                                "the bypass is declared and chained, not "
+                                "silent"))
 
     minted = set()
 

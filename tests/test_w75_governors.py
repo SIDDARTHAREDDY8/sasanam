@@ -394,7 +394,14 @@ class TestExecutorGovernedPath(unittest.TestCase):
         _bootstrap(store, h1)
         engine = PolicyEngine(str(policy_file))
         ex = ToolExecutor(run_dir, engine, log, approvals,
-                          policy_store=store)
+                          policy_store=store,
+                          # Wave-85: the governed store is the subject
+                          # here; delegation identity is not installed, so
+                          # the bypass is declared, not silent.
+                          ungoverned_ack=(
+                              "governed-policy-store test: the store is "
+                              "the subject; delegation identity not "
+                              "installed"))
         # rewrite the file on disk to an allow-all shape
         policy_file.write_text(
             "version: 2\nroles:\n  coder: [delete_file]\n"
@@ -419,7 +426,14 @@ class TestExecutorGovernedPath(unittest.TestCase):
         run_dir = Path(tempfile.mkdtemp(prefix="govred-w75pincall-"))
         log = ActionLog(run_dir / "actions.jsonl")
         ex = ToolExecutor(run_dir, store.current_engine(), log,
-                          ApprovalQueue(run_dir, log), policy_store=store)
+                          ApprovalQueue(run_dir, log), policy_store=store,
+                          # Wave-85: the governed store is the subject
+                          # here; delegation identity is not installed, so
+                          # the bypass is declared, not silent.
+                          ungoverned_ack=(
+                              "governed-policy-store test: the store is "
+                              "the subject; delegation identity not "
+                              "installed"))
         ident = ex.mint_identity("a1", "coder", "alice")
         v1_digest = store.current_engine().policy_hash
         r1 = ex.call(ident, "delete_file", path="notes.txt")

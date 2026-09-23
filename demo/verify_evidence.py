@@ -382,6 +382,11 @@ def verify_bundle(bundle_dir):
         "attribution": {"verdict": "CANNOT-VERIFY", "details": []},
         "stopped_attack": {"verdict": "CANNOT-VERIFY", "details": []},
         "honest_boundaries": list(HONEST_BOUNDARIES),
+        # Wave-85: the bypass section is part of the report schema from
+        # the start, so even a malformed bundle renders a stable
+        # report (CANNOT-VERIFY on the chain, not a missing key).
+        "ungoverned_bypasses": {"verdict": "CANNOT-VERIFY",
+                                "declarations": [], "refusals": []},
     }
     bdir = Path(bundle_dir)
     try:
@@ -580,6 +585,49 @@ def verify_bundle(bundle_dir):
             report["stopped_attack"]["verdict"] = "ATTESTED-ONLY"
     report["stopped_attack"]["details"] = s_details
 
+    # -- ungoverned bypass declarations (wave-85) -------------------------
+    # Every declared skip of the construction checklist, and every
+    # refused attempt, rendered LOUDLY: an auditor must not be able to
+    # miss that part of this run executed outside the governed core.
+    bypass_decls = []
+    bypass_refusals = []
+    for e in entries:
+        ev = e.get("event")
+        if ev == "ungoverned_bypass":
+            bypass_decls.append({
+                "seq": e.get("seq"),
+                "reason": e.get("ungoverned_reason"),
+                "missing_components": e.get("missing_components"),
+                "absent_non_core_components": e.get(
+                    "absent_non_core_components"),
+                "deployment_mode": e.get("deployment_mode"),
+                "caller": "%s:%s in %s" % (
+                    e.get("caller_file"), e.get("caller_line"),
+                    e.get("caller_function")),
+            })
+        elif ev == "ungoverned_bypass_refused":
+            bypass_refusals.append({
+                "seq": e.get("seq"),
+                "cause": e.get("refusal_cause"),
+                "missing_components": e.get("missing_components"),
+                "absent_non_core_components": e.get(
+                    "absent_non_core_components"),
+                "caller": "%s:%s in %s" % (
+                    e.get("caller_file"), e.get("caller_line"),
+                    e.get("caller_function")),
+            })
+    if bypass_decls:
+        bypass_verdict = "DECLARED"
+    elif bypass_refusals:
+        bypass_verdict = "REFUSED-ONLY"
+    else:
+        bypass_verdict = "NONE"
+    report["ungoverned_bypasses"] = {
+        "verdict": bypass_verdict,
+        "declarations": bypass_decls,
+        "refusals": bypass_refusals,
+    }
+
     return report
 
 
@@ -641,6 +689,42 @@ def render_report(report):
     L.append("-" * 70)
     for d in report["stopped_attack"]["details"]:
         L.append("  - " + d)
+    L.append("")
+
+    # Wave-85: the construction seam, rendered LOUD. A declared bypass
+    # is not hidden in the chain noise — the auditor sees every skip
+    # of the checklist, the stated reason, what was missing, and who
+    # declared it from where.
+    ub = report.get("ungoverned_bypasses") or {}
+    ub_verdict = ub.get("verdict", "NONE")
+    L.append("UNGOVERNED BYPASS DECLARATIONS: %s%s"
+             % (ub_verdict,
+                " — AUDITOR ATTENTION REQUIRED"
+                if ub_verdict == "DECLARED" else ""))
+    L.append("-" * 70)
+    if ub_verdict == "NONE":
+        L.append("  None: no executor construction in this chain skipped "
+                 "the governed core.")
+    elif ub_verdict == "CANNOT-VERIFY":
+        L.append("  Cannot verify: the bundle's chain could not be parsed, "
+                 "so no bypass determination was possible.")
+    for d in ub.get("declarations") or []:
+        L.append("  !!! BYPASS DECLARED at seq %s:" % (d.get("seq"),))
+        L.append("      reason: %r" % (d.get("reason"),))
+        L.append("      missing governed core: %s"
+                 % (d.get("missing_components"),))
+        if d.get("absent_non_core_components"):
+            L.append("      also absent (deployment choices, not bypasses): %s"
+                     % (d.get("absent_non_core_components"),))
+        L.append("      deployment mode: %s" % (d.get("deployment_mode"),))
+        L.append("      declared by: %s" % (d.get("caller"),))
+        L.append("      meaning: this run's verdicts carry NO governed "
+                 "policy-change lineage and NO delegation-identity gate.")
+    for r_ in ub.get("refusals") or []:
+        L.append("  [refused] ungoverned construction attempt at seq %s: "
+                 "cause %s; missing %s; attempted by %s"
+                 % (r_.get("seq"), r_.get("cause"),
+                    r_.get("missing_components"), r_.get("caller")))
     L.append("")
 
     anchored = sum(1 for e in report["epochs"]

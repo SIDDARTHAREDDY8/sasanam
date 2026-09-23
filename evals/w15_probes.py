@@ -130,8 +130,13 @@ def _fresh_executor(run_dir, policy):
     same on-disk state) -- mirrors evals/w14_probes.py."""
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
+    # Wave-85: wave-15 attack battery — raw pipeline by design; the
+    # bypass is declared and chained, never silent.
     return ToolExecutor(run_dir, policy, log, approvals,
-                        ledger_path=run_dir / "egress_ledger.jsonl")
+                        ledger_path=run_dir / "egress_ledger.jsonl",
+                        ungoverned_ack=(
+                            "wave-15 attack battery: raw pipeline by "
+                            "design"))
 
 
 def _w15_session_identity_anchor_replace():
@@ -615,7 +620,13 @@ def _w15_budget_double_send_accounting():
                 ex._executed.get("send_email", 0) == 0)
 
     ex2 = ToolExecutor(ctx["run_dir"], ctx["policy"], ctx["log"],
-                       ctx["approvals"])
+                       ctx["approvals"],
+                       # Wave-85: wave-15 attack battery — raw pipeline
+                       # by design; the bypass is declared and chained,
+                       # never silent.
+                       ungoverned_ack=(
+                           "wave-15 attack battery: raw pipeline by "
+                           "design"))
     done2 = ex2.execute_approved()
     log2 = read_entries(ctx["run_dir"] / "actions.jsonl")
     o["reconcile_recovers_loud_and_second_approval_executes"] = (

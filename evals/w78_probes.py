@@ -677,7 +677,15 @@ def sit_lease_expiry_mid_task_halts():
         queue = ApprovalQueue(str(run_dir), lg)
         ex = ToolExecutor(str(run_dir), policy, lg, queue,
                           lease_verifier=verifier,
-                          lease_gated_tools=("read_file",))
+                          lease_gated_tools=("read_file",),
+                          # Wave-85: wave-78 supply-chain battery — lease
+                          # verification is the subject; the governed core
+                          # is not installed, so the bypass is declared
+                          # and chained, never silent.
+                          ungoverned_ack=(
+                              "wave-78 supply-chain battery: lease "
+                              "verification is the subject; governed core "
+                              "not installed"))
         ident = ex.mint_identity("agent-1", "scout", "u1")
 
         # 1. No lease presented: refused, loud.

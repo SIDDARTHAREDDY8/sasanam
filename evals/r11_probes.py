@@ -330,7 +330,12 @@ def _r11_policy_substitution():
             pol = PolicyEngine(
                 str(REPO_ROOT / "policies" / "default.yaml"))
             try:
-                ToolExecutor(run_dir, pol, log, aq)
+                # Wave-85: the pin-refusal cell needs the pin machinery
+                # reached, so the raw pipeline is declared here (the
+                # bypass is chained, never silent).
+                ToolExecutor(run_dir, pol, log, aq, ungoverned_ack=(
+                    "round-11 closure battery: raw pipeline by design; "
+                    "this cell exercises the F48 pin-refusal path"))
                 o["mismatch_refuses_construction"] = False
             except PolicyPinMismatchError:
                 o["mismatch_refuses_construction"] = True

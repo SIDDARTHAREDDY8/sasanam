@@ -219,7 +219,15 @@ def _executor(run_tmp, delegation_ctx=None, policy_text=_ALLOW_ALL,
     log = ActionLog(run_dir / "actions.jsonl")
     ex = ToolExecutor(run_dir, PolicyEngine(str(policy_path)), log,
                       ApprovalQueue(run_dir, log),
-                      ledger_path=run_dir / "egress_ledger.jsonl")
+                      ledger_path=run_dir / "egress_ledger.jsonl",
+                      # Wave-85: wave-74 identity battery — the
+                      # delegation gate is installed post-construction by
+                      # design; the construction itself is raw, declared,
+                      # and chained, never silent.
+                      ungoverned_ack=(
+                          "wave-74 identity battery: gate installed "
+                          "post-construction by design; construction "
+                          "itself is raw"))
     identity = ex.mint_identity(agent_id, "scout", "user-7")
     if delegation_ctx is not None:
         ex._delegation_context = delegation_ctx

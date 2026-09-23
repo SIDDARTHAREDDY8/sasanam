@@ -587,8 +587,17 @@ def _w11_rundir_toctou():
         fresh_policy = PolicyEngine(str(pfile))
         fresh_log = ActionLog(run_dir3 / "actions.jsonl")
         fresh_q = type(q3)(run_dir3, fresh_log)
+        # Wave-85: this battery deliberately exercises the RAW
+        # (pre-wave-74/75) pipeline — no policy_store, no
+        # delegation_context — because its subject is the wave-11 seam
+        # set, not the governed core. The bypass is declared explicitly
+        # and chained per construction (never silent), and is refused
+        # outright in production.
         fresh_ex = ToolExecutor(run_dir3, fresh_policy, fresh_log,
-                               fresh_q)
+                               fresh_q, ungoverned_ack=(
+                                   "wave-11 adversary battery: raw "
+                                   "pipeline by design; exercises the "
+                                   "wave-11 seam set"))
         fresh_ex.execute_approved()
         rec4 = fresh_q.get(aid4)
         o["fresh_executor_refuses_on_policy_change"] = (

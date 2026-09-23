@@ -436,7 +436,13 @@ class TestF31IdentityVerifierHardening(unittest.TestCase):
         v1 = q._identity_verifier
         ex2 = ToolExecutor(ctx["run_dir"], ctx["policy"], ex1.log, q,
                            ledger_path=str(Path(tempfile.mkdtemp())
-                                           / "ledger.jsonl"))
+                                           / "ledger.jsonl"),
+                           # Wave-85: identity-verifier tests exercise the
+                           # raw pipeline; the bypass is declared, not
+                           # silent.
+                           ungoverned_ack=(
+                               "identity-verifier test: raw pipeline by "
+                               "design"))
         self.assertIs(q._identity_verifier, v1)
         # Direct replacement is still refused.
         with self.assertRaises(IdentityVerifierAlreadySetError):

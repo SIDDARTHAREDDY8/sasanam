@@ -63,12 +63,21 @@ policies:
 
 
 def _executor():
+    # Wave-85: synthetic example — the governed core (policy store +
+    # delegation context) is out of scope for the adapter narrative.
+    # Declared staging; a real integration installs the full core.
+    import os as _os
+    _os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
     run_dir = Path(tempfile.mkdtemp(prefix="gov-langchain-"))
     (run_dir / "policy.yaml").write_text(_MINIMAL_POLICY, encoding="utf-8")
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
     return ToolExecutor(run_dir, PolicyEngine(str(run_dir / "policy.yaml")),
-                        log, approvals)
+                        log, approvals,
+                        # Wave-85: declared, chained, never silent.
+                        ungoverned_ack=(
+                            "synthetic langchain example: adapter "
+                            "narrative; governed core out of scope"))
 
 
 class EmailArgs(BaseModel):

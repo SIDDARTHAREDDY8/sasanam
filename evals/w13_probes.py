@@ -319,7 +319,12 @@ def _w13_policy_pin():
             aq = ApprovalQueue(run, log)
             pol = PolicyEngine(str(vp))
             try:
-                ToolExecutor(run, pol, log, aq)
+                # Wave-85: the pin-refusal cell needs the pin machinery
+                # reached, so the raw pipeline is declared here (the
+                # bypass is chained, never silent).
+                ToolExecutor(run, pol, log, aq, ungoverned_ack=(
+                    "wave-13 adversary battery: raw pipeline by design; "
+                    "this cell exercises the F48 pin-refusal path"))
                 o["cosmetic_drift_refused_fail_closed_and_audited"] = False
             except PolicyPinMismatchError:
                 o["cosmetic_drift_refused_fail_closed_and_audited"] = (

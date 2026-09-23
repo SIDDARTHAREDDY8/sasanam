@@ -734,7 +734,15 @@ policies:
         log = ActionLog(run_dir / "actions.jsonl")
         approvals = ApprovalQueue(run_dir, log)
         ex = ToolExecutor(run_dir, policy, log, approvals,
-                          ledger_path=run_dir / "egress_ledger.jsonl")
+                          ledger_path=run_dir / "egress_ledger.jsonl",
+                          # Wave-85: delegation-gate tests install the
+                          # gate post-construction by design; the
+                          # construction itself is raw and declared, not
+                          # silent.
+                          ungoverned_ack=(
+                              "delegation-gate test: gate installed "
+                              "post-construction by design; construction "
+                              "itself is raw"))
         identity = ex.mint_identity(agent_id, "scout", "user-7")
         ctx = None
         if install_gate:
@@ -772,7 +780,13 @@ policies:
         ex = ToolExecutor(
             run_dir, PolicyEngine(str(policy_path)), log,
             ApprovalQueue(run_dir, log),
-            ledger_path=run_dir / "egress_ledger.jsonl")
+            ledger_path=run_dir / "egress_ledger.jsonl",
+            # Wave-85: delegation-gate tests install the gate
+            # post-construction by design; the construction itself is
+            # raw and declared, not silent.
+            ungoverned_ack=(
+                "delegation-gate test: gate installed post-construction "
+                "by design; construction itself is raw"))
         identity = ex.mint_identity("agent-1", "scout", "user-7")
         user_tok, agent_tok, _ = _trio(keys, session=identity.run_id)
         ctx = _dt.DelegationContext(

@@ -233,9 +233,15 @@ def sit_dsl_deny_priority_inherited():
             # executor directly around our policy object.
             ctx = harness.make_run()
             run_dir = ctx["run_dir"]
+            # Wave-85: wave-39 standards-matrix battery — raw pipeline
+            # by design; the bypass is declared and chained, never
+            # silent.
             ex = ToolExecutor(
                 run_dir, policy, ctx["log"], ctx["approvals"],
-                ledger_path=run_dir / "egress_ledger.jsonl")
+                ledger_path=run_dir / "egress_ledger.jsonl",
+                ungoverned_ack=(
+                    "wave-39 standards-matrix battery: raw pipeline by "
+                    "design"))
             ident = ex.mint_identity("o1", "ops", "acme")
             r = ex.call(ident, "http_post",
                         url="https://synthetic.local/x", body="b")
@@ -336,9 +342,16 @@ def sit_ratings_unknown_field_fail_closed():
             run_dir = ctx["run_dir"]
             refused = False
             try:
+                # Wave-85: this cell exercises the tool_ratings
+                # validation path, so the raw pipeline is declared here
+                # (the bypass is chained, never silent).
                 ToolExecutor(
                     run_dir, ctx["policy"], ctx["log"], ctx["approvals"],
                     ledger_path=run_dir / "egress_ledger.jsonl",
+                    ungoverned_ack=(
+                        "wave-39 standards-matrix battery: raw pipeline "
+                        "by design; this cell exercises the "
+                        "tool_ratings validation path"),
                     tool_ratings={"db_wipe": {"reversibility": "reversible",
                                               "write_access": "own-sandbox",
                                               "blast_radius": "galactic"}})

@@ -77,7 +77,11 @@ def make_executor(run_dir):
     policy = PolicyEngine(str(DEFAULT_POLICY))
     log = ActionLog(run_dir / "actions.jsonl")
     approvals = ApprovalQueue(run_dir, log)
-    ex = ToolExecutor(run_dir, policy, log, approvals)
+    ex = ToolExecutor(run_dir, policy, log, approvals,
+                      # Wave-85: synthetic benchmark; the raw pipeline is
+                      # declared, not silent.
+                      ungoverned_ack=(
+                          "synthetic benchmark: raw pipeline by design"))
     ident = ex.mint_identity("bench-agent", "coder", "bench-principal")
     return ex, ident
 

@@ -291,7 +291,13 @@ class RunScopeTest(unittest.TestCase):
         self.assertEqual(ex._ack_cumulative_used, 16)
         # A fresh executor over the same run dir picks up the count.
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                           run["approvals"])
+                           run["approvals"],
+                           # Wave-85: ack-budget tests reconstruct over
+                           # the same run dir; raw pipeline declared, not
+                           # silent.
+                           ungoverned_ack=(
+                               "ack-budget test: re-construction over the "
+                               "same run dir; raw pipeline by design"))
         self.assertEqual(ex2._ack_cumulative_used, 16)
         self.assertEqual(ex2.run_id, ex.run_id)
         # And it enforces from there: 48 more reach the 64 cap, then
@@ -311,7 +317,13 @@ class RunScopeTest(unittest.TestCase):
         ex = run["executor"]
         ex._ack_cumulative_marker.write_text("not-json{{{")
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
-                           run["approvals"])
+                           run["approvals"],
+                           # Wave-85: ack-budget tests reconstruct over
+                           # the same run dir; raw pipeline declared, not
+                           # silent.
+                           ungoverned_ack=(
+                               "ack-budget test: re-construction over the "
+                               "same run dir; raw pipeline by design"))
         # Documented boundary: corrupt marker -> 0 (server-side
         # run-dir state, same trust class as the run dir itself).
         self.assertEqual(ex2._ack_cumulative_used, 0)

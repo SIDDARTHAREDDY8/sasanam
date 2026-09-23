@@ -8575,8 +8575,8 @@ scenarios:
   title: 'governors hardening (wave-84): two proposals against one head — the first apply moves the head and the second is refused by the token parent-link (prior_version is descriptive; the link is the enforcement); version ids stay unique. Expected stopped.'
 - attack_class: governance-subversion
   class: red-team
-  closure: n-a
-  expected: residual
+  closure: green
+  expected: stopped
   finding: null
   id: redteam.governors_w84.legacy_executor_ignores_governed_change
   probe: evals/w84_probes.py::sit_legacy_executor_ignores_governed_change
@@ -8584,13 +8584,13 @@ scenarios:
   tags:
   - surface:governors
   - wave:84
+  - wave:85
   - pattern:RT30
-  - residual:documented
-  title: 'governors hardening (wave-84) boundary pin: a governed apply does not reach an executor built without policy_store= — the tightening is silently ineffective on the legacy path (the governed path is opt-in). Expected residual.'
+  title: 'governors hardening (wave-84) boundary pin, CLOSED by wave-85: the undeclared legacy construction (no policy_store, no ack) is refused at ToolExecutor.__init__ (UngovernedConstructionError) before anything executes; the refusal is chained. Expected stopped.'
 - attack_class: governance-subversion
   class: red-team
-  closure: n-a
-  expected: residual
+  closure: green
+  expected: stopped
   finding: null
   id: redteam.governors_w84.legacy_construction_zero_ceremony
   probe: evals/w84_probes.py::sit_legacy_construction_zero_ceremony
@@ -8598,13 +8598,13 @@ scenarios:
   tags:
   - surface:governors
   - wave:84
+  - wave:85
   - pattern:RT30
-  - residual:documented
-  title: 'governors hardening (wave-84) boundary pin: attacker YAML -> PolicyEngine(path) -> ToolExecutor takes effect with zero policy_change records — the ungoverned construction path is a complete bypass of the governed path by default. Expected residual.'
+  title: 'governors hardening (wave-84) boundary pin, CLOSED by wave-85: attacker YAML -> PolicyEngine(path) -> ToolExecutor with no declaration is refused at construction — the attacker rule never goes live, the refusal is chained, zero policy_change records. Expected stopped.'
 - attack_class: governance-subversion
   class: red-team
-  closure: n-a
-  expected: residual
+  closure: green
+  expected: stopped
   finding: null
   id: redteam.governors_w84.legacy_blast_radius_counted
   probe: evals/w84_probes.py::sit_legacy_blast_radius_counted
@@ -8612,8 +8612,125 @@ scenarios:
   tags:
   - surface:governors
   - wave:84
+  - wave:85
   - pattern:RT30
-  - residual:documented
-  title: 'governors hardening (wave-84) measured residual: 44 files construct ToolExecutor, 2 governed (only w75''s own probe/test), 42 legacy — the default deployment posture in this repo is ungoverned. Expected residual.'
+  title: 'governors hardening (wave-84) census, CLOSED by wave-85: every ToolExecutor construction site in the repo now carries the governed core (policy_store + delegation_context) or an explicit ungoverned_ack declaration — zero silent legacy sites. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.legacy_direct_construction_executes
+  probe: evals/w85_probes.py::sit_legacy_direct_construction_executes
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): direct legacy ToolExecutor construction with zero governed components is refused at __init__ (UngovernedConstructionError) before any tool executes. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.ackless_construction_silent
+  probe: evals/w85_probes.py::sit_ackless_construction_silent
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): ack-less construction without the governed core is refused AND the refusal is chained as ungoverned_bypass_refused — the bypass is never silent. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.blank_ack_accepted
+  probe: evals/w85_probes.py::sit_blank_ack_accepted
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): whitespace-only ungoverned_ack is refused (F131 hollow-justification lesson) — a declaration must say something. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.production_ack_still_constructs
+  probe: evals/w85_probes.py::sit_production_ack_still_constructs
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): in production, even a valid declared ungoverned_ack is refused — the checklist cannot be skipped where the stakes are real. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.unknown_mode_fails_open
+  probe: evals/w85_probes.py::sit_unknown_mode_fails_open
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): an unknown deployment mode fails closed toward refusal (UngovernedConstructionError), never silently toward no-guard. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.ack_reason_dropped_from_chain
+  probe: evals/w85_probes.py::sit_ack_reason_dropped_from_chain
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): the declared ungoverned_ack reason is carried verbatim into the chained ungoverned_bypass event — the declaration is evidence, not theater. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.double_construction_attribution_confusion
+  probe: evals/w85_probes.py::sit_double_construction_attribution_confusion
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): a second legacy construction over a governed run directory is refused at __init__ with the refusal chained — regimes cannot silently mix in one chain. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.bypass_invisible_in_evidence_export
+  probe: evals/w85_probes.py::sit_bypass_invisible_in_evidence_export
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): the independent evidence verifier renders every declared bypass LOUDLY (UNGOVERNED BYPASS DECLARATIONS: DECLARED — AUDITOR ATTENTION REQUIRED) so auditors cannot miss it. Expected stopped.'
+- attack_class: governance-subversion
+  class: red-team
+  closure: green
+  expected: stopped
+  finding: null
+  id: redteam.seam_w85.caller_frame_captured
+  probe: evals/w85_probes.py::sit_caller_frame_captured
+  source: red-team/wave-85
+  tags:
+  - surface:governors
+  - wave:85
+  - pattern:RT31
+  title: 'construction seam (wave-85): the chained ungoverned_bypass declaration carries caller file/line/function — the auditor knows exactly who skipped the checklist and from where. Expected stopped.'
 schema_version: 1
 taxonomy: evals/TAXONOMY.md

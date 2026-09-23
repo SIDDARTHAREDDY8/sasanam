@@ -125,6 +125,222 @@ class PolicyPinMismatchError(Exception):
     GOV_POLICY_HASH pin. Raised by ToolExecutor.__init__ — construction
     is refused fail-closed, before any tool can execute."""
 
+
+class UngovernedConstructionError(Exception):
+    """Wave-85 (legacy-seam closure): ToolExecutor construction refused
+    fail-closed, before anything executes.
+
+    Raised when the governed core (policy_store + delegation_context)
+    is absent and no valid ``ungoverned_ack`` declaration is present —
+    or when the deployment mode is production (even a valid
+    declaration is refused there) or unresolvable (unknown modes fail
+    closed toward refusal, never silently toward "no guard").
+    """
+
+
+# Wave-85: the GOVERNED CORE — the two opt-in components that are
+# load-bearing for the audit questions "who changed the policy" and
+# "who acted", and therefore the two whose absence makes a
+# construction "ungoverned".
+#
+#   * policy_store (wave-75): the ONLY governed mutation path for the
+#     live engine. Without it, verdicts are pinned to a static file
+#     read at construction: policy changes have no chained authorship
+#     and "who changed policy" is unanswerable for the run.
+#   * delegation_context (wave-74): the three-token identity gate
+#     enforced in CODE before policy evaluation. Without it the
+#     "agent without delegation" case is open and "who acted, under
+#     whose authority" is unanswerable.
+#
+# Deliberately NOT in the core (they legitimately vary by deployment
+# and their absence creates no unattributed action):
+#   * detection_monitor (wave-76): behavioral baselines are a
+#     risk-profile choice — less detection depth, not a bypass.
+#   * recovery (wave-77): the halt latch exists only where a recovery
+#     controller is deployed; there is no halt authority to check
+#     elsewhere.
+#   * lease_verifier (wave-78): meaningful only where a LeaseAuthority
+#     mints leases; requiring it where no leases exist would deny
+#     every gated tool by deployment shape, not by threat.
+#   * precommit_gate / trifecta_floor (wave-79): explicit deployment
+#     friction decisions (wave-79 resolved both as opt-in for exactly
+#     this reason).
+_GOVERNED_CORE_COMPONENTS = ("policy_store", "delegation_context")
+
+
+def _construction_caller():
+    """First stack frame outside gov/executor.py: who skipped the
+    checklist. Best-effort: never raises."""
+    unknown = {"caller_file": "<unknown>", "caller_line": 0,
+               "caller_function": "<unknown>"}
+    try:
+        here = os.path.realpath(__file__)
+    except Exception:
+        return dict(unknown)
+    try:
+        frame = sys._getframe(2)
+    except ValueError:
+        return dict(unknown)
+    while frame is not None:
+        try:
+            name = os.path.realpath(frame.f_code.co_filename)
+        except Exception:
+            break
+        if name != here:
+            try:
+                return {
+                    "caller_file": os.path.basename(
+                        frame.f_code.co_filename),
+                    "caller_line": int(frame.f_lineno),
+                    "caller_function": str(frame.f_code.co_name),
+                }
+            except Exception:
+                break
+        frame = frame.f_back
+    return dict(unknown)
+
+
+def _fail_closed_construction_check(run_id, log, policy_store,
+                                    delegation_context, ungoverned_ack,
+                                    non_core=()):
+    """Wave-85 fail-closed construction gate (aviation checklist: the
+    safe state is the DEFAULT state; skipping it requires an explicit,
+    recorded declaration — refused outright in production).
+
+    Returns ``(ack_reason_or_None, missing_components)``. Raises
+    :class:`UngovernedConstructionError` BEFORE anything executes when
+    the governed core is absent and no valid declaration survives the
+    checks below. A chained ``ungoverned_bypass_refused`` record is
+    attempted best-effort before raising (the attempt itself is
+    evidence); audit failure never masks the refusal.
+
+    ``non_core`` is an iterable of ``(name, value)`` for the governed
+    components that are deliberately NOT in the core (detection
+    monitor, recovery, lease verifier, precommit gate, trifecta
+    floor): their absence never invalidates construction, but the
+    declaration reports them so the auditor sees the full deployment
+    shape, not just the bypass.
+    """
+    core_vals = {"policy_store": policy_store,
+                 "delegation_context": delegation_context}
+    missing = [name for name in _GOVERNED_CORE_COMPONENTS
+               if core_vals[name] is None]
+    absent_non_core = [name for name, val in non_core if not val]
+    if not missing:
+        return None, []
+    caller = _construction_caller()
+    # The key layer's fail-closed is MORE fundamental than this gate:
+    # without a key no chain can exist at all, so a NoKeyConfiguredError
+    # from the audit write propagates UNCHANGED (never masked as a
+    # bypass refusal — the deployment has a key problem, not a
+    # declaration problem).
+    from .keys import NoKeyConfiguredError
+
+    def _refuse(cause, detail):
+        try:
+            log.append({
+                "event": "ungoverned_bypass_refused",
+                "run_id": run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "refused",
+                "policy_id": "construction-seam",
+                "refusal_cause": cause,
+                "missing_components": list(missing),
+                "absent_non_core_components": list(absent_non_core),
+                "reason": detail,
+                "caller_file": caller["caller_file"],
+                "caller_line": caller["caller_line"],
+                "caller_function": caller["caller_function"],
+            })
+        except NoKeyConfiguredError:
+            raise
+        except Exception:
+            pass  # the refusal stands even if the audit write fails
+        raise UngovernedConstructionError(detail)
+
+    # 1. The declaration must exist and be non-blank. F131's lesson:
+    #    a whitespace-only justification is hollow — it says nothing
+    #    while looking declared.
+    if ungoverned_ack is None:
+        _refuse(
+            "no_ack",
+            "REFUSED: ToolExecutor constructed without the governed "
+            "core (%s) and without ungoverned_ack — the safe state is "
+            "the default state; skipping the checklist requires an "
+            "explicit, recorded declaration." % ", ".join(missing))
+    if not isinstance(ungoverned_ack, str) or not ungoverned_ack.strip():
+        _refuse(
+            "blank_ack",
+            "REFUSED: ungoverned_ack is blank/whitespace-only — a hollow "
+            "justification (F131). The governed core (%s) is absent; "
+            "state a real reason or install the core."
+            % ", ".join(missing))
+    # 2. Resolve the deployment mode (wave-70/81 machinery). Unknown or
+    #    unresolvable modes fail closed TOWARD refusal, never silently
+    #    toward "no guard".
+    from .keyprovider import resolve_deployment_mode
+    try:
+        mode = resolve_deployment_mode()
+    except Exception as exc:
+        _refuse(
+            "unresolvable_mode",
+            "REFUSED: deployment mode unresolvable (%s) — failing "
+            "closed toward refusal; an unknown mode never silently "
+            "disables the construction guard. Governed core absent: %s."
+            % (exc, ", ".join(missing)))
+    # 3. Production refuses even a valid declaration: where the stakes
+    #    are real, the checklist cannot be skipped by declaration.
+    if mode == "production":
+        _refuse(
+            "production",
+            "REFUSED: deployment mode is production — ungoverned "
+            "construction is refused even with a declared reason. "
+            "Install the governed core (%s) or do not run here."
+            % ", ".join(missing))
+    # 4. Declared bypass (non-production only): stamp the LOUD chained
+    #    declaration FIRST in the run's chain, then proceed. If the
+    #    declaration cannot be chained, the bypass is refused — an
+    #    unrecorded declaration is not a declaration.
+    reason = ungoverned_ack.strip()
+    non_core_note = (" Also absent (deployment choices, NOT bypasses — "
+                     "they legitimately vary by deployment): %s."
+                     % ", ".join(absent_non_core)) if absent_non_core else ""
+    try:
+        log.append({
+            "event": "ungoverned_bypass",
+            "run_id": run_id,
+            "agent_id": "system",
+            "role": "system",
+            "decision": "declared",
+            "policy_id": "construction-seam",
+            "ungoverned_reason": reason,
+            "missing_components": list(missing),
+            "absent_non_core_components": list(absent_non_core),
+            "deployment_mode": mode,
+            "reason": (
+                "LOUD: ToolExecutor constructed WITHOUT the governed "
+                "core (%s) under an explicit, recorded declaration. "
+                "Declared reason: %r. Deployment mode: %s. Declared by "
+                "%s:%s in %s. This run's verdicts carry NO governed "
+                "policy-change lineage and NO delegation-identity gate — "
+                "audit accordingly.%s"
+                % (", ".join(missing), reason, mode,
+                   caller["caller_file"], caller["caller_line"],
+                   caller["caller_function"], non_core_note)),
+            "caller_file": caller["caller_file"],
+            "caller_line": caller["caller_line"],
+            "caller_function": caller["caller_function"],
+        })
+    except NoKeyConfiguredError:
+        raise
+    except Exception as exc:
+        raise UngovernedConstructionError(
+            "REFUSED: the ungoverned_bypass declaration could not be "
+            "chained (%s) — an unrecorded declaration is not a "
+            "declaration." % (exc,))
+    return reason, missing
+
 # F17b: per-run identity issuance budget. Bounds identity sprawl / mint
 # abuse inside one run; deployments that legitimately mint more raise
 # the constant.
@@ -147,12 +363,29 @@ class ToolExecutor:
                  policy_store=None, detection_monitor=None,
                  recovery=None, lease_verifier=None,
                  lease_gated_tools=(), precommit_gate=None,
-                 trifecta_floor=False):
+                 trifecta_floor=False, ungoverned_ack=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # Wave-85 (legacy-seam closure): fail-closed construction. The
+        # governed core (policy_store + delegation_context) is the
+        # DEFAULT; constructing without it requires an explicit,
+        # non-blank, recorded ungoverned_ack — refused outright in
+        # production, and unknown/unresolvable deployment modes fail
+        # closed toward refusal. The check runs BEFORE anything
+        # executes (no directories created, no audit writes except the
+        # gate's own LOUD declaration / best-effort refusal record).
+        self._ungoverned_ack, self._ungoverned_missing = (
+            _fail_closed_construction_check(
+                self.run_id, log, policy_store, delegation_context,
+                ungoverned_ack,
+                non_core=(("detection_monitor", detection_monitor),
+                          ("recovery", recovery),
+                          ("lease_verifier", lease_verifier),
+                          ("precommit_gate", precommit_gate),
+                          ("trifecta_floor", trifecta_floor))))
         # Wave-75 (governing the governors): the governed policy path.
         # Opt-in: None = pre-wave-75 behavior, zero behavior change.
         # When installed, call() snapshots the store's CURRENT engine
@@ -2868,16 +3101,20 @@ class ToolExecutor:
 
     @property
     def is_governed(self):
-        """Whether this executor's live engine is owned by a
-        GovernedPolicyStore (wave-84).
+        """Whether this executor carries the full governed core
+        (wave-84 + wave-85).
 
-        False is the legacy posture: the constructor's engine, no
-        governed policy-change events ever reach it, and a directly
-        constructed PolicyEngine takes effect with zero ceremony
-        (the measured wave-84 residual). Deployments that require
-        governed policy assert this is True.
+        True iff BOTH core components are installed: a policy_store
+        owns the live engine (wave-84: governed policy-change events
+        reach it) AND a delegation_context is bound (wave-74: the
+        three-token identity gate). Either one missing means the
+        construction was a declared ungoverned bypass (wave-85 refuses
+        silent half-core construction), so the executor is not
+        governed no matter which half is present. Deployments that
+        require governed execution assert this is True.
         """
-        return self._policy_store is not None
+        return (self._policy_store is not None
+                and self._delegation_context is not None)
 
     def call(self, identity, tool, **kwargs):
         """Run one tool call through the governance pipeline."""

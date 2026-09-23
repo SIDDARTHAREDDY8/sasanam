@@ -276,6 +276,7 @@ declaration.
 
 ## Changelog
 
+- 2026-09-23 (wave-85): legacy construction seam closed. `ToolExecutor.__init__` runs a fail-closed construction gate: the governed core is exactly `policy_store` + `delegation_context`; missing core without a valid non-blank `ungoverned_ack` raises `UngovernedConstructionError` before anything executes (new exception); valid declarations chain a LOUD `ungoverned_bypass` event (reason verbatim, missing core, deployment mode, caller frame) and are refused outright in production; unknown modes fail closed toward refusal. `is_governed` now requires the FULL core (store-owned engine AND bound delegation context) — a store-only executor is a declared bypass, not governed. Declarations additionally report absent non-core components (detection monitor, recovery, lease verifier, precommit gate, trifecta floor) as deployment-shape context; their absence never invalidates construction.
 - 2026-09-22 (wave-75): v1 — policy-change as provenance record
   (`policy_change` / `breakglass` types), authorship token reusing the
   Wave-74 human key + roster, tier table bound to deployment_mode,
