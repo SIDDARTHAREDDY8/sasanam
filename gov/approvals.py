@@ -199,6 +199,15 @@ _SECURITY_PAYLOAD_FIELDS = (
     "tool", "args", "policy_id", "egress_bytes", "run_id", "decided_by",
     "agent_id", "role", "principal", "identity",
     "preview", "provenance", "policy_context", "policy_flag",
+    # Wave-79 (totality): the governing policy version and the rules
+    # that fired are integrity-bound from birth alongside policy_id —
+    # rewriting them after queueing would let a tampered record lie
+    # about which rule queued it on the human's decision record.
+    # FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/D1/wave-24/
+    # F101/F103): records queued before this change do not carry these
+    # fields, so their digests fail verification after the upgrade —
+    # queued items must be decided or drained before upgrading.
+    "policy_version", "matched_rules",
     "delegation_attempted", "delegation_grant_id", "delegation_delegator",
     # F101 (wave-26): the grant id and the delegating party are
     # integrity-bound from birth. A grant-verified approval-gated
@@ -243,6 +252,17 @@ _SECURITY_PAYLOAD_FIELDS = (
     "bridge_id", "external_request_id", "bridge_request_digest",
     "bridge_versions",
     "delegation_delegator_chain",
+    # F124 (wave-54): window-close approvals are single-use. The
+    # consumed flag is integrity-bound from birth (missing binds as
+    # None, same as every other field) so flipping it back after a
+    # close breaks the MAC and is refused, never silently re-usable
+    # (the F57 break-glass ticket precedent: consumption state rides
+    # the HMAC). FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/
+    # D1/F101/F103): records queued BEFORE this change do not carry
+    # this field, so their digests fail verification automatically
+    # after the upgrade — queued items must be decided or drained
+    # before upgrading.
+    "window_close_consumed",
 )
 
 
@@ -889,6 +909,25 @@ class ApprovalQueueRiskMixin:
     """Mixin for ApprovalQueue: risk, floods, batch, auto-approve,
     break-glass, post-review."""
 
+    # Wave-79 (totality): the single choke point for audit-log writes
+    # in the approval subsystem (the mixin and ApprovalQueue both
+    # route through it — ApprovalQueue inherits this method). Any
+    # entry carrying a `decision` key is a decision record and must
+    # name the governing policy version and the rules that fired.
+    # Explicit values win; otherwise the subsystem fallback
+    # ("approvals-d1" / []) applies. decide() passes the ticket's
+    # stored values so a human's outcome record names the rule that
+    # queued it. Returns the appended entry (seq-bearing), like
+    # log.append.
+    def _log(self, entry, policy_version=None, matched_rules=None):
+        if isinstance(entry, dict) and "decision" in entry:
+            entry.setdefault("policy_version",
+                             policy_version or "approvals-d1")
+            if matched_rules is None:
+                matched_rules = []
+            entry.setdefault("matched_rules", matched_rules)
+        return self.log.append(entry)
+
     # -- risk -----------------------------------------------------------
     def _anomaly_id_set(self, records):
         ids = set()
@@ -1206,7 +1245,7 @@ class ApprovalQueueRiskMixin:
                                     % (self.risk(r), BATCH_RISK_GUARD)))
         if guarded:
             detail = "; ".join("%s (%s)" % g for g in guarded)
-            self.log.append({
+            self._log({
                 "event": "approval_batch_abort",
                 "run_id": self.run_dir.name,
                 "agent_id": "human-operator",
@@ -1232,7 +1271,7 @@ class ApprovalQueueRiskMixin:
                 decided_by=decided_by)
             decided.append(record)
             decided_ids.append(i)
-        batch_entry = self.log.append({
+        batch_entry = self._log({
             "event": "approval_batch",
             "run_id": self.run_dir.name,
             "agent_id": "human-operator",
@@ -1473,7 +1512,7 @@ class ApprovalQueueRiskMixin:
 
     def _refuse_break_glass(self, approval_id, reason, ticket_id=None,
                             operator_principal=None):
-        self.log.append({
+        self._log({
             "event": "break_glass_refused",
             "run_id": self.run_id,
             "agent_id": "human-operator",
@@ -1580,7 +1619,7 @@ class ApprovalQueueRiskMixin:
                 "registry-without-session-identity is explicitly "
                 "unsupported.")
             print(warn_msg, file=sys.stderr)
-            self.log.append({
+            self._log({
                 "event": "break_glass_unprotected",
                 "run_id": self.run_id,
                 "agent_id": "system",
@@ -1746,7 +1785,7 @@ class ApprovalQueueRiskMixin:
                 # store consumed but the log silent, and a replayed
                 # pre-consume store snapshot would resurrect the ticket
                 # with no log evidence to refuse it.
-                self.log.append({
+                self._log({
                     "event": "ticket_consumed",
                     "run_id": record.get("run_id"),
                     "agent_id": "human-operator",
@@ -1792,7 +1831,7 @@ class ApprovalQueueRiskMixin:
         with open(self._reviews_path(), "a", encoding="utf-8") as f:
             f.write(json.dumps(ticket, ensure_ascii=True, default=str)
                     + "\n")
-        self.log.append({
+        self._log({
             "event": "approval_break_glass",
             "run_id": record.get("run_id"),
             "agent_id": "human-operator",
@@ -1871,7 +1910,7 @@ class ApprovalQueueRiskMixin:
         # confederate is refused even though it is not the operator.
         provisioned = target.get("provisioned_reviewer_principal")
         if not provisioned:
-            self.log.append({
+            self._log({
                 "event": "post_review_resolve_refused",
                 "run_id": target.get("run_id") or self.run_dir.name,
                 "agent_id": "human-operator",
@@ -1889,7 +1928,7 @@ class ApprovalQueueRiskMixin:
                 "(pre-R11 ticket): fail closed — re-provision through "
                 "the break-glass ticket flow" % ticket_id)
         if reviewer_identity.principal != provisioned:
-            self.log.append({
+            self._log({
                 "event": "post_review_resolve_refused",
                 "run_id": target.get("run_id") or self.run_dir.name,
                 "agent_id": "human-operator",
@@ -1916,7 +1955,7 @@ class ApprovalQueueRiskMixin:
             for t in tickets:
                 f.write(json.dumps(t, ensure_ascii=True, default=str)
                         + "\n")
-        entry = self.log.append({
+        entry = self._log({
             "event": "post_review_resolved",
             "run_id": target.get("run_id") or self.run_dir.name,
             "agent_id": "human-operator",
@@ -2503,7 +2542,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               delegation_grant_id=None, delegation_delegator=None,
               delegation_delegator_chain=None,
               policy_context=None, policy_flag=None, egress_bytes=None,
-              caller_identity=None):
+              caller_identity=None, policy_version=None,
+              matched_rules=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -2614,6 +2654,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_flag": policy_flag,  # F21: queue reason; batch
             # approval refuses security-excluded flags individually.
             "policy_hash": policy_hash,
+            # Wave-79 (totality): the governing policy version and the
+            # rules that fired ride on the ticket (the executor passes
+            # the queuing verdict's values), so the human's decision
+            # record can name exactly what queued it. Fallbacks are the
+            # honest subsystem values for tickets queued by non-engine
+            # paths.
+            "policy_version": policy_version or "approvals-d1",
+            "matched_rules": (list(matched_rules)
+                              if matched_rules is not None else []),
             # F38 (R10) / F43 (R11): the keyed digest binds the run this
             # record was queued in (the QUEUE's run_id — never a
             # caller-supplied value) and the decider (None while
@@ -2729,7 +2778,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         clash = sorted(eligible & requester_ids)
         if clash:
             try:
-                self.log.append({
+                self._log({
                     "event": "quorum_misconfigured",
                     "run_id": record.get("run_id"),
                     "agent_id": record.get("agent_id"),
@@ -2763,7 +2812,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "opened_at": _utcnow(),
         }
         try:
-            self.log.append({
+            self._log({
                 "event": "quorum_opened",
                 "run_id": record.get("run_id"),
                 "agent_id": record.get("agent_id"),
@@ -2883,7 +2932,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
         def _log_attempt(outcome, note, agent_id=None, role=None, tool=None):
             try:
-                self.log.append({
+                self._log({
                     "event": "approval_decision_attempt",
                     "run_id": (target or {}).get("run_id"),
                     "agent_id": "human-operator",
@@ -2991,7 +3040,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # the MAC, so the tamper check above fires instead.
         if target.get("decision_mode") == "quorum":
             try:
-                self.log.append({
+                self._log({
                     "event": "decision_refused",
                     "run_id": target.get("run_id"),
                     "agent_id": "human-operator",
@@ -3060,7 +3109,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             run_id=target.get("run_id") or "",
             principal="human-operator",
         )
-        entry = self.log.append({
+        entry = self._log({
             "event": "approval_decision",
             "run_id": target.get("run_id"),
             "agent_id": approver.agent_id,
@@ -3074,6 +3123,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_hash": target.get("policy_hash"),
             "decision": "approved" if approved else "rejected",
             "policy_id": target["policy_id"],
+            # Wave-79 (totality): the human's outcome names the rule
+            # that queued the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target["id"],
             "reason": reason,
             "decided_by": decided_by,
@@ -3084,7 +3137,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # it audit-only. Execution refusal keys off bridge_expired
         # (T12), so this entry is the forensic label, not the gate.
         if late:
-            self.log.append({
+            self._log({
                 "event": "approval_late_decision",
                 "run_id": target.get("run_id"),
                 "agent_id": "human-operator",
@@ -3146,7 +3199,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
         def _refuse(code, note):
             try:
-                self.log.append({
+                self._log({
                     "event": "delegation_refused",
                     "run_id": (target or {}).get("run_id"),
                     "agent_id": "human-operator",
@@ -3272,7 +3325,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
-        entry = self.log.append({
+        entry = self._log({
             "event": "approval_delegated",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3281,6 +3334,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": target.get("tool"),
             "decision": "delegated",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "delegated_by": delegated_by,
             "delegated_to": to_principal,
@@ -3337,7 +3394,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
-        entry = self.log.append({
+        entry = self._log({
             "event": "approval_delegated",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3346,6 +3403,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": target.get("tool"),
             "decision": "delegated",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "delegated_by": delegated_by,
             "delegated_to": to_principal,
@@ -3411,7 +3472,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
         def _refuse(code, note):
             try:
-                self.log.append({
+                self._log({
                     "event": "quorum_vote_refused",
                     "run_id": (target or {}).get("run_id"),
                     "agent_id": "human-operator",
@@ -3518,7 +3579,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
         tally_approve = sum(1 for v in votes if v.get("approve"))
-        vote_entry = self.log.append({
+        vote_entry = self._log({
             "event": "quorum_vote",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3527,6 +3588,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": target.get("tool"),
             "decision": "approved" if approve else "denied",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "voter_principal": voter_principal,
             "voter_identity": voter.as_dict(),
@@ -3566,7 +3631,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
-        self.log.append({
+        self._log({
             "event": "quorum_finalized",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3575,6 +3640,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": target.get("tool"),
             "decision": "rejected",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "finalize": "deny_veto",
             "veto_voter": vote["voter_principal"],
@@ -3584,7 +3653,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                        "record is rejected immediately" %
                        vote["voter_principal"]),
         })
-        entry = self.log.append({
+        entry = self._log({
             "event": "approval_decision",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3598,6 +3667,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_hash": target.get("policy_hash"),
             "decision": "rejected",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "reason": target["decision_reason"],
             "decided_by": target["decided_by"],
@@ -3626,7 +3699,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
-        self.log.append({
+        self._log({
             "event": "quorum_finalized",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3635,6 +3708,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": target.get("tool"),
             "decision": "approved",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "finalize": "m_approvals",
             "voters": voters,
@@ -3644,7 +3721,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "related_agent": target.get("agent_id"),
             "reason": target["decision_reason"],
         })
-        entry = self.log.append({
+        entry = self._log({
             "event": "approval_decision",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3658,6 +3735,10 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_hash": target.get("policy_hash"),
             "decision": "approved",
             "policy_id": target.get("policy_id"),
+            # Wave-79 (totality): the outcome names the rule that queued
+            # the ticket (stored, MAC-bound, at queue time).
+            "policy_version": target.get("policy_version", "approvals-d1"),
+            "matched_rules": target.get("matched_rules", []),
             "approval_id": target.get("id"),
             "reason": target["decision_reason"],
             "decided_by": target["decided_by"],
@@ -3695,7 +3776,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             raise ValueError("approval id %r not found" % approval_id)
         if target.get("executed"):
             try:
-                self.log.append({
+                self._log({
                     "event": "bridge_expired_after_execution",
                     "run_id": target.get("run_id"),
                     "agent_id": "human-operator",
@@ -3723,7 +3804,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             integrity_ok = approval_digest_ok(target)
         if not integrity_ok:
             try:
-                self.log.append({
+                self._log({
                     "event": "bridge_expired_refused",
                     "run_id": target.get("run_id"),
                     "agent_id": "human-operator",
@@ -3749,7 +3830,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["args_digest"] = approval_record_digest(target)
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
-        entry = self.log.append({
+        entry = self._log({
             "event": "bridge_wait_expired",
             "run_id": target.get("run_id"),
             "agent_id": "human-operator",
@@ -3944,7 +4025,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     "reason": reason,
                 }
                 fields.update(extra)
-                self.log.append(fields)
+                self._log(fields)
             except Exception:
                 pass
 
@@ -4091,7 +4172,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         first = self.get(approval_id)
         if first is None:
             try:
-                self.log.append({
+                self._log({
                     "event": "bridge_wait_unknown_id",
                     "run_id": self.run_id,
                     "agent_id": "human-operator",
@@ -4116,7 +4197,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 # loudly, report timeout, never approve what we cannot
                 # see.
                 try:
-                    self.log.append({
+                    self._log({
                         "event": "bridge_wait_record_missing",
                         "run_id": self.run_id,
                         "agent_id": "human-operator",
@@ -4149,7 +4230,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             return "rejected"
         if rec is None:
             try:
-                self.log.append({
+                self._log({
                     "event": "bridge_wait_record_missing",
                     "run_id": self.run_id,
                     "agent_id": "human-operator",
@@ -4364,7 +4445,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 markers_key, error, broken_seq, last_audit,
                 suppressed + 1)
             return
-        self.log.append({
+        self._log({
             "event": "reconciliation_marker_invalid",
             "run_id": self.run_id,
             "agent_id": "human-operator",
@@ -4445,7 +4526,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                  if e.get("event") == "action_log_malformed_lines_skipped"),
                 default=0)
             if n_malformed > already:
-                self.log.append({
+                self._log({
                     "event": "action_log_malformed_lines_skipped",
                     "run_id": self.run_id,
                     "agent_id": "human-operator",
@@ -4634,7 +4715,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 # least one entry cannot be authenticated -- so audit
                 # LOUDLY and reconcile nothing. This is the
                 # tamper-loudness backstop for the no-marker path.
-                self.log.append({
+                self._log({
                     "event": "reconciliation_chain_unverifiable",
                     "run_id": self.run_id,
                     "agent_id": "human-operator",
@@ -4704,7 +4785,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
         self._rewrite(fix)
         for aid, seq, integrity_ok in reconciled:
-            self.log.append({
+            self._log({
                 "event": "approval_execution_interrupted",
                 "run_id": self.run_id,
                 "agent_id": "human-operator",

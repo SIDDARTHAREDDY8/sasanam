@@ -112,3 +112,51 @@ parent-side escape rejection, quarantine path, `nobody` ownership.
 - `tests.test_sandbox` (existing): 49/49 pass, no regressions.
 - Full suite via `tests/run_tests.py` with a private TMPDIR: see the
   final report for exact counts.
+
+## Wave-59: filtered-egress cage seccomp profile (2026-09-22)
+
+Implements the wave-58 draft (`workstreams/architect/F81_SECCOMP_PROFILE_DRAFT.md`)
+as real BPF bytes. `gov/sandbox.py` additions:
+
+- `FILTERED_EGRESS_CAGE_ALLOW` = `DEFAULT_SECCOMP_ALLOW` minus `ioctl`
+  (plus defensive removals of `bind`/`listen`/`accept`/`accept4`/`unshare`/
+  `setns`, which DEFAULT never contained) plus the client-socket family
+  (`socket`, `connect`, `sendto`/`recvfrom`, `sendmsg`/`recvmsg`,
+  `sendmmsg`/`recvmmsg`, `getsockopt`/`setsockopt`, `getsockname`,
+  `getpeername`, `shutdown`, `socketpair`).
+- `_build_seccomp_filter_args` (label-assembled classic BPF, same 3-opcode
+  vocabulary as the existing builder; forward jumps only) with the
+  `socket()` scalar arg rules: domain ∈ {AF_UNIX, AF_INET}, type =
+  SOCK_STREAM modulo SOCK_NONBLOCK|SOCK_CLOEXEC, protocol ∈ {0,
+  IPPROTO_TCP} (the protocol rule is a wave-59 break-first catch from the
+  CVE-2026-64564/SCTPhantom intake — SCTP-over-STREAM smuggling dies with
+  EPERM). Violations → SECCOMP_RET_ERRNO|EPERM; everything unlisted →
+  default KILL. Compiled program: 160 instructions on x86_64 (pinned in
+  tests).
+- `Sandbox(..., cage_mode="filtered-egress")` installs the cage filter
+  instead of `DEFAULT_SECCOMP_ALLOW` (composes with — not a fork of —
+  STRICT mode); unknown mode → ValueError, cage-without-seccomp →
+  ValueError, `GOV_SANDBOX_CAGE_MODE` env wiring with the same
+  fail-closed refusals as SandboxError. `GOV_SANDBOX_SECCOMP_LOG=1`
+  selects the SECCOMP_RET_LOG staging tier (denials audit-logged, not
+  enforced; stamped on the run note).
+- Audit story: kill-tier denials die with SIGSYS and the launcher now
+  stamps "seccomp kill-tier denial" on the run note (never silent);
+  errno-tier (EPERM) stays child-visible by design.
+- `python -m gov.sandbox --audit-seccomp-cage`: byte-level audit of the
+  cage profile (structure + full semantics incl. the high-bit arg
+  truncation pin and the deliberate connect()-ALLOW honest boundary).
+
+Break-first (`tests/test_sandbox_seccomp_cage.py`, 30 tests): AF_PACKET /
+SOCK_RAW / AF_NETLINK / AF_INET6 / SOCK_DGRAM / SCTP-protocol smuggling →
+EPERM; bind/listen/accept/unshare/setns/ioctl/ptrace/bpf/keyctl/prctl/
+seccomp/io_uring/userfaultfd → KILL; no socketcall multiplexor on x86_64,
+x32-aliased nrs → KILL; deny-by-default holds. Honest boundaries pinned:
+connect() is filter-ALLOW (destination confinement is the netns's job),
+recvmsg/sendmsg stay ALLOW (fd-passing is a trust-boundary control via fd
+hygiene, not a filter rule). Live-install tests skip in this environment
+(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER) → EINVAL; NO_NEW_PRIVS
+succeeds) — see `workstreams/evals/SECCOMP_REPORT.md` for the
+exercised-vs-emulated accounting. F81 stays OPEN: the filter is one
+layer; closure needs the full wall (netns + veth + proxy + this filter)
+in a privileged deployment CI.

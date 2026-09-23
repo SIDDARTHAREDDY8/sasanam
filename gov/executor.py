@@ -65,6 +65,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
+from . import canary as _canary
+from . import delegation_tokens as _delegation_tokens
+from . import rules_tiering as _rules_tiering
+from . import precommit as _precommit
 from . import supplychain_install as sc_install
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
@@ -138,12 +142,190 @@ _CORRELATION_WINDOW_API = 16
 class ToolExecutor:
     def __init__(self, run_dir, policy, log, approvals, ledger_path=None,
                  principal_registry=None, session_identity=None,
-                 tool_ratings=None, credential_manifest=None):
+                 tool_ratings=None, credential_manifest=None,
+                 canary_registry=None, delegation_context=None,
+                 policy_store=None, detection_monitor=None,
+                 recovery=None, lease_verifier=None,
+                 lease_gated_tools=(), precommit_gate=None,
+                 trifecta_floor=False):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # Wave-75 (governing the governors): the governed policy path.
+        # Opt-in: None = pre-wave-75 behavior, zero behavior change.
+        # When installed, call() snapshots the store's CURRENT engine
+        # at call start and the verdict path (role check → evaluate →
+        # recorded policy_version/hash) runs against that snapshot, so
+        # a policy change applied between two calls never mixes
+        # versions within one verdict. The store's apply() is the ONLY
+        # code path that changes the live engine — there is no
+        # reload-from-disk path (a YAML edit on disk without a
+        # governed change event does not move the live engine).
+        self._policy_store = policy_store
+        # Wave-74 (identity): the session's three-token DelegationContext
+        # (gov/delegation_tokens.DelegationContext, bound). Opt-in:
+        # None = pre-wave-74 behavior, zero behavior change. When
+        # installed, call() enforces the permission intersection
+        # (user ∩ agent ∩ delegation scope) BEFORE policy evaluation —
+        # the check lives in code, not policy text, so no policy YAML
+        # edit can disable it (the "agent without delegation" case
+        # fails closed BY CONSTRUCTION).
+        self._delegation_context = delegation_context
+        # Wave-76 (detection): the behavioral circuit-breaker monitor
+        # (gov/detection.BehavioralMonitor). Opt-in: None = pre-wave-76
+        # behavior, zero behavior change. When installed, call()
+        # consults the monitor's breaker on the verdict path: a breaker
+        # OPEN for the acting identity downgrades allow verdicts on
+        # high-risk tools to require_approval (flag
+        # "behavioral_breaker_open"), and stamps the wave-74 token refs
+        # on every verdict-path entry so the monitor's per-identity
+        # baselines key to the three-token identity. The monitor is
+        # read-only and operator-owned; it never executes, approves, or
+        # writes queue records.
+        self._detection_monitor = detection_monitor
+        # Wave-77 (recovery): the recovery controller
+        # (gov/recovery.RecoveryController). Opt-in: None = pre-wave-77
+        # behavior, zero behavior change. When installed, call()
+        # consults the controller's external halt latch on the verdict
+        # path BEFORE policy evaluation: a halted identity is refused
+        # with RecoveryHaltedError (sticky — catching it and calling
+        # again still raises, the canary pattern) and a loud audit
+        # entry. The halt does not depend on the agent's cooperation;
+        # the latch lives in the operator trust domain, keyed by the
+        # agent_id string the operator used at halt time. A controller
+        # error is treated as halted (fail closed, loud).
+        self._recovery = recovery
+        # Wave-78 (supply-chain / leases): the capability-lease verifier
+        # (gov/capability_leases.LeaseVerifier, agent side — public keys
+        # only). Opt-in: None = pre-wave-78 behavior, zero behavior
+        # change. When installed, call() requires a valid presented
+        # lease for tools in the lease-gated set on the verdict path
+        # BEFORE policy evaluation: the lease is verified at use time
+        # (signature, roster, window, revocation, task binding, scope)
+        # and any refusal is fail-closed, loud, and audited as
+        # lease_refused. The agent holds leases, never raw credentials;
+        # the minting authority's private key is never in this process's
+        # agent-reachable state (see gov/capability_leases).
+        self._lease_verifier = lease_verifier
+        self._lease_gated_tools = frozenset(lease_gated_tools or ())
+        # Wave-79 (pre-commit): the pre-commit gate for irreversible
+        # tools (gov/precommit.PrecommitGate). Opt-in: None =
+        # pre-wave-79 behavior, zero behavior change. When installed,
+        # an irreversible tool (gov/precommit.IRREVERSIBLE registry)
+        # executing on a policy ALLOW verdict must present a bound,
+        # unused pre-commit approval for the exact (tool, args) —
+        # otherwise the call is denied fail-closed (precommit-required)
+        # BEFORE the tool executes. The require_approval path still
+        # queues for a human (the queue's MAC-bound approval is the
+        # human moment there), but auto-approve is disabled for
+        # irreversible tools while the gate is installed: the human
+        # moment must be real.
+        self._precommit_gate = precommit_gate
+        # Wave-79 (rules tiering): the lethal-trifecta approval floor.
+        # Opt-in: False = pre-wave-79 behavior, zero behavior change
+        # (no tier is computed, no escalation record is chained, the
+        # policy's allow/deny/queue verdicts stand exactly as written).
+        # When enabled, call() computes the session's oversight tier
+        # over its EFFECTIVE grants (role tools ∪ verified delegation
+        # scope ∪ lease scope) on the allow path: the first elevated
+        # call in a session chains one loud tier_escalated record, and
+        # external-communication tools require human approval even when
+        # the policy would otherwise allow (the floor overrides allow
+        # only — deny still denies, require_approval already queues;
+        # the override appends the reserved "trifecta-tier-floor"
+        # sentinel to matched_rules). This is a deployment decision:
+        # enabling it means every allowlisted external call in a
+        # trifecta session (notably api_call for the coder/researcher/
+        # scout roles) needs a human — the guarantee is real, and so
+        # is the friction.
+        self._trifecta_floor = trifecta_floor
+        # Sessions that have tripped the elevated trifecta tier this
+        # run, so the loud escalation record is chained once per
+        # session, not once per call.
+        self._trifecta_escalated_sessions = set()
+        self._identity_token_refs = None
+        if delegation_context is not None:
+            try:
+                self._identity_token_refs = (
+                    _delegation_tokens.hop_token_refs(
+                        delegation_context.user_token,
+                        delegation_context.agent_token,
+                        delegation_context.delegation_token))
+            except Exception:
+                # Ref stamping is observability, not authority: the
+                # delegation GATE above already refused bad contexts.
+                # Never let stamping break the verdict path.
+                self._identity_token_refs = None
+        # Wave-51 P1 egress canaries: the run's canary registry (server-side,
+        # outside the jail). Default None = tripwire off, zero behavior
+        # change. When set, check_and_trip runs on the egress-attempt path
+        # inside call() and halts fail-closed on a hit.
+        self.canary_registry = canary_registry
+        # Wave-51 P1: persistent run-halt flag. Once a canary trips, the
+        # run stays halted server-side: every later call() raises
+        # CanaryTripHalt immediately, so catching the exception and
+        # retrying cannot resume the run.
+        self._canary_halted = False
+        # Wave-52 RT19: the halt also survives executor restarts. A
+        # trip writes a server-side marker file into the run dir
+        # (never the jail); a fresh executor constructed over the same
+        # run dir starts halted. Best-effort: the hash-chained
+        # canary_trip audit event remains the durable record, and the
+        # in-memory flag remains the fast path. A trip is terminal by
+        # design — no resume API exists — so no legitimate flow is
+        # affected.
+        self._canary_halt_marker = self.run_dir / ".canary_halted"
+        try:
+            if self._canary_halt_marker.exists():
+                self._canary_halted = True
+        except OSError:
+            pass
+        # Wave-66 D5: per-run cumulative ack-drain budget. The counter
+        # lives on the RUN — in memory here plus a server-side marker
+        # file in the run dir (never the jail), so it survives sink
+        # replacement (the counter is not on the sink), executor
+        # re-creation over the same run dir (marker re-read), and
+        # window close/reopen (keyed to run_id, orthogonal to
+        # windows). drain_ack_sink is the choke point into the hash
+        # chain: every ack record it chains increments the counter;
+        # exhaustion refuses LOUD (AckCumulativeBudgetExceeded).
+        # Best-effort I/O like the canary marker; the hash-chained
+        # control event remains the durable refusal record.
+        self._ack_cumulative_marker = self.run_dir / ".ack_cumulative"
+        (self._ack_cumulative_used,
+         self._ack_budget_hit_audited) = self._read_ack_cumulative()
+        # Wave-53 P1 (sterile cockpit): per-run critical-window
+        # controller. Opt-in — the policy's ``critical_windows:``
+        # block (validated fail-closed at policy load) builds it;
+        # absent/None leaves self.sterile None and behavior is
+        # byte-identical to wave-52 (pinned by test). The controller's
+        # audit events are drained into the run log by _drain_sterile.
+        from .sterile import (  # noqa: E402  (local: no import cycle)
+            SterileController, WindowPolicy, TOOL_CHANNELS)
+        self._sterile_tool_channels = TOOL_CHANNELS
+        self._sterile_events = []
+        self._sterile_loop = None
+        self._sterile_loop_absent_audited = False
+        self._sterile_refusals = {}    # window_id -> refusals this run
+        self._sterile_enters = {}      # window_id -> enter count
+        self._sterile_alerted = set()  # (window_id, enter_count) alerted
+        # Wave-53 P1 fix (paper-review round 2): per-window loop-held
+        # channels. window_id -> [channels the loop was asked to
+        # withhold on entry]. Release on close/expiry touches only
+        # channels no other open window still needs (union
+        # semantics); a channel already withheld by an outer window
+        # is not re-withheld on inner entry.
+        self._sterile_withheld = {}
+        _cw = getattr(policy, "critical_windows", None)
+        self.sterile = (SterileController(WindowPolicy(_cw or []),
+                                          audit=self._sterile_events)
+                        if _cw else None)
+        # First log seq of this run: the lower bound of the sterile
+        # entry snapshot_ref range (integration §1.1).
+        self._sterile_run_first_seq = (
+            int(log.tail_seq) + 1 if self.sterile is not None else None)
         # F111 (wave-34): the run's credential manifest (GTG-50020
         # class). The harness declares every credential it provisions
         # into the agent's reachable scope; the executor identity-binds
@@ -1666,11 +1848,23 @@ class ToolExecutor:
             return 0
 
         def _b(value):
+            if isinstance(value, (bytes, bytearray)):
+                return bytes(value)
             if isinstance(value, str):
                 return value.encode("utf-8")
             if isinstance(value, (dict, list)):
+                # F128: bytes nested inside a structured payload must not
+                # crash the budget counter (uncaught TypeError — F123
+                # class). Decoded latin-1 (1 char/byte; non-ASCII bytes
+                # may expand under UTF-8, so nested bytes overcount
+                # slightly — the conservative direction for a budget).
+                def _default(o):
+                    if isinstance(o, (bytes, bytearray)):
+                        return bytes(o).decode("latin-1")
+                    return str(o)
                 return json.dumps(value, sort_keys=True,
-                                  ensure_ascii=False).encode("utf-8")
+                                  ensure_ascii=False,
+                                  default=_default).encode("utf-8")
             return str(value).encode("utf-8")
 
         if tool == "send_email":
@@ -1711,11 +1905,980 @@ class ToolExecutor:
 
     # -- main entry points --------------------------------------------------
 
+    # -- sterile windows (wave-53 P1) -------------------------------------
+    # Executor-side critical-window enforcement. Integration design:
+    # workstreams/architect/STERILE_COCKPIT_INTEGRATION.md. Default-off:
+    # every method below is a no-op when self.sterile is None.
+
+    def attach_loop_contract(self, loop):
+        """Install the deployment-loop contract (sterile.LoopContract).
+
+        The loop owns freeze_context/withhold/release/reissue_reads
+        for executor-unmediated channels. Without it the executor
+        enforces tool-mediated channels only and declares the gap in
+        audit (loop_contract_absent + per-channel
+        window_declared_unenforceable) — never a silent partial claim.
+
+        Wave-53 P1 fix (paper-review round 2): explicit capability
+        handshake. A loop that inherits any of the four contract
+        methods unimplemented (the base raises NotImplementedError)
+        is rejected at attach time — a half-implemented loop fails
+        loud here, not silently partial at window entry.
+        """
+        from .sterile import LoopContract
+        if not isinstance(loop, LoopContract):
+            raise TypeError("loop must be a sterile.LoopContract")
+        for meth in ("freeze_context", "withhold", "release",
+                     "reissue_reads"):
+            if getattr(type(loop), meth) is getattr(LoopContract, meth):
+                raise TypeError(
+                    "loop must implement LoopContract.%s "
+                    "(inherited NotImplementedError stub)" % meth)
+        self._sterile_loop = loop
+        self.log.append({
+            "event": "sterile_loop_attached",
+            "run_id": self.run_id, "agent_id": "system",
+            "role": "system", "decision": "loop_attached",
+            "policy_id": "sterile-loop",
+            "reason": "Deployment loop contract attached: C4/C6/C7 "
+                      "channels are loop-withheld during windows.",
+        })
+        # RT21 a6 (wave-54): a loop attached while windows are already
+        # open does NOT retro-engage them — the entry-time
+        # window_declared_unenforceable declarations for those windows
+        # stand. Say so loudly so the gap is visible, not silent.
+        if self.sterile is not None:
+            open_now = self.sterile.open_windows()
+            if open_now:
+                self.log.append({
+                    "event": "loop_contract_attached_with_windows_open",
+                    "run_id": self.run_id, "agent_id": "system",
+                    "role": "system", "decision": "declared",
+                    "policy_id": "sterile-loop",
+                    "windows": list(open_now),
+                    "reason": "Loop contract attached while windows %s "
+                              "are already open: those windows were NOT "
+                              "loop-engaged (their entry-time "
+                              "window_declared_unenforceable "
+                              "declarations stand). Attach the contract "
+                              "before any tool call for full coverage."
+                              % (open_now,),
+                })
+
+    def _sterile_loop_owned(self, channel):
+        """Channels the executor cannot mediate (deployment-loop owned)."""
+        from .sterile import CHANNELS
+        rec = CHANNELS.get(channel)
+        return rec is not None and not rec["executor_mediated"]
+
+    def _sterile_snapshot_ref(self):
+        """Entry snapshot reference (integration §1.1).
+
+        The policy hash plus the log-seq range of tool results
+        delivered this run so far: "pre-vetted" means "passed the
+        content stack when delivered" — the window freezes the
+        verdicts, it does not re-prove them.
+        """
+        try:
+            self.log.refresh()
+            last = int(self.log.tail_seq)
+        except Exception:
+            last = 0
+        return {
+            "policy_hash": getattr(self.policy, "policy_hash", None),
+            "log_seq_first": self._sterile_run_first_seq,
+            "log_seq_last": last,
+        }
+
+    def _sterile_loop_error_audit(self, window, phase, error):
+        """A loop-contract call failed: audit loudly, stay degraded.
+
+        Executor-side channel suspension still holds (the executor's
+        own gate is unaffected); the loop-side gap is now an audited
+        fact, not a silent partial claim. Atomicity across executor
+        and loop is the deployment's responsibility — this audit
+        records exactly which phase failed so a reviewer can see a
+        partially applied entry (e.g. freeze ok, withhold failed).
+        """
+        self.log.append({
+            "event": "loop_contract_error",
+            "run_id": self.run_id, "agent_id": "system",
+            "role": "system", "decision": "degraded",
+            "policy_id": "sterile-loop",
+            "window": window, "phase": phase,
+            "error": str(error)[:200],
+            "reason": "Deployment loop contract call failed during "
+                      "%s; executor-side channel suspension still "
+                      "holds. Loop-side enforcement is unverified — "
+                      "treat this window as executor-side only." % phase,
+        })
+
+    def _sterile_loop_engage(self, window_id):
+        """Run the deployment loop's entry obligations (integration §1.1).
+
+        freeze_context(snapshot_ref) once per entry; withhold(channel)
+        for each suspended loop-owned channel not already withheld by
+        an open window. With no loop attached, each suspended
+        loop-owned channel is declared unenforceable in audit
+        (window_declared_unenforceable) — the gap is visible, not
+        silent.
+        """
+        wdef = self._sterile_window_def(window_id) or {}
+        suspended = list(wdef.get("suspend") or [])
+        owned = [c for c in suspended if self._sterile_loop_owned(c)]
+        if self._sterile_loop is None:
+            for ch in owned:
+                self.log.append({
+                    "event": "window_declared_unenforceable",
+                    "run_id": self.run_id, "agent_id": "system",
+                    "role": "system", "decision": "declared",
+                    "policy_id": "sterile-loop",
+                    "window": window_id, "channel": ch,
+                    "reason": "Channel %r is suspended by window %r "
+                              "but no deployment loop contract is "
+                              "attached — the executor cannot withhold "
+                              "arrivals on this channel. Declared "
+                              "suspended but unenforceable." % (ch,
+                                                                window_id),
+                })
+            return
+        ref = self._sterile_snapshot_ref()
+        withheld = []
+        try:
+            self._sterile_loop.freeze_context(ref)
+        except Exception as e:
+            self._sterile_loop_error_audit(window_id, "freeze_context",
+                                           e)
+            self._sterile_withheld[window_id] = withheld
+            return
+        already = set()
+        for ws in self._sterile_withheld.values():
+            already.update(ws)
+        for ch in owned:
+            if ch in already:
+                continue  # an open window already holds it
+            try:
+                self._sterile_loop.withhold(ch)
+            except Exception as e:
+                self._sterile_loop_error_audit(window_id,
+                                               "withhold:%s" % ch, e)
+                continue
+            withheld.append(ch)
+            already.add(ch)
+        self._sterile_withheld[window_id] = withheld
+
+    def _sterile_loop_release_for(self, window_id, phase):
+        """Release loop-held channels for one closing/expiring window.
+
+        Union semantics: a channel is released only when no other
+        open window still holds it.
+        """
+        withheld = self._sterile_withheld.pop(window_id, [])
+        if not withheld or self._sterile_loop is None:
+            return []
+        still_needed = set()
+        for wid, ws in self._sterile_withheld.items():
+            if wid in self.sterile.open_windows():
+                still_needed.update(ws)
+        released = []
+        for ch in withheld:
+            if ch in still_needed:
+                continue
+            try:
+                self._sterile_loop.release(ch)
+            except Exception as e:
+                self._sterile_loop_error_audit(window_id,
+                                               "release:%s" % ch, e)
+                continue
+            released.append(ch)
+        return released
+
+    def _drain_sterile(self, agent_id="system", role="system",
+                     enter_snapshot=None):
+        """Forward controller audit events into the hash-chained log.
+
+        enter_snapshot, when given, is attached to
+        sterile_window_enter events (integration §1.1: the entry
+        snapshot reference — policy hash + delivered-result log-seq
+        range — rides on the enter event the loop's freeze_context
+        pins to).
+        """
+        while self._sterile_events:
+            ev = self._sterile_events.pop(0)
+            entry = {"run_id": self.run_id, "agent_id": agent_id,
+                     "role": role}
+            entry.update(ev)
+            if (enter_snapshot is not None
+                    and ev.get("event") == "sterile_window_enter"):
+                entry["snapshot_ref"] = enter_snapshot
+            self.log.append(entry)
+
+    def _read_ack_cumulative(self):
+        """Read the wave-66 per-run cumulative ack counter from the
+        run-dir marker. Returns (used, budget_hit_audited). A missing
+        or corrupt marker degrades to (0, False) — documented
+        boundary: the marker is server-side run-dir state, same trust
+        class as the run dir itself; the in-memory counter still
+        bounds this executor's drains."""
+        try:
+            data = json.loads(self._ack_cumulative_marker.read_text())
+        except (OSError, ValueError):
+            return 0, False
+        used = data.get("drained", 0) if isinstance(data, dict) else 0
+        if isinstance(used, bool) or not isinstance(used, int) \
+                or used < 0:
+            return 0, False
+        hit = bool(data.get("budget_hit", False)) \
+            if isinstance(data, dict) else False
+        return used, hit
+
+    def _write_ack_cumulative(self):
+        """Persist the wave-66 cumulative ack counter (best-effort)."""
+        try:
+            self._ack_cumulative_marker.write_text(json.dumps(
+                {"drained": self._ack_cumulative_used,
+                 "budget_hit": self._ack_budget_hit_audited}))
+        except OSError:
+            pass
+
+    def _audit_ack_budget_hit(self, cap):
+        """Chain the one-per-run control event naming the exhausted
+        cumulative ack budget. Loud in the audit trail, not just the
+        exception. A control event, not an ack record: it does not
+        count against the ack budget."""
+        if self._ack_budget_hit_audited:
+            return
+        self.log.append({
+            "run_id": self.run_id,
+            "agent_id": "system",
+            "role": "system",
+            "event": "unvetted_ack_cumulative_budget_hit",
+            "decision": "refused",
+            "budget": cap,
+            "drained": self._ack_cumulative_used,
+            "note": ("per-run cumulative ack budget exhausted: "
+                     "further drain_ack_sink calls refuse fail-closed; "
+                     "undrained evidence remains in the sink"),
+        })
+        self._ack_budget_hit_audited = True
+        self._write_ack_cumulative()
+
+    def drain_ack_sink(self, sink, agent_id="system", role="system"):
+        """Forward acknowledgment records into the hash-chained log.
+
+        Wave-65 D5: the deployment drains the consumer-owned ack sink
+        (an ``AckAuditSink`` or a plain list of ack records) into the
+        run log — this is the blessed path answering "should
+        acknowledge() sink records feed the hash-chained audit log"
+        (yes, via the standing drain convention: sterile.py never owns
+        the log; the log owner drains).
+
+        Peek-confirm: each record is appended to the ActionLog BEFORE
+        it is popped from the sink, so a failed append
+        (LogFullError, AppendLockError, NoKeyConfiguredError) leaves
+        the record in the sink — evidence is never silently dropped;
+        the exception propagates fail-closed per F22 (the deployment
+        must drain before relying on the trail).
+
+        Wave-66 D5: per-RUN cumulative flood budget. The per-sink
+        budget bounds one batch before one drain; repeated
+        drain/refill cycles are now bounded by a cumulative cap of
+        ``_ACK_CUMULATIVE_BATCHES_DEFAULT`` full sink batches
+        (default 8 * sink budget, 2048 at the default 256; plain-list
+        sinks default to the 256 batch baseline — the cumulative cap
+        is their ONLY bound). The counter lives on the run
+        (``_ack_cumulative_used`` + the ``.ack_cumulative`` run-dir
+        marker), never the sink: replacing the sink mid-run cannot
+        reset it. The accounting unit is one chained record
+        (individual acks and overflow summaries both count; a
+        coalesced record counts once). On exhaustion
+        ``AckCumulativeBudgetExceeded`` is raised LOUD — records
+        already drained stay chained (exact count), the rest stay in
+        the sink, and exactly one
+        ``unvetted_ack_cumulative_budget_hit`` control event is
+        chained per run. An empty sink drains to 0 with no raise even
+        when exhausted.
+
+        Reserved run keys (run_id, agent_id, role) are stamped by the
+        executor AFTER the record (log-wins, mirroring ActionLog's
+        reserved-metadata rule): a forged ack record cannot override
+        the run context at drain time. The ``consumer`` field stays
+        caller-asserted — consumer identity is self-attested by
+        design (the documented honesty boundary).
+
+        Returns the number of records drained.
+        """
+        from .sterile import (  # noqa: E402  (local: no import cycle)
+            AckCumulativeBudgetExceeded, _ACK_CUMULATIVE_BATCHES_DEFAULT,
+            _ACK_BUDGET_DEFAULT)
+        if hasattr(sink, "peek_oldest") and hasattr(sink, "pop_oldest"):
+            peek, pop = sink.peek_oldest, sink.pop_oldest
+            batch = getattr(sink, "max_records", None)
+        else:
+            # Plain-sequence sink (list): index first, remove only
+            # after the log append succeeds.
+            def peek():
+                return sink[0] if sink else None
+
+            def pop():
+                return sink.pop(0) if sink else None
+
+            batch = None
+        if isinstance(batch, bool) or not isinstance(batch, int) \
+                or batch < 1:
+            # Plain list or foreign sink: the cumulative cap is the
+            # only bound, keyed to the default batch baseline.
+            batch = _ACK_BUDGET_DEFAULT
+        cap = _ACK_CUMULATIVE_BATCHES_DEFAULT * batch
+
+        def _refuse():
+            try:
+                remaining = sink.pending()
+            except (AttributeError, TypeError):
+                try:
+                    remaining = len(sink)
+                except TypeError:
+                    remaining = "?"
+            self._audit_ack_budget_hit(cap)
+            raise AckCumulativeBudgetExceeded(
+                "per-run cumulative ack budget exhausted: %d ack "
+                "records already chained this run (cap %d); %s "
+                "record(s) remain in the sink — fail-closed, evidence "
+                "retained" % (self._ack_cumulative_used, cap,
+                              remaining))
+
+        n = 0
+        while True:
+            rec = peek()
+            if rec is None:
+                break
+            if not isinstance(rec, dict):
+                raise TypeError(
+                    "ack sink holds a non-record %r (refusing to drain)"
+                    % type(rec).__name__)
+            if self._ack_cumulative_used >= cap:
+                _refuse()
+            entry = {}
+            entry.update(rec)
+            entry["run_id"] = self.run_id
+            entry["agent_id"] = agent_id
+            entry["role"] = role
+            self.log.append(entry)  # raises -> record stays; fail closed
+            pop()
+            # Increment ONLY after a successful chain-append + pop: a
+            # failed drain re-drains with exact accounting — no
+            # double-count (wave-65's no-silent-drops property holds).
+            self._ack_cumulative_used += 1
+            n += 1
+        self._write_ack_cumulative()
+        return n
+
+    def _sterile_expire(self, t=None):
+        """Expire overdue windows with loop release + reconciliation.
+
+        Wave-53 P1 fix (paper-review round 2): expiry is not just a
+        controller pop. For each expired window the executor (a)
+        releases loop-withheld channels (union semantics), (b) hands
+        the refused-during-window read list to loop.reissue_reads()
+        when a loop is attached — the reads were refused, never
+        delivered; the loop re-issues them through the full
+        content-defense stack, never marked vetted (R4) — and (c)
+        emits ONE merged sterile_window_exit event per expired window
+        (controller fields + executor reconcile/release fields)
+        instead of a bare controller pop.
+        """
+        if self.sterile is None:
+            return []
+        # Snapshot per-window entry metadata before tick() pops them.
+        detail = {wid: self.sterile.peek(wid)
+                  for wid in self.sterile.open_windows()}
+        expired = self.sterile.tick(t)
+        # Collect (not blind-drain): expired-window exits get merged
+        # into one executor-authored event each.
+        pending = []
+        while self._sterile_events:
+            pending.append(self._sterile_events.pop(0))
+        for wid in expired:
+            info = detail.get(wid) or {}
+            refused = list(info.get("refused") or [])
+            released = self._sterile_loop_release_for(wid, "expired")
+            reissued = None
+            if self._sterile_loop is not None and refused:
+                try:
+                    reissued = self._sterile_loop.reissue_reads(refused)
+                except Exception as e:
+                    self._sterile_loop_error_audit(wid, "reissue_reads",
+                                                   e)
+            merged = {"run_id": self.run_id, "agent_id": "system",
+                      "role": "system",
+                      "event": "sterile_window_exit", "window": wid,
+                      "reason": "expired", "task": "incomplete",
+                      "decision": "expired",
+                      "policy_id": "sterile-close",
+                      "reconcile": refused,
+                      "reconciled_vetted": False,
+                      "reconcile_pending": (not self._sterile_loop
+                                            and bool(refused)),
+                      "released_channels": released}
+            if reissued is not None:
+                # Wave-64 D5: the reissue pipe's return crosses wrapped
+                # in the typed unvetted marker, stored as its JSON
+                # envelope — machine-readable "never vetted" that
+                # survives the audit log's JSON serialization (the
+                # live Unvetted object would be erased by the log's
+                # default=str). reconciled_vetted stays False (R4).
+                # Local import: no import cycle (attach_loop_contract
+                # idiom); the __init__-local sterile import is not in
+                # scope here.
+                from .sterile import Unvetted  # noqa: E402
+                merged["post_window_delta"] = Unvetted(
+                    reissued, origin="reissue_reads",
+                    ack_context={"window": wid,
+                                 "run_id": self.run_id}).to_envelope()
+            self.log.append(merged)
+        for ev in pending:
+            if (ev.get("event") == "sterile_window_exit"
+                    and ev.get("window") in expired
+                    and ev.get("reason") == "expired"):
+                continue  # merged above
+            entry = {"run_id": self.run_id, "agent_id": "system",
+                     "role": "system"}
+            entry.update(ev)
+            self.log.append(entry)
+        return expired
+
+    def _sterile_window_def(self, window_id):
+        for w in self.sterile.policy.windows:
+            if w["id"] == window_id:
+                return w
+        return None
+
+    def _sterile_loop_absent_audit(self):
+        if (self.sterile is not None and self._sterile_loop is None
+                and not self._sterile_loop_absent_audited):
+            self._sterile_loop_absent_audited = True
+            self.log.append({
+                "event": "loop_contract_absent",
+                "run_id": self.run_id, "agent_id": "system",
+                "role": "system", "decision": "degraded",
+                "policy_id": "sterile-loop",
+                "reason": "No deployment loop contract attached: "
+                          "windows enforce executor-mediated channels "
+                          "(tool_result, file_read, web_fetch) only; "
+                          "user_message/skill_content/summary_state are "
+                          "declared suspended but unenforceable.",
+            })
+
+    def _sterile_entry_rescan(self, window_id):
+        """Wave-53 P1 (integration §2): opt-in entry re-scan.
+
+        Re-runs the CURRENT sensitive-content judgment over retained
+        pre-window read content. Catches stale-stack misses, never
+        lineage — a hit is audited (content identified by sha256
+        prefix only, never logged), never silently remediated.
+        """
+        wdef = self._sterile_window_def(window_id)
+        if not wdef or not wdef.get("entry_rescan"):
+            return
+        for content in list(getattr(self, "_read_contents", [])):
+            try:
+                if self._content_is_sensitive(content):
+                    import hashlib
+                    self.log.append({
+                        "event": "window_entry_rescan_hit",
+                        "window": window_id, "run_id": self.run_id,
+                        "agent_id": "system", "role": "system",
+                        "decision": "flagged",
+                        "policy_id": "sterile-entry-rescan",
+                        "content_sha256_prefix": hashlib.sha256(
+                            content.encode("utf-8",
+                                           "replace")).hexdigest()[:16],
+                        "reason": "Pre-window delivered content trips "
+                                  "the current content stack on window "
+                                  "entry re-scan (stale-stack check; not "
+                                  "lineage — see integration design §2).",
+                    })
+            except Exception:
+                continue
+
+    def _sterile_refusal_accounting(self, window_id):
+        n = self._sterile_refusals.get(window_id, 0) + 1
+        self._sterile_refusals[window_id] = n
+        wdef = self._sterile_window_def(window_id)
+        alert_after = (wdef or {}).get("refusal_alert_after")
+        if (alert_after is not None and n > alert_after
+                and (window_id, self._sterile_enters.get(window_id, 0))
+                not in self._sterile_alerted):
+            self._sterile_alerted.add(
+                (window_id, self._sterile_enters.get(window_id, 0)))
+            self.log.append({
+                "event": "window_refusal_rate_alert",
+                "window": window_id, "run_id": self.run_id,
+                "agent_id": "system", "role": "system",
+                "decision": "flagged", "policy_id": "sterile-telemetry",
+                "refusals": n, "threshold": alert_after,
+                "reason": "Refusals for window %r exceeded "
+                          "refusal_alert_after=%d — the window is likely "
+                          "mis-scoped (too broad/long), not a user "
+                          "problem; tune the policy."
+                          % (window_id, alert_after),
+            })
+
+    def _sterile_gate(self, identity, tool, t=None):
+        """Critical-window entry + input-channel refusal for one call.
+
+        Returns an audit-logged refusal dict, or None to continue the
+        pipeline. Identity-verified callers only mutate window state.
+        """
+        if self.sterile is None:
+            return None
+        # Fail-closed expiry on every call, even quiet runs (with
+        # loop release + expiry reconciliation — _sterile_expire).
+        self._sterile_expire(t)
+        # The close primitive is a governance method, never a tool: a
+        # literal tool call with that name is denied loudly, so
+        # tool-call parameters can never reach the controller
+        # (integration §7: window-escape via parameters).
+        if tool == "window_close":
+            entry = self.log.append({
+                "event": "window_close_denied",
+                "run_id": self.run_id, "agent_id": identity.agent_id,
+                "role": identity.role, "tool": tool,
+                "decision": "denied", "policy_id": "sterile-reserved",
+                "reason": "window_close is a governance primitive, not "
+                          "a tool — use request_window_close().",
+            })
+            return {"status": "denied", "reason": entry["reason"],
+                    "policy_id": "sterile-reserved", "seq": entry["seq"]}
+        # Unverified callers never mutate window state (their calls are
+        # denied at the identity check anyway).
+        if self._check_identity(identity) is not None:
+            return None
+        entered = self.sterile.maybe_open(tool, t)
+        enter_snapshot = self._sterile_snapshot_ref()
+        self._drain_sterile(agent_id=identity.agent_id,
+                            role=identity.role,
+                            enter_snapshot=enter_snapshot)
+        for ev in entered:
+            if ev.get("event") == "sterile_window_enter":
+                wid = ev["window"]
+                self._sterile_enters[wid] = \
+                    self._sterile_enters.get(wid, 0) + 1
+                self._sterile_entry_rescan(wid)
+                self._sterile_loop_engage(wid)
+        self._sterile_loop_absent_audit()
+        channel = self._sterile_tool_channels.get(tool, "unknown_tool")
+        verdict = self.sterile.check(tool, channel, t)
+        self._drain_sterile(agent_id=identity.agent_id,
+                            role=identity.role)
+        if verdict["allowed"]:
+            return None
+        wid = verdict["window"]
+        self._sterile_refusal_accounting(wid)
+        return {
+            "status": "window_suspended", "window": wid,
+            "channel": channel,
+            "reason": ("Input channel %r is suspended while critical "
+                       "window %r is open — defer the read until the "
+                       "window closes." % (channel, wid)),
+            "policy_id": "sterile-window",
+        }
+
+    def sterile_tick(self, t=None):
+        """Expire overdue windows outside the call path (quiet runs).
+
+        Loop release + expiry reconciliation included (_sterile_expire).
+        """
+        if self.sterile is None:
+            return []
+        return self._sterile_expire(t)
+
+    def sterile_refusal_summary(self):
+        """Per-window refusal telemetry (integration §4)."""
+        if self.sterile is None:
+            return {}
+        return {wid: {"refusals": self._sterile_refusals.get(wid, 0),
+                       "enters": self._sterile_enters.get(wid, 0)}
+                for wid in self.sterile.open_windows()
+                + [w for w in self._sterile_refusals
+                   if w not in self.sterile.open_windows()]}
+
+    def request_window_close(self, identity, window_id=None,
+                             approval_id=None):
+        """The agent's window_close governance primitive (never a tool).
+
+        agent_declared windows: verifies mechanics (open, innermost,
+        caller identity, no pending in-window approvals) and closes,
+        returning the refused-during-window read list for the loop to
+        re-issue (never marked vetted). human_approval windows: with
+        no approval_id, queues a close request and returns
+        {"status": "queued", ...}; with approval_id, verifies the
+        approval record (approved, same run, window_close type,
+        window match, within TTL) before closing.
+        """
+        from .policy import PolicyDecision
+        if self.sterile is None:
+            return {"closed": False, "reason": "windows_not_configured"}
+        if not isinstance(identity, AgentIdentity):
+            raise TypeError("identity must be an AgentIdentity minted "
+                            "by this executor")
+        id_deny = self._check_identity(identity)
+        if id_deny is not None:
+            self.log.append({
+                "event": "window_close_denied", "run_id": self.run_id,
+                "agent_id": "unverified", "role": "unverified",
+                "window": window_id, "decision": "denied",
+                "policy_id": id_deny[0], "reason": id_deny[2],
+            })
+            return {"closed": False, "reason": "identity_denied"}
+        open_ids = self.sterile.open_windows()
+        if not open_ids:
+            self.log.append({
+                "event": "window_close_denied", "run_id": self.run_id,
+                "agent_id": identity.agent_id, "role": identity.role,
+                "window": window_id, "decision": "denied",
+                "policy_id": "sterile-close",
+                "reason": "No window open.",
+            })
+            return {"closed": False, "reason": "no_window_open"}
+        target = window_id or open_ids[-1]
+        if target != open_ids[-1]:
+            self.log.append({
+                "event": "window_close_denied", "run_id": self.run_id,
+                "agent_id": identity.agent_id, "role": identity.role,
+                "window": target, "decision": "denied",
+                "policy_id": "sterile-close",
+                "reason": "LIFO: window %r is not innermost (%r is)."
+                          % (target, open_ids[-1]),
+            })
+            return {"closed": False, "reason": "not_innermost"}
+        wdef = self._sterile_window_def(target) or {}
+        if wdef.get("close_policy") == "human_approval":
+            if approval_id is None:
+                # Queue the close request through the existing approval
+                # queue (F42 caller_identity; the queue's MAC/digest
+                # integrity covers the record).
+                aid = self.approvals.queue(
+                    action={"tool": "window_close",
+                            "args": {"type": "window_close",
+                                     "window": target},
+                            "identity": identity.as_dict(),
+                            "agent_justification":
+                                "Agent requests close of critical "
+                                "window %r." % target},
+                    decision=PolicyDecision(
+                        "require_approval",
+                        "Critical window %r requires human approval to "
+                        "close." % target,
+                        policy_id="sterile-window-close",
+                        flag="sterile_window_close"),
+                    provenance=("untrusted_influenced" if self._tainted
+                                else "agent_direct"),
+                    preview=("Close request for critical window %r "
+                             "(human_approval)." % target),
+                    policy_hash=self.policy.policy_hash,
+                    caller_identity=identity)
+                self.log.append({
+                    "event": "window_close_queued",
+                    "run_id": self.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role, "window": target,
+                    "decision": "queued_pending",
+                    "policy_id": "sterile-window-close",
+                    "approval_id": aid,
+                    "reason": "Window close queued for human approval.",
+                })
+                return {"closed": False, "status": "queued",
+                        "approval_id": aid, "window": target}
+            rec = self.approvals.get(approval_id)
+            ok, why = self._verify_close_approval(rec, target)
+            if not ok:
+                self.log.append({
+                    "event": "window_close_denied",
+                    "run_id": self.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role, "window": target,
+                    "decision": "denied",
+                    "policy_id": "sterile-window-close",
+                    "approval_id": approval_id,
+                    "reason": "Close approval invalid: %s" % why,
+                })
+                return {"closed": False,
+                        "reason": "human_approval_invalid: %s" % why}
+            human_approved = True
+        else:
+            human_approved = False
+            # Wave-53 P1 fix (paper-review round 2, integration §3.2):
+            # agent_declared close verifies mechanics — including that
+            # no approval for a call made inside the window is still
+            # pending. The agent must not end the quarantine while a
+            # consequential action requested under it is unresolved.
+            pend = self._sterile_pending_in_window_approvals(target)
+            if pend:
+                self.log.append({
+                    "event": "window_close_denied",
+                    "run_id": self.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role, "window": target,
+                    "decision": "denied",
+                    "policy_id": "sterile-close",
+                    "approval_ids": pend,
+                    "reason": "agent_declared close denied: %d "
+                              "approval(s) for calls made inside the "
+                              "window are still pending." % len(pend),
+                })
+                return {"closed": False,
+                        "reason": "pending_approval_in_window",
+                        "approval_ids": pend}
+        result = self.sterile.request_close(target,
+                                            human_approved=human_approved)
+        if not result.get("closed"):
+            self._drain_sterile(agent_id=identity.agent_id,
+                                role=identity.role)
+            return result
+        # Closed: merge the controller's sterile_window_exit into the
+        # single executor-authored exit event below (paper-review
+        # round 2: the old code logged two same-named events).
+        ctl_exit = None
+        while self._sterile_events:
+            ev = self._sterile_events.pop(0)
+            if (ev.get("event") == "sterile_window_exit"
+                    and ev.get("window") == target
+                    and ctl_exit is None):
+                ctl_exit = ev
+                continue
+            entry = {"run_id": self.run_id,
+                     "agent_id": identity.agent_id,
+                     "role": identity.role}
+            entry.update(ev)
+            self.log.append(entry)
+        reconcile = result.get("reconcile", [])
+        released = self._sterile_loop_release_for(target, "close")
+        exit_note = {
+            "event": "sterile_window_exit", "run_id": self.run_id,
+            "agent_id": identity.agent_id, "role": identity.role,
+            "window": target, "decision": "closed",
+            "policy_id": "sterile-close",
+            "controller_depth": (ctl_exit or {}).get("depth"),
+            "reconcile": reconcile,
+            # R4 invariant: reconciled reads are NEVER marked vetted.
+            # The loop re-issues them through the content stack; the
+            # deployment fulfills reconcile_pending when no loop is
+            # attached.
+            "reconciled_vetted": False,
+            "reconcile_pending": (not self._sterile_loop
+                                  and bool(reconcile)),
+            "released_channels": released,
+        }
+        if self._sterile_loop and reconcile:
+            try:
+                reissued = self._sterile_loop.reissue_reads(reconcile)
+            except Exception as e:
+                self._sterile_loop_error_audit(target, "reissue_reads",
+                                               e)
+                exit_note["reissue_error"] = str(e)[:200]
+            else:
+                # Wave-64 D5: see _sterile_expire — the reissue return
+                # is wrapped in the typed unvetted marker (envelope
+                # form for the JSON audit log), never a bare list.
+                # In the else-branch (not the try): the try covers
+                # the LOOP call only, so a wrap failure could never
+                # be misattributed as a loop_contract_error.
+                # Local import (no-cycle idiom): the __init__-local
+                # sterile import is not in scope here.
+                from .sterile import Unvetted  # noqa: E402
+                exit_note["post_window_delta"] = Unvetted(
+                    reissued, origin="reissue_reads",
+                    ack_context={"window": target,
+                                 "run_id": self.run_id}).to_envelope()
+        self.log.append(exit_note)
+        # F124 (wave-54): consume a presented close approval exactly
+        # once the close has succeeded. A denied/failed close does not
+        # burn the approval; a second presentation fails closed in
+        # _verify_close_approval.
+        #
+        # Ordering residual (documented, wave-54 review): consumption is
+        # a second file write (queue _rewrite) after the window is
+        # already closed and the exit audited — there is no transaction
+        # spanning the audit log and the queue file. If the rewrite
+        # FAILS here, the window stays closed but the approval is
+        # unconsumed (replayable). That fault class is crash/disk
+        # between two writes, not agent-reachable without run-dir write
+        # (F59 family: hostile-in-process is an accepted residual), but
+        # it must never be SILENT: on failure we land a LOUD
+        # window_close_approval_consumption_failed audit event naming
+        # the unconsumed approval, then re-raise fail-closed so the
+        # caller sees the close as errored and a reviewer can quarantine
+        # the approval manually.
+        if approval_id is not None:
+            try:
+                self._consume_close_approval(approval_id, target)
+            except Exception as e:  # noqa: BLE001 - fail LOUD, then up
+                self.log.append({
+                    "event": "window_close_approval_consumption_failed",
+                    "run_id": self.run_id,
+                    "agent_id": identity.agent_id, "role": identity.role,
+                    "window": target, "approval_id": approval_id,
+                    "decision": "consumption_failed",
+                    "policy_id": "sterile-window-close",
+                    "reason": ("Window %r closed but approval %s was NOT "
+                               "consumed (%s: %s) — treat the approval as "
+                               "suspect; do not honor a re-presentation "
+                               "without fresh human review (F124)."
+                               % (target, approval_id,
+                                  type(e).__name__, str(e)[:160])),
+                })
+                raise
+        out = {"closed": True, "window": target,
+               "reconcile": reconcile,
+               "reconciled_vetted": False}
+        if approval_id is not None:
+            out["approval_id"] = approval_id
+        return out
+
+    def _sterile_pending_in_window_approvals(self, window_id):
+        """Ids of approvals pending for calls made inside the window.
+
+        Integration §3.2: agent_declared close requires that no
+        approval queued at/after window entry (this run) is still
+        pending. Records with unparseable created_at are treated as
+        in-window (fail closed on the check, not on the record).
+        """
+        info = self.sterile.peek(window_id)
+        if not info:
+            return []
+        from datetime import datetime, timezone
+        entered = datetime.fromtimestamp(info["entered_at"],
+                                         tz=timezone.utc)
+        out = []
+        for rec in self.approvals.pending():
+            if rec.get("run_id") != self.run_id:
+                continue
+            try:
+                created = datetime.fromisoformat(
+                    str(rec.get("created_at")).replace("Z", "+00:00"))
+                in_window = created >= entered
+            except Exception:
+                in_window = True
+            if in_window:
+                out.append(rec.get("id"))
+        return out
+
+    def _verify_close_approval(self, rec, window_id):
+        """Verify a queued window-close approval record. Returns
+        (ok, reason)."""
+        if rec is None:
+            return False, "unknown approval id"
+        # F34/F43 invariant: every state-changing path verifies the
+        # record's keyed digest. ApprovalQueue.get()/all() do NOT
+        # verify MACs on read — the digest is verified at decide()
+        # time and re-MACed, but a post-decision rewrite of the queue
+        # file would otherwise reach this path unverified. Fail closed
+        # here, same as execute_approved(). (Under the public dev key
+        # this is forgery-transparent per F29/F34; under a provisioned
+        # key it binds the record.)
+        if not approval_digest_ok(rec):
+            return False, "approval record digest invalid"
+        # F124 (wave-54): window-close approvals are single-use. The
+        # consumed flag is MAC-bound (see _SECURITY_PAYLOAD_FIELDS),
+        # so a second presentation of the same approval id — e.g. to
+        # close a NEW entry of the same window without a fresh human
+        # decision — fails closed here.
+        if rec.get("window_close_consumed"):
+            return False, "approval already used to close a window"
+        if rec.get("run_id") != self.run_id:
+            return False, "approval is for another run"
+        if rec.get("status") != "approved":
+            return False, "approval not approved (status=%r)" % (
+                rec.get("status"),)
+        if rec.get("late_decision"):
+            return False, "decision recorded after bridge expiry"
+        if rec.get("tool") != "window_close":
+            return False, "approval is not a window_close request"
+        args = rec.get("args") or {}
+        if args.get("type") != "window_close":
+            return False, "approval args are not a window_close request"
+        if args.get("window") != window_id:
+            return False, "approval window mismatch"
+        # TTL: decided_at within approvals.ttl_hours.
+        try:
+            from datetime import datetime, timezone, timedelta
+            decided = datetime.fromisoformat(
+                rec["decided_at"].replace("Z", "+00:00"))
+            ttl = getattr(self.policy, "approval_ttl_hours", 24)
+            if datetime.now(timezone.utc) - decided > timedelta(
+                    hours=ttl):
+                return False, "approval expired (TTL)"
+        except Exception:
+            return False, "unparseable decided_at"
+        return True, "ok"
+
+    def _consume_close_approval(self, approval_id, window_id):
+        """F124 (wave-54): mark a window-close approval consumed.
+
+        Single-use: after a human_approval close succeeds, the record
+        is flagged and re-MACed (F38 pattern — the digest was verified
+        by _verify_close_approval immediately before this mutation, so
+        the re-MAC seals the flag; flipping it back breaks the MAC and
+        is refused, per the F57 ticket-consumption precedent). The
+        consumption is crash-atomic via the queue's _rewrite (F83).
+        Audited loudly (window_close_approval_consumed) so a reviewer
+        can see which human decision closed which window entry.
+        """
+        from .approvals import (approval_digest_ok,
+                                approval_record_digest)
+        from datetime import datetime, timezone
+
+        def _mark(records):
+            out = []
+            for r in records:
+                if r.get("id") == approval_id:
+                    if not approval_digest_ok(r):
+                        raise ValueError(
+                            "refusing to consume approval %r: digest "
+                            "invalid at consume time" % (approval_id,))
+                    r = dict(r)
+                    r["window_close_consumed"] = True
+                    r["window_close_consumed_at"] = datetime.now(
+                        timezone.utc).isoformat()
+                    r["window_close_consumed_window"] = window_id
+                    r["args_digest"] = approval_record_digest(r)
+                out.append(r)
+            return out
+        self.approvals._rewrite(_mark)
+        self.log.append({
+            "event": "window_close_approval_consumed",
+            "run_id": self.run_id, "agent_id": "system",
+            "role": "system", "decision": "consumed",
+            "policy_id": "sterile-window-close",
+            "approval_id": approval_id, "window": window_id,
+            "reason": "Window-close approval %s consumed closing "
+                      "window %r (single-use, F124)." % (approval_id,
+                                                        window_id),
+        })
+
+    def _resolve_engine(self):
+        """The policy engine for a new call. On the governed path the
+        store owns the live engine (changed only by
+        ``GovernedPolicyStore.apply``); otherwise the constructor's
+        engine. Never reads the policy file."""
+        if self._policy_store is not None:
+            return self._policy_store.current_engine()
+        return self.policy
+
     def call(self, identity, tool, **kwargs):
         """Run one tool call through the governance pipeline."""
         if not isinstance(identity, AgentIdentity):
             raise TypeError("identity must be an AgentIdentity minted by "
                             "this executor, got %r" % type(identity).__name__)
+
+        # Wave-75 (governing the governors): snapshot the policy engine
+        # at call start. On the governed path this is the store's
+        # current engine; the verdict path below runs against this
+        # snapshot so a policy applied between two calls never mixes
+        # versions within one verdict. Atomic swap in the store means
+        # every read sees exactly one version — no torn reads.
+        policy = self._resolve_engine()
 
         # F17: fail-closed ledger. The egress ledger is this run's
         # cross-run taint/campaign memory; if it cannot be authenticated
@@ -1736,9 +2899,93 @@ class ToolExecutor:
                 "decision": "denied",
                 "policy_id": "ledger-unverifiable",
                 "flag": "ledger_unverifiable",
+                "policy_version": getattr(policy, "policy_version",
+                                         "unversioned"),
+                "matched_rules": [],
                 "reason": "Refusing to act: %s" % e,
             })
             raise
+
+        # Wave-77 (recovery): external halt latch, checked on the
+        # verdict path before anything agent-influenced runs. Sticky
+        # (the canary pattern): a halted identity stays refused for
+        # every subsequent call. Fail-closed: a controller error reads
+        # as halted, never as "no halt".
+        if self._recovery is not None:
+            try:
+                _halted = bool(
+                    self._recovery.is_halted(identity.agent_id))
+                _halt_err = None
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _halted = True
+                _halt_err = e
+            if _halted:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": identity.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role,
+                    "principal": identity.principal,
+                    "tool": tool,
+                    "decision": "denied",
+                    "policy_id": "recovery-halt",
+                    "flag": "recovery_halted",
+                    "policy_version": getattr(policy, "policy_version",
+                                              "unversioned"),
+                    "matched_rules": [],
+                    "reason": ("Refusing to act: identity is halted by "
+                               "the external recovery controller%s"
+                               % (" (controller error: %s; treating as "
+                                  "halted)" % _halt_err
+                                  if _halt_err is not None else "")),
+                })
+                from .recovery import RecoveryHaltedError
+                raise RecoveryHaltedError(
+                    "identity %r is halted (external recovery "
+                    "controller)" % identity.agent_id)
+
+        # Wave-78 (capability leases): kill ambient authority. When a
+        # lease verifier is installed and the tool is lease-gated, the
+        # call must present a valid lease — verified AT USE TIME, on
+        # this path, before policy evaluation. No lease (or a bad one)
+        # is fail-closed and loud: the refusal is audit-logged and
+        # raised, never a silent policy verdict. The lease's task_id
+        # binding is checked against the task_id framing kwarg the
+        # caller asserts (a lease minted for another task is refused).
+        if (self._lease_verifier is not None
+                and tool in self._lease_gated_tools):
+            _lease = kwargs.pop("lease", None)
+            _task_id = kwargs.get("task_id")
+            try:
+                _lease_id = self._lease_verifier.require(
+                    _lease, agent_id=identity.agent_id, task_id=_task_id,
+                    tool=tool)
+                _lease_err = None
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _lease_id, _lease_err = None, e
+            if _lease_err is not None:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": identity.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role,
+                    "principal": identity.principal,
+                    "tool": tool,
+                    "decision": "denied",
+                    "policy_id": "capability-lease",
+                    "flag": "lease_refused",
+                    "policy_version": getattr(policy, "policy_version",
+                                              "unversioned"),
+                    "matched_rules": [],
+                    "lease_id": (_lease.get("lease_id")
+                                 if isinstance(_lease, dict) else None),
+                    "reason": ("Refusing to act: capability lease check "
+                               "failed: %s" % _lease_err),
+                })
+                from .capability_leases import LeaseRefused
+                raise LeaseRefused(
+                    "capability lease refused for tool %r: %s"
+                    % (tool, _lease_err))
 
         # Framing kwargs are agent-supplied metadata, never trusted inputs.
         justification = kwargs.pop("justification", None)
@@ -1748,12 +2995,75 @@ class ToolExecutor:
         # tool arg — popped here so it never reaches DLP scanning,
         # policy matching, or the tool itself.
         delegation_grant_id = kwargs.pop("delegation_grant_id", None)
+        # Wave-79 (pre-commit): a pre-commit approval id is a
+        # server-side handle, never a tool arg — popped here so it
+        # never reaches DLP scanning, policy matching, or the tool.
+        # The digest binds the REMAINING kwargs (the exact args the
+        # tool will receive).
+        precommit_approval_id = kwargs.pop("precommit_approval_id", None)
         delegation_attempted = bool(on_behalf_of or delegated_by)
         # P10: the verify_invocation ok-dict for a presented grant,
         # filled by the delegation gate below; drives dual attribution
         # in the audit entry. None = no grant presented (or not yet
         # verified).
         delegation_verified = None
+
+        # Wave-74 (identity): three-token delegation gate. When the
+        # deployment installed a DelegationContext (the session's
+        # user/agent/delegation tokens), the permission-intersection check
+        # runs BEFORE policy evaluation and lives in CODE, not policy
+        # text: rewriting the policy YAML to allow-all cannot disable it
+        # (pinned by redteam.identity_w74.missing_delegation_fails_closed).
+        # Policy text still narrows afterwards — the gate only filters,
+        # policy can further deny. The refusal is audit-logged, then
+        # raised: loud, never a silent policy verdict.
+        if self._delegation_context is not None:
+            try:
+                _delegation_gate = _delegation_tokens.enforce_tool_call(
+                    self._delegation_context, identity, tool)
+            except _delegation_tokens.DelegationError as e:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": identity.run_id,
+                    "agent_id": identity.agent_id,
+                    "role": identity.role,
+                    "principal": identity.principal,
+                    "tool": tool,
+                    "decision": "denied",
+                    "policy_id": "delegation-required",
+                    "flag": "delegation_gate_refused",
+                    "policy_version": getattr(policy, "policy_version",
+                                              "unversioned"),
+                    "matched_rules": [],
+                    "reason": ("Refusing to act: %s: %s"
+                               % (type(e).__name__, e)),
+                })
+                raise
+
+        # Wave-51 P1 egress canaries: tripwire on the egress-attempt path,
+        # BEFORE the policy decision. A canary is never a legitimate
+        # destination or credential, so any use is exfiltration intent by
+        # construction — halt fail-closed (CanaryTripHalt), LOUD audit,
+        # approval-queue escalation. No-op when canary_registry is None.
+        # Persistent halt: once tripped, the run stays halted server-side
+        # — catching CanaryTripHalt and calling again still raises — and
+        # the halt survives executor restarts via the marker file
+        # (wave-52 RT19), so a fresh executor over the same run dir
+        # starts halted.
+        if getattr(self, "_canary_halted", False):
+            raise _canary.CanaryTripHalt(
+                "Run halted by canary tripwire: a previous egress attempt "
+                "used a planted canary. The run is halted fail-closed and "
+                "cannot be resumed by retrying.")
+        try:
+            _canary.check_and_trip(self, identity, tool, kwargs)
+        except _canary.CanaryTripHalt:
+            self._canary_halted = True
+            try:
+                self._canary_halt_marker.write_text("halted\n")
+            except OSError:
+                pass  # marker is best-effort; the flag + audit stand
+            raise
 
         self.counters[tool] = self.counters.get(tool, 0) + 1
         # S4: every call() attempt that reaches here consumes step budget
@@ -1796,6 +3106,32 @@ class ToolExecutor:
                 "delegation_scope": (delegation_verified["scope_tools"]
                                      if delegation_verified else None),
                 "policy_context": policy_ctx_snapshot,
+                # Wave-75 (governing the governors): the digest of the
+                # engine that decided this call. The snapshot is taken
+                # at call entry (_resolve_engine), so every entry on
+                # this call's verdict path — including pre-evaluation
+                # rejections — names the exact engine version in force:
+                # "which rule decided this" stays answerable across a
+                # policy swap. Separate from policy_context (the
+                # decision INPUT, None before evaluation).
+                "policy_hash": policy.policy_hash,
+                # Wave-76 (detection): the wave-74 three-token refs on
+                # the live call path, so the monitor's per-identity
+                # baselines key to user/agent/delegation refs exactly
+                # as the provenance v2 slots do. None when no bound
+                # delegation context is installed (the monitor falls
+                # back to the agent-side identity key).
+                "identity_token_refs": self._identity_token_refs,
+                # Wave-79 (totality): every verdict-path entry carries
+                # the governing policy version and the list of rules
+                # that fired. The default is the honest structural
+                # value — no policy rule has fired yet on the
+                # pre-evaluation path — and the post-evaluation
+                # entries override matched_rules with the decision's
+                # list via `extra` (entry.update(extra) below).
+                "policy_version": getattr(policy, "policy_version",
+                                          "unversioned"),
+                "matched_rules": [],
             }
             if self._tainted:
                 entry["taint_detail"] = (
@@ -1883,8 +3219,19 @@ class ToolExecutor:
                         "policy_id": entry["policy_id"],
                         "seq": entry["seq"]}
 
+        # 1b. sterile windows (wave-53 P1) --------------------------------
+        # Executor-side critical-window enforcement: entry on
+        # tool-pattern match, input-channel refusal while a window is
+        # open. Runs after identity + delegation verification
+        # (unverified callers never mutate window state) and before
+        # role/DLP/policy evaluation. No critical_windows block =
+        # self.sterile is None = zero behavior change.
+        sterile_refusal = self._sterile_gate(identity, tool)
+        if sterile_refusal is not None:
+            return sterile_refusal
+
         # 2. role allowlist ------------------------------------------------
-        if not self.policy.role_allows(identity.role, tool):
+        if not policy.role_allows(identity.role, tool):
             entry = self.log.append(_base({
                 "decision": "denied",
                 "policy_id": "role-allowlist",
@@ -1908,7 +3255,7 @@ class ToolExecutor:
                     "policy_id": "dlp-credential-block", "seq": entry["seq"]}
 
         # 4. rate / volume guards ------------------------------------------
-        rl = self.policy.rate_limit or {}
+        rl = policy.rate_limit or {}
         if self._repeats[repeat_key] > int(rl.get("max_identical_calls", 10)):
             entry = self.log.append(_base({
                 "decision": "denied",
@@ -1984,7 +3331,7 @@ class ToolExecutor:
         # the existing write/delete guard convention: exactly N calls
         # are allowed. Absent key = unenforced. Checked before policy
         # evaluation, like every other step-4 guard.
-        _run_limits = getattr(self.policy, "run_limits", None) or {}
+        _run_limits = getattr(policy, "run_limits", None) or {}
         _max_tool_calls = _run_limits.get("max_tool_calls_per_run")
         if (_max_tool_calls is not None
                 and self._total_calls > _max_tool_calls):
@@ -2005,7 +3352,7 @@ class ToolExecutor:
         # kwargs); ceilings use >= on the accrued totals: the call that
         # crosses the ceiling completes (you cannot un-call a provider)
         # and the NEXT call is denied. Absent budgets key = unenforced.
-        _budgets = getattr(self.policy, "budgets", None) or {}
+        _budgets = getattr(policy, "budgets", None) or {}
         if _budgets:
             # Count every call() invocation that reaches this guard.
             self._budget_actions += 1
@@ -2105,7 +3452,7 @@ class ToolExecutor:
             "platform_egress": ctx.get("platform_egress"),
             "counters": dict(ctx.get("counters") or {}),
         }
-        decision = self.policy.evaluate(action, ctx)
+        decision = policy.evaluate(action, ctx)
 
         # S3 (K-041) wired wave-39: S3-GAP-1 closed. An unrated mutating
         # tool must never execute on a policy allow alone — the forced
@@ -2118,6 +3465,138 @@ class ToolExecutor:
                 and decision.effect == "allow"):
             decision = _forced_require_approval
 
+        # Wave-76 (detection): behavioral circuit breaker. When the
+        # monitor's breaker is OPEN for the acting identity, an allow
+        # verdict on a high-risk tool is downgraded to require_approval
+        # (fail-closed direction only: a deny stays denied, an existing
+        # require_approval is untouched). The queued action still
+        # carries the agent's own executor-minted identity -- it is the
+        # ROUTING that changed. Fail-closed: a monitor error is treated
+        # as OPEN (an unverifiable detector must never read as "no
+        # drift"). No monitor installed = zero behavior change.
+        if (decision.effect == "allow"
+                and self._detection_monitor is not None):
+            try:
+                _route = self._detection_monitor.route_action(
+                    identity, tool)
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _route = "queue"
+                self.log.append(_base({
+                    "decision": "breaker_fail_closed",
+                    "policy_id": "detection-breaker",
+                    "flag": "detection_monitor_unreachable",
+                    "matched_rules": [],
+                    "reason": ("Detection monitor unreachable (%s); "
+                               "treating breaker as OPEN." % e),
+                }))
+            if _route == "queue":
+                decision = PolicyDecision(
+                    "require_approval",
+                    ("Behavioral circuit breaker is OPEN for this "
+                     "identity; human review is required before "
+                     "execution (wave-76 detection)."),
+                    policy_id="detection-breaker",
+                    flag="behavioral_breaker_open",
+                )
+            elif _route == "half_open_probe":
+                decision = PolicyDecision(
+                    "require_approval",
+                    ("Behavioral circuit breaker is HALF-OPEN for this "
+                     "identity (human reset); this action is admitted "
+                     "as a measured half-open probe (wave-76 "
+                     "detection)."),
+                    policy_id="detection-breaker",
+                    flag="behavioral_breaker_half_open",
+                )
+
+        # Wave-79 (rules tiering): lethal-trifecta approval floor.
+        # Opt-in via trifecta_floor= (default off: zero behavior
+        # change). The session's tier is computed over its EFFECTIVE
+        # grants (role tools ∪ verified delegation scope) — the
+        # composition rule (design §1(d)): a parent holding two axes
+        # whose child adds the third trips elevated at the child's
+        # first external call, with wave-74's strict attenuation
+        # untouched. When elevated, external-communication tools
+        # require human approval even when the policy allows: the floor
+        # bites only where the policy would otherwise allow silently
+        # (deny still denies; require_approval already queues). The
+        # first elevated call in a session chains a loud tier_escalated
+        # record (once per session). The override appends the reserved
+        # "trifecta-tier-floor" sentinel to matched_rules so the
+        # forcing is visible in the log next to the engine's rules.
+        if decision.effect == "allow" and self._trifecta_floor:
+            _tier_grants = _rules_tiering.effective_grants(
+                role_tools=(getattr(policy, "roles", None) or {}).get(
+                    identity.role) or (),
+                delegation_scope=(delegation_verified["scope_tools"]
+                                  if delegation_verified else ()),
+            )
+            _tier, _tier_axes = _rules_tiering.session_tier(_tier_grants)
+            if (_tier == _rules_tiering.TIER_ELEVATED
+                    and identity.run_id
+                    not in self._trifecta_escalated_sessions):
+                self._trifecta_escalated_sessions.add(identity.run_id)
+                self.log.append(_base({
+                    "decision": "tier_escalated",
+                    "policy_id": "trifecta-tier",
+                    "flag": "trifecta_tier_escalated",
+                    "reason": ("Lethal-trifecta oversight tier: this "
+                               "session's effective grants hold all three "
+                               "axes (private-data + untrusted-content + "
+                               "external-comm); external-communication "
+                               "tools now require human approval "
+                               "(wave-79 rules tiering)."),
+                    "tier": _rules_tiering.TIER_ELEVATED,
+                    "tier_axes": sorted(_tier_axes),
+                }))
+            if _rules_tiering.floor_applies(_tier_grants, tool,
+                                            decision.effect):
+                decision = PolicyDecision(
+                    "require_approval",
+                    ("Lethal-trifecta approval floor: this session holds "
+                     "the private-data + untrusted-content + "
+                     "external-comm trifecta, so the external-"
+                     "communication tool %r requires human approval even "
+                     "though the policy allows it (wave-79 rules "
+                     "tiering)." % tool),
+                    policy_id=decision.policy_id,
+                    flag="trifecta_floor",
+                    matched_rules=(list(decision.matched_rules)
+                                   + [_rules_tiering
+                                      .TRIFECTA_FLOOR_SENTINEL]),
+                )
+
+        # Wave-79 (pre-commit): irreversible tools on the allow path.
+        # When the gate is installed, an irreversible tool (the frozen
+        # gov/precommit registry) executing on a policy ALLOW must
+        # present a bound, unused pre-commit approval for the EXACT
+        # (tool, args) — otherwise denied fail-closed BEFORE the tool
+        # executes. The digest binds the post-framing-pop kwargs, i.e.
+        # exactly what the tool would receive. The require_approval
+        # path still queues for a human (the queue's MAC-bound approval
+        # is the human moment there); deny is unchanged.
+        if (decision.effect == "allow"
+                and self._precommit_gate is not None
+                and _precommit.is_irreversible(tool)
+                and not self._precommit_gate.check(
+                    precommit_approval_id, tool, kwargs)):
+            entry = self.log.append(_base({
+                "decision": "denied",
+                "policy_id": "precommit-required",
+                "flag": "precommit_required",
+                "matched_rules": [],
+                "reason": ("Refusing to act: %r is an irreversible tool "
+                           "and no bound, unused pre-commit approval for "
+                           "the exact (tool, args) was presented "
+                           "(wave-79 pre-commit gate: preview the action, "
+                           "get human approval bound to the preview, then "
+                           "commit)." % tool),
+            }))
+            return {"status": "denied",
+                    "reason": entry["reason"],
+                    "policy_id": "precommit-required",
+                    "seq": entry["seq"]}
+
         if decision.effect == "allow":
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
@@ -2125,10 +3604,24 @@ class ToolExecutor:
             auth_entry = self.log.append(_base({
                 "decision": "execution_authorized",
                 "policy_id": decision.policy_id,
+                "matched_rules": decision.matched_rules,
                 "reason": decision.reason,
                 "flag": decision.flag,
             }))
-            result = self._simulate(tool, kwargs, ctx)
+            # Wave-79 (pre-commit, atomic): irreversible tools with the
+            # gate installed consume their bound approval IN the commit
+            # that executes them — a single-use ticket. The earlier
+            # check() failed fast with a denied record; commit()
+            # re-verifies and marks the ticket consumed before running
+            # the thunk, so a second call presenting the same approval
+            # id is refused (no replay through the executor).
+            if (self._precommit_gate is not None
+                    and _precommit.is_irreversible(tool)):
+                result = self._precommit_gate.commit(
+                    precommit_approval_id, tool, kwargs,
+                    lambda: self._simulate(tool, kwargs, ctx))
+            else:
+                result = self._simulate(tool, kwargs, ctx)
             self._ingest_result(tool, result, identity.principal)
             if tool == "api_call":
                 self.api_calls += 1
@@ -2148,6 +3641,7 @@ class ToolExecutor:
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
+                "matched_rules": decision.matched_rules,
                 "reason": decision.reason,
                 "flag": decision.flag,
                 "result_summary": self._summarize(tool, result),
@@ -2159,6 +3653,7 @@ class ToolExecutor:
             entry = self.log.append(_base({
                 "decision": "denied",
                 "policy_id": decision.policy_id,
+                "matched_rules": decision.matched_rules,
                 "reason": decision.reason,
                 "flag": decision.flag,
             }))
@@ -2177,7 +3672,7 @@ class ToolExecutor:
             # F12: the preview is built from the SAME redacted args that
             # will execute — preview, digest, and execution all agree.
             self._preview(tool, redacted_args),
-            policy_hash=self.policy.policy_hash,
+            policy_hash=policy.policy_hash,
             delegation_attempted=delegation_attempted,
             # F101 (wave-26): a grant-verified call queues under the
             # ACTING (delegatee) identity — the verified grant id and
@@ -2213,19 +3708,30 @@ class ToolExecutor:
             # (attacker-controlled dict) — the executor passes the real
             # minted AgentIdentity it received in call(). The queue
             # authenticates it and stamps the record from it.
-            caller_identity=identity)
+            caller_identity=identity,
+            # Wave-79 (totality): the governing policy version and the
+            # rules that fired ride on the ticket, so the human's
+            # decision record can name exactly what queued it.
+            policy_version=getattr(policy, "policy_version", "unversioned"),
+            matched_rules=decision.matched_rules)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
+            "matched_rules": decision.matched_rules,
             "reason": decision.reason,
             "flag": decision.flag,
             "approval_id": approval_id,
         }))
         # Low-risk auto-approval: only fires when the ACTIVE policy
         # explicitly opts in (auto_approve.enabled + risk cap). The audit
-        # record is identical to a human approval.
-        auto = self.approvals.maybe_auto_approve(
-            approval_id, self.policy.auto_approve)
+        # record is identical to a human approval. Wave-79: disabled for
+        # irreversible tools while the pre-commit gate is installed —
+        # the human moment must be real, never auto-approved.
+        auto = None
+        if not (self._precommit_gate is not None
+                and _precommit.is_irreversible(tool)):
+            auto = self.approvals.maybe_auto_approve(
+                approval_id, policy.auto_approve)
         if auto is not None:
             executed = self.execute_approved()
             return {"status": "auto_approved_executed",
@@ -2918,6 +4424,11 @@ class ToolExecutor:
                 "redactions_applied": rec.get("redactions_applied", []),
                 "decision": "approved_executed",
                 "policy_id": rec.get("policy_id"),
+                # Wave-79 (totality): the executed-approval record names
+                # the governing policy version and the rules that fired,
+                # propagated from the queue ticket.
+                "policy_version": rec.get("policy_version", "approvals-d1"),
+                "matched_rules": rec.get("matched_rules", []),
                 "approval_id": aid,
                 "policy_context": _exec_ctx_snapshot,
                 "reason": "Executed after human approval %s: %s"

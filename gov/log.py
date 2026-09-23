@@ -3,7 +3,11 @@
 Each entry is one JSON line. Integrity comes from two layers:
 
 1. **HMAC chain.** Every entry stores ``hash = HMAC-SHA256(key,
-   key_epoch || prev_hash || canonical_json(entry))``. Without the key an
+   key_epoch || prev_hash || canonical_json(entry))``. The canonical form
+   includes the reserved ``seq``, ``ts`` (wall clock), ``key_epoch`` and --
+   since wave-72 -- the anchor ``epoch_id`` (``e%08d`` of the epoch's first
+   seq), so backdating, reordering, and cross-epoch moves without the key
+   break verification. Without the key an
    attacker cannot recompute a valid chain after altering history, so
    truncate-and-rebuild and history-rewrite attacks are detected by
    :func:`verify_chain`. The legacy unkeyed :func:`_entry_hash` is kept only
@@ -21,16 +25,25 @@ Each entry is one JSON line. Integrity comes from two layers:
 
 Key custody: the HMAC key comes from the ``GOV_LOG_KEY`` environment
 variable (``GOV_LOG_KEY_EPOCH`` optionally names the key version and is
-bound into every MAC). Resolution is STRICT (R6c): ``GOV_LOG_KEY`` unset
-raises ``NoKeyConfiguredError`` — there is no silent fallback to the
+bound into every MAC), or from a file-backed keyring via
+``GOV_KEYRING_FILE``. Resolution is STRICT (R6c) and lives in the
+``gov.keyprovider`` chokepoint (see ``workstreams/architect/
+KEY_MANAGEMENT_DESIGN.md``): ``GOV_LOG_KEY`` unset raises
+``NoKeyConfiguredError`` — there is no silent fallback to the
 publicly-known development key (F73: unsetting one env var can no longer
 silently reduce the log to a key the whole world knows). The dev key is
-reachable only when the process explicitly called ``enable_dev_keys()``
-in code AND ``GOV_DEV_KEYS=1`` is set — test harnesses only; production
-entry points never opt in, so they fail closed. Explicitly configuring
-dev-key material (the dev bytes, or the ``dev`` epoch) is rejected
-outright. Production deployments MUST set ``GOV_LOG_KEY`` (or activate a
-keyring via ``gov.keys`` / ``gov.kms``). ``key_epoch`` is stored on every entry and
+reachable only in a non-production deployment mode when the process
+explicitly called ``enable_dev_keys()`` in code AND ``GOV_DEV_KEYS=1``
+is set — test harnesses only; production entry points never opt in, so
+they fail closed. Deployment mode follows the wave-61 precedent:
+``GOV_DEPLOYMENT_MODE`` (or the ``deployment_mode=`` kwarg, which wins),
+default ``"production"`` (least-privilege). In production mode an
+explicit dev-key opt-in is a contradiction and refuses LOUD — dev keys
+are never valid in production, even when requested. Explicitly
+configuring dev-key material (the dev bytes, or the ``dev`` epoch) is
+rejected outright. Production deployments MUST set ``GOV_LOG_KEY`` (or
+``GOV_KEYRING_FILE``, or activate a keyring via ``gov.keys`` /
+``gov.kms``). ``key_epoch`` is stored on every entry and
 checkpoint so key rotations are visible in the log.
 
 ``format_version`` is frozen at 1 for log entries; the verifier rejects
@@ -104,6 +117,21 @@ FORMAT_VERSION = 1
 # Checkpoint format 2: HMAC fields plus the signed tree head
 # (merkle_root, threshold sigs, roster binding). Entries stay v1.
 CHECKPOINT_SIG_VERSION = 2
+
+# Wave-72 (Haber-Stornetta anchoring): the anchor-epoch id format. An epoch
+# is a checkpoint-bounded segment of the chain; its id is "e%08d" of the
+# seq of its first entry -- derivable, unique, monotonic, no state file.
+_EPOCH_ID_RE = None  # compiled lazily (re import is local to _valid_epoch_id)
+_FIRST_EPOCH_ID = "e00000001"
+
+
+def _valid_epoch_id(value):
+    """True when ``value`` is a well-formed wave-72 epoch id (``e%08d``)."""
+    global _EPOCH_ID_RE
+    if _EPOCH_ID_RE is None:  # lazy: keep the hot import surface unchanged
+        import re
+        _EPOCH_ID_RE = re.compile(r"^e\d{8}$")
+    return isinstance(value, str) and _EPOCH_ID_RE.match(value) is not None
 
 # F25: how long an append waits for the log's exclusive lock before
 # failing closed. A crashed lock holder's flock is released by the
@@ -200,54 +228,33 @@ def dev_keys_enabled():
     return _dev_enabled
 
 
-def _active_key():
+def _active_key(deployment_mode=None):
     """Return (key_bytes, key_epoch). STRICT (R6c) — F73 fix.
 
-    * ``GOV_LOG_KEY`` set to non-dev material -> ``(key_bytes, epoch)``.
-    * ``GOV_LOG_KEY`` set to the public dev bytes, or epoch ``dev`` ->
-      raise ``NoKeyConfiguredError``: dev keys are rejected on the
-      production path even when explicitly configured.
-    * ``GOV_LOG_KEY`` unset -> the public dev key ONLY when the process
-      called :func:`enable_dev_keys` AND ``GOV_DEV_KEYS=1`` (loud one-time
-      warning); otherwise raise ``NoKeyConfiguredError`` — fail closed.
+    Resolution is delegated to :mod:`gov.keyprovider` (the wave-69
+    chokepoint): configured env key → configured keyring file →
+    production mode: refuse / non-production + double opt-in: dev key
+    (loud warning). Dev material (dev bytes, ``dev`` epoch, dev in the
+    archive) is rejected outright on every provider (F73/F77); the
+    production+dev contradiction (explicit dev-key opt-in in a declared
+    production deployment) refuses loud instead of warning-and-
+    continuing. See ``gov/keyprovider.py`` for the full rule table.
 
-    The old behavior warned-and-continued with the public dev key here,
-    which let unsetting one env var silently reduce the log to
-    tamper-invisible (red-team Attack 1: forged history verified
-    ``ok=True``). That path is gone.
+    ``deployment_mode`` (wave-70): an explicit mode declaration that
+    wins over ``GOV_DEPLOYMENT_MODE`` for this resolution, exactly the
+    ``resolve_active_key`` precedence (explicit kwarg > env > default
+    ``"production"``). ``None`` (default) keeps the pre-wave-70
+    behavior byte-identical.
+
+    Behavior for every pre-wave-69 case is byte-identical (refusal
+    messages included); chain mechanics are untouched.
     """
-    # Lazy import: gov/keys.py imports this module at its top level, so a
-    # top-level import here would be circular. By call time both modules
-    # are fully initialized.
-    from .keys import NoKeyConfiguredError
-    global _dev_warned
-    env = os.environ.get("GOV_LOG_KEY")
-    if env:
-        epoch = os.environ.get("GOV_LOG_KEY_EPOCH", "env")
-        key = env.encode("utf-8")
-        if key == _DEV_KEY or epoch == "dev":
-            raise NoKeyConfiguredError(
-                "the configured key is the public development key (bytes "
-                "or 'dev' epoch); dev keys are rejected on the production "
-                "path (F73/R6c)")
-        return key, epoch
-    if _dev_enabled and os.environ.get("GOV_DEV_KEYS") == "1":
-        if not _dev_warned:
-            _dev_warned = True
-            print(
-                "GOVERNANCE KEY WARNING: GOV_DEV_KEYS=1 with explicit "
-                "in-code dev-key opt-in; using the PUBLIC development "
-                "key. This log is NOT tamper-evident against anyone who "
-                "read the docs. Never use for real audit data.",
-                file=sys.stderr,
-            )
-        return _DEV_KEY, "dev"
-    raise NoKeyConfiguredError(
-        "GOV_LOG_KEY is not set and dev keys are not enabled for this "
-        "process (F73: no silent dev-key fallback). Configure a production "
-        "key, or — local test harnesses only — call "
-        "gov.log.enable_dev_keys() in code with GOV_DEV_KEYS=1 in the "
-        "environment.")
+    # Lazy import: gov/keyprovider.py imports gov/keys.py at its top
+    # level, and gov/keys.py imports this module at its top level, so a
+    # top-level import here would be circular. By call time all three
+    # modules are fully initialized.
+    from . import keyprovider as _kp
+    return _kp.resolve_active_key(deployment_mode)
 
 
 def _utcnow():
@@ -504,7 +511,8 @@ class LogFullError(Exception):
 class ActionLog:
     """Append-only JSONL log with HMAC chaining and signed checkpoints."""
 
-    def __init__(self, path, max_bytes=None, signer=None, roster=None):
+    def __init__(self, path, max_bytes=None, signer=None, roster=None, *,
+                 deployment_mode=None):
         """Create/open the log at ``path``.
 
         ``signer`` (P2): an optional ``gov.signing.Signer`` (or
@@ -514,9 +522,28 @@ class ActionLog:
         roster dict (A5) -- REQUIRED when the signer needs threshold
         k > 1, otherwise the checkpoint cannot bind its signer set
         (fail-fast here, not at first append).
+        ``deployment_mode`` (wave-70): an explicit deployment-mode
+        declaration for this log instance (wave-61 precedent: explicit
+        kwarg > ``GOV_DEPLOYMENT_MODE`` > least-privilege default
+        ``"production"``; unknown modes fail fast HERE at
+        construction). Keyword-only; ``None`` (default) preserves the
+        pre-wave-70 behavior exactly (env, then production default).
+        The declaration flows into this instance's key-resolving
+        operations (``append``, ``write_checkpoint``). Module-level
+        verification helpers (``_verify``, ``verify_chain_tip``, ...)
+        deliberately keep the default: verification must work
+        regardless of a creation-time declaration.
         """
         self.path = Path(path)
         self.checkpoint_path = self.path.parent / "checkpoints.jsonl"
+        self._deployment_mode = deployment_mode
+        if deployment_mode is not None:
+            # Fail fast on unknown modes at construction (the per-append
+            # re-resolution would raise the same ValueError, but a
+            # misconfigured mode must not survive past construction).
+            # Lazy import: same circularity as _active_key (see above).
+            from . import keyprovider as _kp
+            _kp.resolve_deployment_mode(deployment_mode)
         self._max_bytes = None
         if max_bytes is not None:
             self.configure_guard(max_bytes)
@@ -531,6 +558,10 @@ class ActionLog:
                 "set" % (signer.threshold,))
         self._merkle = None  # MerkleStack, built by refresh() iff signer
         self._known_sig = None  # (size, mtime_ns) the cached tail matches
+        # Wave-72: the currently open anchor epoch. Always stamped on new
+        # entries as reserved chain metadata (bound inside the HMAC input
+        # via the canonical form); derived from the tail entry on refresh.
+        self._epoch_id = _FIRST_EPOCH_ID
         self.refresh()
 
     def configure_guard(self, max_bytes):
@@ -591,11 +622,31 @@ class ActionLog:
         """
         self._seq = 0
         self._prev = GENESIS
+        # Wave-72: the open anchor epoch is re-derived from the tail entry
+        # on every refresh (a close that was never submitted is forgotten --
+        # harmless: closes only matter once anchored; see ANCHOR_DESIGN.md).
+        # Malformed epoch ids are not trusted (F52 spirit); the default
+        # stands and new entries keep the chain consistent.
+        self._epoch_id = _FIRST_EPOCH_ID
         # P2: when signing, maintain the incremental Merkle stack over
         # exactly the entries this refresh accepts (same scan, no extra
         # I/O). The stack commits to the writer's view of the log; the
         # strict arbiter remains _verify (F28). Unsigned logs pay nothing.
         stack = _merkle.MerkleStack() if self._signer is not None else None
+        # F126: capture the (size, mtime) signature BEFORE reading the
+        # content, not after. The F22 cache assumes the signature
+        # describes the file version that produced _seq/_prev; capturing
+        # it after the read lets a concurrent writer slip in between,
+        # leaving _seq stale while the signature matches the current
+        # file — the next _refresh_if_changed then skips and assigns a
+        # duplicate seq (chain fork, caught 2026-09-22 in the sit64
+        # concurrency probe). Sig-before-read makes the cache
+        # conservative: if a writer lands between the stat and the read,
+        # the signature is OLDER than the content, so the next check sees
+        # sig != known and re-reads (one wasted read, never a stale seq).
+        # Size is monotonic under append-only writers, so sig == known
+        # still implies the file is unchanged.
+        self._known_sig = self._file_sig()
         if self.path.exists():
             for line in self.path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -612,10 +663,44 @@ class ActionLog:
                     continue
                 self._seq = seq
                 self._prev = chain_hash
+                epoch_id = entry.get("epoch_id")
+                if _valid_epoch_id(epoch_id):
+                    self._epoch_id = epoch_id
                 if stack is not None:
                     stack.append(_merkle.leaf_hash(_leaf_input(entry)))
         self._merkle = stack
-        self._known_sig = self._file_sig()
+
+    @property
+    def tail_seq(self):
+        """Highest seq assigned by this log instance (0 when empty).
+
+        Read-only accessor for the in-process tail; call ``refresh()``
+        first if other processes may have appended. Added wave-53 for
+        the sterile-cockpit entry snapshot reference (no behavior
+        change to the log itself).
+        """
+        return self._seq
+
+    @property
+    def epoch_id(self):
+        """The currently open wave-72 anchor epoch id (``e%08d``)."""
+        return self._epoch_id
+
+    def close_epoch(self):
+        """Close the current anchor epoch at the tail (wave-72).
+
+        Returns ``(epoch_id, start_seq, end_seq)`` and advances the
+        in-memory epoch id to the segment starting after the tail, so
+        subsequent appends are stamped with the new epoch. The anchorer
+        (``gov/anchorer.py``) calls this when its checkpoint policy trips;
+        it performs no I/O itself. A close with ``end_seq < start_seq``
+        (empty log) is the anchorer's signal to skip.
+        """
+        start_seq = int(self._epoch_id[1:])
+        end_seq = self._seq
+        closed = self._epoch_id
+        self._epoch_id = "e%08d" % (self._seq + 1)
+        return closed, start_seq, end_seq
 
     @property
     def checkpoints(self):
@@ -648,7 +733,7 @@ class ActionLog:
         (seq, entry_hash) arguments are rejected when signing, fail-fast,
         so a signed head can never describe a non-tail prefix.
         """
-        key, epoch = _active_key()
+        key, epoch = _active_key(self._deployment_mode)
         if self._signer is not None and (
                 seq is not None or entry_hash is not None):
             raise ValueError(
@@ -709,7 +794,7 @@ class ActionLog:
         logged.
 
         Reserved chain metadata (seq, ts, prev_hash, format_version,
-        key_epoch) is always set by the log itself: same-named keys in
+        key_epoch, epoch_id) is always set by the log itself: same-named keys in
         ``event`` are dropped, so a caller can never forge or clobber the
         chain bookkeeping.
 
@@ -726,7 +811,7 @@ class ActionLog:
         """
         if not isinstance(event, dict):
             raise TypeError("event must be a dict")
-        key, epoch = _active_key()
+        key, epoch = _active_key(self._deployment_mode)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with _append_locked(self.path) as f:
             # Re-check the tail UNDER the lock: another process may have
@@ -747,6 +832,10 @@ class ActionLog:
                 "prev_hash": self._prev,
                 "format_version": FORMAT_VERSION,
                 "key_epoch": epoch,
+                # Wave-72: the open anchor epoch, bound inside the HMAC
+                # input via the canonical form (backdating / reordering /
+                # cross-epoch moves without the key break verification).
+                "epoch_id": self._epoch_id,
             })
             entry["hash"] = _compute_mac(key, epoch, self._prev,
                                          _canonical(entry))

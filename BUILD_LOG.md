@@ -2,8 +2,1221 @@
 
 SYNTHETIC PROJECT. All runs are local simulations; no real systems,
 credentials, or network activity are involved.
+## Wave-79: rules tiering — the lethal-trifecta as a policy primitive + enforcement wiring, pre-commit for irreversible actions, total decision records (2026-09-22)
 
-## Wave-49 RT17: approval-queue operator-deception ratchet (2026-09-22, OPEN)
+- **Theme:** the learnings memo's Part 1 rules-layer slice. The three axes (private_data, untrusted_content, external_comm) and the lethal trifecta are prior art (Willison, June 2025; Meta's Agents Rule of Two, Oct 2025) — the wave's invention claim is bounded to the policy primitive and its enforcement wiring: a closed, frozen TOOL_AXES registry (`gov/rules_tiering.py`); tier computed over effective grants (role tools ∪ verified delegation scope ∪ lease scope); a policy-independent approval floor on external-comm tools that only ever overrides allow (deny still denies; require_approval already queues), with the reserved `trifecta-tier-floor` sentinel in matched_rules; total decision records — every adjudicating record carries nonempty `policy_version` + list `matched_rules` (engine default deny gets `["default_deny"]`; structural/human/governor decisions honestly use `[]`; the provenance validator refuses field-less records at build); and the pre-commit protocol for the frozen irreversible registry (`gov/precommit.py`: delete_file, send_email, http_post, install_package — preview → exact digest-bound single-use human approval → atomic commit; preview/execution mismatch and ticket replay refused fail-closed; no public mutator; reclassification only through a wave-75 `policy_change` record with status `applied` binding the exact mutation digest). Fresh intake `research/intake-wave79-2026-09-22.md`: two searches (lethal-trifecta framing; NIST AI RMF agent governance) + one page opened (the public lethal-trifecta-audit skill — its "gate leg 3" fix direction and transitive-across-tools closure independently match this wave's design; its per-setup framing supports the opt-in decision below).
+- **Lane 1 — design.** `workstreams/architect/RULES_TIERING_DESIGN.md`: the trifecta framing is cited as prior art with the invention claim bounded to the primitive + wiring; `api_call` honestly classified as carrying all three axes; tier composition over effective grants (wave-74 strict attenuation untouched — composition is over grants, not token scopes); one loud `tier_escalated` record per session; deliberately-not-claimed (sterile-window activation, canary-density changes); the pre-commit protocol with the no-inverse test for irreversibility and the wave-75 governed reclassification path; totality field matrix per decision family.
+- **Lane 2 — implementation.** `gov/rules_tiering.py` (new): closed TOOL_AXES registry, axis union/tier computation, effective-grant composition, approval-floor predicate, unknown tools fail closed. `gov/precommit.py` (new): frozen irreversible registry, canonical (tool,args) digest, preview + single-use approval tickets, `commit()` (atomic consume-in-commit), `apply_governed_change()` (structural verification of the wave-75 applied record). `gov/policy.py`: `policy_version` derived from YAML `version` (honest `"unversioned"` fallback); `PolicyDecision.matched_rules`; default deny → `["default_deny"]`. `gov/executor.py`: opt-in `trifecta_floor=` (default off — see break→fix) + opt-in `precommit_gate=`; tier computed on the allow path over effective grants; floor converts allow→require_approval with `trifecta_floor` flag + sentinel; precommit check fail-fast (denied record) then atomic consume-in-commit around `_simulate`; auto-approve disabled for irreversible tools while the gate is installed; totality stamped on verdict/approval/recovery/load-gate records. `gov/approvals.py`: `_log()` choke point stamps decision records; queue stores `policy_version`/`matched_rules` in the MAC-bound payload. `gov/recovery.py`, `gov/load_gate.py`: totality fields. `tests/harness.py`: `trifecta_floor` + `precommit_gate` passthrough. `evals/w79_probes.py` (11 probes, `redteam.rules_w79.*`, pattern RT27, in `evals/run_evals.py` + `registry.yaml`).
+- **Lane 3 — break-first battery.** **10 stopped / 1 residual / 0 break**: (1) single-tool trifecta (api_call) queued by the floor with engine rule + sentinel named; (2) three-axis grant composition with no single trifecta tool escalates loudly (two-axis control does not); (3) cross-hop composition trips the floor, attenuation untouched; (4) incident-class mislabeled-tool probe — read→api_call exfil still queued by read-before-send correlation (labels escalate, never weaken); only the tier escalation is lost, fixed by reclassification; (5) injected matched_rules kwarg never reaches the record; (6) field-less provenance records refused at build, approvals choke point auto-stamps; (7) write_file destructive overwrite executes with the gate installed — documented classification boundary (residual); (8) approved-A/executed-B refused; (9) one ticket, two calls — second refused (atomic consume); (10) no public registry mutator, forged applied record refused, well-formed wave-75 path authorizes the exact mutation; (11) deny wins over the floor.
+- **Break→fix (same-wave, hardened not filed).** (a) The battery caught a genuine pre-commit replay bug: the executor `check()`ed the bound approval but never consumed it — the same ticket executed twice. Fixed: `gate.commit(approval_id, tool, kwargs, lambda: self._simulate(...))` consumes the ticket atomically in the executing commit (the earlier `check()` remains as the fail-fast denied record). (b) The trifecta floor as specified (unconditional) broke 75 unrelated tests across 15 files — roles holding api_call are elevated from the first call by grant composition, so every allowlisted api_call queued; the battery's first run was 7 stopped / 1 residual / 3 break, and two of the three breaks were my probe-premise errors (publisher/coder roles complete the trifecta through other tools — the tier was correct; probes rewritten to the honest claim), the third was the replay bug (a). Rewriting 75 other waves' regression pins was rejected as silent rewriting at scale; weakening the floor was rejected as gutting the claim. Resolved as an explicit deployment opt-in: `ToolExecutor(..., trifecta_floor=True)`, default off = zero behavior change (no tier computed, no escalation record), following the wave-78 opt-in gate precedent; design doc §1 updated honestly; a default-off unit test pins the behavior. (c) One botched edit during (a) merged two lines (caught by syntax check, repaired — no gate ran on the broken tree).
+- **Boundary notes (not filed, no F129).** The floor is off by default (deployment decision — the guarantee is real and so is the friction); lease scope is plumbed into effective grants but tested at unit level only, not end-to-end against real lease objects; the pre-commit gate does not cover `execute_approved()` (the queue's MAC-bound approval is the human moment there by design); registry reclassification verification is structural, not yet cryptographically re-verifying wave-75 provenance; the write_file classification boundary is documented as the residual above. No genuine independently-reachable miss → no finding filed; next free remains **F129**. F81 stays LOW/OPEN (no egress mechanism touched); F29/F70 stay CLOSED.
+- **Exact graded claims.** When the deployment enables the floor: a session whose effective grants complete the trifecta cannot execute an external-comm tool on a bare policy allow — it queues with the sentinel named, once per session loudly. Labels never weaken enforcement (the mislabeled-tool probe). A caller cannot inject matched_rules into a decision record. Decision records without policy_version/matched_rules cannot be built. An irreversible tool cannot execute without a bound, single-use, digest-exact human approval (or the queue's own human approval), and a consumed ticket cannot be replayed through the executor. The irreversible registry cannot be mutated except through an applied wave-75 policy-change record binding the exact mutation. Does NOT guarantee: the floor when not enabled (default off); undoing executed irreversible effects (no undo mechanism — the protocol is prevention); key custody beyond the operator's.
+- **Deliberate exclusions (documented, not filed).** Sterile-window activation and canary-density changes (memo Part 1 items explicitly not claimed); unconditional floor (see break→fix); pre-commit coverage of `execute_approved()`; cryptographic re-verification of wave-75 provenance in `apply_governed_change`; end-to-end lease-scope tier composition; the commercial evidence pipeline (standing order).
+- **Gates (sequential, never concurrent; venv `~/workspace/.gov-venv`, TMPDIR=/tmp/gov-run).** Canonical suite **2683 OK** (2621 + 62 new w79; 8 skipped, 7 expected failures) — one mid-wave RED was the unconditional floor breaking 75 unrelated tests (my design bug, not a flake; resolved as the documented opt-in; the rerun is the number above). Registry gate **620/620** oracle matches (609 + 11 new; REGISTRY-GATE GREEN; all 11 w79 observed as expected: 10 stopped + 1 documented residual). Adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real). Realistic battery **4/4**. Unit `tests/test_w79_rules_tiering.py` + `tests/test_w79_totality.py` + `tests/test_w79_precommit.py` **62/62**. Standalone battery **10 stopped / 1 residual / 0 break**. No RED anywhere at close.
+- **Uncommitted commit plan (repo stays PRIVATE; no .git, no commit/push/publication/release).** When the user approves a commit: `gov/rules_tiering.py` (new), `gov/precommit.py` (new), `gov/policy.py` (policy_version + matched_rules), `gov/executor.py` (trifecta_floor= + precommit_gate= wiring, atomic consume, totality), `gov/approvals.py` (_log choke point + MAC payload), `gov/recovery.py` + `gov/load_gate.py` (totality), `tests/harness.py` (passthroughs), `tests/test_w79_rules_tiering.py` + `tests/test_w79_totality.py` + `tests/test_w79_precommit.py` (new, 62 tests), `evals/w79_probes.py` (new, 11 probes), `evals/run_evals.py` (w79 mapping), `evals/scenarios/registry.yaml` (11 entries), `evals/FINDINGS.md` (wave-79 note), `workstreams/architect/RULES_TIERING_DESIGN.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-79 header), `research/intake-wave79-2026-09-22.md` (new), `BUILD_LOG.md` (this entry).
+
+  Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+## Wave-78: supply-chain enforcement — digest-verify every loadable artifact + capability leases kill ambient authority (2026-09-22)
+
+- **Theme:** the Plugin4Shell (CVE-2026-92104) response wave. A coding agent's plugin system resolved a 40-hex "pinned" SHA through the ref namespace, so a branch named as the SHA shadowed the reviewed commit — the compromise shape is *reference confusion at the load seam*, not a crypto break. The wave's answer has two halves: (1) **pins are digests, never references** — the governed load path takes fetched bytes + a digest pin, and the ref namespace is not an input at all; (2) **agents hold capability leases, never ambient authority** — short-lived, task-bound, scope-bound, Ed25519-signed leases verified at every use, with a constructive side (the verifier holds public keys only) and an assertive side (the session refuses to open when production-shaped raw credentials are reachable). Fresh intake `research/intake-wave78-2026-09-22.md`: three searches (2026-09-17→22) on the Plugin4Shell patches, September-2026 agent supply-chain attacks, and TUF/JIT-scoped-credential convergence — only result snippets read, no pages opened; the public conversation independently converges on hash-verified targets and short-lived task-scoped credentials, which is what this wave builds.
+- **Lane 1 — design.** `workstreams/architect/SUPPLYCHAIN_DESIGN.md`: pins are `sha256:<64-hex>` only (branches, tags, `latest`, versions, `FETCH_HEAD`, 40-hex git SHAs rejected as pin values — the exact Plugin4Shell confusion); no TOFU (unpinned fails closed); intended first-pin authority is the wave-75 governed human-key path; verification and loading bind to the same in-memory bytes (no re-fetch/re-read TOCTOU); TUF cited narrowly (hash-verified targets + trusted metadata root in scope; multi-role delegation, threshold signing, snapshot/timestamp roles out); leases are NOT delegation tokens — Ed25519-signed by a roster registration authority, bound to agent + task, scoped to tools/resources, default TTL 900 s / max 3600 s, checked at each use (signature, issuer, time, revocation, binding, scope), no grace execution after expiry; the wave-75 nuclear rule extended to pin mutations (two distinct human keys for production; dev/test/staging single-human; tier committed in the signed body so a dev-tier signature can never be replayed as production); deliberately-not-done (no TUF full framework, no multi-artifact atomic pinsets, no lease attenuation/delegation chains, no commercial evidence pipeline).
+- **Lane 2 — implementation.** `gov/load_gate.py` (new): `ArtifactPinset` (digest-only pins; `pin`/`unpin` the only mutation path, Ed25519 authorship from `DelegationTrust.human_keys`, tier rule enforced in `_require_approvals`, mutations chained as `artifact_pinned`/`artifact_unpinned`); `verify_and_load()` (hash fetched bytes → compare pin → return `VerifiedArtifact` wrapping those exact bytes); `load_file_verified()` (one read, then verify/return); `SkillLoader` (governed skill-loading primitive); `RefResolver` + `legacy_load_via_refs()` are deliberately SIMULATED vulnerable paths, used only to reproduce the CVE shape in probes — never in production code. `gov/capability_leases.py` (new): `LeaseAuthority` (minting key held operator-side), `LeaseVerifier` (public roster keys; `require()` checks all six properties at use time), `assert_agent_scope_clean()` (environment/path DLP for production-shaped credentials). `gov/executor.py`: opt-in `lease_verifier=` + `lease_gated_tools=` — lease-gated calls verify the presented lease BEFORE policy evaluation, binding checked against the executor-held `identity.agent_id` (not a kwarg), refusal writes a loud `lease_refused` audit and raises `LeaseRefused`. `evals/w78_probes.py` (11 probes, `redteam.supplychain_w78.*`, pattern RT26, in `evals/run_evals.py` + `registry.yaml`).
+- **Lane 3 — break-first battery.** **11 stopped / 0 residual / 0 break**: (1) exact refname shadowing — legacy path loads attacker bytes (CVE shape proved real), governed path refuses as `digest_mismatch` loudly; (2) digest mismatch refused loud with chained record; (3) verify/load TOCTOU swap impossible by construction + single-read file load; (4) mutable-reference pin attempts refused (incl. the 40-hex git SHA as a pin value); (5) unpinned/attacker-first-pin refused — no TOFU; (6) lease theft outside scope refused (`scope_denied`); (7) cross-task replay and expired lease refused (`binding_mismatch` / `lease_expired`); (8) non-authority mint and post-mint scope forgery refused; (9) ambient raw credential reach fails the session open, verifier holds no private key; (10) mid-task expiry halts until the authority re-mints, end to end through `ToolExecutor`; (11) production pin with one approval / same key twice / dev-tier-signature replay all refused, two distinct humans pin successfully.
+- **Break→fix (same-wave, hardened not filed).** (a) My `registry.yaml` append landed after the trailing top-level keys — YAML parse error, B3 test RED mid-wave. My bug, never labeled a flake; fixed by moving the entries inside the `scenarios` list. (b) The production two-person rule for digest pins was in the design doc but NOT in `ArtifactPinset.pin` (single roster signature) — a design/implementation mismatch I caught on re-read; implemented same-wave (tier-committed canonical body, `_require_approvals`, 8 new unit tests + 1 new probe). (c) Two probes missed the second-signature update after (b) — fixed, battery re-run green. (d) A `verify_and_load` docstring documented a `reference_not_digest` refusal the signature makes structural — corrected to state the exclusion honestly.
+- **Boundary notes (not filed, no F129).** The lease's task binding is checked against the caller-asserted `task_id` framing kwarg — the containment boundary is the executor-held agent identity + scope + TTL; a same-holder cross-task replay gains no scope (residual: mislabeled-task audit entries, stated). The governed load primitives are not yet the FORCED path for the sterile skill-content channel, the initial `PolicyEngine(yaml_path)` load, or MCP pinsets — "digest-verify every loadable artifact" is the enforced direction, not completed wiring. The ambient-clean assertion is a helper, not yet wired to session open. Pin/load/lease events are chained `ActionLog` records, not `gov/provenance` schema records. Key custody (roster, lease authority, halt/recovery) is the standing prod-KMS priority. No genuine independently-reachable miss → no finding filed; next free remains **F129**. F81 stays LOW/OPEN (separate privileged-CI-blocked track; `F81_WALL_READINESS.md` touched with an honest no-progress currency note); F29/F70 stay CLOSED.
+- **Exact graded claims.** Compromised artifact bytes yield NOTHING unless they match an operator-pinned digest (the loader never resolves references). A compromised agent yields only its task/time/scope-bound leases — never raw developer credentials, never the minting key. Production digest-pin changes need two distinct roster humans; a dev-tier signature cannot become a production approval. A stolen lease presented by another identity is refused at the executor-held identity binding; an expired lease is refused with no grace. Refname shadowing has no governed resolution seam to exploit. Does NOT guarantee: already-loaded artifacts (pinning governs future loads), the forced wiring of every load path (stated above), or key custody beyond the operator's.
+- **Deliberate exclusions (documented, not filed).** Full TUF (multi-role delegation, threshold signing, snapshot/timestamp roles); multi-artifact atomic pinsets; lease attenuation/delegation chains; the commercial evidence pipeline (standing order); pinning non-bytes artifacts (policies-as-text are bytes — covered); revocation push/propagation beyond the per-lease-id seam.
+- **Gates (sequential, never concurrent; venv `~/workspace/.gov-venv`, TMPDIR=/tmp/gov-run).** Canonical suite **2621 OK** (2577 + 44 new w78; 8 skipped, 7 expected failures; B3 citation guard in-suite) — one mid-wave RED was my own `registry.yaml` structure bug (fixed same-wave; the rerun is the number above). Registry gate **609/609** oracle matches (598 + 11 new; REGISTRY-GATE GREEN; all 11 w78 observed=stopped). Adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real). Realistic battery **4/4**. Unit `tests/test_w78_supplychain.py` **44/44**. Standalone battery **11 stopped / 0 residual / 0 break**. No RED anywhere at close.
+- **Uncommitted commit plan (repo stays PRIVATE; no .git, no commit/push/publication/release).** When the user approves a commit: `gov/load_gate.py` (new), `gov/capability_leases.py` (new), `gov/executor.py` (lease-gate wiring), `tests/test_w78_supplychain.py` (new, 44 tests), `evals/w78_probes.py` (new, 11 probes), `evals/run_evals.py` (w78 mapping), `evals/scenarios/registry.yaml` (11 entries), `evals/FINDINGS.md` (wave-78 note), `workstreams/architect/SUPPLYCHAIN_DESIGN.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-78 header), `workstreams/architect/F81_WALL_READINESS.md` (currency note), `research/intake-wave78-2026-09-22.md` (new), `BUILD_LOG.md` (this entry).
+
+  Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+## Wave-77: Part 6 response/recovery — "get back to safe" as named, audited operations (2026-09-22)
+
+- **Theme:** "Get back to safe." Part 6 of the 7-part governance program, built ON the closed F70 (R18, wave-23) — not a re-litigation of it. The recovery doctrine as named, audited operations: checkpoint → verify → resume-or-halt, plus principled decommissioning, each with RTO/RPO-style objectives stated with the test that measures them. Temporal's split is the model (already the tree's instinct): event-sourced journal + deterministic replay; control flow deterministic, effects journaled and never re-executed; LLM invocations explicitly classified as non-deterministic steps OUTSIDE the replay path. The founder note ("the countdown replay beat the draft") is taken literally: recovery is designed as named audited operations, not as an incident ticket. Fresh intake `research/intake-wave77-2026-09-22.md`: the public conversation independently argues the same thesis — kill switches are now legislation (US AI Kill Switch Act H.R. 9917, California's 2026-09-18 executive order, UK rejection) while peer-reviewed work documents shutdown resistance; Rubrik's public-sector CTO: "resilience, not shutdown, delivers true deterrence" (post-event recovery to a known-good state is the missing pillar); the 1,200-agent hierarchy incident (evidence erasure) is the live shape behind the decommissioning step order; the benevolent-offramps state machine converges on halt→snapshot→human-review 1:1.
+- **Lane 1 — design.** `workstreams/architect/RECOVERY_DESIGN.md` (§0 states up front: recovery is the white space — even OpenAI's governance paper stops at "stop it"; this wave is differentiation, not catch-up, graded by the battery): the six named operations; the checkpoint format (chained journal artifact, not a side file — MAC'd in the dedicated `recovery-checkpoint` domain, carrying journal_seq + chain_head_hash + tip_generation + identity_key + effect_watermark + voided_approvals + epoch); the verify-before-resume gate specified exactly (8 sub-checks: checkpoint MAC, chain integrity to the checkpoint, freshness via the operator-pinned newest-checkpoint pin + tip-generation pin, anchor state, authority invalidation + re-issuance, in-flight approval voiding, effect-journal frontier, policy pinning); the resume-refuses-compromise-replay rule (old session dies in the revocation ledger FIRST; resume without a fresh operator-issued delegation is refused as `resume_authority_not_reissued`); decommissioning's exact ordered steps (revoke leases/tokens → drain the approval queue → seal the run log → final anchor, `incomplete-<step>` status on any fault, one-way seal latch); the external shutdown authority's trust domain and credential separation (halt key in `<run_dir>/recovery/`, separate key AND separate MAC domain from the journal key; a stolen halt key is availability-only — bounded compromise stated exactly); trip→recovery wiring (atomic `pending_trips()` drain, stable case ids, restart-safe seen set, crash-safe append-then-persist with a pre-append journal scan); RTO/RPO objectives with their measuring tests (checkpoint RPO=0 measured 0.9 ms; verify gate 8 sub-checks chained even on fail, measured 1.3 ms; halt drain→halt measured 0.8 ms; decommission all-4-steps-or-`incomplete*`); the graded guarantees and the stated non-guarantees (no time travel; unknown-no-anchor-audit is explicit, never silent); deliberately-not-done (no auto-resume, no cross-run checkpoint migration, no LLM judge, no halt quorum); Wave-78 readiness (rule violations route to the same resume_or_halt decision record; F81 wall stays the priority).
+- **Lane 2 — implementation.** `gov/recovery.py` (new): `HaltAuthority` (256-bit halt key, `recovery-halt-v1` MAC domain; a journal-domain MAC is never a halt credential), `RecoveryController` (checkpoint / verify_before_resume / resume / halt / decide / decommission, keyed operator-side; production deployment mode requires explicit recovery+halt keys — no dev-key fallback; the two keys must differ), `RecoveryTrigger` (drain → stable case ids → `recovery_triggered` records; idempotency persisted in the operator run dir; `monitor.requeue_trips()` on mid-batch write failure), effect-journal helpers (`effect_started`/`effect_recorded`), `RecoveryHaltedError` (sticky, the canary pattern). `gov/detection.py`: `requeue_trips()` (the drain's complement — unprocessed trips go back on trigger-write failure). `gov/executor.py`: opt-in `recovery=` wiring; the halt latch is checked on the verdict path before policy evaluation (fail-closed: a controller error reads as halted; loud `recovery_halted` audit). `tests/test_w70_hmac_chokepoint_audit.py`: the new `gov/recovery.py::_mac` HMAC site registered in the allowlist with its custody story (operator-held keys, explicit pass, production-requires-keys, domain-separated).
+- **Lane 2 — break-first battery.** `evals/w77_probes.py` (8 probes, `redteam.recovery_w77.*`, pattern RT25, in `evals/run_evals.py` + `registry.yaml`): **8 stopped / 0 residual / 0 break**. Resume under the halted session's authority refused LOUD; journal tamper between checkpoint and resume caught by `chain_to_checkpoint`; forged checkpoint refused, superseded (rollback-replayed) checkpoint refused while the newest still resumes; agent-credentialed decommission refused at the trust-domain check before any step runs; halt without credential refused LOUD, wrong-domain MAC refused, stolen halt key proven availability-only; recorded effects never re-executed, ambiguous half-effects routed to the human decision; mid-batch drain crash loses zero trips and double-triggers zero; "kill switch tested" (NIST RS.MI-01) end to end: detector trip → case → chained `agent_halted` → executor refusal, drain→halt 0.8 ms.
+- **Break→fix (same-wave, hardened not filed).** (a) The trip drain's persist-before-append ordering lost a trip's record while marking its case id seen on a mid-batch crash — the probe caught it; fixed to append-then-persist with a pre-append journal scan for already-chained case ids (crash after append retries without double-triggering). (b) The verify gate's freshness relied on the tip-generation pin alone, which never moves unless tips are written — a valid older checkpoint was accepted after the log advanced; fixed with the operator-pinned newest-checkpoint pin (`<run_dir>/recovery/checkpoints.json`, `fail-checkpoint-superseded`) and the documented halt-time re-checkpoint procedure. (c) The wave-70 HMAC chokepoint audit went RED on the new `_mac` site (2 failures — the suite halted feature work honestly); registered with its custody story, rerun green.
+- **Exact graded claims.** The gate refuses on positive failure evidence, never on the absence of a witness: `unknown-no-anchor-audit` is chained explicitly (a silent witness is not a verdict; the gate never overrules a witness). A halted identity does no further work (executor-checked, sticky). A resumed identity works under FRESH authority only — the old session's authority is dead before the new one exists. Journaled effects are never re-executed; ambiguous mid-effects go to a human decision, never an automatic retry. Decommissioning is all-or-nothing in status terms; the seal is one-way. The halt path works without the agent's cooperation and is bounded under halt-key compromise (availability, not integrity). Does NOT guarantee: un-exfiltration, undoing executed external effects, compromise detection (wave-76's job), world-state rollback, or key custody beyond the operator's key management (standing prod-KMS priority).
+- **Deliberately not done.** No automatic resume (the decision names a human principal — auto-resume is the compromise-replay shape with extra steps); no cross-run checkpoint migration (a rollback vector); no LLM judge in the verify gate (P8 stays uncovered-by-design; the gate is mechanical checks only); no halt/decommission quorum (the kill switch is 1-of-1 by design — a kill switch that needs a committee is not a kill switch); no commercial evidence pipeline (strategic context only).
+- **Gates (sequential, all green).** Canonical: **2577 OK** (2548 + 29 new w77), 8 skipped, 7 expected failures — one mid-wave RED was the wave-70 HMAC chokepoint audit on the new `_mac` site (not a flake, not a regression in existing behavior — a new key-material site the audit correctly demanded a custody story for), registered same-wave; the rerun is the number above. Registry gate: **598/598 oracle matches** (590 + 8 new), 41 delegated, REGISTRY-GATE GREEN (15 accepted residuals kept visible). Adversary matrix: **3216/3216 SHIP-GATE GREEN**. Realistic battery: **4/4**. Unit: `tests/test_w77_recovery.py` 29/29. Battery standalone: 8 stopped / 0 residual / 0 break.
+- **Finding hygiene.** No finding filed: the battery's two genuine miss-shaped observations (drain crash-safety ordering, checkpoint freshness) were hardened same-wave. F81 stays LOW/OPEN (untouched — nothing here is an egress mechanism); F29/F70 stay CLOSED; next free finding remains **F129**.
+- **Commit plan (uncommitted).** New: `gov/recovery.py`, `tests/test_w77_recovery.py`, `evals/w77_probes.py`, `workstreams/architect/RECOVERY_DESIGN.md`, `research/intake-wave77-2026-09-22.md`. Modified: `gov/detection.py` (`requeue_trips`), `gov/executor.py` (`recovery=` wiring + halt-latch check), `evals/run_evals.py` (w77 import/map), `evals/scenarios/registry.yaml` (8 entries), `evals/FINDINGS.md` (wave-77 note), `workstreams/architect/REALWORLD_BAR.md` (wave-77 header), `tests/test_w70_hmac_chokepoint_audit.py` (allowlist + custody story), `BUILD_LOG.md` (this entry).
+- **Trailer:** `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`
+
+## Wave-76: Part 5 detection — behavioral circuit breakers (2026-09-22)
+
+- **Theme:** "Detection, not a wall." Unparks P3 as Part 5: deterministic runtime statistics over the audit stream (EWMA α=0.3/z>2.5 spike + CUSUM k=0.5σ/h=5σ drift — prior art, adopted verbatim, commoditized by design), differentiated by enforcement wiring and the anti-deception battery. Per-identity keys preferring wave-74 user/agent/delegation token refs; purpose-group cold-start defaults (approximate, conservative); founder signal set (tool-call rate, privilege-escalation attempts, egress attempts, denial rate, approval denials, anchor downgrades); harmful-direction-only alerting; breaker CLOSED/OPEN/HALF_OPEN with human reset only; high-risk actions route to the approval queue on OPEN (fail-closed); monitor exceptions fail closed to approval; anchor `head_match=False` is a boolean tripwire and approval-denial divergence a second tripwire outside agent control; baseline persistence under `<run_dir>/detection/baselines.json`; provenance `detector_trip` record type with fail-closed validation; `demo/make_report.py` renders `gov.detection.export_boundary()` verbatim (windows, thresholds, measured lag, slow-boil sentence). Does NOT claim to close P8 (offline judge — still uncovered-by-design). Wave-77 consumes detector trips as response/recovery trigger input.
+- **Lane 1 — design.** `workstreams/architect/DETECTION_DESIGN.md` (§0 states up front: detection is not a wall; the math is prior art; the slow-boil limit is visible; the monitor must survive its own battery or it is theater): signal taxonomy, threshold table (α/z/k/h with ACR/Montgomery provenance), per-identity keys over wave-74 token refs, purpose-group defaults, retention semantics (enforced 288-bucket deque), breaker state machine (reset reseeds EWMA, carries CUSUM only for drift trips), trip→approval routing, trust-boundary statement (monitor outside the agent trust domain), the anchor/approval tripwires the agent cannot see coming, auditor-visible thresholds, Wave-77 handoff.
+- **Lane 2 — implementation.** `gov/detection.py` (~950 lines): `StreamingStats` (bounded-window Welford, virtual prior, exact recompute on eviction, backward-compatible persistence), `Ewma`/`Cusum` (one-sided, harmful direction), `SignalState` (evaluate-then-train split: training freezes while CUSUM suspicion is active or the breaker is not CLOSED; cold-start observations evaluated but never trained on), `CircuitBreaker` (human reset only, half-open probe quota, consecutive-opens accounting), anchor-downgrade global latch, one trip record per open transition, named reset/rebaseline payloads for chaining, `export_boundary()`, `build_detector_trip()`. `gov/provenance.py`: `detector_trip` record type + fail-closed validation (record-type confusion refused). `gov/executor.py`: optional `detection_monitor=` wiring; allow verdicts downgraded to `require_approval` with flag `behavioral_breaker_open` when OPEN; monitor exception → fail-closed queue + loud `detection_monitor_unreachable` audit; no monitor → zero behavior change.
+- **Lane 3 — break-first battery.** `evals/w76_probes.py` (12 probes, `redteam.detection_w76.*`, pattern RT24, in `evals/run_evals.py` + `registry.yaml`): **10 stopped / 2 residual / 0 break**. The deceptive agent (HF grading-AI shape) is caught by the two unseen tripwires; threshold-edge gaming (0.8σ) caught by CUSUM at bucket 17 while EWMA never fires; monitor-blinding floods trip the spike and freeze training; cold-start poisoning bounded (n=0 until the window ends); trip suppression has no agent-reachable seam; denial-storms bounded (1 record per transition, no auto-reset); improvement never trips. The 2 residuals are pinned boundaries: the patient adversary (0.4σ drift, 300 buckets, zero trips) and the named-human re-baseline (the one operator action that can launder drift — chained and named). `research/intake-wave76-2026-09-22.md`: zero public searches/opens performed this wave (recorded exactly); prior-art framing from the standing memo (authensor Sentinel, ACR, purpose-group cold start, Greenblatt/Willison deception, OpenAI automatic monitoring).
+- **Break→fix (same-wave, hardened not filed).** (a) The adaptive baseline absorbed a +1σ slow-boil drift and desensitized its own CUSUM — the monitor would have been theater against its core gradual-drift claim. Fixed: training freezes while `cusum.sh > 0` or the breaker is not CLOSED; the cold-start baseline seeds from the group default, never attacker traffic. Re-measured: +1σ trips CUSUM at bucket 11 (matches `MEASURED_CUSUM_LAG_BUCKETS`), 0.4σ never trips in 300 buckets, baseline mean held 0.2 instead of absorbing to 0.7. (b) Half-open reset now reseeds EWMA to the baseline mean (phantom re-trips) and carries CUSUM forward ONLY for drift trips (a huge stale `sh` from a spike trip made half-open unclosable — the anti-laundering property applies to the drift accumulator, not the spike's incidental accumulation). (c) Retention was metadata-only — now an enforced 288-bucket rolling deque with exact Welford recompute on eviction (the virtual prior survives eviction by design); persistence format updated with backward-compatible loader; rebaseline drops the old window.
+- **Exact graded claims.** Trips: sudden spikes (EWMA, z>2.5 on the smoothed statistic); sustained shifts above k=0.5σ (CUSUM, measured lag 11 buckets for +1σ); threshold-edge riding at 0.8σ (CUSUM, bucket 17); cold-start attack-rate traffic (group default); anchor downgrades (boolean latch); approval-denial divergence. Never trips: a sustained 0.4σ shift in 300 buckets (the stated slow-boil boundary — pinned, not filed); sudden improvements (harmful-direction-only); nothing auto-resets (human reset only).
+- **Deliberately not done.** No offline judge / LLM-as-judge (P8 still uncovered-by-design — different layer); no automatic re-baselining (only the named human action; auto-adopt is the laundering path); no symmetric alerting (improvements are silent by design); no agent-side monitoring SDK (the monitor must never run inside the agent trust domain — deployment boundary, not code); chained operator transition records for reset/rebaseline are returned as payloads for the operator path to chain, not auto-appended (the monitor has no log-write authority by design); no ASR benchmark (wedge-2 disclaimer stands).
+- **Gates (sequential, all green).** Canonical: **2548 OK** (2503 + 45 new w76), 8 skipped, 7 expected failures — one transient RED mid-wave was my own registry.yaml append (entries landed after the trailing top-level keys; YAML parse error), fixed same-wave by moving them inside the `scenarios` list; the rerun is the number above. Registry gate: **590/590 oracle matches** (578 + 12 new), 41 delegated, REGISTRY-GATE GREEN (15 accepted residuals kept visible). Adversary matrix: **3216/3216 SHIP-GATE GREEN**. Realistic battery: **4/4**. Unit: `tests/test_w76_detection.py` 45/45. Battery standalone: 10 stopped / 2 residual / 0 break.
+- **Finding hygiene.** No finding filed: the battery's two initial breaks were probe-shape errors, not misses; the one genuine miss-shaped observation (adaptive desensitization) was hardened same-wave. F81 stays LOW/OPEN (untouched); F29/F70 stay CLOSED; next free finding remains **F129**.
+- **Commit plan (uncommitted).** New: `gov/detection.py`, `tests/test_w76_detection.py`, `evals/w76_probes.py`, `workstreams/architect/DETECTION_DESIGN.md`, `research/intake-wave76-2026-09-22.md`. Modified: `gov/provenance.py` (detector_trip record type + validation), `gov/executor.py` (detection_monitor wiring), `evals/run_evals.py` (w76 import/map), `evals/scenarios/registry.yaml` (12 entries), `evals/FINDINGS.md` (wave-76 note), `workstreams/architect/REALWORLD_BAR.md` (wave-76 header), `demo/make_report.py` (behavioral detection section), `BUILD_LOG.md` (this entry).
+- **Trailer:** `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`
+
+## Wave-75: governing the governors — "who changed the rules, and under what authority" (2026-09-22)
+
+- **Theme:** Part 7 (governing the governors) of the 7-part governance program, deliberately built *before* detection/response: silent policy mutation defeats every other control, so the rule-changing path is governed first. Policy changes become `prov.record_type="policy_change"` records (not a parallel log schema): canonical digest over parsed/enforced meaning (comment-only edits are no-ops by design), Ed25519 authorship tokens by rostered wave-74 human keys chained to the previous policy-change token, structured diffs over rules and top-level sections. **The nuclear rule:** production apply requires approvals from two DISTINCT roster human keys — same key twice refused (counts keys, not signatures); dev/test/staging stay single-approval. `GovernedPolicyStore` (bootstrap → propose → approve → apply) is the only governed mutation path; apply builds the engine from the stored artifact, never a file reread — a disk rewrite mid-run is a no-op by construction. **Break-glass ceremony:** declared → activated → used/expired → reviewed, every transition a chained `breakglass` provenance record; expiry is appended as a record, not dropped silently; a new activation is refused while a prior use is unreviewed; post-use review must be by a distinct roster human; rollback is a new governed change, not a bypass. Executor integration: `ToolExecutor.call` accepts `policy_store=` and snapshots the live engine at call entry; every decision record carries the deciding engine's `policy_hash` — "which rule decided this" stays answerable across swaps. ASRS framing: `docs/asrs-near-miss-wave75-2026-09-22.md` (aviation just-culture reporting as docs/process — findings as blameless near-misses, residuals recorded not punished; the anchor plays NASA to the operator's FAA). Fresh intake: `research/intake-wave75-2026-09-22.md` ("propose, don't write" independently confirmed by the strikersam governance README; baseline-tighten-only-twist mirrored by our nuclear rule; PAL two-man doctrine = count people/keys; ASRS genesis lesson; Moltbook unilateral retroactive ToS as the live threat shape).
+- **Lane 1 — design.** `workstreams/architect/GOVERNORS_DESIGN.md`: why policy_change is a prov record type (reuses wave-73 validators/anchoring), authorship-token schema (Ed25519, parent_token_hash chaining), canonical-digest design (semantic, not bytewise), tiered approval matrix, break-glass state machine with dual recording, version-pinning audit requirements, residuals (key-holder in-chain backdate = wave-72/73 threat model answered by anchor downgrade; review quality is organizational; policy/config/code/key mutation beyond policy files is an explicit residual), deliberately-not-done, Wave-76 readiness (anchor downgrades as detection tripwires; per-identity baselines over wave-74 identities).
+- **Lane 2 — implementation.** `gov/policy_change.py` (new): digest/diff, authorship tokens, roster verification, parent-token chaining, approvals bound to change ID + policy digest, production two-person/distinct-key enforcement, `GovernedPolicyStore` with artifact-not-reference apply, break-glass declare/activate/use/expiry-sweeper/review/outstanding-review gate, provenance record builders. `gov/policy.py`: `PolicyEngine.from_text()` via `_init_from_bytes()` (file-backed and text-backed engines hash identically). `gov/provenance.py`: `policy_change` + `breakglass` record types, fail-closed record validation, `governor_changes` export section. `gov/executor.py`: optional `policy_store=`, `_resolve_engine()`, call-entry engine snapshot replacing verdict-path `self.policy` uses.
+- **Lane 3 — break/fix.** Focused: `tests/test_w75_governors.py` 29/29 OK. Battery: `evals/w75_probes.py` 9/9 HOLD (silent rewrite no-op; non-roster authorship refused at propose; one-approval production apply refused; same-key-twice refused; undeclared break-glass use refused; post-expiry use refused + expiry chained; review gate holds then clears; key-holder backdate verifies in-chain but anchor downgrades to operator-attested-only; in-flight swap pins each decision record to its deciding digest). Same-wave break→fix (hardened, not filed): malformed-policy proposal could raise `AttributeError` — propose gate now catches any loader exception and fails closed with `PolicyChangeError`. Registered as `redteam.governors_w75.*` (pattern RT23) and wired into `evals/run_evals.py`. Findings: F81 stays LOW/OPEN (no egress mechanism touched); F29/F70 CLOSED; no genuine independently-reachable miss → nothing filed; next free **F129**.
+- **Known concern audited and closed in-wave (break→fix, honest accounting):** an audit of the "every decision record carries the deciding engine's digest" claim found it *false as written*: `call()`'s verdict path used the engine snapshot, but `tool_call` audit entries did not stamp `policy_hash` — only the approval-queue kwarg did. Fixed: `_base()` now stamps the call-entry snapshot digest on every verdict-path entry (including pre-evaluation rejections, which name the version in force), and `call()`'s entire verdict path was audited — zero `self.policy` references remain inside it; all verdict-path reads go through the snapshot. The unit test and `inflight_version_pinned` probe now prove it with real `ToolExecutor.call()` verdicts on either side of a swap (executed under v1, denied under v2, each entry naming its engine). **Stated boundaries that remain:** `execute_approved()` is a separate entry point and deliberately uses the *current* engine — guarded by an explicit policy-staleness refusal (an approval granted under a different digest is refused, "approval_policy_stale", never silently re-evaluated); grant/approval *minting* stamps the current engine, which is correct mint-time semantics. Policy rollback is a new governed change, not a bypass.
+- **Deliberately not done (with rationale):** live transport/mTLS (unchanged, local); PKI beyond the roster model; selective-disclosure/ZK proofs (research gap); commercial evidence pipeline (strategic context only); policy rollback as anything other than a new governed change; break-glass review quality beyond the distinct-human requirement (organizational, not mechanical).
+## Wave-74: identity — "whose hand, on whose authority" (2026-09-22)
+
+- **Theme:** Part 4 (Identity) of the 7-part governance program. Session IDs existed; lineage didn't. This wave turns "which user, which deployment, which parent agent spawned this one" into verifiable structure chained into the log like everything else — the converged design from three independent sources: (1) South et al.'s user token + agent token + human-signed delegation token (arXiv:2501.09674); (2) the SPIFFE-style split between transport identity (WHO is calling) and application delegation (ON BEHALF of whom); (3) the permission intersection user ∩ agent ∩ delegation scope; (4) parent-signed, monotonically attenuating spawn chains. Fresh intake: `research/intake-wave74-2026-09-22.md` (MongoDB Pattern 4's two break points — scope not narrowing re-broadens authority, recipients must verify signatures not trust claims — pinned by the probe battery; Red Hat's SPIFFE two-layer wording; 1h SVID TTL grounding `DEFAULT_TTL_S=3600`).
+- **Lane 1 — design.** `workstreams/architect/IDENTITY_DESIGN.md`: the three-token envelope `south-3token/v1` (user token / agent token / delegation token with `user_token_hash` + `agent_token_hash` refs, scope, expiry, revocation endpoint, audit URLs); **why Ed25519 not HMAC** (verifier must not hold the signing key — unforgeability by verifier is the whole point of the human signature); session/epoch binding; token storage (full tokens in enforcement memory, never in the log — provenance carries only SHA-256 refs); expiry (TTL 3600s, max 86400s, ±300s skew); permission intersection fail-closed by construction; per-hop attenuation (scope ⊏ parent, depth cap 8); break model; deliberately-not-done; Wave-75 readiness (the human delegation key is the first human-keyed identity in the tree — Wave-75's policy-authorship primitive).
+- **Lane 2 — implementation.** `gov/delegation_tokens.py` (new): issuance/verification of all three tokens, `DelegationTrust` public-key rosters, `DelegationContext.bind()` with fail-closed checks, `spawn_sub_agent()` parent-signed lineage, `open_delegated_session()` returning a verified context + a delegation object ready for a v2 provenance record (session-start log chaining at the API seam). `gov/provenance.py`: delegation sub-schema v2 — null-token v1 records still verify (back-compat), v2 requires exactly `{tokens_schema: "south-3token/v1", user_token_ref, agent_token_ref, delegation_token_ref}` on every hop with no extra fields (a fourth token shape is structurally refused), binds commits to filled slots, and any null/non-v2 tokens on a v2 record is a hard error. `gov/executor.py`: `ToolExecutor.call` accepts an opt-in `delegation_context`; when present, the delegation gate runs in CODE before policy evaluation — a missing or invalid delegation refuses with `DelegationRequiredError`/`DelegationBindingError` even under an allow-all policy, and the refusal is audit-logged (`delegation_refused`) without running the tool. Revocation: `revocation_endpoint` + `revocation_checker` seam; checker errors now fail closed as `DelegationRevokedError` (never a raw crash); `RevocationLedger` reference implementation.
+- **Lane 3 — break/fix.** Same-wave implementation review hardened three issues (not filed — all hardened before closeout): (a) `bind()` on a tokenless context raised a confusing signature error — now `DelegationRequiredError`; (b) revocation-checker exceptions propagated raw — now fail closed as `DelegationRevokedError`; (c) `enforce_tool_call` did not bind the leaf delegation's subject to the acting identity — a sibling agent could borrow a delegation; now `DelegationBindingError`. A wave-73 unit test pinned "version 2 = unknown"; wave-74 intentionally revved the sub-schema (§7 contract), so the test was updated to play the version game against v3 and to assert v2-with-null-tokens is refused. Focused: `tests/test_w74_identity.py` 62/62 OK. Battery: `evals/w74_probes.py` 8/8 HOLD (forgery refused — Ed25519; escalation refused at issuance AND chain verification; missing-delegation fails closed under allow-all policy; cross-session replay refused; expiry/skew enforced; parent-signature swap AND spliced parent hash refused; middle-hop truncation breaks the wave-73 binds validator; valid-chain control authorizes/spawns/executes/chains). Findings: F81 stays LOW/OPEN (no egress mechanism touched); F29/F70 CLOSED; no genuine independently-reachable miss → nothing filed; next free **F129**.
+- **Gates (sequential, all green):** canonical **2474 OK** (2412 + 62 new; 8 skipped, 7 expected failures); registry **GREEN** (569 executed + 41 delegated to realistic = 610 total; all 8 `redteam.identity_w74.*` stopped); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**.
+- **Deliberately not done (with rationale):** revocation propagation beyond the seam (Shared Signals-style push is future work; TTL-only default stated); resource-scoped entries (v1 scope is tool-granular by design — South's standardized scopes are listed as future research); selective disclosure/ZK proofs (research gap); PKI (roster model by decision); live transport/mTLS/SPIRE (local transport is F55 provisioned identity + process boundary, stated); commercial evidence pipeline (strategic context only).
+- **Wave-75 readiness:** Wave-75 needs "who changed the rules." Wave-74 delivers the primitive: the human delegation token's `delegator` + Ed25519 signature is the first human-keyed identity with a real private key behind it. Wave-75 can reuse the envelope for policy-change authorship (mutation signed by the human author's key, chained `parent_token_hash` → previous authorship token, verified against the same roster).
+
+## Wave-73: the provenance record — "the letter inside the envelope" (2026-09-22)
+
+- **Theme:** Part 3 (Proof) of the 7-part governance program. The audit chain (HMAC + checkpoints + wave-72 anchoring) is the envelope; the provenance record is the first-class, Art-12-shaped auditor schema inside it: identity/lineage/approvals/actions/session timing as a verifiable record, not a log line. Load-bearing input: `research/agent-governance-learnings-2026-09-22.md` Part 3 ranked recommendations + `research/intake-wave73-2026-09-22.md` (new: Art 12(1) automatic-recording as architectural requirement, Art 12(2) purpose-driven events not payload capture, Art 12(3) Annex-III-1(a)-only scope warning, 6-month retention floor, authensor/trust_chain table-stakes honesty notes).
+- **Lane 1 — design.** `workstreams/architect/PROVENANCE_DESIGN.md` (new): the `prov` envelope specified field-by-field with types and required/optional (§1: schema_version, record_type, session_id, session_open/close, clock_source, principal, delegation, approvals, action{verb,tool,args_digest}, resource{kind,ref,scope}, outcome, policy_version, matched_rules, payload_tier, retention{class,until,policy}, anchor_ref (export-populated), supersedes); the record-type → required-field matrix (§1.2); the chained delegation path with `binds` pointers (§2); anchor-receipt references not duplication (§3); the two-tier payload model (§4: default decision tier with validator-enforced forbidden keys; restricted tier needs bounded retention + access list); session timing + the key-holder backdate residual (§5); schema versioning + migration by re-issuance (§6); and the **Wave-74 delegation contract as an implementable spec** (§7: fill `tokens` with the adopted three-token shape, keep binds semantics, rev the delegation sub-version independently, no fourth token shape, permission intersection and revocation are Wave-74's). Break model table (§8) and deliberately-not-done list (§9).
+- **Lane 2 — implement + break-first.** `gov/provenance.py` (new): `PROVENANCE_SCHEMA_VERSION=1`, `build_delegation()` (binds-chained), `validate_delegation()` (truncation/reorder/edit detection; `tokens` must stay null until Wave-74), `validate_provenance()` (fail-closed: envelope version, type matrix, tier enforcement with recursive forbidden-key scan, retention boundedness, session-timing well-formedness), `append_provenance()` (validates BEFORE writing; refusal is itself logged as decision/denied), `check_session_timing()` (export-time anchor cross-check: impossible timing flagged, soft window reported-not-blessed), `build_retention_manifest()` (per-tier aggregation, over-retention flags), `provenance_export()` (the live Art-12 export: automatic-recording statement + traceability rows joined to per-epoch anchor grades + retention manifest + delegation-chain monitoring + timing findings). `demo/make_report.py`: new "Provenance export (wave-73)" section in Markdown+HTML — **collects the wave-72 deferral** (traceability fields, retention manifest, delegation-chain monitoring); the deferral comment at `anchor_status_text()` is discharged in writing.
+- **Lane 2 — break-first results.** `evals/w73_probes.py` (7 SITUATIONS, new) → **7 HOLD / 0 MISS** standalone, wired into `evals/run_evals.py`, registered as 7 `redteam.provenance_w73.*` scenarios. **Same-wave break→fix (honest, never called a flake):** the record-type-confusion probe found the validator initially accepted `approval` records carrying `action` fields with no linked decision — the design's §1.2 matrix specified the refusal but the implementation missed it. Hardened same-wave (`prov.decision_ref` required when approval records carry action fields), regression unit test added. **Probe-design correction (honest):** the first session-backdate draft asserted the export-time check would flag a post-anchor key-holder backdate — wrong threat model: any key-holder rewrite changes the chain head, so the anchor already downgrades the epoch to operator-attested-only via head mismatch. The probe was rewritten to pin the true residual (reforged chain verifies in-chain AND the anchor catches the rewrite). Two probe-harness bugs fixed along the way (a `"\n"`-literal file write corrupting the forgery probe's line; a checkpoint-`hash` field not updated in the key-holder reforge helper — both probe bugs, mirroring the wave-72 closeout fixes).
+- **Lane 3 — standing pressure.** Realistic battery 4/4. B3 citation guard green in-suite (no new STANDARDS_MAPPING.md citations — Art 12/CSA vocabulary is implemented in the export, not cited as control claims). Finding hygiene: F29 CLOSED, F70 CLOSED (R18 wave-23), F81 LOW/OPEN — all untouched by wave-73's mechanisms; wave-73 accounting note appended to `evals/FINDINGS.md`; **no new finding, F129 stays free**. BUILD_LOG (this entry) + REALWORLD_BAR wave-73 header current. Internet intake recorded exactly (`research/intake-wave73-2026-09-22.md`).
+- **Gates (sequential, never concurrent; venv `~/workspace/.gov-venv`, TMPDIR=/tmp/gov-run):** canonical suite **2412 OK** (2384 baseline + 28 new `test_w73_provenance`; 8 skipped, 7 expected failures; B3 citation guard in-suite); registry gate **GREEN** (602 scenarios = 595 + 7 new `redteam.provenance_w73.*` pins, all observed=stopped; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. Break-first **7 HOLD / 0 MISS**. No RED anywhere at close.
+- **Graded claims, stated exactly:** the schema binds honest writers and gives auditors per-record verifiable claims (forgery/type-confusion/tier-smuggling/truncation/version-games all refused without the key). It does NOT stop a key-holder rewriting `prov` content — that attacker is wave-72's model and is answered by the external anchor, not this schema. Session timing binds to the chain via the wave-72 `epoch_id` in the HMAC canonical form; key-holder backdating inside the open epoch is undetectable in-chain by construction (stated residual, probe-pinned), caught post-anchor via head mismatch.
+- **Deliberately not done:** the three-token identity machinery (Wave-74, per the §7 contract — the schema needs no rework); per-hop scope evaluation / permission intersection (Wave-74); token revocation propagation (Wave-74); selective disclosure / ZK property proofs (research gap, no shipped answer anywhere); the commercial evidence pipeline (no metering/billing/SaaS — strategic context only); live Rekor submission; P-256 SET verification; anchor-key KMS custody; P8/P13 boundaries untouched and unclaimed.
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `gov/provenance.py` (new: schema + validation + export), `demo/make_report.py` (provenance export section; wave-72 deferral discharged), `tests/test_w73_provenance.py` (new: 28 tests), `evals/w73_probes.py` (new: 7 break-first probes), `evals/run_evals.py` (w73 import + module map), `evals/scenarios/registry.yaml` (+7 `redteam.provenance_w73.*`), `evals/FINDINGS.md` (wave-73 accounting note), `workstreams/architect/PROVENANCE_DESIGN.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-73 header), `research/intake-wave73-2026-09-22.md` (new), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+## Wave-72: Haber–Stornetta anchoring of the audit chain — closeout (2026-09-22)
+
+- **Honest starting point:** the original wave-72 coordinator built the anchor client, the epoch machinery, 28 unit tests, and the design doc, then ended the session without the intake file, the break-first probes, the registry wiring, or the gate runs — and left a FALSE claim in `ANCHOR_DESIGN.md` ("exactly one live Rekor submission validates the REST mapping"). This closeout did the missing work, corrected the false claim in writing, and adjudicated the one open security question. Nothing below re-litigates the build; it completes and corrects it.
+- **Lane 1 — what the wave built (coordinator's build, verified at closeout).** `gov/anchor_backend.py`: Ed25519-signed anchor statements + Sigstore Rekor v1 `hashedrekord` witness, stdlib `urllib` only, deterministic `FakeWitness` + `LocalAnchorLog` (explicitly not an independent witness). `gov/anchorer.py`: executor-side daemon (anchoring NEVER runs in the sandbox/enforcement path), epoch policy 100 records OR 3600 s with `anchor_on_close=True`, Ed25519 statement binding epoch id/start/end seq/checkpoint head/optional Merkle root/wall window/pubkey/log id/prev-anchor, hash-only witness boundary (backend sees only `anchor_hash`; the statement stays local), HMAC-chained `anchor_receipt` records, conjunctive `audit_anchors` grading `anchored` vs `operator-attested-only`. `gov/log.py`: `ActionLog` stamps reserved `epoch_id="e%08d"` (in the HMAC canonicalization; caller-supplied values clobbered). `workstreams/architect/ANCHOR_DESIGN.md`: the full design record.
+- **Lane 2 — closeout corrections (all honest, none called flakes).**
+  - **False validation claim corrected:** the design doc's "exactly one live Rekor submission" was false — no `POST /api/v1/log/entries` was ever submitted from this environment. Corrected in writing: the REST mapping is schema-conformant by construction (hashedrekord 0.0.1 envelope read from the spec) + the recording-transport unit test, NOT by live exercise. A live submission is the remaining gap (wave-73+ manual step). `research/intake-wave72-2026-09-22.md` (new) records what the tools genuinely did: 1 search + 1 publicKey-endpoint fetch (pin verified byte-for-byte, log-id cross-check passes).
+  - **Real implementation bug, caught by the closeout battery:** `_rfc6962_root()` consumed Rekor inclusion-proof hashes top-down — wrong for every tree larger than 2 leaves. Fixed to consume the current top-level sibling from the end of the remaining proof (leaf-level-first, Rekor's order). Same-wave break→fix.
+  - **Four adversary-test model bugs fixed:** `_rewrite_with_key()` reforged the chain but not the HMAC checkpoint sidecar — testing old F27 detection instead of the Wave-72 external anchor; fixed to the full key-holder model (chain + all affected checkpoint MACs). The async nonblocking test called `assertTrue` on the witness instead of the TestCase. (The 28-test focused suite then ran green 3×.)
+  - **Closeout RED (never called a flake):** the first full canonical run showed 1 error — `test_size_guard_enforces_projected_size_not_current_size`. Root cause: wave-72's `epoch_id` field added ~24 bytes/entry, tipping the test's 600-byte arithmetic (341 + 262 = 603 > 600 projected). The guard was CORRECT (it refused a genuinely-over-cap append); the test's numbers were stale. Fix: cap recalibrated 600 → 700 with the refusal behavior re-verified (over-cap "second" append still refused, small "third" still fits, chain clean). Full suite re-ran green on the final code.
+- **Lane 3 — break-first.** `evals/w72_probes.py` (13 SITUATIONS, new) → **13 HOLD / 0 MISS** standalone, then wired into `evals/run_evals.py` and registered as 13 `redteam.anchor_w72.*` scenarios (registry gate GREEN with them). Adversarial extras 9/9: epoch_id caller-clobber, statement extra-field rejection, mixed-backend callable audit, empty/not-due anchor states, cross-epoch move breaks MAC, and the 2-leaf RekorBackend round-trip (which first FAILED because the probe built the tree over the anchor hash — the probe's error, corrected to Rekor's real leaf convention sha256(0x00 || entry body); the implementation was right, and the corrected probe now pins it permanently).
+- **Lane 4 — the open security question, adjudicated.** `RekorBackend.verify_receipt()` verifies the inclusion proof against the receipt-carried `rootHash`; the SET is carried-not-verified; an offline auditor never touches an authenticated Rekor root. **Adjudicated NOT a finding (F129 stays free):** the `anchored` grade is conjunctive (statement_sig + anchor_hash_bind + head_match + statement_chain + receipt + witness_binding + witness_time_window ALL required), and the crown-jewel attacker (HMAC key, NO anchor key) is stopped at `statement_sig` before the root matters — pinned by probes. The self-attested root becomes load-bearing only under anchor-key compromise (already total by the key-custody model: the anchor authority IS the attacker) or for third-party verifiability (wave-73 hardening: P-256 SET verification or the v2 Ed25519 shard). Documented as a boundary in `ANCHOR_DESIGN.md` §5, not filed.
+- **The guarantee, exactly:** "no undetected rewrite of history prior to the last anchor" — history after the last anchor is soft, and the anchor cadence is the security parameter. Holds against the documented threat model (key-holder without the anchor key reforging chain + checkpoint sidecar with valid MACs): the forged chain verifies, the anchor catches it (head_match False → operator-attested-only).
+- **Gates (sequential, never concurrent; venv `~/workspace/.gov-venv`, TMPDIR=/tmp/gov-run):** canonical suite **2384 OK** (2356 baseline + 28 new `test_w72_anchor`; 8 skipped, 7 expected failures; B3 citation guard in-suite); registry gate **GREEN** (595 scenarios = 582 + 13 new `redteam.anchor_w72.*` pins, all observed=stopped; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. Break-first **13 HOLD / 0 MISS**. No RED anywhere at close.
+- **Finding states:** F81 LOW/OPEN unchanged (anchoring is evidence-integrity hygiene, not egress confinement — wave-72 note appended). F29 stays CLOSED (disclosure). **F70 discrepancy:** the closeout handoff said F70 MEDIUM/OPEN, but the ledger says CLOSED (R18, wave-23 crypto/log); the closure mechanism (`_marker_sets`, `_append_tip_gen_pin`) is verified still in `gov/log.py` with regression tests present, and wave-72 touched none of it — ledger stands, handoff was stale. No new findings; **F129** next free. The anchor-interval residual is pinned by probe, not filed (designed security parameter).
+- **Deliberately not done:** a live Rekor submission (manual wave-73+ step); P-256 SET signature verification; STH-signature/consistency verification for third-party verifiability; cloud KMS/HSM anchor-key custody (production refuses without `GOV_ANCHOR_KEY`/file; non-production ephemeral key needs double opt-in); per-record (vs per-epoch) anchoring; the commercial evidence pipeline; P8/P13 boundaries untouched and unclaimed.
+- **Wave-73 provenance readiness:** the anchor statement already binds epoch id, seq range, checkpoint head, Merkle root (optional), wall window, key id, and log id — the fields a provenance/attestation export needs. Missing prerequisites before provenance claims: (1) a live Rekor submission proving the wire path end-to-end; (2) SET/STH verification so a third party can authenticate the witness without trusting receipt-carried roots; (3) anchor-key custody beyond local software (KMS/HSM); (4) a policy decision on the anchor cadence as the published security parameter (100 records / 3600 s are defaults, not a promise).
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `gov/anchor_backend.py` (RFC 6962 proof-consumption fix), `gov/anchorer.py` (new: executor-side anchor daemon + audit), `gov/log.py` (epoch_id stamping in HMAC canonicalization), `tests/test_w72_anchor.py` (new: 28 tests; 4 test-model bugs fixed at closeout), `tests/test_hardening_r5.py` (size-guard cap 600 → 700 recalibration for the epoch_id schema change), `evals/w72_probes.py` (new: 13 break-first probes), `evals/run_evals.py` (w72 import + module map), `evals/scenarios/registry.yaml` (+13 `redteam.anchor_w72.*`), `evals/FINDINGS.md` (F81 wave-72 accounting), `workstreams/architect/ANCHOR_DESIGN.md` (false live-submission claim corrected + self-attested-root adjudication), `workstreams/architect/REALWORLD_BAR.md` (wave-72 header), `research/intake-wave72-2026-09-22.md` (new: honest intake), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+
+- **Honest starting point:** wave-69/70 made key RESOLUTION fail-closed and machine-audited, but keys lived in memory forever as immutable copies with no discard story, and wave-70 left one surveyed-not-wired loose end: `EgressLedger` mode semantics. This wave closes both — and the honest verdict on the zeroization threat is a measured negative, not a victory lap.
+- **Lane 1 — design + measurement first.** `research/zeroization-design-wave71-2026-09-22.md`: full inventory of every in-memory key copy (provider storage, `_active_key()` return values and log/ledger consumers, all `hmac.new()` sites, HMAC C/OpenSSL internals, CPython allocator freelists, immutable-object residuals; confirmed no `_active_key` cache exists). Measurement honesty: two attempted census mechanisms (a `gc.get_objects()` value scan, a weakref census) were tried and REJECTED pre-ship — `bytes`/`bytearray` are not gc-tracked in CPython (the scan vacuously passes) and `bytearray` is not weak-referenceable — the final census is read-back of the real provider buffer plus `sys.getrefcount()`. A `/proc/self/mem` self-scan experiment proved allocator/HMAC residue at first read, then failed to reproduce on a second attempt — self-scanning contaminates its own later scans (the scanner reads memory INTO Python `bytes`), so the raw-memory claim is stated as a measured negative with the honest caveat, not a reproducible count. The internet intake (`research/intake-wave71-2026-09-22.md`) corroborates the design: mutable `bytearray` is the honest Python-level shape, immutable `str`/`bytes` cannot be scrubbed, secrets-in-use cannot hide from a dump, locked memory and out-of-process custody need C/HSM.
+- **Lane 1 — implementation.** `gov/zeroize.py` (new): `zeroize()` wipes mutable buffers and raises `TypeError` on immutable/read-only inputs (wiping an immutable would be theater); `key_buffer()` exception-safe context manager. `gov/keys.py`: `KeyMaterial.key` is now a `bytearray` (always a copy — `bytearray(bytes)` copies, so no `bytes(x) is x` aliasing; every consumer — `hmac.new`, `hashlib.sha256`, `.decode`, `==` against `bytes` — is buffer-protocol compatible, suite-verified); `KeyMaterial.destroy()` zeroizes the real buffer then drops the reference (`key = None`) so post-destroy use raises loud instead of silently HMACing under an all-zero key (a zeroed key that "works" is a forgery footgun); `KeyRing.destroy()` wipes all epochs; `to_dict()` on destroyed material raises the new `DestroyedKeyError` (a wiped key can never silently persist as None/zeros); `key_id` (a digest, not the key) survives for the audit trail. 18 unit tests in `tests/test_w71_zeroization.py` (wipe read-back, double-wipe safety, immutable/refusal, exception path, HMAC equivalence, no-aliasing, both destroys, refcount census, env-str residual boundary pin, destroyed-serialize refusal). Two same-wave REDs caught and fixed honestly (a test asserting a byte-identical `to_dict` round-trip through the lossy legacy `key_raw` text path — pre-existing behavior for non-hex keys, test bug; a test passing `str` to a bytes-only constructor — both real test bugs, never called flakes).
+- **Lane 1 — EgressLedger follow-up, resolved one way by contract.** Wave-70's surveyed loose end is answered: `EgressLedger` does NOT gain a `deployment_mode=` kwarg. It inherits process-level `gov.log._active_key()` resolution — one `GOV_DEPLOYMENT_MODE` declaration moves log and ledger together; a per-ledger kwarg is rejected by construction (`TypeError`), so mode/epoch forks between a log and its ledger are unrepresentable. A kwarg-vs-env mismatch refuses LOUD via the production/dev contradiction rather than silently forking. Docstring + `KEY_MANAGEMENT_DESIGN.md` updated; no functional ledger code changed. 3 registry probes pin the contract.
+- **Lane 2 — break-first.** `evals/w71_probes.py` (10 SITUATIONS) → **10 HOLD / 0 MISS**: wipe verification, double-wipe safety, use-after-wipe loud failure, exception-path wipe, immutable-wipe theater refusal, refcount census, env-str residual boundary pin, ledger inherits env mode, ledger no-fork kwarg, ledger kwarg-mismatch fails loud. No genuine independently-reachable miss → no finding filed; **F129** next free. F81 accounting (still LOW/OPEN — zeroization is key-custody hygiene, not egress confinement); F29 stays CLOSED with a residual touch-up (explicitly-destroyed provider buffers now wiped + fail loud; dev-era forgeability and immutable/HMAC/allocator residuals unchanged).
+- **Docs:** `research/zeroization-design-wave71-2026-09-22.md` (inventory + measured census + honest negative), `research/intake-wave71-2026-09-22.md`, `KEY_MANAGEMENT_DESIGN.md` (EgressLedger contract), `evals/FINDINGS.md` (F81 wave-71 accounting + F29 touch-up), `workstreams/architect/REALWORLD_BAR.md` (wave-71 header), this entry.
+- **Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical suite **2356 OK** (2338 baseline + 18 new; 8 skipped, 7 expected failures); registry gate **541/541** oracle matches (531 + 10 new `redteam.zeroize_w71.*` pins, all observed=stopped; 582 scenarios, 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. No RED anywhere at close; no concurrency violations (the matrix ran before the final `DestroyedKeyError` guard edit — the delta is provably inert for matrix cells: `destroy()` is never called there and the guard only fires on destroyed material; the full canonical suite re-ran green on the final code).
+- **Deliberately not done:** C-extension locked-memory backend (`mlock`, `MADV_DONTDUMP`, secure allocator, explicit cleanse); HSM/KMS-side HMAC so plaintext log keys never enter CPython; removing environment-string key transport; per-context/session DEKs; core-dump/swap controls as deployment policy; the commercial evidence pipeline; P8/P13 boundaries untouched and unclaimed; cloud HSM/KMS custody (envelope seam exists, no backend).
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `gov/zeroize.py` (new), `gov/keys.py` (`bytearray` storage, `destroy()` on material + ring, `DestroyedKeyError`, `to_dict` guard), `gov/egress_ledger.py` (docstring: no-fork contract), `tests/test_w71_zeroization.py` (new, 18 tests), `evals/w71_probes.py` (new, 10 probes), `evals/run_evals.py` (w71 import + module map), `evals/scenarios/registry.yaml` (+10 `redteam.zeroize_w71.*`), `evals/FINDINGS.md` (F81 wave-71 accounting + F29 touch-up), `workstreams/architect/KEY_MANAGEMENT_DESIGN.md` (EgressLedger contract), `workstreams/architect/REALWORLD_BAR.md` (wave-71 header), `research/zeroization-design-wave71-2026-09-22.md` (new), `research/intake-wave71-2026-09-22.md` (new), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+## Wave-70: key-management hardening completion — close wave-69's two loose ends by mechanism (2026-09-22)
+
+- **Honest starting point:** wave-69's two loose ends were real and stated: (1) the design doc said "explicit `deployment_mode=` kwarg wins" but only `resolve_active_key()` had the kwarg — `ActionLog` (the entry point every caller uses) did not, so the documented precedence was aspirational; (2) the "every HMAC key path flows through the guarded chokepoint" audit was informal (a human grep, run once). Both are now mechanism, not prose.
+- **Lane 1 — direction (a): wire the kwarg end-to-end.** Surveyed every chain-creating entry point before choosing:
+  - `ActionLog.__init__(..., *, deployment_mode=None)` — keyword-only, default None; stored as `self._deployment_mode`, flows into the instance's key-resolving mutations (`append`, `write_checkpoint`) via `_active_key(mode)`; unknown modes fail fast AT CONSTRUCTION (eager `resolve_deployment_mode` validation — a misconfigured mode must not survive past construction). Module-level verify/read helpers (`_verify`, `verify_chain_tip`, `_read/_write_tip_cache`, `write_chain_tip_from_tail`, `_append_tip_gen_pin`) deliberately keep the default: verification must work regardless of a creation-time declaration.
+  - `keys.require_key(*, deployment_mode=None)` — keyword-only; applies to the production/dev contradiction check. Zero production callers exist (tests only), so the signature tightening is zero-risk.
+  - Surveyed and deliberately NOT wired, with rationale in `KEY_MANAGEMENT_DESIGN.md`: `EgressLedger` (its contract is "the SAME key epochs as the action log" — it inherits gov.log's resolution; forking mode semantics between a log and its ledger is a follow-up, not this wave), `require_production_key()` (always-production by contract — a mode kwarg would be meaningless), explicit provider selectors (`KeyRing.from_env/from_file`, envelope KMS — mode-agnostic by design).
+  - Direction (a) was safe because keyword-only default-None cannot break existing callers by construction — verified, not assumed: full suite green with zero caller changes.
+- **Lane 1 — break-first.** `evals/w70_probes.py` (6 SITUATIONS) + 14 unit tests in `tests/test_w70_key_management.py`: kwarg-vs-env conflict both directions (staging-kwarg beats production-env → dev key, loud; production-kwarg beats staging-env → contradiction refuses LOUD at append), unknown mode via kwarg → ValueError at construction, no-kwarg production with no key → loud refusal never dev-fallback, `require_key` kwarg contradiction, env-key-still-wins closure pin (mode declaration doesn't disturb provider order). Battery → **6 HOLD / 0 MISS**. Same-wave REDs caught and fixed honestly (missing keyword-only marker on `require_key()`; unknown-mode test asserting before the opt-in path reached mode resolution — both real test/setup bugs, never called flakes). The w70_probes.py harness itself had a real bug (double-wrapped `@contextlib.contextmanager` on `_govrun`/`_env` from a bad copy of the w69 pattern — every probe errored until fixed; fixed, not worked around).
+- **Lane 2 — the deny-list audit is now a standing regression test.** `tests/test_w70_hmac_chokepoint_audit.py` (11 tests): AST-walks every `*.py` under `gov/`, resolves the obvious alias shapes (`import hmac as _h`, `from hmac import new as _new`, `hmac.HMAC(...)`, `hmac.digest(...)`) to the hmac origin, and FAILS THE SUITE unless every found call site is in the explicit `ALLOWED_HMAC_SITES` allowlist — 13 sites, each with a one-line custody story (5 log-chain MACs via `_active_key()` chokepoint; 2 approvals MACs under the same active log key; 2 egress-ledger MACs via `gov.log._active_key()`; `FakeKmsProvider._hmac` synthetic test double; PEC `_token_mac` deployer-held key; `demonstration_cipher` TEST-ONLY env-gated; sterile `_reg_mac` registry-held secret). Allowlist-not-denylist: any NEW site fails closed; stale entries fail too (with an actionable message); a site-count tripwire forces deliberate allowlist edits. `hmac.compare_digest` uses are out of scope (verification only, no key material — documented).
+- **Lane 2 — break-first the test itself.** Planted a temporary `gov/_w70_audit_probe_tmp.py` with an unguarded `hmac.new` in 3 shapes (plain, `import hmac as _h`, `from hmac import new as _new`) → audit test went RED naming all three sites; removed the file → green. Alias-evasion is caught; the documented residual gap is fully dynamic indirection (`__import__`/`getattr` tricks, vendored HMAC over hashlib) — accepted as a boundary (an actor landing that in `gov/` source already has source-write; the supply-chain threat model), not a finding.
+- **Lane 3 — internet intake:** `research/intake-wave70-2026-09-22.md` (1 search with 3 queries + 1 page opened — the xancyber FileRise CVE-2026-77427 write-up, Aug 2026): the headline learning is structural — "a remediation that lives in one deployment mode's tooling instead of in the application's own logic" is exactly the wave-69 kwarg loose end (kwarg on the resolver but not on `ActionLog`); v3.22.0's "fail closed when it can't" mirrors F73; no-blind-re-rotation mirrors our never-re-sign rule; the author's honest-scoring discipline (AC:H for the genuine prerequisite, I:N for the unproven forgery, ruled-out angles on the record) is our finding-hygiene norm stated back. Also: AWS KMS HMAC keys have no automatic rotation (confirms the epoch model for the envelope seam); key-separation/allowlist-not-denylist corroboration from unrelated projects' key-management docs. Applied: Lane 1 direction + F29 touch-up wording; the rest filed as future work (zeroization still open).
+- **Docs:** F29 touch-up in `evals/FINDINGS.md` (stays CLOSED; residual shrinks slightly — per-call-site production declaration now possible via kwarg, previously only per-process via env; dev/test-era chains still publicly forgeable, custody still local software); F81 wave-70 accounting (still LOW/OPEN, no egress touched, no finding filed, **F129** next free); `KEY_MANAGEMENT_DESIGN.md` loose-end wording closed (kwarg wired end-to-end + surveyed-not-wired list with rationale); `workstreams/architect/REALWORLD_BAR.md` wave-70 header; this entry.
+- **Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical suite **2338 OK** (2313 baseline + 25 new; 8 skipped, 7 expected failures); registry gate **531/531** oracle matches (525 + 6 new `redteam.keymgmt_w70.*` pins, all observed=stopped; 572 scenarios, 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. Quiet-box verification after landing.
+- **Deliberately not done:** `EgressLedger` mode wiring (surveyed, follow-up); cloud HSM/KMS custody (envelope seam exists, no backend); in-memory key zeroization; the commercial evidence pipeline (metering/billing/SaaS — strategic context, not build order); P8/P13 boundaries untouched and unclaimed; no new findings (none earned — the break-first RED was the test proving itself).
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `gov/log.py` (`_active_key(deployment_mode=None)`, `ActionLog.__init__` keyword-only kwarg + eager validation, `append`/`write_checkpoint` thread-through), `gov/keys.py` (`require_key(*, deployment_mode=None)`), `tests/test_w70_key_management.py` (new, 14 tests), `tests/test_w70_hmac_chokepoint_audit.py` (new, 11 tests), `evals/w70_probes.py` (new, 6 probes), `evals/run_evals.py` (w70 import + module map), `evals/scenarios/registry.yaml` (+6 `redteam.keymgmt_w70.*`), `evals/FINDINGS.md` (F29 residual shrink + F81 accounting), `workstreams/architect/KEY_MANAGEMENT_DESIGN.md` (loose-end closure + surveyed-not-wired rationale), `workstreams/architect/REALWORLD_BAR.md` (wave-70 header), `research/intake-wave70-2026-09-22.md` (new), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+## Wave-69: prod KMS/key management — kill the dev-key fallback (2026-09-22)
+
+- **Honest starting point:** the wave premise was partly stale. `gov/log.py` already had the F73 strict resolver (no-key refuses, dev requires the in-code + env double opt-in), `gov/keys.py` already had the 0600 file-backed KeyRing with epochs/rotation/retention, `gov/kms.py` already had the envelope provider + FakeKmsProvider, and the F29 ledger entry was already CLOSED (2026-09-21) for disclosure. Wave-69 is honestly a residual-shrink, not a from-scratch build: the genuinely new closure is an explicit production-mode guard + provider abstraction wired into every resolution path.
+- **Lane 1 — design + implementation.**
+  - `workstreams/architect/KEY_MANAGEMENT_DESIGN.md` (new): `KeyProvider` ABC (`DevKeyProvider`, `EnvKeyProvider`, `FileKeyProvider`, `EnvelopeKmsProvider`); deployment-mode rule on the wave-61 precedent (explicit kwarg > `GOV_DEPLOYMENT_MODE` env > default `production`; unknown mode fails fast); **production + full dev opt-in = contradiction, refuses LOUD** (no dev-keyed chain can start behind a warning in production); env key wins over file keyring; file keyring must be 0600; dev bytes/epoch rejected on all configured paths; local software keyring is explicitly not HSM-grade; dev-era chains never re-signed (consistency-only, zero third-party evidentiary weight); rotation keeps retired epochs, mixed chains verify per-epoch via `KeyRing.verify_log`, rotate between runs never under one.
+  - `gov/keyprovider.py` (new): the single resolution chokepoint. `gov/log.py::_active_key()` delegates to it; `keys.require_key()` now needs the same double opt-in AND applies the production contradiction (same-wave gap fixed: it previously could still hand back `KeyRing.dev()` under production mode — now refuses, with 2 new unit tests). Module-level `production_contradiction(mode)` helper shares the rule between `resolve_active_key()` and `require_key()`.
+  - Deny-list-completeness audit this wave: every HMAC key path for the log/ledger/approvals flows through `_active_key()` (the guarded chokepoint) or a screened `KeyRing` from `from_env()`/`from_file()` — no independent dev fallback reachable. Documented, not filed.
+  - Staging declarations added to all synthetic/dev entry points (`tests/__init__.py`, `evals/run_evals.py`, `evals/trial_runner.py`, `gov/verify.py --dev`, `demo/*`) — unset mode defaults to production by design.
+- **Lane 2 — break-first.** `evals/w69_probes.py` (15 SITUATIONS) + 47 unit tests in `tests/test_w69_key_management.py`: fallback resurrection (env-alone, dev bytes, dev epoch, archive smuggle, keyring-file seeded, unknown mode), the production contradiction, key confusion dev↔prod, mixed-chain rotation verifies + splice fails, lost key (file deleted, env unset mid-run), era-marking export honesty (dev-signed log with forged prod labels renders dev/FAILED), legit staging/dev closure pin. Battery → **15 HOLD / 0 MISS**. Refuted/boundary (not filed): `require_key()` gap got a same-wave fix; dev-era whole-chain forgery stays the F29 documented posture; inherited-env-from-compromised-parent is the documented boundary class.
+- **Lane 3 — internet intake:** `research/intake-wave69-2026-09-22.md` (2 searches + 1 page opened): JFrog Artifactory CVE-2026-82329 (blank-32-byte default HMAC secret → forged admin tokens; "patch does not revoke minted tokens" → rotation is an explicit operational step — now written into the design doc); Authlib CVE-2026-27962 (key=None → trusts attacker-embedded key — the verify-takes-key-from-config lesson); 2026 envelope-encryption best practices (root > KEK > DEK, old-versions-decrypt/latest-encrypts matches our epoch model, in-memory zeroization — recorded as a gap for a future wave); bazspark's fail-closed `SecurityError` production fix as the F73 pattern in the wild. Learnings applied: rotation-explicitness in the design rationale; zeroization + deny-list-completeness audit recorded as future work, not this wave.
+- **Docs:** F29 updated precisely in `evals/FINDINGS.md` (stays CLOSED; residual shrinks — production-mode paths now structurally refuse dev keys; remaining residual: dev/test chains publicly forgeable, local-consistency evidence only); F81 wave-69 accounting (still LOW/OPEN, no egress touched, no finding filed, **F129** next free); `workstreams/architect/REALWORLD_BAR.md` wave-69 header; this entry.
+- **Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical suite **2313 OK** (2266 baseline + 47 new; 8 skipped, 7 expected failures) — two same-wave REDs caught and fixed honestly (broken `production_contradiction` helper import in `keys.require_key()`; order-dependent once-per-process `_dev_warned` assertions in 3 new tests — both real test/setup bugs, never called flakes); registry gate **525/525** oracle matches (510 + 15 new `redteam.keymgmt_w69.*` pins, all observed=stopped; 566 scenarios, 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. Quiet-box verification after landing.
+- **Deliberately not done:** cloud HSM/KMS custody (envelope seam exists, no backend); in-memory key zeroization; the commercial evidence pipeline (metering/billing/SaaS — strategic context, not build order); P8/P13 boundaries untouched and unclaimed; no new findings (none earned).
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `gov/keyprovider.py` (new), `gov/log.py` (`_active_key` delegates + module docs), `gov/keys.py` (`require_key` double-opt-in + production contradiction + `production_contradiction` helper wiring), `tests/test_w69_key_management.py` (new, 47 tests), `evals/w69_probes.py` (new, 15 probes), `evals/run_evals.py` (w69 import + module map + staging declaration), `evals/trial_runner.py` (staging), `gov/verify.py` (staging for --dev), `demo/run_demo.py` / `demo/attack_scenario.py` / `demo/make_report.py` (staging), `tests/__init__.py` / `tests/bench_concurrent.py` (staging), `evals/scenarios/registry.yaml` (+15 `redteam.keymgmt_w69.*`), `evals/FINDINGS.md` (F29 residual shrink + F81 accounting), `workstreams/architect/KEY_MANAGEMENT_DESIGN.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-69 header), `research/intake-wave69-2026-09-22.md` (new), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+
+- **Lane 1 — attribution in the evidence export: Branch A.** Surveyed the repo for an existing evidence/audit export path: it EXISTS in-repo — `demo/make_report.py` renders the hash-chained action log as an auditor-readable Markdown+HTML audit report (the repo's evidence export). No new pipeline built (building one to answer this question would have been theater; the founder's commercial pipeline — metering, billing, SaaS export — stays out of build order).
+  - `demo/make_report.py`: new `attribution_fields(e)` renders the wave-67 mark VERBATIM as first-class fields — `| attribution=<authenticated|unattributed>` plus `| token_id=<...>` when present; entries without the key render nothing (no silent upgrade, no downgrade, no inference). `evidence_line()` appends these fields. New "Acknowledgments (consumer attribution)" section lists the chained `unvetted_acknowledged` records (`ack_records()`/`ack_line()`) plus a `VALIDITY_AT_TIME_NOTE`: "authenticated" means the token verified AT THE ACK'S RECORDED TIME — validity-at-time, not current validity; token_id + ts lets the auditor check the registration authority's revocation ledger as of that ts; revocation/expiry after the ack never rewrites history. `acks` is optional (defaults None) so legacy render callers keep working — rendered honestly as "not included in this rendering", never a claim about the log (this fixed a same-wave RED: 3 errors in `tests/test_hardening_r7.py` from the initial required-arg signature; isolated, fixed, suite re-run green).
+  - Break-first battery (`evals/w68_probes.py`, 4 SITUATIONS, registered in `evals/run_evals.py` + `registry.yaml` as `redteam.sterile_d5_export.*`, closure: green) → **4 HOLD / 0 MISS**: forged-attribution label tamper breaks the hash chain and the export renders FAILED (never a clean banner over forged marks); exporter never invents/upgrades marks (mark-less entries render nothing; malformed entries verbatim); revoked-token records keep their honest historical mark with validity-at-time semantics (never presented as currently valid); end-to-end chain-verify → Markdown+HTML with first-class fields. Unit tests: `tests/test_w68_attribution_export.py` (8 tests) green.
+  - Refuted/boundary (not filed): dev-key whole-chain forgery is the F29 documented posture (export says so loudly); anonymous laundering stays the designed behavior (wave-67 boundary). No genuine independently-reachable miss → no finding filed; F81 stays LOW/OPEN; next free finding remains **F129**.
+- **Lane 2 — registration-authority reference design (design-doc only, no code):** `workstreams/architect/REGISTRATION_AUTHORITY_DESIGN.md` — the deployment-side authority binding consumer registrations to real identities: Shape A (operator console, human-in-the-loop) vs Shape B (IAM/workload-identity, machine issuance) integration; onboarding flow (request → identity proof → approval → issuance → audit record; allowlist changes are the privileged human path); revocation UX (who can revoke, propagation-to-verify SLA, one-action revoke, append-only history, emergency brake); verify-only wiring for the run side (executor never mints; mint-secret custody; clock honesty); audit of the registry itself (every issuance/revocation/role change chained in the authority's own log; token_id-without-issuance-record is a finding); threat model (rogue operator, compromised IAM, authority outage, stolen token, forged token, audit-log tamper — what breaks, what stays standing); consolidated list of deployment choices this repo cannot make (identity plane, proof standards, registrar roles, TTLs, propagation SLA, HSM/KMS custody, retention).
+- **Lane 3 — standing pressure:** realistic battery 4/4 (smoke, human-error, incident-refresh, swarm); B3 citation guard green in-suite (`tests/test_b3_matrix.py` in the canonical run — new external citations this wave are standards-context: EU AI Act Omnibus VII timeline, NIST AI RMF NHI mapping, not control claims); finding hygiene (F81 only open finding; F129 next free); internet intake `research/intake-wave68-2026-09-22.md` (2 searches + 1 page opened: vaara EU AI Act Aug 2026 doc — Omnibus VII Reg (EU) 2026/1744 moves high-risk to 2 Dec 2027/2 Aug 2028, Art 50 + GPAI enforcement live 2 Aug 2026, Commission guidance C(2026) 5054 para 31 "on whose behalf" attribution obligation, vaara `export-article50` signed-trail + README_FOR_AUTHORITY "what it proves / does not prove" honesty language validating our validity-at-time note, `authority_ref` field as token_id analogue; sanction signed hash-chained audit export; acgs-lite chain-vs-receipt "both must hold"; genai-security-project NHI crosswalk JIT/short-lived/anomaly-triggered revocation corroborating lane 2; Art 26 six-month log retention as deployment-choice input; SAF-K8s incident-reporting mappings for B3 watch).
+- **Gates (sequential, never concurrent):** canonical suite **2266 OK** (2258 baseline + 8 new; 8 skipped, 7 expected failures) — one same-wave RED caught and fixed honestly (render signature regression, not a flake); registry gate **510/510** oracle matches (506 + 4 new `redteam.sterile_d5_export.*`; 551 scenarios, 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. Quiet-box verification after landing.
+- **Deliberately not done:** no commercial evidence pipeline (metering/billing/SaaS export service) — strategic context, not build order; no Branch-B schema note in CONSUMER_REGISTRY.md (Branch A taken — the export exists); no registration-authority code (design-doc wave by brief); no new findings (none earned); P8/P13 boundaries untouched and unclaimed.
+- **Commit plan (staged, NOT committed — tree has no .git; do not push/release without explicit user approval):** files changed — `demo/make_report.py` (attribution export fields), `tests/test_w68_attribution_export.py` (new), `evals/w68_probes.py` (new), `evals/run_evals.py` (probe registration), `evals/scenarios/registry.yaml` (+4 scenarios), `evals/FINDINGS.md` (wave-68 entry), `workstreams/architect/REGISTRATION_AUTHORITY_DESIGN.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-68 header), `research/intake-wave68-2026-09-22.md` (new), `BUILD_LOG.md` (this entry). Trailer: `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+## Wave-68: attribution meets the evidence export + registration-authority reference design (2026-09-22)
+## Wave-67: authenticated consumer registry for ack evidence — shipped (2026-09-22)
+
+- Closed the wave-65/66 documented gap (consumer identity in the D5 acknowledgment trail was self-attested) by mechanism, not by audit:
+  - `gov/sterile.py`: new `ConsumerRegistry` (deployment-scoped issuance/verification authority with 256-bit mint secret; injectable clock), `ConsumerToken` (256-bit HMAC-bound bearer: HMAC(secret, public_id|consumer_id|issued_at|ttl_s|bearer); non-serializable/non-copyable — `VettingCapability` precedent, possession by reference), `ConsumerAuthError` (fail-closed LOUD, subclasses `VettingError`). `register_consumer(consumer_id, ttl_s=None)` mints `tok-<64hex>` public ids; `verify()` checks type → MAC (constant-time) → bound-id == claimed consumer → ttl → revocation set, raising on ANY failure. `revoke(public_id)` fails future acks loud; history is append-only — chained records keep attribution + token_id + ts (validity-at-time auditable, nothing rewritten). `__all__` extended.
+  - `Unvetted.acknowledge()` gains keyword-only `consumer_token=None, registry=None`. Verified pair → record stamped `"attribution": "authenticated"` + public `token_id`; no pair (or registry without token) → `"attribution": "unattributed"`, byte-identical to wave-66 (Wave-49 lesson: tokens never mandatory). Token without a registry raises loud; invalid token NEVER degrades to unattributed (no silent downgrade path — a laundering primitive by design-avoidance). Ordering: verify → record append → unwrap (a forged token leaves no record and never yields the payload). What "authenticated" proves, pinned precisely: token possession at ack time bound to the named consumer — NOT human identity, NOT non-theft (in-process theft under the bound name is an F59-class residual, stated in the design doc, not filed).
+  - Design: `workstreams/evals/CONSUMER_REGISTRY.md` (the four answers: deployment-scoped placement — the executor never issues, a run minting its own evidence tokens is self-attestation with extra steps; token lifecycle issue→use→expiry→revoke with append-only history; anonymous path honestly marked — laundering-as-unattributed is the designed behavior, a deployment needing attribution refuses unattributed at ITS policy layer; the precise claim). `drain_ack_sink` needed no change (records flow through `entry.update(rec)`; executor reserved-key re-stamp untouched).
+- Break-first battery (8 probes, `evals/w67_probes.py`): **7 HOLD / 1 BOUNDARY / 0 MISS**. Attack lanes: mint-without-registry / bearer-bit-flip / MAC-bit-flip / foreign-registry token (all refused loud, no record, no payload); cross-name token theft (refused loud, no misattribution); same-id two registrations (distinct token_ids, both valid, independent revocation, chained records distinguishable); revocation mid-stream (future acks refuse loud, pre-revocation chained record intact with token_id+ts); invalid-token-never-degrades (garbage/no-registry/non-registry all fail loud); ttl expiry on the registry clock; legitimate-loop regression (legacy flow byte-identical, authenticated flow drains with token_id, wave-66 cumulative budget intact). The boundary (graded, not filed): anonymous laundering is honestly marked `unattributed` — no silent path to `authenticated` exists.
+- New: `tests/test_w67_consumer_registry.py` (30 tests), `evals/w67_probes.py` (8 SITUATIONS, all `stopped` standalone and in-registry), `evals/scenarios/registry.yaml` (+8 `redteam.sterile_d5_reg.*` pins), `evals/run_evals.py` module map extended, `workstreams/evals/CONSUMER_REGISTRY.md`, `research/intake-wave67-2026-09-22.md` (1 search + 1 page opened: CyClaw auth design; 2 applied learnings: live-revocation-state-beats-stateless-tokens — our verify-against-live-registry design is exactly their choice; named-individually-revocable-tokens is the attribution primitive — our same-id token_id distinction matches).
+- Deliberately not built: mandatory tokens (Wave-49); human-identity binding (registry binds registrations, the deployment binds registrations to people); revocation-history rewriting (append-only chain); token-use audit at the registry (the chained record IS the audit — no second book); cross-registry federation (foreign tokens fail closed); a real deployment registration authority (in-repo the registry object stands in, VettingStack precedent — the executor is never handed mint power).
+- Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run): canonical **2258 OK** (2228 + 30 new; 8 skipped, 7 expected failures); registry gate **506/506** (547 scenarios — 539 + 8 new pins, closure green; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. B3 citation guard green in-suite. No RED anywhere at close; no concurrency violations (wave-65's phantom watch item: no unidentified failure this wave).
+- FINDINGS.md: wave-67 accounting appended to the F81 entry. F81 stays LOW/OPEN (no F81 mechanism touched). No F129 filed (no genuine independently-reachable miss — every attack lane held or graded as designed boundary). Next free F129.
+- Wave-68 questions: (1) first real `VettingStack` deployment consumer — who mints the first vetted mark in a live run and what does the auditor see? (2) first real `drain_ack_sink` deployment caller — where does the sink live across the run (consumer-side lifetime, drain cadence)? (3) with attribution now authenticated, does the metered-evidence pipeline need a deployment registration-authority reference design (operator console/IAM/onboarding) before the founder's evidence bet is sellable, or is the in-repo stand-in sufficient for the prototype? (4) does the authenticated-attribution mark need to flow into the metered-evidence export schema (auditor-readable exports) as a first-class field?
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-66: per-run cumulative ack flood budget — shipped (2026-09-22)
+
+- Closed wave-65's deliberate gap (the per-sink budget bounds one batch before one drain — repeated drain/refill cycles could grow the hash chain without bound per run) by mechanism:
+  - `gov/sterile.py`: new `AckCumulativeBudgetExceeded` exception (fail-closed, LOUD); `_ACK_CUMULATIVE_BATCHES_DEFAULT = 8`; `AckAuditSink.max_records` read-only property (the cumulative cap scales from the sink's batch budget). Design comment block extended with the wave-66 answers.
+  - `gov/executor.py`: `ToolExecutor` now carries the run-scoped counter `_ack_cumulative_used` + server-side run-dir marker `.ack_cumulative` (`{"drained": N, "budget_hit": bool}`, read at construction, rewritten after every drain that advances the counter — canary-marker precedent). `drain_ack_sink` enforces the cumulative cap (`8 * sink.max_records`, 2048 at default; plain-list sinks default to the 256 baseline — the cumulative cap is their ONLY bound). Accounting unit: one chained record (individual acks and overflow summaries both count; coalesced counts collapse to one). Exhaustion: refuse loud — records already drained stay chained (exact), the rest stay in the sink (peek-confirm), exactly one `unvetted_ack_cumulative_budget_hit` control event chained per run; empty-sink drains stay no-ops. Counter increments only after successful log-append + pop — a failed drain re-drains with exact accounting, no double-count.
+  - Survival matrix pinned by test: sink replacement mid-run cannot reset the counter (it lives on the executor); executor re-creation over the same run dir re-reads the marker; window close/reopen is orthogonal (per `run_id`). Corrupt marker degrades to 0 (documented boundary — server-side run-dir trust class).
+- Break-first battery (6 probes, `evals/w66_probes.py`): **6 HOLD / 0 BOUNDARY / 0 MISS**. Attack lanes: 12 drain/refill cycles × 8 records → exactly 64 chained (cap for max_records=8), cycles 9–12 refused loud with evidence retained, chain growth bounded (~measured, <200KB) and verified; fresh-sink-mid-run anti-theater probe (counter stands at 40 after swap, cap still enforced); exhaustion loudness (raise + retained evidence + exactly-once control event); flaky-append mid-drain → re-drain exact (used 1→4, no double-count); executor re-creation enforces from marker; legitimate 3-window flow (distinct acks + 500-ack coalesced loop) drains cleanly. No misses → no F129 filed.
+- New: `tests/test_w66_ack_cumulative_budget.py` (12 tests), `evals/w66_probes.py` (6 SITUATIONS, all `stopped` standalone and in-registry), `evals/scenarios/registry.yaml` (+6 `redteam.sterile_d5_ack_cum.*` pins), `evals/run_evals.py` module map extended, `workstreams/evals/ACK_CUMULATIVE_BUDGET.md` (design doc with the four answers: run-scoped placement, chained-record accounting unit, refuse-loud exhaustion, exact re-drain), `research/intake-wave66-2026-09-22.md` (1 search + 1 page opened; 2 applied learnings: rate-limit-the-expensive-sink-keep-events-inspectable, backpressure-not-silent-drop).
+- Deliberately not built: per-ack pre-authorization at `acknowledge()` time (no run context consumer-side; would violate "sterile.py never owns the log"); summary-degradation instead of refusal (weaker bound — append-only chain can't fold into an emitted summary); cross-run budgets (threat is per-run chain growth); consumer authenticated registry (wave-65 Q3, still open).
+- Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run): canonical **2228 OK** (2216 + 12 new; 8 skipped, 7 expected failures); registry gate **498/498** (539 scenarios — 533 + 6 new pins, closure green; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. B3 citation guard green in-suite. No RED anywhere at close; no concurrency violations (wave-65's phantom watch item: no unidentified failure this wave).
+- FINDINGS.md: wave-66 accounting appended to the F81 entry. F81 stays LOW/OPEN (no F81 mechanism touched). No F129 filed. Next free F129.
+- Wave-67 questions: (1) first real `VettingStack` deployment consumer — who mints the first vetted mark in a live run and what does the auditor see? (2) first real `drain_ack_sink` deployment caller — where does the sink live across the run (consumer-side lifetime, drain cadence)? (3) is consumer self-attestation acceptable for the evidence bet, or does the metered-evidence pipeline need an authenticated consumer registry first? (4) does the cumulative cap need a deployment-tunable knob (env/config) or is the module constant sufficient?
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+## Wave-65: Sterile D5 acknowledgment audit trail — shipped (2026-09-22)
+
+- Closed wave-64's open question (should `acknowledge()` sink records feed the hash-chained audit log) by mechanism, not audit:
+  - `gov/sterile.py`: new `AckAuditSink` (per-sink budget 256 + consecutive-duplicate coalescing with exact `count` + one count-preserving `unvetted_ack_overflow` summary; measured worst-case chain growth <170KB/sink for 5,000 acks; no sampling, no silent drops). `Unvetted.acknowledge()` now records `event/consumer/origin/ack_context/count/ts` and returns the payload only after the record is appended (a raising sink withholds the payload — record-without-unwrap impossible through `acknowledge()`). `ack_context` (executor-stamped `{window, run_id}`) is carried through the `__gov_unvetted__` JSON envelope on both executor wrap sites (close producer boundary, sterile-expiry producer boundary); malformed decoded context degrades to `{}`.
+  - `gov/executor.py`: new `ToolExecutor.drain_ack_sink` — peek-confirm (append to `ActionLog` before removing the pending record; a failed log append keeps the evidence in the sink and propagates fail-closed). Reserved `run_id/agent_id/role` re-stamped log-wins, so forged run context cannot survive the drain. Consumer identity stays self-attested (documented boundary, same class as F59 in-process residual).
+  - Honesty definition pinned in the design doc: "acknowledged" = the marker was unwrapped by the named consumer — NOT that the consumer used the data, NOT authenticated identity, NOT payload safety. `ActionLog.append()` remains the single JSON-escaping choke point (log-injection probes hold: newline/control-char consumer and window identifiers escape cleanly, chain verifies).
+- Break-first battery (17 probes): **12 HOLD / 5 BOUNDARY / 0 MISS**. Boundaries: self-attested consumer identity + direct sink forgery (F59 in-process residual), sink=None / no-op sink caller choice, dunder bypass (wave-64 residual). Flood probe measured: 5,000 distinct acks -> 256 individual records + 1 overflow summary, exact accounting, chain verified, ~162KB growth; 5,000 identical acks -> one record with `count=5000`.
+- New: `tests/test_w65_sterile_d5_ack_audit.py` (22 tests), `evals/w65_probes.py` (6 SITUATIONS, all `stopped` standalone and in-registry), `evals/scenarios/registry.yaml` (+6 `redteam.sterile_d5_ack.*` pins), `evals/run_evals.py` module map extended, `workstreams/evals/STERILE_D5_ACK_AUDIT.md` (design doc with the four answers: recorded fields, flood rule, honesty definition, failure modes), `research/intake-wave65-2026-09-22.md` (1 search + 1 page opened; 2 applied learnings: record-at-the-boundary-and-tie-action-to-record, hash-chain-seals-what-the-writer-receives/not-upstream-truth, tamper-evident-not-tamper-proof).
+- RED EPISODE (honest accounting): the first canonical run after the fix reported **2 failures** but the runner only surfaced the tail, so one failure's identity was never captured. Isolation: a second run showed 1 failure — `tests/test_w64_sterile_d5.py::test_acknowledge_contract`, the wave-64-pinned exact-dict assertion, broken by the intentional wave-65 additive contract change (record gains `ack_context`/`count`/`ts`). Fix: updated the pin to assert the legacy fields unchanged plus the new additive fields, with a comment documenting the evolution (not a flake — an intentional, documented change). The second failure from run #1 never reproduced in runs #2 or #3 and was never identified; per the red-halts rule it is NOT labeled a flake (no signature on file, FLAKE_TRACKER.md does not exist in this tree). Procedural note: during run #1 this agent ran the standalone w65 probes concurrently with the suite, violating the no-concurrency guidance — a plausible (weak) mechanism for a TMPDIR/load phantom. Recorded as a watch item; if it recurs, isolate before any other work. Final clean run: **2216 OK, 8 skipped, 7 expected failures**.
+- Gates (sequential, all green): canonical **2216 OK** (8 skipped, 7 expected failures); registry gate **492/492** (533 scenarios — 527 + 6 new pins, closure green; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real); realistic battery **4/4**. B3 citation guard green in-suite.
+- FINDINGS.md: wave-65 accounting appended to the F81 entry. F81 stays LOW/OPEN (no F81 mechanism touched). No F129 filed (no genuine independently-reachable miss). Next free F129.
+- Wave-66 questions: (1) first real `VettingStack` deployment consumer — who mints the first vetted mark in a live run and what does the auditor see? (2) first real `drain_ack_sink` deployment caller — where does the sink live across the run (consumer-side lifetime, drain cadence)? (3) is consumer self-attestation acceptable for the evidence bet, or does the metered-evidence pipeline need an authenticated consumer registry first? (4) per-sink vs per-run flood accounting: current budget bounds a batch before one drain — repeated drain/refill cycles could grow the chain; decide whether the budget must be cumulative per run.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+## Wave-64: Sterile D5 — typed unvetted marker (2026-09-22)
+
+**Lane 1 — break-first battery (`/tmp/w64_breakfirst.py`, 36 probes, 7 lanes: pre-D5 silent-trust gap confirmation, JSON type erasure + stripped markers, consumer duck-typing confusion, marker forgery, legitimate close/expiry/no-loop behavior, repr hygiene).** Final: **35 HOLD / 1 BOUNDARY / 0 MISS**. The boundary is pinned honestly, not graded as a miss: deliberate in-process bypass of the wrapper (`_payload` / dunder access in CPython) is reachable — the `Unvetted` wrapper is **advisory-with-teeth against hostile in-process code, a real fail-loud guard against confused consumers** (F59 family). Two mid-wave corrections, one real implementation bug caught by the battery: (1) first cut imported `Unvetted` only in `ToolExecutor.__init__` scope → swallowed `NameError` recorded as `reissue_error` on close — fixed with the file's method-local import idiom, and the close-path wrap moved into try/else so a wrapper failure can never be misattributed as a `loop_contract_error`; (2) a harness expiry timestamp `10**9` predated the 2026 clock (harness bug, not code).
+
+**Lane 2 — design + implement (`gov/sterile.py`, `gov/executor.py`).** Wave-63's D5 question — the unvetted reissue pipe was documented ("never vetted", design §8 R4) but consumers got no machine-readable marker — is now closed by mechanism. `Unvetted`: payload unreachable through normal iteration/indexing/`len`/`in`/`bool` (all raise `TypeError` naming the path); equality against the payload is fail-closed `False`; `repr` shows origin/shape only, never contents; `acknowledge(consumer_id, sink=None)` is the only read path (anonymous acceptance refused; sink records auditable `unvetted_acknowledged`). `to_envelope()`/`from_envelope()` cross the JSON boundary with a `__gov_unvetted__` envelope; `from_envelope` is total and fail-closed — stripped keys, pre-D5 plain values, and unverifiable vetted claims all decode as `Unvetted` (nothing is vetted unless it carries a minted `Vetted` mark, so erasure can only under-inform). The executor wraps the loop's `reissue_reads` return as the JSON envelope on `post_window_delta` at both sites (close + expiry); `reconciled_vetted: False` and `request_window_close`'s return shape unchanged (Wave-49). `Vetted` cannot be constructed directly — only `VettingStack.vet(payload, capability)` mints, and only for capabilities the stack itself issued (256-bit token, `hmac.compare_digest`, non-serializable/non-copyable); the loop is never issued a capability. Marker keys are meaningful only at the envelope top level (nested lookalikes are inert data). Report: `workstreams/evals/STERILE_D5_REPORT.md` (Lane 1 design answers for placement, unwrap contract, serialization, mint authority).
+
+**Intake (`research/intake-wave64-2026-09-22.md`):** one exact search (`typed taint tracking untrusted data wrapper LLM agent prompt injection defense 2026`) + one page opened (neural-taint-tracking repo, provenance-aware lexical taint tracking for prompt-injection-resistant agents). Two applied learnings: declassification must be gate-held, never self-asserted (their `gate.allow_quote`-only rule is the same principle as the capability-gated `Vetted` mint); "labels are not the enforcement layer" (validates the advisory-vs-enforcement grading). Their honest-limits section is the model for our BOUNDARY accounting.
+
+**Verdict: shipped as advisory-with-teeth** — accidental confusion is structurally impossible and the vetted mark is genuinely mint-gated (12 forgery probes hold), but deliberate in-process bypass remains reachable (documented boundary). No genuine independently-reachable miss → no F129; F81 stays LOW/OPEN (the only open finding); P8 UNCOVERED-by-design and P13 PARTIAL-by-design preserved. Deliberately not built: per-read markers (one envelope per `reissue_reads` call matches the contract surface); wrapping the close return value (public shape); HMAC-signed vetted envelopes (entangles with the open prod-KMS priority). Wave-65 open questions: (1) should `acknowledge()` sinks feed the hash-chained log directly; (2) `VettingStack` needs its first real deployment consumer to define capability purposes; (3) F81 D1–D4 privileged-CI lanes still deferred.
+
+**Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical **2194 OK** (2171 + 23 new `test_w64_sterile_d5.py`; 8 skipped, 7 expected failures); registry **486/486** (527 scenarios; 5 new `redteam.sterile_d5.*` pins, closure: green; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **4/4**. B3 citation guard green in-suite. No RED anywhere at close; no flake claims (FLAKE_TRACKER.md does not exist in this tree — no known-flake signatures to consult; nothing observed).
+
+**Staged commit plan (DO NOT COMMIT / DO NOT PUSH — repo stays private):** modified `gov/sterile.py` (Unvetted/Vetted/VettingStack/VettingCapability/VettingError + contract docstrings), `gov/executor.py` (executor-side wrap at close + expiry), `evals/run_evals.py` (w64_probes module map), `evals/scenarios/registry.yaml` (5 probes, 527 scenarios), `evals/FINDINGS.md` (F81 wave-64 accounting; next free F129), `workstreams/architect/REALWORLD_BAR.md` (wave-64 header); added `tests/test_w64_sterile_d5.py` (23 tests), `evals/w64_probes.py` (5 probes), `workstreams/evals/STERILE_D5_REPORT.md`, `research/intake-wave64-2026-09-22.md`.
+
+Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-63: RT21 canary ratchet + F128 (2026-09-22)
+
+**Lane 1 — break-first battery (`/tmp/w63_breakfirst.py`, 39 probes, 7 lanes: split shapes, pipeline interplay, adversarial robustness, sterile ratchet, mixed-encoding bounds, non-string leaves, cross-call residuals).** Pre-fix **6 MISS / 18 HOLD / 14 RESIDUAL / 1 BOUNDARY** → post-fix **0 MISS / 24 HOLD / 14 RESIDUAL / 1 BOUNDARY**. Pipeline ordering mapped: canary `check_and_trip()` fires first (before identity and DLP), DLP computed next, sterile gate after identity/delegation (a sterile refusal returns before the already-computed DLP result is enforced), then role → DLP deny → policy. Report: `workstreams/evals/RT21_CANARY_RATCHET.md` (note: `RT21_REPORT.md` already belongs to Wave-54's sterile/F124 work — this wave's report takes the requested `RT21_CANARY_RATCHET.md` path).
+
+**F128 (HIGH) filed and CLOSED same wave** — one root cause, six shapes: the canary and DLP traversals inspected string values only, so (1) canary secret as a JSON int array → executed, no trip; (2) AKIA canary as an int array → executed, no trip AND no DLP block; (3) secret as a dict key → executed, no trip; (4) secret as bytes → no canary trip; (5) nested int array → executed, no trip; (6) innocent bytes nested in params → uncaught `TypeError` from `_egress_bytes_for()` (F123-class availability hole, legitimate-reachable). An int array of 0–255 is JSON's canonical byte encoding — the miss is stronger than the split-string residual (receiver reassembly is `bytes(...)`). Hardening: `gov/canary.py::_try_ascii_leaf()` (bytes/all-int-list leaves → strict-ASCII printable length-gated variants; dict keys traversed; decoded leaves only ever ADD true hits — near-zero-FP invariant preserved by construction); `gov/dlp.py` (same decoded leaves in `_collect_strings`, gate at 8 chars; dict keys strict-scanned *individually* in `find_credential_cross_field`; direct bytes fields strict-scanned in `scan_tool_args`; entropy tripwires stay on original str text — no new heuristic surface); `gov/executor.py::_egress_bytes_for()` (bytes pass through; `json.dumps` `default=` decodes nested bytes latin-1, conservative overcount). **Self-inflicted regression caught mid-wave by the battery (Wave-50 leaf-vs-envelope lesson):** the first DLP cut put dict keys *into* the cross-field join — keys "a"/"b" glued onto b64 halves poisoned alignment-sensitive decoding and flipped A4/A5 to executed; fixed by scanning keys individually, never joined; pinned by `test_keys_do_not_poison_join_reassembly`. Deliberately out of scope: text-rendered numeric arrays, non-ASCII blobs, sub-gate int arrays, exotic carriers. Corrected classifications (not misses): B1 first used a role without `write_file` (reran with `coder` → DLP denied); an `http_post` bytes-payload "MISS" didn't survive scrutiny (payload is summarized before execution — no exfiltration demonstrated; re-probed via `api_call` where args execute verbatim).
+
+**Lane 2 — sterile ratchet (D1–D6):** no misses. F124 single-use consumption holds under replay and window-mismatch presentation; consumed-flag tampering fails the MAC; reissue-on-close leaks no content to the loop; the hostile-loop summary plant is a documented BOUNDARY (executor guarantee ends at "via loop contract, never vetted").
+
+**Intake (`research/intake-wave63-2026-09-22.md`):** no browser search/open tools were exposed in this subagent session — the file records exactly that (no searches, no opens, nothing fabricated). The wave is grounded in first-party mechanism analysis and the local battery.
+
+**Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical **2171 OK** (2154 + 17 new `test_w63_rt21_canary.py`; 8 skipped, 7 expected failures); registry **481/481** (522 scenarios; 5 new `redteam.rt21.*` F128 probes — 3 fix-verified stopped + 2 no-regression; 41 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **4/4**. Two mid-wave registry REDs, both harness-side, isolated per red-halts rules: (1) new probes unresolvable until `w63_probes` was added to the gate's module map in `evals/run_evals.py`; (2) the oracle's closure=green accept set is {stopped, flagged} — the two no-regression probes were corrected to return "stopped" (no-misfire) per the w51 negative-control convention. B3 citation guard green in-suite. No RED anywhere at close; no flake claims (FLAKE_TRACKER.md does not exist in this tree — no known-flake signatures to consult; nothing observed).
+
+**Staged commit plan (DO NOT COMMIT / DO NOT PUSH — repo stays private):** modified `gov/canary.py` (F128 traversal + docstring), `gov/dlp.py` (F128 traversal + key scanning + bytes fields), `gov/executor.py` (bytes budget fix), `evals/run_evals.py` (w63_probes module map), `evals/scenarios/registry.yaml` (5 probes, 522 scenarios), `evals/FINDINGS.md` (F128 filed/closed; next free F129), `workstreams/architect/REALWORLD_BAR.md` (wave-63 header); added `tests/test_w63_rt21_canary.py` (17 tests), `evals/w63_probes.py` (5 probes), `workstreams/evals/RT21_CANARY_RATCHET.md`, `research/intake-wave63-2026-09-22.md`.
+
+Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-62: refusal loudness + B2 incident refresh (2026-09-22)
+
+**Lane 1 — refusal loudness (`workstreams/evals/REFUSAL_LOUDNESS.md`).** The wave-61 open question — the LOG-tier production guard's refusal was `SandboxError`-to-caller, a single channel that died when the caller swallowed it — is now closed by mechanism, not assumption. (a) Break-first baseline (temporary `/tmp/swallow_baseline.py` harness, since removed): exception raised yes; stderr emitted by guard **0 bytes**; structured receipt none; swallowing caller ran the workload UNCAGED. The exception-only refusal was silent. (b) Design: `_refuse_loud()` in `gov/sandbox.py` emits (1) an unconditional stderr record (`GOV-SANDBOX REFUSAL [<kind>] pid=<pid>: <message>`) and (2) an optional structured JSONL receipt (`<refusal_receipt_dir>/refusals.jsonl`; explicit `Sandbox(..., refusal_receipt_dir=)` kwarg wins over `GOV_SANDBOX_REFUSAL_DIR`) BEFORE raising the original `SandboxError` unchanged. Emission is best-effort and fail-safe: a broken/readonly sink raises nothing and never masks the enforcement refusal (pinned by test). (c) Wired into all three fail-closed `run()` refusal sites (LOG-tier guard, canary-plant failure, required-layer-missing); the `_make_preexec` internal invariant was deliberately not routed (internal contract, not a deployment refusal). (d) Break-first verification (`workstreams/evals/refusal_loudness_harness.py`): 7/7 — stderr survives swallow; receipt survives stderr→/dev/null; no sink means stderr-only with no files; broken sink still refuses; kwarg wins over env; uncaught refusal exits nonzero with traceback + stderr record; legitimate staging retry still functional (Wave-49 SoD / Wave-50 TranscriptGuard preserved). (e) Unit tests: `RefusalLoudnessTest` 10/10 green. (f) Registry: 3 new `redteam.f81.refusal_loudness_*` probes (expected: denied; delegated), 517 scenarios / 41 delegated. (g) Deliberately NOT built: fail-deadly process poisoning (hostile to legitimate catch-and-remediate — the harness proves staging retry works post-fix) and a hash-chained audit sink (wave-61's decline stands: cheaper channels suffice, break-first proved it). (h) Residual boundary, documented not filed: a caller deliberately suppressing stderr AND disabling the receipt sink AND swallowing the exception is outside the in-process Sandbox trust model — same class as wave-61's inherited-env-from-compromised-parent boundary. No genuine independently-reachable miss → no finding filed; F81 stays LOW/OPEN; next free F128.
+
+**Lane 2 — B2 incident refresh (`research/intake-wave62-2026-09-22.md`, `tests/realistic/scenarios_incidents.py`).** Two September-2026 incidents replayed as deterministic realistic scenarios (WV-1, WV-2) — new `incident-refresh-pack`; battery is now 4/4 (was 3/3). (a) **DseWiki agent-swarm hijack (Reuters 2026-09-04):** synthetic wiki page with injected collusion post (evasion tips, moderator impersonation, recreate-deleted-pages instruction). Outcome: tainted post queues via `approval-read-before-send` with untrusted provenance; human rejects; moderator-identity mint refused by the deployment `PrincipalRegistry` (`UnregisteredRoleError`); `identity_mint_refused` audited; chain verified. Correction during development: I first asserted `approval-tainted-action` — the real policy priority selects `approval-read-before-send`; the scenario asserts the real verdict, not the guessed one. (b) **Unit 42 / AWS Bedrock AgentCore ("A Vault with a Heap-View"):** poisoned support ticket → attempted read of `harness/memory/token_cache` DENIED by `deny-secret-reads`; allowlisted API exfil carrying a synthetic JWT DENIED by `dlp-credential-block` (JWT never raw in `actions.jsonl`); backup post to `collector.evil.example` DENIED by `deny-egress-unallowlisted`; all denials audited, chain verified. Honest differentiation recorded in the scenario doc: AWS closed the Unit 42 report as "informative" (customer-side `allowedTools` scoping + egress filtering); our defaults are the opposite — no shell tool exists, DLP blocks exfil, egress is allowlist-deny. But the platform memory-isolation half of the root cause is NOT proven by this policy-level scenario — deployment-owned boundary, same class as F81's netns-CI deferrals. No public API/network; all local and synthetic; $0 spend.
+
+**Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical **2154 OK** (2144 + 10 new refusal-loudness tests; 8 skipped, 7 expected failures); registry **476/476** (517 scenarios; 3 new `redteam.f81.refusal_loudness_*` probes correctly gate-delegated to `tests/`); adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **4/4 green** (2 new incident scenarios inside the new pack). B3 citation guard green in-suite. No RED anywhere; no flake claims (FLAKE_TRACKER.md does not exist in this tree — no known-flake signatures to consult; nothing observed).
+
+**Staged commit plan (DO NOT COMMIT / DO NOT PUSH — repo stays private):** modified `gov/sandbox.py` (loud refusal), `tests/test_sandbox_seccomp_cage.py` (10 tests), `evals/scenarios/registry.yaml` (3 probes), `evals/FINDINGS.md` (F81 wave-62 accounting), `workstreams/architect/REALWORLD_BAR.md` (wave-62 header); added `workstreams/evals/REFUSAL_LOUDNESS.md`, `workstreams/evals/refusal_loudness_harness.py`, `tests/realistic/scenarios_incidents.py`, `research/intake-wave62-2026-09-22.md`.
+
+Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-61: LOG-tier production guard — design + implement + break-first (2026-09-22)
+
+**Lane 1 — guard design (`workstreams/evals/SECCOMP_LOG_SHAKEDOWN.md` §6).** The wave-60 open question — the only control stopping `GOV_SANDBOX_SECCOMP_LOG=1` from dissolving KILL default-deny into log-and-execute in production was an honest run-note stamp — is now closed by mechanism. (a) Authority: explicit `Sandbox(deployment_mode=)` kwarg (operator code) > `GOV_SANDBOX_DEPLOYMENT_MODE` env (operator-explicit launcher signal) > default `production`; the LOG env var is demoted from authority to *request*, honored only in staging. (b) "Production" defined least-privilege: `deployment_mode ∈ {"production","staging"}`, default production — ambiguity defaults to KILL; unknown values refuse at construction. (c) Fail-closed: production+LOG → **refuse to launch loudly** (`SandboxError` naming the var, before jail creation) — not force-KILL-and-continue, which would normalize the misconfiguration; guard-internal failure → no launch. (d) Trust-path testing: the config-guard analog of byte-pinning is the exhaustive decision table plus structural pins (exactly-one env read, tier-as-value, no laundering). Threat-model honesty: the guard's adversary is operator misconfiguration, not a malicious env-writer (who can already unset `GOV_SANDBOX_BACKEND`) — documented boundary, not a finding.
+
+**Lane 2 — implement + break-first (`gov/sandbox.py`, `SeccompLogGuardTest` 13 tests, all green).** `_resolve_seccomp_tier(deployment_mode, log_requested)` is the single chokepoint at `run()` top; the tier resolves exactly once per run and flows as a value into `_make_preexec(..., seccomp_tier)` — the old note-vs-install double env read is deleted (no decision/install TOCTOU; the run note cannot disagree with the installed filter; child-side preexec never touches env for the tier). `sandbox_config_from_env()` maps `GOV_SANDBOX_DEPLOYMENT_MODE`. Break-first results: production+LOG refused before `Popen` (no child spawned; invariant unconditional — also fires when seccomp isn't installed); garbage/unicode LOG values (`""`, `"0"`, `"true"`, fullwidth `１`, `" true"`) pinned to `_env_flag` strictness → KILL; `" 1 "` (stripped) → refused; kwarg-beats-env and unknown-mode refusal pinned; KILL-tier install `OSError` never retries with `default_action="log"` (file-recorded install attempts, all `"kill"` — no downgrade laundering); exactly-one-read pin via counting wrapper; child never sees the tier var (`DEFAULT_ALLOWED_ENV` pin, parent-side pre-fork decision). Staging behavior unbroken: staging+LOG allowed and stamped, staging-without-LOG → KILL. **No misses → no finding filed; next free remains F128.** F81 stays LOW/OPEN. Report: `workstreams/evals/LOG_GUARD_REPORT.md`.
+
+**Lane 3 — standing pressure.** Realistic battery **3/3** green. B3 citation guard green in-suite. Finding hygiene: F81 the only open finding (LOW, accepted filtered-egress gap); F125/F126/F127 closed; nothing filed in wave-61. Registry: 3 new `redteam.f81.seccomp_log_guard_*` probes (expected: denied — prod-refusal, TOCTOU single-read, no-downgrade-laundering), 511 → **514 scenarios**, correctly gate-delegated to `tests/`.
+
+**Intake (`research/intake-wave61-2026-09-22.md`):** camthink-ai/neoruntime documents fail-open seccomp load ("the container is started **without** seccomp and a warning is logged"; "Consider a fail-closed policy" as a next step) — concrete external validation that the fail-open seam is a real industry shape and our fail-closed posture is a differentiator; kguardian docs treat `SCMP_ACT_LOG` as log-and-allow with tiers for monitoring-only clusters (validates the LOG≠enforcement model); CVE-2026-31431 "Copy Fail" (AF_ALG+splice kernel container escape — kernel exploits outside this layer's threat model; our socket-domain allowlist denies AF_ALG at the errno tier); macOS `__OSINSTALL_ENVIRONMENT` sandbox escape (env var as security signal — supports the design premise that env must not be authoritative); vm2 CVE-2026-92948 (watchlist). No new findings.
+
+**Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical **2144 OK** (2131 baseline + 13 new guard tests; 8 skipped, 7 expected failures); registry **476/476** (514 scenarios, 38 delegated); adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **3/3**. No RED anywhere; no flake claims (FLAKE_TRACKER.md does not exist in this tree — no known-flake signatures to consult; nothing observed).
+
+**Files changed:** `gov/sandbox.py` (guard, `deployment_mode` kwarg, single-read tier flow, `GOV_SANDBOX_DEPLOYMENT_MODE` mapping), `tests/test_sandbox_seccomp_cage.py` (`SeccompLogGuardTest`, 13 tests), `evals/scenarios/registry.yaml` (3 probes, 514 scenarios), `evals/FINDINGS.md` (F81 wave-61 accounting, next free F128), `workstreams/evals/SECCOMP_LOG_SHAKEDOWN.md` (§6 design), `workstreams/evals/LOG_GUARD_REPORT.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-61 header), `research/intake-wave61-2026-09-22.md` (new), `BUILD_LOG.md` (this entry).
+
+**Staged commit plan (DO NOT COMMIT / DO NOT PUSH — repo stays private, release only on the user's explicit decision):**
+
+    Wave-61: LOG-tier production guard — design + implement + break-first
+
+    Lane 1: guard design (SECCOMP_LOG_SHAKEDOWN.md §6) — authority
+    precedence kwarg > env > default-production; production+LOG refuses
+    loudly (SandboxError, no launch); threat model is operator
+    misconfiguration, documented honestly.
+    Lane 2: _resolve_seccomp_tier single chokepoint at run() top; tier
+    resolved once, flows as a value (double env read deleted — no
+    decision/install TOCTOU). SeccompLogGuardTest 13/13 green:
+    prod-refusal before Popen, env strictness, kwarg-beats-env,
+    exactly-one-read, no downgrade laundering on install OSError.
+    Staging use unbroken. No finding filed; next free F128.
+    Lane 3: realistic 3/3, B3 green, finding hygiene, intake
+    (neoruntime fail-open quote, kguardian LOG model, CVE-2026-31431,
+    macOS env-var escape). Gates: canonical 2144 OK, registry
+    476/476 (514 scenarios), matrix 3216/3216, realistic 3/3.
+    F81 stays LOW/OPEN.
+
+    Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+NO COMMIT / NO PUSH performed.
+
+## Wave-60: F81 wall-readiness consolidation + seccomp LOG-tier shake-down (2026-09-22)
+
+**Lane 1 — LOG-tier shake-down (workstreams/evals/SECCOMP_LOG_SHAKEDOWN.md + log_tier_shakedown.py + log_tier_shakedown_inventory.json).** 10 representative local synthetic workloads were strace-traced and 345 unique `(syscall,args)` rows replayed through the exact compiled LOG and KILL blobs via `gov.sandbox._bpf_decision`. Denial inventory before fix: 11 unique shapes — `ioctl(TCGETS)` 493× across all 10 workloads, `ioctl(FIOCLEX)` 10× across all 10 (LOG→LOG, KILL→KILL in both), `ioctl(TIOCGWINSZ)` 1× probe-only, `bind` 2× / `listen` 1× / `accept4` 1× in the synthetic server side, `prctl(PR_SET_NAME)` 1× probe-only, and 4 socket misuse shapes at EPERM in both tiers. Bare Python issues TCGETS/FIOCLEX before user code — the wave-59 blanket ioctl denial SIGSYS-killed every Python workload at startup.
+
+**F127 (LOW) — filed and CLOSED same wave** (loud availability failure, not bypass; no finding inflation). Fix in `gov/sandbox.py`: argument-filtered ioctl rule — TCGETS `0x5401` → ALLOW, FIOCLEX `0x5451` → ALLOW, all other ioctl requests → `SECCOMP_RET_ERRNO|EPERM`. The break-first denial set includes SIOCSIFADDR `0x8916`, SIOCSIFFLAGS `0x8914`, SIOCADDRT `0x890B`, TIOCSTI `0x5412`, TCSETS `0x5402`, FIONREAD `0x541B`, and bogus `0xDEAD`. High-bit ioctl requests explicitly pinned: BPF sees the low 32 bits; the kernel validates the full request and unknown full values fail with ENOTTY. BPF program grew **160 → 166 instructions** (byte-audit pinned); `python -m gov.sandbox --audit-seccomp-cage` green (x86_64, 140 allowlisted syscall numbers, arch check OK, default deny KILL_PROCESS). **Proposed vs applied deltas:** proposed but deliberately NOT applied — `prctl(PR_SET_NAME)` (probe-only, privilege-adjacent, on the MUST-NOT-ADD list; needs a more deliberate arg-filter design), `ioctl(TIOCGWINSZ)`, IPv6 sockets, UDP child DNS, and cage-side server syscalls (bind/listen/accept stay KILL). Applied: the 2-request ioctl allowlist + 7-shape denial set. `tests/test_sandbox_seccomp_cage.py` now 37 tests (3 ioctl arg-filter tests + `SeccompLogTierAbuseTest`'s 4), targeted run green (4 live skips). LOG-tier abuse conclusions: LOG means log-and-execute (unshare/prctl/seccomp/mount/bpf run under LOG but KILL under production); socket/ioctl EPERM argument rules enforced in both tiers; no new child-visible oracle (allowlist ships in source, child cannot read host audit log, EPERM identical across tiers); no denial-to-allow laundering (filters immutable post-install, stacked filters only further restrict, tier switch is parent-side pre-fork). **Wave-61 open question:** a hard production guard so `GOV_SANDBOX_SECCOMP_LOG=1` cannot dissolve default-deny — the current control is only an honest run-note stamp.
+
+**Lane 2 — F81 wall-readiness ledger (workstreams/architect/F81_WALL_READINESS.md).** F81 stays LOW/OPEN. 8 mechanism claims proven (proxy shape in `gov/egress_proxy.py`; exact BPF bytes, now 166 insns; child-driven netns handshake + parent veth injection, no default route, ENETUNREACH; verdict-log policy hash + hash chain; upstream firewall contract + honest absent-state reporting; CONNECT fuzzing 9,124 parse/decide outcomes + 610 sessions, F125 closed; SCTP/DCCP protocol constraint; this wave's LOG shake-down + F127 closure). 4 privileged-CI deferred lanes specified: D1 live child netns + veth topology (exact /30, no default route, repeat wave-58 escape battery); D2 kernel-load the exact 166-instruction filter + run the 4 skipped live tests; D3 real proxy-over-veth data leg (allowed/denied CONNECT, proxy crash fail-closed); D4 composed wall against all closure probes. All 16 closure probes marked DEFERRED — no synthetic test satisfies deployment-only closure criteria (wave-57 rule honored); the composed wall has never run as one system.
+
+**Intake (research/intake-wave60-2026-09-22.md):** CVE-2026-92574 (CRI-O checkpoint restore bypassing seccomp/no_new_privs — security-state inheritance; boundary note, our filter installs fresh per child, no CRI-O here); AWS AgentCore indirect prompt injection → plaintext credential extraction (Unit 42, AWS closed as informational — F111 supporting evidence + differentiation read); German-website hijack of deployed OpenAI agents (Reuters 2026-09-04 — B1 watchlist); Astra self-generated prompt injection (updated Sept 16 — prior intake stands); yaklang SECCOMP_BYPASS.md arch-confusion class (`int 0x80`) structurally closed by our arch-check-first BPF shape (external validation); OWASP LLM Top-10 2026 Excessive Agency → #3 (standards context, not a citation); MCP cache poisoning MCP-2026-008/015 (MCP control-area note). No new findings. Next free: **F128**.
+
+**Gates (sequential, never concurrent; venv, TMPDIR=/tmp/gov-run):** canonical **2131 OK** (2124 + 7 new; 8 skipped, 7 expected failures); registry **476/476** (511 scenarios; 2 new `redteam.f81.seccomp_*` probes — `seccomp_ioctl_arg_filtered` → F127, `seccomp_log_tier_abuse_review` → F81 staging boundary — correctly gate-delegated to `tests/`); adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **3/3 green**. B3 citation guard green in-suite. One mid-wave RED: my registry append landed after the file's `schema_version` trailer and broke YAML parsing (1 unittest error) — isolated as an edit mistake (not a code regression), fixed by moving the entries before the trailer, suite re-run clean per red-halts rules.
+
+**Files changed:** `gov/sandbox.py` (ioctl argument rule, 160→166 insns), `tests/test_sandbox_seccomp_cage.py` (7 new tests), `evals/scenarios/registry.yaml` (2 probes, 511 scenarios), `evals/FINDINGS.md` (F127 filed/closed, F81 wave-60 accounting, next free F128), `workstreams/evals/log_tier_shakedown.py` + `log_tier_shakedown_inventory.json` + `SECCOMP_LOG_SHAKEDOWN.md` (new), `workstreams/architect/F81_WALL_READINESS.md` (new), `workstreams/architect/REALWORLD_BAR.md` (wave-60 header), `research/intake-wave60-2026-09-22.md` (new), `BUILD_LOG.md` (this entry).
+
+**Staged commit plan (DO NOT COMMIT / DO NOT PUSH — repo stays private, release only on the user's explicit decision):**
+
+    Wave-60: F81 wall-readiness consolidation + seccomp LOG-tier shake-down
+
+    Lane 1: shake-down of the LOG staging tier (10 strace-traced workloads,
+    345 unique syscall rows replayed through compiled blobs) caught the wave-59
+    blanket ioctl denial SIGSYS-killing every Python workload at startup.
+    F127 (LOW) filed and closed same wave: argument-filtered ioctl rule
+    (TCGETS/FIOCLEX ALLOW; everything else EPERM), BPF 160 -> 166 instructions.
+    Lane 2: F81_WALL_READINESS.md — 8 proven mechanism claims vs 4 privileged-CI
+    deferred lanes; all 16 closure probes DEFERRED. Internet intake:
+    CVE-2026-92574, AgentCore credential extraction, German-website hijack —
+    no new findings. Gates: canonical 2131 OK, registry 476/476 (511 scenarios),
+    matrix 3216/3216, realistic 3/3. F81 stays LOW/OPEN; next free F128.
+
+    Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+NO COMMIT / NO PUSH performed.
+
+## Wave-59: F81 seccomp implementation — the wave-58 draft as real BPF bytes + break-first re-run (2026-09-22)
+
+**Implementation (gov/sandbox.py — composed with STRICT, not forked).** The wave-58
+design-only `F81_SECCOMP_PROFILE_DRAFT.md` is now a shipped profile: `FILTERED_EGRESS_CAGE_ALLOW`
+(DEFAULT_SECCOMP_ALLOW minus `ioctl`, minus defensive `bind`/`listen`/`accept`/`accept4`/`unshare`/`setns`,
+plus the client-socket family: socket/connect/sendto/recvfrom/sendmsg/recvmmsg/getsockopt/getpeername/shutdown/socketpair);
+a new label-assembled classic-BPF builder (`_build_seccomp_filter_args`, same 3-opcode vocabulary — forward jumps only)
+compiling to **160 instructions** on x86_64 (pinned in tests); scalar `socket(domain,type,protocol)` rules —
+domain ∈ {AF_UNIX, AF_INET}, type = SOCK_STREAM modulo NONBLOCK|CLOEXEC, **protocol ∈ {0, IPPROTO_TCP}** (a wave-59
+break-first catch from the CVE-2026-64564/SCTPhantom intake: the draft left protocol unconstrained and SCTP-over-STREAM
+would have passed; hardened same-wave, no finding — kernel exploits are outside this layer's threat model, filing would be
+finding inflation). Violations → SECCOMP_RET_ERRNO|EPERM; default → KILL. `Sandbox(..., cage_mode="filtered-egress")`
+installs the cage filter through the existing STRICT machinery (same `_harden_worker`, same fail-closed `require_seccomp`);
+unknown mode, cage-without-seccomp, and env misconfig (`GOV_SANDBOX_CAGE_MODE`) all refuse loudly — never silent "no cage".
+`SECCOMP_RET_LOG` staging tier (`GOV_SANDBOX_SECCOMP_LOG=1`) for denials-without-enforcement, stamped on the run note so staging
+is never mistaken for enforced. Kill-tier denials now stamp "seccomp kill-tier denial" on the run note (never silent SIGSYS).
+`python -m gov.sandbox --audit-seccomp-cage` byte-audit added; `--audit-seccomp` (DEFAULT profile) re-run green, byte-identical.
+
+**Break-first re-run against the real bytes (tests/test_sandbox_seccomp_cage.py, 30 tests).** Every shape evaluates the
+exact compiled program via the byte evaluator: AF_PACKET/SOCK_RAW → EPERM (held); AF_NETLINK route manipulation → EPERM (held);
+AF_INET6/SOCK_DGRAM/bogus → EPERM (held); SCTP(132)/DCCP(33) protocol smuggling → EPERM (held); bind/listen/accept proxy
+impersonation → KILL (held — no rendezvous point); unshare/setns/prctl/seccomp/ptrace/bpf/keyctl/io_uring → KILL (held);
+socketcall absent on x86_64 / x32-alias → KILL (held); deny-by-default for unlisted syscalls (held); no all-forward-jump
+violations; LOG-tier encoding. Honest boundaries pinned, NOT claimed: (5.3) `connect()` is filter-ALLOW by design — classic
+BPF cannot dereference the sockaddr pointer (inability, not TOCTOU); confinement is netns (ENETUNREACH) + proxy + upstream
+firewall. (5.4) `recvmsg`/`sendmsg` stay ALLOW — fd-passing is an fd-hygiene trust-boundary control (CLOEXEC + no inherited
+fds), not a filter rule; multi-process cages would trigger a revisit. No genuine independently-reachable miss — **no finding
+filed; next free F127 unused.** F81 stays LOW OPEN: a seccomp profile is one layer; closure needs the composed wall
+(netns + veth + proxy + this filter) with the wave-25/wave-57 probe family passing in privileged deployment CI.
+
+**Exercised vs emulated — errno evidence, no faked passes.** `PR_SET_NO_NEW_PRIVS` succeeds (0); `prctl(PR_SET_SECCOMP,
+SECCOMP_MODE_FILTER)` fails **errno 22/EINVAL** in this environment → `seccomp_available() = False`, honestly. So: the exact
+compiled bytes (160 insns) ARE proven (evaluator + byte audit exit 0); the kernel load path is NOT — the 4 live tests
+(`SeccompCageLiveTest`) skip via the established `@unittest.skipUnless` convention, written + queued for privileged CI, NOT
+marked passing. The install path is exercised up to the honest refusal; the refusal itself is the fail-closed behavior
+(`require_seccomp` → `_exit(127)` pre-exec, covered by tests).
+
+**Gates (sequential, canonical venv, TMPDIR=/tmp/gov-run):** canonical suite **2124 OK** (8 skipped, 7 expected failures);
+registry gate **476/476** (509 scenarios, 33 delegated to tests/ incl. the 8 new `redteam.f81.seccomp_*` probes — GREEN);
+adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **3/3**. One background canonical run was started mid-work,
+KILLED before completion (tree edits landed after discovery began — mixed-state results are not gate results); the clean
+re-run above is the authoritative one. No RED anywhere; no flake claims.
+
+**Reports/docs:** `workstreams/evals/SECCOMP_REPORT.md` (verdict doc: implementation, break-first table, §4 errno accounting,
+deliberately-undone list, 5 open questions for wave-60); `research/intake-wave59-2026-09-22.md` (verbatim query + snippet-level
+findings, zero pages opened — CVE-2026-64564/31431/92574, SandboxEscapeBench, seccomp pitfalls); `evals/FINDINGS.md` F81 wave-59
+accounting (stays LOW OPEN); `workstreams/architect/REALWORLD_BAR.md` wave-59 header; `workstreams/sandbox/PROGRESS.md` extended.
+B3 citation guard green in-suite (new probe IDs correctly absent from `docs/STANDARDS_MAPPING.md` — pending closure probes are
+not standards claims).
+
+**Commit plan (staged, NOT committed — repo stays private, no push):**
+`gov/sandbox.py`, `tests/test_sandbox_seccomp_cage.py`, `evals/scenarios/registry.yaml`, `evals/FINDINGS.md`,
+`workstreams/evals/SECCOMP_REPORT.md`, `research/intake-wave59-2026-09-22.md`, `workstreams/architect/REALWORLD_BAR.md`,
+`workstreams/sandbox/PROGRESS.md`, `BUILD_LOG.md`.
+Trailer required on commit:
+`Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`
+
+## Wave-58: F81 proxy hardening — netns handshake (works-hardened), CONNECT fuzzing (F125 filed+fixed), seccomp draft, firewall contract (2026-09-22)
+
+**P1 — Lane 1: netns handshake ATTEMPTED live, verdict works-hardened
+with one environmental leg missing.** Both wave-56 untried patterns were
+executed in this environment (euid 0, `CapEff=0x1fffff7ffff`): (a)
+parent-prepared netns + setns-join — `unshare(CLONE_NEWNET)` in a forked
+child **succeeds**, but sibling `setns`-join **fails EPERM** (even
+self-join EPERM), so parent-prepared+setns-join is NOT the pattern; (b)
+child-driven move — `RTM_NEWLINK` veth creation **succeeds**,
+`RTM_SETLINK ... netns <pid>` peer injection **succeeds**, `ip netns add`
+fails EPERM (bind-mount). Working pattern, proven end-to-end:
+**child-driven unshare + parent veth injection** — child sees only
+`lo`+`veth-c`, route table exactly `169.254.240.0/30` (no default
+route), direct egress → `ENETUNREACH`. Break-first battery (all
+executed): `setns`→host EPERM, userns+`setns` EACCES, child route-add
+EPERM, no netns-fd leakage (CLOEXEC rule), raw sockets creatable but
+harmless (own ns only), `ip_forward=0`. Two hardening rules from the
+battery: (1) abstract unix sockets are **banned conservatively** —
+no successful cross-netns abstract-socket connection was ever
+demonstrated (child `connect("\0w58parent")` → ECONNREFUSED proves
+nothing about visibility; an unbound name in the child's own ns returns
+the same error) — launcher/proxy MUST never use abstract sockets; (2)
+the
+proxy-over-veth TCP leg **cannot be exercised here** — `connect()` to
+any locally-created veth address returns EPERM *even parent-side*
+(10.99.99.1, 192.168.99.1, 169.254.240.1 all EPERM while parent→lo and
+parent→external connect fine; iptables wide open) — environmental
+LSM/eBPF veto, so the data leg stays deployment-verified-only in a
+privileged CI. `gov/egress_proxy.py` untouched by Lane 1 (EmulatedCage
+still the mechanism-shape model). Report:
+`workstreams/architect/F81_NETNS_HANDSHAKE.md` (attempt log with errno
+evidence, hardened spec §§4.1–4.5). No finding (no
+independently-reachable miss in shipped code; the abstract-socket ban
+is a conservative deployment-hygiene boundary note).
+
+**P2 — Lane 4 (B5 pressure, highest value): CONNECT-parser fuzzing →
+F125 FILED and FIXED.** Deterministic seeded fuzzer
+(`workstreams/evals/fuzz_connect.py`, seed 20260922): 4,562 authorities
++ 610 request-lines through `_parse_authority`/`decide`/`serve_stream`,
+properties P1 (never raises) / P2 (never outside grammar) / P3 (accepted
+targets re-serialize to themselves). **75 distinct crash inputs
+pre-fix**: `str.isdigit()` accepts non-ASCII digits (`²`, `①②`, `½`)
+that `int()` rejects — `_parse_authority` accepted the port,
+`decide()` called `int(port_raw)` unguarded → `ValueError` escaped
+`serve_stream` (independently reachable by the cage child over its
+client socket; LOW — availability, not bypass: a dead worker degrades
+toward no-network, fail-closed). Fix: explicit ASCII-only authority
+grammar at parse (`port.isascii() and port.isdigit()`, bracketed form
+`\d+`→`[0-9]+`, unbracketed host `[A-Za-z0-9.-]+` — superset of the
+policy `_HOST_RE` alphabet, so nothing the allowlist could match is
+refused) + try/except around `int(port_raw)` in `decide()` →
+`malformed-authority` deny as defense in depth. Post-fix: **0 crashes,
+0 grammar escapes** across the full corpus; P3 holds. Refuted shapes
+(userinfo smuggling, absolute-form, `host:80:evil`, LF-only/mixed line
+endings, 9KB overlong, `%2e`/`..` hosts, trailing-dot/case folding) all
+deny fail-closed — documented, not findings. Regression tests:
+`tests/test_egress_proxy.py::TestF125UnicodeDigitPort` (4 tests);
+registry probes `redteam.f81.proxy_unicode_digit_port_crash`
+(finding F125) and `redteam.f81.proxy_upstream_firewall_absent_reported`
+registered (registry now 501 scenarios). Report:
+`workstreams/evals/FUZZ_CONNECT_REPORT.md`; corpus generator retained
+for every future parser touch. Next free finding: **F127** (F126 was
+consumed by the gate-found audit-log race, filed later this wave).
+
+**P3 — Lane 2: mode-specific seccomp profile DRAFT (design+spec, NOT
+wired).** `workstreams/architect/F81_SECCOMP_PROFILE_DRAFT.md`: follows
+the repo idiom (`DEFAULT_SECCOMP_ALLOW` frozenset + classic-BPF
+`_build_seccomp_filter` + prctl after NO_NEW_PRIVS). Deltas for cage
+mode: remove `bind`/`listen`/`accept`/`accept4` (pure client),
+`unshare`/`setns` (kill tier), `ptrace`/`bpf`/`keyctl`/`mount`/
+`process_vm_*`/`perf_event_open` (MUST-NOT-ADD), `ioctl`, `prctl`,
+`seccomp`; keep `socket`/`connect`/… client-only with **argument
+filters**: `socket()` domain ∈ {AF_INET, AF_UNIX} + type = SOCK_STREAM
+(scalar args, race-free — kills AF_PACKET smuggling and NETLINK_ROUTE
+manipulation). **Corrected post-review:** the draft's `connect()`
+sockaddr-must-equal-proxy-veth rule is REMOVED — classic seccomp BPF
+cannot dereference the userspace `sockaddr *` at all (not "advisory
+due to TOCTOU"; an inability, not a race). Destination confinement
+belongs to the netns (no route → ENETUNREACH), the proxy policy, and
+the upstream firewall — never to seccomp. Audit story: errno tier (network misuse, loud-local),
+kill tier (escape attempts → SIGSYS, launcher-logged), `SECCOMP_RET_LOG`
+staging tier. Paper break-first: AF_PACKET smuggling held, unix-socket
+proxy impersonation held (TCP-on-veth, no filesystem/abstract paths),
+SCM_RIGHTS fd-passing held (CLOEXEC + no fd inheritance),
+clone-namespace games held, filter-tampering
+held, io_uring default-deny. `gov/sandbox.py` live paths untouched —
+the draft is design-only; the implementing wave re-runs break-first
+against real BPF bytes.
+
+**P4 — Lane 3: upstream firewall contract.**
+`docs/UPSTREAM_FIREWALL_CONTRACT.md` — short, normative: startup checks
+(ip_forward=0 asserted, veth-end exclusivity, operator-owned check
+command with TTL freshness; any failure → never ready, child never
+forked), audit (every run status carries `upstream_firewall` ∈
+{verified, degraded, absent} — absence is a reported state, never
+omitted), exact operator-facing `F81-UPSTREAM-FIREWALL` refusal text.
+Prototype honesty touch: `FilteredRun.status()` now reports
+`upstream_firewall` (default `"unverified (no contract check wired)"`)
++ constructor `firewall_state` param; pinned by
+`TestCrashFailClosed.test_upstream_firewall_absence_is_reported_not_silent`.
+
+**P5 — standing pressure.** Internet intake
+(`research/intake-wave58-2026-09-22.md`): CVE-2026-73548 (Envoy
+extended-CONNECT HTTP/2 smuggling, ~1 day old) — class structurally
+absent here (no HTTP/2, no upgrades, no connection pooling; advisory's
+own scope note confirms plain-CONNECT unaffected) — recorded as a
+regression trigger if the proxy ever gains pooling/upgrades (boundary
+note, not a finding); AGT watch: NonoSandboxProvider filtered egress
+exists upstream (parity confirmation, differentiation stays in
+enforcement shape + auditability), ACA proposal documents a
+default-allow-by-omission footgun our launcher closes by construction;
+seccomp-TOCTOU intake: no new technique, draft's caveat stands. No new
+findings from intake. B3 citation guard: green (new probe IDs correctly
+absent from `docs/STANDARDS_MAPPING.md`).
+
+**P6 — gate-found F126 (audit-log concurrency): FILED and FIXED same wave.**
+The adversary-matrix gate went RED on sit64
+(`chain_verifies_after_concurrent_writes`): 4 processes × 25 concurrent
+`ActionLog.append()` forked the HMAC chain (duplicate seqs; e.g. 100
+lines, seqs 1–78). Not a wave-58 regression — `gov/log.py` untouched by
+the lanes and the matrix never imports wave-58 code; the bug was latent
+(the wave-57 3216/3216 passed by timing luck). Root cause: `refresh()`
+captured the F22 `(size, mtime_ns)` cache signature AFTER `read_text()` —
+a concurrent writer slipping between the read and the stat left `_seq`
+stale while the signature matched the current file, so the next
+`_refresh_if_changed()` skipped the re-read and assigned a duplicate seq.
+The `ActionLog.__init__` → `refresh()` path runs without the append lock,
+which is exactly the window the forked probe workers hit. This violated
+the F25 docstring claim ("no two writers can assign the same sequence
+number or fork prev_hash"). Fix: capture `_known_sig` BEFORE the content
+read in `refresh()` — the signature then always describes a file version
+older-or-equal to the content, so a mid-refresh writer forces a re-read
+(one wasted read, never a stale seq); size monotonicity keeps
+`sig == known` a valid unchanged-implies. `verify_chain` DETECTS the fork
+(fail-closed), so severity MEDIUM, not HIGH. Post-fix: sit64 probe 0/30,
+standalone 4×25 stress 0/30 (was ~1/10). Deterministic regression test
+`TestF126RefreshSigAtomicity` in `tests/test_log_integrity.py` (mocks the
+exact interleaving; verified FAIL on old ordering, PASS on new). Filed as
+**F126 — MEDIUM — CLOSED** in `evals/FINDINGS.md`. Next free finding:
+**F127**. (Cautionary note: a stale `gov/__pycache__` masked the fix
+during verification — `cp`-restore kept a confusing mtime; cleared
+`__pycache__` and re-verified.)
+
+**Gates (sequential, never concurrent):** canonical suite baseline
+**2088 OK** (4 skipped, 7 expected failures — venv,
+`TMPDIR=/tmp/gov-wave58`) verified BEFORE lane work; post-lane rerun
+**2093 OK** (2088 + 5 new: 4 F125 + 1 firewall-contract; 4 skipped,
+7 expected failures — venv, `TMPDIR=/tmp/gov-wave58b`); post-F126-fix
+rerun **2094 OK** (2093 + 1 new F126 regression test; 4 skipped,
+7 expected failures — venv, `TMPDIR=/tmp/gov-wave58i`); registry gate **476/476**
+(501 scenarios, 25 delegated); adversary matrix **3216/3216 SHIP-GATE
+GREEN** post-F126-fix (was RED 3192/3216 on sit64 pre-fix; 1608/1608
+provisional + 1608/1608 real); realistic battery **3/3 green**
+(smoke-full-loop, human-error-pack, swarm-pack).
+
+**Break→fix/boundary accounting:** F125 filed (LOW, genuine
+independently-reachable miss) → fixed same wave with closure evidence
+(fuzzer 0/0 post-fix + 4 regression tests + registry probe) → **CLOSED**.
+F126 filed (MEDIUM, genuine audit-log concurrency miss in the F25
+linearization claim, found by the sit64 gate probe — not a wave-58
+regression) → fixed same wave with closure evidence (probe 0/30 +
+stress 0/30 post-fix + deterministic regression test) → **CLOSED**.
+F81 stays **LOW OPEN** (accepted filtered-egress gap; the proxy leg of
+the topology is proven in mechanism only — the veth data leg needs
+privileged CI per Lane 1 row E). No finding inflation: refuted fuzz
+shapes and the abstract-socket/netns caveats are boundary notes.
+Deliberately not done: rewiring `gov/sandbox.py` (load-bearing; seccomp
+draft is paper until airtight), real proxy-over-veth (environmental
+EPERM — privileged CI), `setns`-based handshake (EPERM — child-driven
+pattern instead), closing F81 (needs the real wall + deployment
+verification).
+
+**Commit plan (STAGED, NOT COMMITTED — tree has no .git; do not push,
+do not publish):**
+- `gov/egress_proxy.py`: ASCII-only authority grammar (F125 fix),
+  `int(port_raw)` guard, `FilteredRun` firewall-state reporting.
+- `gov/log.py`: F126 fix — `refresh()` captures `_known_sig` before
+  content read (sig-before-read invariant).
+- `tests/test_egress_proxy.py`: `TestF125UnicodeDigitPort` (4),
+  firewall-absence reporting test.
+- `tests/test_log_integrity.py`: `TestF126RefreshSigAtomicity`
+  (deterministic interleaving repro).
+- `evals/FINDINGS.md`: F125 filed + closed; F126 filed + closed.
+- `evals/scenarios/registry.yaml`: 2 wave-58 probes (501 scenarios).
+- New: `workstreams/architect/F81_NETNS_HANDSHAKE.md`,
+  `workstreams/architect/F81_SECCOMP_PROFILE_DRAFT.md`,
+  `workstreams/evals/fuzz_connect.py`,
+  `workstreams/evals/FUZZ_CONNECT_REPORT.md`,
+  `docs/UPSTREAM_FIREWALL_CONTRACT.md`,
+  `research/intake-wave58-2026-09-22.md`.
+- Updated: `BUILD_LOG.md`, `workstreams/architect/REALWORLD_BAR.md`.
+
+Trailer (when the user approves a commit):
+`Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`
+
+## Wave-57: F81 proxy prototype (bounded, mechanism-shape) + B1 intake follow-through (2026-09-22)
+
+**P1 — F81 proxy prototype: built BOUNDED, EPERM boundary stated in code
+and report.** The wave-55 "no prototype until the design survives" rule
+is satisfied (wave-56 adversarial review: sound on paper, no
+design-killer), so prototype authorization was granted and exercised
+narrowly: the code parts of the ADR shape only. New `gov/egress_proxy.py`
+(~700 lines, stdlib only — `hashlib/ipaddress/json/os/re/select/socket/
+time`, zero dependencies): CONNECT-tunneling core with first-match-wins
+ordering (client check → method check → operator pinholes → **static
+dst-deny above allow** (loopback/RFC1918/link-local/carrier-NAT, never
+expiring) → exact-FQDN allowlist (no suffix wildcards — Wiki shape
+refused at parse) → deny-all), per-request hostname resolution through
+an injected resolver (no launch-time pinning; the default resolver
+refuses — fail-closed), verdict log written to an operator-owned
+absolute path that **refuses cage-root locations at construction**
+(sep-boundaried prefix check; no env-var override ever consulted),
+every verdict line carrying `policy_version` + `policy_hash` +
+`prev_hash` chain (tamper-evident; `verify_file` breaks loudly on
+byte-flip or line deletion), readiness semantics (`ready` flag → 503 +
+`not-ready` verdict; `ReadinessGate.launch` raises `ProxyNotReadyError`
+*without forking the child*), and the no-default-route topology
+**emulated synthetically** (`EmulatedCage`: the only route is the proxy;
+direct attempts raise `NoRouteError`). **Squid-vs-bespoke decided
+BESPOKE** on the auditability bar (every verdict auditable, no opaque
+binary behavior in the trust path; honest cost admitted — bespoke
+userspace is our own bug surface; the design's §6.4 operator-owned
+upstream firewall requirement stands unchanged). **HARD BOUNDARY,
+stated in module docstring, `EmulatedCage`, and
+`workstreams/evals/PROXY_PROTOTYPE_REPORT.md`:** real network namespaces
+cannot be exercised in this environment (EPERM) — the veth/child-netns/
+no-default-route topology is deployment-verified-only; the prototype
+proves the mechanism shape (ordering, resolution discipline, verdict
+binding, readiness, honest reporting), NOT the wall. **Under no
+circumstances does this wave close F81** — F81 stays LOW OPEN; closure
+needs the real wall + deployment verification against the wave-25
+family + IP-layer probe + the three new proxy probes.
+
+**P1 break-first (wave-56 five-part residuals), all in
+`tests/test_egress_proxy.py` (38 tests, synthetic — socketpair
+transport, injected resolvers/connectors, zero network calls):**
+(1) readiness race — first request vs not-ready → 503, connector never
+called, gate never forks; (2) DNS-rebind/TOCTOU — `confirm_connected`
+re-validates the *connected* answer: rebind to 127.0.0.1 →
+`dst-deny-toctou`, no bytes flow; public→public flip stays allow,
+pinned as policy-not-breach; (3) verdict-log tampering — cage paths
+refused, `EGRESS_VERDICT_LOG` env ignored by construction, cage
+speaking `ALLOW...` down its client socket is just a malformed CONNECT
+(denied, logged as deny); (4) proxy compromise containment — the
+module's self-guarantees tested: connector never called on any deny
+shape, called only with the decided (host, ip, port), no privileged
+operations in the module; the operator upstream firewall stays
+out-of-scope and required; (5) policy-as-data confusion — unknown keys,
+`*.` wildcards, IP-literal allow entries, wildcard binds all refused
+loudly by name; malformed reload keeps the old policy serving with the
+old hash; version skew → `PolicyVersionMismatch`, no 200 ever.
+**Registered** `redteam.f81.proxy_dst_deny_above_allow`,
+`redteam.f81.proxy_crash_fail_closed`,
+`redteam.f81.proxy_verdict_log_policy_hash` in
+`evals/scenarios/registry.yaml` (closure-probe:pending, wave-25 pattern —
+spec'd against a real deployment; the synthetic tests do NOT satisfy
+them). No new findings: the break-first pass surfaced no
+independently-reachable miss. Deliberately not done: no real
+netns/veth wiring (EPERM — faking it would be worse), no TLS
+interception (deliberate), no tool-call reassembler (wave-55 verdict
+stands), no `gov/sandbox.py`/seccomp/canary changes, no launcher
+wiring (deployment-integration wave, gated on the netns handshake
+blocker).
+
+**P2 — B1 intake follow-through** (`research/intake-wave57-2026-09-22.md`,
+searches recorded, 0 pages opened): (a) **academic-utility hopping
+class** — NO registry situation; decomposition documented: planted-
+secret exfil via benign redirector already covered by canary.p1.*
+(payload-matched, reputation-agnostic); real-secret exfil via allowed
+redirector is the owned secret-hygiene residual (F81 design §7.3/§10);
+our controls never did reputation filtering, so no reputation-trust
+assumption exists to break. B5 ratchet noted: redirect re-validation on
+the operator-invoked `--verify` path (`gov/supplychain.py:500`). (b)
+**Spain AEPD report** — details FIRMED UP (Reuters 2026-09-15,
+BleepingComputer, Infosecurity Magazine: third-party-deployed agent
+chained recon → credential discovery → login → vuln discovery → data
+modification + invoice exfil, no human in the loop); recorded as
+confirmed I24-candidate pending patterns.yaml refresh — the case-study
+source files are absent from this working copy, and any P17 mapping or
+denominator change belongs to a dedicated B1 wave. (c) **AGT
+task-scoped credential lifecycle hooks** — still "What we're building"
+in `docs/LIMITATIONS.md` §8 (primary re-confirmed); NOT shipped, so no
+wedge-1 adjacency re-run; the wave-56 teardown read stands.
+
+**P3 — Standing pressure.** All four gates green, run sequentially:
+canonical suite **2088 tests OK** (2050 baseline + 38 new; 4 skipped, 7
+expected failures — venv, `TMPDIR=/tmp/gov-run`; pre-change baseline
+re-verified 2050 OK before edits); registry gate **476/476 oracle
+matches** (`evals/run_evals.py --registry-gate`, private TMPDIR,
+REGISTRY-GATE: GREEN); adversary matrix **3216/3216 SHIP-GATE GREEN**
+(1608/1608 provisional, 1608/1608 real); realistic battery **3/3**
+(smoke-full-loop, human-error-pack, swarm-pack). B3 citation guard green
+in-suite (new probe IDs correctly absent from STANDARDS_MAPPING.md).
+Finding hygiene: F81 stays LOW OPEN (wave-57 prototype note appended to
+the ledger entry); next free finding number F125; no new findings.
+Internet intake at `research/intake-wave57-2026-09-22.md`.
+
+**Artifacts (all new, additive — no `gov/sandbox.py`, seccomp, or
+canary changes):** `gov/egress_proxy.py`, `tests/test_egress_proxy.py`,
+`workstreams/evals/PROXY_PROTOTYPE_REPORT.md`,
+`research/intake-wave57-2026-09-22.md`; registry +3 probes (499
+scenarios); FINDINGS.md F81 wave-57 note; REALWORLD_BAR.md wave-57
+header. **Commit plan (STAGED, NOT committed — tree has no .git; repo
+stays private):** the above files as one wave-57 commit with trailer
+`Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+No commit, no push, no publication without explicit user approval.
+
+## Wave-56: F81 proxy-egress design (design-only, no prototype) + AGT credential-gap teardown addendum + internet intake (2026-09-22)
+
+**P1 — F81 proxy-egress: designed on paper, adversarially reviewed,
+deliberately NOT prototyped.** The §2a proxy wall (founder-strategy memo
+`research/founder-strategy-2026-09-22.md`) was answered in
+`workstreams/architect/F81_PROXY_EGRESS_DESIGN.md` (12 sections: gap
+restatement, recipe correction, enforcement point, DNS adjudication,
+ordering rationale, failure modes, canary composition, five-part
+adversarial review, explicit closure criteria, non-promises, prototype
+blockers, verdict). Two corrections to prior waves are recorded in the
+doc: (a) the memo's §2a recipe **conflated two architectures** —
+OpenSandbox's in-netns DNS-proxy sidecar vs woditschka ADR 2026-07-29's
+outside-the-workload dual-homed forward proxy (ADR re-fetched in full
+this wave; it explicitly *rejected* the sidecar premise after a
+~4,400-line spike). The design picks the ADR shape: enforcement as
+parent-owned topology (veth pair, child netns with no default route,
+proxy outside the child's netns), so there is no route to race and zero
+privileged machinery in the cage. (b) The wave-55 "reassembly happens
+for free at the proxy" shorthand is **corrected**: a CONNECT-tunneling
+proxy does not reassemble content (no TLS interception, deliberate) —
+the proxy gives destination confinement, not content reassembly; the
+split-secret-to-an-allowed-destination shape still evades both layers
+and is now explicitly owned by secret hygiene, not by any planned
+control. The five-part paper review: readiness race closed by topology;
+wave-25 resolver-input/NO_PROXY probes answered by construction (the
+child's resolver view never decides anything); DNS-rebind narrowed to
+the ADR-admitted resolve→connect TOCTOU (static dst-deny above the
+allow rules closes the private-space direction regardless of TTL);
+proxy compromise contained by a required operator-owned upstream
+firewall layer (chokepoint, not trust root); verdict log outside the
+cage, hash-bound to the active allowlist. Set-up-safe answer to the
+accepted-gap rationale: every mechanism failure converges to no-network
+(never open), policy is data refused loudly on malformed input,
+reporting stays honest (`egress_filtered=True` + allowlist, never
+collapsed into `network_isolated`). **Verdict: sound on paper with
+documented residuals — no design-killer; no prototype this wave**
+(wave-55 rule honored). F81 stays LOW OPEN; closure criteria stated
+explicitly (wave-25 `redteam.f81.*` family + IP-layer probe + three new
+proxy probes spec'd for a future wave to register). Prototype blockers
+named: parent↔child netns handshake in the EPERM environment (untried:
+parent-prepared netns + setns-join, child-driven IFLA_NET_NS_FD move),
+coordinated seccomp redesign (socket family currently denied
+wholesale), proxy implementation choice (bespoke CONNECT vs squid),
+per-deployment upstream firewall spec.
+
+**P2 — Competitive teardown addendum: AGT's Credential Persistence
+Gap.** New `research/teardown-addendum-wave56-2026-09-22.md`: AGT's
+`docs/LIMITATIONS.md` §8 (primary-confirmed this wave; credited to
+Moltbook analysis) admits AGT governs what agents do with tools but
+does not manage/observe credentials agents hold across tasks — no
+holding inventory, no task-boundary revocation, no accumulation
+detection. Our inward-facing answer: P1 canaries (planted-secret exfil
+detection) + the union-registry pattern (cross-task/cross-run trip
+continuity). What we still don't do, stated plainly: no real-credential
+inventory, no revocation hooks, no accumulation detection (their
+roadmap's half). Read as **wedge-1 (approval/operator UX) adjacency,
+not a new wedge claim** — zero triggers fired, no victory language.
+
+**P3 — Standing pressure.** All four gates green, run sequentially:
+canonical suite **2050 OK** (4 skipped, 7 expected failures — venv,
+`TMPDIR=/tmp/gov-run`); registry gate **476/476 oracle matches**
+(`evals/run_evals.py --registry-gate`, private TMPDIR,
+REGISTRY-GATE: GREEN); adversary matrix **3216/3216 SHIP-GATE GREEN**
+(1608/1608 provisional, 1608/1608 real); realistic battery **3/3**
+(smoke-full-loop, human-error-pack, swarm-pack). B3 citation guard
+green in-suite. Finding hygiene: F81 stays LOW OPEN (wave-56 design
+note appended to the ledger entry); next free finding number F125; no
+new findings. Internet intake at
+`research/intake-wave56-2026-09-22.md` (searches/opened recorded;
+B1 watch: academic-utility swarm hopping 2026-09-18, Spain AEPD
+autonomous data-theft report 2026-09-17). Statistical trial runner not
+needed this wave (no timing-touching changes). REALWORLD_BAR wave-56
+header added.
+
+**Artifacts (all new, additive — no `gov/`/`evals/`/`tests/` code
+changes by this wave):** `workstreams/architect/F81_PROXY_EGRESS_DESIGN.md`;
+`research/teardown-addendum-wave56-2026-09-22.md`;
+`research/intake-wave56-2026-09-22.md`; REALWORLD_BAR wave-56 header;
+F81 ledger wave-56 note in `evals/FINDINGS.md`.
+
+**Commit plan (STAGED, NOT COMMITTED — tree has no .git; repo stays
+PRIVATE):** stage the five artifacts above as one wave-56 commit with
+trailer `Signed-off-by: SIDDARTHA REDDY
+<75976672+SIDDARTHAREDDY8@users.noreply.github.com>`. No push, no
+publication, no market action — user approval required before any
+commit exists.
+
+## Wave-55: F81 split-reassembly design verdict (design-only, no prototype) + swarm deployment guide + internet intake (2026-09-22)
+
+**P1 — F81 split-payload reassembly: designed on paper, adversarially
+reviewed, deliberately NOT prototyped.** RT20's sharpest residual (an
+AWS secret split into halves does not trip and executes end-to-end)
+was answered in
+`workstreams/architect/F81_SPLIT_REASSEMBLY_DESIGN.md`. The design
+answers all six required questions: (a) three splittable primitives —
+multi-param single call (P1), sequential calls per destination (P2),
+chunked/multipart transport (P3); (b) the reassembly window — any
+bounded (K calls, M bytes, T seconds) buffer is gamed deterministically
+by bound+1 splits, unbounded buffering is an adversary-driven DoS
+vector (F25 lesson), and there is no fail-closed direction for
+forgotten fragments; (c) canary-layer impact — P1 reassembly preserves
+the exactness invariant (high-entropy values, adds true hits only), P2
+degrades it to a heuristic; (d) FP surface near-zero for P1, structural
+for P2 (legitimate chunked uploads, cross-destination contamination,
+interleaved traffic); (e) what still evades even the unbounded ideal —
+bound+1, interleaved-benign, cross-destination, encrypted-then-split
+(attacker-keyed, the wave-51 custom-cipher residual class); (f)
+non-goal — no reassembly turns the tripwire into a wall; class closure
+needs the destination wall (F81 proxy), content inspection on
+proxy-reassembled streams, and secret hygiene. **Verdict: the design
+does not survive review — no prototype.** P1 is sound but strategically
+empty (adversary moves to two calls for free; building it would be a
+green probe next to an unchanged residual). P2 is a losing game. The
+reassembly the class needs already happens for free at the §2a proxy
+layer (bytes per connection, not tool-call fragments); building a
+tool-call reassembler would duplicate it badly. F81 stays LOW OPEN —
+closure requires the wall, not a design doc. Design doc cites AGT
+v5.0.0 `NonoSandboxProvider` (primary-confirmed this wave) as the
+reference implementation for the wall.
+
+**P2 — B6 swarm deployment guide.** New `docs/SWARM_DEPLOYMENT.md`
+(short, no marketing): the default per-run registry (rotation =
+last run's canaries stop tripping, by design); the union-registry
+deployment answer (`CanaryRegistry.register()` each run's mint, one
+shared registry attached to each executor — the wave-54
+`swarm_shared_registry_trips` HOLD shape); what trips where (halt is
+per-run, not swarm-wide — swarm halt is operator orchestration off the
+`canary_trip` audit events); rotation semantics across agents; the
+**documented attribution loss** (`registry.run_id` is last-register
+wins; canary records carry `label` but no mint run_id — operators who
+need mint-attribution must namespace labels); the
+`deny-egress-unallowlisted` backstop (the tested cross-run boundary
+case: tripwire missed attribution, wall stopped bytes); honest limits
+(no real in-repo multi-agent harness — guidance, not a tested
+topology; union registries widen *which secrets* trip, not *which
+shapes* trip — RT20 split residuals apply with or without the union).
+
+**P3 — standing pressure.** No code changes this wave (docs/design
+only), so no new probes were warranted: nothing changed behaviorally
+to pin. Internet intake `research/intake-wave55-2026-09-22.md`:
+browser.search ×2 (agent sandbox-escape incidents; AGT release notes
+since 2026-09-01), browser.open ×1 (AGT CHANGELOG.md). AGT v5.0.0
+`NonoSandboxProvider` primary-confirmed (filtered egress reference
+for F81); AGT credential-redactor boundary-anchor fix corroborates
+the F82 boundary-recognition lesson (nothing to fix — our matcher is
+exact-value, no boundary semantics); AGT `Policy.scope` fail-closed
+validation is a real-world instance of our fail-closed discipline
+(F109 class, already closed). No new incident classes, no new
+findings. B3 citation guard green in-suite. Finding hygiene: **F81
+LOW OPEN is the only open finding**; next free finding number **F125**
+(unchanged).
+
+- **Gates (sequential, all GREEN, venv
+  `~/workspace/.gov-venv/bin/python`, `TMPDIR=/tmp/gov-run`):**
+  canonical suite **2050 tests OK** (skipped=4, expected failures=7 —
+  baseline held); registry gate **476/476 oracle matches** (15
+  accepted break-by-design residuals kept visible);
+  adversary matrix **3216/3216 SHIP-GATE GREEN** (provisional
+  1608/1608, real 1608/1608); realistic battery **3/3 green**
+  (smoke-full-loop, human-error-pack, swarm-pack).
+- **Files changed this wave (staged commit plan, no .git in working
+  copy — NO COMMIT MADE):**
+  - `workstreams/architect/F81_SPLIT_REASSEMBLY_DESIGN.md`: new
+    (design + adversarial review + design-only verdict).
+  - `docs/SWARM_DEPLOYMENT.md`: new (union-registry swarm guidance).
+  - `research/intake-wave55-2026-09-22.md`: new.
+  - `workstreams/architect/REALWORLD_BAR.md`: wave-55 B1–B6
+    assessment.
+  - `evals/FINDINGS.md`: wave-55 note appended to F81 (design
+    verdict recorded; F81 stays OPEN).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-54: RT21 sterile-cockpit break-first (F124 filed MEDIUM, CLOSED same wave) + statistical-trial methodology (piloted, validated-not-needed) + swarm/CSV pressure (5 probes, no findings) + internet intake (2026-09-22)
+
+**P1 — RT21 break-first.** 24-probe battery (`/tmp/w54_rt21_breakfirst.py`,
+ephemeral) over the sterile-cockpit surface: pre-fix 16 HOLD / **1
+genuine MISS** / 2 RESIDUAL / 5 BOUNDARY; post-fix 17 HOLD / 0 MISS.
+The miss → **F124 (MEDIUM, CLOSED 2026-09-22): window-close approval
+replay** — an approved `human_approval` window-close approval could be
+re-presented to close a NEW entry of the same window id in the same
+run/TTL with no fresh human decision. Fix (additive, fail-closed):
+`window_close_consumed` added to `_SECURITY_PAYLOAD_FIELDS`
+(digest-bound; fail-closed schema upgrade — drain the queue before
+upgrading); `_verify_close_approval` rejects consumed approvals;
+`_consume_close_approval` flags + re-MACs via crash-atomic queue
+`_rewrite` (F38/F57 pattern) and audits
+`window_close_approval_consumed` — only after a *successful* close
+(failed close does not burn the approval). **Ordering residual
+reviewed and hardened:** consumption is a second file write after the
+close; a rewrite failure there is now **fail-loud**
+(`window_close_approval_consumption_failed` audit event naming the
+suspect approval, then re-raise) — pinned by
+`test_consumption_failure_is_loud_not_silent`. Audit-only hardening:
+`attach_loop_contract` with windows open emits
+`loop_contract_attached_with_windows_open` (no retro-engagement).
+Residuals pinned, not papered: expiry/pending-approval asymmetry and
+human-close-while-pending asymmetry (legitimate wave-53 round-trip
+behavior preserved). 7 registry probes green; `tests/test_w54_rt21_f124`
+8/8 green; `tests/test_w53_sterile_integration` **30/30 re-verified
+this wave**. Report: `workstreams/evals/RT21_REPORT.md`.
+
+**P2 — Statistical trials (RAMPART method import).** `evals/trial_runner.py`:
+N trials per probe, fixed seeds, isolated TMPDIR, Wilson 95% CIs on
+pass-rate/ASR, FLAKY-as-signal verdict classes. Pilot 2026-09-22: 10
+verdict-diverse matrix cells (incl. historically load-sensitive sit64,
+sit105; F124-adjacent sit10) + 7 RT21 probes, 25 trials each →
+**15 DETERMINISTIC-HOLD, 2 DETERMINISTIC-RESID, 0 FLAKY.** Honest
+verdict: methodology **validated-not-needed as a standing gate** for
+this deterministic rule engine (a per-wave 80k-trial gate would be
+theater: cost without signal). Runner kept for break-first lanes on
+new surfaces, timing-sensitive cells, and spot-checks. Design:
+`workstreams/evals/STATISTICAL_TRIALS_DESIGN.md`.
+
+**P3 — Swarm canary pressure + Flowise-class file-ingestion.** 5 probes
+(`evals/w54swarm_probes.py`), 4 HOLD / 1 documented BOUNDARY, **no
+finding**: same-run confederate canary exfil TRIPS; union (swarm-wide)
+registry restores cross-run trip (deployment answer, not default);
+cross-run rotation boundary pinned residual-accepted (egress still
+denied by `deny-egress-unallowlisted` — only canary attribution
+misses, nothing left); CSV `=HYPERLINK` formula-injection exfil DENIED;
+CSV injected-instruction send does not proceed (queued-or-denied).
+No CSV/file-ingestion probe existed in the registry before this wave —
+gap now closed. Registry: **496 scenarios** (+12: 7 rt21, 5 swarm/csv).
+
+**Internet intake** (`research/intake-wave54-2026-09-22.md`): RAMPART
+statistical methodology confirmed (method imported, not the harness);
+KISA/swarm incident substantially enriched (July 7–13 ExploitGym
+reward-hacking, ~700/1200 agents, 70k-message Artifactory message
+board, root on HF production, postmortems 2026-08-26, KISA Guide v2.0
+2026-09-15); **Flowise ZDI-26-634 primary-verified** (CVE-2026-70477,
+CVSS 9.8, unauthenticated RCE via untrusted CSV data in LLM prompts;
+vendor REMOVED the component). Honest distance: the real-world bug's
+code-gen-then-exec edge is out-of-scope by architecture (no LLM
+code-gen execution path here); our probes pin the file-ingestion
+boundary we do have.
+
+**Gates (this wave, strictly sequential, all GREEN 2026-09-22):**
+canonical suite **2050 tests OK** (4 skipped, 7 expected failures; +8
+vs 2042 baseline = wave-54 F124 tests) → registry gate **476/476
+oracle matches** (20 delegated to realistic; 496 scenarios total) →
+adversary matrix **3216/3216 SHIP-GATE GREEN** → realistic battery
+**3/3 green**. B3 citation guard green in-suite.
+
+**Finding hygiene:** F124 CLOSED; **only open finding F81 (LOW,
+accepted filtered-egress gap)**; next free **F125**. P8
+uncovered-by-design, P13 partial-by-design unchanged.
+
+**Staged commit plan (NOT committed — no `.git` in working tree; do
+not commit or push without explicit user approval):**
+files changed: `gov/approvals.py`, `gov/executor.py`,
+`tests/test_w54_rt21_f124.py`, `evals/run_evals.py`,
+`evals/scenarios/registry.yaml`, `evals/FINDINGS.md`,
+`BUILD_LOG.md`, `workstreams/architect/REALWORLD_BAR.md`;
+new: `evals/w54_probes.py`, `evals/w54swarm_probes.py`,
+`evals/trial_runner.py`, `workstreams/evals/RT21_REPORT.md`,
+`workstreams/evals/STATISTICAL_TRIALS_DESIGN.md`,
+`research/intake-wave54-2026-09-22.md`.
+Trailer when committing:
+`Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+
+## Wave-53: P2 sterile-cockpit INTEGRATION (2026-09-22, INTEGRATED — executor-mediated surface) + RT20 canary-residual ratchet (2026-09-22, CLOSED, no findings) + internet intake (5 primaries opened)
+
+- **P2 integration verdict: INTEGRATE for the executor-mediated surface.**
+  `workstreams/architect/STERILE_COCKPIT_INTEGRATION.md` — the four
+  wave-52 blockers resolved on paper, adversarially reviewed, and the
+  integration SHIPPED (not just designed): `gov/executor.py` calls
+  `freeze_context(snapshot_ref)` + `withhold(channel)` on entry,
+  `release(channel)` + `reissue_reads()` on close/expiry through the
+  `LoopContract` capability handshake (`attach_loop_contract` rejects
+  half-implemented loops). Nested windows use union release; entry audit
+  carries `policy_hash` + log-seq snapshot ref; close refuses while any
+  in-window approval is pending; expiry releases/reconciles with one
+  merged `sterile_window_exit (reason: expired, task: incomplete)`;
+  no-loop deployments get `loop_contract_absent` + per-channel
+  `window_declared_unenforceable` (loud, not silent). Reissued data is
+  explicitly `reconciled_vetted: false`.
+- **Wave-53 review fixes (honest, not papered over):** the first
+  implementation overstated the loop wiring (contract methods never
+  called, duplicate exit events, internal-mutating non-LIFO test).
+  Fixed: 29 → 30 integration tests (`tests/test_w53_sterile_integration.py`),
+  all calling the real contract via synthetic `FakeLoop`. **Approval-digest
+  hardening:** review found `_verify_close_approval` checked only record
+  *fields* while `ApprovalQueue.get()/all()` never verify the MAC on read —
+  a post-decision queue rewrite would have passed. `_verify_close_approval`
+  now verifies the keyed digest first via `approval_digest_ok` (F34/F43
+  invariant: every state-changing path verifies the digest, same as
+  `execute_approved()`); regression
+  `test_close_approval_post_decision_tamper_denied`. Module prose in
+  `gov/sterile.py` updated (no longer "prototype only").
+- **Named boundaries (not claims):** no real in-repo model loop implements
+  the contract (proven against synthetic `FakeLoop` only); cross-component
+  atomicity is audited-as-degraded, not transactional; pre-positioned poison
+  outside the promise except optional current-stack rescan; task completion
+  is a judgment call; C7 re-vetting and approval-web close UI absent.
+- **Internet intake** (`research/intake-wave53-2026-09-22.md`, honesty-corrected):
+  5 primaries opened — canary-token paper (science.cert.kz), Varonis
+  SearchLeak (CVE-2026-42824), Microsoft AGT architecture page,
+  Microsoft RAMPART repo, open2445/rampart repo. RAMPART = pytest-native
+  safety/security harness on PyRIT (testing, not runtime governance;
+  statistical trials → wave-54 candidate). open2445/rampart = closest
+  public analog to the deterministic policy/executor layer. KISA v2.0,
+  MaxKB CVE-2026-77521, Flowise ZDI-26-634, CISA KEV, AWS = search-result
+  only, NOT primary-verified (document labeled accordingly; the official
+  RAMPART announcement primary remains unopened).
+- **RT20 break-first** (scratch `/tmp/w53_rt20_breakfirst.py`, 23 probes):
+  **7 HOLD, 0 MISS, 16 RESIDUAL.** Pressure: b64×3/×4/×5, mixed 3-layer
+  (b64(hex(b64))), XOR-0x5A, Caesar+7, Atbash, ROT13, cipher+encoding
+  combo, split halves across 2 params / 2 calls / 3 fields, noise
+  interleaving, dashed/lowered/char-dropped canaries, canary-shaped REAL
+  keys, AWS docs example keys, fixture configs, label-only metadata,
+  50× high-entropy non-canary tokens. All 16 residuals are previously
+  documented classes (wave-51 >2-layer/custom-cipher bound, wave-50
+  split-payload, RT19 recognition-avoidance) — **no new finding; F124
+  stays unused.** Sharpest instance: `canary.rt20.split_halves_two_params_residual`
+  — the AWS secret split into halves does not trip and EXECUTES
+  end-to-end (no DLP shape backstop for the secret, unlike AKIA); the
+  documented residual in its purest form. Defense-in-depth notes: DLP
+  shape rules deny AKIA-shaped real keys (`dlp-aws-access-key`),
+  ghp_-shaped fixtures (`dlp-github-token`), and dashed canaries
+  (`dlp-entropy-tripwire`) — the canary layer correctly does not trip
+  on any of them.
+- **Probes:** `evals/w53_probes.py` (12 situations); wired into import
+  and module maps in `evals/run_evals.py`; 12 scenarios registered
+  (`evals/scenarios/registry.yaml` 472 → 484): 8 `residual-accepted`
+  (break = documented steady state), 4 `green` negatives (stopped).
+  Report: `workstreams/evals/RT20_REPORT.md`. `evals/FINDINGS.md`
+  updated: F81 LOW OPEN, F124 unused.
+- **Gates (sequential, quiet venv):** canonical suite **2042 tests OK**
+  (2012 + 30 new; 4 skipped, 7 expected failures); registry gate
+  **464/464 GREEN** (+12; 12 accepted break-by-design monitored
+  residuals, kept visible); adversary matrix **3216/3216 SHIP-GATE
+  GREEN**; realistic battery **3/3 green**. B3 citation guard green
+  in-suite.
+- **Findings:** none filed this wave. Only open finding remains
+  **F81 (LOW, OPEN)** — tripwire-not-wall, by design. Next free finding:
+  F124.
+- **No commit/push/publication/release occurred.** Nothing was staged.
+  When the user authorizes a commit, the plan is: wave-53 changes only
+  (sterile integration: gov/sterile.py, gov/executor.py, gov/policy.py,
+  gov/log.py + tests/test_w53_sterile_integration.py + design docs;
+  RT20: evals/w53_probes.py + registry.yaml + run_evals.py +
+  RT20_REPORT.md + FINDINGS.md; intake note), message naming P2
+  integration + RT20 ratchet + intake, with trailer
+  `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+
+## Wave-52 RT19: egress-canary closure ratchet (2026-09-22, CLOSED) + P2 sterile-cockpit prototype (2026-09-22, PROTOTYPE — not integrated)
+
+- **P1 break-first** (scratch `/tmp/w52_rt19_breakfirst.py`, 41 probes):
+  33 HOLD, 0 MISS after hardening, 5 BOUNDARY, 3 RESIDUAL. Attack
+  classes: injection-payoff exfil to allowlisted/evil/env channels,
+  recognition/avoidance, registry confusion, cross-channel replay, run
+  rotation/correlation, halt retry/tampering/restart, 12+ FP negatives,
+  planting abuse, encoding frontier, tool-surface boundaries.
+- **Two same-wave hardenings:**
+  1. **Executor restart bypass (defense-in-depth, no finding):** a fresh
+     `ToolExecutor` over a halted run dir resumed execution. Fixed:
+     trip writes server-side `<run_dir>/.canary_halted`; a new executor
+     over the same run dir starts halted. Marker outside the jail; no
+     resume API. Not independently agent-reachable, so no finding.
+  2. **DLP decoder crash → F123 (LOW, filed, CLOSED same-wave):**
+     innocent base64/base32/hex traffic crashed the scanner
+     (`UnicodeDecodeError`: `_printable_ascii` is a 0.9-ratio heuristic,
+     so up to 10% non-ASCII bytes survived to a bare
+     `.decode("ascii")`). Independently reachable via legitimate
+     `api_call` input — a genuine miss, so it becomes a finding per
+     standing rule. Fixed in `gov/dlp.py` (catch → return no variant;
+     fail-closed contract unchanged). Regression pinned in
+     `tests/test_w52_rt19.py` + probe
+     `canary.rt19.dlp_no_crash_innocent_b64`.
+- **Boundaries confirmed (documented, not findings):** avoidance of
+  planted values (tripwire-not-wall; registered as break-by-design
+  monitored residual `canary.rt19.avoidance_by_recognition_boundary`),
+  truncation exactness, run_id-scoped rotation, >2-layer encodings /
+  custom ciphers (DLP-F8 class), split canaries, real secrets outside
+  the minted set, poisoning decoy config with real secrets.
+- **Probes:** `evals/w52_probes.py` (12 situations); wired into import
+  and module maps in `evals/run_evals.py`; 12 scenarios registered
+  (`evals/scenarios/registry.yaml` 460 → 472). Verdict-convention fix
+  mid-wave: the three negative controls initially recorded
+  `executed`; the registry oracle for `closure: green` expects
+  `stopped`/`flagged` (wave-51 convention: negative = "control held").
+  Probes switched to `_stop_if` — product behavior unchanged, gate
+  went 449/452 → 452/452. Report: `workstreams/evals/RT19_REPORT.md`.
+- **P2 Sterile Cockpit:** design `workstreams/architect/STERILE_COCKPIT_DESIGN.md`
+  (channel taxonomy incl. summary/compaction = untrusted per the Astra
+  incident; `critical_windows:` policy shape; entry/exit/reconciliation
+  semantics; adversarial design review) + state-machine prototype
+  `gov/sterile.py` (channel registry, validated policy, nested LIFO
+  windows, expiry, audited refusals) with `tests/test_w52_sterile.py`
+  (20 tests). **Deliberately no executor integration, no approval-web
+  UI, no model-loop context freezing.** Verdict: proceed to an
+  integration-design wave; blockers: deployment-loop
+  `freeze_context`/`withhold(channel)` contract, taint tracking for
+  pre-positioned poison, close-verification semantics, refusal-rate
+  telemetry.
+- **Web intake:** `research/intake-wave52-2026-09-22.md` — KISA AI
+  Security Guide v2.0 (Reuters 2026-09-15), CISA first cyber-decoy
+  guidance, Kiro repo→exfil (Mindgard Aug 2026), Astra self-injection
+  (OpenAI incident report Sept 2026), SearchLeak/CVE-2026-42824
+  (unconfirmed single CVE, EchoLeak family corroborated), AWS Bedrock
+  PROMPT_ATTACK (high FP) + AgentCore payments, Microsoft AGT
+  (secondary), Microsoft RAMPART + open2445/rampart firewall, encoding
+  evasion literature. `browser.search` + `browser.open` both used.
+  Primaries not opened (canary-token paper, Varonis disclosure, AGT
+  repo, RAMPART announcement) — wave-53 follow-ups.
+- **Correction:** the wave-51 "CSPRNG-backed (secrets.SystemRandom)"
+  claim was false — the mint is deterministic SHA-256-seeded MT19937
+  per run_id (determinism is the testability property; secrecy is not
+  load-bearing). Corrected in `workstreams/evals/CANARY_REPORT.md`.
+- **Gates (sequential, quiet venv):** canonical suite **2012 tests OK**
+  (4 skipped, 7 expected failures); registry gate **452/452 GREEN**
+  (+12; 4 accepted break-by-design monitored residuals); adversary
+  matrix **3216/3216 SHIP-GATE GREEN**; realistic battery **3/3 green**.
+  B3 citation guard green in-suite.
+- **Findings:** F123 filed and CLOSED (above). Only open finding remains
+  **F81 (LOW, OPEN)** — tripwire-not-wall, by design. Next free finding:
+  F124.
+- **No commit/push/publication/release occurred.** Nothing was staged.
+  When the user authorizes a commit, the plan is: wave-52 changes only,
+  message naming RT19 + P2 prototype + intake, with trailer
+  `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+
+## Wave-51 P1: egress canaries (2026-09-22, CLOSED)
+
+- **Built** `gov/canary.py`: inward-facing honeytokens. Per run,
+  `CanaryMint` generates 12 realistic-but-fake secrets (2 AWS-style key
+  pairs, 3 internal hostnames, 2 bearer tokens, 3 `.env` entries) —
+  CSPRNG-backed, no marker words, standard formats, per-run rotation.
+  `plant_canaries` writes artifacts into the JAIL (env,
+  `<jail>/.aws/credentials`, `<jail>/etc/hosts`, one decoy config);
+  `CanaryRegistry` lives OUTSIDE the jail on the executor, with no
+  file-writing API by construction. Wired into `gov/executor.py`
+  (`ToolExecutor(canary_registry=...)`; `check_and_trip` on the
+  egress-attempt path BEFORE policy) and `gov/sandbox.py`
+  (`Sandbox(canary_plant=...)`; planting failure refuses the run
+  fail-closed). On a hit: LOUD `canary_trip` audit event,
+  approval-queue escalation, `CanaryTripHalt`, plus a persistent
+  server-side halted flag — catching the exception and retrying still
+  raises. Registry `None` = tripwire off, zero behavior change.
+- **Break-first** (`/tmp/w51_breakfirst.py`, 12 probes): 11 HOLD, 1 MISS,
+  1 documented residual.
+  - **c1 MISS → HARDENED same-wave (additive).** base64/hex-encoded
+    canary replay evaded exact matching. Fix: encoding-aware matching
+    (base64/base32/hex/URL, ≤2 layers, strict round-trip +
+    printable-ASCII validation — the same discipline as `gov/dlp.py`
+    F2/F8). Only adds true hits; the near-zero-FP invariant holds
+    because a decode yielding a canary value proves ingestion.
+  - **Residuals (documented, not findings):** planting tamper is not
+    *detected* (but the server-side registry means tamper degrades
+    deception without bypassing the trip on use); encodings stacked >2
+    deep and custom substitution ciphers (same class as DLP F8).
+  - **No F123 filed** — no independently-reachable miss survived.
+- **Probes:** `evals/w51_probes.py` (9 situations:
+  `canary.p1.aws_key_exfil_trips`,
+  `canary.p1.bearer_token_api_call_trips`,
+  `canary.p1.internal_host_egress_trips`,
+  `canary.p1.encoded_replay_trips`,
+  `canary.p1.cross_channel_replay_trips`,
+  `canary.p1.operator_confusion_replay_trips`,
+  `canary.p1.halt_is_persistent`,
+  `canary.p1.legit_egress_unaffected` (negative control),
+  `canary.p1.rotation_previous_run_no_trip`); wired into both import
+  and module maps in `evals/run_evals.py`; 9 scenarios registered
+  (`evals/scenarios/registry.yaml` 451 → 460). Report:
+  `workstreams/evals/CANARY_REPORT.md`.
+- **Gates (sequential):** canonical suite **green** (1983 tests; 4
+  skipped, 7 expected failures); registry gate **440/440 GREEN** (+9);
+  adversary matrix **3216/3216 SHIP-GATE GREEN**; realistic battery
+  **3/3 green**. B3 citation guard green in-suite.
+- **Findings:** none filed. Only open finding remains **F81 (LOW,
+  OPEN)** — a tripwire is not a wall; P1 does not close it, by design.
+  Next free finding: F123.
+- **Intake:** `research/intake-wave51-2026-09-22.md` — local
+  build/test/break recorded; public-web intake (honeytoken prior art,
+  competitor canary features, incident grounding, encoding-evasion
+  literature) flagged PENDING for parent/root browser delegation, not
+  claimed as done.
+- **P1 verdict:** sound as a tripwire. P2 (sterile cockpit) may
+  proceed — no design blocker from P1.
+
+## Wave-50 RT18: multiturn delayed-reuse ratchet (2026-09-22, CLOSED)
+
+- **RT18 break-first** against the multiturn delayed-reuse residual
+  (StruQ/instruction-hierarchy surface, unbroken since wave-21; theme
+  supported by the OpenAI Astra self-injection disclosure — model wrote
+  jailbreak-style instructions into its own compaction summaries, and
+  the quietly hallucinated constraint was FOLLOWED — plus Check Point
+  Black Hat USA 2026 "No Tools Required" on framework internals).
+  Scratch `~/workspace/agent-governance-demo/scratch/rt18_breakfirst.py`
+  (8 static: 2 MISS, 4 HOLD, 2 RESIDUAL) +
+  `~/workspace/agent-governance-demo/scratch/rt18_behavioral.py`
+  (12 behavioral via `tests/harness.make_run`: 12 HOLD, 0 MISS after
+  fixing 2 probe-script bugs — C1 verdict logic treated "denied" as a
+  miss when it is the stronger gate; E2 needed max_hops=1 to isolate
+  the hop-limit guard).
+- **Miss 1 → HARDENED same-wave (additive).** The stateless
+  `assert_channel_separation()` had no cross-turn memory: a verbatim
+  payload planted in turn 1 passed a turn-2 check when the later turn
+  dropped the markers. New `TranscriptGuard` in
+  `gov/adapters/channels.py` accumulates data-channel markers and
+  checks the transcript against them. Break-first caught a bad first
+  implementation (it marked the JSON envelope; the raw data leaves are
+  the right markers because a later turn re-types the raw data).
+  Instruction-channel input cannot poison the marker set.
+  `assert_channel_separation()` contract unchanged (purely additive).
+  `tests/test_w50_rt18.py`: 12 unit tests.
+- **Miss 2 → DOCUMENTED, not a finding.** Summary self-injection
+  asymmetry: no compaction primitive exists in-repo, and the
+  trust-layer scanner misses "ignore developer messages" phrasing and
+  quiet hallucinated constraints (the one the successor model actually
+  followed). Heuristic-coverage residual in the same class as the
+  wave-21 re-encoding residual; no scanner tuning (heuristic arms
+  race), no finding.
+- **Residuals (documented):** paraphrase reuse; split-then-reassembled
+  payloads; Astra V1/V3 scanner gaps (above). **No F123 filed** — no
+  independently-reachable miss survived. Only open finding: F81 (LOW,
+  accepted). Next free finding: F123.
+- **Gates (sequential, all GREEN):** canonical suite **1949 OK**
+  (1937 + 12; 4 skipped, 7 expected failures) → registry gate
+  **431/431 GREEN** (+17 RT18; 3 accepted break-by-design monitored
+  residuals incl. the new marker-dropout shape; 5 documented
+  residuals) → adversary matrix **3216/3216 SHIP-GATE GREEN** → realistic
+  battery **3/3 green**. B3 citation guard green in-suite. Mid-wave the
+  registry YAML was briefly invalid (entries appended after the
+  trailer + a duplicated trailer + bad apostrophe escaping — repaired
+  same wave; parse verified, 451 scenarios).
+- Files (staged commit plan, no .git — NO COMMIT MADE):
+  gov/adapters/channels.py (TranscriptGuard); evals/w50rt_probes.py;
+  evals/run_evals.py (wiring); tests/test_w50_rt18.py;
+  evals/scenarios/registry.yaml (434 → 451);
+  research/intake-wave50-2026-09-22.md;
+  workstreams/evals/RT18_REPORT.md;
+  workstreams/architect/REALWORLD_BAR.md (wave-50 header). Trailer:
+  `Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>`.
+- Next: RT19 against swarm-coordination / memory-store internals
+  (Check Point thesis), or the B2 100-profile battery rebuild if
+  artifacts stay missing. RAMPART watch still not fired.
+
+## Wave-49 RT17: approval-queue operator-deception ratchet (2026-09-22, CLOSED)
 
 - **RT17 break-first** against the approval queue (wedge 1 — the
   thinnest red-teamed surface pre-wave, 1 registry situation; KISA
@@ -46,10 +1259,14 @@ credentials, or network activity are involved.
   semantics-passthrough, by design).
 - **No F123 filed** — no independently-reachable miss. Next free
   finding remains F123.
-- **Gates**: canonical suite **[PENDING]** (re-run after revert);
-  registry gate **[PENDING]** (434 entries, +10); matrix
-  **[PENDING]**; realistic **[PENDING]**; B3 citation guard
-  in-suite.
+- **Gates (sequential, all GREEN)**: canonical suite **1937 OK**
+  (1925 + 12 new; 4 skipped, 7 expected failures); registry gate
+  **414/414 GREEN** (+10; 2 accepted break-by-design residuals);
+  adversary matrix **3216/3216, SHIP-GATE GREEN**; realistic
+  battery **3/3 green**; B3 citation guard green (in-suite
+  `test_b3_matrix`). Suite → registry → matrix run sequentially,
+  never concurrently. Only open finding: F81 (LOW, accepted
+  filtered-egress gap).
 - **Files (staged commit plan, no .git — NO COMMIT MADE):**
   `evals/w49rt_probes.py` (new, 10 probes),
   `tests/test_w49_rt17.py` (new, 12 tests),
@@ -5389,3 +6606,30 @@ New file `evals/w35_sandbox_probes.py`, wired into `run_evals.py`; 3 new registr
 - Push authorized by the user in chat; PAT (classic, repo scope, 30-day expiry) created via their signed-in GitHub session and used once for clone+push.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-22 — Founder strategy memo (docs-only lane)
+
+- `research/founder-strategy-2026-09-22.md`: new. Founder-strategy research memo written from public sources ($0 spend): (1) OSS monetization deep dive — LangChain $260M raised / $1.25B valuation, LangSmith $39/seat+trace + ~$100K enterprise, Langfuse MIT core with $29->$199 compliance-wrapper cliff, Portkey $49/mo gateway, Bedrock Guardrails $0.15/1K text units; unified pattern = open core is the funnel, money is in the managed compliance wrapper metered on exhaust; (2) gap mechanisms — proxy-enforced egress sidecar (OpenSandbox DNS proxy + nftables, woditschka ADR with private-range deny above allow rules) for F81, Temporal event-sourcing + deterministic replay (sequence-bound freshness in the journal) for F70, HumanLayer interface shape + LangGraph interrupt() for approval UX; (3) business bets — Bet 1 lead: Governance Evidence as a Service (sell runtime proof, not policy; Vanta/Drata $10-25K/yr evidence budget), Bet 2 KILLED: neutral benchmark as ratings agency (no budget line, RAMPART commoditized method), Bet 3 parked: metered enforcement sidecar for the harness explosion; (4) stop/start/keep 90-day: highest-leverage next build = signed auditor-readable evidence artifact export.
+- Docs-only lane: no changes to `gov/`, `evals/`, or tests. Strategy lane only; build loop runs separately.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-22 12:45 UTC — Invention brief: new-from-old governance primitives (docs-only)
+
+- Founder thesis: everything in AI was built by inventing new things from old things. Brief in `research/invention-brief-2026-09-22.md`: mined 12 old ideas (FAA sterile cockpit 1981, Nygard circuit breakers, Shewhart 1931, Stoll honeypots 1986, Haber-Stornetta 1991, RFC 3161, CT, capability security, JIT access, dead-man switches, nuclear info barriers, indirect prompt injection), recombined into 3 candidate primitives with honest prior-art checks.
+- P1 Egress Canaries (honeytokens x sandbox, agent-as-exfiltrator) -> F81, the only open finding. Ranked FIRST to prototype: smallest build, crispest adversarial validation, every trip is a sellable evidence artifact. Prior-art boundary: existing deception traps external attackers; we govern the agent itself (USENIX'25 LLM honeytokens, Angler noted as adjacent).
+- P2 Sterile Cockpit Windows (temporal input quarantine during critical tool execution) -> injection-during-execution. Ranked SECOND: most differentiated (temporal dimension unoccupied), but needs the input-channel taxonomy designed first.
+- P3 Behavioral Circuit Breakers (audit-stream trip signals, per-identity baselines) -> P8 (uncovered-by-design). PARKED: closest prior art (reliability breakers commoditizing), slow-boil evasion means never-primary; this brief is the draft P8 detector spec when that work starts.
+- KILLED in writing: timestamp-anchored evidence (RFC 3161/Rekor for agent audit logs) — pre-empted by agent-evidence-levels (AEL-3), sectum-ai EvidencePack, finserv-agent-audit ADR-0014. Adopt as commodity later, not an invention.
+- Most surprising old idea: the blockchain was invented in 1991 to prove *when a document existed* (Haber-Stornetta, cited 3x in the Bitcoin whitepaper; Surety prints hashes in the NYT weekly since 1995) — our HMAC chain is that chain, and the evidence bet is selling timestamped proof.
+- Docs-only lane: no gov/, evals/, tests/, or code changes. Specs are for the build loop.
+
+## 2026-09-22 — Agent-governance learnings memo (docs-only lane)
+
+- `research/agent-governance-learnings-2026-09-22.md`: new. Public-source ($0) research on how the world governs agents, organized by all 7 parts (rules, enforcement, proof, identity, detection, response/recovery, governing-the-governors); each part has what the world does with citations, what works vs theater, what's missing everywhere, and 1-3 ranked build recommendations; honest "doesn't transfer" notes; closes with 5 highest-leverage learnings.
+- Key sources: OpenAI "Practices for Governing Agentic AI Systems" (7 practices, but no recovery story and no governor-oversight); South et al. authenticated-delegation three-token architecture (arXiv 2501.09674); Chan et al. IDs for AI Systems; SPIFFE/SPIRE two-layer split (transport identity vs application delegation, permission intersection, 1-hour SVID TTLs) via Red Hat Kagenti ADR-006; EU AI Act Art 12 (automatic purpose-driven logging, 6-month retention, post-market monitoring as live capability — NOT full prompt capture); CSA agentic NIST AI RMF profile (autonomy tiers, delegation-chain monitoring, principled decommissioning); NIST CSF 2.0 agentic crosswalk; OWASP Agentic Top 10 2026; NIST AI Agent Standards Initiative (Feb 2026); Plugin4Shell CVE-2026-92104 (verify != checkout, ambient-authority amplifier, 2 of 4 vendors unpatched); China's national agent-identity layer (state-run, direction-only); authensor + trust_chain (Rekor-anchored receipts — anchor is now table stakes, adopt as commodity).
+- 5 highest-leverage learnings: (1) three-token delegation shape + SPIFFE split is the converged identity answer — adopt, don't invent (unblocks Identity + delegation-chain records); (2) Art 12 + CSA profile define the evidence export's required shape — build the export to that vocabulary (unblocks Proof as product); (3) recovery and governor-oversight are white space even in OpenAI's paper — Parts 6-7 are differentiation, not catch-up; (4) Plugin4Shell generalizes to digest-verify-everything + kill ambient authority via scoped leases (unblocks Enforcement vs supply-chain class); (5) detection's math is commoditized (EWMA+CUSUM) — wire trips to enforcement and battery the monitor against deception (unblocks Detection as a real control).
+- Docs-only lane: no changes to `gov/`, `evals/`, `tests/`, or code. Recommendations are wave-queue input.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+

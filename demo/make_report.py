@@ -139,14 +139,71 @@ def short_args(args, limit=90):
     return " ".join(bits)
 
 
+def attribution_fields(e):
+    """Wave-68: render the wave-67 attribution mark as first-class export
+    fields — VERBATIM from the verified chain entry, never invented.
+
+    Returns "" when the entry carries no attribution key (e.g. tool_call
+    records), " | attribution=<...>" for unattributed acks, and
+    " | attribution=authenticated | token_id=<...>" for authenticated
+    acks. The exporter never upgrades (an entry without the mark never
+    renders "authenticated") and never downgrades; a tampered label
+    breaks the hash-chain verification, which the report renders FAILED.
+    """
+    att = e.get("attribution")
+    if att is None:
+        return ""
+    tid = e.get("token_id")
+    if tid is None:
+        return " | attribution=%s" % att
+    return " | attribution=%s | token_id=%s" % (att, tid)
+
+
 def evidence_line(e):
     return ("seq %(seq)s | %(ts)s | %(agent_id)s (%(role)s) | %(tool)s | %(args)s | "
-            "%(decision)s | policy %(policy_id)s | %(reason)s" % {
+            "%(decision)s | policy %(policy_id)s | %(reason)s%(attribution)s" % {
                 "seq": e.get("seq"), "ts": e.get("ts"),
                 "agent_id": e.get("agent_id"), "role": e.get("role"),
                 "tool": e.get("tool"), "args": short_args(e.get("args")),
                 "decision": e.get("decision"), "policy_id": e.get("policy_id"),
-                "reason": e.get("reason")})
+                "reason": e.get("reason"),
+                "attribution": attribution_fields(e)})
+
+
+# Wave-68: validity-at-time semantics for the attribution export. The
+# exporter does not hold the registration authority's revocation ledger
+# (it reads only the run dir), so it cannot — and must not — assert
+# CURRENT token validity. What it preserves is validity-at-time:
+# token_id + ts lets the auditor check the revocation ledger as of the
+# ack's recorded time. A token revoked or expired AFTER the ack does not
+# rewrite history: the chained record keeps its mark, honestly.
+VALIDITY_AT_TIME_NOTE = (
+    "\"attribution\": \"authenticated\" means the ack presented a "
+    "consumer token that verified against the deployment's registration "
+    "authority AT THE ACK'S RECORDED TIME (ts) — validity-at-time, not "
+    "current validity. A token revoked or expired AFTER the ack does "
+    "not rewrite history: the chained record keeps its mark. To audit: "
+    "check the registration authority's revocation ledger as of the ack "
+    "ts; token_id distinguishes independent registrations of the same "
+    "consumer_id. \"attribution\": \"unattributed\" is the always-open "
+    "anonymous path — honestly marked, never silently upgradable to "
+    "\"authenticated\" by the exporter. A forged label breaks the "
+    "hash-chain verification above, which is this export's tamper "
+    "evidence (qualified by the signing-key status).")
+
+
+def ack_records(entries):
+    """Wave-68: the chained acknowledgment records (wave-65 D5 ack trail
+    with wave-67 attribution marks), in chain order."""
+    return [e for e in entries if e.get("event") == "unvetted_acknowledged"]
+
+
+def ack_line(e):
+    return ("seq %(seq)s | %(ts)s | consumer=%(consumer)s | origin=%(origin)s"
+            "%(attribution)s" % {
+                "seq": e.get("seq"), "ts": e.get("ts"),
+                "consumer": e.get("consumer"), "origin": e.get("origin"),
+                "attribution": attribution_fields(e)})
 
 
 def build_findings(entries):
@@ -237,11 +294,163 @@ def build_findings(entries):
     return findings
 
 
+def anchor_status_text(anchors):
+    """Wave-72: qualified external-anchoring language (F29 discipline).
+
+    ``anchors`` is the dict from ``gov.anchorer.anchor_summary`` (or None
+    when the summary was not provided / could not be computed). Returns
+    plain text — callers escape for HTML. Never claims third-party
+    timestamping when no anchor exists.
+    """
+    if anchors is None:
+        return ("External anchor status not provided in this report "
+                "rendering; no claim is made about third-party timestamping.")
+    epochs = anchors.get("epochs") or []
+    anchored = [e for e in epochs if e.get("grade") == "anchored"]
+    bad = [e for e in epochs if e.get("grade") != "anchored"]
+    backends = sorted({e.get("backend") for e in anchored
+                       if e.get("backend")}) or ["none"]
+    last = anchors.get("last_anchor") or {}
+    open_ep = anchors.get("open_epoch") or {}
+    parts = ["Wave-72 Haber-Stornetta anchoring: %d of %d closed epochs "
+             "anchored (witness backends: %s)." % (
+                 len(anchored), len(epochs), ", ".join(backends))]
+    # Evidence-export vocabulary (research intake 2026-09-22: EU AI Act
+    # Art 12 + CSA agentic NIST profile). The automatic-recording
+    # statement lives here; traceability fields (who/when/resource/
+    # outcome), the retention manifest, and delegation-chain monitoring
+    # are collected by the Wave-73 provenance export
+    # (provenance_export_text below) — the wave-72 deferral is now
+    # discharged, no rework here.
+    parts.append("Anchor receipts are recorded automatically by the anchor "
+                 "daemon on the anchor cadence (EU AI Act Art 12 automatic "
+                 "recording), never at the agent's invocation.")
+    for e in bad:
+        reasons = "; ".join(e.get("reasons") or ["no reason recorded"])
+        parts.append("Epoch %s grades %s: %s." % (
+            e.get("epoch_id"), e.get("grade"), reasons))
+    if last:
+        parts.append("Last anchor: epoch %s at %s." % (
+            last.get("epoch_id"), last.get("witness_time")))
+    if open_ep:
+        parts.append("Open epoch %s holds %d unanchored record(s) "
+                     "(the soft window)." % (
+                         open_ep.get("epoch_id"),
+                         open_ep.get("unanchored_records", 0)))
+    if not anchors.get("chain_ok"):
+        parts.append("NOTE: the HMAC chain could not be verified in this "
+                     "rendering, so anchor grades are witness-half only.")
+    parts.append("Guarantee: %s" % anchors.get("guarantee", ""))
+    return " ".join(parts)
+
+
+def provenance_export_text(provenance):
+    """Wave-73: the Art 12 provenance export — collects the wave-72 deferral.
+
+    Renders traceability fields (who/when/resource/outcome), the
+    retention manifest, delegation-chain monitoring, and session-timing
+    findings from ``gov.provenance.provenance_export``. ``provenance``
+    None renders honestly as not-provided, never as a claim about the
+    log. Returns plain text — callers escape for HTML.
+    """
+    if provenance is None:
+        return ("Provenance export not provided in this report rendering; "
+                "no claim is made about traceability coverage.")
+    parts = [provenance.get("automatic_recording", "")]
+    rows = provenance.get("traceability_rows") or []
+    parts.append("Traceability (who/when/resource/outcome) — %d provenance "
+                 "record(s):" % len(rows))
+    for r in rows:
+        parts.append(
+            "seq %(seq)s | %(ts)s | principal %(principal)s | "
+            "action %(action)s | resource %(resource)s | outcome "
+            "%(outcome)s | policy %(policy_version)s | tier "
+            "%(payload_tier)s | delegation hops %(delegation_hops)s | "
+            "anchor %(anchor_grade)s" % {k: r.get(k) for k in
+            ("seq", "ts", "principal", "action", "resource", "outcome",
+             "policy_version", "payload_tier", "delegation_hops",
+             "anchor_grade")})
+    manifest = provenance.get("retention_manifest") or {}
+    parts.append("Retention manifest (policy %s; floor %s):"
+                 % (manifest.get("policy_ref"),
+                    manifest.get("retention_floor")))
+    for tier in sorted((manifest.get("tiers") or {})):
+        t = manifest["tiers"][tier]
+        parts.append("- tier %s: %d record(s), retain until %s .. %s"
+                     % (tier, t["records"], t["earliest_until"],
+                        t["latest_until"]))
+    for flag in manifest.get("flags") or []:
+        parts.append("RETENTION FLAG: %s" % flag)
+    dm = provenance.get("delegation_monitoring") or {}
+    parts.append("Delegation-chain monitoring: %d record(s) carry chained "
+                 "delegation paths; hop depths %s. %s"
+                 % (dm.get("records_with_delegation"),
+                    dm.get("distinct_hop_depths"), dm.get("note", "")))
+    findings = provenance.get("session_timing_findings") or []
+    if findings:
+        parts.append("Session-timing findings:")
+        for f in findings:
+            parts.append("- [%s] session %s: %s"
+                         % (f["kind"], f["session_id"], f["detail"]))
+    else:
+        parts.append("Session-timing findings: none.")
+    return "\n".join(parts)
+
+
+def detection_boundary_text(boundary):
+    """Wave-76: the behavioral detection parameters, rendered verbatim
+    from ``gov.detection.export_boundary`` — baseline windows,
+    thresholds, the measured CUSUM lag, and the slow-boil sentence.
+    ``boundary=None`` renders honestly as not-provided, never as a
+    claim about detection coverage. Returns plain text — callers
+    escape for HTML. Every number below comes from ``gov.detection``;
+    nothing is hand-copied."""
+    if boundary is None:
+        return ("Behavioral detection parameters not provided in this "
+                "report rendering; no claim is made about detection "
+                "coverage.")
+    parts = []
+    sigs = boundary.get("signals") or {}
+    first = next(iter(sigs.values())) if sigs else {}
+    parts.append(
+        "Behavioral circuit breakers (wave-76, gov/detection.py): EWMA "
+        "alpha=%s / spike z>%s; CUSUM k=%s sigma / h=%s sigma; "
+        "bucket=%ss; baseline window=%s buckets (enforced rolling "
+        "window); cold-start=%s buckets on purpose-group defaults "
+        "(approximate, conservative)." % (
+            first.get("ewma_alpha"), first.get("spike_z"),
+            first.get("cusum_k"), first.get("cusum_h"),
+            first.get("bucket_seconds"), first.get("window_buckets"),
+            first.get("min_training_buckets")))
+    parts.append("Monitored signals: %s." % ", ".join(sorted(sigs)))
+    parts.append("Measured CUSUM lag: %s buckets (%s)" % (
+        boundary.get("measured_cusum_lag_buckets"),
+        boundary.get("measured_cusum_lag_note")))
+    parts.append("SLOW-BOIL BOUNDARY: %s" % boundary.get("slow_boil"))
+    parts.append("Alerting is harmful-direction-only; trip -> the human "
+                 "approval queue (fail-closed); the monitor never "
+                 "executes tools and never approves queue items.")
+    return "\n".join(parts)
+
+
 def render_markdown(run_id, generated_at, chain_ok, chain_count, stats,
-                    findings, key):
+                    findings, key, acks=None, anchors=None,
+                    provenance=None, detection=None):
     """F29: ``key`` is the dict from :func:`key_status` — the report's
     integrity language is derived from the entries' ``key_epoch``
-    values, never an unqualified "tamper-evident" claim."""
+    values, never an unqualified "tamper-evident" claim.
+    ``acks`` are the chained ``unvetted_acknowledged`` records rendered
+    with their wave-68 first-class attribution fields (verbatim).
+    ``acks=None`` (legacy callers) renders the section as not-provided,
+    never as a claim about the log. ``anchors`` is the wave-72
+    ``gov.anchorer.anchor_summary`` dict; ``anchors=None`` (legacy)
+    renders honestly as not-provided. ``provenance`` is the wave-73
+    ``gov.provenance.provenance_export`` dict (collects the wave-72
+    Art 12 deferral: traceability fields, retention manifest,
+    delegation-chain monitoring); None renders as not-provided.
+    ``detection`` is the wave-76 ``gov.detection.export_boundary``
+    dict (baseline windows, thresholds, measured lag, slow-boil
+    sentence); None renders as not-provided."""
     lines = []
     lines.append("> **%s**" % BANNER)
     lines.append("")
@@ -257,6 +466,21 @@ def render_markdown(run_id, generated_at, chain_ok, chain_count, stats,
     lines.append("**%s**" % key["banner_line"])
     lines.append("")
     lines.append(key["integrity_note"])
+    lines.append("")
+    lines.append("## External anchoring (wave-72)")
+    lines.append("")
+    lines.append(anchor_status_text(anchors))
+    lines.append("")
+    lines.append("## Provenance export (wave-73)")
+    lines.append("")
+    lines.append(provenance_export_text(provenance))
+    lines.append("")
+    # Wave-76: behavioral detection parameters (baseline windows,
+    # thresholds, measured lag, slow-boil boundary) rendered verbatim
+    # from gov.detection -- never hand-copied.
+    lines.append("## Behavioral detection (wave-76)")
+    lines.append("")
+    lines.append(detection_boundary_text(detection))
     lines.append("")
     lines.append("## Summary")
     lines.append("")
@@ -285,6 +509,22 @@ def render_markdown(run_id, generated_at, chain_ok, chain_count, stats,
         for e in f["evidence"]:
             lines.append("    %s" % evidence_line(e))
         lines.append("")
+    # Wave-68: acknowledgment attribution as first-class export fields.
+    # acks=None (legacy callers) is rendered honestly as not-provided —
+    # never as a claim about the log's contents.
+    lines.append("## Acknowledgments (consumer attribution)")
+    lines.append("")
+    if acks is None:
+        lines.append("Acknowledgment records were not included in this "
+                     "report rendering.")
+    elif acks:
+        for e in acks:
+            lines.append("    %s" % ack_line(e))
+    else:
+        lines.append("No acknowledgment records in this run's log.")
+    lines.append("")
+    lines.append(VALIDITY_AT_TIME_NOTE)
+    lines.append("")
     lines.append("## Notes")
     lines.append("")
     lines.append("- %s" % BANNER)
@@ -324,9 +564,13 @@ code{background:#f4f4f4;padding:1px 5px;border-radius:3px;font-size:13px}
 
 
 def render_html(run_id, generated_at, chain_ok, chain_count, stats,
-                findings, key):
+                findings, key, acks=None, anchors=None, provenance=None,
+                detection=None):
     """F29: see :func:`render_markdown` — integrity language derives from
-    the entries' ``key_epoch`` values."""
+    the entries' ``key_epoch`` values. ``anchors`` is the optional
+    wave-72 anchor summary (None renders honestly as not-provided).
+    ``provenance`` is the optional wave-73 provenance export dict.
+    ``detection`` is the optional wave-76 detection boundary dict."""
     esc = htmlmod.escape
     parts = []
     parts.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">")
@@ -348,6 +592,21 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats,
     parts.append("<li>Hash-chain verification: <strong>%s</strong></li>"
                  % ("OK" if chain_ok else "FAILED"))
     parts.append("</ul>")
+    # Wave-72: external anchoring status (qualified language, F29).
+    parts.append("<h2>External anchoring (wave-72)</h2>")
+    parts.append("<p>%s</p>" % esc(anchor_status_text(anchors)))
+    # Wave-73: provenance export (Art 12 traceability + retention
+    # manifest + delegation-chain monitoring; collects the wave-72
+    # deferral). Rendered as preformatted text; provenance=None renders
+    # honestly as not-provided.
+    parts.append("<h2>Provenance export (wave-73)</h2>")
+    parts.append("<div class=\"evidence\">%s</div>"
+                 % esc(provenance_export_text(provenance)))
+    # Wave-76: behavioral detection parameters, verbatim from
+    # gov.detection (numbers, never hand-copied).
+    parts.append("<h2>Behavioral detection (wave-76)</h2>")
+    parts.append("<div class=\"evidence\">%s</div>"
+                 % esc(detection_boundary_text(detection)))
     parts.append("<h2>Summary</h2>")
     parts.append("<table><tr><th>Outcome</th><th>Count</th></tr>")
     for name, count in stats:
@@ -366,6 +625,18 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats,
         for e in f["evidence"]:
             parts.append("<div class=\"evidence\">%s</div>" % esc(evidence_line(e)))
         parts.append("</div>")
+    # Wave-68: acknowledgment attribution as first-class export fields
+    # (acks=None renders honestly as not-provided — see render_markdown).
+    parts.append("<h2>Acknowledgments (consumer attribution)</h2>")
+    if acks is None:
+        parts.append("<p>Acknowledgment records were not included in this "
+                     "report rendering.</p>")
+    elif acks:
+        for e in acks:
+            parts.append("<div class=\"evidence\">%s</div>" % esc(ack_line(e)))
+    else:
+        parts.append("<p>No acknowledgment records in this run's log.</p>")
+    parts.append("<p>%s</p>" % esc(VALIDITY_AT_TIME_NOTE))
     parts.append("<div class=\"footer\">%s<br>%s</div>"
                  % (esc(BANNER), esc(key["integrity_note"])))
     parts.append("</body></html>")
@@ -379,6 +650,9 @@ def main():
     # Production entry points never do this — they fail closed.
     import os
     os.environ.setdefault("GOV_DEV_KEYS", "1")
+    # Wave-69: the report tool renders synthetic demo runs, not production
+    # (wave-61 deployment_mode discipline).
+    os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
     from gov.log import enable_dev_keys
     enable_dev_keys()
     parser = argparse.ArgumentParser(description="Generate the audit report for a run.")
@@ -425,10 +699,43 @@ def main():
     reports.mkdir(parents=True, exist_ok=True)
     md_path = reports / ("%s_audit_report.md" % run_id)
     html_path = reports / ("%s_audit_report.html" % run_id)
+    # Wave-68: the wave-67 attribution marks flow into the export as
+    # first-class fields (verbatim from the verified chain).
+    acks = ack_records(entries)
+    # Wave-72: external anchor summary — optional, never blocks the
+    # report; failure renders honestly as not-provided.
+    try:
+        from gov.anchorer import (audit_anchors, anchor_summary,
+                                  backend_for_receipt)
+        _arep = audit_anchors(str(run_dir / "actions.jsonl"),
+                              backend_for_receipt)
+        anchors = anchor_summary(_arep)
+    except Exception:
+        anchors = None
+    # Wave-73: provenance export — the Art 12 traceability fields,
+    # retention manifest, and delegation-chain monitoring wave-72
+    # deferred. Computed live from the log; failure renders honestly as
+    # not-provided (never blocks the report).
+    try:
+        from gov.provenance import provenance_export
+        provenance = provenance_export(entries, anchors)
+    except Exception:
+        provenance = None
+    # Wave-76: behavioral detection boundary — operative baseline
+    # windows, thresholds, measured lag, slow-boil sentence. Computed
+    # live from gov.detection; failure renders honestly as
+    # not-provided (never blocks the report).
+    try:
+        from gov.detection import BehavioralMonitor
+        detection = BehavioralMonitor().export_boundary()
+    except Exception:
+        detection = None
     md_path.write_text(render_markdown(run_id, generated_at, chain_ok, chain_count,
-                                       stats, findings, key), encoding="utf-8")
+                                       stats, findings, key, acks, anchors,
+                                       provenance, detection), encoding="utf-8")
     html_path.write_text(render_html(run_id, generated_at, chain_ok, chain_count,
-                                     stats, findings, key), encoding="utf-8")
+                                     stats, findings, key, acks, anchors,
+                                     provenance, detection), encoding="utf-8")
     print("wrote %s" % md_path)
     print("wrote %s" % html_path)
     print("chain: %s (%d entries)" % ("OK" if chain_ok else "BROKEN", chain_count))

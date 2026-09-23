@@ -238,9 +238,15 @@ def _ledger_keyring():
     """{key_epoch: key_bytes}: active key plus archived epochs.
 
     F17: the SAME key epochs as the action log (``gov/log.py``) —
-    ``GOV_LOG_KEY`` / ``GOV_LOG_KEY_ARCHIVE``, falling back to the public
-    dev key. Verification therefore survives the same rotations the
-    action log does.
+    ``GOV_LOG_KEY`` / ``GOV_LOG_KEY_ARCHIVE``. The ledger inherits
+    ``gov.log._active_key()``'s process-level resolution (wave-71:
+    deliberately no ``deployment_mode=`` kwarg — a per-ledger mode
+    declaration could fork the ledger's key epochs away from the
+    log's, breaking this contract; one process-level declaration
+    moves both together). Wave-69: there is no silent dev-key
+    fallback — dev keys require the double opt-in and refuse in
+    production mode, exactly as on the log path. Verification
+    therefore survives the same rotations the action log does.
     """
     key, epoch = _logmod._active_key()
     keys = {epoch: key}

@@ -64,6 +64,7 @@ def main(argv=None):
     consistency_seq = None
     do_sigs = False
     do_export = False
+    do_anchors = False
     query = {}
     rest = []
     i = 0
@@ -97,6 +98,9 @@ def main(argv=None):
             i += 2
         elif argv[i] == "--sigs":
             do_sigs = True
+            i += 1
+        elif argv[i] == "--anchors":
+            do_anchors = True
             i += 1
         elif argv[i] == "--export":
             do_export = True
@@ -134,6 +138,9 @@ def main(argv=None):
         print("                    so logs spanning key rotations verify.")
         print("  --sigs          third-party (HMAC-keyless) verification of")
         print("                    the signed checkpoints (P2/A5).")
+        print("  --anchors       Haber-Stornetta anchor audit (wave-72):")
+        print("                    per-epoch anchored / operator-attested-only")
+        print("                    grades via checkpoint -> receipt -> witness.")
         print("  --sig-trust <json>  {key_id: pubkey_hex} trusted signing "
               "keys")
         print("  --roster <json>     offline-root-signed signer roster "
@@ -150,11 +157,33 @@ def main(argv=None):
         # R6c: explicit --dev opt-in at the CLI layer (in-code), plus the
         # env factor. Loud warning; default stays strict.
         os.environ.setdefault("GOV_DEV_KEYS", "1")
+        # Wave-69: --dev verification is synthetic, not production
+        # (wave-61 deployment_mode discipline).
+        os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
         enable_dev_keys()
         print("GOVERNANCE KEY WARNING: --dev: verifying with the PUBLIC "
               "development key (zero integrity). Never use for real audit "
               "data.", file=sys.stderr)
     log_path = rest[0]
+
+    if do_anchors:
+        # Wave-72: the auditor walk (checkpoint -> receipt -> witness).
+        # Exit 0 iff the chain verifies AND every closed epoch is
+        # anchored; the JSON report always prints (witness-half results
+        # need no HMAC key, the chain half is marked needs-key without it).
+        from . import anchorer as _anchorer
+        try:
+            report = _anchorer.audit_anchors(
+                log_path, _anchorer.backend_for_receipt)
+        except (OSError, ValueError, _anchorer.AnchorerError) as e:
+            print(json.dumps({"ok": False, "error": "anchors: %s" % e},
+                             indent=2, sort_keys=True))
+            return 1
+        print(json.dumps(report, indent=2, sort_keys=True, default=str))
+        grades = [ep.get("grade") for ep in report.get("epochs", [])]
+        ok = bool(grades) and report.get("chain_ok") and all(
+            g == _anchorer.GRADE_ANCHORED for g in grades)
+        return 0 if ok else 1
 
     def _trust():
         trusted = {}

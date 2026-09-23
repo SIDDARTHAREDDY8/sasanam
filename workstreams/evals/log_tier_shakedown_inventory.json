@@ -1,0 +1,2841 @@
+{
+ "inventory": [
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 12,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "clone",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 76,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 131,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 18,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 61,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 117,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mkdir",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 31,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 7,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 134,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 81,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 120,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rename",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "unlink",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "wait4",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "baseline-file-fork"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 12,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "clone3",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 51,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 87,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 21,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 12,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 10,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 40,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 76,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "madvise",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 38,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 10,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 7,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 96,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 56,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 81,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 67,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 17,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigprocmask",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "threads-queue"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "accept4",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "bind",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 21,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "clone3",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 85,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "connect",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "epoll_create1",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 136,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 22,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 16,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getpeername",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getsockname",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 60,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "listen",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 117,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "madvise",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 31,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 8,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 133,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 82,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 130,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "recvfrom",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "recvmsg",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 67,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigprocmask",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "sendto",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "setsockopt",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "shutdown",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    1,
+    526337,
+    0
+   ],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "socket",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    2,
+    524289,
+    0
+   ],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "socket",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    2,
+    524290,
+    0
+   ],
+   "count": 1,
+   "kill_verdict": "EPERM",
+   "log_verdict": "EPERM",
+   "name": "socket",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [
+    16,
+    524291,
+    -1
+   ],
+   "count": 1,
+   "kill_verdict": "EPERM",
+   "log_verdict": "EPERM",
+   "name": "socket",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "uname",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "tcp-client-proxy-leg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 15,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 54,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "epoll_create1",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 87,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 14,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getsockname",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 40,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 76,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 27,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 95,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 56,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 80,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "recvmsg",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "sendmsg",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [
+    1,
+    524289,
+    0
+   ],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "socketpair",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "unix-socketpair-msg"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 21,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 104,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close_range",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "dup2",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "epoll_create1",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 148,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 16,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 68,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 128,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 46,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 12,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 4,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 139,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 90,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pipe2",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "poll",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 139,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 192,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigprocmask",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "vfork",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "wait4",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "subprocess-exec"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 31,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 79,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "epoll_create1",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 134,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 23,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 16,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 11,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getpid",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 60,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 116,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 42,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 9,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 133,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 84,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 174,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "ssl-context"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 18,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 89,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 7,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 151,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getcwd",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 14,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getpid",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 68,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 132,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 51,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 11,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 149,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 93,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 141,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "unlink",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "io-tempfile-mmap"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 8,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 42,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 14,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 28,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 52,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 36,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 8,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 80,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 47,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [
+    15
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "prctl",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 58,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "probe-prctl-setname"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 8,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 45,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 67,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 14,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 28,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [
+    21523
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 52,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 40,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 9,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 3,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 83,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 48,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pipe2",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 59,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "probe-ioctl-winsz"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "access",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "arch_prctl",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 10,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "brk",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 55,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "close",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "epoll_create1",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "execve",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "exit_group",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fcntl",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 87,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "fstat",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "futex",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 14,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getdents64",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "getrandom",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "gettid",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [
+    21505
+   ],
+   "count": 40,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [
+    21585
+   ],
+   "count": 1,
+   "kill_verdict": "KILL",
+   "log_verdict": "LOG",
+   "name": "ioctl",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 76,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "lseek",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 27,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mmap",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 6,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "mprotect",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "munmap",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 95,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "newfstatat",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 56,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "openat",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 2,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "pread64",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "prlimit64",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 80,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "read",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 5,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "readlink",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rseq",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 66,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "rt_sigaction",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_robust_list",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "set_tid_address",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [
+    2,
+    524290,
+    0
+   ],
+   "count": 1,
+   "kill_verdict": "EPERM",
+   "log_verdict": "EPERM",
+   "name": "socket",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [
+    10,
+    524289,
+    0
+   ],
+   "count": 1,
+   "kill_verdict": "EPERM",
+   "log_verdict": "EPERM",
+   "name": "socket",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [
+    10,
+    524290,
+    0
+   ],
+   "count": 1,
+   "kill_verdict": "EPERM",
+   "log_verdict": "EPERM",
+   "name": "socket",
+   "workload": "probe-udp-dns-shape"
+  },
+  {
+   "args": [],
+   "count": 1,
+   "kill_verdict": "ALLOW",
+   "log_verdict": "ALLOW",
+   "name": "write",
+   "workload": "probe-udp-dns-shape"
+  }
+ ],
+ "note": "verdicts from _bpf_decision on the exact compiled cage bytes (kill + log blobs)"
+}

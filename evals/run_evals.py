@@ -2843,7 +2843,7 @@ def _registry_oracle(entry):
 def run_registry_gate():
     import uuid
     import yaml
-    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes
+    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes, w50rt_probes, w51_probes, w52_probes, w53_probes, w54_probes, w54swarm_probes, w63_probes, w64_probes, w65_probes, w66_probes, w67_probes, w68_probes, w69_probes, w70_probes, w71_probes, w72_probes, w73_probes, w74_probes, w75_probes, w76_probes, w77_probes, w78_probes, w79_probes
 
     runid = "registry-gate-" + uuid.uuid4().hex[:8]
     # Wave-26 red-team hygiene: honor an already-set TMPDIR (a lane's
@@ -2893,7 +2893,30 @@ def run_registry_gate():
                 "evals/w45rt_probes.py": w45rt_probes,
                 "evals/w46rt_probes.py": w46rt_probes,
                 "evals/w48rt_probes.py": w48rt_probes,
-                "evals/w49rt_probes.py": w49rt_probes}
+                "evals/w49rt_probes.py": w49rt_probes,
+                "evals/w50rt_probes.py": w50rt_probes,
+                "evals/w51_probes.py": w51_probes,
+                "evals/w52_probes.py": w52_probes,
+                "evals/w53_probes.py": w53_probes,
+                "evals/w54_probes.py": w54_probes,
+                "evals/w54swarm_probes.py": w54swarm_probes,
+                "evals/w63_probes.py": w63_probes,
+                "evals/w64_probes.py": w64_probes,
+                "evals/w65_probes.py": w65_probes,
+                "evals/w66_probes.py": w66_probes,
+                "evals/w67_probes.py": w67_probes,
+                "evals/w68_probes.py": w68_probes,
+                "evals/w69_probes.py": w69_probes,
+                "evals/w70_probes.py": w70_probes,
+                "evals/w71_probes.py": w71_probes,
+                "evals/w72_probes.py": w72_probes,
+                "evals/w73_probes.py": w73_probes,
+                "evals/w74_probes.py": w74_probes,
+                "evals/w75_probes.py": w75_probes,
+                "evals/w76_probes.py": w76_probes,
+                "evals/w77_probes.py": w77_probes,
+                "evals/w78_probes.py": w78_probes,
+                "evals/w79_probes.py": w79_probes}
         reg_path = Path("evals/scenarios/registry.yaml")
         scenarios = yaml.safe_load(reg_path.read_text())["scenarios"]
         eval_entries = [e for e in scenarios
@@ -2993,6 +3016,10 @@ def main():
     # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor. Production
     # entry points never do this — they fail closed without a key.
     os.environ.setdefault("GOV_DEV_KEYS", "1")
+    # Wave-69: the eval harness is synthetic, not production — declare it
+    # explicitly (wave-61 deployment_mode discipline). Probes inherit this
+    # ambiently; probes that need production mode set it explicitly.
+    os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
     from gov.log import enable_dev_keys
     enable_dev_keys()
     if "--registry-gate" in sys.argv[1:]:

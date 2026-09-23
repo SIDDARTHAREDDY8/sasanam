@@ -59,6 +59,8 @@ from gov.approvals import ApprovalQueue
 # GOV_DEV_KEYS=1). Ledger numbers stay worst-case for the ledger path
 # (no real GOV_LOG_KEY -> sig cache disabled).
 os.environ.setdefault("GOV_DEV_KEYS", "1")
+# Wave-69: local benchmark harness, not production (wave-61 discipline).
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 from gov.log import enable_dev_keys as _bench_enable_dev_keys
 _bench_enable_dev_keys()
 from gov.egress_ledger import EgressLedger

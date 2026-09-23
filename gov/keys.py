@@ -58,8 +58,11 @@ Dev keys
 --------
 There is **no silent dev-key fallback on the production path**. A key is
 used only if (a) it is configured via the file or env backend, or (b) the
-operator explicitly opts in with ``GOV_DEV_KEYS=1``, in which case a loud
-multi-line warning is printed to stderr on every resolution. The dev key is
+process explicitly opts in with the double opt-in —
+``gov.log.enable_dev_keys()`` in code AND ``GOV_DEV_KEYS=1`` — in which
+case a loud multi-line warning is printed to stderr on every resolution
+(``require_key()`` enforces the same double opt-in as ``gov/log.py``;
+``require_production_key()`` has no dev fallback at all). The dev key is
 publicly documented and provides **zero** integrity.
 
 ``require_production_key()`` (R6c) is the strictest resolver: configured
@@ -86,6 +89,7 @@ except ImportError:  # pragma: no cover
     fcntl = None
 
 from . import log as _logmod  # chain primitives live in gov/log.py (read-only)
+from .zeroize import zeroize  # wave-71: KeyMaterial.destroy() wipe
 
 FORMAT_VERSION = 1
 KEY_BYTES = 32  # 256-bit HMAC keys
@@ -129,9 +133,25 @@ class NoKeyConfiguredError(RuntimeError):
     explicitly opted in. Fail-closed: callers must not proceed."""
 
 
+class DestroyedKeyError(RuntimeError):
+    """Raised when code touches a KeyMaterial after destroy().
+
+    A destroyed key's buffer has been wiped and its reference dropped;
+    any serialization or use is a programming error and must fail loud
+    rather than silently operating on a None/zeroed key."""
+
+
 class KeyMaterial:
     """One key version. ``key`` is the EXACT byte string fed to HMAC — the
-    same bytes ``gov/log.py`` uses (env value UTF-8 encoded)."""
+    same bytes ``gov/log.py`` uses (env value UTF-8 encoded).
+
+    Wave-71: ``key`` is stored as a ``bytearray`` (always a copy of the
+    input — no ``bytes(x) is x`` aliasing), so :meth:`destroy` can
+    actually wipe it. Every consumer (``hmac.new``, ``hashlib.sha256``,
+    ``.decode``, ``==`` against ``bytes``) is buffer-protocol /
+    comparison compatible with ``bytearray``; the wave-71 suite proves
+    no behavior change. After :meth:`destroy`, ``key`` is ``None`` and
+    any use raises loud — a wiped key must never silently HMAC."""
 
     def __init__(self, epoch, key, created_utc=None, status="active"):
         if not _epoch_pattern().match(epoch):
@@ -139,15 +159,39 @@ class KeyMaterial:
         if not isinstance(key, (bytes, bytearray)) or len(key) == 0:
             raise ValueError("key must be non-empty bytes")
         self.epoch = epoch
-        self.key = bytes(key)
+        # bytearray() always copies (bytes input included), so the
+        # caller's buffer and this material never alias: destroying
+        # this material cannot wipe the caller's copy, and mutating
+        # the caller's copy cannot change this material.
+        self.key = bytearray(key)
         self.key_id = hashlib.sha256(self.key).hexdigest()[:KEY_ID_LEN]
         self.created_utc = created_utc or _utcnow()
         self.status = status  # "active" | "retired" | "dev"
+
+    def destroy(self):
+        """Wipe this key version's buffer. Fail-loud afterwards.
+
+        Zeroizes the ``bytearray``, then drops the reference (``key``
+        becomes ``None``) so any later use raises instead of silently
+        HMACing under an all-zero key — a zeroed key that still
+        "works" is a forgery footgun (all-zero-key MACs are computable
+        by anyone). Idempotent: destroying twice is safe. ``key_id``
+        (a digest, not the key) survives for the audit trail.
+        """
+        if self.key is not None:
+            zeroize(self.key)
+            self.key = None
 
     def to_dict(self):
         # Generated keys are 64 ASCII hex chars (32 random bytes hex-encoded);
         # store that exact string so from_dict restores byte-identical keys.
         # Non-hex (legacy env) keys round-trip via key_raw instead.
+        # Destroyed material cannot be serialized: the key is gone (wiped +
+        # reference dropped) — fail loud, never emit a None/zeroed key.
+        if self.key is None:
+            raise DestroyedKeyError(
+                "cannot serialize destroyed key material for epoch %r" % (
+                    self.epoch,))
         return {"epoch": self.epoch,
                 "key_hex": self.key.decode("ascii")
                            if self._is_hex_key() else None,
@@ -347,6 +391,24 @@ class KeyRing:
     def describe(self):
         return {"active_epoch": self._active_epoch,
                 "keys": [m.describe() for _, m in sorted(self._keys.items())]}
+
+    def destroy(self):
+        """Wipe every key buffer in this ring, then forget them.
+
+        Wave-71: the discard-time wipe. After this call no live Python
+        object graph yields any epoch's key (proven by the wave-71
+        copy-census test). Later use raises loud (``KeyError`` on
+        ``get``/``active``) — a destroyed ring never silently verifies
+        or signs. Note the boundary: retired epochs are retained by
+        *design* (history must stay verifiable), so ``destroy()`` is
+        for rings being discarded, not for the live ring; and wiping
+        reachable buffers does not scrub CPython allocator / C-level
+        residue (see ``gov/zeroize.py``).
+        """
+        for mat in self._keys.values():
+            mat.destroy()
+        self._keys = {}
+        self._active_epoch = None
 
     # -- rotation -------------------------------------------------------
 
@@ -584,18 +646,38 @@ class KeyRing:
                 "error": None}
 
 
-def require_key():
+def require_key(*, deployment_mode=None):
     """Fail-closed production key resolution.
 
-    Prefers configured keys (env backend); dev keys only with explicit
-    ``GOV_DEV_KEYS=1`` opt-in (loud warning). Raises
-    :class:`NoKeyConfiguredError` otherwise — the production path must not
-    silently fall back to a public key.
+    Prefers configured keys (env backend); dev keys only with the
+    explicit double opt-in — the in-code ``enable_dev_keys()`` call AND
+    ``GOV_DEV_KEYS=1`` — matching ``gov/log.py`` (wave-69: the old
+    env-only fallback's contract disagreed with the log path's, and no
+    production callers exist). Raises :class:`NoKeyConfiguredError`
+    otherwise — the production path must not silently fall back to a
+    public key. Prefer :func:`require_production_key` (no dev fallback
+    at all) for strict production use.
+
+    ``deployment_mode`` (wave-70): explicit mode declaration, keyword-
+    only; wins over ``GOV_DEPLOYMENT_MODE`` for the production/dev
+    contradiction check (wave-61 precedent). ``None`` (default) keeps
+    the pre-wave-70 behavior exactly.
     """
     try:
         return KeyRing.from_env()
     except NoKeyConfiguredError:
         pass
+    if not _logmod.dev_keys_enabled():
+        raise NoKeyConfiguredError(
+            "GOV_LOG_KEY is not set and dev keys are not enabled for this "
+            "process: dev fallback requires gov.log.enable_dev_keys() in "
+            "code AND GOV_DEV_KEYS=1 in the environment (test harnesses "
+            "only).")
+    from .keyprovider import production_contradiction, resolve_deployment_mode
+    contradiction = production_contradiction(
+        resolve_deployment_mode(deployment_mode))
+    if contradiction is not None:
+        raise contradiction
     return KeyRing.dev()  # raises unless GOV_DEV_KEYS=1
 
 

@@ -16,6 +16,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
@@ -201,6 +202,56 @@ class TestFailClosedLogging(unittest.TestCase):
             "T6/R6: log emission failed, yet the tool STILL EXECUTED "
             "(fail-open logging: write_file ran before append raised)",
         )
+
+
+class TestF126RefreshSigAtomicity(unittest.TestCase):
+    """F126: refresh() must capture the (size, mtime) signature BEFORE
+    reading content, not after.
+
+    The F22 cache assumes the signature describes the file version that
+    produced _seq/_prev. Capturing it after the read lets a concurrent
+    writer slip in between: _seq goes stale while the signature matches
+    the current file, so the next _refresh_if_changed() skips the re-read
+    and assigns a duplicate seq (chain fork). This test deterministically
+    reproduces that interleaving: a writer appends during another
+    instance's constructor refresh(), between its content read and its
+    signature capture.
+    """
+
+    def test_concurrent_writer_during_refresh_no_duplicate_seq(self):
+        from gov.log import verify_chain
+        import tempfile
+
+        d = Path(tempfile.mkdtemp(prefix="f126-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(str(d),
+                                                            ignore_errors=True))
+        p = str(d / "actions.jsonl")
+        log_a = ActionLog(p)
+        for i in range(3):
+            log_a.append({"n": i})
+
+        real_read_text = Path.read_text
+
+        def interleaved_read_text(self, *args, **kwargs):
+            text = real_read_text(self, *args, **kwargs)
+            # The concurrent writer lands between the content read and
+            # the signature capture inside refresh().
+            if str(self) == p and text.strip().count("\n") == 2:
+                log_a.append({"racer": True})
+            return text
+
+        with mock.patch.object(Path, "read_text", interleaved_read_text):
+            log_b = ActionLog(p)  # constructor refresh, raced
+
+        entry = log_b.append({"after": True})
+        # File now holds 5 entries (3 + racer + this one); the new entry
+        # must chain onto the racer's seq 4, not duplicate it.
+        self.assertEqual(entry["seq"], 5,
+                         "F126: stale _seq after raced refresh caused a "
+                         "duplicate seq assignment (chain fork)")
+        ok, _broken, count = verify_chain(p)
+        self.assertTrue(ok)
+        self.assertEqual(count, 5)
 
 
 if __name__ == "__main__":

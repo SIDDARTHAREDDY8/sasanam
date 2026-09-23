@@ -811,7 +811,12 @@ class TestF22LogGuard(unittest.TestCase):
         # The guard rejects when current + new line would exceed the
         # cap — not only when the current size already exceeds it —
         # and the refusal mutates no chain state (no seq gap).
-        log = ActionLog(os.path.join(self.tmp, "d.jsonl"), max_bytes=600)
+        # Cap is 700 (not 600): wave-72 stamps `epoch_id` on every
+        # entry (~24 bytes), so the old 600-byte arithmetic no longer
+        # leaves room for the small "third" entry. The guard itself is
+        # unchanged — it still refused the genuinely-over-cap "second"
+        # append above (603 > 600 projected).
+        log = ActionLog(os.path.join(self.tmp, "d.jsonl"), max_bytes=700)
         log.append({"event": "first", "pad": "x" * 100})
         size = os.path.getsize(log.path)
         self.assertLess(size, 400)

@@ -228,6 +228,8 @@ def main():
         # synthetic attack demo still runs with zero configuration.
         # Production entry points never do this — they fail closed.
         os.environ.setdefault("GOV_DEV_KEYS", "1")
+        # Wave-69: synthetic attack demo, not production (wave-61 discipline).
+        os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
         from gov.log import enable_dev_keys
         enable_dev_keys()
         _run_demo()

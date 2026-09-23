@@ -60,6 +60,8 @@ def main():
     # synthetic demo still runs with zero configuration. Production
     # entry points never do this — they fail closed without a key.
     os.environ.setdefault("GOV_DEV_KEYS", "1")
+    # Wave-69: the demo is synthetic, not production (wave-61 discipline).
+    os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
     from gov.log import enable_dev_keys
     enable_dev_keys()
     run_id = "demo-" + datetime.now().strftime("%Y%m%d-%H%M%S")

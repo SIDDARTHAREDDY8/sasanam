@@ -218,7 +218,8 @@ STANDARD_AGENTS = {
 
 def make_run(policy_path=None, ledger_path=None, principal_registry=None,
              break_glass_tickets=(), session_identity=None,
-             credential_manifest=None):
+             credential_manifest=None, precommit_gate=None,
+             trifecta_floor=False):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -272,7 +273,9 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                                          else run_dir / "egress_ledger.jsonl"),
                             principal_registry=principal_registry,
                             session_identity=session_identity,
-                            credential_manifest=credential_manifest)
+                            credential_manifest=credential_manifest,
+                            precommit_gate=precommit_gate,
+                            trifecta_floor=trifecta_floor)
 
     minted = set()
 

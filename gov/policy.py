@@ -102,7 +102,8 @@ KNOWN_RULE_FIELDS = frozenset(
 KNOWN_TOP_LEVEL_KEYS = frozenset(
     {"version", "roles", "rate_limit", "egress", "approvals",
      "auto_approve", "campaign_allowlist", "delegation", "log_limits",
-     "budgets", "run_limits", "velocity", "policies"})
+     "budgets", "run_limits", "velocity", "policies",
+     "critical_windows"})
 
 KNOWN_APPROVALS_KEYS = frozenset(
     {"ttl_hours", "batch_excluded_queue_reasons", "delegation", "quorum"})
@@ -149,15 +150,26 @@ def default_policy_path():
 
 
 class PolicyDecision:
-    def __init__(self, effect, reason, policy_id=None, flag=None):
+    def __init__(self, effect, reason, policy_id=None, flag=None,
+                 matched_rules=None):
         self.effect = effect          # "allow" | "require_approval" | "deny"
         self.reason = reason
         self.policy_id = policy_id
         self.flag = flag
+        # Wave-79 (totality): the rules that fired, in evaluation order.
+        # The engine evaluates deny -> require_approval -> allow with
+        # first-match-wins per pass, so at most one rule determines the
+        # verdict; the fail-closed default is the reserved sentinel
+        # "default_deny" (documented, not hidden). Auto-derived from
+        # policy_id unless explicitly passed.
+        if matched_rules is None:
+            matched_rules = [policy_id] if policy_id else ["default_deny"]
+        self.matched_rules = list(matched_rules)
 
     def to_dict(self):
         return {"effect": self.effect, "reason": self.reason,
-                "policy_id": self.policy_id, "flag": self.flag}
+                "policy_id": self.policy_id, "flag": self.flag,
+                "matched_rules": list(self.matched_rules)}
 
 
 def _resolve(path, context):
@@ -203,6 +215,28 @@ class PolicyEngine:
     def __init__(self, yaml_path):
         self.yaml_path = Path(yaml_path)
         raw = self.yaml_path.read_bytes()
+        self._init_from_bytes(raw, source_label=str(self.yaml_path))
+
+    @classmethod
+    def from_text(cls, text, source_label="<policy text>"):
+        """Build an engine from in-memory YAML (the governed path).
+
+        Wave-75: the governed policy-change path applies the *stored
+        change artifact*, never a re-read of a file (the Plugin4Shell
+        lesson — verify the artifact, not the reference). ``text`` is
+        the exact buffer that was hashed into the change's
+        ``policy_digest``; the F53 one-buffer rule applies here too.
+        """
+        if not isinstance(text, str):
+            raise ValueError("policy text must be str, got %r"
+                             % type(text).__name__)
+        raw = text.encode("utf-8")
+        engine = cls.__new__(cls)
+        engine.yaml_path = None
+        engine._init_from_bytes(raw, source_label=source_label)
+        return engine
+
+    def _init_from_bytes(self, raw, source_label):
         self.policy_hash = sha256(raw).hexdigest()
         self.source_digest = self.policy_hash
         # F53 (R12): parse the SAME buffer the pin hashed. A second
@@ -212,6 +246,12 @@ class PolicyEngine:
         # attest pristine bytes while the engine enforced attacker
         # bytes. One read, no window.
         cfg = parse_yaml(raw.decode("utf-8")) or {}
+        # Wave-79 (totality): the policy version that names the rule set
+        # on every decision record. The YAML `version:` top-level is the
+        # source of truth; a missing version stamps "unversioned"
+        # (honest, never blank — the schema requires a non-empty
+        # string).
+        self.policy_version = str(cfg.get("version", "unversioned"))
         # F90: unknown top-level sections are refused loudly. A misspelled
         # section (``bugets:`` for ``budgets:``) previously loaded
         # silently with the control unenforced — the exact shape of the
@@ -285,6 +325,18 @@ class PolicyEngine:
         for i, rule in enumerate(cfg.get("policies") or []):
             self._validate_rule(rule, i)
             self.policies.append(rule)
+        # Wave-53 P1 (sterile cockpit): the ``critical_windows:`` block.
+        # Absent = feature off (None). Present = validated fail-closed
+        # HERE at load via gov/sterile.py's WindowPolicy — an invalid
+        # block refuses the policy rather than half-applying at
+        # runtime. The raw block is kept (the executor builds the
+        # controller from it).
+        _cw = cfg.get("critical_windows")
+        self.critical_windows = _cw
+        if _cw is not None:
+            from .sterile import WindowPolicy  # local: sterile has no
+            # policy import (no cycle)
+            WindowPolicy(_cw)  # raises SterilePolicyError on invalid
 
     # ------------------------------------------------------------ validation
     @staticmethod

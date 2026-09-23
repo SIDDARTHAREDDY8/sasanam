@@ -360,7 +360,13 @@ def _try_b64_decode(run):
         return None
     if not _printable_ascii(raw):
         return None
-    return raw.decode("ascii")
+    # _printable_ascii is a 0.9-ratio heuristic, so up to 10% of the
+    # bytes may still be non-ASCII: guard the final decode (wave-52
+    # RT19: innocent base64-looking traffic crashed the scanner here).
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
 
 
 def _try_hex_decode(run):
@@ -373,7 +379,10 @@ def _try_hex_decode(run):
         return None
     if not _printable_ascii(raw):
         return None
-    return raw.decode("ascii")
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
 
 
 def _try_b32_decode(run):
@@ -398,7 +407,10 @@ def _try_b32_decode(run):
         return None
     if not _printable_ascii(raw):
         return None
-    return raw.decode("ascii")
+    try:
+        return raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
 
 
 def _decode_layer(text):
@@ -514,16 +526,89 @@ def find_credential(text):
     return None
 
 
+def _try_ascii_leaf(value):
+    """Decode a non-string arg leaf to ASCII text, or None.
+
+    F128 (wave-63): non-string leaves are scannable credential
+    carriers — a bytes blob, or a JSON-native int array (the canonical
+    byte encoding, like base64), holding a credential-shaped string is
+    still that credential. Only strict ASCII decodes yield a variant
+    (printable-gated, length-gated): the strict credential rules run on
+    decoded leaves exactly as they do on str leaves, and the entropy
+    tripwire stays on the original text (documented F2/F8 boundary).
+    """
+    raw = None
+    if isinstance(value, (bytes, bytearray)):
+        if len(value) < 8:
+            return None
+        raw = bytes(value)
+    elif isinstance(value, (list, tuple)):
+        if len(value) < 8:
+            return None
+        if not all(isinstance(i, int) and not isinstance(i, bool)
+                   and 0 <= i <= 255 for i in value):
+            return None
+        raw = bytes(value)
+    else:
+        return None
+    try:
+        text = raw.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if not all(c.isprintable() or c in " \t\n\r" for c in text):
+        return None
+    return text
+
+
 def _collect_strings(value, out):
-    """Recursively collect every string leaf of an arg mapping."""
+    """Recursively collect every string leaf of an arg mapping.
+
+    F128: also collects ASCII-decoded forms of bytes/bytearray leaves
+    and all-int (0-255) list/tuple leaves. Dict KEYS are deliberately
+    NOT collected here: this feed joins into one buffer, and key
+    fragments glued onto adjacent values poison alignment-sensitive
+    decoding (wave-63: keys "a"/"b" glued onto b64 halves broke the
+    cross-field reassembly). Keys are scanned individually, not joined
+    (see find_credential_cross_field). Used by the cross-field
+    (strict-rules-only) scan, so decoded leaves never reach the
+    entropy tripwire.
+    """
     if isinstance(value, str):
         out.append(value)
+    elif isinstance(value, (bytes, bytearray)):
+        decoded = _try_ascii_leaf(value)
+        if decoded is not None:
+            out.append(decoded)
     elif isinstance(value, dict):
         for v in value.values():
             _collect_strings(v, out)
     elif isinstance(value, (list, tuple)):
+        decoded = _try_ascii_leaf(value)
+        if decoded is not None:
+            out.append(decoded)
         for v in value:
             _collect_strings(v, out)
+
+
+def _collect_keys(value, out):
+    """Recursively collect every dict key of an arg mapping.
+
+    F128: keys are scanned INDIVIDUALLY (never joined into the
+    cross-field buffer — see _collect_strings). A credential-shaped
+    string as an object key is still the credential.
+    """
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(k, str):
+                out.append(k)
+            elif isinstance(k, (bytes, bytearray)):
+                decoded = _try_ascii_leaf(k)
+                if decoded is not None:
+                    out.append(decoded)
+            _collect_keys(v, out)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            _collect_keys(v, out)
 
 
 def find_credential_cross_field(args):
@@ -534,13 +619,25 @@ def find_credential_cross_field(args):
     the entropy tripwire — so joining fields cannot manufacture a
     heuristic hit; only a genuine known-format credential spanning the
     join blocks.
+
+    F128: dict keys are strict-scanned individually (a credential as an
+    object key is still the credential); keys never enter the joined
+    buffer (glue poisoning — see _collect_strings).
     """
     parts = []
     _collect_strings(args or {}, parts)
     joined = "".join(parts)
-    if not joined:
-        return None
-    return _find_credential_strict(joined)
+    if joined:
+        hit = _find_credential_strict(joined)
+        if hit:
+            return hit
+    keys = []
+    _collect_keys(args or {}, keys)
+    for k in keys:
+        hit = _find_credential_strict(k)
+        if hit:
+            return hit
+    return None
 
 
 def scrub_pii(text):
@@ -658,6 +755,19 @@ def scan_tool_args(tool, args):
                 blocked, blocking_rule = True, sub_rule
                 redactions.insert(0, blocking_rule)
             redactions.extend(h for h in sub_hits if h not in redactions)
+        elif isinstance(value, (bytes, bytearray)):
+            # F128: a bytes/bytearray field value is a scannable
+            # credential carrier — strict rules on the ASCII-decoded
+            # form (the entropy tripwire stays on the original str
+            # text, per the documented F2/F8 boundary). The stored
+            # redaction keeps the original value untouched.
+            redacted[name] = value
+            decoded = _try_ascii_leaf(value)
+            if decoded is not None:
+                rule = _find_credential_strict(decoded)
+                if rule and not blocked:
+                    blocked, blocking_rule = True, rule
+                    redactions.insert(0, blocking_rule)
         else:
             redacted[name] = value
     # F8: a credential chunked across params is innocent per-field. Scan

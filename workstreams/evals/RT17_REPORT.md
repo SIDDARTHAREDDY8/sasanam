@@ -92,11 +92,13 @@ masquerade in forensics. Probe
 
 ## Gates
 
-- Canonical suite: **PENDING** (re-run after the approvals.py
-  change; was 1925 OK).
-- Registry gate: **PENDING** (was 404/404).
-- Adversary matrix: **PENDING** (was 3216/3216).
-- Realistic battery: **PENDING** (was 3/3).
-- B3 citation guard: in-suite.
+- Canonical suite: **1937 OK** (1925 + 12 new; 4 skipped, 7
+  expected failures).
+- Registry gate: **414/414 GREEN** (was 404; +10 RT17; 2 accepted
+  break-by-design residuals).
+- Adversary matrix: **3216/3216 SHIP-GATE GREEN**.
+- Realistic battery: **3/3 green**.
+- B3 citation guard: green (in-suite `test_b3_matrix`).
+- Suite → registry → matrix run sequentially, never concurrently.
 
 No F123 filed. Next free finding: F123.
