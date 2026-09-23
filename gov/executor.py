@@ -2866,6 +2866,19 @@ class ToolExecutor:
             return self._policy_store.current_engine()
         return self.policy
 
+    @property
+    def is_governed(self):
+        """Whether this executor's live engine is owned by a
+        GovernedPolicyStore (wave-84).
+
+        False is the legacy posture: the constructor's engine, no
+        governed policy-change events ever reach it, and a directly
+        constructed PolicyEngine takes effect with zero ceremony
+        (the measured wave-84 residual). Deployments that require
+        governed policy assert this is True.
+        """
+        return self._policy_store is not None
+
     def call(self, identity, tool, **kwargs):
         """Run one tool call through the governance pipeline."""
         if not isinstance(identity, AgentIdentity):

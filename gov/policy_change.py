@@ -37,6 +37,8 @@ human stand-in, labeled as such.
 
 import hashlib
 import json
+import functools
+import threading
 from datetime import datetime, timedelta, timezone
 
 from . import signing as _signing
@@ -64,6 +66,22 @@ class TierError(PolicyChangeError):
 
 class BreakGlassError(PolicyChangeError):
     """The break-glass ceremony refused an operation."""
+
+
+def _with_store_lock(fn):
+    """Serialize GovernedPolicyStore mutations (wave-84).
+
+    apply()'s verify-then-swap is check-then-act on the authorship
+    head: two concurrent applies could both pass the parent check and
+    fork the chain. The RLock makes each lifecycle call atomic;
+    re-entrancy is required because _new_change calls approve() and
+    apply() (bootstrap auto-apply).
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
 
 
 # ---------------------------------------------------------------------------
@@ -587,6 +605,13 @@ class GovernedPolicyStore:
         self._authorship_head = _GENESIS  # prior authorship token ref
         self._changes = {}
         self._seq = 0
+        # Wave-84: the store is a shared in-process object — admin
+        # operations (propose/approve/apply) may arrive on threads.
+        # apply()'s verify-then-swap is check-then-act on the authorship
+        # head; without the lock two concurrent applies could both pass
+        # the parent check and fork the chain. RLock: _new_change calls
+        # approve()/apply() re-entrantly (bootstrap auto-apply).
+        self._lock = threading.RLock()
 
     # -- introspection ------------------------------------------------
     def current_engine(self):
@@ -610,11 +635,19 @@ class GovernedPolicyStore:
             raise PolicyChangeError("unknown change %r" % change_id)
 
     # -- lifecycle ----------------------------------------------------
+    @_with_store_lock
     def bootstrap(self, text, author_signer, author, purpose,
                   approver_signers=(), now=None, genesis_artifact=None):
         """Install the first policy. Same rules as a change, with
         ``prior_version="GENESIS"`` — the bootstrap is authored and
         approved, not anointed.
+
+        Wave-84 (F130): a store bootstraps ONCE. A second bootstrap
+        used to succeed and chain a record claiming prior_version
+        GENESIS with a "<genesis>" diff marker — hiding the real diff
+        and lying about lineage while the token parent-link quietly
+        continued the old chain. Policy evolution after bootstrap goes
+        through propose(), never a re-genesis.
 
         Wave-80: ``genesis_artifact`` (``{"artifact_id", "digest",
         ...}`` — the load-gate pin the bootstrap bytes were verified
@@ -625,6 +658,13 @@ class GovernedPolicyStore:
         read straight off disk leaves ``genesis_artifact`` None and
         the record honestly shows the genesis as unverified-file
         bytes (the documented wave-80 residual)."""
+        if self._engine is not None:
+            raise PolicyChangeError(
+                "already bootstrapped (live version %s): policy "
+                "evolution goes through propose(), not a second "
+                "bootstrap — re-genesis would chain a false "
+                "prior_version GENESIS record (F130)"
+                % self._version)
         return self._new_change(
             text=text, prior_text=None, prior_version=_GENESIS,
             author_signer=author_signer, author=author, purpose=purpose,
@@ -687,6 +727,7 @@ class GovernedPolicyStore:
             author=author, purpose=purpose, approver_signers=(),
             now=now, auto_apply=False)
 
+    @_with_store_lock
     def _new_change(self, *, text, prior_text, prior_version,
                     author_signer, author, purpose, approver_signers,
                     now, auto_apply, genesis_artifact=None):
@@ -743,6 +784,7 @@ class GovernedPolicyStore:
             self.apply(change_id, now=now)
         return change
 
+    @_with_store_lock
     def approve(self, change_id, approver_signer, now=None):
         """Record a roster human's approval on a proposed change.
         Each approval is a chained ``approved`` event."""
@@ -757,6 +799,7 @@ class GovernedPolicyStore:
         self._emit(change, status="approved", approvals=change.approvals)
         return ap
 
+    @_with_store_lock
     def apply(self, change_id, now=None):
         """The ONLY path that changes the live engine. Re-verifies
         everything (authorship vs roster, tier, digest binding), builds
@@ -797,6 +840,7 @@ class GovernedPolicyStore:
                    approvals=change.approvals)
         return engine
 
+    @_with_store_lock
     def reject(self, change_id, reason, now=None):
         change = self.get_change(change_id)
         if change.status != "proposed":
@@ -916,12 +960,18 @@ class BreakGlass:
     # -- ceremony -----------------------------------------------------
     def declare(self, purpose, ttl_s, requester_signer, now=None):
         """Request break-glass: a roster human states a purpose and a
-        TTL. Appends the ``declared`` (request) record."""
+        TTL. Appends the ``declared`` (request) record.
+
+        Wave-84: the purpose must be non-blank, not merely truthy — a
+        whitespace "purpose" is a hollow justification and the PAL
+        contract is purpose-DECLARED."""
         if not isinstance(requester_signer, _signing.Signer):
             raise TypeError("requester_signer must be a gov.signing.Signer")
         self._require_human(requester_signer.key_id)
-        if not purpose or not isinstance(purpose, str):
-            raise BreakGlassError("a stated purpose is required")
+        if not purpose or not isinstance(purpose, str) or \
+                not purpose.strip():
+            raise BreakGlassError("a stated (non-blank) purpose is "
+                                  "required")
         if not isinstance(ttl_s, int) or ttl_s <= 0:
             raise BreakGlassError("ttl_s must be a positive int")
         if ttl_s > 86400:
@@ -963,8 +1013,18 @@ class BreakGlass:
         """Record one break-glass use. Requires an active,
         unexpired declaration. Use without declaration → refused (no
         record — there is nothing to dual-record). Use after expiry →
-        refused AND an ``expired`` record appended (loud)."""
+        refused AND an ``expired`` record appended (loud).
+
+        Wave-84: the action summary must be non-blank — dual recording
+        means the record says what was DONE, and the declaration's
+        purpose is chained into every use record regardless."""
         decl = self.get(declaration_id)
+        if not action_summary or \
+                not isinstance(action_summary, str) or \
+                not action_summary.strip():
+            raise BreakGlassError("a stated (non-blank) action summary "
+                                  "is required — every use must say what "
+                                  "was done")
         if decl.state != "active":
             raise BreakGlassError(
                 "break-glass use refused: declaration %r is %r, not "
@@ -1018,8 +1078,10 @@ class BreakGlass:
             raise BreakGlassError("the user cannot review their own "
                                   "break-glass use — two-person review "
                                   "required")
-        if not finding or not isinstance(finding, str):
-            raise BreakGlassError("a stated review finding is required")
+        if not finding or not isinstance(finding, str) or \
+                not finding.strip():
+            raise BreakGlassError("a stated (non-blank) review finding "
+                                  "is required")
         decl.reviewed = True
         decl.state = "reviewed"
         self._emit(decl, "reviewed", review_status="complete",

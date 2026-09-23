@@ -58,6 +58,7 @@ __all__ = [
     "BehavioralMonitor",
     "build_detector_trip",
     "TRIP_KINDS",
+    "SLOW_BOIL_BOUNDARY",
 ]
 
 # ---------------------------------------------------------------------------
@@ -852,11 +853,15 @@ class BehavioralMonitor:
         Returns the operator-action payload the operator MUST chain
         (naming the resetter); None if the breaker was not OPEN.
         The EWMA level tracker is reseeded to the baseline mean (the
-        human judged the spike over). CUSUM suspicion is carried
-        forward only when the opening trip was a drift trip (a reset
-        must not restart the drift clock); a spike trip's incidental
-        accumulation is zeroed. If the new level is legitimate, the
-        operator uses :meth:`rebaseline` (also chained, also named).
+        human judged the spike over). CUSUM suspicion is carried forward
+        on EVERY reset, capped at the decision interval h*sigma (F129:
+        the recorded trip kind is adversary-influenced -- a deliberate
+        spike on one signal shadows an in-progress drift on another --
+        so it must not gate the carry-forward; the cap keeps wave-76's
+        phantom-re-trip fix: a capped sh decays below the trip line
+        within ~2 quiet buckets). A reset never restarts the drift
+        clock. If the new level is legitimate, the operator uses
+        :meth:`rebaseline` (also chained, also named).
         """
         identity_key = identity_key_of(entry_or_identity)
         br = self._breaker(identity_key)
@@ -868,18 +873,21 @@ class BehavioralMonitor:
         # old spike cannot phantom re-trip the half-open window. A
         # CONTINUING spike re-trips on fresh evidence (the next bucket
         # still exceeds the limit).
-        # CUSUM suspicion is carried forward ONLY when the opening trip
-        # was a drift trip: that is the anti-laundering property (a
-        # reset must not restart the drift clock). A spike trip's
-        # incidental CUSUM accumulation is zeroed -- the spike is over
-        # by human judgment, and a huge stale sh would otherwise make
-        # half-open unclosable (phantom re-trips for dozens of
-        # buckets). A new drift still re-trips within the measured lag.
+        # CUSUM suspicion is carried forward on EVERY reset, capped at
+        # the decision interval h*sigma (F129): the recorded trip kind
+        # is adversary-influenced -- a deliberate spike on one signal
+        # shadows an in-progress drift on another, so gating the
+        # carry-forward on last_kind let a reset restart the drift
+        # clock. The cap preserves wave-76's phantom-re-trip fix (a raw
+        # huge sh from a spike trip would otherwise make half-open
+        # unclosable): a capped sh decays below the trip line within
+        # ~2 quiet buckets, while a continued drift re-trips within ~2
+        # buckets. A new drift still re-trips within the measured lag.
         for st in self._signals.get(identity_key, {}).values():
-            mean, _, _ = st.reference()
+            mean, sigma, _ = st.reference()
+            sigma = max(sigma, SIGMA_FLOOR)
             st.ewma.z = mean
-            if last_kind != "cusum_drift":
-                st.cusum.sh = 0.0
+            st.cusum.sh = min(st.cusum.sh, st.cusum.h * sigma)
         return {
             "action": "breaker_reset",
             "identity_key": identity_key,
@@ -887,10 +895,14 @@ class BehavioralMonitor:
             "at": _utcnow(),
             "new_state": CircuitBreaker.HALF_OPEN,
             "prior_trip_kind": last_kind,
-            "cusum_carried": last_kind == "cusum_drift",
-            "note": ("EWMA reseeded to baseline mean; CUSUM carried "
-                     "forward only for drift trips; re-baseline is a "
-                     "separate named operator action"),
+            "cusum_carried": True,
+            "cusum_cap_sigmas": CUSUM_H,
+            "note": ("EWMA reseeded to baseline mean; CUSUM suspicion "
+                     "carried forward capped at h*sigma on every reset "
+                     "(F129: the recorded trip kind is "
+                     "adversary-influenced and no longer gates the "
+                     "carry-forward); re-baseline is a separate named "
+                     "operator action"),
         }
 
     def rebaseline(self, entry_or_identity, reset_by, signal=None):
@@ -1020,6 +1032,83 @@ class BehavioralMonitor:
 
     # -- export surface (the slow-boil boundary, rendered) -----------------
 
+    def export_snapshot(self):
+        """Per-identity detector state for the evidence export (wave-83).
+
+        Plain-data snapshot (JSON-serializable, deterministic, no log
+        writes): for each identity, the role, the breaker state, and per
+        signal the operative baseline window, thresholds, and current
+        levels -- what an auditor needs to see what drift would and
+        would NOT trip. Consumed by
+        ``gov.provenance.provenance_export`` via the
+        ``detection_snapshot`` kwarg; absence of a snapshot renders as
+        stated absence, never as invented baselines.
+        """
+        identities = {}
+        for key, per in self._signals.items():
+            br = self._breakers.get(key)
+            breaker_state = br.state if br is not None else \
+                CircuitBreaker.CLOSED
+            signals = {}
+            for sig, st in per.items():
+                mean, sigma, basis = st.reference()
+                sigma = max(sigma, SIGMA_FLOOR)
+                sigma_ewma = sigma * math.sqrt(
+                    st.ewma.alpha / (2.0 - st.ewma.alpha))
+                if st.buckets_seen <= MIN_TRAINING_BUCKETS:
+                    training = "cold-start (evaluated, never trained)"
+                elif breaker_state != CircuitBreaker.CLOSED:
+                    training = ("frozen: breaker %s" % breaker_state)
+                elif st.cusum.sh > 0:
+                    training = "frozen: CUSUM suspicion active"
+                else:
+                    training = "active"
+                signals[sig] = {
+                    "basis": basis,
+                    "window_buckets": min(st.buckets_seen,
+                                          WINDOW_BUCKETS),
+                    "buckets_seen": st.buckets_seen,
+                    "baseline_mean": round(mean, 4),
+                    "baseline_sigma": round(sigma, 4),
+                    "spike_threshold": round(
+                        mean + SPIKE_Z * sigma_ewma, 4),
+                    "spike_z": SPIKE_Z,
+                    "ewma_alpha": EWMA_ALPHA,
+                    "cusum_threshold": round(CUSUM_H * sigma, 4),
+                    "cusum_k_sigmas": CUSUM_K,
+                    "cusum_h_sigmas": CUSUM_H,
+                    "ewma_level": (None if st.ewma.z is None
+                                   else round(st.ewma.z, 4)),
+                    "cusum_sh": round(st.cusum.sh, 4),
+                    "baseline_training": training,
+                }
+            identities[key] = {
+                "role": self._roles.get(key),
+                "breaker_state": breaker_state,
+                "consecutive_opens": (br.consecutive_opens
+                                      if br is not None else 0),
+                "signals": signals,
+            }
+        return {
+            "identities": identities,
+            "parameters": {
+                "ewma_alpha": EWMA_ALPHA,
+                "spike_z": SPIKE_Z,
+                "cusum_k_sigmas": CUSUM_K,
+                "cusum_h_sigmas": CUSUM_H,
+                "bucket_seconds": BUCKET_SECONDS,
+                "window_buckets": WINDOW_BUCKETS,
+                "min_training_buckets": MIN_TRAINING_BUCKETS,
+                "sigma_floor": SIGMA_FLOOR,
+                "winsor_sigmas": WINSOR_SIGMAS,
+                "half_open_quiet_buckets": HALF_OPEN_QUIET_BUCKETS,
+                "half_open_probe_quota": HALF_OPEN_PROBE_QUOTA,
+                "measured_cusum_lag_buckets":
+                    MEASURED_CUSUM_LAG_BUCKETS,
+            },
+            "slow_boil_boundary": SLOW_BOIL_BOUNDARY,
+        }
+
     def export_boundary(self):
         """The operative detection parameters for the demo export.
 
@@ -1040,6 +1129,7 @@ class BehavioralMonitor:
             },
             "measured_cusum_lag_buckets": MEASURED_CUSUM_LAG_BUCKETS,
             "measured_cusum_lag_note": MEASURED_CUSUM_LAG_NOTE,
+            "slow_boil_boundary": SLOW_BOIL_BOUNDARY,
             "slow_boil": ("A drift engineered to stay under the CUSUM "
                           "decision interval (h=%s sigma, k=%s sigma) "
                           "never trips. The thresholds above are what "
@@ -1062,6 +1152,80 @@ MEASURED_CUSUM_LAG_NOTE = (
     "(by design -- that is why the pair exists). Textbook expectation "
     "h/(delta-k) = 10 buckets; the +1 is the strict-inequality trip "
     "rule.")
+
+#: The explicit slow-boil boundary (wave-83): what drift would NOT
+#: trip, stated as measured numbers, not prose. Rendered verbatim into
+#: the evidence export (``gov.provenance.provenance_export``) so an
+#: auditor sees the operative limits. Every measurement is from the
+#: deterministic synthetic battery (``evals/w83_probes.py``); the
+#: battery re-measures them if the math changes.
+SLOW_BOIL_BOUNDARY = {
+    "statement": (
+        "Drift engineered to stay under the CUSUM decision interval "
+        "(h=5.0 sigma, k=0.5 sigma reference) never trips, and the "
+        "baseline trains on suspicion-free traffic -- so a patient "
+        "adversary that keeps every bucket under k=0.5 sigma of drift "
+        "is invisible to this layer no matter how long it runs. "
+        "egress_attempts counts attempts, not bytes: byte volume per "
+        "attempt is not a signal (content is the DLP/canary layer's "
+        "job). There is no cross-signal aggregate: harm spread across "
+        "signals at sub-k per-signal drift is invisible. A human reset "
+        "never restarts the drift clock (F129: CUSUM suspicion is "
+        "carried forward capped at h*sigma on every reset); a human "
+        "re-baseline CAN launder drift into the baseline, but it is a "
+        "named, chained operator action (who, old mean -> new mean, "
+        "when)."
+    ),
+    "measurements": [
+        {
+            "id": "sub-k-sustained",
+            "claim": ("0.4-sigma sustained drift: 300 buckets, zero "
+                      "trips (w76 patient_adversary_boundary; w83 "
+                      "lowlow_exfil_under_threshold: 120 exfil events "
+                      "at 0.4 sigma, zero trips)"),
+        },
+        {
+            "id": "suspicion-free-chase",
+            "claim": ("baseline chased 0.2 -> 3.0 egress/bucket in 2221 "
+                      "buckets with zero trips (w83 "
+                      "slowboil_ratchet_walk): the LEVEL reached is "
+                      "unbounded; only the RATE (~(k*sigma - eps) per "
+                      "window-turnover, ~1.3 buckets of drift per "
+                      "5-minute bucket at scout scale) is bounded"),
+        },
+        {
+            "id": "baseline-poisoning-payoff",
+            "claim": ("after the chase to 2.0/bucket, 200 exfil events "
+                      "at 10x the original normal: zero trips over 100 "
+                      "buckets (w83 "
+                      "baseline_poisoning_inflated_normal)"),
+        },
+        {
+            "id": "signal-spreading",
+            "claim": ("+1.64 extra events/bucket spread across the 5 "
+                      "count signals at 0.4 sigma each: 200 buckets, "
+                      "zero trips; the same total concentrated on one "
+                      "signal trips at bucket 2 (w83 "
+                      "signal_spreading_aggregate); theoretical ceiling "
+                      "~sum(0.5*sigma_i) ~= 2.05 events/bucket"),
+        },
+        {
+            "id": "byte-volume-blindness",
+            "claim": ("1 attempt every 4 buckets (0.25/bucket avg), each "
+                      "carrying arbitrary bytes: zero trips in 200 "
+                      "buckets -- the signal counts attempts (w83 "
+                      "lowlow_exfil_under_threshold)"),
+        },
+        {
+            "id": "reset-anti-laundering",
+            "claim": ("post-F129: a reset carries CUSUM suspicion "
+                      "forward capped at h*sigma on EVERY reset; a "
+                      "continued +1-sigma drift re-trips within ~4 "
+                      "buckets even when the opening trip was a "
+                      "spike (w83 reset_gaming_spike_shadows_drift)"),
+        },
+    ],
+}
 
 
 def build_detector_trip(trip, *, session_id, session_open,

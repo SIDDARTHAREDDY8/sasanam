@@ -281,3 +281,19 @@ declaration.
   Wave-74 human key + roster, tier table bound to deployment_mode,
   `GovernedPolicyStore` as the only mutation path, break-glass PAL
   state machine, version-pinning contract, break model, residuals.
+- 2026-09-23 (wave-84): hardening. F130 — `bootstrap()` now refuses
+  on a live store (a second bootstrap chained a false-genesis record:
+  `prior_version GENESIS` + a `"<genesis>"` diff marker hiding the
+  real live→new diff while the token parent-link silently continued
+  the old chain); policy evolution after genesis goes through
+  `propose()` only. Break-glass PAL contract: `declare()` / `use()` /
+  `review()` now reject whitespace-only purpose / action-summary /
+  review finding (F131, LOW). Lifecycle calls (`_new_change`,
+  `approve`, `apply`, `reject`, `bootstrap`) serialized on a store
+  RLock — N threads proposing against one head then racing `apply()`
+  produce exactly one winner (chain cannot fork). Added
+  `ToolExecutor.is_governed` (True iff `policy_store=` owns the live
+  engine) so deployments can assert the governed posture — the legacy
+  `PolicyEngine(path) → ToolExecutor` path remains ungoverned by
+  default (measured: 42 of 44 construction sites legacy), stated as
+  the wave's main residual, not a finding.

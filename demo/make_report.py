@@ -399,6 +399,70 @@ def provenance_export_text(provenance):
                          % (f["kind"], f["session_id"], f["detail"]))
     else:
         parts.append("Session-timing findings: none.")
+    # Wave-83: the detection section — per-identity baseline windows /
+    # thresholds / current levels / breaker state, chained trip
+    # history, and the explicit slow-boil boundary.
+    if provenance.get("detection") is not None:
+        parts.append(detection_state_text(provenance["detection"]))
+    return "\n".join(parts)
+
+
+def detection_state_text(det):
+    """Wave-83: per-identity detection state, rendered verbatim from
+    the provenance export's ``detection`` section — baseline windows,
+    thresholds, current EWMA/CUSUM levels, breaker state; the chained
+    detector_trip history; and the explicit slow-boil boundary (what
+    drift would NOT trip). Absent a snapshot the section states so
+    honestly, never by omission. Returns plain text — callers escape
+    for HTML. Every number below comes from the snapshot or the
+    chained log; nothing is hand-copied."""
+    parts = []
+    parts.append("Detection state (behavioral circuit breakers, wave-83):")
+    parts.append(det.get("note") or "")
+    slow = det.get("slow_boil_boundary")
+    if isinstance(slow, dict):
+        parts.append("Slow-boil boundary: %s" % slow.get("statement", ""))
+        for m in slow.get("measurements") or []:
+            parts.append("- %s: %s" % (m.get("id"), m.get("claim")))
+    elif slow:
+        parts.append("Slow-boil boundary: %s" % slow)
+    idents = det.get("identities")
+    if idents is None:
+        parts.append("Per-identity baselines: not included in this "
+                     "rendering (no detection snapshot was supplied).")
+    else:
+        for ik in sorted(idents):
+            row = idents[ik]
+            parts.append("- identity %s | role %s | breaker %s | "
+                         "consecutive opens %s"
+                         % (ik, row.get("role"), row.get("breaker_state"),
+                            row.get("consecutive_opens")))
+            for sig in sorted(row.get("signals") or {}):
+                s = row["signals"][sig]
+                parts.append(
+                    "    signal %s: basis %s | window %s/%s buckets | "
+                    "baseline mean %s sigma %s | spike threshold %s "
+                    "(z>%s) | CUSUM threshold %s (k=%s,h=%s) | EWMA "
+                    "level %s | CUSUM sh %s | training %s"
+                    % (sig, s.get("basis"), s.get("window_buckets"),
+                       s.get("buckets_seen"), s.get("baseline_mean"),
+                       s.get("baseline_sigma"), s.get("spike_threshold"),
+                       s.get("spike_z"), s.get("cusum_threshold"),
+                       s.get("cusum_k_sigmas"), s.get("cusum_h_sigmas"),
+                       s.get("ewma_level"), s.get("cusum_sh"),
+                       s.get("baseline_training")))
+    trips = det.get("trip_history") or []
+    parts.append("Detector trip history (chained records): %d" % len(trips))
+    for t in trips:
+        parts.append("- seq %s | %s | %s | signal %s | observed %s | "
+                     "threshold %s | baseline %s±%s (%s, %s/%s buckets) | "
+                     "anchor %s"
+                     % (t.get("seq"), t.get("ts"), t.get("trip_kind"),
+                        t.get("signal"), t.get("observed"),
+                        t.get("threshold"), t.get("baseline_mean"),
+                        t.get("baseline_sigma"), t.get("basis"),
+                        t.get("buckets_seen"), t.get("window_buckets"),
+                        t.get("anchor_grade")))
     return "\n".join(parts)
 
 
@@ -721,9 +785,25 @@ def main():
     # retention manifest, and delegation-chain monitoring wave-72
     # deferred. Computed live from the log; failure renders honestly as
     # not-provided (never blocks the report).
+    #
+    # Wave-83: the per-identity detection snapshot (baseline windows,
+    # thresholds, current levels, breaker state) rides along as the
+    # export's ``detection`` section. It comes from the run's
+    # persisted baselines (run_dir/detection/baselines.json) when the
+    # run recorded any; otherwise the section renders honest absence
+    # (trip history still from the chained detector_trip records;
+    # baselines are never invented).
     try:
         from gov.provenance import provenance_export
-        provenance = provenance_export(entries, anchors)
+        try:
+            from gov.detection import BehavioralMonitor as _BM83
+            _mon83 = _BM83(run_dir=str(run_dir))
+            detection_snapshot = (_mon83.export_snapshot()
+                                  if _mon83.load_baselines() else None)
+        except Exception:
+            detection_snapshot = None
+        provenance = provenance_export(
+            entries, anchors, detection_snapshot=detection_snapshot)
     except Exception:
         provenance = None
     # Wave-76: behavioral detection boundary — operative baseline

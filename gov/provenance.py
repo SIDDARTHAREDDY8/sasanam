@@ -819,7 +819,7 @@ def build_retention_manifest(entries, policy_ref="art12-default"):
     return manifest
 
 
-def provenance_export(entries, anchors):
+def provenance_export(entries, anchors, detection_snapshot=None):
     """Build the auditor-facing provenance export dict.
 
     Joins per-record ``prov`` sections with chain metadata (``seq``,
@@ -828,6 +828,15 @@ def provenance_export(entries, anchors):
     session), and session-timing findings. This is the live capability
     the Art 12 export vocabulary asks for — computed from the log on
     demand, never a cached claim.
+
+    Wave-83: ``detection_snapshot`` is the plain-data dict from
+    ``gov.detection.BehavioralMonitor.export_snapshot`` (per-identity
+    baseline windows, thresholds, current levels, breaker state) plus
+    the measured slow-boil boundary. ``None`` (legacy callers, or a
+    report rendering with no live monitor) renders the section as
+    stated absence — trip history still comes from the chained
+    ``detector_trip`` records in the log; per-identity baselines are
+    never invented.
     """
     rows = []
     for e in entries:
@@ -884,6 +893,11 @@ def provenance_export(entries, anchors):
         # the rules, what the diff was, who approved it, and each
         # record's epoch anchor grade.
         "governor_changes": _governor_changes_section(entries, by_epoch),
+        # Wave-83 (detection anti-deception): per-identity baseline
+        # windows, thresholds, current levels, trip history, and the
+        # explicit slow-boil boundary (what drift would NOT trip).
+        "detection": _detection_section(entries, by_epoch,
+                                        detection_snapshot),
     }
 
 
@@ -937,4 +951,79 @@ def _governor_changes_section(entries, by_epoch):
                 "provenance records in the same HMAC-chained log as "
                 "decisions; per-record epoch anchor grades say which "
                 "are externally anchored vs operator-attested-only.",
+    }
+
+
+def _slow_boil_boundary_text():
+    """The slow-boil boundary for renders that had no live snapshot.
+
+    Imported lazily so ``gov.provenance`` never hard-depends on
+    ``gov.detection`` at module load (``gov.detection`` in turn imports
+    provenance helpers lazily inside ``build_detector_trip``).
+    """
+    try:
+        from .detection import SLOW_BOIL_BOUNDARY
+        return SLOW_BOIL_BOUNDARY
+    except Exception:
+        return None
+
+
+def _detection_section(entries, by_epoch, detection_snapshot):
+    """Wave-83 detection section: per-identity baseline windows,
+    thresholds, and current levels; the chained ``detector_trip``
+    history; and the explicit slow-boil boundary (what drift would NOT
+    trip).
+
+    Absent a snapshot the section states that per-identity detector
+    state was not included in this rendering -- trip history still
+    comes from the chained records; baselines are never invented.
+    """
+    trips = []
+    for e in entries:
+        prov = e.get("prov") or {}
+        if prov.get("record_type") != "detector_trip":
+            continue
+        d = prov.get("detector_trip") or {}
+        trips.append({
+            "seq": e.get("seq"),
+            "ts": e.get("ts"),
+            "epoch_id": e.get("epoch_id"),
+            "trip_kind": d.get("trip_kind"),
+            "identity_key": d.get("identity_key"),
+            "signal": d.get("signal"),
+            "observed": d.get("observed"),
+            "threshold": d.get("threshold"),
+            "baseline_mean": d.get("baseline_mean"),
+            "baseline_sigma": d.get("baseline_sigma"),
+            "basis": d.get("basis"),
+            "buckets_seen": d.get("buckets_seen"),
+            "window_buckets": d.get("window_buckets"),
+            "anchor_grade": by_epoch.get(e.get("epoch_id"),
+                                         "operator-attested-only"),
+        })
+    if detection_snapshot is None:
+        return {
+            "note": ("Per-identity detector state (baseline windows, "
+                     "thresholds, current EWMA/CUSUM levels, breaker "
+                     "state) was not included in this rendering: no "
+                     "detection snapshot was supplied to "
+                     "provenance_export. Trip history below is the "
+                     "chained detector_trip records only; baselines "
+                     "are never invented."),
+            "slow_boil_boundary": _slow_boil_boundary_text(),
+            "parameters": None,
+            "identities": None,
+            "trip_history": trips,
+        }
+    return {
+        "note": ("Per-identity detection state: baseline windows, "
+                 "thresholds, current EWMA/CUSUM levels, and breaker "
+                 "state as of the snapshot; the chained detector_trip "
+                 "history; and the explicit slow-boil boundary (what "
+                 "drift would NOT trip)."),
+        "slow_boil_boundary": (detection_snapshot.get("slow_boil_boundary")
+                                or _slow_boil_boundary_text()),
+        "parameters": detection_snapshot.get("parameters"),
+        "identities": detection_snapshot.get("identities") or {},
+        "trip_history": trips,
     }
