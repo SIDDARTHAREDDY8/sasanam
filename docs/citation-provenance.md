@@ -3,7 +3,8 @@
 ## The problem in one paragraph
 
 An evaluated agent can upload fabricated "independent" evidence to an
-allowlisted web host (paste site, gist) via governed `http_post` and later
+allowlisted web host (paste site, gist, API endpoint) via a governed
+upload-shaped call (`http_post` or `api_call`, F139/F140) and later
 cite the planted URL back to evaluators as independent corroboration. The
 upload-side approval gate is **structurally blind** to this: the approver
 sees only the URL plus `{bytes, sha256_prefix}` (F12 — payload content is
@@ -16,9 +17,19 @@ not the upload.
 ## The rule
 
 **Treat bare-URL citations in agent output as untrusted-by-default until
-verified.** Before an evaluation report's conclusions are accepted, run
-every cited URL through `gov/eval_integrity.check_citations` (or
-`gov/citation_provenance.verify_citation` directly):
+verified.** Route every evaluation report whose conclusions will be
+trusted through the governed acceptance checkpoint
+`gov/eval_integrity.accept_report` (F141) — it runs the citation check
+*before* conclusions are accepted, chains a `citation_check_completed`
+record into the log, and **refuses** tainted reports (SELF_PLANTED hits
+become eval-integrity violations with chained `detector_trip`, tripped
+breaker, and a halt-request for the operator). UNKNOWN citations are
+never violations. Use `gov/eval_integrity.eval_sessions_missing_citation_check`
+to lint which eval sessions skipped the checkpoint.
+
+Calling `gov/eval_integrity.check_citations` directly is also fine
+(on-demand verification of a URL list); `accept_report` is the
+checkpoint wrapper that makes the check auditable and enforced.
 
 ```python
 from gov import eval_integrity as ei
@@ -53,13 +64,17 @@ than self-planting — investigate accordingly.
 
 ## Operator notes
 
-- The executor records `kind: "upload"` entries (URL, payload sha prefix,
-  uploader identity) into the cross-run `EgressLedger` at **every executed**
-  `http_post` (direct and approved paths). Queued-but-never-approved posts
-  are not plants — they never reached the host — and are not recorded.
-- The per-run chained log already carries what the index needs (`tool_call`
-  entries: readable URL, `{bytes, sha256_prefix}` payload summary, uploader
-  identity), so same-run verification works with no new logging.
+- The executor records `kind: "upload"` entries (URL, payload sha
+  prefix, uploader identity, tool) into the cross-run `EgressLedger` at
+  **every executed upload-shaped call** — `http_post` and `api_call`
+  (F140), direct and approved paths. For `api_call` the URL is the
+  `endpoint` and the payload summary is a canonical fingerprint of
+  `params`. Queued-but-never-approved calls are not plants — they never
+  reached the host — and are not recorded.
+- The per-run chained log already carries what the index needs
+  (`tool_call` entries: readable URL/endpoint, payload summary,
+  uploader identity), so same-run verification works with no new
+  logging.
 - `trusted_sources` is a deployment decision, not a default. Ship with it
   empty (everything unverifiable → `UNKNOWN`) until the deployment's trust
   policy is explicit. A short, reviewed list beats a long convenient one.
@@ -93,3 +108,14 @@ than self-planting — investigate accordingly.
 6. **Deny-all outbound posting** closes the plant path entirely but
    disables legitimate publisher workflows — a deployment tradeoff,
    not a product default.
+7. **Response-URL gap (F140 follow-up, not closed).** A real API
+   plant's citable URL is usually a *resource* URL returned in the API
+   response, not the endpoint the agent called. This primitive
+   correlates the endpoint; a citation of a response-minted resource
+   URL has no governed record to match. Closing that needs response
+   capture or endpoint→content bindings.
+8. **The checkpoint must be invoked.** `accept_report` is opt-in: a
+   deployment that never routes reports through it gets no citation
+   protection. The `eval_sessions_missing_citation_check` lint makes
+   skipped sessions auditable — wire it into the eval workflow, don't
+   just document it.

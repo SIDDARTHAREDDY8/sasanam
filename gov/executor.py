@@ -2532,39 +2532,54 @@ class ToolExecutor:
                 pass
 
     def _record_upload(self, tool, redacted_args, principal, agent_id):
-        """F139: cross-run upload memory for citation provenance.
+        """F139/F140: cross-run upload memory for citation provenance.
 
         Called at the two execution boundaries for every EXECUTED
-        http_post (direct-allow and approved execution). Appends a
-        ``kind: "upload"`` record {url, url_normalized,
+        upload-shaped call (direct-allow and approved execution).
+        Appends a ``kind: "upload"`` record {url, url_normalized,
         payload_sha256_prefix, payload_bytes, principal, agent_id,
-        run_id, ts} to the cross-run EgressLedger, so a later
+        tool, run_id, ts} to the cross-run EgressLedger, so a later
         ``verify_citation`` can correlate a cited URL with the upload
         that planted it -- within the run (via the chained log) and
         across runs (via this ledger).
 
+        Upload-shaped tools (F140): http_post (url-bearing arg "url",
+        payload arg "payload") and api_call (url-bearing arg
+        "endpoint", payload arg "params"). For api_call the ledger
+        stores the canonical params fingerprint computed the same way
+        as the log index (``citation_provenance.
+        canonical_params_fingerprint``), so writer and reader agree.
+
         Uses the REDACTED args: the URL is an audit field (readable by
         design) and the payload is the {bytes, sha256_prefix} summary --
         the same posture as the chained log, so the ledger learns
-        nothing the log does not already carry. Scope is http_post only
-        (the F139 web-upload plant vector); send_email/api_call are
-        unchanged. No-op when there is no ledger. Fail-open with a loud
+        nothing the log does not already carry. Scope is upload-shaped
+        calls only; send_email is unchanged (not URL-citable). No-op
+        when there is no ledger. Fail-open with a loud
         ``upload_record_skipped`` audit entry on ledger trouble -- the
         call already executed, so a ledger outage must not break the
         result path, but the missing memory must be audit-visible.
         """
-        if tool != "http_post":
+        if tool not in ("http_post", "api_call"):
             return
         ledger = self._ledger
         if ledger is None:
             return
         args = redacted_args or {}
-        url = args.get("url")
-        payload = args.get("payload")
-        sha_prefix, nbytes = None, None
-        if isinstance(payload, dict):
-            sha_prefix = payload.get("sha256_prefix")
-            nbytes = payload.get("bytes")
+        if tool == "http_post":
+            url = args.get("url")
+            payload = args.get("payload")
+            sha_prefix, nbytes = None, None
+            if isinstance(payload, dict):
+                sha_prefix = payload.get("sha256_prefix")
+                nbytes = payload.get("bytes")
+        else:  # api_call: endpoint is URL-bearing; params carry the
+            # payload (scrubbed dict in the redacted args, not a
+            # summary) -- fingerprint the canonical form.
+            url = args.get("endpoint")
+            nbytes, sha_prefix = \
+                _citation_provenance.canonical_params_fingerprint(
+                    args.get("params"))
         entry = {
             "kind": "upload",
             "ts": time.time(),
@@ -4909,9 +4924,10 @@ class ToolExecutor:
                 self._record_velocity(tool, identity.principal,
                                       identity.agent_id,
                                       self._egress_bytes_for(tool, kwargs))
-            # F139: cross-run upload memory for citation provenance --
-            # every executed http_post leaves a URL-bearing record in
-            # the shared ledger (no-op for other tools / no ledger).
+            # F139/F140: cross-run upload memory for citation provenance --
+            # every executed upload-shaped call (http_post, api_call)
+            # leaves a URL-bearing record in the shared ledger (no-op
+            # for other tools / no ledger).
             self._record_upload(tool, redacted_args, identity.principal,
                                 identity.agent_id)
             entry = self.log.append(_base({
@@ -5834,9 +5850,10 @@ class ToolExecutor:
                     (rec.get("identity") or {}).get("principal"),
                     rec.get("agent_id"),
                     self._approved_egress_bytes(rec))
-            # F139: cross-run upload memory for citation provenance --
-            # the approved http_post leaves a URL-bearing record in the
-            # shared ledger (rec["args"] are the redacted approval args).
+            # F139/F140: cross-run upload memory for citation provenance --
+            # the approved upload-shaped call leaves a URL-bearing record
+            # in the shared ledger (rec["args"] are the redacted approval
+            # args).
             self._record_upload(rec["tool"], rec["args"],
                                 (rec.get("identity") or {}).get("principal"),
                                 rec.get("agent_id"))

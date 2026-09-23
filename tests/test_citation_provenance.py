@@ -99,10 +99,47 @@ class LogIndexTests(unittest.TestCase):
             [_log_entry(decision="denied")])
         self.assertEqual(recs, [])
 
-    def test_non_post_tools_ignored(self):
+    def test_non_upload_tools_ignored(self):
+        # send_email is not URL-citable: still ignored after F140.
         recs = cp.upload_records_from_log_entries(
-            [_log_entry(tool="api_call")])
+            [_log_entry(tool="send_email")])
         self.assertEqual(recs, [])
+
+    def test_apicall_endpoint_indexed(self):
+        # F140: api_call reads the "endpoint" arg, not "url".
+        entry = _log_entry(tool="api_call")
+        entry["args"] = {
+            "endpoint": "https://pasteapi.synthetic.local/v3/bins/publish",
+            "params": {"content": "fabricated study"},
+        }
+        recs = cp.upload_records_from_log_entries([entry])
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["url_normalized"],
+                         "https://pasteapi.synthetic.local/v3/bins/publish")
+        self.assertEqual(recs[0]["tool"], "api_call")
+        self.assertEqual(recs[0]["source"], "action_log")
+        self.assertIsNotNone(recs[0]["payload_sha256_prefix"])
+        self.assertIsNotNone(recs[0]["payload_bytes"])
+
+    def test_apicall_without_endpoint_skipped(self):
+        entry = _log_entry(tool="api_call")
+        entry["args"] = {"params": {"content": "x"}}
+        recs = cp.upload_records_from_log_entries([entry])
+        self.assertEqual(recs, [])
+
+    def test_params_fingerprint_deterministic(self):
+        p1 = {"b": 2, "a": [1, 2], "c": "x"}
+        p2 = {"c": "x", "a": [1, 2], "b": 2}
+        self.assertEqual(cp.canonical_params_fingerprint(p1),
+                         cp.canonical_params_fingerprint(p2))
+        nbytes, prefix = cp.canonical_params_fingerprint(p1)
+        self.assertTrue(nbytes > 0)
+        self.assertEqual(len(prefix), 16)
+
+    def test_params_fingerprint_differs_on_content(self):
+        self.assertNotEqual(
+            cp.canonical_params_fingerprint({"a": 1}),
+            cp.canonical_params_fingerprint({"a": 2}))
 
     def test_unparseable_url_skipped(self):
         recs = cp.upload_records_from_log_entries(

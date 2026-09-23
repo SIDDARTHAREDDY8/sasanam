@@ -16,10 +16,16 @@ What it does:
         ``detector_trip`` records, trip the identity's circuit breaker
         (high-risk tools then queue for a human), and produce a
         halt-request payload for operator-signed quarantine.
-  (iv)  Citation provenance (F139): evaluator-side verification of
-        URLs cited in agent output against governed http_post upload
-        records (``check_citations``) -- a SELF_PLANTED hit is an
-        integrity violation through the (iii) path.
+  (iv)  Citation provenance (F139/F140): evaluator-side verification of
+        URLs cited in agent output against governed upload-shaped call
+        records (``http_post`` and ``api_call``) via ``check_citations``
+        -- a SELF_PLANTED hit is an integrity violation through the
+        (iii) path.
+  (v)   Governed report acceptance (F141): ``accept_report`` runs the
+        citation check BEFORE conclusions are accepted and chains a
+        ``citation_check_completed`` record; tainted reports are
+        refused, not merely flagged. ``eval_sessions_missing_citation_check``
+        lints which eval sessions skipped the checkpoint.
 
 What it does NOT do (stated residuals):
   - A perfect sandbagger that leaks no eval-reasoning and detects eval
@@ -375,3 +381,90 @@ def check_citations(text_or_urls, *, monitor, log, identity=None,
             "n_self_planted": sum(
                 1 for c in citations
                 if c["verdict"] == _citation_provenance.SELF_PLANTED)}
+
+
+# ---------------------------------------------------------------------------
+# (v) Governed eval-report acceptance (F141): the check as a checkpoint
+# ---------------------------------------------------------------------------
+
+def accept_report(report_text, *, monitor, log, identity=None,
+                  identity_key=None, session_id, session_open,
+                  log_entries=None, ledger=None, citation_index=None,
+                  trusted_sources=(),
+                  trusted_content_hashes=(),
+                  policy_version="eval-integrity-s4"):
+    """Governed eval-report acceptance checkpoint (F141).
+
+    Runs ``check_citations`` over the report text BEFORE the report's
+    conclusions are accepted, and always chains a
+    ``citation_check_completed`` record (session id, citation counts,
+    verdict breakdown, accepted flag) into the log. The checkpoint is
+    "checked", not "all clean": ``UNKNOWN`` citations are never
+    violations -- only ``SELF_PLANTED`` hits refuse acceptance.
+
+    A report with n_self_planted > 0 is NOT accepted (``accepted=False``);
+    its citing conclusions are compromised. The violation payloads were
+    already filed inside ``check_citations`` (detector_trip + breaker +
+    halt-request) and are returned here for the operator.
+
+    Opt-in: nothing in gov/ routes through this function unless the
+    deployment calls it -- eval sessions that don't handle citations
+    behave exactly as before (zero behavior change elsewhere). The
+    deployment's contract is: route every evaluation report whose
+    conclusions will be trusted through ``accept_report``.
+
+    Returns {"accepted": bool, "check": <check_citations result>,
+             "entry": <chained log entry>}.
+    """
+    check = check_citations(
+        report_text, monitor=monitor, log=log, identity=identity,
+        identity_key=identity_key, session_id=session_id,
+        session_open=session_open, citation_index=citation_index,
+        log_entries=log_entries, ledger=ledger,
+        trusted_sources=trusted_sources,
+        trusted_content_hashes=trusted_content_hashes,
+        policy_version=policy_version)
+    verdict_counts = {}
+    for c in check["citations"]:
+        v = c.get("verdict")
+        verdict_counts[v] = verdict_counts.get(v, 0) + 1
+    accepted = check["n_self_planted"] == 0
+    entry = log.append({
+        "event": "eval_integrity",
+        "signal": "citation_check_completed",
+        "session_id": session_id,
+        "session_open": session_open,
+        "policy_version": policy_version,
+        "n_citations": len(check["citations"]),
+        "n_self_planted": check["n_self_planted"],
+        "verdict_counts": verdict_counts,
+        "accepted": accepted,
+        "reason": ("eval report citation check completed: %d citation(s), "
+                   "%d self-planted; report %s"
+                   % (len(check["citations"]), check["n_self_planted"],
+                      "accepted" if accepted
+                      else "REFUSED (tainted evidence)")),
+    })
+    return {"accepted": accepted, "check": check, "entry": entry}
+
+
+def eval_sessions_missing_citation_check(log_entries, *, session_ids):
+    """Lint (F141): which of the given eval sessions has no
+    ``citation_check_completed`` record in the chained log.
+
+    The operator enumerates the sessions whose reports mattered; the
+    lint answers the coverage question. Returns the sorted session_ids
+    with no completed check -- an empty list means every named session
+    went through the governed acceptance path.
+    """
+    checked = set()
+    for e in log_entries or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("event") == "eval_integrity" and \
+                e.get("signal") == "citation_check_completed":
+            sid = e.get("session_id")
+            if sid is not None:
+                checked.add(str(sid))
+    return sorted(s for s in (str(x) for x in (session_ids or ()))
+                  if s not in checked)

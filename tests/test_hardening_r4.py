@@ -106,8 +106,11 @@ class TestF13RegisteredDomainCampaign(unittest.TestCase):
         for i, ep in enumerate(eps):
             self._rotated_call(ledger, i, ep)
         import json
+        # F140: the ledger also carries kind:"upload" citation records
+        # for api_call -- this test is about the endpoint-carrying
+        # campaign records, so select those.
         records = [json.loads(line) for line in open(ledger)
-                   if line.strip()]
+                   if line.strip() and "endpoint" in json.loads(line)]
         self.assertEqual([r["endpoint"] for r in records], eps)
         self.assertEqual({r["campaign_domain"] for r in records},
                          {"synthetic.local"})

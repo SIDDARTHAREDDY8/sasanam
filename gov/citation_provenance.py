@@ -16,11 +16,19 @@ What this module does:
     (a) per-run chained-log ``tool_call`` entries (URL + payload sha
     prefix + uploader identity are already recorded there) and/or
     (b) the cross-run ``EgressLedger`` ``kind:"upload"`` entries the
-    executor appends at every executed http_post (F139).
+    executor appends at every executed upload-shaped call (F139/F140).
   - ``verify_citation``: ``SELF_PLANTED`` / ``UNKNOWN`` / ``INDEPENDENT``
     for one cited URL.
   - ``extract_urls``: pull candidate citations out of evaluator-facing
     text.
+  - ``canonical_params_fingerprint``: (bytes, sha256_prefix) over a
+    canonical serialization of api_call params (the log carries params
+    as a scrubbed dict, not the http_post {bytes, sha256} summary).
+
+Upload-shaped tools (F140): ``http_post`` (URL-bearing arg ``url``,
+payload arg ``payload``) and ``api_call`` (URL-bearing arg
+``endpoint``, payload arg ``params``). The correlation primary key is
+the normalized URL; the payload fingerprint is corroboration only.
 
 Verdict semantics (read carefully):
   - ``SELF_PLANTED``: the URL was uploaded through governed tooling.
@@ -58,10 +66,17 @@ What this module does NOT do (stated residuals):
     boundary (the standing GOVERNANCE WARNING on mint_identity):
     configure a deployment-controlled PrincipalRegistry for real
     deployments.
+  - Response-URL gap (F140 follow-up, NOT closed here): a real API
+    plant's citable URL is usually a *resource* URL returned in the API
+    response, not the endpoint the agent called. This primitive
+    correlates the endpoint -- a citation of a response-minted resource
+    URL has no governed record to match. Closing that needs response
+    capture or endpoint->content bindings; do not claim it.
 """
 
 import hashlib
 import hmac
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -75,6 +90,12 @@ _VERDICTS = (SELF_PLANTED, UNKNOWN, INDEPENDENT)
 # queued but never approved never reached the host -- only executed
 # uploads count.
 _EXECUTED_DECISIONS = ("allowed_executed", "approved_executed")
+
+# F140: the tools whose executed calls are upload-shaped -- a
+# URL-addressable egress call carrying a payload to a third-party host.
+# http_post: URL-bearing arg "url", payload arg "payload".
+# api_call: URL-bearing arg "endpoint", payload arg "params".
+_UPLOAD_TOOLS = ("http_post", "api_call")
 
 
 def normalize_url(url):
@@ -123,13 +144,32 @@ def _host_of(normalized_url):
         return ""
 
 
+def canonical_params_fingerprint(params):
+    """(bytes, sha256_prefix) over a canonical serialization of params.
+
+    api_call's redacted args carry ``params`` as a (PII-scrubbed) dict,
+    not the ``{bytes, sha256_prefix}`` summary http_post's ``payload``
+    uses -- so both the ledger writer (executor._record_upload) and the
+    log index compute the summary from the canonical form (sorted-keys
+    JSON) and stay consistent. The URL is the correlation primary key;
+    this fingerprint is corroboration only.
+    """
+    try:
+        data = json.dumps(params, sort_keys=True, separators=(",", ":"),
+                          default=str).encode("utf-8", "replace")
+    except (TypeError, ValueError):
+        data = str(params).encode("utf-8", "replace")
+    return len(data), hashlib.sha256(data).hexdigest()[:16]
+
+
 def upload_records_from_log_entries(entries):
-    """Extract governed http_post upload records from chained-log entries.
+    """Extract governed upload-shaped call records from chained-log entries.
 
     Each record: {url, url_normalized, payload_sha256_prefix,
-    payload_bytes, agent_id, principal, run_id, seq, source}. Only
-    EXECUTED uploads (allowed_executed / approved_executed) -- a queued
-    but never approved post never reached the host and is not a plant.
+    payload_bytes, agent_id, principal, run_id, seq, tool, source}.
+    Only EXECUTED calls (allowed_executed / approved_executed) -- a
+    queued but never approved call never reached the host and is not a
+    plant. Covers http_post (url/payload) and api_call (endpoint/params).
     """
     out = []
     for e in entries or []:
@@ -137,20 +177,27 @@ def upload_records_from_log_entries(entries):
             continue
         if e.get("event") != "tool_call":
             continue
-        if e.get("tool") != "http_post":
+        tool = e.get("tool")
+        if tool not in _UPLOAD_TOOLS:
             continue
         if e.get("decision") not in _EXECUTED_DECISIONS:
             continue
         args = e.get("args") or {}
-        url = args.get("url")
+        if tool == "http_post":
+            url = args.get("url")
+            payload = args.get("payload")
+            sha_prefix, nbytes = None, None
+            if isinstance(payload, dict):
+                sha_prefix = payload.get("sha256_prefix")
+                nbytes = payload.get("bytes")
+        else:  # api_call: "endpoint" is the URL-bearing arg; params
+            # are the payload (scrubbed dict in the log, not a summary).
+            url = args.get("endpoint")
+            nbytes, sha_prefix = canonical_params_fingerprint(
+                args.get("params"))
         normalized = normalize_url(url)
         if normalized is None:
             continue
-        payload = args.get("payload")
-        sha_prefix, nbytes = None, None
-        if isinstance(payload, dict):
-            sha_prefix = payload.get("sha256_prefix")
-            nbytes = payload.get("bytes")
         out.append({
             "url": url,
             "url_normalized": normalized,
@@ -160,6 +207,7 @@ def upload_records_from_log_entries(entries):
             "principal": e.get("principal"),
             "run_id": e.get("run_id"),
             "seq": e.get("seq"),
+            "tool": tool,
             "source": "action_log",
         })
     return out

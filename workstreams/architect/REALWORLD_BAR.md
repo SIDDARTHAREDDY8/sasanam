@@ -2196,3 +2196,5 @@ a decided strategy.
 - **B6:** No market action; repo stays private. Push at the clean boundary under standing approval.
 
 **Bottom line:** the loop from attack (planted evidence) to detection (citation verification) to response (breaker + halt) is now closed end-to-end. Still a prototype.
+
+**Wave-94 (2026-09-23):** F140 (MEDIUM) + F141 (LOW) CLOSED by central review. F140: upload-provenance extended to `api_call` (endpoint URL + params fingerprint) — break-first 5 BREAK pre-fix → 0 BREAK/5 CLOSED/2 CONTROL post-fix; response-URL gap stays an explicit residual (resource URLs from API responses are not captured — deeper work, not claimed). F141: `accept_report` checkpoint makes the citation check mandatory on the governed path — opt-in by design, skipping is auditable via lint. B4: F140/F141 CLOSED 2026-09-23; next free finding **F142**. B5: `evals/f140_closure.py` joins F139's battery as the standing ratchet for the plant/cite class. B6 unchanged.

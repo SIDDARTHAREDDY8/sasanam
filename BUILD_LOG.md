@@ -6925,3 +6925,15 @@ Break-first: new `evals/f138_break.py` demonstrated the gap on the unfixed tree 
 **Ruling:** F139 (MEDIUM) CLOSED by central review 2026-09-23. P1's upload-side BREAK remains by design (F12 redaction → approval gate structurally blind; citation check is the compensating control). Next free finding: F140.
 
 **Gates (final tree, sequential, separate TMPDIRs):** canonical 3156 OK (8 skipped, 7 xfail); registry GREEN; matrix SHIP-GATE GREEN; realistic 4/4 (smoke-full-loop, human-error-pack, incident-refresh-pack, swarm-pack).
+
+## 2026-09-23 — Red-team scout: F140 (MEDIUM) and F141 (LOW) filed
+
+Scout probed wave-93 residuals break-first (`evals/f140_citegap_probes.py`, 3 BREAK / 1 CONTROL, deterministic, independently re-verified). **F140 (MEDIUM):** citation-provenance covers `http_post` only — an `api_call` plant to an allowlisted API endpoint leaves zero upload records (ledger + log index) and a diligent evaluator calling `check_citations` gets `UNKNOWN`, breaker stays CLOSED. Re-opens the exact F139 attack through the adjacent egress tool. **F141 (LOW):** `check_citations` is a library, not a control — zero invocations in `gov/`; plant+cite sails through with no signals unless the evaluator manually calls it. Filed as an invocation residual on F139's closure block. Next free finding: **F142**. Closure work dispatched.
+
+## 2026-09-23 — Wave-94: F140 (MEDIUM) + F141 (LOW) CLOSED, pushed
+
+**F140 closure:** `gov/citation_provenance.py` `_UPLOAD_TOOLS=("http_post","api_call")` + `canonical_params_fingerprint()`; `upload_records_from_log_entries` indexes `api_call` (endpoint URL + params fingerprint); `gov/executor.py` `_record_upload` covers `api_call` at both execution boundaries; `tests/test_hardening_r4.py` forensic test selects endpoint-carrying records. Break-first `evals/f140_closure.py` (7 probes): 5 BREAK pre-fix → 0 BREAK / 5 CLOSED / 2 CONTROL post-fix, deterministic. Residual (documented): response-URL gap — a real API plant's citable URL is usually a *resource* URL from the response, not the endpoint; this closes the direct-endpoint sub-case only. F139 battery re-run GREEN.
+
+**F141 closure:** `gov/eval_integrity.py` `accept_report(...)` — runs `check_citations` before accepting report conclusions, chains `citation_check_completed`; SELF_PLANTED → accepted=False; UNKNOWN never violates ("checked" not "all clean"); `eval_sessions_missing_citation_check` lint; `docs/citation-provenance.md` updated. `tests/test_eval_accept_report.py` 6/6. Residual: opt-in — skipping the checkpoint is auditable via the lint.
+
+Gates (sequential, separate TMPDIRs): canonical **3166 OK** (8 skipped, 7 xfail); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN** (1608/1608 provisional+real); realistic battery **4/4**. Next free finding: **F142**.
