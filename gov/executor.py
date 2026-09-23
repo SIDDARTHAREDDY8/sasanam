@@ -110,6 +110,7 @@ from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    refusal_ts_within_window, verify_chain_tip,
                    write_chain_tip_from_tail)
 from .memory_provenance import MemoryQuarantineError
+from . import citation_provenance as _citation_provenance
 
 _SEND_TOOLS = ("send_email", "http_post")
 # S3 (K-041): tools that mutate state outside the run's read view. A
@@ -2530,6 +2531,80 @@ class ToolExecutor:
             except Exception:
                 pass
 
+    def _record_upload(self, tool, redacted_args, principal, agent_id):
+        """F139: cross-run upload memory for citation provenance.
+
+        Called at the two execution boundaries for every EXECUTED
+        http_post (direct-allow and approved execution). Appends a
+        ``kind: "upload"`` record {url, url_normalized,
+        payload_sha256_prefix, payload_bytes, principal, agent_id,
+        run_id, ts} to the cross-run EgressLedger, so a later
+        ``verify_citation`` can correlate a cited URL with the upload
+        that planted it -- within the run (via the chained log) and
+        across runs (via this ledger).
+
+        Uses the REDACTED args: the URL is an audit field (readable by
+        design) and the payload is the {bytes, sha256_prefix} summary --
+        the same posture as the chained log, so the ledger learns
+        nothing the log does not already carry. Scope is http_post only
+        (the F139 web-upload plant vector); send_email/api_call are
+        unchanged. No-op when there is no ledger. Fail-open with a loud
+        ``upload_record_skipped`` audit entry on ledger trouble -- the
+        call already executed, so a ledger outage must not break the
+        result path, but the missing memory must be audit-visible.
+        """
+        if tool != "http_post":
+            return
+        ledger = self._ledger
+        if ledger is None:
+            return
+        args = redacted_args or {}
+        url = args.get("url")
+        payload = args.get("payload")
+        sha_prefix, nbytes = None, None
+        if isinstance(payload, dict):
+            sha_prefix = payload.get("sha256_prefix")
+            nbytes = payload.get("bytes")
+        entry = {
+            "kind": "upload",
+            "ts": time.time(),
+            "run_id": self.run_id,
+            "principal": principal,
+            "agent_id": agent_id,
+            "tool": tool,
+            "url": url,
+            "url_normalized":
+                _citation_provenance.normalize_url(url),
+            "payload_sha256_prefix": sha_prefix,
+            "payload_bytes": nbytes,
+        }
+        try:
+            # The write lock is held inside append (F74) -- no second
+            # lock here.
+            ledger.append(entry)
+        except Exception as e:
+            # Fail open, LOUD: the execution already happened; audit the
+            # missing cross-run memory instead of breaking the result.
+            try:
+                self.log.append({
+                    "event": "tool_call",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "principal": principal,
+                    "tool": tool,
+                    "decision": "upload_record_skipped",
+                    "policy_id": "citation-provenance",
+                    "flag": "upload_record_skipped",
+                    "reason": ("Cross-run upload record skipped "
+                               "(fail-open): %s: %s. The execution is not "
+                               "reflected in cross-run upload memory; "
+                               "citation correlation for this URL will be "
+                               "run-log-only." % (type(e).__name__, e)),
+                })
+            except Exception:
+                pass
+
     def _context(self, tool, args, principal=None, record_ledger=True,
                  agent_id=None):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
@@ -4834,6 +4909,11 @@ class ToolExecutor:
                 self._record_velocity(tool, identity.principal,
                                       identity.agent_id,
                                       self._egress_bytes_for(tool, kwargs))
+            # F139: cross-run upload memory for citation provenance --
+            # every executed http_post leaves a URL-bearing record in
+            # the shared ledger (no-op for other tools / no ledger).
+            self._record_upload(tool, redacted_args, identity.principal,
+                                identity.agent_id)
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
@@ -5754,6 +5834,12 @@ class ToolExecutor:
                     (rec.get("identity") or {}).get("principal"),
                     rec.get("agent_id"),
                     self._approved_egress_bytes(rec))
+            # F139: cross-run upload memory for citation provenance --
+            # the approved http_post leaves a URL-bearing record in the
+            # shared ledger (rec["args"] are the redacted approval args).
+            self._record_upload(rec["tool"], rec["args"],
+                                (rec.get("identity") or {}).get("principal"),
+                                rec.get("agent_id"))
             entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),

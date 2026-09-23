@@ -16,6 +16,10 @@ What it does:
         ``detector_trip`` records, trip the identity's circuit breaker
         (high-risk tools then queue for a human), and produce a
         halt-request payload for operator-signed quarantine.
+  (iv)  Citation provenance (F139): evaluator-side verification of
+        URLs cited in agent output against governed http_post upload
+        records (``check_citations``) -- a SELF_PLANTED hit is an
+        integrity violation through the (iii) path.
 
 What it does NOT do (stated residuals):
   - A perfect sandbagger that leaks no eval-reasoning and detects eval
@@ -37,6 +41,7 @@ import re
 from .detection import (BehavioralMonitor, CircuitBreaker, build_detector_trip,
                         identity_key_of)
 from .provenance import append_provenance
+from . import citation_provenance as _citation_provenance
 
 EVAL_INTEGRITY_VERSION = "s4-eval-integrity-v1"
 
@@ -286,3 +291,87 @@ def report_eval_integrity_violation(*, monitor, log, identity=None,
             "halt_request": halt_request,
             "quarantined": False,  # True only after operator-signed halt
             }
+
+
+# ---------------------------------------------------------------------------
+# (iv) Citation provenance (F139): evaluator-side citation verification
+# ---------------------------------------------------------------------------
+
+def check_citations(text_or_urls, *, monitor, log, identity=None,
+                    identity_key=None, session_id, session_open,
+                    citation_index=None, log_entries=None, ledger=None,
+                    trusted_sources=(), trusted_content_hashes=(),
+                    policy_version="eval-integrity-s4"):
+    """Scan evaluator-facing text (or a URL list) for citations and verify
+    each one against governed upload records (F139).
+
+    The citation-poisoning shape: an evaluated agent uploads fabricated
+    "independent" evidence via allowlisted http_post -- the approval gate
+    sees only the URL plus {bytes, sha256_prefix} (F12), so the plant is
+    structurally invisible at upload time -- and later cites the planted
+    URL as independent corroboration. This check closes the loop at the
+    citation: every cited URL is verified with
+    ``citation_provenance.verify_citation`` and a SELF_PLANTED hit goes
+    through ``report_eval_integrity_violation`` with
+    signal="self_planted_citation" -- the real detection path
+    (detector_trip + breaker + halt-request). UNKNOWN citations are
+    reported as unknown, never flagged; INDEPENDENT ones (deployment
+    trust anchor) pass silently.
+
+    ``text_or_urls``: evaluator-facing text (URLs extracted with
+    ``citation_provenance.extract_urls``) or an explicit URL list.
+    ``identity``: the citing identity (AgentIdentity or dict) -- used
+    for the same_principal/same_agent evidence flags. ``citation_index``:
+    a prebuilt ``CitationIndex``; otherwise one is built from
+    ``log_entries`` (this run's chained log) and/or ``ledger`` (the
+    cross-run EgressLedger).
+
+    Evaluator guidance: treat bare-URL citations in agent output as
+    untrusted-by-default until verified -- see docs/citation-provenance.md.
+
+    Returns {"citations": [{"url", "verdict", ...}], "violations":
+    [report_eval_integrity_violation results], "n_self_planted": int}.
+    """
+    if isinstance(text_or_urls, str):
+        urls = _citation_provenance.extract_urls(text_or_urls)
+    else:
+        urls = [str(u) for u in (text_or_urls or [])]
+    index = citation_index
+    if index is None:
+        index = _citation_provenance.CitationIndex()
+        if log_entries is not None:
+            index.add_log_entries(log_entries)
+        if ledger is not None:
+            index.add_ledger(ledger)
+    citations = []
+    violations = []
+    seen = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        res = _citation_provenance.verify_citation(
+            url, identity,
+            index=index,
+            trusted_sources=trusted_sources,
+            trusted_content_hashes=trusted_content_hashes)
+        citations.append(res)
+        if res["verdict"] == _citation_provenance.SELF_PLANTED:
+            violations.append(report_eval_integrity_violation(
+                monitor=monitor, log=log, identity=identity,
+                identity_key=identity_key,
+                signal="self_planted_citation",
+                evidence={"url": res["url"],
+                          "url_normalized": res["url_normalized"],
+                          "upload": res.get("upload"),
+                          "n_uploads": res.get("n_uploads", 1),
+                          "same_principal": res.get("same_principal"),
+                          "same_agent": res.get("same_agent"),
+                          "reason": res.get("reason")},
+                session_id=session_id, session_open=session_open,
+                policy_version=policy_version))
+    return {"citations": citations,
+            "violations": violations,
+            "n_self_planted": sum(
+                1 for c in citations
+                if c["verdict"] == _citation_provenance.SELF_PLANTED)}

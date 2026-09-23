@@ -2185,3 +2185,14 @@ a decided strategy.
 - **B6:** No market action; repo stays private. Push at the clean boundary under standing approval.
 
 **Bottom line:** the build now covers unknown-agent discovery, supply-chain verification, and regulator evidence as first-class primitives — with their limitations stated plainly (memory-only agents invisible; no production scan scheduler; no in-process sweep scheduler; discovery ledger chain unkeyed; mitigation extraction heuristic). The "sell the evidence, not the engine" thesis now has prototype evidence machinery. Still a prototype: prod KMS real-server validation, SSO/TLS/multi-tenancy, and adversarial standards validation remain ahead. No victory on green tests.
+
+## Honest distance assessment — wave-93 (2026-09-23, F139 CLOSED)
+
+- **B1:** Citation-provenance primitive closes the evaluator-evidence-poisoning class: governed upload index (per-run chained log + cross-run egress ledger) with evaluator-side `verify_citation` → SELF_PLANTED / UNKNOWN / INDEPENDENT.
+- **B2:** Canonical **3156 OK** (8 skipped, 7 expected failures; +30), registry **GREEN**, matrix **SHIP-GATE GREEN**, realistic battery **4/4**. New: `tests/test_citation_provenance.py` 30/30; `evals/f139_closure.py` 8 BREAK pre-fix → 6 CLOSED / 3 CONTROL post-fix.
+- **B3:** Self-planted citations route through the real S4 evaluation-integrity detection path (`detector_trip` + breaker + halt-request) — the evidence-integrity story for audits is now concrete rather than aspirational.
+- **B4:** **F139 (MEDIUM) CLOSED 2026-09-23** by central review. Break-first verified; benign control (genuinely independent URL) does not flag. P1's upload-side BREAK remains by design: F12 redaction makes the approval gate structurally blind to plant-vs-legitimate, and the citation check is the compensating control — documented, not claimed. Next free finding: **F140**.
+- **B5:** F139 closure battery is the standing pressure ratchet for this attack class (plant + cite + cross-run variants).
+- **B6:** No market action; repo stays private. Push at the clean boundary under standing approval.
+
+**Bottom line:** the loop from attack (planted evidence) to detection (citation verification) to response (breaker + halt) is now closed end-to-end. Still a prototype.

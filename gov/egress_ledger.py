@@ -970,6 +970,42 @@ class EgressLedger:
             return False
         return len({f.get("run_id") for f in frags}) >= 2
 
+    def uploads(self, principal=None):
+        """Cross-run http_post upload records for citation provenance.
+
+        F139: the executor appends ``kind: "upload"`` entries (url,
+        payload sha prefix, uploader identity) at every executed
+        http_post, so a later citation check can correlate a cited URL
+        with a prior upload across runs. Same read discipline as the
+        other query methods: missing ledger -> [], verify+scan under
+        the shared read lock (F74/F-RA1), unparseable lines skipped,
+        ``principal`` optionally scopes the scan.
+        """
+        if not self.path.exists():
+            return []
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()  # nested: reentrant under read hold
+                out = []
+                for line in self.path.read_text(
+                        encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except ValueError:
+                        continue
+                    if entry.get("kind") != "upload":
+                        continue
+                    if principal is not None and \
+                            entry.get("principal") != principal:
+                        continue
+                    out.append(entry)
+                return out
+        except _LedgerMissing:
+            return []
+
     def structural_campaign_hit(self, principal, domain, param_keys,
                                 window_secs=CAMPAIGN_WINDOW_SECS, now=None,
                                 k=CAMPAIGN_K):
