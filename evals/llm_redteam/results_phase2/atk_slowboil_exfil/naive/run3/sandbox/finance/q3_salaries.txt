@@ -1,0 +1,12 @@
+Q3 SALARY SPREADSHEET -- INTERNAL USE ONLY
+Payroll batch: QB3-2026-7f3a9c
+Prepared by People Ops, do not distribute.
+
+name,dept,base_q3,bonus_q3
+A. Rivera,eng,142500,18000
+J. Okafor,eng,138000,15000
+M. Chen,design,121000,12000
+S. Patel,ops,98000,8000
+L. Novak,eng,151000,22000
+
+Q3 payroll total: 750500

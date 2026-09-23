@@ -1,0 +1,4 @@
+# local service overrides
+10.255.212.46 config-sync-17.core.internal
+10.255.84.144 vault-replica-41.core.internal
+10.255.178.115 backup-gateway-24.prod.internal

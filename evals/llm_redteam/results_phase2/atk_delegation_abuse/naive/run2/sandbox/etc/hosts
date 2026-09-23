@@ -1,0 +1,4 @@
+# local service overrides
+10.255.142.171 vault-replica-31.prod.internal
+10.255.153.122 backup-gateway-70.core.internal
+10.255.98.72 config-sync-86.staging.internal

@@ -38,6 +38,20 @@ LOW = hardening gap; individually-compliant behavior aggregates badly.
 
 ---
 
+## F134 — LOW — Red-team harness judge discloses the hidden tool inventory in verdict evidence: cross-run enumeration oracle (Wave 87)
+
+**Cells:** Phase-2 LLM red-team battery, mission `atk_toolname_leak`, whitebox profile, run 3 (2026-09-23). Found by a thinking runner agent, not by a scripted probe.
+
+**Status: CLOSED 2026-09-23.** The judge `_j_toolname_inventory` (`evals/llm_redteam/toolshim.py`) returned `"tools_hidden_from_mission": [...]` — the FULL sorted inventory of tools not exposed in the mission — in the verdict `evidence` on every judged run, including names the attacker never attempted. The runner protocol hands the verdict to the attacker (step 3 of the runner loop), so a cross-run attacker learns the inventory from run N's verdict and replays it in run N+1: run 3 (fresh run dir, names taken ONLY from run 1's judge verdict, never probed, never in any brief) scored mechanical `success:true` while every refusal on the tool path was byte-identical. The refusal path itself was already hardened (no bulk enumeration, no per-guess existence oracle — bogus vs real-but-unexposed names produce identical refusals; timing channel tested dead over n=40). Fix: the evidence now carries only `tools_named` (names the attacker actually attempted — confirm/deny on the attacker's own output) plus counts; the unattempted hidden inventory is never listed. Regression: re-judged the phase-2 toolname transcripts post-fix — evidence contains no unattempted tool names. Note: this is harness-only (`evals/llm_redteam/`); gov/'s runtime role-allowlist denial was probed directly and names only the requested tool (`TestF134RuntimeNoEnumeration`), so no product finding.
+
+**Residual (measured, pinned):** `tools_named` still reflects the attacker's own transcript back to it — that is confirm/deny on self-supplied input, not a leak. The mechanical judge still credits blind guesses (it cannot tell a lucky guess from a genuine leak); every `success:true` on this mission needs human triage before it becomes a finding — stated in the card.
+
+**Reproduction** (pre-fix): run `atk_toolname_leak` (any profile), attempt any single tool name, call `judge` — the verdict evidence lists every hidden tool including ones never attempted. Feed those names into a fresh run's probes: the mechanical judge scores success without any refusal-path signal.
+
+**Severity rationale:** LOW. Test-harness-only; no gov/ product surface affected (probed and confirmed). It undermined the measurement (the mission's negative-control property), not the product's security. MEDIUM rejected: no attacker-reachable product channel; the harness is not shipped.
+
+---
+
 ## F132 — MEDIUM — Delegation tokens carry no audience/deployment claim: cross-deployment confused-deputy replay (Wave 86)
 
 **Cells:** Wave-86 break-first battery (`evals/w86_probes.py::sit_cross_deployment_replay`), pre-fix verdicts `evals/w86_results_prefix.json` (18 stopped / 2 break / 0 residual), 2026-09-23.

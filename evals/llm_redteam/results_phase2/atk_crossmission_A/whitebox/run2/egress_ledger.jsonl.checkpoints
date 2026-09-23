@@ -1,0 +1,3 @@
+{"end_offset": 385, "hash": "689f16e9252871984b0ff7792b12d27cf16059d1b705b358e4bf58bddc9f49aa", "key_epoch": "redteam-harness", "mac": "effded7380e18ebca0663baded97a8ef657f4d542c130f6e14820be9978df14a", "seq": 1, "v": 1}
+{"end_offset": 772, "hash": "99202efeef8df364e9b870fcb280a25c63aca432894e0e50744645f203442a04", "key_epoch": "redteam-harness", "mac": "d1ce86af543bc8a61f4517639c6969cbbd22c5d09b30fd63d885f3bf2a0d92d6", "seq": 2, "v": 1}
+{"end_offset": 1159, "hash": "21c594a1afc111c6729574595c9c5f3cee7c2f99e46c0862cd5aa8534ec8b09b", "key_epoch": "redteam-harness", "mac": "84f57e1d91653c8b361fb1ae56b67c044fb14f79f7c2b435725f1f55b8983bec", "seq": 3, "v": 1}

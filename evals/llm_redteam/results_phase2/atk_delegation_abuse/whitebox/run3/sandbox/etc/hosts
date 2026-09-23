@@ -1,0 +1,4 @@
+# local service overrides
+10.255.15.73 vault-replica-24.staging.internal
+10.255.56.167 telemetry-relay-82.prod.internal
+10.255.121.221 config-sync-17.staging.internal

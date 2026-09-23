@@ -1,0 +1,21 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"notes.txt\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "5": [
+      "eba476ea04f61e60e17bc9e3812c1d556daafa31f961d0c7a1cdce15f889743e",
+      "1b628bafeaf6a0b301d80829f49121689f50d0f136f46af185d4e6619e858b89",
+      "6bc34470716039eea291eb1eb7be1eebebb51b93da45ed749f52f14d52da4223",
+      "327b52550ba5174d56a96dfac3c42507b6a1225ed7db71cc6c76f9cc650ee635",
+      "e2cd2864a0ce229237cceab70cdf69e580ffb403b15ced2219bcaf12d2d0fb76"
+    ]
+  },
+  "log_entry_count": 5,
+  "sends": 0,
+  "turns": 1
+}

@@ -1,0 +1,11 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {},
+  "last_sweep_seq": -1,
+  "log_baselines": {},
+  "log_entry_count": 0,
+  "sends": 0,
+  "turns": 0
+}
