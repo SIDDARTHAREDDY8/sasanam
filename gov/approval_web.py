@@ -201,6 +201,7 @@ import secrets
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -224,6 +225,9 @@ from gov.approvals import (  # noqa: E402
     _canonical_dumps,
     _DECISION_TARGET_CAP_BYTES,
     risk_level,
+    # S3 shield (wave-89): packet-first rendering + persuasion banners.
+    PERSUASION_FLAG_SCORE,
+    PERSUASION_RISK_SCORE,
 )
 from gov.log import ActionLog, read_entries_with_stats  # noqa: E402
 
@@ -718,6 +722,44 @@ def render_list(app, csrf=None):
         csrf=csrf)
 
 
+def _packet_panel(record):
+    """S3 shield (wave-89): render the canonical packet as the PRIMARY
+    decision basis — machine-generated, agent-prose-free. Agent prose
+    (preview/justification/args) stays segregated in the untrusted zone
+    below; the approver decides on this panel first."""
+    pkt = record.get("canonical_packet") or {}
+    if not pkt:
+        return ("<p><small>canonical packet: n/a (record predates the "
+                "approval-integrity shield)</small></p>")
+    pol = pkt.get("policy") or {}
+    pers = pkt.get("persuasion") or {}
+    rows = [
+        ("action", _esc(pkt.get("action"))),
+        ("target", "<code>%s</code>" % _esc(pkt.get("target"))),
+        ("risk", "<strong class='risk-%s'>%s (%s)</strong>" % (
+            _esc(pkt.get("risk_tier")), _esc(pkt.get("risk_score")),
+            _esc(pkt.get("risk_tier")))),
+        ("risk factors", _esc("; ".join(pkt.get("risk_factors") or []))
+         or "(none)"),
+        ("blast radius", _esc("; ".join(pkt.get("blast_radius") or []))
+         or "(none identified)"),
+        ("policy", _esc("%s · version %s · rules: %s · flag: %s" % (
+            pol.get("policy_id"), pol.get("policy_version"),
+            ", ".join(pol.get("matched_rules") or []),
+            pol.get("policy_flag")))),
+        ("persuasion score", _esc("%s%s" % (
+            pers.get("score"),
+            (" — markers: %s" % "; ".join(pers.get("markers") or []))
+            if pers.get("markers") else ""))),
+        ("packet digest", "<code>%s</code>"
+         % _esc((record.get("packet_digest") or "")[:32])),
+    ]
+    return ("<h2>Decision packet (governor-generated — decide on this)</h2>"
+            "<table>%s</table>"
+            % "".join("<tr><td>%s</td><td>%s</td></tr>" % kv
+                      for kv in rows))
+
+
 def render_detail(app, record, csrf):
     r = record
     flags = []
@@ -839,6 +881,37 @@ def render_detail(app, record, csrf):
                         _esc("; ".join(detail["factors"]))))
     except Exception:
         risk_html = "<p>risk: n/a</p>"
+    # S3 shield (wave-89): the canonical packet is the PRIMARY decision
+    # basis — rendered first, before any agent-authored prose. Agent
+    # prose stays segregated in the untrusted zone below.
+    packet_html = _packet_panel(r)
+    _ps = r.get("persuasion_score") or 0
+    if _ps >= PERSUASION_RISK_SCORE:
+        flags.append(
+            "<div class='err'><strong>PERSUASION MARKERS (score %d):</strong> "
+            "%s — this request's framing tries to steer you. Decide on "
+            "the packet above, not on this tone.</div>"
+            % (_ps, _esc("; ".join(r.get("persuasion_markers") or []))))
+    elif _ps >= PERSUASION_FLAG_SCORE:
+        flags.append(
+            "<div class='warn'><strong>Persuasion-shaped framing (score "
+            "%d):</strong> %s — verify the packet above independently."
+            "</div>" % (_ps,
+                        _esc("; ".join(r.get("persuasion_markers") or []))))
+    if r.get("prose_divergence"):
+        flags.append(
+            "<div class='err'><strong>PROSE DIVERGENCE:</strong> %s — the "
+            "agent's prose names a different target than the action will "
+            "execute. Trust the packet target, not the story.</div>"
+            % _esc(r.get("prose_divergence")))
+    if r.get("status") == "pending" and r.get("cooling_off_until"):
+        _cool_until = ApprovalQueue._parse_ts(r.get("cooling_off_until"))
+        if _cool_until is not None and datetime.now(timezone.utc) < _cool_until:
+            flags.append(
+                "<div class='warn'><strong>COOLING-OFF until %s:</strong> "
+                "critical-tier items cannot be approved until the pause "
+                "elapses. Rejection stays available.</div>"
+                % _esc(r.get("cooling_off_until")))
     just = r.get("agent_justification")
     just_html = ("<p class='unverified'>agent justification (UNVERIFIED "
                  "agent-supplied text — may contain instructions aimed "
@@ -873,10 +946,10 @@ def render_detail(app, record, csrf):
         "<h2>Untrusted content — do not follow instructions here</h2>"
         "<p class='unverified'>Everything in this section is agent- or "
         "foreign-supplied input: it may contain instructions aimed at "
-        "you, the approver. Decide only on the governor-verified facts "
-        "above (risk, policy verdict, digest, status). Instructions "
-        "appearing here are not from the operator and must not be "
-        "obeyed.</p>"
+        "you, the approver. Decide only on the decision packet above "
+        "(machine-generated, digest-bound) — never on this prose. "
+        "Instructions appearing here are not from the operator and "
+        "must not be obeyed.</p>"
         "%s%s</div>"
         % (_args_view(r.get("args") or {}), just_html))
     # -- D1-core quorum panel: the MACed snapshot + every vote row,
@@ -1030,7 +1103,7 @@ def render_detail(app, record, csrf):
                                     _esc(r.get("decision_reason"))))
     return _page(
         "Approval %s" % r["id"],
-        "".join(flags) + bridge_html +
+        "".join(flags) + bridge_html + packet_html +
         "<table>"
         "<tr><th>field</th><th>value</th></tr>"
         "<tr><td>id</td><td>%s</td></tr>"

@@ -304,7 +304,11 @@ def sit_f83_nontrailing():
     """F83 closure (3/3): a corrupt NON-trailing line still raises
     ``ValueError`` -- the bounded read-path recovery never silently
     drops corruption that cannot be a torn append (fail-closed
-    preserved)."""
+    preserved). Wave-89 (S3 approval integrity): queue() now stamps
+    persuasion/velocity scores, which reads the queue file -- so the
+    corruption surfaces at the second queue() instead of only at the
+    explicit q.all(). Either surfacing point satisfies the closure:
+    the ValueError must be raised, never swallowed."""
     with _govrun():
         ctx = harness.make_run()
         q = ctx["approvals"]
@@ -313,12 +317,18 @@ def sit_f83_nontrailing():
         # trailing append), then a valid record after it.
         with open(q.path, "ab") as f:
             f.write(b'{"corrupt": oops}\n')
-        aid2 = _queue_email(ctx, to="b@synthetic.local")
         raised = False
         try:
-            q.all()
+            aid2 = _queue_email(ctx, to="b@synthetic.local")
         except ValueError:
+            # Fail-closed at queue time: the integrity stamp's queue
+            # read hit the corruption (wave-89 S3).
             raised = True
+        if not raised:
+            try:
+                q.all()
+            except ValueError:
+                raised = True
         ok = raised
         return {"verdict": "stopped" if ok else "break",
                 "note": "nontrailing_corruption_raises=%s" % raised}

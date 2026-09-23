@@ -107,6 +107,15 @@ ALLOWED_HMAC_SITES = {
     # gov/sterile.py: the sterile registry's own registration secret.
     ("gov/sterile.py", "_reg_mac", 0):
         "sterile registry token MAC; registry-held secret",
+    # gov/lineage.py (wave-90, S6): the infection-lineage sidecar
+    # stamps. The key is the tracker's own per-run lineage key
+    # (run_dir/lineage/.key, mode 0600, os.urandom(32) at creation),
+    # held in the operator trust domain — never the log key, never
+    # agent-reachable through governed tools (which cannot read
+    # outside the sandbox). Stamps are per-run: a new run mints a
+    # new key, so stamps never cross runs.
+    ("gov/lineage.py", "LineageTracker._sign_stamp", 0):
+        "lineage sidecar-stamp MAC; per-run operator-held lineage key",
 }
 
 

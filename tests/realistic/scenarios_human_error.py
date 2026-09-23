@@ -137,9 +137,15 @@ def scenario_he_1a():
     entries = ctx["read_log"]()
     tool_entries = [e for e in entries if e.get("event") == "tool_call"]
     flags = {e.get("flag") for e in tool_entries}
-    checks["default_deny_audited"] = flags == {"default_deny"}
+    # Wave-89 S5 adds an informational risk_tier_escalation audit event
+    # when the trajectory escalates tiers (read->mutating->egress);
+    # it never changes the decision. The scenario's intent is that
+    # every action is denied and audited — both hold.
+    checks["default_deny_audited"] = (
+        flags <= {"default_deny", "risk_tier_escalation"}
+        and "default_deny" in flags)
     assert checks["default_deny_audited"], \
-        "expected only default_deny flags, got %r" % (flags,)
+        "expected default_deny (+ S5 risk_tier_escalation) flags, got %r" % (flags,)
     checks["nothing_executed_or_queued"] = not any(
         e.get("decision") in ("allowed_executed", "approved_executed",
                               "auto_approved_executed", "queued_pending",

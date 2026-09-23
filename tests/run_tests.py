@@ -78,8 +78,10 @@ finally:
             else:
                 _hygiene_harness._safe_remove_run_file(p, stats)
     print("run-dir hygiene: removed=%d kept_in_use=%d kept_outside_tmp=%d "
-          "kept_missing=%d errors=%d retained=%d (registered=%d)" % (
+          "kept_missing=%d errors=%d retained=%d (registered=%d) "
+          "kept_foreign_owned=%d" % (
               stats["removed"], stats["kept_in_use"],
               stats["kept_outside_tmp"], stats["kept_missing"],
-              stats["errors"], stats["retained"], stats["registered"]))
+              stats["errors"], stats["retained"], stats["registered"],
+              stats["kept_foreign_owned"]))
 sys.exit(0 if result.wasSuccessful() else 1)

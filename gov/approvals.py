@@ -39,6 +39,7 @@ import fcntl
 import hmac
 import json
 import os
+import re
 import secrets
 import stat
 import sys
@@ -263,6 +264,34 @@ _SECURITY_PAYLOAD_FIELDS = (
     # after the upgrade — queued items must be decided or drained
     # before upgrading.
     "window_close_consumed",
+    # S3 shield (wave-89): the approval-integrity fields are
+    # integrity-bound from birth. persuasion_score/markers are computed
+    # by the queue (never caller-supplied); packet_digest binds the
+    # displayed decision packet (WYSINWYS); cooling_off_until binds the
+    # mandatory pause; prose_divergence binds the prose-vs-args signal;
+    # packet_risk_score/factors bind the risk snapshot the packet showed.
+    # Rewriting any of them after queueing (deflating a persuasion
+    # score, swapping the packet, clearing a cooling-off) breaks the
+    # MAC and is refused, never silently re-MACed. FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/wave-24/F101/F103/F124):
+    # records queued BEFORE this change do not carry these fields, so
+    # their digests fail verification automatically after the upgrade
+    # — queued items must be decided or drained before upgrading.
+    "persuasion_score", "persuasion_markers", "prose_divergence",
+    "packet_digest", "cooling_off_until",
+    "packet_risk_score", "packet_risk_factors",
+    # Wave-89 (stream s5-tool): the tool-definition digest pinned at
+    # queue time and the deferred-effect details are integrity-bound
+    # from birth. Rewriting tool_digest after queueing would let a
+    # rug-pulled tool definition ride a human's approval for a
+    # different tool; stripping deferred_effect would let a
+    # plant-now/harm-later action launder its deferred nature off the
+    # human's decision record. FAIL-CLOSED UPGRADE (same precedent as
+    # F34/F38/R11/D1/F101/F103): records queued BEFORE this change do
+    # not carry these fields, so their digests fail verification
+    # automatically after the upgrade — queued items must be decided
+    # or drained before upgrading.
+    "tool_digest", "deferred_effect",
 )
 
 
@@ -804,6 +833,232 @@ ANOMALY_TOOL_MIX_MIN = 4      # ... and at least this many pending items
 ANOMALY_RISK_BUMP = 15        # advisory escalation on anomalous items
 
 
+ANOMALY_RISK_BUMP = 15        # advisory escalation on anomalous items
+
+
+# --- S3 approval-integrity shield (wave-89) ------------------------------
+# Deterministic, $0, no-LLM defenses for the HUMAN's decision (memo Part
+# D row 3: human-approver persuasion, PARTIAL -> measured). The approval
+# queue was machine-blind to manipulation of the approver: agent prose
+# passed through untouched, nothing computed divergence between prose
+# claims and canonical args, nothing bound what the human SAW, and
+# fatigue/velocity signals were advisory-only. This section adds:
+#   score_persuasion()      deterministic persuasion-marker scoring
+#   prose_divergence()       prose-claim vs canonical-args divergence
+#   canonical_packet()       machine-generated, agent-prose-free packet
+#   _packet_digest()        digest binding of the displayed packet
+# plus queue()/decide() wiring: cooling-off for critical items and
+# enforced different-approver escalation for fatigued principals.
+# HONEST LIMITS (documented, not claimed away): heuristic scoring is
+# bypassable by a careful adversary; a determined, fatigued, or
+# complicit approver remains a residual; cooling-off can be waited out;
+# second-approver enforcement is only as strong as decided_by identity
+# strings. We meter and escalate; we never claim the process is
+# human-proof.
+
+# Persuasion marker families: (family, points per distinct marker hit,
+# family cap, regexes). Scoring is deterministic and one-directional —
+# it can only raise the score, never lower it.
+_PERSUASION_MARKERS = (
+    ("urgency", 15, 30, (
+        r"\burgent\b", r"\basap\b", r"\bimmediately\b",
+        r"\bright now\b", r"\bdeadline\b", r"\btime-sensitive\b",
+        r"\bemergency\b", r"\bbefore it'?s too late\b", r"\bat once\b",
+    )),
+    ("authority", 20, 40, (
+        r"\bmanager\b.{0,30}\bapproved\b", r"\bceo\b.{0,30}\bapproved\b",
+        r"\bverbally approved\b", r"\bper policy\b",
+        r"\bauthoriz(?:ed|ation) by\b", r"\bleadership\b.{0,30}\bapproved\b",
+        r"\bcompliance requires\b", r"\balready approved\b",
+        r"\bsecurity team\b.{0,30}\bapproved\b",
+    )),
+    ("secrecy", 25, 50, (
+        r"\bdon'?t tell\b", r"\bdo not tell\b", r"\bconfidential\b",
+        r"\bdon'?t log\b", r"\bdo not log\b", r"\bkeep this quiet\b",
+        r"\bbetween us\b", r"\boff the record\b",
+        r"\bno need to document\b", r"\bdelete this\b",
+    )),
+    ("approver_instruction", 30, 60, (
+        r"\bjust approve\b", r"\bno need to review\b",
+        r"\bdon'?t review\b", r"\bdo not review\b",
+        r"\bskip the review\b", r"\bapprove without\b",
+        r"\brubber[- ]stamp\b", r"\bdon'?t ask questions\b",
+    )),
+    ("guilt", 15, 30, (
+        r"\byou'?ll be responsible\b", r"\byou will be responsible\b",
+        r"\byour fault\b", r"\byour responsibility\b",
+        r"\bpeople will suffer\b", r"\bthink of the team\b",
+    )),
+)
+PERSUASION_FLAG_SCORE = 50    # banner threshold: approver is warned
+PERSUASION_RISK_SCORE = 70    # risk-bump threshold: feeds cooling-off /
+                              # fatigue machinery via _score_factors
+PERSUASION_RISK_BUMP = 20     # advisory, one-directional, never lowers
+
+COOLING_OFF_MIN_SCORE = 80         # "critical" tier: mandatory pause
+DEFAULT_COOLING_OFF_SECONDS = 900  # 15 minutes; policy-configurable
+
+FATIGUE_WINDOW_SEC = 600            # trailing window for velocity
+FATIGUE_DECISION_THRESHOLD = 8      # approves by one principal in window
+FATIGUE_ESCALATION_MIN_SCORE = 60   # "high" tier: needs a fresh approver
+
+# Matches address-like tokens, including bare internal hostnames
+# (ops@internal) that carry no dot-TLD — the divergence detector must
+# see the addresses humans actually write, not just RFC-shaped ones.
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+")
+
+
+def score_persuasion(text):
+    """Deterministic persuasion-marker scoring over agent prose.
+
+    Returns ``(score 0-100, markers [...])`` where markers are
+    ``"family:matched-phrase"`` strings. Pure function of the text —
+    no LLM, no network, $0. Bypassable by a careful adversary by
+    construction (documented limit); it is a tripwire, not a verdict.
+    """
+    blob = str(text or "")
+    lowered = blob.lower()
+    markers = []
+    total = 0
+    for family, points, cap, patterns in _PERSUASION_MARKERS:
+        fam_total = 0
+        for pat in patterns:
+            m = re.search(pat, lowered)
+            if m:
+                markers.append("%s:%s" % (family, m.group(0).strip()))
+                fam_total += points
+        total += min(fam_total, cap)
+    return min(100, total), markers
+
+
+def prose_divergence(justification, args):
+    """Detect when agent prose claims a DIFFERENT target than the args.
+
+    The decide-A/summarize-A'/execute-A shape: the justification names a
+    benign recipient while the canonical args name another. Returns a
+    short description string when a specific recipient claim in the
+    prose contradicts the action's actual target, else None. Heuristic
+    and conservative: prose that names no address never diverges.
+    """
+    just = str(justification or "")
+    claimed = {m.group(0).lower() for m in _EMAIL_RE.finditer(just)}
+    if not claimed:
+        return None
+    args = args or {}
+    actual = None
+    for key in ("to", "url", "path", "recipient", "destination"):
+        val = args.get(key)
+        if isinstance(val, str) and val:
+            actual = val
+            break
+    if actual is None:
+        return None
+    actual_addrs = {m.group(0).lower() for m in _EMAIL_RE.finditer(actual)}
+    if actual_addrs and not (claimed & actual_addrs):
+        # The prose names concrete address(es) and NONE of them is the
+        # actual target — the approver is being told a different story
+        # than the action will execute.
+        return ("justification names %s but the action targets %s"
+                % (sorted(claimed)[0], sorted(actual_addrs)[0]))
+    return None
+
+
+def _packet_target(tool, args):
+    """The machine-extracted target of the action (never agent prose)."""
+    args = args or {}
+    for key in ("to", "url", "path", "window", "recipient", "destination"):
+        val = args.get(key)
+        if isinstance(val, str) and val:
+            return val
+    for val in args.values():
+        if isinstance(val, str) and val:
+            return val[:120]
+    return "(no scalar target)"
+
+
+def _packet_blast_radius(record):
+    """Machine-computed blast-radius hints from governor-held fields."""
+    hints = []
+    ctx = record.get("policy_context") or {}
+    tool = record.get("tool")
+    if ctx.get("path_outside_sandbox"):
+        hints.append("target outside sandbox")
+    if ctx.get("domain_allowlisted") is False and tool in (
+            "send_email", "http_post", "api_call"):
+        hints.append("egress to non-allowlisted destination")
+    if ctx.get("carries_read_content"):
+        hints.append("carries previously-read content")
+    if _secret_hint_in_args(record.get("args")):
+        hints.append("secret-like material in arguments")
+    if tool == "delete_file":
+        hints.append("destructive: deletes data")
+    if (record.get("persuasion_score") or 0) >= PERSUASION_RISK_SCORE:
+        hints.append("high persuasion markers in agent prose")
+    if record.get("prose_divergence"):
+        hints.append("agent prose contradicts action target")
+    return hints
+
+
+def canonical_packet(record):
+    """Machine-generated, agent-prose-free decision packet.
+
+    The PRIMARY decision basis: action, machine-extracted target, risk
+    tier + factors, blast radius, policy citations, persuasion summary.
+    Pure function of the stored record — recomputable at decide time,
+    so the digest below binds exactly what the human saw.
+    """
+    score = record.get("packet_risk_score") or 0
+    return {
+        "packet_version": 1,
+        "action": record.get("tool"),
+        "target": _packet_target(record.get("tool"), record.get("args")),
+        "risk_tier": risk_level(score),
+        "risk_score": score,
+        "risk_factors": list(record.get("packet_risk_factors") or []),
+        "blast_radius": _packet_blast_radius(record),
+        "policy": {
+            "policy_id": record.get("policy_id"),
+            "policy_version": record.get("policy_version"),
+            "matched_rules": list(record.get("matched_rules") or []),
+            "policy_flag": record.get("policy_flag"),
+        },
+        "persuasion": {
+            "score": record.get("persuasion_score") or 0,
+            "markers": list(record.get("persuasion_markers") or []),
+        },
+        "preview_sha256": sha256(
+            str(record.get("preview") or "").encode("utf-8")).hexdigest(),
+        "agent": {
+            "agent_id": record.get("agent_id"),
+            "role": record.get("role"),
+            "principal": record.get("principal"),
+        },
+    }
+
+
+def _packet_digest(packet):
+    """Digest binding of the displayed packet (WYSINWYS)."""
+    return sha256(
+        _canonical_dumps(packet).encode("utf-8")).hexdigest()
+
+
+def _packet_digest_ok(record):
+    """Recompute the packet from the STORED record and compare.
+
+    The packet is a pure function of stored fields, so any drift
+    between what was displayed (queue time) and what is decided —
+    rewritten preview, edited persuasion score, swapped risk snapshot —
+    breaks the digest. Fail closed.
+    """
+    stored = record.get("packet_digest")
+    if not stored:
+        return False
+    try:
+        return _packet_digest(canonical_packet(record)) == stored
+    except Exception:
+        return False
+
+
 def risk_level(score):
     if score < 30:
         return "low"
@@ -902,6 +1157,18 @@ def _score_factors(record, queue_records, anomaly_ids=(), ignore_history=False):
         factors.append("queue-anomaly cluster +%d (advisory: review "
                        "individually, never auto-approve)"
                        % ANOMALY_RISK_BUMP)
+    # S3 shield (wave-89): persuasion-shaped items score higher. The
+    # bump is advisory and one-directional — it can only raise the
+    # score, never lower it — and it feeds the cooling-off (>=80) and
+    # fatigue-escalation (>=60) machinery below, plus the batch guards.
+    # Records queued before the shield carry no persuasion_score and
+    # get no bump (fail-closed upgrade keeps them undecidable anyway).
+    _pers = record.get("persuasion_score") or 0
+    if _pers >= PERSUASION_RISK_SCORE:
+        score += PERSUASION_RISK_BUMP
+        factors.append("persuasion markers in agent prose +%d (advisory: "
+                       "manipulation-shaped framing detected)"
+                       % PERSUASION_RISK_BUMP)
     return min(100, score), factors
 
 
@@ -2115,7 +2382,7 @@ def _atomic_write_text(path, lines):
 class ApprovalQueue(ApprovalQueueRiskMixin):
     def __init__(self, run_dir, log, batch_excluded_reasons=None,
                  delegation_config=None, quorum_config=None,
-                 principal_registry=None):
+                 principal_registry=None, cooling_off_seconds=None):
         self.run_dir = Path(run_dir)
         # F42 (R11): the queue's authoritative run id — records stamp
         # THIS, never a caller-supplied run_id.
@@ -2128,6 +2395,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # policy). ToolExecutor pushes the policy-derived list via the
         # setter below.
         self.set_batch_excluded_reasons(batch_excluded_reasons)
+        # S3 shield (wave-89): cooling-off pause for critical items.
+        self.set_cooling_off_seconds(cooling_off_seconds)
         # D1-core: delegation/quorum policy sections, normalized
         # fail-closed at install. The raw shapes are the policy file's
         # ``approvals.delegation`` / ``approvals.quorum`` mappings (or
@@ -2345,6 +2614,87 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         else:
             self._batch_excluded = tuple(r for r in reasons)
 
+    def set_cooling_off_seconds(self, seconds):
+        """S3 shield (wave-89): install the cooling-off pause length.
+
+        ``seconds=None`` keeps the default (15 minutes); an explicit
+        value (possibly 0 = pause disabled) is honored as the
+        deployment's choice. Re-set is allowed — this is policy data,
+        not an identity anchor.
+        """
+        if seconds is None:
+            self._cooling_off_seconds = DEFAULT_COOLING_OFF_SECONDS
+        else:
+            self._cooling_off_seconds = max(0, int(seconds))
+
+    def _stamp_approval_integrity(self, record, preview, justification,
+                                  args):
+        """S3 shield (wave-89): stamp the approval-integrity fields on a
+        freshly-built record, BEFORE its args_digest is computed (they
+        are MAC-bound from birth). Called from every queueing path —
+        queue() AND queue_external() — so no ingress route produces an
+        unstamped record that decide() would then have to refuse.
+        Bridge/foreign records get the same shield: their
+        agent_justification is explicitly UNVERIFIED foreign prose, the
+        highest-value persuasion surface.
+        """
+        _p_score, _p_markers = score_persuasion(
+            "%s\n%s" % (preview, justification or ""))
+        record["persuasion_score"] = _p_score
+        record["persuasion_markers"] = _p_markers
+        record["prose_divergence"] = prose_divergence(justification, args)
+        # Risk snapshot for the packet and the cooling-off gate,
+        # computed pre-insert against the current queue state.
+        _p_risk, _p_factors = _score_factors(record, self.all())
+        record["packet_risk_score"] = _p_risk
+        record["packet_risk_factors"] = _p_factors
+        _packet = canonical_packet(record)
+        record["canonical_packet"] = _packet
+        record["packet_digest"] = _packet_digest(_packet)
+        # Cooling-off: critical-tier items cannot be approved until the
+        # pause elapses — and neither can heavily-manipulated items.
+        # A persuasion score >= PERSUASION_RISK_SCORE means the framing
+        # is maximally manipulative; the laundering shape works at ANY
+        # risk tier (a compliant approver rubber-stamps a medium-risk
+        # exfil the same way), so the pause is the manipulation
+        # circuit-breaker, not just the criticality gate. Stamped here
+        # (MAC-bound); decide() enforces.
+        if (_p_risk >= COOLING_OFF_MIN_SCORE
+                or _p_score >= PERSUASION_RISK_SCORE):
+            _cool_until = (datetime.now(timezone.utc)
+                           + timedelta(seconds=self._cooling_off_seconds))
+            record["cooling_off_until"] = _cool_until.isoformat()
+        else:
+            record["cooling_off_until"] = None
+
+    def _principal_fatigued(self, principal):
+        """S3 shield (wave-89): is this principal past the decision-
+        velocity threshold? Counts APPROVE decisions (the laundering
+        direction — rejections don't launder) by the principal inside
+        the trailing window, read from the queue file itself so the
+        signal survives restarts and cannot drift from the log.
+
+        Honest limit: identity is only as strong as decided_by strings
+        (documented localhost-grade limit, same as the D1-core note).
+        """
+        if not principal:
+            return False
+        now = datetime.now(timezone.utc)
+        count = 0
+        for r in self.all():
+            if r.get("status") != "approved":
+                continue
+            if r.get("decided_by") != principal:
+                continue
+            ts = self._parse_ts(r.get("decided_at"))
+            if ts is None:
+                continue
+            if (now - ts).total_seconds() <= FATIGUE_WINDOW_SEC:
+                count += 1
+                if count >= FATIGUE_DECISION_THRESHOLD:
+                    return True
+        return False
+
     def set_delegation_config(self, cfg):
         """D1-core: install the ``approvals.delegation`` policy section.
 
@@ -2543,7 +2893,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               delegation_delegator_chain=None,
               policy_context=None, policy_flag=None, egress_bytes=None,
               caller_identity=None, policy_version=None,
-              matched_rules=None):
+              matched_rules=None, tool_digest=None, deferred_effect=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -2616,6 +2966,20 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # Sanitize here (in addition to the executor's _preview) so every
         # record is safe no matter which caller queued it.
         preview = sanitize_preview_text(preview or "")
+        # Wave-89 (stream s5-tool): auto-pin the tool-definition digest
+        # when the caller did not supply one. The executor always pins
+        # explicitly from its own inventory; direct queue() callers
+        # (tests, the canary halt path) get the default inventory's
+        # digest so every new record carries a pin and the sweep's
+        # re-verification applies uniformly. A deployment with a custom
+        # ToolInventory that queues directly (bypassing the executor)
+        # should pass tool_digest explicitly — the default pin here is
+        # best-effort, and the sweep compares against the EXECUTOR's
+        # inventory.
+        if tool_digest is None and action.get("tool") is not None:
+            from . import tool_continuity as _tool_continuity
+            tool_digest = _tool_continuity.ToolInventory().digest_for(
+                action.get("tool"))
         # F42: every authority field below comes from the authenticated
         # caller object or the queue itself — never from action[].
         record = {
@@ -2670,6 +3034,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # binds the full security record: identity, preview,
             # provenance, policy_context, policy_flag,
             # delegation_attempted.
+            # Wave-89 (stream s5-tool): the tool-definition digest
+            # pinned at queue time and the deferred-effect details ride
+            # on the record MAC-bound (see _SECURITY_PAYLOAD_FIELDS):
+            # a post-queue definition swap or a stripped deferred
+            # marker breaks the digest and is refused, never silently
+            # re-MACed. Deep-copied so caller-side mutation after
+            # queue() cannot reach the bound record.
+            "tool_digest": tool_digest,
+            "deferred_effect": (json.loads(json.dumps(
+                deferred_effect, sort_keys=True, default=str))
+                if deferred_effect is not None else None),
             "digest_scheme": APPROVAL_DIGEST_SCHEME,
             # F33: raw outbound payload bytes at queue time; the execution
             # boundary charges this (the redacted queue form may summarize
@@ -2720,6 +3095,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # checked against the snapshot, never the live policy file.
         if self._quorum_applies(policy_flag):
             self._open_quorum(record)
+        # S3 shield (wave-89): persuasion scoring + canonical packet,
+        # computed by the queue from governor-held fields — never from
+        # agent claims about the packet. Shared helper so queue() and
+        # queue_external() stamp identically (no unstamped ingress).
+        self._stamp_approval_integrity(
+            record, preview, action.get("agent_justification"), args)
         # F43: the digest covers the record's security fields, computed
         # here from the stamped record itself.
         record["args_digest"] = approval_record_digest(record)
@@ -3078,6 +3459,126 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             raise ValueError(
                 "decision refused: approval %r is delegated to %r; only "
                 "the assignee may decide it" % (approval_id, assignee))
+        # S3 shield (wave-89): packet re-verification (WYSINWYS). The
+        # packet is a pure function of the stored record, so any drift
+        # between what the human saw at queue time and what is decided
+        # now — rewritten preview, deflated persuasion score, swapped
+        # risk snapshot — breaks the digest. Fail closed, audited.
+        if not _packet_digest_ok(target):
+            try:
+                self._log({
+                    "event": "approval_integrity_violation",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "refused",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "decided_by": decided_by,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("packet digest mismatch: the displayed "
+                               "decision packet drifted between queue "
+                               "and decide — decision refused"),
+                })
+            except Exception:
+                pass
+            _log_attempt(
+                "rejected_attempt",
+                "decision refused: the decision packet failed "
+                "re-verification (tampered after display)",
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "approval %r failed packet re-verification: the displayed "
+                "packet was tampered with after queueing — decision "
+                "refused" % approval_id)
+        if approved:
+            # S3 shield (wave-89): cooling-off. A critical-tier approve
+            # before the pause elapses is refused — the persuasion
+            # laundering shape needs the approver deciding in the same
+            # breath as the framing. Rejections are the safe direction
+            # and always pass. Audited; the record stays pending.
+            _cool_until = self._parse_ts(target.get("cooling_off_until"))
+            if _cool_until is not None:
+                _now = datetime.now(timezone.utc)
+                if _now < _cool_until:
+                    try:
+                        self._log({
+                            "event": "approval_cooling_off",
+                            "run_id": target.get("run_id"),
+                            "agent_id": "human-operator",
+                            "role": "approver",
+                            "principal": "human-operator",
+                            "tool": target.get("tool"),
+                            "decision": "refused",
+                            "policy_id": target.get("policy_id"),
+                            "approval_id": approval_id,
+                            "decided_by": decided_by,
+                            "related_agent": target.get("agent_id"),
+                            "cooling_off_until":
+                                target.get("cooling_off_until"),
+                            "reason": ("cooling-off: critical-tier item "
+                                       "cannot be approved until %s"
+                                       % target.get("cooling_off_until")),
+                        })
+                    except Exception:
+                        pass
+                    _log_attempt(
+                        "rejected_attempt",
+                        "decision refused: cooling-off pause has not "
+                        "elapsed for this critical-tier item",
+                        agent_id=target.get("agent_id"),
+                        role=target.get("role"),
+                        tool=target.get("tool"))
+                    raise ValueError(
+                        "decision refused (cooling_off): approval %r is "
+                        "critical-tier and cannot be approved until %s"
+                        % (approval_id, target.get("cooling_off_until")))
+            # S3 shield (wave-89): fatigue escalation. A principal past
+            # the decision-velocity threshold cannot solo-approve a
+            # high-risk item — a DIFFERENT approver must decide it. This
+            # is the enforced form of the F4 advisory signal: the
+            # flood-then-smuggle shape dies here instead of getting a
+            # risk bump. Audited; the record stays pending.
+            if (self.risk(target) >= FATIGUE_ESCALATION_MIN_SCORE
+                    and self._principal_fatigued(decided_by)):
+                try:
+                    self._log({
+                        "event": "approval_fatigue_escalation",
+                        "run_id": target.get("run_id"),
+                        "agent_id": "human-operator",
+                        "role": "approver",
+                        "principal": "human-operator",
+                        "tool": target.get("tool"),
+                        "decision": "refused",
+                        "policy_id": target.get("policy_id"),
+                        "approval_id": approval_id,
+                        "decided_by": decided_by,
+                        "related_agent": target.get("agent_id"),
+                        "reason": ("fatigue escalation: principal %r is "
+                                   "past the decision-velocity threshold "
+                                   "(%d approves in %ds); this high-risk "
+                                   "item requires a different approver"
+                                   % (decided_by,
+                                      FATIGUE_DECISION_THRESHOLD,
+                                      FATIGUE_WINDOW_SEC)),
+                    })
+                except Exception:
+                    pass
+                _log_attempt(
+                    "rejected_attempt",
+                    "decision refused: fatigued principal must escalate "
+                    "this high-risk item to a different approver",
+                    agent_id=target.get("agent_id"),
+                    role=target.get("role"),
+                    tool=target.get("tool"))
+                raise ValueError(
+                    "decision refused (fatigue_escalation): approver %r "
+                    "is past the decision-velocity threshold; approval "
+                    "%r requires a different approver"
+                    % (decided_by, approval_id))
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
@@ -3131,6 +3632,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "reason": reason,
             "decided_by": decided_by,
             "related_agent": target["agent_id"],
+            # S3 shield (wave-89): "what the human saw" rides the
+            # decision record — the packet digest binds the displayed
+            # decision basis, and the persuasion/divergence signals
+            # name what the approver was shown about manipulation.
+            "packet_digest": target.get("packet_digest"),
+            "persuasion_score": target.get("persuasion_score"),
+            "prose_divergence": target.get("prose_divergence"),
         })
         # D1-core T11: the late decision is a second, distinct audit
         # entry — the decision above is recorded, but this entry marks
@@ -4114,6 +4622,13 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "bridge_request_digest": bridge_request_digest,
                 "bridge_versions": bridge_versions,
             }
+            # S3 shield (wave-89): the same approval-integrity stamping
+            # as queue() — foreign/bridge ingress is the highest-value
+            # persuasion surface (its justification is explicitly
+            # UNVERIFIED foreign prose), so it must not produce
+            # unstamped records that decide() would refuse.
+            self._stamp_approval_integrity(
+                record, preview, agent_justification, args)
             record["args_digest"] = approval_record_digest(record)
             self.run_dir.mkdir(parents=True, exist_ok=True)
             # F83: heal a torn tail before appending (same discipline
@@ -5030,6 +5545,27 @@ def _print_records(records, queue=None, anomaly_ids=()):
         if queue is not None and r.get("status") == "pending":
             detail = queue.risk_detail(r)
             print("    risk factors: %s" % "; ".join(detail["factors"]))
+        # S3 shield (wave-89): the canonical packet is the PRIMARY
+        # decision basis — machine-generated, agent-prose-free. The
+        # agent's prose stays segregated and labeled below.
+        _pkt = r.get("canonical_packet") or {}
+        if _pkt:
+            print("    packet: %s -> %s | risk %s (%s)%s" % (
+                _pkt.get("action"), _pkt.get("target"),
+                _pkt.get("risk_score"), _pkt.get("risk_tier"),
+                (" | blast radius: %s" % "; ".join(_pkt.get("blast_radius") or []))
+                if _pkt.get("blast_radius") else ""))
+            print("    packet digest: %s" % r.get("packet_digest"))
+        _ps = r.get("persuasion_score") or 0
+        if _ps:
+            print("    persuasion score: %d%s" % (
+                _ps, (" [%s]" % "; ".join(r.get("persuasion_markers") or []))
+                if r.get("persuasion_markers") else ""))
+        if r.get("prose_divergence"):
+            print("    DIVERGENCE: %s" % r.get("prose_divergence"))
+        if r.get("cooling_off_until") and r.get("status") == "pending":
+            print("    COOLING-OFF until %s: approve refused before then"
+                  % r.get("cooling_off_until"))
         if r.get("preview"):
             print("    preview: %s" % r["preview"])
         if r.get("redactions_applied"):

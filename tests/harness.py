@@ -77,6 +77,76 @@ def _register_run_dir(path):
     return path
 
 
+# Wave-88: PID-stamped ownership markers. Every run dir make_run()
+# creates carries a ``.gov-owner-<pid>`` marker naming the creating
+# process. Sweeps that may encounter FOREIGN dirs (run_tests.py's
+# backstop, evals/run_evals._sweep_new_tmpdirs) skip markers owned by a
+# LIVE other pid -- this makes the wave-87 flake (a concurrent gate's
+# sweep removing a live run dir between a test's exists() and open()
+# on approvals.jsonl) impossible by construction instead of
+# caught-and-swallowed. The /proc fd-liveness scan alone cannot see a
+# test that is between file operations (no open fd at the scan
+# instant); the marker is the owner saying "I am live".
+#
+# Markers owned by a DEAD pid are stale and still swept (no leak
+# regression). The creating process's OWN registry sweep
+# (cleanup_run_dirs) always finalizes its own dirs: its pid is never
+# "other", and suite-end cleanup must work despite unclosed fds
+# (wave-23's Errno-28 leak). In-process threads must be joined by
+# their test before any sweep -- the own-pid exclusion is intentional.
+_OWNER_MARKER_PREFIX = ".gov-owner-"
+
+
+def _mark_run_dir_owned(run_dir):
+    """Stamp the creating pid on a fresh run dir.
+
+    Raises OSError if the marker cannot be created: the marker is the
+    only thing that protects a live run dir from a foreign sweep, so
+    a dir that cannot be marked must not be handed out.
+    """
+    Path(run_dir).joinpath(
+        "%s%d" % (_OWNER_MARKER_PREFIX, os.getpid())).touch()
+
+
+def _pid_alive(pid):
+    """True if pid names a live process. Fail-safe: on any ambiguity
+    (EPERM, non-Linux) report alive -- a sweep must never delete a dir
+    it cannot prove is unowned."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, we just cannot signal it
+    except OSError:
+        return True  # fail-safe toward keeping, never toward deleting
+    return True
+
+
+def dir_owned_by_live_other_process(path):
+    """Explicit ownership check (wave-88): True if ``path`` carries a
+    ``.gov-owner-<pid>`` marker whose pid is alive and is not ours.
+
+    Fail-safe toward keeping: unreadable dirs report False here (the
+    callers then apply their own guards), and pid-reuse ambiguity
+    keeps the dir -- a stale marker can leak a dead owner's dir, it
+    can never cause a live dir's wrongful removal."""
+    me = str(os.getpid())
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    for name in names:
+        if not name.startswith(_OWNER_MARKER_PREFIX):
+            continue
+        pid_s = name[len(_OWNER_MARKER_PREFIX):]
+        if not pid_s.isdigit() or pid_s == me:
+            continue
+        if _pid_alive(int(pid_s)):
+            return True
+    return False
+
+
 def _dir_in_use_by_live_process(path):
     """Liveness guard: True if any live process holds an open fd under
     ``path`` (checked via /proc/<pid>/fd symlinks), so cleanup never
@@ -124,6 +194,15 @@ def _safe_remove_run_dir(path, stats):
         return False
     if not os.path.isdir(p) or os.path.islink(p):
         stats["kept_missing"] += 1
+        return False
+    # Wave-88: never remove a run dir owned by a LIVE other process
+    # (concurrent gate under the same TMPDIR). The marker check is
+    # structural -- the wave-87 FileNotFoundError flake is impossible
+    # by construction, not caught-and-swallowed. Own dirs (our pid)
+    # and dead-owner dirs are still finalized.
+    if dir_owned_by_live_other_process(p):
+        stats["kept_foreign_owned"] = \
+            stats.setdefault("kept_foreign_owned", 0) + 1
         return False
     if _dir_in_use_by_live_process(p):
         stats["kept_in_use"] += 1
@@ -181,7 +260,8 @@ def cleanup_run_dirs(*, success=True):
     """
     stats = {"removed": 0, "kept_in_use": 0, "kept_outside_tmp": 0,
              "kept_missing": 0, "errors": 0, "retained": 0,
-             "registered": len(_RUN_DIR_REGISTRY)}
+             "registered": len(_RUN_DIR_REGISTRY),
+             "kept_foreign_owned": 0}
     keep_env = os.environ.get("GOV_KEEP_RUN_DIRS")
     if keep_env == "1" or (not success and keep_env != "0"):
         stats["retained"] = len(_RUN_DIR_REGISTRY)
@@ -225,7 +305,8 @@ STANDARD_AGENTS = {
 def make_run(policy_path=None, ledger_path=None, principal_registry=None,
              break_glass_tickets=(), session_identity=None,
              credential_manifest=None, precommit_gate=None,
-             trifecta_floor=False):
+             trifecta_floor=False, memory_firewall=None,
+             lineage_tracker=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -260,8 +341,28 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
     scope. The executor identity-binds egress credentials against it
     (``credential_identity_mismatch`` policy signal). Default None =
     an empty manifest is constructed (nothing provisioned).
+
+    ``memory_firewall`` (S1-MEM): a ``gov.memory_provenance.MemoryFirewall``
+    installed on the executor. Default None = pre-S1 behavior, zero
+    behavior change. Pass a deployment-constructed firewall (owning a
+    ledger path OUTSIDE the run dir) to exercise cross-session memory
+    provenance; ledger entries persist across make_run() calls that
+    share the path.
+
+    ``lineage_tracker`` (S6, F137): a ``gov.lineage.LineageTracker``
+    installed on the executor. Default None = pre-wave-90 behavior,
+    zero behavior change. When installed, call() refuses unlineaged
+    identities fail-closed and file writes/reads are lineage-stamped.
+    The battery/harness mints genesis explicitly after make_run().
     """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
+    try:
+        _mark_run_dir_owned(run_dir)  # wave-88: PID-stamped ownership marker
+    except OSError:
+        # Unmarkable dirs are unusable: a foreign sweep could delete
+        # them mid-run. Remove the fresh dir and fail construction.
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
     _register_run_dir(run_dir)
     policy = PolicyEngine(str(policy_path or DEFAULT_POLICY))
     log = ActionLog(run_dir / "actions.jsonl")
@@ -282,6 +383,8 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             credential_manifest=credential_manifest,
                             precommit_gate=precommit_gate,
                             trifecta_floor=trifecta_floor,
+                            memory_firewall=memory_firewall,
+                            lineage_tracker=lineage_tracker,
                             # Wave-85: the harness deliberately exercises
                             # the raw (pre-wave-74/75) pipeline — no
                             # policy_store, no delegation_context — so

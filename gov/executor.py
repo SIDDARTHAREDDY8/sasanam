@@ -58,6 +58,7 @@ import os
 import fcntl
 import sys
 import time
+import hashlib
 import collections.abc
 import itertools
 from datetime import datetime, timezone
@@ -69,6 +70,7 @@ from . import canary as _canary
 from . import delegation_tokens as _delegation_tokens
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
+from . import tool_continuity as _tool_continuity
 from . import supplychain_install as sc_install
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
@@ -106,6 +108,7 @@ from .tool_ratings import normalize_tool_ratings
 from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    refusal_ts_within_window, verify_chain_tip,
                    write_chain_tip_from_tail)
+from .memory_provenance import MemoryQuarantineError
 
 _SEND_TOOLS = ("send_email", "http_post")
 # S3 (K-041): tools that mutate state outside the run's read view. A
@@ -417,12 +420,22 @@ class ToolExecutor:
                  recovery=None, lease_verifier=None,
                  lease_gated_tools=(), precommit_gate=None,
                  trifecta_floor=False, ungoverned_ack=None,
-                 revocation_checker=None, spawn_budget=None):
+                 revocation_checker=None, spawn_budget=None,
+                 message_bus=None, memory_firewall=None,
+                 tool_inventory=None, trajectory_checkpoint_every=50,
+                 lineage_tracker=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # Wave-89 (S2, inter-agent messaging): the governed message bus
+        # (gov/messaging.MessageBus), constructed by the deployment in the
+        # operator trust domain. Opt-in: None = pre-wave-89 behavior, zero
+        # behavior change. When installed, send()/receive() are governed
+        # (provenance stamps, steg screening, bandwidth caps) and
+        # lineage quarantine is enforced at send/receive/call/spawn.
+        self._message_bus = message_bus
         # Wave-85 (legacy-seam closure): fail-closed construction. The
         # governed core (policy_store + delegation_context) is the
         # DEFAULT; constructing without it requires an explicit,
@@ -484,6 +497,32 @@ class ToolExecutor:
                     "spawn_budget must be None or a non-negative int, "
                     "got %r" % (spawn_budget,))
             self._spawn_budget = _SpawnBudget(spawn_budget)
+        # S1-MEM (memory provenance firewall, memo row 1): opt-in.
+        # None (the default) = pre-S1 behavior, zero behavior change.
+        # When a gov.memory_provenance.MemoryFirewall is installed,
+        # write_file/read_file on deployment-designated memory paths are
+        # routed through it: writes are tiered and chained into the
+        # per-deployment memory ledger, and reads of untrusted or unknown
+        # instruction-shaped entries are quarantined (fail-closed, loud).
+        # The firewall instance is deployment-constructed (it owns the
+        # ledger path); the executor only routes events through it.
+        self._memory_firewall = memory_firewall
+        self._mem_scanned_principals = set()
+        # Wave-90 (S6, F137 — infection lineage): the lineage substrate
+        # (gov.lineage.LineageTracker), constructed by the deployment in
+        # the operator trust domain and shared across a spawn lineage by
+        # reference. Opt-in: None = pre-wave-90 behavior, zero behavior
+        # change. When installed, there is no silent opt-out WITHIN the
+        # run: call() refuses unlineaged identities fail-closed,
+        # spawn_sub_agent mints a birth certificate for every child
+        # (taint is hereditary at birth), and agent-driven file writes
+        # are lineage-stamped / reads record lineage contact — so the
+        # raw file channel carries the same provenance the S2 bus gives
+        # the message channel. The tracker instance is
+        # deployment-constructed (it owns run_dir/lineage/); the
+        # executor only routes events through it.
+        self._lineage_tracker = lineage_tracker
+        self._lineage_cert = None  # this executor's birth certificate
         # Wave-76 (detection): the behavioral circuit-breaker monitor
         # (gov/detection.BehavioralMonitor). Opt-in: None = pre-wave-76
         # behavior, zero behavior change. When installed, call()
@@ -746,6 +785,15 @@ class ToolExecutor:
             getattr(policy, "batch_excluded_queue_reasons", None) or ())
         if hasattr(approvals, "set_batch_excluded_reasons"):
             approvals.set_batch_excluded_reasons(self._batch_excluded)
+        # S3 shield (wave-89): cooling-off pause length. Defensive
+        # getattr — gov/policy.py may gain a normalized
+        # ``cooling_off_seconds`` attr in a later wave; until then the
+        # queue default (15 min) stands. Policy file keeps the
+        # F90 unknown-key guard, so an un-normalized deployment key is
+        # refused loudly rather than silently honored.
+        if hasattr(approvals, "set_cooling_off_seconds"):
+            approvals.set_cooling_off_seconds(
+                getattr(policy, "cooling_off_seconds", None))
         # P10 (wave-26): governed AUTHORITY delegation — agent→agent
         # grants of tool-call authority via DelegationStore
         # (gov/approvals.py). This is a DIFFERENT primitive from
@@ -808,6 +856,24 @@ class ToolExecutor:
         # approved-then-executed sends are counted once, not twice.
         self._egress_bytes = 0  # F33: cumulative executed egress bytes
         # this run (actual payload UTF-8 bytes, DLP-independent).
+        # Wave-89 (stream s5-tool): tool-execution continuity. The
+        # digest-pinned tool inventory (gov/tool_continuity.ToolInventory)
+        # and the trajectory re-verifier (gov/tool_continuity.
+        # TrajectoryReverifier). tool_inventory=None builds the default
+        # inventory from the built-in tool table (zero behavior change
+        # for built-in tools: their digests are stable, so no drift can
+        # fire). trajectory_checkpoint_every=50 chains a
+        # trajectory_reverified event every 50th call and forces full
+        # gate re-verification; 0/None disables the periodic
+        # checkpoint (tier-escalation markers still fire — cheap and
+        # always on). Existing tests make far fewer than 50 calls per
+        # run, so the default changes no suite verdict.
+        self._tool_inventory = (
+            tool_inventory
+            if tool_inventory is not None
+            else _tool_continuity.ToolInventory())
+        self._trajectory = _tool_continuity.TrajectoryReverifier(
+            checkpoint_every=trajectory_checkpoint_every)
         # S2 (K-018): hard budget accrual. Tokens/spend accrue on the
         # RESULT path only (_ingest_result / ingest_foreign_result via
         # result["_usage"] — never call kwargs, so an agent cannot forge
@@ -940,6 +1006,38 @@ class ToolExecutor:
                        self.run_id),
         })
         return ident
+
+    # Wave-89 (S2): governed inter-agent messaging. Thin wrappers over
+    # the deployment-installed MessageBus; the bus is None unless the
+    # deployment opted in (message_bus= kwarg), in which case both
+    # methods refuse loudly instead of silently degrading.
+    def send_message(self, identity, recipient, msg_type, content,
+                     thread=None):
+        """Send a governed inter-agent message via the run's MessageBus.
+
+        Requires the deployment-installed bus (opt-in); raises
+        MessageBusMissingError when absent. Provenance stamp,
+        steg screening, and bandwidth caps run inside bus.send().
+        """
+        if self._message_bus is None:
+            from .messaging import MessageBusMissingError
+            raise MessageBusMissingError(
+                "send_message refused: no MessageBus installed on this "
+                "executor (deployment did not opt in via message_bus=)")
+        return self._message_bus.send(self, identity, recipient, msg_type,
+                                      content, thread=thread)
+
+    def receive_message(self, identity, msg_id):
+        """Read and stamp-validate a governed message. Returns
+        (content, stamp, flags). Raises MessageBusMissingError when no
+        bus is installed.
+        """
+        if self._message_bus is None:
+            from .messaging import MessageBusMissingError
+            raise MessageBusMissingError(
+                "receive_message refused: no MessageBus installed on this "
+                "executor (deployment did not opt in via message_bus=)")
+        return self._message_bus.receive(self, identity, msg_id)
 
     def mint_identity(self, agent_id, role, principal):
         """Issue the only kind of identity this executor will honor.
@@ -1086,6 +1184,14 @@ class ToolExecutor:
                 "spawn refused: this executor has no bound parent "
                 "DelegationContext — sub-agents can only be spawned "
                 "under a verified three-token delegation (fail closed)")
+        # Wave-89 (S2): a quarantined identity cannot spawn -- quarantine
+        # escape via fresh children is closed. Fail-closed, loud.
+        if (self._message_bus is not None and self._message_bus.is_quarantined(
+                ctx.agent_token["claims"]["agent_id"])):
+            from .messaging import QuarantineDeniedError
+            raise QuarantineDeniedError(
+                "spawn refused: spawner %r is quarantined" %
+                ctx.agent_token["claims"]["agent_id"])
         budget = self._spawn_budget
         if budget is not None and budget.remaining <= 0:
             raise SpawnBudgetExhaustedError(
@@ -1096,6 +1202,20 @@ class ToolExecutor:
                    sub_agent_id))
         parent_claims = ctx.agent_token["claims"]
         parent_agent_id = parent_claims["agent_id"]
+        # Wave-90 (S6, F137): the birth parent is the SPAWNING
+        # EXECUTOR's own identity. DelegationContext.spawn keeps the
+        # parent's agent_token unchanged down the tree, so past the
+        # first hop parent_claims["agent_id"] names the ultimate
+        # delegator, NOT the direct spawner — parenting the birth
+        # certificate to it would skip a hop in the lineage graph
+        # (exactly the F137 gap). The provisioned session identity is
+        # per-executor: the child is constructed with
+        # session_identity=(sub_agent_id, ...), so it names the true
+        # spawner at every hop. Fall back to the delegation claims
+        # when no session identity was provisioned.
+        _sess = self._session_identity
+        spawner_id = (_sess.agent_id if _sess is not None
+                      else parent_agent_id)
         key_registered = self._register_spawn_parent_key(
             ctx.trust, parent_agent_id, parent_signer)
         # The child token + bound child context: attenuation, depth,
@@ -1103,6 +1223,27 @@ class ToolExecutor:
         child_ctx = ctx.spawn(sub_agent_id, sub_scope, parent_signer,
                               ttl_s=ttl_s)
         child_token = child_ctx.delegation_token
+        # Wave-90 (S6, F137): mandatory birth certificates. When a
+        # lineage tracker is installed, the child's birth certificate
+        # is minted here — AFTER the key registration and the child
+        # token + bound child context succeeded, so a failed spawn
+        # never leaves an orphan birth record, and the certificate
+        # carries BOTH token refs. No opt-out within a governed run:
+        # birth() fails closed on an unregistered parent, and taint is
+        # hereditary — an infected parent's child is born infected,
+        # which covers env-var and argument channels that carry no
+        # file contact. The budget check above runs first so an
+        # exhausted budget never mints a certificate for a child that
+        # will not exist.
+        lineage_cert = None
+        if self._lineage_tracker is not None:
+            lineage_cert = self._lineage_tracker.birth(
+                spawner_id, sub_agent_id,
+                parent_token_ref=_delegation_tokens.token_ref(
+                    ctx.delegation_token),
+                child_token_ref=_delegation_tokens.token_ref(child_token),
+                role=role or parent_claims["role"],
+                principal=principal or parent_claims["principal"])
         child_claims = child_token["claims"]
         self.log.append({
             "event": "agent_spawn",
@@ -1122,6 +1263,14 @@ class ToolExecutor:
                 ctx.delegation_token),
             "child_token_ref": _delegation_tokens.token_ref(child_token),
             "parent_key_registered": key_registered,
+            # Wave-90 (S6, F137): bind the spawn event to the lineage
+            # substrate — the birth certificate ids join the token refs
+            # in the hash chain.
+            "lineage_id": (lineage_cert["lineage_id"]
+                           if lineage_cert else None),
+            "parent_lineage_id": (
+                self._lineage_tracker.lineage_id(spawner_id)
+                if lineage_cert else None),
             "reason": ("Sub-agent %r spawned by %r at delegation depth "
                        "%d with scope %r (parent token %s... → child "
                        "token %s...; audience %r; parent workload key "
@@ -1156,10 +1305,19 @@ class ToolExecutor:
             lease_gated_tools=self._lease_gated_tools,
             precommit_gate=self._precommit_gate,
             trifecta_floor=self._trifecta_floor,
-            revocation_checker=self._revocation_checker)
+            revocation_checker=self._revocation_checker,
+            lineage_tracker=self._lineage_tracker)
+        # Wave-90 (S6, F137): the child carries its birth certificate.
+        # One lineage, one tracker: shared by reference like the bus.
+        child._lineage_cert = lineage_cert
         # One lineage, one budget: the child shares the parent's
         # budget box by reference.
         child._spawn_budget = self._spawn_budget
+        # Wave-89 (S2): one lineage, one bus -- the child shares the
+        # parent's message bus by reference, so provenance stamps,
+        # quarantine state, and the infection monitor see the whole
+        # lineage. None stays None (opt-in preserved down the tree).
+        child._message_bus = self._message_bus
         return child
 
     def _check_identity(self, identity):
@@ -1353,8 +1511,251 @@ class ToolExecutor:
             except Exception:
                 pass
 
-    # F40 (R10): bounds for the total foreign-result normalizer.
+    # -- S1-MEM: memory provenance firewall hooks (opt-in) ---------------
+
+    def _memory_session_scan(self, principal):
+        """S1-MEM: once per (executor, principal), scan the memory ledger
+        for untrusted, instruction-shaped entries recorded by earlier
+        sessions. Flags are chained ``memory_session_flag`` events --
+        detection, not denial (enforcement happens at read time). A
+        tampered memory ledger fails closed and loud, like F17."""
+        fw = self._memory_firewall
+        if fw is None or not principal:
+            return
+        if principal in self._mem_scanned_principals:
+            return
+        self._mem_scanned_principals.add(principal)
+        try:
+            flagged = fw.scan_at_session_open(principal)
+        except LedgerUnverifiableError as e:
+            self.log.append({
+                "event": "memory_ledger_unverifiable",
+                "run_id": self.run_id,
+                "principal": principal,
+                "decision": "denied",
+                "policy_id": "memory-provenance-firewall",
+                "flag": "memory_ledger_unverifiable",
+                "reason": ("Refusing to act: the memory provenance "
+                           "ledger cannot be authenticated: %s" % e),
+            })
+            raise
+        for mem_key, reason in flagged:
+            self.log.append({
+                "event": "memory_session_flag",
+                "run_id": self.run_id,
+                "principal": principal,
+                "mem_key": mem_key,
+                "instruction_reason": reason,
+                "decision": "flagged",
+                "policy_id": "memory-provenance-firewall",
+                "flag": "memory_session_flag",
+                "reason": ("Session-open scan: memory entry %s was "
+                           "recorded untrusted-derived and "
+                           "instruction-shaped (%s) in an earlier "
+                           "session; it will be quarantined on read."
+                           % (mem_key, reason)),
+            })
+
+    def _memory_firewall_hook(self, tool, args, result,
+                              agent_id, role, principal):
+        """S1-MEM: route write_file/read_file on memory paths through the
+        opt-in firewall. Called between execution and result ingestion so
+        a quarantined read never pollutes the run's fingerprint store.
+        ``memory_firewall`` None (the default) = immediate no-op."""
+        fw = self._memory_firewall
+        if fw is None or tool not in ("read_file", "write_file"):
+            return
+        raw_path = (args or {}).get("path")
+        if not isinstance(raw_path, str):
+            return
+        # Sandbox-relative memory key (mirrors _resolve/_is_outside_sandbox).
+        try:
+            rp = self._resolve(raw_path).resolve()
+        except OSError:
+            rp = Path(os.path.abspath(str(self._resolve(raw_path))))
+        try:
+            rel = rp.relative_to(self._sandbox_resolved)
+        except ValueError:
+            return
+        mem_key = fw.mem_key_for(rel.as_posix())
+        if mem_key is None:
+            return
+        # First memory interaction of the session: run the session-open
+        # scan so a poison planted by an earlier session is flagged in
+        # the chain before any memory bytes are delivered.
+        self._memory_session_scan(principal)
+        if tool == "read_file":
+            content = (result or {}).get("content")
+            if not isinstance(content, str):
+                return
+            try:
+                verdict, reason = fw.check_memory_read(
+                    principal, mem_key, content)
+            except LedgerUnverifiableError as e:
+                self.log.append({
+                    "event": "memory_ledger_unverifiable",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "tool": tool,
+                    "mem_key": mem_key,
+                    "decision": "denied",
+                    "policy_id": "memory-provenance-firewall",
+                    "flag": "memory_ledger_unverifiable",
+                    "reason": ("Refusing to act: the memory provenance "
+                               "ledger cannot be authenticated: %s" % e),
+                })
+                raise
+            if verdict == "quarantine":
+                self.log.append({
+                    "event": "memory_quarantine",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "tool": tool,
+                    "mem_key": mem_key,
+                    "decision": "denied",
+                    "policy_id": "memory-provenance-firewall",
+                    "flag": "memory_quarantine",
+                    "reason": ("Quarantined memory read: %s is %s; the "
+                               "content was not delivered."
+                               % (mem_key, reason)),
+                })
+                raise MemoryQuarantineError(
+                    "memory read quarantined: %s (%s)"
+                    % (mem_key, reason))
+            return
+        # write_file: tier, classify, and chain the provenance record for
+        # the bytes actually written. The tier is computed from the run's
+        # ingested tool-result fingerprints -- never from a caller kwarg.
+        content = (args or {}).get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        _record, tier, shaping_reason = fw.record_memory_write(
+            principal=principal,
+            mem_key=mem_key,
+            content=content,
+            writer_agent_id=agent_id,
+            writer_run_id=self.run_id,
+            read_fingerprints=list(getattr(self, "_read_contents", [])),
+            tainted_run=bool(getattr(self, "_tainted", False)))
+        # Detection surface: a chained action-log marker (no raw content)
+        # alongside the hash-chained ledger record.
+        self.log.append({
+            "event": "memory_write_provenance",
+            "run_id": self.run_id,
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "tool": tool,
+            "mem_key": mem_key,
+            "trust_tier": tier,
+            "instruction_shaped": shaping_reason is not None,
+            "instruction_reason": shaping_reason,
+            "decision": "executed",
+            "policy_id": "memory-provenance-firewall",
+            "flag": "memory_write_provenance",
+            "reason": ("Memory provenance recorded: %s tiered %s%s."
+                       % (mem_key, tier,
+                          (" (instruction-shaped: %s)" % shaping_reason)
+                          if shaping_reason else "")),
+        })
+
     _FOREIGN_BLOB_MAX = 65536  # same cap as the native read path
+
+    def _lineage_real_path(self, path):
+        """Best-effort symlink-resolving path for lineage stamps.
+
+        A write through a symlink must stamp the REAL file: otherwise a
+        reader via the real path misses the stamp and the lineage
+        breaks at exactly the hop the attacker chose. Mirrors the
+        resolve discipline of _is_outside_sandbox."""
+        p = self._resolve(path)
+        try:
+            return p.resolve()
+        except OSError:
+            return Path(os.path.abspath(str(p)))
+
+    @staticmethod
+    def _lineage_file_digest(real_path):
+        """SHA-256 hex + byte count of the real file, read in chunks.
+
+        Returns ``(None, 0)`` when the file cannot be read — the hook
+        then stays silent rather than flagging bytes it could not see
+        (fail-open on unreadable, fail-closed on identity)."""
+        try:
+            h = hashlib.sha256()
+            n = 0
+            with open(real_path, "rb") as f:
+                for chunk in iter(lambda: f.read(65536), b""):
+                    h.update(chunk)
+                    n += len(chunk)
+            return h.hexdigest(), n
+        except OSError:
+            return None, 0
+
+    def _lineage_file_hook(self, tool, args, result, agent_id):
+        """S6 (wave-90, F137): raw-file-channel lineage interposition.
+
+        Opt-in; immediate no-op when the tracker is None. Called
+        between execution and result ingestion (mirroring
+        _memory_firewall_hook) so stamps and contact records describe
+        the bytes actually written/read:
+
+        - write_file -> HMAC lineage stamp next to the written file
+          (writer lineage, content hash, taint bit); the content hash
+          also feeds the population-level replication watch.
+        - read_file (real sandbox reads only) -> stamp lookup: contact
+          recorded, taint propagated on infected stamps, forged stamps
+          LOUD; unstamped files are informational, never refused.
+        - delete_file -> the sidecar is removed with the file.
+
+        Fail-open on stamp mechanics, fail-closed on identity: the
+        call() gate already refused unlineaged identities, so a
+        LineageError here would be an internal inconsistency — it
+        propagates loud rather than being swallowed.
+        """
+        tracker = self._lineage_tracker
+        if tracker is None or not isinstance(agent_id, str):
+            return
+        args = args or {}
+        result = result or {}
+        if tool == "write_file":
+            raw_path = result.get("path") or args.get("path")
+            if not isinstance(raw_path, str):
+                return
+            content = args.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            content_b = content.encode("utf-8")
+            sha = hashlib.sha256(content_b).hexdigest()
+            tracker.stamp_write(agent_id, self._lineage_real_path(raw_path),
+                                sha, len(content_b))
+            tracker.observe_content(sha, agent_id, len(content_b))
+        elif tool == "read_file":
+            # Simulated reads have no real bytes: nothing to stamp.
+            if result.get("source") != "sandbox":
+                return
+            raw_path = args.get("path")
+            if not isinstance(raw_path, str):
+                return
+            real = self._lineage_real_path(raw_path)
+            # Hash the ACTUAL file bytes, not the truncated tool
+            # result: _simulate returns only the first 4000 chars,
+            # while the write stamp covers the full content — hashing
+            # the truncation would false-positive every long file as
+            # forged. Chunked so large files stay cheap.
+            sha, n = self._lineage_file_digest(real)
+            if sha is None:
+                return
+            tracker.note_read(agent_id, real, sha, n)
+            tracker.observe_content(sha, agent_id, n)
+        elif tool == "delete_file":
+            if result.get("deleted") and isinstance(args.get("path"), str):
+                tracker.note_delete(
+                    agent_id, self._lineage_real_path(args["path"]))
     _FOREIGN_WALK_MAX_DEPTH = 6  # nesting depth before a node counts opaque
     _FOREIGN_WALK_MAX_FRAGS = 4096  # text fragments before truncating
     _FOREIGN_WALK_MAX_ITEMS = 4096  # container items walked before truncating
@@ -3427,6 +3828,67 @@ class ToolExecutor:
                     "identity %r is halted (external recovery "
                     "controller)" % identity.agent_id)
 
+        # Wave-89 (S2): lineage quarantine, checked on the verdict path
+        # before anything agent-influenced runs -- mirrors the recovery
+        # halt above. A quarantined identity is denied every tool call
+        # (sticky, like the halt): quarantine is containment, and
+        # containment must not depend on the agent's cooperation. The
+        # bus lives in the operator trust domain; a missing bus means
+        # pre-wave-89 behavior (zero behavior change when opt-out).
+        if self._message_bus is not None and \
+                self._message_bus.is_quarantined(identity.agent_id):
+            self.log.append({
+                "event": "tool_call",
+                "run_id": identity.run_id,
+                "agent_id": identity.agent_id,
+                "role": identity.role,
+                "principal": identity.principal,
+                "tool": tool,
+                "decision": "denied",
+                "policy_id": "lineage-quarantine",
+                "flag": "quarantine_denied",
+                "policy_version": getattr(policy, "policy_version",
+                                          "unversioned"),
+                "matched_rules": [],
+                "reason": ("Refusing to act: identity %r is quarantined "
+                           "(lineage quarantine); contained agents cannot "
+                           "execute" % identity.agent_id),
+            })
+            from .messaging import QuarantineDeniedError
+            raise QuarantineDeniedError(
+                "identity %r is quarantined (lineage quarantine)" %
+                identity.agent_id)
+
+        # Wave-90 (S6, F137): mandatory infection lineage. When a
+        # lineage tracker is installed, the acting identity must
+        # resolve to the run's genesis through birth records — an
+        # unlineaged agent (fresh executor outside the spawn tree,
+        # hand-rolled identity chain) is refused fail-closed and loud
+        # BEFORE anything agent-influenced runs. Mirrors the recovery
+        # halt / quarantine gates above. None = pre-wave-90 behavior,
+        # zero behavior change.
+        if self._lineage_tracker is not None and \
+                not self._lineage_tracker.verify(identity.agent_id):
+            self.log.append({
+                "event": "lineage_unregistered",
+                "run_id": identity.run_id,
+                "agent_id": identity.agent_id,
+                "role": identity.role,
+                "principal": identity.principal,
+                "tool": tool,
+                "decision": "denied",
+                "policy_id": "infection-lineage",
+                "flag": "lineage_unregistered",
+                "reason": ("Refusing to act: identity %r has no birth "
+                           "certificate resolving to this run's lineage "
+                           "genesis — unlineaged execution is refused "
+                           "fail-closed" % identity.agent_id),
+            })
+            from .lineage import LineageError
+            raise LineageError(
+                "identity %r is unlineaged: no birth certificate for "
+                "this run (fail closed)" % identity.agent_id)
+
         # Wave-78 (capability leases): kill ambient authority. When a
         # lease verifier is installed and the tool is lease-gated, the
         # call must present a valid lease — verified AT USE TIME, on
@@ -3938,6 +4400,31 @@ class ToolExecutor:
         }
         decision = policy.evaluate(action, ctx)
 
+        # Wave-89 (stream s5-tool): use-time tool-definition
+        # verification. The inventory's CURRENT definition digest is
+        # compared against the last-seen digest; drift quarantines the
+        # tool fail-closed (loud tool_quarantined audit, no execution).
+        # Unregistered tools and provider failures do NOT refuse here —
+        # the policy's own unknown-tool handling decides those; the
+        # inventory refuses to invent a refusal for a tool it never
+        # pinned.
+        _inv_ok, _inv_prev, _inv_cur = (
+            self._tool_inventory.verify_at_use(tool))
+        if not _inv_ok:
+            _inv_entry = self.log.append(_base({
+                "decision": "tool_quarantined",
+                "policy_id": "tool-inventory",
+                "flag": "tool_quarantined",
+                "matched_rules": [],
+                "reason": ("Refusing to act: tool %r definition drifted "
+                           "(digest %s -> %s); quarantined pending "
+                           "deployment re-pin (wave-89 tool continuity)."
+                           % (tool, (_inv_prev or "?")[:12],
+                              (_inv_cur or "?")[:12])),
+            }))
+            return {"status": "denied", "reason": _inv_entry["reason"],
+                    "policy_id": "tool-inventory", "seq": _inv_entry["seq"]}
+
         # S3 (K-041) wired wave-39: S3-GAP-1 closed. An unrated mutating
         # tool must never execute on a policy allow alone — the forced
         # require_approval downgrades an allow to queued human review.
@@ -3948,6 +4435,50 @@ class ToolExecutor:
         if (_forced_require_approval is not None
                 and decision.effect == "allow"):
             decision = _forced_require_approval
+        # Wave-89 (stream s5-tool): deferred-effect (plant-now/harm-later)
+        # scan on the raw kwargs. A hit chains a loud
+        # deferred_effect_detected event and forces require_approval on
+        # the allow path (fail-closed direction only: deny stays denied,
+        # an existing require_approval is untouched but still gets the
+        # marker stamped on its record). The deferred details ride the
+        # approval record MAC-bound, so the human sees WHEN it fires and
+        # a later auditor can reconstruct the planted intent — the
+        # intent-ledger entry for logic-bomb-shaped actions.
+        # Wave-90 (stream s8-redact): the scan still reads RAW kwargs
+        # (redaction must not destroy trigger evidence pre-detection),
+        # but scan_deferred_effect() now emits structured DESCRIPTORS
+        # (shape/position/fingerprint), never raw values — the audit
+        # entry and the MAC-bound record below therefore carry no
+        # payload content, only the trigger's kind, location, and a
+        # correlation fingerprint.
+        _deferred = _tool_continuity.scan_deferred_effect(tool, kwargs)
+        if _deferred is not None:
+            self.log.append(_base({
+                "decision": "deferred_effect_detected",
+                "policy_id": "deferred-effect",
+                "flag": "deferred_effect",
+                "matched_rules": [],
+                "deferred_effect": _deferred,
+                "reason": ("Deferred-effect markers in %r call "
+                           "(%s): forcing human review — the action "
+                           "plants a trigger that fires later "
+                           "(wave-89 tool continuity)."
+                           % (tool, ", ".join(
+                               sorted({t["kind"]
+                                       for t in _deferred["triggers"]})))),
+            }))
+            if decision.effect == "allow":
+                decision = PolicyDecision(
+                    "require_approval",
+                    ("Deferred-effect markers (%s) in this %r call: it "
+                     "plants a trigger that fires later, so a human must "
+                     "review WHEN it fires, not just WHAT it does "
+                     "(wave-89 tool continuity)."
+                     % (", ".join(sorted({t["kind"] for t in
+                                          _deferred["triggers"]})), tool)),
+                    policy_id="deferred-effect",
+                    flag="deferred_effect",
+                )
 
         # Wave-76 (detection): behavioral circuit breaker. When the
         # monitor's breaker is OPEN for the acting identity, an allow
@@ -4050,6 +4581,66 @@ class ToolExecutor:
                                       .TRIFECTA_FLOOR_SENTINEL]),
                 )
 
+        # Wave-89 (stream s5-tool): trajectory continuity. Every call
+        # that reaches a final gate verdict is counted; every Nth call
+        # (default 50) chains a loud trajectory_reverified event and
+        # forces full gate re-verification (the ledger is re-verified
+        # fail-closed; the NEXT call picks up a refreshed policy
+        # snapshot at its own call start, so wave-75's within-verdict
+        # version pinning is never mixed). A risk-tier escalation
+        # (read < mutating < egress < irreversible) chains
+        # risk_tier_escalation. Escalation never auto-downgrades
+        # allow -> require_approval — a documented design choice (the
+        # false-positive cost on legitimate trajectories); the suite is
+        # the judge.
+        _tier = _tool_continuity.risk_tier_for(tool)
+        if _precommit.is_irreversible(tool):
+            _tier = _tool_continuity.TIER_IRREVERSIBLE
+        (_checkpoint_due, _tier_escalated,
+         _prev_tier) = self._trajectory.note_call(_tier)
+        if _tier_escalated:
+            self.log.append(_base({
+                "decision": "risk_tier_escalation",
+                "policy_id": "trajectory",
+                "flag": "risk_tier_escalation",
+                "matched_rules": [],
+                "from_tier": _tool_continuity.TIER_NAMES[_prev_tier],
+                "to_tier": _tool_continuity.TIER_NAMES[_tier],
+                "reason": ("Risk-tier escalation: first %s-tier tool call "
+                           "this run (from %s). The trajectory, not just "
+                           "the action, is now visible to auditors "
+                           "(wave-89 tool continuity)."
+                           % (_tool_continuity.TIER_NAMES[_tier],
+                              _tool_continuity.TIER_NAMES[_prev_tier])),
+            }))
+        if _checkpoint_due:
+            try:
+                self._ledger.require_verified()
+            except LedgerUnverifiableError as e:
+                _cp_entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "ledger-unverifiable",
+                    "flag": "ledger_unverifiable",
+                    "matched_rules": [],
+                    "reason": ("Refusing to act at trajectory checkpoint "
+                               "%d: %s"
+                               % (self._trajectory.calls, e)),
+                }))
+                raise
+            self.log.append(_base({
+                "decision": "trajectory_reverified",
+                "policy_id": "trajectory",
+                "flag": "trajectory_reverified",
+                "matched_rules": [],
+                "trajectory_calls": self._trajectory.calls,
+                "max_tier": _tool_continuity.TIER_NAMES[
+                    self._trajectory.max_tier],
+                "reason": ("Trajectory checkpoint %d: gate state "
+                           "re-verified (ledger authenticated); no drift "
+                           "detected (wave-89 tool continuity)."
+                           % self._trajectory.calls),
+            }))
+
         # Wave-79 (pre-commit): irreversible tools on the allow path.
         # When the gate is installed, an irreversible tool (the frozen
         # gov/precommit registry) executing on a policy ALLOW must
@@ -4106,6 +4697,19 @@ class ToolExecutor:
                     lambda: self._simulate(tool, kwargs, ctx))
             else:
                 result = self._simulate(tool, kwargs, ctx)
+            # S1-MEM: memory provenance firewall (opt-in; no-op when the
+            # firewall is None). Runs between execution and result
+            # ingestion so a quarantined read never pollutes the run's
+            # fingerprint store; may raise MemoryQuarantineError.
+            self._memory_firewall_hook(tool, kwargs, result,
+                                       identity.agent_id, identity.role,
+                                       identity.principal)
+            # S6 (wave-90, F137): raw-file-channel lineage interposition
+            # (opt-in; no-op when the tracker is None). Stamps
+            # agent-driven writes, records read contacts, propagates
+            # taint — the file channel carries lineage like the bus.
+            self._lineage_file_hook(tool, kwargs, result,
+                                    identity.agent_id)
             self._ingest_result(tool, result, identity.principal)
             if tool == "api_call":
                 self.api_calls += 1
@@ -4155,8 +4759,22 @@ class ToolExecutor:
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
             # will execute — preview, digest, and execution all agree.
-            self._preview(tool, redacted_args),
+            # Wave-89 (stream s5-tool): the machine-generated
+            # deferred-effect banner leads the preview when the call
+            # plants a later-firing trigger (agent prose never gets to
+            # soften it).
+            ((_tool_continuity.deferred_preview_banner(_deferred) + " "
+              + self._preview(tool, redacted_args))
+             if _deferred is not None
+             else self._preview(tool, redacted_args)),
             policy_hash=policy.policy_hash,
+            # Wave-89 (stream s5-tool): the tool-definition digest pinned
+            # at queue time and the deferred-effect details ride the
+            # record MAC-bound (see _SECURITY_PAYLOAD_FIELDS) — the
+            # sweep re-verifies the digest, and a stripped deferred
+            # marker breaks the digest.
+            tool_digest=self._tool_inventory.digest_for(tool),
+            deferred_effect=_deferred,
             delegation_attempted=delegation_attempted,
             # F101 (wave-26): a grant-verified call queues under the
             # ACTING (delegatee) identity — the verified grant id and
@@ -4735,6 +5353,36 @@ class ToolExecutor:
             # expired bridge record is still refused loudly.
             if rec.get("bridge_id"):
                 continue
+            # Wave-89 (stream s5-tool): re-verify the tool-definition
+            # digest pinned at queue time against the inventory's CURRENT
+            # definition. A provider-side description/schema swap between
+            # human approval and sweep execution (the MCP rug-pull shape)
+            # is refused fail-closed and audited. Bridge records never
+            # reach this point (foreign-executed, skipped above); tools
+            # the inventory never pinned, and non-tool records
+            # (window_close), have nothing to re-verify. Pre-upgrade
+            # records fail closed BEFORE this point: the wave-89 fields
+            # are MAC-bound from birth, so a record MACed by the old
+            # code (payload without these fields) fails
+            # approval_digest_ok above with approval_integrity_violation
+            # — the same fail-closed-upgrade precedent as
+            # F34/F38/R11/D1/wave-24/F101/F103. queue() auto-pins the
+            # default inventory's digest when the caller supplies none,
+            # so every new record for an inventoried tool carries a pin.
+            _pinned_digest = rec.get("tool_digest")
+            _current_digest = self._tool_inventory.digest_for(rec["tool"])
+            if (_pinned_digest is not None
+                    and _current_digest != _pinned_digest):
+                _refuse("Approval %s refused: tool %r definition "
+                        "changed between approval and execution "
+                        "(digest %s -> %s) — possible rug-pull; "
+                        "re-approval required under the new "
+                        "definition (wave-89 tool continuity)."
+                        % (aid, rec["tool"],
+                           (_pinned_digest or "?")[:12],
+                           (_current_digest or "?")[:12]),
+                        "tool_digest_mismatch")
+                continue
             # F38 (R10): cross-run replay — the record's run_id must
             # match the executing run. The keyed digest binds run_id
             # (so a planted record cannot be re-labeled without the log
@@ -4831,6 +5479,59 @@ class ToolExecutor:
                             policy_id="volume-guard-egress-bytes")
                     continue
 
+            # F135 (wave-88): re-validate the three-token delegation at
+            # the actual execution boundary (TOCTOU guard). The call-time
+            # gate consults the revocation checker and token expiry per
+            # call, but a human approval can land long after queueing: a
+            # delegation revoked — or expired — between approval and this
+            # sweep must not execute. Re-running enforce_tool_call
+            # re-checks revocation (leaf AND ancestors), expiry, scope,
+            # and the session/subject binding against CURRENT token
+            # state. Refusal is fail-closed and audited like every other
+            # execution-time re-validation; the record stays
+            # approved-but-unexecuted (fail-safe, retriable — a fresh
+            # delegation in a rebuilt executor lets a later sweep
+            # execute it: the approval stands, the gate checks CURRENT
+            # token state, and the queued record stores no token
+            # reference to refresh).
+            # Executors without a bound DelegationContext (legacy or
+            # harness-ungoverned pipeline) have no gate to re-run and
+            # keep today's behavior.
+            if self._delegation_context is not None:
+                _f135_identity = AgentIdentity(
+                    agent_id=rec["agent_id"], role=rec["role"],
+                    run_id=self.run_id,
+                    principal=(rec.get("identity") or {}).get("principal"),
+                    provenance="minted")
+                try:
+                    _delegation_tokens.enforce_tool_call(
+                        self._delegation_context, _f135_identity,
+                        rec["tool"],
+                        revocation_checker=self._revocation_checker)
+                except _delegation_tokens.DelegationRevokedError as e:
+                    _refuse("Approval %s refused: the delegation "
+                            "authorizing it was revoked after approval "
+                            "(%s); revocation is re-checked at the "
+                            "execution boundary." % (aid, e),
+                            "delegation_revoked_at_execution",
+                            policy_id="delegation-execution-refused")
+                    continue
+                except _delegation_tokens.DelegationExpiredError as e:
+                    _refuse("Approval %s refused: the delegation "
+                            "authorizing it expired after approval "
+                            "(%s); token expiry is re-checked at the "
+                            "execution boundary." % (aid, e),
+                            "delegation_expired_at_execution",
+                            policy_id="delegation-execution-refused")
+                    continue
+                except _delegation_tokens.DelegationError as e:
+                    _refuse("Approval %s refused: the delegation "
+                            "authorizing it no longer validates at "
+                            "execution (%s)." % (aid, e),
+                            "delegation_invalid_at_execution",
+                            policy_id="delegation-execution-refused")
+                    continue
+
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched.
@@ -4875,6 +5576,16 @@ class ToolExecutor:
             # authorization was granted before the claim.
             self.approvals.mark_executed(aid)
             result = self._simulate(rec["tool"], rec["args"], ctx)
+            # S1-MEM: memory provenance firewall (opt-in; no-op when None).
+            self._memory_firewall_hook(
+                rec["tool"], rec["args"], result,
+                rec.get("agent_id"), rec.get("role"),
+                (rec.get("identity") or {}).get("principal"))
+            # S6 (wave-90, F137): raw-file-channel lineage interposition
+            # (opt-in; no-op when the tracker is None) — approved
+            # executions stamp/contact exactly like direct calls.
+            self._lineage_file_hook(
+                rec["tool"], rec["args"], result, rec.get("agent_id"))
             self._ingest_result(rec["tool"], result,
                                 (rec.get("identity") or {}).get("principal"))
             if rec["tool"] == "api_call":
