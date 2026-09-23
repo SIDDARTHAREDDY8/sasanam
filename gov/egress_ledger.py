@@ -263,13 +263,13 @@ def _ledger_keyring():
 
 
 def _real_key_available():
-    """True when a real (non-dev) HMAC key is configured.
+    """True when an HMAC key is explicitly configured (``GOV_LOG_KEY``).
 
     F23: the stat-signature cache is only ever trusted when a verified
-    integrity anchor exists. The public dev fallback key (see
-    ``gov/log.py``) is documented in this source tree, so a T6 attacker
-    knows it and can forge MACs with it — under the dev key there is NO
-    integrity anchor, and trusting the cache would be silent trust.
+    integrity anchor exists. Wave-81 deleted the public dev key from
+    ``gov/`` entirely: with no key configured the action log refuses to
+    start (``NoKeyConfiguredError``), so the cache can never be built
+    on attacker-known key material.
     """
     return bool(os.environ.get("GOV_LOG_KEY"))
 

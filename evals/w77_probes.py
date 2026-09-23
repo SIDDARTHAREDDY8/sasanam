@@ -104,17 +104,31 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    prev = log_mod._dev_enabled
-    prev_warned = log_mod._dev_warned
-    log_mod._dev_enabled = enabled
-    log_mod._dev_warned = False
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-        log_mod._dev_warned = prev_warned
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 @contextlib.contextmanager
 def _govrun():
     old = os.environ.get("TMPDIR")
@@ -139,8 +153,7 @@ def _sit(sid):
         def wrapper():
             try:
                 with _govrun():
-                    with _env(GOV_DEV_KEYS="1",
-                              GOV_DEPLOYMENT_MODE="staging"):
+                    with _env(GOV_DEPLOYMENT_MODE="staging"):
                         with _dev_keys(True):
                             with redirect_stderr(io.StringIO()):
                                 detail = fn()
@@ -221,7 +234,7 @@ def sit_resume_replays_compromise_refused():
                         "resume_authority_not_reissued; refusal chained "
                         "(%d resume_refused record)" % len(refused)}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -270,7 +283,7 @@ def sit_journal_tamper_between_checkpoint_and_resume():
                         "refused; %d failed verification record chained"
                         % len(loud)}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -335,7 +348,7 @@ def sit_checkpoint_forgery_refused():
                         "(rollback-replayed) checkpoint refused; the "
                         "newest checkpoint still resumes correctly"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -388,7 +401,7 @@ def sit_decommission_bypass_impossible():
                         "trust-domain check (no step ran, no seal); the "
                         "halt-key decommission completed all 4 steps"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -457,7 +470,7 @@ def sit_halt_authority_games():
                         "availability-only (cannot mint checkpoints or "
                         "resume attestations)"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -510,7 +523,7 @@ def sit_half_execution_no_double_execute():
                         "the unrecorded half-effect is ambiguous and "
                         "carried into the resume_or_halt decision"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -571,7 +584,7 @@ def sit_trip_drain_crash_safe():
                 "note": "mid-batch crash: 0 lost trips, 0 "
                         "double-triggers (3 unique case records)"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -632,7 +645,7 @@ def sit_kill_switch_tested():
                         "drain->halt %.1f ms (objective < 1000)"
                         % dt_ms}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)

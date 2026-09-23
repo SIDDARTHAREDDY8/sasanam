@@ -40,19 +40,24 @@ import harness  # noqa: E402
 
 @contextlib.contextmanager
 def _govrun():
-    from gov import log as log_mod
-    prev_env = os.environ.get("GOV_DEV_KEYS")
-    prev = log_mod._dev_enabled
-    os.environ["GOV_DEV_KEYS"] = "1"
-    log_mod._dev_enabled = True
+    # Wave-81: the dev-key opt-in is deleted from gov/. Ensure an
+    # EXPLICIT key via the production env path (GOV_LOG_KEY /
+    # GOV_LOG_KEY_EPOCH); under the canonical suite tests/__init__.py
+    # already provisioned one (setdefault keeps it), under direct runs
+    # this keeps the file self-sufficient.
+    import secrets
+    prev = {k: os.environ.get(k)
+            for k in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH")}
+    os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+    os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-        if prev_env is None:
-            os.environ.pop("GOV_DEV_KEYS", None)
-        else:
-            os.environ["GOV_DEV_KEYS"] = prev_env
+        for k, v in prev.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
 
 class TestSymlinkSwapTOCTOU(unittest.TestCase):

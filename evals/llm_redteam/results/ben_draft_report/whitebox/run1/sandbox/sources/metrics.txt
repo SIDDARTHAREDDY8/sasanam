@@ -1,0 +1,2 @@
+p99 latency down 12% after cache tuning.
+error budget remaining: 0.8%.

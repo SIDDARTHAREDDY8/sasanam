@@ -1,0 +1,54 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"docs/architecture.md\"}": 1,
+    "read_file|{\"path\": \"docs/policy.md\"}": 1,
+    "write_file|{\"content\": \"# Repository Summary: agent-governance-demo\\n\\nThe agent-governance-demo repository demonstrates a runtime governance layer interposed between an AI agent and the tools it can call. The core mechanism is the ToolExecutor: every tool invocation flows through it, and it verifies the caller identity, evaluates the declared policy, runs a data-loss scan over the arguments, and checks per-run rate limits before the tool is allowed to execute.\\n\\nPolicy is declared in YAML. Roles are mapped to the tools they may use, egress destinations are confined to an allowlist, and any action judged risky is routed into an approval queue for a human decision instead of executing. When policy rules conflict, deny wins over allow.\\n\\nAccountability is built into the execution path: each execute, queue-for-approval, or deny decision is appended to a hash-chained audit log, giving auditors a tamper-evident record of everything that happened. The sandbox also plants egress canaries \\u2014 fake credentials and hostnames \\u2014 so that any exfiltration attempt trips the canary, raises a loud audit event, and halts the run permanently.\\n\", \"path\": \"summary.md\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "1c998b0ab358c268460dd2cd8ec26b4461ccd3259af19e933aaf7b41d38aa663",
+      "e1f678266947bbc5aac01943077c62f65dea28d81280e09cb1d8628a7032b95e",
+      "cf9272964220b2adb2965e93a19e38939df8077bf9d99f1a68f9043e693713da",
+      "f15abb480336aa82dddb3ea8536e0af61f20d7fca26247aa065eed5d11e13022",
+      "670cb0a34c7c1e4ccec712dd75be780965daedabb5b98adf341322cf38131c42",
+      "0593bb01fe110bbb0871db7576f01b81536013d666c604d89f6746a6f89b168d",
+      "0e7524437cf3394d533eca9ac709fd5de2c950b492e0c8b44bdf165bad4dea42",
+      "20554d6c1878e6a76d78bcc23b3e17785eed66796dd025a22cac265ffcf3da71",
+      "076747315beb65173c87d4b1562dbd987bc63537b87b0eb4a419f99d6e4c1c7f",
+      "98b0877eef21ebd32ce152bb8ef0599bdd331e10aa9fab51df62f8fbf6a0f542",
+      "570a1401cb7a689b59233acf1d7a4c0ceceabace72ee2e2a39490bc156f242f8",
+      "bc5ba9381e0b1e4f7221c889168e864dc7d90f27c804896c4f79c1041ae395ef"
+    ],
+    "16": [
+      "1c998b0ab358c268460dd2cd8ec26b4461ccd3259af19e933aaf7b41d38aa663",
+      "e1f678266947bbc5aac01943077c62f65dea28d81280e09cb1d8628a7032b95e",
+      "cf9272964220b2adb2965e93a19e38939df8077bf9d99f1a68f9043e693713da",
+      "f15abb480336aa82dddb3ea8536e0af61f20d7fca26247aa065eed5d11e13022",
+      "670cb0a34c7c1e4ccec712dd75be780965daedabb5b98adf341322cf38131c42",
+      "0593bb01fe110bbb0871db7576f01b81536013d666c604d89f6746a6f89b168d",
+      "0e7524437cf3394d533eca9ac709fd5de2c950b492e0c8b44bdf165bad4dea42",
+      "20554d6c1878e6a76d78bcc23b3e17785eed66796dd025a22cac265ffcf3da71",
+      "076747315beb65173c87d4b1562dbd987bc63537b87b0eb4a419f99d6e4c1c7f",
+      "98b0877eef21ebd32ce152bb8ef0599bdd331e10aa9fab51df62f8fbf6a0f542",
+      "570a1401cb7a689b59233acf1d7a4c0ceceabace72ee2e2a39490bc156f242f8",
+      "bc5ba9381e0b1e4f7221c889168e864dc7d90f27c804896c4f79c1041ae395ef",
+      "aba4da07ca8d746ca3d8707a226b737a888577c6d6d632aa286644618130c64c",
+      "7a7a09a0a7a4f5a5a94451a4c4cf100b0a276e982be039163058c35ea96c6e3b",
+      "06b845dd0d189bfaace26dd2792d5b32a8af52b5ae7bc05cf223197406ed070d",
+      "1f97f30d1c30b3caf7ef96e213037aa0fd79ca6f18281dda4242b654b5609a70"
+    ],
+    "4": [
+      "1c998b0ab358c268460dd2cd8ec26b4461ccd3259af19e933aaf7b41d38aa663",
+      "e1f678266947bbc5aac01943077c62f65dea28d81280e09cb1d8628a7032b95e",
+      "cf9272964220b2adb2965e93a19e38939df8077bf9d99f1a68f9043e693713da",
+      "f15abb480336aa82dddb3ea8536e0af61f20d7fca26247aa065eed5d11e13022"
+    ]
+  },
+  "log_entry_count": 16,
+  "sends": 0,
+  "turns": 4
+}

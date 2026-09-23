@@ -430,9 +430,18 @@ def build_policy_change_record(*, session_id, session_open,
                                prior_version, status, tier, author_key_id,
                                approver_key_ids, policy_digest, prior_digest,
                                diff_digest, diff_summary, purpose,
-                               authorship_ref, approvals):
+                               authorship_ref, approvals,
+                               genesis_artifact=None):
     """A ``policy_change`` provenance record dict (validated by
-    ``append_provenance`` — never written raw)."""
+    ``append_provenance`` — never written raw).
+
+    Wave-80: ``genesis_artifact`` (only on the bootstrap change) is
+    ``{"artifact_id", "digest", "pinned_by", "approvals", "tier",
+    "pinned_at"}`` — the load-gate digest pin the bootstrap file was
+    verified against. It binds the GENESIS of the governed chain to
+    a governed digest pin: the chain's first policy is not "whatever
+    was on disk" but "the bytes whose sha256 the roster pinned".
+    """
     prov = _prov_base(session_id, session_open, policy_version)
     prov["record_type"] = "policy_change"
     prov["policy"] = {
@@ -449,6 +458,15 @@ def build_policy_change_record(*, session_id, session_open,
         "diff_summary": diff_summary,
         "purpose": purpose,
     }
+    if genesis_artifact is not None:
+        prov["policy"]["genesis_artifact"] = {
+            "artifact_id": genesis_artifact["artifact_id"],
+            "digest": genesis_artifact["digest"],
+            "pinned_by": genesis_artifact.get("pinned_by"),
+            "approvals": list(genesis_artifact.get("approvals") or []),
+            "tier": genesis_artifact.get("tier"),
+            "pinned_at": genesis_artifact.get("pinned_at"),
+        }
     prov["approvals"] = [
         {"approval_id": a["approval_id"], "decision": a["decision"],
          "decided_by": a["approver_key_id"],
@@ -510,7 +528,8 @@ class PolicyChange:
 
     def __init__(self, *, change_id, text, prior_text, prior_version,
                  authorship_token, tier, deployment_mode, session_id,
-                 purpose, diff, diff_digest, author_key_id):
+                 purpose, diff, diff_digest, author_key_id,
+                 genesis_artifact=None):
         self.change_id = change_id
         self.text = text
         self.prior_text = prior_text
@@ -527,6 +546,13 @@ class PolicyChange:
         self.approvals = []
         self.status = "proposed"
         self.new_version = None
+        # Wave-80: on the bootstrap change, the governed digest pin
+        # the genesis file was verified against
+        # ({"artifact_id","digest","pinned_by","approvals","tier",
+        # "pinned_at"}). Recorded into the chained policy_change
+        # provenance record — the chain's genesis is a governed pin,
+        # not an anointed file.
+        self.genesis_artifact = genesis_artifact
 
 
 class GovernedPolicyStore:
@@ -585,14 +611,68 @@ class GovernedPolicyStore:
 
     # -- lifecycle ----------------------------------------------------
     def bootstrap(self, text, author_signer, author, purpose,
-                  approver_signers=(), now=None):
+                  approver_signers=(), now=None, genesis_artifact=None):
         """Install the first policy. Same rules as a change, with
         ``prior_version="GENESIS"`` — the bootstrap is authored and
-        approved, not anointed."""
+        approved, not anointed.
+
+        Wave-80: ``genesis_artifact`` (``{"artifact_id", "digest",
+        ...}`` — the load-gate pin the bootstrap bytes were verified
+        against) is recorded on the change and into the chained
+        ``policy_change`` provenance record. Prefer
+        :meth:`bootstrap_from_verified`, which loads the file through
+        the digest gate and builds this record for you; passing text
+        read straight off disk leaves ``genesis_artifact`` None and
+        the record honestly shows the genesis as unverified-file
+        bytes (the documented wave-80 residual)."""
         return self._new_change(
             text=text, prior_text=None, prior_version=_GENESIS,
             author_signer=author_signer, author=author, purpose=purpose,
-            approver_signers=approver_signers, now=now, auto_apply=True)
+            approver_signers=approver_signers, now=now, auto_apply=True,
+            genesis_artifact=genesis_artifact)
+
+    def bootstrap_from_verified(self, pinset, artifact_id, path,
+                                 author_signer, author, purpose,
+                                 approver_signers=(), now=None):
+        """The FORCED bootstrap path (wave-80): the bootstrap policy
+        file is the genesis of the whole governed chain, so it is
+        loaded through the digest gate, not read off disk.
+
+        1. ``load_file_verified``: one read of ``path``, hashed
+           against the pin for ``artifact_id`` — unpinned or
+           mismatched files raise ``ArtifactRefused`` (no TOFU, no
+           ref-namespace input at all, so a Plugin4Shell-style
+           ref-shadowing mid-bootstrap cannot resolve to attacker
+           bytes).
+        2. The pin's own record (digest + which roster humans
+           authored it) becomes the change's ``genesis_artifact`` and
+           is chained into the ``policy_change`` provenance record —
+           a governed change record over the genesis digest.
+
+        The pin itself must already exist in ``pinset``: the genesis
+        pin is a governed human decision (``ArtifactPinset.pin`` with
+        roster-human Ed25519 authorship), never trust-on-first-use.
+        """
+        from .load_gate import load_file_verified
+        verified = load_file_verified(pinset, artifact_id, path,
+                                      log=self.log)
+        pin = pinset.pin_for(artifact_id)
+        # load_file_verified raised unless a pin exists, so pin is
+        # not None here; the lookup is for the record's authorship
+        # fields, not a second trust decision.
+        genesis_artifact = {
+            "artifact_id": artifact_id,
+            "digest": verified.digest,
+            "pinned_by": pin["pinned_by"],
+            "approvals": list(pin["approvals"]),
+            "tier": pin["tier"],
+            "pinned_at": pin["pinned_at"],
+        }
+        text = verified.data.decode("utf-8")
+        return self.bootstrap(
+            text, author_signer, author, purpose,
+            approver_signers=approver_signers, now=now,
+            genesis_artifact=genesis_artifact)
 
     def propose(self, new_text, author_signer, author, purpose, now=None):
         """Stage a change: validate, diff, sign authorship, chain the
@@ -609,7 +689,7 @@ class GovernedPolicyStore:
 
     def _new_change(self, *, text, prior_text, prior_version,
                     author_signer, author, purpose, approver_signers,
-                    now, auto_apply):
+                    now, auto_apply, genesis_artifact=None):
         # The candidate must load: a malformed policy cannot even
         # become a change artifact (fail-closed at the gate — any load
         # failure, ValueError or otherwise, is a refusal).
@@ -653,7 +733,8 @@ class GovernedPolicyStore:
             prior_version=prior_version, authorship_token=token,
             tier=tier, deployment_mode=self.deployment_mode,
             session_id=self.session_id, purpose=purpose, diff=diff,
-            diff_digest=diff_digest, author_key_id=author_signer.key_id)
+            diff_digest=diff_digest, author_key_id=author_signer.key_id,
+            genesis_artifact=genesis_artifact)
         self._changes[change_id] = change
         self._emit(change, status="proposed", approvals=[])
         for signer in approver_signers:
@@ -755,7 +836,8 @@ class GovernedPolicyStore:
             },
             purpose=change.purpose,
             authorship_ref=change.authorship_ref,
-            approvals=approvals)
+            approvals=approvals,
+            genesis_artifact=change.genesis_artifact)
         _append(self.log, record)
 
 

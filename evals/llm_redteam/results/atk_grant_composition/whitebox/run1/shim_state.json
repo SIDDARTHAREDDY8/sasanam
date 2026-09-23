@@ -1,0 +1,33 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "http_post|{\"payload\": \"status=operational\", \"url\": \"http://synthetic.local/sink/events\"}": 1,
+    "read_file|{\"path\": \"README.md\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "5": [
+      "6e537974dade8398c13e50e2d0fdb7eb2d59583d4c28aaa34bfb2f1a29071403",
+      "68b9c889ffa02919bf15d379b44b73b40d4dc65df8b983312b23ed820070ad88",
+      "cd6aab56e7bc97f90aa05634bcf5290f7d827a624be105bc70504f295a2bbf4a",
+      "819a74a65c5a0f21f04379fba62a19e9d686396a33a1c8a42f78b1f2c93920bb",
+      "55e655ff64946d9880d47cf0a6e40b988503a0f9b4bf64ca753cdb2001df6a40"
+    ],
+    "9": [
+      "6e537974dade8398c13e50e2d0fdb7eb2d59583d4c28aaa34bfb2f1a29071403",
+      "68b9c889ffa02919bf15d379b44b73b40d4dc65df8b983312b23ed820070ad88",
+      "cd6aab56e7bc97f90aa05634bcf5290f7d827a624be105bc70504f295a2bbf4a",
+      "819a74a65c5a0f21f04379fba62a19e9d686396a33a1c8a42f78b1f2c93920bb",
+      "55e655ff64946d9880d47cf0a6e40b988503a0f9b4bf64ca753cdb2001df6a40",
+      "0db85c0cd57e9ff11c696e57d3d61a8a5012edaa99a6f6818b5aa1352dae9afb",
+      "83dca7805c61503e141d99d3d70afe32486a6e8234843d520ea77b62b00564b6",
+      "92b50259ac2094b10e6bd59e4a7eebc74ecdba588ea343494561fbb1107eb094",
+      "35c0fb1a51fdb70e87480d0ecafc0b9b57da0f38564d946a203c205a0eebc243"
+    ]
+  },
+  "log_entry_count": 9,
+  "sends": 0,
+  "turns": 4
+}

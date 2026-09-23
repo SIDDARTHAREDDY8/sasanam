@@ -56,16 +56,21 @@ _KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
 
 
 def _pin_dev_key_env():
-    """Pin the dev flow under R6c: scrub any configured key so the
-    harness double opt-in (tests/__init__: in-code enable_dev_keys() +
-    GOV_DEV_KEYS=1) resolves the public dev key. Explicitly configuring
-    dev material is rejected outright since the KMS milestone (F73)."""
-    import gov.log as L
+    """Provision an EXPLICIT test key via the production env path
+    (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH; wave-81 deleted the dev key from
+    gov/). The queue/ledger tests need a working keyed digest; there is
+    no fallback to pin anymore — the key here is fresh random material
+    per setUp, nothing shared, nothing public.
+
+    (Wave-81 also removed gov.log._LEDGER_KEYRING/_LEDGER_ACTIVE, so the
+    old ledger-cache resets are gone — nothing to reset.)"""
+    try:
+        from tests.keyfixture import provision_test_key
+    except ImportError:  # tests/ directly on sys.path
+        from keyfixture import provision_test_key
     saved = {n: os.environ.get(n) for n in _KEY_NAMES}
-    for n in _KEY_NAMES:
-        os.environ.pop(n, None)
-    L._LEDGER_KEYRING = None
-    L._LEDGER_ACTIVE = None
+    provision_test_key()
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
 
     def _restore():
         for n, v in saved.items():
@@ -73,8 +78,6 @@ def _pin_dev_key_env():
                 os.environ.pop(n, None)
             else:
                 os.environ[n] = v
-        L._LEDGER_KEYRING = None
-        L._LEDGER_ACTIVE = None
     return _restore
 
 

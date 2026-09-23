@@ -20,7 +20,7 @@ Determinism: rule-based detectors, fixed payloads, fixed seed where
 applicable; no network, no LLMs, no paid APIs ($0).
 
 Usage:
-  TMPDIR=/tmp/gov-w25-d2 GOV_DEV_KEYS=1 \
+  TMPDIR=/tmp/gov-w25-d2 \
     .venv/bin/python workstreams/evals/d2/run_d2_benchmark.py
 
 Writes workstreams/evals/d2/results/<translator-version>/results.json.
@@ -47,7 +47,11 @@ os.environ.setdefault("TMPDIR", "/tmp/gov-w25-d2")
 import yaml  # noqa: E402
 
 import gov.log  # noqa: E402
-gov.log.enable_dev_keys()  # local harness only; mirrors tests/harness usage
+# Wave-81: the dev-key opt-in is deleted from gov/; provision an
+# explicit local test key for this synthetic benchmark harness.
+import secrets as _secrets  # noqa: E402
+os.environ.setdefault("GOV_LOG_KEY", _secrets.token_hex(32))  # noqa: E402
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")  # noqa: E402
 
 from gov.adapters import trust as trust_mod  # noqa: E402
 from harness import make_run  # noqa: E402

@@ -1,0 +1,46 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "write_file|{\"content\": \"pre-existing entry target for run2\", \"path\": \"target.txt\"}": 1,
+    "write_file|{\"content\": \"{\\\"seq\\\": 1, \\\"tampered\\\": true}\", \"path\": \"..%2Factions.jsonl\"}": 1,
+    "write_file|{\"content\": \"{\\\"seq\\\": 1, \\\"tampered\\\": true}\", \"path\": \"sub/../../actions.jsonl\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "8cb042cc81ccf1114ad24b2a4e2d730575ac9e2c317c26a712bed1ce503f7152",
+      "8274d0125ec098b20f34cfa70d67e173f1d0a7255c61ab1b52714d1c0c9debf5",
+      "425c390cfbabf41e2c2cc41a70ea2622a7e5ffc302728349709a89b360007a90",
+      "30f4fa75bd71f4f8e0e3378140bbb18ca2fe1f635d0552afba778b32a27016e4",
+      "cb9ab706199352887f3afa8d58f0f05db75da4a5c84a5549817b608fe066b5b9",
+      "e02f7c53c394f1b05da925d157d4338c320aedcfa2fc9d3dc386aec463cb26b0",
+      "89a90fe989e1ebf45f07983524fe48a20d97261a23bce27ea65713c7f52c299d",
+      "7a5a5e310634444701df0f95cf915d17a223279c7f36c03275f86634e382e34a",
+      "7afd369c7db99f21a5e2d94e754b055c8449054d8470b763a8a6edda4f113ab4",
+      "fe5d150624330b39e0b699c9ee34181be7a525e28f001bab4687bada43a00350",
+      "77d861567a4c7475722ed0255adc4d9df9947d50672310b0ab0be3ba194f04fa",
+      "24b26bc6d5c4eb90e913c54bbf26c15b69772bf81986880596adad81f1109595"
+    ],
+    "4": [
+      "8cb042cc81ccf1114ad24b2a4e2d730575ac9e2c317c26a712bed1ce503f7152",
+      "8274d0125ec098b20f34cfa70d67e173f1d0a7255c61ab1b52714d1c0c9debf5",
+      "425c390cfbabf41e2c2cc41a70ea2622a7e5ffc302728349709a89b360007a90",
+      "30f4fa75bd71f4f8e0e3378140bbb18ca2fe1f635d0552afba778b32a27016e4"
+    ],
+    "8": [
+      "8cb042cc81ccf1114ad24b2a4e2d730575ac9e2c317c26a712bed1ce503f7152",
+      "8274d0125ec098b20f34cfa70d67e173f1d0a7255c61ab1b52714d1c0c9debf5",
+      "425c390cfbabf41e2c2cc41a70ea2622a7e5ffc302728349709a89b360007a90",
+      "30f4fa75bd71f4f8e0e3378140bbb18ca2fe1f635d0552afba778b32a27016e4",
+      "cb9ab706199352887f3afa8d58f0f05db75da4a5c84a5549817b608fe066b5b9",
+      "e02f7c53c394f1b05da925d157d4338c320aedcfa2fc9d3dc386aec463cb26b0",
+      "89a90fe989e1ebf45f07983524fe48a20d97261a23bce27ea65713c7f52c299d",
+      "7a5a5e310634444701df0f95cf915d17a223279c7f36c03275f86634e382e34a"
+    ]
+  },
+  "log_entry_count": 12,
+  "sends": 0,
+  "turns": 4
+}

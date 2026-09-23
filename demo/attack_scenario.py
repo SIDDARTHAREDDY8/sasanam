@@ -223,15 +223,15 @@ def main():
     summary, claims no verdicts, and returns a nonzero exit code.
     """
     try:
-        # R6c dev-key opt-in (demo harness only): explicit in-code
-        # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so the
-        # synthetic attack demo still runs with zero configuration.
-        # Production entry points never do this — they fail closed.
-        os.environ.setdefault("GOV_DEV_KEYS", "1")
+        # Wave-81: the dev-key opt-in is deleted from gov/. This is a
+        # synthetic attack demo, not production — it provisions an
+        # explicit test key process-wide. Production entry points
+        # never do this — they fail closed without a key.
+        import secrets as _secrets
+        os.environ.setdefault("GOV_LOG_KEY", _secrets.token_hex(32))
+        os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
         # Wave-69: synthetic attack demo, not production (wave-61 discipline).
         os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-        from gov.log import enable_dev_keys
-        enable_dev_keys()
         _run_demo()
     except Exception as e:
         print("RESULT: FAILURE — attack scenario aborted before "

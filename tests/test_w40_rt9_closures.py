@@ -67,18 +67,21 @@ def _env(**pairs):
 
 
 @contextlib.contextmanager
-def _dev_keys(enabled=True):
-    prev = log_mod._dev_enabled
-    log_mod._dev_enabled = enabled
-    try:
+def _keyed():
+    """Wave-81: provision a fresh EXPLICIT random key via the production
+    env path (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH). Replaces the deleted
+    dev-key opt-in (the old _dev_keys touched gov.log._dev_enabled,
+    which no longer exists)."""
+    import secrets
+    with _env(GOV_LOG_KEY=secrets.token_hex(32),
+              GOV_LOG_KEY_EPOCH="test",
+              GOV_LOG_KEY_ARCHIVE=None):
         yield
-    finally:
-        log_mod._dev_enabled = prev
 
 
 @contextlib.contextmanager
 def _govrun():
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _keyed():
         yield
 
 

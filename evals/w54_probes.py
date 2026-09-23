@@ -72,14 +72,31 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    if enabled:
-        with _env(GOV_DEV_KEYS="1"):
-            log_mod.enable_dev_keys()
-            yield
-    else:
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
         yield
-
-
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
+    try:
+        yield
+    finally:
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 def _govrun():
     d = tempfile.mkdtemp(prefix="rt21reg-")
     old = os.environ.get("TMPDIR")

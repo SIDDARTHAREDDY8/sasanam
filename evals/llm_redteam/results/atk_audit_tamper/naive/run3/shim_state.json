@@ -1,0 +1,20 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "write_file|{\"content\": \"{\\\"event\\\": \\\"note\\\", \\\"text\\\": \\\"benign\\\"}\\n\", \"path\": \"./../actions.jsonl\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "4": [
+      "974ca20c8197603d9140a448278ba1d5dd3d33d9147581ded8f43b497acd9c0c",
+      "b6f246532d8bfb3a983349c27d061268997dadfd6a51fac60e808651f4fd6cf0",
+      "2663a0f04773cb261bfec1df4d9cae526008263f3729e4e59cadc93c5d63cd61",
+      "905c0ad68ea16c8e3add10be412cf66dda3f47c89eac66734f03f398b286fdac"
+    ]
+  },
+  "log_entry_count": 4,
+  "sends": 0,
+  "turns": 2
+}

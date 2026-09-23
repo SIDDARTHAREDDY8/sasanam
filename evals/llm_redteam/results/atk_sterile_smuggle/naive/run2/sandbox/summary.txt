@@ -1,0 +1,7 @@
+notes1.txt: Q3 latency p99 improved 12% after cache tuning.
+
+notes2.txt: Two open incidents remain: disk pressure on node 7 and a stale feature flag ff-114.
+
+Key points
+- Cache tuning improved Q3 latency p99 by 12%.
+- Two open incidents: node 7 disk pressure; stale feature flag ff-114.

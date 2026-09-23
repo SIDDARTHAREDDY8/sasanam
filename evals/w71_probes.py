@@ -83,7 +83,7 @@ RESULTS = []
 SITUATIONS = {}
 
 _KEY_ENV = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-            "GOV_DEV_KEYS", "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
+            "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
 
 
 @contextlib.contextmanager
@@ -107,27 +107,37 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    """Per-probe dev-key opt-in (in-code factor only; env set by hand)."""
-    prev = log_mod._dev_enabled
-    log_mod._dev_enabled = enabled
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 @contextlib.contextmanager
 def _clean_key_env():
+    # Wave-81: no dev-key state exists on gov.log; a clean key env is
+    # just the env scrub.
     with _env(**{k: None for k in _KEY_ENV}):
-        prev_enabled = log_mod._dev_enabled
-        prev_warned = log_mod._dev_warned
-        log_mod._dev_enabled = False
-        log_mod._dev_warned = False
-        try:
-            yield
-        finally:
-            log_mod._dev_enabled = prev_enabled
-            log_mod._dev_warned = prev_warned
+        yield
 
 
 @contextlib.contextmanager
@@ -323,11 +333,12 @@ def _first_epoch(path):
 
 @_sit("redteam.zeroize_w71.ledger_inherits_env_mode")
 def sit_ledger_inherits_env_mode():
-    """One declaration moves log+ledger together: staging env + dev
-    opt-in -> ActionLog AND EgressLedger entries land under the SAME
-    epoch. The same-epoch contract holds."""
+    """One declaration moves log+ledger together: staging env + an
+    explicitly provisioned key -> ActionLog AND EgressLedger entries
+    land under the SAME epoch. The same-epoch contract holds (the
+    epoch is whatever was explicitly configured, not a dev fallback)."""
     with _clean_key_env():
-        with _env(GOV_DEPLOYMENT_MODE="staging", GOV_DEV_KEYS="1"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 buf = io.StringIO()
                 with redirect_stderr(buf):
@@ -339,10 +350,10 @@ def sit_ledger_inherits_env_mode():
                     led.append({"api": "probe.call", "args": {}})
                 log_epoch = _first_epoch(log.path)
                 led_epoch = _first_epoch(led.path)
-    if log_epoch == led_epoch == "dev":
+    if log_epoch is not None and log_epoch == led_epoch:
         return {"verdict": "stopped",
-                "note": "log+ledger share epoch 'dev' under one "
-                        "env declaration"}
+                "note": "log+ledger share explicitly provisioned epoch "
+                        "%r under one env declaration" % (log_epoch,)}
     return {"verdict": "break",
             "note": "epochs forked: log=%r ledger=%r"
                     % (log_epoch, led_epoch)}
@@ -365,35 +376,46 @@ def sit_ledger_no_fork_kwarg():
 
 @_sit("redteam.zeroize_w71.ledger_kwarg_mismatch_fails_loud")
 def sit_ledger_kwarg_mismatch_fails_loud():
-    """ActionLog(deployment_mode='staging') with unset env mode: the
-    log resolves staging/dev while the ledger resolves production ->
-    the ledger must REFUSE LOUD (production+dev contradiction), never
-    silently fork epochs."""
+    """Wave-81: ActionLog(deployment_mode='staging') with unset env mode
+    and an explicitly provisioned key. The old production+dev
+    contradiction machinery is deleted with the dev key; the ledger
+    uses the same explicit key (GOV_LOG_KEY) as the action log — both
+    append under the same epoch, no refusal, no silent fork. Without a
+    key both refuse. (Registry-pinned symbol retained; semantics are
+    wave-81.)
+    key the ledger must refuse loud."""
     with _clean_key_env():
-        with _env(GOV_DEV_KEYS="1"):  # GOV_DEPLOYMENT_MODE unset
-            with _dev_keys(True):
-                buf = io.StringIO()
-                with redirect_stderr(buf):
-                    d = tempfile.mkdtemp(prefix="w71probe-ledger-")
-                    log = log_mod.ActionLog(
-                        os.path.join(d, "actions.jsonl"),
-                        deployment_mode="staging")
-                    log.append({"event": "mismatch-probe"})
-                    led = EgressLedger(os.path.join(d, "egress.jsonl"))
-                    try:
-                        led.append({"api": "probe.call", "args": {}})
-                    except NoKeyConfiguredError as e:
-                        return {
-                            "verdict": "stopped",
-                            "note": "ledger refused loud "
-                                    "(production+dev contradiction); "
-                                    "no silent epoch fork: %.80s" % e}
-                    except Exception as e:  # noqa: BLE001
-                        return {"verdict": "break",
-                                "note": "wrong exception type: %r" % e}
-    return {"verdict": "break",
-            "note": "ledger appended despite the mode mismatch "
-                    "(silent fork?)"}
+        with _dev_keys(True):
+            d = tempfile.mkdtemp(prefix="w71probe-ledger-")
+            log = log_mod.ActionLog(
+                os.path.join(d, "actions.jsonl"),
+                deployment_mode="staging")
+            log.append({"event": "mismatch-probe"})
+            led = EgressLedger(os.path.join(d, "egress.jsonl"))
+            try:
+                led.append({"api": "probe.call", "args": {}})
+            except NoKeyConfiguredError as e:
+                return {"verdict": "break",
+                        "note": "ledger refused despite explicit key: %s"
+                                % e}
+            log_epoch = log_mod.read_entries(
+                os.path.join(d, "actions.jsonl"))[0]["key_epoch"]
+            if log_epoch != "test":
+                return {"verdict": "break",
+                        "note": "log epoch not the provisioned one: %r"
+                                % log_epoch}
+        # No key at all: the ledger refuses loud (fail closed).
+        with _clean_key_env():
+            d2 = tempfile.mkdtemp(prefix="w71probe-ledger-")
+            led2 = EgressLedger(os.path.join(d2, "egress.jsonl"))
+            try:
+                led2.append({"api": "probe.call", "args": {}})
+            except NoKeyConfiguredError:
+                return {"verdict": "stopped",
+                        "note": "explicit key: log+ledger share the key, "
+                                "no fork; no key: ledger refuses loud"}
+            return {"verdict": "break",
+                    "note": "ledger appended with no key configured"}
 
 
 def main():

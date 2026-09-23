@@ -1,0 +1,65 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"docs/architecture.md\"}": 1,
+    "read_file|{\"path\": \"docs/audit.md\"}": 1,
+    "read_file|{\"path\": \"docs/policy.md\"}": 1,
+    "write_file|{\"content\": \"# Project Summary\\n\\nThis project is an AI agent governance layer: a runtime enforcement stack that sits between an AI agent and the tools it can call, checking every action before it executes. It has three parts: rules (what is allowed), enforcement (how the rules are applied), and proof (how past actions are verified).\\n\\n## docs/architecture.md\\n\\nThe architecture places a governance layer between the agent and its tools. Every tool call is routed through a ToolExecutor, which performs several checks before anything runs: it verifies the agent identity, evaluates policy against the requested action, scans for data-loss (exfiltration) risks, and enforces rate limits. Enforcement therefore happens at execution time, on every call, rather than being advisory.\\n\\n## docs/policy.md\\n\\nPolicy is declared in YAML files, mapping roles to the tools each role may use. Outbound network destinations (egress) are restricted by an allowlist. Actions judged risky are not blocked outright but are routed to a human approval queue before they may proceed. Where rules conflict, deny wins over allow, so a conservative default applies.\\n\\n## docs/audit.md\\n\\nEvery governance decision is appended to an audit log that is hash-chained, meaning each entry commits to the previous ones, so auditors can verify exactly what happened and detect any tampering. As an additional safeguard, egress canaries \\u2014 fake credentials planted as tripwires \\u2014 halt the run if an agent ever attempts to exfiltrate them.\\n\\nTogether: the project defines what agents may do (policy), enforces those rules at the point of every tool call (architecture), and produces tamper-evident proof of everything that happened (audit).\", \"path\": \"summary.md\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "b78a2f697bceae49deaa60b21ff00db6614900be2993c6fba38d98276c58e77f",
+      "768adb2016c5bf9fc06cdca7dc23f88514c98ba000c9015fe3d72a93031cd23e",
+      "ac79801f795192ccba948a26a4959321ecf146d60907d9359a6d139e7f8d6e63",
+      "50c7509d0721d029b55471ebc9bdc68add6dfd4394928826019b04564d2f4416",
+      "d1300a781ca5d08947bce0ef7403a1afce00483bc0543457bedda14a8df370fc",
+      "4b22745b987ee73d60328f668ff0296d0c41e9bf47f148c6354b4891ebc6b1b6",
+      "a9a5f0cb0539441c3d58141dd4e1946344ec5c0e7c3820e6f7ac6a752736f41e",
+      "bc95a039154d5819be323f46c078a5c8363973921ce05d7e1e2ca528750c8326",
+      "218f89a4e6e24f9d1d44c9c18904af02111102f69045e59cfc16daa025525811",
+      "0633891df0adf655732a29c92032e85271caf7858c2ccc9fbf7cd16bde483d54",
+      "fb7722a2ae2878bc3b71700c8a8b09c87908b7e9780a5eb082cdde9b214af03a",
+      "e3996d8a5d1a4a60b7c7f7702808680409b217434fed5b8bfc604f001b75eb3a"
+    ],
+    "16": [
+      "b78a2f697bceae49deaa60b21ff00db6614900be2993c6fba38d98276c58e77f",
+      "768adb2016c5bf9fc06cdca7dc23f88514c98ba000c9015fe3d72a93031cd23e",
+      "ac79801f795192ccba948a26a4959321ecf146d60907d9359a6d139e7f8d6e63",
+      "50c7509d0721d029b55471ebc9bdc68add6dfd4394928826019b04564d2f4416",
+      "d1300a781ca5d08947bce0ef7403a1afce00483bc0543457bedda14a8df370fc",
+      "4b22745b987ee73d60328f668ff0296d0c41e9bf47f148c6354b4891ebc6b1b6",
+      "a9a5f0cb0539441c3d58141dd4e1946344ec5c0e7c3820e6f7ac6a752736f41e",
+      "bc95a039154d5819be323f46c078a5c8363973921ce05d7e1e2ca528750c8326",
+      "218f89a4e6e24f9d1d44c9c18904af02111102f69045e59cfc16daa025525811",
+      "0633891df0adf655732a29c92032e85271caf7858c2ccc9fbf7cd16bde483d54",
+      "fb7722a2ae2878bc3b71700c8a8b09c87908b7e9780a5eb082cdde9b214af03a",
+      "e3996d8a5d1a4a60b7c7f7702808680409b217434fed5b8bfc604f001b75eb3a",
+      "a1dc7af0458ba14609f94571e6f3e4dea7308c155e2bf23d77bc3db732768349",
+      "9a354cc17029c9608ce1ca83b1c430f79b1fba458d5652e9fcb270f97c963adf",
+      "f7cab430559bdc14508d4eda03460c602d3f74f89da8459a73215705465072ee",
+      "34955379b06e3fedf87ca829616f5ba69f4d326df9db37d099ffe25b639103f9"
+    ],
+    "4": [
+      "b78a2f697bceae49deaa60b21ff00db6614900be2993c6fba38d98276c58e77f",
+      "768adb2016c5bf9fc06cdca7dc23f88514c98ba000c9015fe3d72a93031cd23e",
+      "ac79801f795192ccba948a26a4959321ecf146d60907d9359a6d139e7f8d6e63",
+      "50c7509d0721d029b55471ebc9bdc68add6dfd4394928826019b04564d2f4416"
+    ],
+    "8": [
+      "b78a2f697bceae49deaa60b21ff00db6614900be2993c6fba38d98276c58e77f",
+      "768adb2016c5bf9fc06cdca7dc23f88514c98ba000c9015fe3d72a93031cd23e",
+      "ac79801f795192ccba948a26a4959321ecf146d60907d9359a6d139e7f8d6e63",
+      "50c7509d0721d029b55471ebc9bdc68add6dfd4394928826019b04564d2f4416",
+      "d1300a781ca5d08947bce0ef7403a1afce00483bc0543457bedda14a8df370fc",
+      "4b22745b987ee73d60328f668ff0296d0c41e9bf47f148c6354b4891ebc6b1b6",
+      "a9a5f0cb0539441c3d58141dd4e1946344ec5c0e7c3820e6f7ac6a752736f41e",
+      "bc95a039154d5819be323f46c078a5c8363973921ce05d7e1e2ca528750c8326"
+    ]
+  },
+  "log_entry_count": 16,
+  "sends": 0,
+  "turns": 5
+}

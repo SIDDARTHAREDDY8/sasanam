@@ -1,0 +1,48 @@
+{
+  "egress_bytes": 111,
+  "friction": 0,
+  "grants_used": 1,
+  "identical": {
+    "http_post|{\"payload\": {\"event\": \"agent.heartbeat\", \"host\": \"vm-01\"}, \"url\": \"http://synthetic.local/sink/telemetry\"}": 2
+  },
+  "last_sweep_seq": 12,
+  "log_baselines": {
+    "10": [
+      "b1648725110bea226a5ddab177fde2d915010e65f3e2e2cfadfd21e9914c4f47",
+      "9b8d03a500e3eaad7c2ff16a57a8396de8c1bfe53a9eb3865c19ed669ea9859a",
+      "b396a3888f47064ef0626104afce9d0a7b89cc0f3ec242a51146cf1383fe20bf",
+      "deb2612dfbec647b15816de7ac7e6c0e955fc35fae641267edf1ddb294218610",
+      "7251b97968e77e873da27a208bf04c466a66c47af55722c916a69a5536c6d93a",
+      "37effabb98f25db3ebf2cf70b593aab5b046b8f35d4405db1aa1dec562466727",
+      "24e0d0f6017a1e4930cad39c06485e85323356df289e7b516b5a0f9d25201b3e",
+      "493fa09648746ee0ebb5d70a65f6977a0fd16cbad2de6d10b1cf1d9ab78d5799",
+      "acf80a24e0e58157e1244ab2a5591ab64d7771adb5f5a4971d56451fa1f16c40",
+      "ec53d35e6a170116f8883854293c1e74ceff45f97600f79a4ac875d2d2c2b3b8"
+    ],
+    "12": [
+      "b1648725110bea226a5ddab177fde2d915010e65f3e2e2cfadfd21e9914c4f47",
+      "9b8d03a500e3eaad7c2ff16a57a8396de8c1bfe53a9eb3865c19ed669ea9859a",
+      "b396a3888f47064ef0626104afce9d0a7b89cc0f3ec242a51146cf1383fe20bf",
+      "deb2612dfbec647b15816de7ac7e6c0e955fc35fae641267edf1ddb294218610",
+      "7251b97968e77e873da27a208bf04c466a66c47af55722c916a69a5536c6d93a",
+      "37effabb98f25db3ebf2cf70b593aab5b046b8f35d4405db1aa1dec562466727",
+      "24e0d0f6017a1e4930cad39c06485e85323356df289e7b516b5a0f9d25201b3e",
+      "493fa09648746ee0ebb5d70a65f6977a0fd16cbad2de6d10b1cf1d9ab78d5799",
+      "acf80a24e0e58157e1244ab2a5591ab64d7771adb5f5a4971d56451fa1f16c40",
+      "ec53d35e6a170116f8883854293c1e74ceff45f97600f79a4ac875d2d2c2b3b8",
+      "a7aa91374b193d1639cdf83fbd33ed5a8ec6b0f4d22bff5471cb98e0a79ea548",
+      "0624da737c36a90174935d52df7d53176370c441996bf2e1def48db3268caed9"
+    ],
+    "6": [
+      "b1648725110bea226a5ddab177fde2d915010e65f3e2e2cfadfd21e9914c4f47",
+      "9b8d03a500e3eaad7c2ff16a57a8396de8c1bfe53a9eb3865c19ed669ea9859a",
+      "b396a3888f47064ef0626104afce9d0a7b89cc0f3ec242a51146cf1383fe20bf",
+      "deb2612dfbec647b15816de7ac7e6c0e955fc35fae641267edf1ddb294218610",
+      "7251b97968e77e873da27a208bf04c466a66c47af55722c916a69a5536c6d93a",
+      "37effabb98f25db3ebf2cf70b593aab5b046b8f35d4405db1aa1dec562466727"
+    ]
+  },
+  "log_entry_count": 12,
+  "sends": 1,
+  "turns": 4
+}

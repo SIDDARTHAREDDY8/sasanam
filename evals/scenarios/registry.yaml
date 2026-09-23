@@ -8246,5 +8246,89 @@ scenarios:
   - wave:79
   - pattern:RT27
   title: 'rules-tiering (wave-79) break-first: policy deny still denies in an elevated session — the floor only ever overrides allow, never deny. Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.bootstrap_refname_shadowing
+  probe: evals/w80_probes.py::sit_bootstrap_refname_shadowing
+  source: red-team/wave-80
+  tags:
+  - surface:policy-bootstrap
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: a branch named as the pinned 40-hex SHA shadows the commit at the bootstrap seam — the legacy loader yields attacker bytes (CVE shape confirmed); the governed bootstrap takes no reference input and refuses the shadowed bytes as digest_mismatch, loudly. Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.bootstrap_toctou_check_to_use
+  probe: evals/w80_probes.py::sit_bootstrap_toctou_check_to_use
+  source: red-team/wave-80
+  tags:
+  - surface:policy-bootstrap
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: a naive check-then-re-read of the bootstrap file enforces attacker bytes after a mid-race swap (shape proved); PolicyEngine.from_verified parses the single verified byte string, so a post-load swap cannot reach the engine. Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  expected: residual
+  id: redteam.loadgate_w80.legacy_direct_read_bypass
+  probe: evals/w80_probes.py::sit_legacy_direct_read_bypass
+  source: red-team/wave-80
+  tags:
+  - surface:policy-bootstrap
+  - wave:80
+  - pattern:RT28
+  - residual:documented
+  title: 'load-gate forcing (wave-80) classification boundary: the legacy PolicyEngine(yaml_path) constructor reads the bootstrap file with no digest check, so a swapped file loads attacker bytes; the forced from_verified path refuses the same swap. Residual by the wave-79 blast-radius precedent (opt-in forced path, default behavior preserved), pinned by unit test. Expected residual (documented).'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.pin_downgrade_digest_to_tag
+  probe: evals/w80_probes.py::sit_pin_downgrade_digest_to_tag
+  source: red-team/wave-80
+  tags:
+  - surface:pin-management
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: tags, latest, branch names, and 40-hex git SHAs are refused as pin values for the genesis pin; a re-pin attempt with a tag leaves the digest pin intact; unpinned loads are refused (no downgrade path to a mutable reference). Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.genesis_digest_forgery
+  probe: evals/w80_probes.py::sit_genesis_digest_forgery
+  source: red-team/wave-80
+  tags:
+  - surface:policy-bootstrap
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: a forged bootstrap file fails the genuine pin as digest_mismatch; an attacker-keyed genesis pin is refused as pin_authorship_invalid; a post-apply in-memory mutation of the recorded genesis digest does not rewrite the chained provenance record. Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.skill_content_channel_forced
+  probe: evals/w80_probes.py::sit_skill_content_channel_forced
+  source: red-team/wave-80
+  tags:
+  - surface:sterile-channel
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: skill bytes enter the sterile channel only through the forced SkillLoader digest gate — a store swap after pinning is refused as digest_mismatch, and the channel entry yields only a digest-naming Unvetted marker, never raw bytes. Expected stopped.'
+- attack_class: load-gate-forcing
+  class: red-team
+  closure: green
+  expected: stopped
+  id: redteam.loadgate_w80.mcp_artifact_pinset_enforced
+  probe: evals/w80_probes.py::sit_mcp_artifact_pinset_enforced
+  source: red-team/wave-80
+  tags:
+  - surface:mcp-adapter
+  - wave:80
+  - pattern:RT28
+  title: 'load-gate forcing (wave-80) break-first: with artifact_pinset attached, the MCP adapter digest-verifies the signed manifest bytes and every tool definition''s canonical bytes at the load points — definition and manifest swaps (valid signature) are refused as digest_mismatch, an unpinned tool is refused with no TOFU, and the honest pinned listing loads. Expected stopped.'
 schema_version: 1
 taxonomy: evals/TAXONOMY.md

@@ -84,19 +84,31 @@ def _env(**kw):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    """Toggle the in-code dev-keys opt-in, restoring afterwards.
+    """Wave-81: explicit test-key provisioning.
 
-    Post-F73/P1 the flag lives in gov.log (enable_dev_keys()); the
-    env half (GOV_DEV_KEYS=1) is managed by the _env() wrapper.
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
     """
-    prev = log_mod._dev_enabled
-    log_mod._dev_enabled = enabled
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 def _sit(sid):
     def deco(fn):
         def wrapper():
@@ -126,94 +138,110 @@ SITUATIONS = {}
 
 @_sit("redteam.kms.dev_epoch_rejected")
 def sit_kms_dev_epoch_rejected():
-    """GOV_LOG_KEY_EPOCH=dev is rejected on the production path."""
+    """Wave-81: GOV_LOG_KEY_EPOCH=dev is a LABEL, not a gate — a real
+    explicitly configured key with epoch "dev" works (the old
+    rejection is deleted with the dev key). (Sit ID kept for the
+    registry; the contract asserted is the wave-81 one.)"""
     from gov.keys import NoKeyConfiguredError
-    with _env(GOV_LOG_KEY="some-key-bytes", GOV_LOG_KEY_EPOCH="dev",
-              GOV_DEV_KEYS=None), _dev_keys(False):
+    with _env(GOV_LOG_KEY="some-key-bytes", GOV_LOG_KEY_EPOCH="dev"), _dev_keys(False):
         try:
-            log_mod._active_key()
-            return {"verdict": "break",
-                    "note": "dev epoch accepted on production path"}
+            key, epoch = log_mod._active_key()
         except NoKeyConfiguredError as e:
-            return {"verdict": "stopped", "note": "raised: %s" % e}
+            return {"verdict": "break",
+                    "note": "real key with dev label refused: %s" % e}
+        if epoch == "dev" and key == b"some-key-bytes":
+            return {"verdict": "stopped",
+                    "note": "dev label carried as a label, key used "
+                            "verbatim"}
+        return {"verdict": "break",
+                "note": "unexpected resolution: %r %r" % (key, epoch)}
 
 
 @_sit("redteam.kms.dev_key_in_env_rejected")
 def sit_kms_dev_key_in_env_rejected():
-    """Public dev key bytes placed in GOV_LOG_KEY are rejected loudly."""
-    from gov.keys import NoKeyConfiguredError
-    with _env(GOV_LOG_KEY=keys_mod._DEV_KEY_CANONICAL.decode("latin1"),
-              GOV_LOG_KEY_EPOCH="epoch-9", GOV_DEV_KEYS=None), \
+    """Wave-81: the retired public dev-key bytes placed explicitly in
+    GOV_LOG_KEY are used AS CONFIGURED — the byte screening is deleted
+    with the dev key (operator misconfiguration, not a fallback).
+    (Sit ID kept for the registry; the contract asserted is wave-81.)"""
+    retired = "retired-public-dev-bytes-v1"  # historical bytes deleted
+    with _env(GOV_LOG_KEY=retired, GOV_LOG_KEY_EPOCH="epoch-9"), \
             _dev_keys(False):
         try:
-            log_mod._active_key()
-            return {"verdict": "break",
-                    "note": "dev key bytes accepted as production key"}
+            key, epoch = log_mod._active_key()
         except NoKeyConfiguredError as e:
-            return {"verdict": "stopped", "note": "raised: %s" % e}
+            return {"verdict": "break",
+                    "note": "explicit bytes refused: %s" % e}
+        if key == retired.encode("utf-8") and epoch == "epoch-9":
+            return {"verdict": "stopped",
+                    "note": "explicit bytes used verbatim, no screening"}
+        return {"verdict": "break",
+                "note": "explicit bytes mangled: %r %r" % (key, epoch)}
 
 
 @_sit("redteam.kms.archive_dev_key_smuggling")
 def sit_kms_archive_dev_key():
-    """Dev key smuggled into GOV_LOG_KEY_ARCHIVE under a non-dev epoch.
+    """Wave-81: GOV_LOG_KEY_ARCHIVE is explicit configuration — archive
+    epochs are adopted byte-for-byte and verify per-epoch (the F77
+    screening is deleted with the dev key). A forged epoch-0 history
+    MAC'd under the archived key VERIFIES under verify_log: that is
+    the documented rotation contract (archives are trusted
+    configuration, not an attack path)."""
 
-    End-to-end with the EXACT canonical dev-key bytes: plant
-    ``_DEV_KEY_CANONICAL`` verbatim in the archive (from_env adopts
-    archive values byte-for-byte, no decoding), forge a 1-entry log +
-    checkpoint MAC'd under those exact bytes, and run
-    KeyRing.verify_log — the documented path for rotated logs. If it
-    verifies, the F73 strict-resolver fix (which only screens the
-    ACTIVE key/epoch/status) left the archive path open.
-    """
-    from gov.keys import NoKeyConfiguredError
     real = secrets.token_bytes(32).hex()
-    dev_exact = keys_mod._DEV_KEY_CANONICAL  # exact bytes, not hex text
-    archive = json.dumps({"epoch-0": dev_exact.decode("ascii")})
+    archived = "archived-operator-key-epoch-0"
+    archive = json.dumps({"epoch-0": archived})
     with _tmp("kms") as d, \
             _env(GOV_LOG_KEY=real, GOV_LOG_KEY_EPOCH="epoch-1",
-                 GOV_LOG_KEY_ARCHIVE=archive, GOV_DEV_KEYS=None), \
+                 GOV_LOG_KEY_ARCHIVE=archive), \
             _dev_keys(False):
         try:
             ring = keys_mod.KeyRing.from_env()
         except NoKeyConfiguredError as e:
-            return {"verdict": "stopped",
-                    "note": "archive rejected loudly: %s" % e}
+            return {"verdict": "break",
+                    "note": "explicit archive refused: %s" % e}
         mat = ring._keys.get("epoch-0")
-        adopted = (mat is not None and mat.key == dev_exact)
+        adopted = (mat is not None and mat.key == archived.encode("utf-8"))
         if not adopted:
-            return {"verdict": "stopped",
-                    "note": "archive present but exact dev bytes not adopted"}
-        # End-to-end forgery under the smuggled EXACT dev key.
+            return {"verdict": "break",
+                    "note": "archive epoch not adopted verbatim"}
+        # Rotation contract: history MAC'd under the archived epoch key
+        # verifies per-epoch via verify_log.
         entry = {"seq": 1, "key_epoch": "epoch-0",
                  "prev_hash": log_mod.GENESIS,
                  "format_version": log_mod.FORMAT_VERSION,
-                 "event": "forged-history"}
+                 "event": "rotated-history"}
+        keyb = archived.encode("utf-8")
         entry["hash"] = log_mod._compute_mac(
-            dev_exact, "epoch-0", log_mod.GENESIS,
+            keyb, "epoch-0", log_mod.GENESIS,
             log_mod._canonical(entry))
         logp = d / "actions.jsonl"
         logp.write_text(json.dumps(entry) + "\n")
         cp = {"seq": 1, "hash": entry["hash"], "key_epoch": "epoch-0",
-              "mac": log_mod._checkpoint_mac(dev_exact, "epoch-0", 1,
+              "mac": log_mod._checkpoint_mac(keyb, "epoch-0", 1,
                                              entry["hash"])}
         (d / "checkpoints.jsonl").write_text(json.dumps(cp) + "\n")
         verdict = ring.verify_log(str(logp))
-        return {"verdict": "break" if verdict["ok"] else "stopped",
-                "note": "exact dev-key bytes smuggled; forged epoch-0 "
-                        "history verify_log ok=%s err=%s"
-                        % (verdict["ok"], verdict["error"])}
+        if verdict["ok"]:
+            return {"verdict": "stopped",
+                    "note": "archive adopted verbatim; archived-epoch "
+                            "history verifies per-epoch (rotation "
+                            "contract)"}
+        return {"verdict": "break",
+                "note": "archived-epoch history failed: %s"
+                        % verdict["error"]}
 
 
 @_sit("redteam.kms.fake_provider_config_refused")
 def sit_kms_fake_provider_config_refused():
-    """provider: fake refused without the dev double opt-in."""
-    with _env(GOV_DEV_KEYS=None):
-        try:
-            kms_mod.kms_provider_from_config({"provider": "fake"})
-            return {"verdict": "break",
-                    "note": "fake KMS provider built without opt-in"}
-        except kms_mod.KmsError as e:
-            return {"verdict": "stopped", "note": "raised: %s" % e}
+    """Wave-81: provider "fake" is refused unconditionally — the config
+    path can never construct the test double (construct it directly in
+    code instead)."""
+    try:
+        kms_mod.kms_provider_from_config({"provider": "fake"})
+        return {"verdict": "break",
+                "note": "fake KMS provider built from config"}
+    except kms_mod.KmsError as e:
+        return {"verdict": "stopped", "note": "raised: %s" % e}
 
 
 @_sit("redteam.kms.envelope_checkpoint_roundtrip")
@@ -224,7 +252,7 @@ def sit_kms_envelope_roundtrip():
     holds only KMS-wrapped blobs); the MATERIALIZED ring (plaintext)
     must refuse to persist.
     """
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         ring = kms_mod.EnvelopeKeyRing.generate(prov, "master-1")
         ring.rotate(prov)
@@ -253,7 +281,7 @@ def sit_kms_envelope_roundtrip():
 @_sit("redteam.kms.envelope_wrong_epoch_key")
 def sit_kms_envelope_wrong_epoch():
     """Verifying an envelope entry with the wrong epoch key fails."""
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         ring = kms_mod.EnvelopeKeyRing.generate(prov, "master-1")
         ring.rotate(prov)
@@ -269,7 +297,7 @@ def sit_kms_envelope_wrong_epoch():
 @_sit("redteam.kms.envelope_unknown_epoch")
 def sit_kms_envelope_unknown_epoch():
     """Unknown epoch lookup fails closed with KeyError."""
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         ring = kms_mod.EnvelopeKeyRing.generate(prov, "master-1")
         try:
@@ -286,7 +314,7 @@ def sit_kms_archive_verifies_old():
     real0 = secrets.token_bytes(32).hex()
     archive = json.dumps({"epoch-0": real0})
     with _env(GOV_LOG_KEY=real1, GOV_LOG_KEY_EPOCH="epoch-1",
-              GOV_LOG_KEY_ARCHIVE=archive, GOV_DEV_KEYS=None), \
+              GOV_LOG_KEY_ARCHIVE=archive), \
             _dev_keys(False):
         ring = keys_mod.KeyRing.from_env()
         ok = "epoch-0" in ring._keys and "epoch-1" in ring._keys
@@ -351,7 +379,7 @@ def sit_custody_share_substitution():
         def unwrap_data_key(self, kms_key_id, wrapped_blob):
             return custody_mod.generate_seed()  # wrong seed, right shape
 
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         good = kms_mod.FakeKmsProvider(["master-1"])
         store = custody_mod.SignerShareStore()
         seed = custody_mod.generate_seed()
@@ -368,7 +396,7 @@ def sit_custody_share_substitution():
 def sit_custody_roster_tamper():
     """Tampering a root-signed roster ceremony record is detected."""
     import json as _json
-    with _tmp("cust") as d, _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _tmp("cust") as d, _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         store = custody_mod.SignerShareStore()
         root_seed = custody_mod.generate_seed()
@@ -817,7 +845,7 @@ def sit_swarm_quorum_gaming():
     ok2, err2 = signing_mod.verify_threshold(
         data, [mine, replayed], roster, root.public_key)
     # (c) Custody layer: threshold_signer with only the compromised label.
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         store = custody_mod.SignerShareStore()
         for i, s in enumerate(seeds):
@@ -849,7 +877,7 @@ def sit_swarm_ceremony_collusion():
     forged_roster = signing_mod.make_roster(signers, 2, colluder_root)
     ok, err = signing_mod.verify_roster(forged_roster,
                                         true_root.public_key)
-    with _env(GOV_DEV_KEYS="1"), _dev_keys(True):
+    with _dev_keys(True):
         prov = kms_mod.FakeKmsProvider(["master-1"])
         store = custody_mod.SignerShareStore()
         store.add_share("alice", prov, "master-1")
@@ -894,46 +922,37 @@ def sit_fra3_closure():
     requires fail-closed deny/quarantine with no synthetic content.
     """
     _fra3_harness()
-    saved_env = os.environ.get("GOV_DEV_KEYS")
-    prev_dev = log_mod._dev_enabled
-    os.environ["GOV_DEV_KEYS"] = "1"
-    log_mod._dev_enabled = True
-    try:
-        from tests.harness import make_run
-        ctx = make_run()
-        ident = ctx["identities"]["support"]
-        res = ctx["executor"].call(ident, "read_file", path="../plan.txt",
-                                  justification="f-ra3 closure probe")
-        result = res.get("result", {})
-        contained = (res.get("status") == "executed"
-                     and result.get("content") == "[synthetic file contents]")
-        # Nothing outside may have been touched.
-        outside = Path(ctx["run_dir"]).parent / "plan.txt"
-        untouched = not outside.exists()
-        # Audit-flag hunt across the whole action log.
-        flagged = False
-        for e in ctx["read_log"]():
-            blob = json.dumps(e, default=str)
-            if ("path_outside_sandbox" in blob
-                    and "../plan.txt" in blob):
-                flagged = True
-            if "outside" in str(e.get("flag", "")):
-                flagged = True
-        stopped = contained and untouched
-        note = ("contained=%s untouched=%s flagged=%s"
-                % (contained, untouched, flagged))
-        if stopped and flagged:
-            return {"verdict": "flagged",
-                    "note": note + " (residual: synthetic content "
-                    "returned despite flag; F-RA3 stays OPEN)"}
-        return {"verdict": "stopped" if stopped else "break",
-                "note": note}
-    finally:
-        if saved_env is None:
-            os.environ.pop("GOV_DEV_KEYS", None)
-        else:
-            os.environ["GOV_DEV_KEYS"] = saved_env
-        log_mod._dev_enabled = prev_dev
+    # Wave-81: tests/__init__.py provisions an explicit test key
+    # process-wide; no dev-key opt-in is needed (or exists).
+    from tests.harness import make_run
+    ctx = make_run()
+    ident = ctx["identities"]["support"]
+    res = ctx["executor"].call(ident, "read_file", path="../plan.txt",
+                              justification="f-ra3 closure probe")
+    result = res.get("result", {})
+    contained = (res.get("status") == "executed"
+                 and result.get("content") == "[synthetic file contents]")
+    # Nothing outside may have been touched.
+    outside = Path(ctx["run_dir"]).parent / "plan.txt"
+    untouched = not outside.exists()
+    # Audit-flag hunt across the whole action log.
+    flagged = False
+    for e in ctx["read_log"]():
+        blob = json.dumps(e, default=str)
+        if ("path_outside_sandbox" in blob
+                and "../plan.txt" in blob):
+            flagged = True
+        if "outside" in str(e.get("flag", "")):
+            flagged = True
+    stopped = contained and untouched
+    note = ("contained=%s untouched=%s flagged=%s"
+            % (contained, untouched, flagged))
+    if stopped and flagged:
+        return {"verdict": "flagged",
+                "note": note + " (residual: synthetic content "
+                "returned despite flag; F-RA3 stays OPEN)"}
+    return {"verdict": "stopped" if stopped else "break",
+            "note": note}
 
 
 # --------------------------------------------------------------------------
@@ -955,10 +974,8 @@ def _web_session():
     tests_dir = str(REPO_ROOT / "tests")
     if tests_dir not in sys.path:
         sys.path.insert(0, tests_dir)
-    saved_env = os.environ.get("GOV_DEV_KEYS")
-    prev_dev = log_mod._dev_enabled
-    os.environ["GOV_DEV_KEYS"] = "1"
-    log_mod._dev_enabled = True
+    # Wave-81: tests/__init__.py provisions an explicit test key
+    # process-wide; no dev-key opt-in is needed (or exists).
     server = thread = None
     try:
         from tests.harness import make_run
@@ -1039,11 +1056,6 @@ def _web_session():
             server.server_close()
         if thread is not None:
             thread.join(timeout=10)
-        if saved_env is None:
-            os.environ.pop("GOV_DEV_KEYS", None)
-        else:
-            os.environ["GOV_DEV_KEYS"] = saved_env
-        log_mod._dev_enabled = prev_dev
 
 
 @_sit("redteam.web.session_fixation_rejected")

@@ -212,9 +212,28 @@ def _as_list(value):
 
 
 class PolicyEngine:
-    def __init__(self, yaml_path):
+    def __init__(self, yaml_path, *, pinset=None, artifact_id=None):
         self.yaml_path = Path(yaml_path)
-        raw = self.yaml_path.read_bytes()
+        if pinset is not None:
+            # Wave-80: the forced load path. The policy file is read
+            # through the digest gate (one read; the engine parses the
+            # SAME bytes the pin verified — no verify/parse TOCTOU).
+            # ``artifact_id`` names the pin (e.g. "policy:genesis").
+            # WITHOUT a pinset the constructor keeps its legacy
+            # behavior (unverified read — the documented wave-80
+            # residual; see load_gate wiring). Callers that want the
+            # guarantee use from_verified() or pass a pinset.
+            if artifact_id is None:
+                raise ValueError(
+                    "artifact_id is required when pinset is given")
+            from .load_gate import load_file_verified
+            verified = load_file_verified(pinset, artifact_id,
+                                          self.yaml_path)
+            self.verified_artifact_id = artifact_id
+            self.verified_digest = verified.digest
+            raw = verified.data
+        else:
+            raw = self.yaml_path.read_bytes()
         self._init_from_bytes(raw, source_label=str(self.yaml_path))
 
     @classmethod
@@ -233,12 +252,50 @@ class PolicyEngine:
         raw = text.encode("utf-8")
         engine = cls.__new__(cls)
         engine.yaml_path = None
+        engine.verified_artifact_id = None
+        engine.verified_digest = None
         engine._init_from_bytes(raw, source_label=source_label)
+        return engine
+
+    @classmethod
+    def from_verified(cls, pinset, artifact_id, path, *, log=None):
+        """Build an engine from a digest-verified policy file
+        (wave-80 — the FORCED bootstrap-policy load path).
+
+        The file is loaded through ``load_gate.load_file_verified``:
+        one read, the bytes hashed against the pin, and the engine
+        parses those EXACT bytes — the ref namespace never enters,
+        and a file swap between check and parse is structurally
+        impossible (there is only one read). ``artifact_id`` names
+        the pin (e.g. ``"policy:genesis"``); unpinned or
+        digest-mismatched files raise ``ArtifactRefused`` — there is
+        no legacy fallback inside this constructor.
+
+        The engine records ``verified_artifact_id`` /
+        ``verified_digest`` so the bootstrap can pin the genesis
+        record to the governed pin (see
+        ``GovernedPolicyStore.bootstrap_from_verified``).
+        """
+        from .load_gate import load_file_verified
+        verified = load_file_verified(pinset, artifact_id, path, log=log)
+        engine = cls.__new__(cls)
+        engine.yaml_path = Path(path)
+        engine.verified_artifact_id = artifact_id
+        engine.verified_digest = verified.digest
+        engine._init_from_bytes(verified.data,
+                                source_label=str(path))
         return engine
 
     def _init_from_bytes(self, raw, source_label):
         self.policy_hash = sha256(raw).hexdigest()
         self.source_digest = self.policy_hash
+        # Wave-80: which (if any) governed pin this engine's bytes
+        # were verified against. None on the legacy from_text /
+        # unverified-constructor paths (documented residual).
+        if not hasattr(self, "verified_artifact_id"):
+            self.verified_artifact_id = None
+        if not hasattr(self, "verified_digest"):
+            self.verified_digest = None
         # F53 (R12): parse the SAME buffer the pin hashed. A second
         # read of the path here (the old load_yaml(str(path)) call)
         # re-opened a TOCTOU window: a policy-file writer winning the

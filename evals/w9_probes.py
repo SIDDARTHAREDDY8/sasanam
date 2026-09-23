@@ -81,9 +81,11 @@ def _owned_run(**kw):
 
 def _forge_production_labeled_log(d):
     """Build the F32 forgery: entries labeled key_epoch='production'
-    but HMAC'd under the PUBLIC dev key (anyone who read the docs holds
-    it). Returns (log_path, entry_dicts)."""
-    dev = _logmod._DEV_KEY
+    but HMAC'd under an explicit insider key the forger holds (wave-81:
+    the public dev key is deleted, so the forgery is an insider who
+    holds the configured key relabeling epochs). Returns (log_path,
+    entry_dicts)."""
+    insider = b"w9-insider-holds-this-key"
     lp = str(d / "forged.jsonl")
     prev = _logmod.GENESIS
     entries = []
@@ -93,7 +95,7 @@ def _forge_production_labeled_log(d):
              "format_version": _logmod.FORMAT_VERSION,
              "key_epoch": "production",
              "event": "tool_call", "decision": "allowed_executed"}
-        e["hash"] = _logmod._compute_mac(dev, "production", prev,
+        e["hash"] = _logmod._compute_mac(insider, "production", prev,
                                          _logmod._canonical(e))
         entries.append(e)
         prev = e["hash"]
@@ -102,7 +104,7 @@ def _forge_production_labeled_log(d):
         encoding="utf-8")
     cp = {"seq": 3, "hash": prev, "key_epoch": "production",
           "format_version": _logmod.FORMAT_VERSION,
-          "mac": _logmod._checkpoint_mac(dev, "production", 3, prev)}
+          "mac": _logmod._checkpoint_mac(insider, "production", 3, prev)}
     (d / "checkpoints.jsonl").write_text(json.dumps(cp) + "\n",
                                          encoding="utf-8")
     return lp, entries
@@ -111,50 +113,54 @@ def _forge_production_labeled_log(d):
 def _w9_forge():
     """Brief 1 (F32 CLOSED): self-declared epoch labels vs the verified
     key binding. The forgery — entries labeled 'production' but MAC'd
-    under the PUBLIC dev key — FAILS the single-key verifier with a
-    label-binding error (fail closed, no MAC-mismatch ambiguity);
+    under the insider's explicit key — FAILS the single-key verifier
+    with a label-binding error (fail closed, no MAC-mismatch ambiguity);
     require_verified raises the typed LogUnverifiableError; and the
     report derives its key status from the VERIFIED binding, so the
-    forgery renders dev with the mismatch flagged — never a production
-    banner."""
+    forgery renders with the mismatch flagged — never a production
+    banner. Wave-81: the public dev key is deleted; the forger is an
+    insider holding the configured key."""
     o = {}
     with _tmp("w9f-") as d:
         lp, entries = _forge_production_labeled_log(d)
-        # The documented dev flow: GOV_LOG_KEY=<dev key>. The entries are
-        # labeled 'production' but MAC'd under the public dev key.
-        with _env(_logmod._DEV_KEY.decode("utf-8"), "dev"):
+        # The insider flow: GOV_LOG_KEY=<insider key>, epoch "epoch-9".
+        # The entries are labeled 'production' but MAC'd under the
+        # insider key.
+        with _env("w9-insider-holds-this-key", "epoch-9"):
             v = _logmod._verify(lp)
         o["forge_fails_single_key"] = (
             not v["ok"]
             and "key_epoch label mismatch" in (v["error"] or ""))
         try:
-            with _env(_logmod._DEV_KEY.decode("utf-8"), "dev"):
+            with _env("w9-insider-holds-this-key", "epoch-9"):
                 _logmod.require_verified(lp)
             o["forge_typed_api_raises"] = False
         except _logmod.LogUnverifiableError:
             o["forge_typed_api_raises"] = True
-        # A production-configured single-key verifier: still closed.
-        with _env("prod-secret-not-public-xyz", "production"):
+        # A different-explicit-key single-key verifier: still closed.
+        with _env("other-explicit-key", "epoch-2"):
             o["forge_closed_realkey"] = not _logmod._verify(lp)["ok"]
         # The KeyRing path: the label selects the verifying key.
         ring = KeyRing()
         ring._keys["production"] = KeyMaterial(
-            "production", b"prod-secret-not-public-xyz", status="active")
-        ring._keys["dev"] = KeyMaterial(
-            "dev", _logmod._DEV_KEY, status="dev")
-        ring._active_epoch = "production"
+            "production", b"other-explicit-key", status="active")
+        ring._keys["epoch-9"] = KeyMaterial(
+            "epoch-9", b"w9-insider-holds-this-key", status="active")
+        ring._active_epoch = "epoch-9"
         o["forge_closed_keyring"] = not ring.verify_log(lp)["ok"]
         # The human-facing report derives status from the VERIFIED key
         # binding (the configured epoch), never from the labels: the
-        # forgery renders dev, with the label mismatch flagged loudly.
+        # forgery is flagged as a label mismatch, never a production
+        # banner.
         from demo.make_report import key_status
-        with _env(_logmod._DEV_KEY.decode("utf-8"), "dev"):
+        with _env("w9-insider-holds-this-key", "epoch-9"):
             v2 = _logmod._verify(lp)
         ks = key_status(entries, v2["key_epoch"])
-        o["forge_report_stays_dev"] = (
-            ks["status"] == "dev" and ks["verified_epoch"] == "dev"
+        o["forge_report_flags_mismatch"] = (
+            ks["verified_epoch"] == "epoch-9"
             and ks["label_mismatch"] == ["production"]
-            and "LABEL MISMATCH" in ks["banner_line"])
+            and "LABEL MISMATCH" in ks["banner_line"]
+            and "verified epoch `production`" not in ks["banner_line"])
     return o
 
 

@@ -1,0 +1,65 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"data/notes1.txt\"}": 1,
+    "read_file|{\"path\": \"data/notes2.txt\"}": 1,
+    "read_file|{\"path\": \"skills/report/SKILL.md\"}": 1,
+    "write_file|{\"content\": \"notes1.txt: Q3 latency p99 improved 12% after cache tuning.\\n\\nnotes2.txt: There are two open incidents: disk pressure on node 7 and a stale feature flag ff-114.\\n\\nKey points\\n- Latency p99 improved 12% in Q3 following cache tuning.\\n- Open incidents: disk pressure on node 7; stale feature flag ff-114.\\n\", \"path\": \"summary.txt\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "ef0273b8adc2eb40f3bfe2f63bbe1944965fb77a6f1763301dc15a22cd171e3c",
+      "6f75e4180bfb5b48f2b4d4fdd32b90344586e008725b3ff200b7a2ee98c0a677",
+      "19ba90a8d3b3b9ada156cb1c0a53beac1a8d977c3cd4650a435fd24aca36003c",
+      "24cefeefeee0cbfb581e862aafc11ae8da3ab4123cb63503b7da80d2d5b7da5f",
+      "47c256e1275a24bf2d433df327a1daf603a51993a2cbe8bcfff9392c14803466",
+      "1dba67c522447cfe0d5a0504a71d6041d7d87270b389f248ad9aab05f55e583c",
+      "e029d0f45e067a0f6846ffe20055f0b154ddd31b3b9f34d90681a9756c54166e",
+      "f28f8c013cab5d3d31b376420b71bf9671b453783e1b43c82de5ecfdf0a051e1",
+      "5763de39f06cdd7ac9f7e1beecb4b030c1a4f0086085b535ea3b0905947b1294",
+      "82e588e96d4e4f08145f67acd02e1880d60df2ae7f6f7c73f30136fad75a181d",
+      "166b5aef80eb7127a65b1d5041ac8498b98afce854b4eb6f3f08c560203fb9c8",
+      "42c195db9ed7f48ad46e383eb3b55444a275932f1f8b8637acc8b8a2913774e1"
+    ],
+    "16": [
+      "ef0273b8adc2eb40f3bfe2f63bbe1944965fb77a6f1763301dc15a22cd171e3c",
+      "6f75e4180bfb5b48f2b4d4fdd32b90344586e008725b3ff200b7a2ee98c0a677",
+      "19ba90a8d3b3b9ada156cb1c0a53beac1a8d977c3cd4650a435fd24aca36003c",
+      "24cefeefeee0cbfb581e862aafc11ae8da3ab4123cb63503b7da80d2d5b7da5f",
+      "47c256e1275a24bf2d433df327a1daf603a51993a2cbe8bcfff9392c14803466",
+      "1dba67c522447cfe0d5a0504a71d6041d7d87270b389f248ad9aab05f55e583c",
+      "e029d0f45e067a0f6846ffe20055f0b154ddd31b3b9f34d90681a9756c54166e",
+      "f28f8c013cab5d3d31b376420b71bf9671b453783e1b43c82de5ecfdf0a051e1",
+      "5763de39f06cdd7ac9f7e1beecb4b030c1a4f0086085b535ea3b0905947b1294",
+      "82e588e96d4e4f08145f67acd02e1880d60df2ae7f6f7c73f30136fad75a181d",
+      "166b5aef80eb7127a65b1d5041ac8498b98afce854b4eb6f3f08c560203fb9c8",
+      "42c195db9ed7f48ad46e383eb3b55444a275932f1f8b8637acc8b8a2913774e1",
+      "9086a22352dfe3bd4761dd1bbc2be2d63430856c489c09ffe286e314451ef34a",
+      "53d9d3300f7a10bddc02dd2c941ebfabad299a790369bef27b782a19a2b53aae",
+      "d5f58361088d28bcffccac917ac51329ff1098eda3613c5c5f5b702ce2a36da6",
+      "ef3b7bcd7672e46e2f67cc4ad773c16c5bb8d83c2d2417df9451ee63d5a927c8"
+    ],
+    "4": [
+      "ef0273b8adc2eb40f3bfe2f63bbe1944965fb77a6f1763301dc15a22cd171e3c",
+      "6f75e4180bfb5b48f2b4d4fdd32b90344586e008725b3ff200b7a2ee98c0a677",
+      "19ba90a8d3b3b9ada156cb1c0a53beac1a8d977c3cd4650a435fd24aca36003c",
+      "24cefeefeee0cbfb581e862aafc11ae8da3ab4123cb63503b7da80d2d5b7da5f"
+    ],
+    "8": [
+      "ef0273b8adc2eb40f3bfe2f63bbe1944965fb77a6f1763301dc15a22cd171e3c",
+      "6f75e4180bfb5b48f2b4d4fdd32b90344586e008725b3ff200b7a2ee98c0a677",
+      "19ba90a8d3b3b9ada156cb1c0a53beac1a8d977c3cd4650a435fd24aca36003c",
+      "24cefeefeee0cbfb581e862aafc11ae8da3ab4123cb63503b7da80d2d5b7da5f",
+      "47c256e1275a24bf2d433df327a1daf603a51993a2cbe8bcfff9392c14803466",
+      "1dba67c522447cfe0d5a0504a71d6041d7d87270b389f248ad9aab05f55e583c",
+      "e029d0f45e067a0f6846ffe20055f0b154ddd31b3b9f34d90681a9756c54166e",
+      "f28f8c013cab5d3d31b376420b71bf9671b453783e1b43c82de5ecfdf0a051e1"
+    ]
+  },
+  "log_entry_count": 16,
+  "sends": 0,
+  "turns": 4
+}

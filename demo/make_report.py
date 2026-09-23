@@ -20,10 +20,12 @@ from gov.log import _verify  # noqa: E402  (verdict carries the key binding)
 BANNER = "SYNTHETIC DEMONSTRATION \u2014 no real systems were inspected."
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
-# F29: epochs that are clearly non-production. Entries signed under these
-# epochs are NOT tamper-evident against anyone who holds the key (the dev
-# key is literally published in the source tree), and the report must say
-# so loudly instead of claiming "tamper-evident" unqualified.
+# F29: epochs that are clearly non-production BY LABEL. Wave-81 deleted
+# the published dev key from gov/, so "anyone who read the docs" can no
+# longer forge entries -- but a non-production label still means the
+# operator did not declare production custody, and the report must say
+# so loudly instead of claiming "tamper-evident" unqualified. Integrity
+# always depends on the operator's key custody, never on the label.
 _NON_PROD_EPOCHS = {"dev", "development", "devkey", "test", "unknown"}
 
 
@@ -36,17 +38,18 @@ def key_status(entries, verified_epoch):
     entry label. Under the fail-closed single-key verifier (F32), a log
     that verifies clean carries that epoch on every entry; a forged log
     (labels != configured epoch) FAILS verification, and the report then
-    renders the configured (dev) status with the label mismatch flagged
-    as forgery evidence — a dev-key forgery can never render a production
-    banner, no matter what the labels claim.
+    renders the configured status with the label mismatch flagged as
+    forgery evidence — forged labels can never render a clean
+    production banner, no matter what they claim.
 
     Returns a dict with:
 
     - ``epochs``: sorted list of distinct ``key_epoch`` labels seen
       (forensic metadata only — never used for the status).
     - ``verified_epoch``: the verifier-bound epoch the status derives from.
-    - ``status``: "dev" (verified epoch is non-production), "nondev"
-      (verified epoch is operator-configured), or "none" (no entries).
+    - ``status``: "dev" (verified epoch carries a non-production label),
+      "nondev" (verified epoch is operator-configured without a
+      non-production label), or "none" (no entries).
     - ``label_mismatch``: labels that differ from the verified epoch —
       forgery evidence, rendered loudly.
     - ``banner_line`` / ``integrity_note``: qualified integrity language
@@ -65,20 +68,22 @@ def key_status(entries, verified_epoch):
     else:
         status = "nondev"
     if status == "dev":
-        banner_line = (f"PUBLIC/DEVELOPMENT key (verified epoch `{vepoch}`) — NOT "
-                       "tamper-evident against anyone with the key")
+        banner_line = (f"Non-production epoch label (verified epoch `{vepoch}`) — "
+                       "not a production custody claim")
         integrity_note = (
             "All agent actions, policy decisions, and human approvals in "
             "this report come from the run's hash-chained action log. The "
             f"log was verified under key epoch `{vepoch}` "
-            "(PUBLIC/DEVELOPMENT key, published in the source tree): it is "
-            "NOT tamper-evident against anyone with the key — anyone who "
-            "read the docs can forge entries. The hash-chain replay below "
-            "is a consistency check on this local copy, not tamper-evidence "
-            "against third parties. Approval-queue integrity digests are "
-            "HMAC-keyed to this same key (F34): under the development key "
-            "a docs-reader can forge those too. Entry sequence numbers "
-            "cite the exact records.")
+            "(a non-production label chosen by the operator): integrity is "
+            "qualified — tamper-evident only against parties that do NOT "
+            "hold the key, and the label itself is not a custody claim. "
+            "Wave-81 removed the published development key from gov/, so "
+            "there is no docs-reader-forgeable key anymore; forging "
+            "entries requires the operator's configured key. The "
+            "hash-chain replay below is a consistency check on this local "
+            "copy, not tamper-evidence against third parties. "
+            "Approval-queue integrity digests are HMAC-keyed to this same "
+            "key (F34). Entry sequence numbers cite the exact records.")
     elif status == "nondev":
         banner_line = (f"Operator-configured key (verified epoch `{vepoch}`) — "
                        "tamper-evident only against parties without the key")
@@ -644,17 +649,17 @@ def render_html(run_id, generated_at, chain_ok, chain_count, stats,
 
 
 def main():
-    # R6c dev-key opt-in (demo report tool only): explicit in-code
-    # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so reports
-    # can be generated from synthetic demo runs with zero configuration.
-    # Production entry points never do this — they fail closed.
+    # Wave-81: the dev-key opt-in is deleted from gov/. This report
+    # tool renders synthetic demo runs, not production — it provisions
+    # an explicit test key process-wide. Production entry points
+    # never do this — they fail closed without a key.
     import os
-    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    import secrets as _secrets
+    os.environ.setdefault("GOV_LOG_KEY", _secrets.token_hex(32))
+    os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     # Wave-69: the report tool renders synthetic demo runs, not production
     # (wave-61 deployment_mode discipline).
     os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-    from gov.log import enable_dev_keys
-    enable_dev_keys()
     parser = argparse.ArgumentParser(description="Generate the audit report for a run.")
     parser.add_argument("--rundir", default=None, help="run directory (default: latest)")
     args = parser.parse_args()

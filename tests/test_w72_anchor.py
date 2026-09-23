@@ -677,12 +677,15 @@ class TestBoundaries(W72Base):
         self.assertEqual(rep["epochs"], [])
         self.assertEqual(rep["open_epoch"]["unanchored_records"], 4)
 
-    def test_resolve_anchor_key_production_refuses_loud(self):
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
-        os.environ.pop("GOV_ANCHOR_KEY", None)
-        os.environ.pop("GOV_ANCHOR_KEY_FILE", None)
-        with self.assertRaises(_anchorer.NoAnchorKeyError):
-            _anchorer.resolve_anchor_key()
+    def test_resolve_anchor_key_refuses_loud_in_every_mode(self):
+        # Wave-81: the dev anchor-key fallback is deleted -- unconfigured
+        # anchoring refuses loudly in production, staging, dev, and test.
+        for mode in ("production", "staging", "dev", "test"):
+            os.environ["GOV_DEPLOYMENT_MODE"] = mode
+            os.environ.pop("GOV_ANCHOR_KEY", None)
+            os.environ.pop("GOV_ANCHOR_KEY_FILE", None)
+            with self.assertRaises(_anchorer.NoAnchorKeyError, msg=mode):
+                _anchorer.resolve_anchor_key()
 
     def test_resolve_anchor_key_explicit(self):
         seed_hex = _seed(11).hex()

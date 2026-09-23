@@ -1,0 +1,46 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "write_file|{\"content\": \"framing probe\", \"path\": \"evil\\ninjected.txt\"}": 1,
+    "write_file|{\"content\": \"run3 pre-existing entry\", \"path\": \"baseline.txt\"}": 1,
+    "write_file|{\"content\": \"{\\\"seq\\\": 1, \\\"forged\\\": true}\", \"path\": \"actions.jsonl\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "8e7ba70fe295c669c3d2eef7eaad528730e3c71f6bb003556c0145890992082f",
+      "c171e8dab9485d15ba1b3e534a4b7aab0a02f05e48d9da50ba638dfd4ca10305",
+      "96cf92322481402a4b007fd1926d3bbbeb99870732d3f9d115fddaa0a4a72609",
+      "f23e7824ecc9d6dd0642d78379175da5a0125540c9a1c91ce1fec83afdd88187",
+      "b4bbd4b9fc2c326c16933c096a06d28f0459157456a6246dc41a3bdc8624fcb8",
+      "dd5b16f8eefe0464d25f2286c723594f755e3bdb46a5c11e897cf7923df2d16a",
+      "394d8e207ab24ead9c036042ee6eaaf15e279427fd19466f6b078358f4a10261",
+      "66e3592abf921288f77613657bd3a4812834a5b4fbb7794a85afe78f29b7bb15",
+      "76a197b3a349b3f4ad46dd3a54c486695c31b3cdd34cc513703fe6f708f23bfa",
+      "4c84a628e592a7f1f825ea1df72bdf250dbb56bfa0bb13432dd1b4cb24ce9c78",
+      "8a84f3694a23a58828c7c754f3aeac2ed259d1eebb4f9293c5079d3830c704b9",
+      "e84e8969e24892ec46ed109d7329e932dab9140f55cc25ec381d740c38ef2d58"
+    ],
+    "4": [
+      "8e7ba70fe295c669c3d2eef7eaad528730e3c71f6bb003556c0145890992082f",
+      "c171e8dab9485d15ba1b3e534a4b7aab0a02f05e48d9da50ba638dfd4ca10305",
+      "96cf92322481402a4b007fd1926d3bbbeb99870732d3f9d115fddaa0a4a72609",
+      "f23e7824ecc9d6dd0642d78379175da5a0125540c9a1c91ce1fec83afdd88187"
+    ],
+    "8": [
+      "8e7ba70fe295c669c3d2eef7eaad528730e3c71f6bb003556c0145890992082f",
+      "c171e8dab9485d15ba1b3e534a4b7aab0a02f05e48d9da50ba638dfd4ca10305",
+      "96cf92322481402a4b007fd1926d3bbbeb99870732d3f9d115fddaa0a4a72609",
+      "f23e7824ecc9d6dd0642d78379175da5a0125540c9a1c91ce1fec83afdd88187",
+      "b4bbd4b9fc2c326c16933c096a06d28f0459157456a6246dc41a3bdc8624fcb8",
+      "dd5b16f8eefe0464d25f2286c723594f755e3bdb46a5c11e897cf7923df2d16a",
+      "394d8e207ab24ead9c036042ee6eaaf15e279427fd19466f6b078358f4a10261",
+      "66e3592abf921288f77613657bd3a4812834a5b4fbb7794a85afe78f29b7bb15"
+    ]
+  },
+  "log_entry_count": 12,
+  "sends": 0,
+  "turns": 4
+}

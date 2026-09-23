@@ -4,6 +4,11 @@
 Not for publication — per A13/A16, any external use needs human-reviewed
 notes. No contact with Microsoft was made; no upstream issues filed.**
 
+> **Wave-81 note (2026-09-23):** the dev-key fallback is deleted from
+> gov/. The re-run command below no longer takes `GOV_DEV_KEYS=1` and
+> the runner provisions an explicit test key; historical `GOV_DEV_KEYS`
+> references in this document describe the wave-25 state.
+
 ## 1. What was built
 
 Strategy D2 (A13, binding): run our adversarial eval battery against

@@ -55,15 +55,15 @@ def show(desc, result):
 
 
 def main():
-    # R6c dev-key opt-in (demo harness only): explicit in-code
-    # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor, so the
-    # synthetic demo still runs with zero configuration. Production
-    # entry points never do this — they fail closed without a key.
-    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    # Wave-81: the dev-key opt-in is deleted from gov/. This synthetic
+    # demo, not production, provisions an explicit test key
+    # process-wide. Production entry points never do this — they fail
+    # closed without a key.
+    import secrets as _secrets
+    os.environ.setdefault("GOV_LOG_KEY", _secrets.token_hex(32))
+    os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     # Wave-69: the demo is synthetic, not production (wave-61 discipline).
     os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-    from gov.log import enable_dev_keys
-    enable_dev_keys()
     run_id = "demo-" + datetime.now().strftime("%Y%m%d-%H%M%S")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
@@ -138,11 +138,12 @@ def main():
     by_tool = {rec["tool"]: rec["id"] for rec in pending}
 
     def decide(cmd, aid, reason):
-        # R6c: the approval CLI is a production entry point (never enables
-        # dev keys itself), so the demo harness invokes its main()
-        # IN-PROCESS: the in-code enable_dev_keys() opt-in above is
-        # process-local and would not cross a subprocess boundary, while
-        # env vars alone must never enable dev keys.
+        # Wave-81: the approval CLI is a production entry point (never
+        # provisions a key itself), so the demo harness invokes its
+        # main() IN-PROCESS: the explicit test key above is
+        # process-local and would not cross a subprocess boundary,
+        # while nothing about the harness environment may let the CLI
+        # conjure a key.
         import io
         from contextlib import redirect_stdout, redirect_stderr
         from gov.approvals import main as approve_main

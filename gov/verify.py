@@ -8,14 +8,14 @@ Key selection:
     unset raises ``NoKeyConfiguredError``; there is no silent dev-key
     fallback (F73). A log that spans a rotation does NOT verify under
     this path — by design (fail-closed): pass ``--keyring``.
-  * ``--dev``: explicit opt-in to the PUBLIC development key (in-code
-    opt-in at this CLI layer plus ``GOV_DEV_KEYS=1``), with a loud
-    warning. For verifying synthetic demo/test logs only; never for
-    real audit data.
   * ``--keyring <path>`` (F19): verify with a persisted keyring file
     (as written by ``KeyRing.save``), so logs spanning key epochs
     verify. ``<path>`` may also be a directory containing
     ``keyring.json``. Genuine tampering still fails closed.
+    (Wave-81: the old ``--dev`` flag — verify with the public
+    development key — is deleted. There is no dev key in ``gov/``
+    anymore; verify test logs with ``--keyring`` pointing at the
+    keyring the test harness saved.)
 
 Third-party proof commands (P2/A5/K-060) -- no HMAC key needed:
   * ``--sigs``: verify the signed checkpoints' Ed25519 signature sets
@@ -30,12 +30,11 @@ Third-party proof commands (P2/A5/K-060) -- no HMAC key needed:
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 
 from .keys import KeyRing, NoKeyConfiguredError
-from .log import _verify, enable_dev_keys
+from .log import _verify
 
 
 def _resolve_keyring(path):
@@ -53,7 +52,6 @@ def _resolve_keyring(path):
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     keyring = None
-    dev = False
     # P2/A5/K-060 proof + export commands (third-party: no HMAC key).
     sig_trust = None
     roster_path = None
@@ -72,9 +70,6 @@ def main(argv=None):
         if argv[i] == "--keyring" and i + 1 < len(argv):
             keyring = argv[i + 1]
             i += 2
-        elif argv[i] == "--dev":
-            dev = True
-            i += 1
         elif argv[i] == "--sig-trust" and i + 1 < len(argv):
             sig_trust = argv[i + 1]
             i += 2
@@ -116,7 +111,7 @@ def main(argv=None):
             rest.append(argv[i])
             i += 1
     if not rest or rest[0] in ("-h", "--help"):
-        print("usage: python -m gov.verify [--dev] [--keyring <path>] "
+        print("usage: python -m gov.verify [--keyring <path>] "
               "<actions.jsonl>")
         print("       python -m gov.verify <actions.jsonl> --sigs "
               "[--sig-trust <json> --roster <json> --root-pubkey <hex> "
@@ -126,13 +121,6 @@ def main(argv=None):
         print("       python -m gov.verify <actions.jsonl> --export "
               "[--principal P --event E --since TS --until TS --limit N]")
         print("")
-        print("  --dev           verify with the PUBLIC development key "
-              "(explicit")
-        print("                    opt-in: in-code enablement at this CLI "
-              "layer")
-        print("                    plus GOV_DEV_KEYS=1, with a loud "
-              "warning).")
-        print("                    For synthetic demo/test logs only.")
         print("  --keyring <path>  verify with a persisted keyring file")
         print("                    (or a directory containing keyring.json),")
         print("                    so logs spanning key rotations verify.")
@@ -153,17 +141,6 @@ def main(argv=None):
         print("  --export            print a tamper-evident export bundle "
               "(K-060)")
         return 0 if rest and rest[0] in ("-h", "--help") else 2
-    if dev:
-        # R6c: explicit --dev opt-in at the CLI layer (in-code), plus the
-        # env factor. Loud warning; default stays strict.
-        os.environ.setdefault("GOV_DEV_KEYS", "1")
-        # Wave-69: --dev verification is synthetic, not production
-        # (wave-61 deployment_mode discipline).
-        os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-        enable_dev_keys()
-        print("GOVERNANCE KEY WARNING: --dev: verifying with the PUBLIC "
-              "development key (zero integrity). Never use for real audit "
-              "data.", file=sys.stderr)
     log_path = rest[0]
 
     if do_anchors:
@@ -263,8 +240,8 @@ def main(argv=None):
         try:
             verdict = _verify(log_path)
         except NoKeyConfiguredError as e:
-            # R6c strict default: no key configured and no --dev opt-in.
-            # Fail closed with a clear message, not a traceback.
+            # R6c strict default: no key configured. Fail closed with a
+            # clear message, not a traceback.
             print(json.dumps({"ok": False, "error": "key: %s" % e},
                              indent=2, sort_keys=True))
             return 1

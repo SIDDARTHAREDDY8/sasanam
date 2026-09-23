@@ -749,11 +749,29 @@ class GovernedMCPClient:
       :class:`ListingChurnGuard`. Default-constructed when omitted
       (default-on): per-server listing-churn rate limiting and
       tool-count anomaly flags, enforced in ``_validate_and_pin``.
+    * ``artifact_pinset`` (wave-80) -- a
+      ``gov.load_gate.ArtifactPinset``. When attached, the two MCP
+      artifact load points go through the digest gate (fail closed,
+      no TOFU):
+        - the signed server manifest: ``manifest_bytes`` are verified
+          against pin ``mcp:manifest:<server_id>`` in
+          ``_fetch_and_verify_manifest`` (in ADDITION to the ed25519
+          signature — a valid signature over attacker-substituted
+          bytes is the Plugin4Shell shape);
+        - every tool-definition entry: the canonical ``name +
+          description + inputSchema`` bytes are verified against pin
+          ``mcp:tool:<server_id>:<name>`` in ``_validate_and_pin``
+          before the entry's metadata hash is committed.
+      Mismatch or a missing pin raises ``ArtifactRefused`` (loud,
+      audit-logged ``mcp_artifact_refused``). Omitted (None) keeps
+      the legacy behavior — the wave-80 documented residual on this
+      seam (the K-012 ``pinned_tools`` / manifest-signature checks
+      still apply).
     """
 
     def __init__(self, binding, session, server_id=None, pinned_tools=None,
                  server_public_key=None, description_allowlist=None,
-                 listing_churn_guard=None):
+                 listing_churn_guard=None, artifact_pinset=None):
         if not isinstance(binding, GovernedBinding):
             raise TypeError("binding must be a GovernedBinding, got %r"
                             % type(binding).__name__)
@@ -821,6 +839,20 @@ class GovernedMCPClient:
         self._churn_guard = (listing_churn_guard
                              if listing_churn_guard is not None
                              else ListingChurnGuard())
+        # Wave-80: digest-pinset for MCP artifact loads (manifest +
+        # tool definitions). None = legacy behavior (documented
+        # residual); attached = fail-closed digest verification.
+        if artifact_pinset is not None:
+            from gov.load_gate import ArtifactPinset
+            if not isinstance(artifact_pinset, ArtifactPinset):
+                raise TypeError("artifact_pinset must be an "
+                                "ArtifactPinset, got %r"
+                                % type(artifact_pinset).__name__)
+        self._artifact_pinset = artifact_pinset
+
+    def _mcp_artifact_id(self, kind, name):
+        """Pinset artifact id for an MCP artifact load."""
+        return "mcp:%s:%s:%s" % (kind, self._server_id or "default", name)
 
     @property
     def binding(self):
@@ -1022,6 +1054,30 @@ class GovernedMCPClient:
                                manifest_bytes, signature):
             raise ServerProvenanceError("<server>",
                                        "manifest_signature_invalid")
+        # Wave-80: the manifest is a loadable artifact — verify its
+        # bytes against the digest pinset when attached. A valid
+        # signature over substituted bytes (key-compromise or
+        # manifest-swap shape) is refused here as digest_mismatch;
+        # an unpinned manifest is refused as artifact_unpinned (no
+        # TOFU on the pinned path).
+        if self._artifact_pinset is not None:
+            from gov.load_gate import ArtifactRefused, verify_and_load
+            try:
+                verify_and_load(
+                    self._artifact_pinset,
+                    self._mcp_artifact_id("manifest", "server"),
+                    manifest_bytes)
+            except ArtifactRefused:
+                try:
+                    self._audit_listing(
+                        "mcp_artifact_refused",
+                        {"tool": "<server>",
+                         "artifact_id": self._mcp_artifact_id(
+                             "manifest", "server"),
+                         "reason": "manifest_digest_gate"})
+                except Exception:
+                    pass
+                raise
         try:
             manifest = json.loads(manifest_bytes.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
@@ -1119,6 +1175,34 @@ class GovernedMCPClient:
                 raise MetadataPoisoningError(name, "duplicate_tool_name")
             seen.add(name)
             description = _entry_description(entry)
+            # Wave-80: every tool definition is a loadable artifact.
+            # When the pinset is attached, the canonical definition
+            # bytes are digest-verified against
+            # mcp:tool:<server_id>:<name> BEFORE the metadata hash is
+            # committed — a definition swap (rug pull at the byte
+            # level, or a session serving attacker bytes for a pinned
+            # tool) is refused as digest_mismatch / artifact_unpinned.
+            if self._artifact_pinset is not None:
+                from gov.load_gate import (ArtifactRefused,
+                                           verify_and_load)
+                entry_bytes = _canonical_metadata(
+                    name, description, _entry_schema(entry)).encode("utf-8")
+                try:
+                    verify_and_load(
+                        self._artifact_pinset,
+                        self._mcp_artifact_id("tool", name),
+                        entry_bytes)
+                except ArtifactRefused:
+                    try:
+                        self._audit_listing(
+                            "mcp_artifact_refused",
+                            {"tool": name,
+                             "artifact_id": self._mcp_artifact_id(
+                                 "tool", name),
+                             "reason": "tool_definition_digest_gate"})
+                    except Exception:
+                        pass
+                    raise
             entry_hash = metadata_hash(name, description,
                                        _entry_schema(entry))
             if entry_hash in self._description_allowlist:

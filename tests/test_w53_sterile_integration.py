@@ -11,6 +11,7 @@ Deterministic, hermetic (make_run temp dirs), $0.
 """
 
 import os
+import secrets
 import sys
 import tempfile
 import unittest
@@ -21,10 +22,12 @@ for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
         sys.path.insert(0, _p)
 
 os.environ.setdefault("TMPDIR", "/tmp/gov-run")
-os.environ.setdefault("GOV_DEV_KEYS", "1")
-
-from gov.log import enable_dev_keys  # noqa: E402
-enable_dev_keys()
+# Wave-81: gov/ has no dev key or dev-key opt-in. Provision an EXPLICIT
+# random key via the production env path (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH);
+# tests/__init__.py does the same for the canonical suite -- this keeps
+# direct `python tests/test_x.py` runs self-sufficient.
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
 
 from harness import make_run  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402

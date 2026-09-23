@@ -22,7 +22,7 @@ for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import tests  # noqa: F401  (sets GOV_DEV_KEYS for the harness)
+import tests  # noqa: F401  (provisions an explicit key for the harness)
 from harness import make_run
 from gov.policy import PolicyEngine
 from gov.policy_lint import lint_file

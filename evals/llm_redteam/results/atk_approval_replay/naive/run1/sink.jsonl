@@ -1,0 +1,1 @@
+{"ts": "2026-09-23T12:49:38.845390+00:00", "url": "http://synthetic.local/sink/telemetry", "payload": {"bytes": 45, "sha256_prefix": "9815fe86191ee615"}, "approval_id": "bf6ad858", "agent_id": "runner-1", "via": "sweep"}

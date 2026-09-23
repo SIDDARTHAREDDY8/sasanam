@@ -46,7 +46,8 @@ HMAC-SHA256-PRF counter-mode authenticated wrap. It exercises the envelope
 *protocol* (key-id binding, blob tamper-evidence, outage fail-closed) with
 zero network and byte-identical outputs across runs. It provides **no**
 production security (fixed secret, no hardware backing) and the config
-factory refuses it outside ``GOV_DEV_KEYS=1``. Real cloud wiring is
+factory refuses it unconditionally — tests construct
+``FakeKmsProvider`` directly in code instead. Real cloud wiring is
 operator provider-config (``DESIGN.md`` §2, §9); no credentials ship here.
 """
 
@@ -55,7 +56,6 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import re
 import secrets
 import threading
@@ -76,7 +76,10 @@ KEY_ID_LEN = 16
 
 _KEY_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 
-_ENV_DEV_OPT_IN = "GOV_DEV_KEYS"
+# Wave-81: the dev opt-in variable gate for the fake KMS provider is
+# DELETED from gov/ (the identifier may not appear here at all). The
+# factory below refuses "provider: fake" unconditionally; tests
+# construct FakeKmsProvider directly in code.
 
 
 class KmsError(Exception):
@@ -153,15 +156,17 @@ class KmsProvider(abc.ABC):
 _FAKE_MAGIC = b"FAKEKMS1"
 # Fixed wrap secret: the entire reason this class is test-only. Documented
 # as providing ZERO production security.
-_FAKE_WRAP_SECRET = b"fake-kms-test-wrap-secret-v1::NOT-FOR-PRODUCTION"
+_FAKE_WRAP_SECRET = b"fake-kms-test-wrap-secret-v1::TEST-ONLY-DOUBLE"
 
 
 class FakeKmsProvider(KmsProvider):
     """Deterministic, local, no-network KMS stand-in for tests.
 
     TEST-ONLY — must never be wired in production: the wrap secret is a
-    fixed constant and there is no hardware backing. ``kms_provider_from_
-    config`` refuses ``provider: fake`` unless ``GOV_DEV_KEYS=1``.
+    fixed constant and there is no hardware backing.
+    ``kms_provider_from_config`` refuses ``provider: fake``
+    unconditionally (wave-81: no dev opt-in variable in gov/); tests
+    construct this class directly in code.
 
     Determinism: counter nonces (not randomness) + fixed secret, so the
     same call sequence on a fresh instance yields byte-identical blobs —
@@ -658,8 +663,10 @@ def kms_provider_from_config(mapping):
     """Build a :class:`KmsProvider` from operator config (see ``DESIGN.md``
     §9 for the schema).
 
-    * ``provider: fake`` -> :class:`FakeKmsProvider`, ONLY when
-      ``GOV_DEV_KEYS=1`` (test-only; refused otherwise).
+    * ``provider: fake`` -> :class:`KmsError`, ALWAYS (test-only; the
+      operator config surface never builds the fake KMS — tests
+      construct :class:`FakeKmsProvider` directly in code). Wave-81:
+      the old dev opt-in variable gate is deleted from ``gov/``.
     * ``provider: aws|gcp|azure`` -> :class:`KmsError`: real cloud adapters
       are not built in this repo ($0 spend, no credentials, no network).
     * anything else -> :class:`KmsError`.
@@ -669,12 +676,10 @@ def kms_provider_from_config(mapping):
                        % type(mapping).__name__)
     name = mapping.get("provider", "")
     if name == "fake":
-        if os.environ.get(_ENV_DEV_OPT_IN) != "1":
-            raise KmsError(
-                "refusing KMS provider 'fake' outside GOV_DEV_KEYS=1: "
-                "the fake KMS is test-only and must never be wired in "
-                "production")
-        return FakeKmsProvider(mapping.get("key_ids") or [])
+        raise KmsError(
+            "refusing KMS provider 'fake' from operator config: the fake "
+            "KMS is test-only and is never wired from config (construct "
+            "FakeKmsProvider directly in test code)")
     if name in ("aws", "gcp", "azure"):
         raise KmsError(
             "real cloud KMS adapters (%s) are not built in this repo: "

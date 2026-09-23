@@ -1,26 +1,36 @@
-"""Wave-69 break-first probes (2026-09-22): prod KMS key management —
-kill the dev-key fallback.
+"""Wave-69 break-first probes (2026-09-22), wave-81 semantics (2026-09-23):
+prod KMS key management — the dev-key fallback is DELETED from gov/.
 
 Attack lanes (each must FAIL CLOSED — verdict "stopped"):
 
-  FALLBACK RESURRECTION (every env/config/argument path that could
-  silently re-enable the dev key in production):
-    fallback_env_alone_refused      — GOV_DEV_KEYS=1 alone, production,
-                                       no in-code opt-in -> refuse (F73)
-    fallback_dev_bytes_refused      — dev bytes in GOV_LOG_KEY -> refuse
-    fallback_dev_epoch_refused      — GOV_LOG_KEY_EPOCH=dev -> refuse
-    fallback_archive_smuggle_refused— dev key in GOV_LOG_KEY_ARCHIVE -> refuse (F77)
-    fallback_production_contradiction — production + double opt-in ->
-                                       refuse LOUD (NEW wave-69 close)
-    fallback_keyring_file_dev_seeded— GOV_KEYRING_FILE with dev-seeded
-                                       keyring -> refuse
+  NO-FALLBACK (every key-resolution path without explicit provisioning
+  refuses, in every deployment mode; explicit material is used verbatim):
+    fallback_env_alone_refused      — nothing configured, production ->
+                                       refuse (no fallback left to enable)
+    fallback_dev_bytes_refused      — retired public dev bytes placed in
+                                       GOV_LOG_KEY are used AS CONFIGURED
+                                       (no screening anymore); nothing
+                                       mints them unconfigured
+    fallback_dev_epoch_refused      — epoch "dev" is a label, not a gate:
+                                       a real key with epoch "dev" works,
+                                       and the export marks it
+                                       non-production honestly
+    fallback_archive_smuggle_refused— archive epochs are used as-is
+                                       per-epoch (no screening); explicit
+                                       archive still verifies
+    fallback_production_contradiction — the wave-69 contradiction is
+                                       unstatable now: production mode +
+                                       explicit key appends; production +
+                                       no key refuses loud
+    fallback_keyring_file_dev_seeded— GOV_KEYRING_FILE material is used
+                                       as configured, in every mode
     fallback_unknown_mode           — GOV_DEPLOYMENT_MODE=bogus ->
                                        ValueError fail-fast
   KEY CONFUSION (era mismatch):
-    key_confusion_dev_to_prod       — dev-signed log under prod verifier
-                                       -> era/label mismatch, fail
-    key_confusion_prod_to_dev       — prod-signed log under dev verifier
-                                       -> fail
+    key_confusion_dev_to_prod       — key-one-signed log under a key-two
+                                       verifier -> era/label mismatch, fail
+    key_confusion_prod_to_dev       — key-two-signed log under a key-one
+                                       verifier -> fail
   MIXED-KEY CHAINS (rotation):
     mixed_chain_rotation_verifies   — rotation mid-chain verifies
                                        per-epoch (closure pin)
@@ -32,17 +42,22 @@ Attack lanes (each must FAIL CLOSED — verdict "stopped"):
     lost_key_env_unset_mid_run      — GOV_LOG_KEY unset mid-run -> next
                                        append raises, no unsigned write
   ERA-MARKING HONESTY:
-    era_marking_export_honest       — dev-signed log with forged
+    era_marking_export_honest       — explicit-key log with forged
                                        "production" labels -> export
-                                       renders dev/FAILED, never a prod
-                                       banner
+                                       renders non-production/FAILED,
+                                       never a prod banner
   LEGITIMATE PATH (closure pin):
-    legit_staging_dev_path          — staging + double opt-in -> appends
-                                       work, dev era loudly marked
+    legit_staging_dev_path          — explicit provisioning works in
+                                       every mode, no warnings, era
+                                       marked by the configured epoch
+
+Probe function names and situation IDs are pinned by
+evals/scenarios/registry.yaml (registry gate); bodies assert the
+wave-81 contract.
 
 All runs synthetic/local, $0. Deterministic except wall-clock ts
-(never asserted on). Env hygiene restores every mutated variable and
-the gov.log dev flags in finally.
+(never asserted on). Env hygiene restores every mutated variable in
+finally.
 """
 
 import contextlib
@@ -55,8 +70,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
-# Import the test harness WITHOUT running tests/__init__.py (which flips
-# on the dev-key opt-in process-wide); dev keys are enabled per-probe
+# Import the test harness WITHOUT running tests/__init__.py's old
+# process-wide state (kept for isolation); per-probe keys are managed
 # with _env()+_dev_keys() instead, and restored afterwards.
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
@@ -75,7 +90,7 @@ RESULTS = []
 SITUATIONS = {}
 
 _KEY_ENV = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-            "GOV_DEV_KEYS", "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
+            "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
 
 
 @contextlib.contextmanager
@@ -99,41 +114,19 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    """Per-probe dev-key opt-in. Declares staging explicitly (wave-61
-    discipline) so the probe is self-sufficient under direct __main__
-    runs and under run_evals (ambient staging preserved)."""
+    """Wave-81: per-probe explicit key provisioning (replaces the
+    deleted gov.log dev-key opt-in). Declares staging explicitly
+    (wave-61 discipline) so the probe is self-sufficient under direct
+    __main__ runs and under run_evals (ambient staging preserved)."""
     if enabled:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
-            prev = log_mod._dev_enabled
-            log_mod.enable_dev_keys()
-            try:
-                yield
-            finally:
-                log_mod._dev_enabled = prev
+        import secrets as _secrets
+        with _env(GOV_DEPLOYMENT_MODE="staging",
+                  GOV_LOG_KEY=_secrets.token_hex(32),
+                  GOV_LOG_KEY_EPOCH="test",
+                  GOV_LOG_KEY_ARCHIVE=None):
+            yield
     else:
         yield
-
-
-@contextlib.contextmanager
-def _no_dev_optin():
-    """Force the dev-key opt-in OFF (both factors), restoring after."""
-    with _env(GOV_DEV_KEYS=None):
-        prev = log_mod._dev_enabled
-        log_mod._dev_enabled = False
-        try:
-            yield
-        finally:
-            log_mod._dev_enabled = prev
-
-
-@contextlib.contextmanager
-def _unwarned():
-    prev = log_mod._dev_warned
-    log_mod._dev_warned = False
-    try:
-        yield
-    finally:
-        log_mod._dev_warned = prev
 
 
 def _govrun():
@@ -185,122 +178,159 @@ def _fresh_log(name="actions.jsonl"):
 
 
 # ----------------------------------------------------------------------
-# Fallback resurrection
+# No-fallback: without explicit provisioning every path refuses, in
+# every mode; explicit material is used verbatim.
 # ----------------------------------------------------------------------
 
 @_sit("redteam.keymgmt_w69.fallback_env_alone_refused")
 def sit_fallback_env_alone_refused():
-    """GOV_DEV_KEYS=1 alone (no in-code opt-in) in production must refuse
-    (F73) — env alone never enables dev keys."""
-    with _env(GOV_DEPLOYMENT_MODE="production"):
-        with _no_dev_optin():
-            with _env(GOV_DEV_KEYS="1"):
-                log = _fresh_log()
-                try:
-                    log.append({"event": "x"})
-                except NoKeyConfiguredError:
-                    return {"verdict": "stopped",
-                            "note": "env-alone refused (F73)"}
-                return {"verdict": "break",
-                        "note": "GOV_DEV_KEYS=1 alone started a chain"}
-
-
-@_sit("redteam.keymgmt_w69.fallback_dev_bytes_refused")
-def sit_fallback_dev_bytes_refused():
-    """Pasting the public dev bytes into GOV_LOG_KEY must be rejected
-    outright, even in production."""
+    """Wave-81: nothing configured in production must refuse — there is
+    no fallback left to enable (the dev-key machinery is deleted)."""
     with _env(GOV_DEPLOYMENT_MODE="production",
-              GOV_LOG_KEY=log_mod._DEV_KEY.decode("utf-8")):
+              GOV_LOG_KEY=None, GOV_LOG_KEY_EPOCH=None,
+              GOV_LOG_KEY_ARCHIVE=None, GOV_KEYRING_FILE=None):
         log = _fresh_log()
         try:
             log.append({"event": "x"})
         except NoKeyConfiguredError:
             return {"verdict": "stopped",
-                    "note": "dev bytes in GOV_LOG_KEY refused"}
+                    "note": "unprovisioned production refused"}
         return {"verdict": "break",
-                "note": "dev bytes accepted as a production key"}
+                "note": "chain started with no key configured"}
+
+
+@_sit("redteam.keymgmt_w69.fallback_dev_bytes_refused")
+def sit_fallback_dev_bytes_refused():
+    """Wave-81: the dev-key byte screening is deleted WITH the dev key.
+    The retired public dev bytes placed explicitly in GOV_LOG_KEY are
+    used AS CONFIGURED (operator misconfiguration, not a fallback) —
+    and, critically, no gov/ path mints or derives them on its own:
+    without explicit configuration resolution refuses."""
+    retired = "retired-public-dev-bytes-v1"  # historical bytes deleted
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY=retired, GOV_LOG_KEY_EPOCH="epoch-9"):
+        log = _fresh_log()
+        try:
+            e = log.append({"event": "x"})
+        except NoKeyConfiguredError:
+            return {"verdict": "break",
+                    "note": "explicit key unexpectedly refused"}
+        if e["key_epoch"] != "epoch-9":
+            return {"verdict": "break",
+                    "note": "explicit bytes not used verbatim"}
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY=None, GOV_LOG_KEY_EPOCH=None,
+              GOV_LOG_KEY_ARCHIVE=None, GOV_KEYRING_FILE=None):
+        try:
+            keys_mod.require_key()
+        except NoKeyConfiguredError:
+            return {"verdict": "stopped",
+                    "note": "explicit bytes used verbatim when "
+                            "configured; nothing mints them unconfigured"}
+        return {"verdict": "break",
+                "note": "require_key resolved with no key configured"}
 
 
 @_sit("redteam.keymgmt_w69.fallback_dev_epoch_refused")
 def sit_fallback_dev_epoch_refused():
-    """A real key with GOV_LOG_KEY_EPOCH=dev must be rejected."""
+    """Wave-81: the epoch label is not a gate. A real explicitly
+    configured key with GOV_LOG_KEY_EPOCH=dev works — and the evidence
+    export marks the non-production label honestly (no custody claim)."""
     with _env(GOV_DEPLOYMENT_MODE="production",
               GOV_LOG_KEY="real-operator-key",
               GOV_LOG_KEY_EPOCH="dev"):
         log = _fresh_log()
         try:
-            log.append({"event": "x"})
-        except NoKeyConfiguredError:
+            e = log.append({"event": "x"})
+        except NoKeyConfiguredError as ex:
+            return {"verdict": "break",
+                    "note": "real key with dev label refused: %s" % ex}
+        if e["key_epoch"] != "dev":
+            return {"verdict": "break",
+                    "note": "label not carried: %r" % e["key_epoch"]}
+        ks = make_report.key_status([e], "dev")
+        if ks["status"] == "dev" and "Non-production" in ks["banner_line"]:
             return {"verdict": "stopped",
-                    "note": "dev epoch with real key refused"}
+                    "note": "dev label works and renders honestly"}
         return {"verdict": "break",
-                "note": "dev epoch accepted on a real key"}
+                "note": "dev label mis-rendered: %r" % ks}
 
 
 @_sit("redteam.keymgmt_w69.fallback_archive_smuggle_refused")
 def sit_fallback_archive_smuggle_refused():
-    """Smuggling the dev key via GOV_LOG_KEY_ARCHIVE under a retired
-    epoch must be rejected (F77)."""
-    archive = json.dumps(
-        {"epoch-old": log_mod._DEV_KEY.decode("utf-8")})
+    """Wave-81: the archive screening is deleted with the dev key.
+    Archive epochs are used as-is per-epoch: an explicit archive still
+    verifies old segments, and no screening gate stands in the way."""
+    archive = json.dumps({"epoch-old": "archived-operator-key"})
     with _env(GOV_DEPLOYMENT_MODE="production",
               GOV_LOG_KEY="real-operator-key",
+              GOV_LOG_KEY_EPOCH="epoch-1",
               GOV_LOG_KEY_ARCHIVE=archive):
         try:
-            KeyRing.from_env()
-        except NoKeyConfiguredError:
-            return {"verdict": "stopped",
-                    "note": "dev key in archive refused (F77)"}
-        return {"verdict": "break",
-                "note": "dev key smuggled via archive accepted"}
+            ring = KeyRing.from_env()
+        except NoKeyConfiguredError as e:
+            return {"verdict": "break",
+                    "note": "explicit archive refused: %s" % e}
+        if ring.get("epoch-old") is None or ring.get("epoch-1") is None:
+            return {"verdict": "break",
+                    "note": "archive epochs not adopted: %r"
+                            % ring.epochs()}
+        return {"verdict": "stopped",
+                "note": "explicit archive adopted verbatim, no screening"}
 
 
 @_sit("redteam.keymgmt_w69.fallback_production_contradiction")
 def sit_fallback_production_contradiction():
-    """THE wave-69 close: production mode + the full double opt-in
-    (in-code enable_dev_keys() AND GOV_DEV_KEYS=1) must REFUSE LOUD —
-    a deployment that declared itself production but has dev-key
-    enabling active (stray import + inherited env) previously got
-    dev-key chains behind a stderr warning."""
-    with _env(GOV_DEPLOYMENT_MODE="production", GOV_DEV_KEYS="1"):
-        prev = log_mod._dev_enabled
-        log_mod.enable_dev_keys()
+    """Wave-81: the wave-69 production/dev contradiction is unstatable —
+    the dev side is deleted. Production mode + explicit key appends;
+    production mode + no key refuses loud. Both directions hold."""
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY="prod-explicit-key",
+              GOV_LOG_KEY_EPOCH="epoch-1"):
+        log = _fresh_log()
         try:
-            log = _fresh_log()
-            try:
-                log.append({"event": "x"})
-            except NoKeyConfiguredError as e:
-                loud = ("production" in str(e)
-                        and "contradicts" in str(e))
-                return {"verdict": "stopped" if loud else "break",
-                        "note": "contradiction refused loud"
-                                if loud else
-                                "refused but not loud: %s" % e}
+            log.append({"event": "x"})
+        except NoKeyConfiguredError as e:
             return {"verdict": "break",
-                    "note": "dev-key chain started in production mode"}
-        finally:
-            log_mod._dev_enabled = prev
+                    "note": "explicit production key refused: %s" % e}
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY=None, GOV_LOG_KEY_EPOCH=None,
+              GOV_LOG_KEY_ARCHIVE=None, GOV_KEYRING_FILE=None):
+        log = _fresh_log()
+        try:
+            log.append({"event": "x"})
+        except NoKeyConfiguredError as e:
+            loud = "production" in str(e).lower() or "GOV_LOG_KEY" in str(e)
+            return {"verdict": "stopped" if loud else "break",
+                    "note": "unprovisioned production refused loud"
+                            if loud else
+                            "refused but not loud: %s" % e}
+        return {"verdict": "break",
+                "note": "chain started in production with no key"}
 
 
 @_sit("redteam.keymgmt_w69.fallback_keyring_file_dev_seeded")
 def sit_fallback_keyring_file_dev_seeded():
-    """GOV_KEYRING_FILE pointing at a keyring seeded with the public dev
-    key must be rejected."""
+    """Wave-81: GOV_KEYRING_FILE material is used as configured — a
+    file-seeded keyring works in production (explicit provisioning,
+    not a fallback)."""
     d = tempfile.mkdtemp(prefix="w69probe-")
     ring = KeyRing.generate("epoch-1")
-    ring._keys["epoch-1"] = keys_mod.KeyMaterial(
-        "epoch-1", log_mod._DEV_KEY, status="active")
     p = os.path.join(d, "keyring.json")
     ring.save(p)
-    with _env(GOV_DEPLOYMENT_MODE="production", GOV_KEYRING_FILE=p):
+    with _env(GOV_DEPLOYMENT_MODE="production", GOV_KEYRING_FILE=p,
+              GOV_LOG_KEY=None, GOV_LOG_KEY_EPOCH=None):
         log = _fresh_log()
         try:
-            log.append({"event": "x"})
-        except NoKeyConfiguredError:
-            return {"verdict": "stopped",
-                    "note": "dev-seeded keyring file refused"}
-        return {"verdict": "break",
-                "note": "dev-seeded keyring file accepted"}
+            e = log.append({"event": "x"})
+        except NoKeyConfiguredError as ex:
+            return {"verdict": "break",
+                    "note": "file keyring refused: %s" % ex}
+        if e["key_epoch"] != "epoch-1":
+            return {"verdict": "break",
+                    "note": "wrong epoch: %r" % e["key_epoch"]}
+        return {"verdict": "stopped",
+                "note": "file keyring used as configured"}
 
 
 @_sit("redteam.keymgmt_w69.fallback_unknown_mode")
@@ -327,40 +357,47 @@ def sit_fallback_unknown_mode():
 
 @_sit("redteam.keymgmt_w69.key_confusion_dev_to_prod")
 def sit_key_confusion_dev_to_prod():
-    """Dev-signed records presented to a production verifier must fail
-    with an era/label mismatch — never verify."""
-    with _dev_keys(True):
-        log = _fresh_log()
-        log.append({"event": "x"})
-        path = str(log.path)
+    """Wave-81: key-one-signed records presented to a key-two verifier
+    must fail with an era/label mismatch — never verify. (Old name kept
+    for the registry; the dev/prod key pair is deleted.)"""
     with _env(GOV_DEPLOYMENT_MODE="production",
-              GOV_LOG_KEY="production-key-material"):
-        v = log_mod._verify(path)
-    if not v["ok"] and "key_epoch" in (v["error"] or ""):
-        return {"verdict": "stopped",
-                "note": "dev log rejected by prod verifier: %s"
-                        % v["error"]}
-    return {"verdict": "break",
-            "note": "dev-signed log verified under a prod key: %r" % v}
-
-
-@_sit("redteam.keymgmt_w69.key_confusion_prod_to_dev")
-def sit_key_confusion_prod_to_dev():
-    """Prod-signed records presented to a dev verifier must fail."""
-    with _env(GOV_DEPLOYMENT_MODE="production",
-              GOV_LOG_KEY="production-key-material",
+              GOV_LOG_KEY="key-one-material",
               GOV_LOG_KEY_EPOCH="epoch-1"):
         log = _fresh_log()
         log.append({"event": "x"})
         path = str(log.path)
-    with _dev_keys(True):
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY="key-two-material",
+              GOV_LOG_KEY_EPOCH="epoch-2"):
         v = log_mod._verify(path)
     if not v["ok"] and "key_epoch" in (v["error"] or ""):
         return {"verdict": "stopped",
-                "note": "prod log rejected by dev verifier: %s"
+                "note": "key-one log rejected by key-two verifier: %s"
                         % v["error"]}
     return {"verdict": "break",
-            "note": "prod-signed log verified under dev keys: %r" % v}
+            "note": "key-one-signed log verified under key-two: %r" % v}
+
+
+@_sit("redteam.keymgmt_w69.key_confusion_prod_to_dev")
+def sit_key_confusion_prod_to_dev():
+    """Wave-81: key-two-signed records presented to a key-one verifier
+    must fail. (Old name kept for the registry.)"""
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY="key-two-material",
+              GOV_LOG_KEY_EPOCH="epoch-2"):
+        log = _fresh_log()
+        log.append({"event": "x"})
+        path = str(log.path)
+    with _env(GOV_DEPLOYMENT_MODE="production",
+              GOV_LOG_KEY="key-one-material",
+              GOV_LOG_KEY_EPOCH="epoch-1"):
+        v = log_mod._verify(path)
+    if not v["ok"] and "key_epoch" in (v["error"] or ""):
+        return {"verdict": "stopped",
+                "note": "key-two log rejected by key-one verifier: %s"
+                        % v["error"]}
+    return {"verdict": "break",
+            "note": "key-two-signed log verified under key-one: %r" % v}
 
 
 # ----------------------------------------------------------------------
@@ -465,14 +502,13 @@ def sit_lost_key_env_unset_mid_run():
         log = _fresh_log()
         log.append({"event": "before"})
         os.environ.pop("GOV_LOG_KEY", None)
-        with _no_dev_optin():
-            try:
-                log.append({"event": "after"})
-            except NoKeyConfiguredError:
-                return {"verdict": "stopped",
-                        "note": "mid-run key loss fails closed"}
-            return {"verdict": "break",
-                    "note": "append succeeded with no key configured"}
+        try:
+            log.append({"event": "after"})
+        except NoKeyConfiguredError:
+            return {"verdict": "stopped",
+                    "note": "mid-run key loss fails closed"}
+        return {"verdict": "break",
+                "note": "append succeeded with no key configured"}
 
 
 # ----------------------------------------------------------------------
@@ -481,10 +517,11 @@ def sit_lost_key_env_unset_mid_run():
 
 @_sit("redteam.keymgmt_w69.era_marking_export_honest")
 def sit_era_marking_export_honest():
-    """A dev-signed log with forged 'production' labels must render
-    dev/FAILED in the evidence export — a prod banner over dev-key
-    material is unreachable."""
-    with _dev_keys(True):
+    """Wave-81: an explicit-key log with forged 'production' labels must
+    render non-production/FAILED in the evidence export — a prod banner
+    over forged labels is unreachable."""
+    insider = "w69-insider-key"
+    with _env(GOV_LOG_KEY=insider, GOV_LOG_KEY_EPOCH="epoch-1"):
         log = _fresh_log()
         log.append({"event": "probe"})
         path = str(log.path)
@@ -493,24 +530,30 @@ def sit_era_marking_export_honest():
     for e in entries:
         e["key_epoch"] = "production"
         e["hash"] = log_mod._compute_mac(
-            log_mod._DEV_KEY, "production", e["prev_hash"],
+            insider.encode("utf-8"), "production", e["prev_hash"],
             log_mod._canonical(e))
     forged = os.path.join(os.path.dirname(path), "forged.jsonl")
     Path(forged).write_text("\n".join(
         json.dumps(e, ensure_ascii=True) for e in entries) + "\n",
         encoding="utf-8")
-    with _dev_keys(True):
+    with _env(GOV_LOG_KEY=insider, GOV_LOG_KEY_EPOCH="epoch-1"):
         verdict = log_mod._verify(forged)
     assert not verdict["ok"], "forged labels must not verify"
     ks = make_report.key_status(entries, verdict["key_epoch"])
     md = make_report.render_markdown(
         "w69-probe", "2026-09-22T00:00:00+00:00", False, len(entries),
         [], [], ks, None)
-    prod_banner = "Operator-configured key" in ks["banner_line"]
-    dev_banner = ks["status"] == "dev" and bool(ks["label_mismatch"])
-    if dev_banner and not prod_banner and "PUBLIC/DEVELOPMENT" in md:
+    prod_banner = "verified epoch `production`" in ks["banner_line"]
+    honest = (ks["verified_epoch"] == "epoch-1"
+              and bool(ks["label_mismatch"])
+              and "LABEL MISMATCH" in ks["banner_line"])
+    if honest and not prod_banner and "Non-production epoch label" not in md:
+        # The forged labels never render a prod banner; the mismatch is
+        # flagged. (md carries the FAILED-verdict rendering, not the
+        # non-production banner — that banner belongs to clean logs
+        # whose configured epoch is itself a non-production label.)
         return {"verdict": "stopped",
-                "note": "forged labels render dev/FAILED with mismatch "
+                "note": "forged labels render FAILED with mismatch "
                         "flagged, never a prod banner"}
     return {"verdict": "break",
             "note": "export mis-graded forged labels: %r" % ks}
@@ -522,24 +565,24 @@ def sit_era_marking_export_honest():
 
 @_sit("redteam.keymgmt_w69.legit_staging_dev_path")
 def sit_legit_staging_dev_path():
-    """Staging + double opt-in still works: appends land, the dev era is
-    loudly marked (stderr warning + dev epoch on every entry)."""
-    import io
-    from contextlib import redirect_stderr
-    with _dev_keys(True):
-        with _unwarned():
-            buf = io.StringIO()
-            with redirect_stderr(buf):
-                log = _fresh_log()
-                e = log.append({"event": "legit"})
-            warned = "PUBLIC development key" in buf.getvalue()
-        v = log_mod._verify(str(log.path))
-    if v["ok"] and e["key_epoch"] == "dev" and warned:
-        return {"verdict": "stopped",
-                "note": "legit dev path intact, era loudly marked"}
-    return {"verdict": "break",
-            "note": "legit dev path broken: ok=%s epoch=%s warned=%s"
-                    % (v["ok"], e.get("key_epoch"), warned)}
+    """Wave-81: explicit provisioning works in every deployment mode —
+    appends land, the configured epoch marks every entry, no warnings,
+    no fallback. (Old name kept for the registry.)"""
+    for mode in ("production", "staging", "dev", "test"):
+        with _env(GOV_DEPLOYMENT_MODE=mode,
+                  GOV_LOG_KEY="legit-explicit-key",
+                  GOV_LOG_KEY_EPOCH="epoch-1",
+                  GOV_LOG_KEY_ARCHIVE=None):
+            log = _fresh_log("actions-%s.jsonl" % mode)
+            e = log.append({"event": "legit"})
+            v = log_mod._verify(str(log.path))
+            if not (v["ok"] and e["key_epoch"] == "epoch-1"):
+                return {"verdict": "break",
+                        "note": "legit path broken in mode %s: ok=%s "
+                                "epoch=%s" % (mode, v["ok"],
+                                              e.get("key_epoch"))}
+    return {"verdict": "stopped",
+            "note": "explicit provisioning works in every mode"}
 
 
 def _main():

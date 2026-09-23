@@ -29,7 +29,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import anchor_backend as _ab
-from . import ed25519 as _ed
 from . import log as _log
 
 ANCHOR_RECEIPT_EVENT = "anchor_receipt"
@@ -82,27 +81,26 @@ class AnchorPolicy:
         return "An epoch closes " + ", ".join(parts) + "."
 
 
-_dev_anchor_keys_enabled = False
-
-
-def enable_dev_anchor_keys():
-    """In-code half of the dev anchor-key double opt-in (tests/dev only)."""
-    global _dev_anchor_keys_enabled
-    _dev_anchor_keys_enabled = True
+# Wave-81: the dev anchor-key double opt-in (the in-code enabler plus
+# the dev opt-in environment variable) was DELETED from gov/.
+# Anchoring requires an explicitly configured Ed25519 seed in every
+# mode; unconfigured anchoring raises NoAnchorKeyError loudly — the
+# chain continues as operator-attested-only, never silently unanchored.
 
 
 def resolve_anchor_key(explicit=None):
     """Resolve the Ed25519 anchor-signing key (keyprovider idiom).
 
     Precedence: explicit hex seed > ``GOV_ANCHOR_KEY`` (hex) >
-    ``GOV_ANCHOR_KEY_FILE`` (0600 file, hex) > non-production double
-    opt-in (in-code :func:`enable_dev_anchor_keys` AND ``GOV_DEV_KEYS=1``)
-    gives an ephemeral dev key with a loud warning. Production without a
-    configured key raises :class:`NoAnchorKeyError` -- anchoring stays
-    disabled and the chain continues as ``operator-attested-only``, never
-    silently unanchored.
+    ``GOV_ANCHOR_KEY_FILE`` (0600 file, hex). Nothing configured raises
+    :class:`NoAnchorKeyError` -- anchoring stays disabled and the chain
+    continues as ``operator-attested-only``, never silently unanchored.
+    Wave-81 deleted the dev anchor-key fallback: there is no
+    non-production ephemeral key anymore; every deployment that wants
+    anchors configures a seed explicitly.
 
-    Returns ``{"seed", "key_id", "pubkey_hex", "dev"}``.
+    Returns ``{"seed", "key_id", "pubkey_hex", "dev"}`` (``"dev"`` is
+    always ``False`` now — the field is kept for API shape).
     """
     seed_hex = (explicit or os.environ.get("GOV_ANCHOR_KEY", "")).strip()
     if seed_hex:
@@ -138,19 +136,11 @@ def resolve_anchor_key(explicit=None):
         pub = _ab.anchor_pubkey(seed)
         return {"seed": seed, "key_id": _ab.anchor_key_id(pub),
                 "pubkey_hex": pub.hex(), "dev": False}
-    # Dev double opt-in (mirrors gov.log's dev-key shape).
+    # Wave-81: the dev double opt-in branch is DELETED. Unconfigured
+    # anchoring refuses loudly in every mode. The mode is still resolved
+    # (and validated) for the refusal message.
     from . import keyprovider as _kp
     mode = _kp.resolve_deployment_mode()
-    if (mode in ("staging", "dev", "test") and _dev_anchor_keys_enabled
-            and os.environ.get("GOV_DEV_KEYS") == "1"):
-        sys.stderr.write(
-            "WARNING: using an EPHEMERAL dev anchor-signing key "
-            "(non-production double opt-in). Anchors under it attest "
-            "nothing; configure GOV_ANCHOR_KEY for real deployments.\n")
-        seed = _ed.generate_seed()
-        pub = _ab.anchor_pubkey(seed)
-        return {"seed": seed, "key_id": _ab.anchor_key_id(pub),
-                "pubkey_hex": pub.hex(), "dev": True}
     raise NoAnchorKeyError(
         "no anchor-signing key configured (GOV_ANCHOR_KEY / "
         "GOV_ANCHOR_KEY_FILE); refusing to anchor in %r mode" % (mode,))

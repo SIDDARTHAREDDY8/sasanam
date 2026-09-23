@@ -1,25 +1,27 @@
-"""Wave-69 tests: prod KMS key management — kill the dev-key fallback.
+"""Wave-81 tests: explicit key provisioning -- the dev-key fallback is dead.
 
-Covers the new ``gov/keyprovider.py`` chokepoint (KeyProvider ABC +
-Dev/Env/File/EnvelopeKms providers), the wave-61-style deployment_mode
-rule (explicit declaration, default least-privilege, production+dev
-contradiction refuses loud), the ``keys.require_key()`` double-opt-in
-tightening, and the break-first properties: fallback resurrection,
-key confusion (era mismatch), mixed-key chains (rotation + splice),
-lost-key behavior, and era-marking honesty in the evidence export.
+Covers the ``gov/keyprovider.py`` chokepoint (KeyProvider ABC +
+Env/File/EnvelopeKms providers -- the Dev provider is deleted),
+the wave-61-style deployment_mode rule (explicit declaration, default
+least-privilege, unknown modes fail fast), ``keys.require_key()``
+failing closed with no key in EVERY mode, and the break-first
+properties: old dev names absent, key confusion (era mismatch),
+mixed-key chains (rotation + splice), lost-key behavior, and
+era-marking honesty in the evidence export.
+
+Wave-69 originally built this file around the dev-key double opt-in;
+wave-81 deleted the dev key, every opt-in, and every fallback from
+``gov/``, so every dev-path test is replaced by a refusal/absence test.
 
 Deterministic, $0, synthetic/local only. Env hygiene: every test saves
-and restores all touched env vars plus the ``gov.log._dev_enabled``
-module flag.
+and restores all touched env vars.
 """
 
-import io
 import json
 import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,17 +33,15 @@ from gov import keyprovider as kp
 from gov import keys
 from gov import log as log_mod
 from gov.keys import KeyRing, NoKeyConfiguredError
-from gov.log import ActionLog, _DEV_KEY
+from gov.log import ActionLog
 
 _ENV_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-              "GOV_DEV_KEYS", "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
+              "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
 
 
 def _clean_env():
     saved = {n: os.environ.get(n) for n in _ENV_NAMES}
     had = {n: n in os.environ for n in _ENV_NAMES}
-    prev_enabled = log_mod._dev_enabled
-    prev_warned = log_mod._dev_warned
     for n in _ENV_NAMES:
         os.environ.pop(n, None)
 
@@ -51,8 +51,6 @@ def _clean_env():
                 os.environ[n] = saved[n]
             else:
                 os.environ.pop(n, None)
-        log_mod._dev_enabled = prev_enabled
-        log_mod._dev_warned = prev_warned
 
     return restore
 
@@ -87,47 +85,39 @@ class DeploymentModeTest(unittest.TestCase):
             kp.resolve_deployment_mode()
 
 
-class DevKeyProviderTest(unittest.TestCase):
+class ProviderAbsenceTest(unittest.TestCase):
+    """Wave-81 break-first: the dev provider and the production/dev
+    contradiction are deleted from gov/keyprovider.py -- every mode
+    requires explicit provisioning."""
+
     def setUp(self):
         self.addCleanup(_clean_env())
-        log_mod._dev_warned = False  # full-suite order independence
 
-    def _opt_in(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
+    def test_dev_provider_absent(self):
+        self.assertFalse(hasattr(kp, "DevKeyProvider"))
+        with self.assertRaises(AttributeError):
+            kp.DevKeyProvider  # noqa: B018
 
-    def test_staging_double_opt_in_resolves_dev_loud(self):
-        self._opt_in()
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            key, epoch = kp.DevKeyProvider(
-                deployment_mode="staging").resolve()
-        self.assertEqual(key, _DEV_KEY)
-        self.assertEqual(epoch, "dev")
-        self.assertIn("PUBLIC development key", buf.getvalue())
+    def test_contradiction_helper_absent(self):
+        # production_contradiction() existed to refuse the
+        # production+dev-opt-in combination; with the dev key deleted the
+        # contradiction is unstatable.
+        self.assertFalse(hasattr(kp, "production_contradiction"))
 
-    def test_production_refuses_even_with_double_opt_in(self):
-        # The wave-69 contradiction: explicit dev opt-in in production.
-        self._opt_in()
-        with self.assertRaises(NoKeyConfiguredError) as ctx:
-            kp.DevKeyProvider(deployment_mode="production").resolve()
-        self.assertIn("production", str(ctx.exception))
+    def test_old_dev_names_absent_from_log(self):
+        for name in ("enable_dev_keys", "dev_keys_enabled"):
+            self.assertFalse(hasattr(log_mod, name), name)
 
-    def test_env_alone_never_sufficient(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod._dev_enabled = False
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.DevKeyProvider(deployment_mode="staging").resolve()
+    def test_explicit_providers_still_present(self):
+        for name in ("KeyProvider", "EnvKeyProvider", "FileKeyProvider",
+                     "EnvelopeKmsProvider", "resolve_active_key",
+                     "resolve_deployment_mode"):
+            self.assertTrue(hasattr(kp, name), name)
 
-    def test_in_code_alone_never_sufficient(self):
-        log_mod.enable_dev_keys()
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.DevKeyProvider(deployment_mode="staging").resolve()
-
-    def test_describe_marks_dev(self):
-        d = kp.DevKeyProvider().describe()
-        self.assertEqual(d["provider"], "dev")
-        self.assertIn("zero integrity", d["warning"])
+    def test_no_key_refuses_in_every_mode(self):
+        for mode in ("production", "staging", "dev", "test"):
+            with self.assertRaises(NoKeyConfiguredError, msg=mode):
+                kp.resolve_active_key(deployment_mode=mode)
 
 
 class EnvKeyProviderTest(unittest.TestCase):
@@ -145,17 +135,6 @@ class EnvKeyProviderTest(unittest.TestCase):
         os.environ["GOV_LOG_KEY_EPOCH"] = "epoch-7"
         key, epoch = kp.EnvKeyProvider().resolve()
         self.assertEqual(epoch, "epoch-7")
-
-    def test_dev_bytes_rejected(self):
-        os.environ["GOV_LOG_KEY"] = _DEV_KEY.decode("utf-8")
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.EnvKeyProvider().resolve()
-
-    def test_dev_epoch_rejected(self):
-        os.environ["GOV_LOG_KEY"] = "real-key-material"
-        os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.EnvKeyProvider().resolve()
 
     def test_unset_raises(self):
         with self.assertRaises(NoKeyConfiguredError):
@@ -188,15 +167,6 @@ class FileKeyProviderTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             kp.FileKeyProvider(path).resolve()
 
-    def test_dev_seeded_keyring_refused(self):
-        ring = KeyRing.generate("epoch-1")
-        # Attacker/operator seeds the keyring file with the public dev key.
-        dev_mat = keys.KeyMaterial("epoch-1", _DEV_KEY, status="active")
-        ring._keys["epoch-1"] = dev_mat
-        path = self._save_ring(ring)
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.FileKeyProvider(path).resolve()
-
     def test_missing_file_fails_closed(self):
         with self.assertRaises((FileNotFoundError, OSError)):
             kp.FileKeyProvider(str(self.tmp / "nope.json")).resolve()
@@ -212,14 +182,9 @@ class FileKeyProviderTest(unittest.TestCase):
 class ResolveActiveKeyTest(unittest.TestCase):
     def setUp(self):
         self.addCleanup(_clean_env())
-        log_mod._dev_warned = False  # full-suite order independence
         self.tmp = Path(tempfile.mkdtemp(prefix="w69key-"))
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.tmp, ignore_errors=True))
-
-    def _opt_in(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
 
     def test_env_provider_wins_over_file(self):
         ring = KeyRing.generate("epoch-9")
@@ -239,97 +204,53 @@ class ResolveActiveKeyTest(unittest.TestCase):
         self.assertEqual(key, ring.active().key)
         self.assertEqual(epoch, "epoch-3")
 
-    def test_production_contradiction_refuses_loud(self):
-        self._opt_in()
+    def test_no_key_refuses_in_every_mode(self):
+        # Wave-81: no fallback exists, so the chokepoint refuses loudly
+        # in production, staging, dev, and test alike.
+        for mode in ("production", "staging", "dev", "test"):
+            with self.assertRaises(NoKeyConfiguredError, msg=mode):
+                kp.resolve_active_key(deployment_mode=mode)
+
+    def test_no_key_refusal_names_the_fix(self):
         with self.assertRaises(NoKeyConfiguredError) as ctx:
             kp.resolve_active_key(deployment_mode="production")
-        msg = str(ctx.exception)
-        self.assertIn("production", msg)
-        self.assertIn("contradicts", msg)
+        self.assertIn("GOV_LOG_KEY", str(ctx.exception))
 
-    def test_production_default_contradiction(self):
-        # Unset mode defaults to production: the contradiction fires.
-        self._opt_in()
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.resolve_active_key()
-
-    def test_production_no_key_f73(self):
-        log_mod._dev_enabled = False
-        with self.assertRaises(NoKeyConfiguredError) as ctx:
-            kp.resolve_active_key(deployment_mode="production")
-        self.assertIn("F73", str(ctx.exception))
-
-    def test_staging_dev_path_loud(self):
-        self._opt_in()
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            key, epoch = kp.resolve_active_key(deployment_mode="staging")
-        self.assertEqual((key, epoch), (_DEV_KEY, "dev"))
-        self.assertIn("PUBLIC development key", buf.getvalue())
-
-    def test_nonproduction_no_optin_fails_closed(self):
-        log_mod._dev_enabled = False
-        with self.assertRaises(NoKeyConfiguredError):
-            kp.resolve_active_key(deployment_mode="staging")
+    def test_unknown_mode_fails_fast(self):
+        os.environ["GOV_LOG_KEY"] = "some-key"
+        with self.assertRaises(ValueError):
+            kp.resolve_active_key(deployment_mode="prod")
 
     def test_log_active_key_delegates(self):
-        # gov/log.py::_active_key goes through the chokepoint: staging +
-        # double opt-in resolves the dev key exactly as before.
-        self._opt_in()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            key, epoch = log_mod._active_key()
-        self.assertEqual((key, epoch), (_DEV_KEY, "dev"))
+        # gov/log.py::_active_key goes through the chokepoint: an
+        # explicitly configured key resolves identically.
+        os.environ["GOV_LOG_KEY"] = "delegated-key"
+        os.environ["GOV_LOG_KEY_EPOCH"] = "epoch-5"
+        key, epoch = log_mod._active_key()
+        self.assertEqual(key, b"delegated-key")
+        self.assertEqual(epoch, "epoch-5")
 
-    def test_log_active_key_contradiction(self):
-        self._opt_in()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
+    def test_log_active_key_no_key_refuses(self):
         with self.assertRaises(NoKeyConfiguredError):
             log_mod._active_key()
 
 
 class RequireKeyTighteningTest(unittest.TestCase):
+    """Wave-81: require_key() fails closed with no key in every mode --
+    there is no fallback left to tighten."""
+
     def setUp(self):
         self.addCleanup(_clean_env())
-        log_mod._dev_warned = False  # full-suite order independence
 
-    def test_env_only_no_longer_falls_back(self):
-        # Wave-69: require_key() needs the in-code opt-in too now.
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod._dev_enabled = False
+    def test_no_key_refuses(self):
         with self.assertRaises(NoKeyConfiguredError):
             keys.require_key()
 
-    def test_double_opt_in_still_falls_back_loud(self):
-        # Non-production (staging) declared: the legacy dev path still
-        # works loudly. (Default mode is production, where this same
-        # double opt-in now refuses as a contradiction — see above.)
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            ring = keys.require_key()
-        self.assertEqual(ring.active().epoch, "dev")
-        self.assertIn("PUBLIC development key", buf.getvalue())
-
-    def test_production_contradiction_in_require_key(self):
-        # Wave-69 same-wave gap: require_key() must refuse the
-        # production + double-opt-in contradiction, not hand back the dev
-        # ring behind the mode guard.
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
-        with self.assertRaisesRegex(NoKeyConfiguredError, "contradict"):
-            keys.require_key()
-
-    def test_default_mode_contradiction_in_require_key(self):
-        # Unset mode defaults to production, so the same refusal applies.
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
-        with self.assertRaisesRegex(NoKeyConfiguredError, "contradict"):
-            keys.require_key()
+    def test_no_key_refuses_in_every_mode(self):
+        for mode in ("production", "staging", "dev", "test"):
+            os.environ["GOV_DEPLOYMENT_MODE"] = mode
+            with self.assertRaises(NoKeyConfiguredError, msg=mode):
+                keys.require_key()
 
     def test_configured_key_beats_everything(self):
         os.environ["GOV_LOG_KEY"] = "prod-key-here"
@@ -337,9 +258,10 @@ class RequireKeyTighteningTest(unittest.TestCase):
         self.assertEqual(ring.active().epoch, "env")
 
 
-class KeyConfusionTest(unittest.TestCase):
-    """Dev-signed records must never verify under a prod key and vice
-    versa — era mismatch fails closed with a clear signal."""
+class CrossKeyConfusionTest(unittest.TestCase):
+    """Wave-81: with no dev key, era confusion is between explicitly
+    configured keys -- records MAC'd under one key never verify under
+    another, and forged epoch labels fail closed under both."""
 
     def setUp(self):
         self.addCleanup(_clean_env())
@@ -347,9 +269,9 @@ class KeyConfusionTest(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(
             self.tmp, ignore_errors=True))
 
-    def _opt_in(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
+    def _configure(self, key, epoch):
+        os.environ["GOV_LOG_KEY"] = key
+        os.environ["GOV_LOG_KEY_EPOCH"] = epoch
 
     def _write_entries(self, n):
         log = ActionLog(str(self.tmp / "actions.jsonl"))
@@ -357,58 +279,52 @@ class KeyConfusionTest(unittest.TestCase):
             log.append({"event": "probe", "i": i})
         return str(self.tmp / "actions.jsonl")
 
-    def test_dev_log_rejected_by_prod_verifier(self):
-        self._opt_in()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
+    def test_other_key_rejects_log(self):
+        self._configure("key-one-material", "epoch-1")
         path = self._write_entries(3)
-        # Now verify as production with a real key: era/label mismatch.
-        os.environ["GOV_LOG_KEY"] = "production-key-material"
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
+        # Verify under a different explicit key/epoch: label mismatch.
+        self._configure("key-two-material", "epoch-2")
         v = log_mod._verify(path)
         self.assertFalse(v["ok"])
         self.assertIn("key_epoch", v["error"])
 
-    def test_prod_log_rejected_by_dev_verifier(self):
-        os.environ["GOV_LOG_KEY"] = "production-key-material"
-        os.environ["GOV_LOG_KEY_EPOCH"] = "epoch-1"
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
+    def test_same_key_wrong_epoch_label_rejected(self):
+        # Same key material, wrong epoch label configured: the F32 bind
+        # still fails closed (label forgery or misconfigured epoch).
+        self._configure("key-one-material", "epoch-1")
         path = self._write_entries(3)
-        # Now verify under dev keys: the prod labels mismatch the dev epoch.
-        os.environ.pop("GOV_LOG_KEY", None)
-        os.environ.pop("GOV_LOG_KEY_EPOCH", None)
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
-        self._opt_in()
+        self._configure("key-one-material", "epoch-9")
         v = log_mod._verify(path)
         self.assertFalse(v["ok"])
         self.assertIn("key_epoch", v["error"])
 
-    def test_forged_prod_labels_under_dev_key_fail(self):
-        # F32 shape through the chokepoint: entries HMAC'd under the dev
-        # key but labeled "production" do not verify under either key.
-        self._opt_in()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
+    def test_forged_labels_fail_under_both_keys(self):
+        # F32 shape through the chokepoint: entries HMAC'd under key-one
+        # but labeled "epoch-2" do not verify under either key.
+        self._configure("key-one-material", "epoch-1")
         path = self._write_entries(2)
         entries = [json.loads(l) for l in
                    Path(path).read_text(encoding="utf-8").splitlines()
                    if l.strip()]
+        key_one = b"key-one-material"
         for e in entries:
-            e["key_epoch"] = "production"
-            # Re-MAC under the dev key with the forged label (attacker
-            # with the public dev key can do this).
+            e["key_epoch"] = "epoch-2"
+            # Re-MAC under key-one with the forged label (an attacker
+            # holding key-one can do this).
             e["hash"] = log_mod._compute_mac(
-                _DEV_KEY, "production", e["prev_hash"],
+                key_one, "epoch-2", e["prev_hash"],
                 log_mod._canonical(e))
         forged = self.tmp / "forged.jsonl"
         forged.write_text("\n".join(
             json.dumps(e, ensure_ascii=True) for e in entries) + "\n",
             encoding="utf-8")
-        # Under dev keys: label != configured epoch -> fail.
+        # Under key-one/epoch-1: label != configured epoch -> fail.
         v = log_mod._verify(str(forged))
         self.assertFalse(v["ok"])
         self.assertIn("key_epoch", v["error"])
-        # Under a prod key: MACs don't match either.
-        os.environ["GOV_LOG_KEY"] = "production-key-material"
-        os.environ["GOV_DEPLOYMENT_MODE"] = "production"
+        # Under key-two/epoch-2: labels match the configured epoch but
+        # the MACs were made under key-one -> fail.
+        self._configure("key-two-material", "epoch-2")
         v = log_mod._verify(str(forged))
         self.assertFalse(v["ok"])
 
@@ -508,29 +424,27 @@ class LostKeyTest(unittest.TestCase):
         # The key vanishes mid-run: the next append fails closed — no
         # silent unsigned continuation.
         del os.environ["GOV_LOG_KEY"]
-        os.environ.pop("GOV_DEV_KEYS", None)
-        log_mod._dev_enabled = False
         with self.assertRaises(NoKeyConfiguredError):
             log.append({"event": "after"})
 
-    def test_env_key_unset_mid_run_with_dev_optin_contradicts(self):
-        # Even WITH the dev opt-in present, losing the configured key in
-        # production does not silently downgrade to dev: contradiction.
+    def test_mid_run_key_loss_message_names_the_fix(self):
+        # Wave-81: the refusal is loud about what to configure; there is
+        # no fallback it could silently downgrade to.
         os.environ["GOV_LOG_KEY"] = "mid-run-key"
         os.environ["GOV_DEPLOYMENT_MODE"] = "production"
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
         log = ActionLog(str(self.tmp / "actions.jsonl"))
         log.append({"event": "before"})
         del os.environ["GOV_LOG_KEY"]
         with self.assertRaises(NoKeyConfiguredError) as ctx:
             log.append({"event": "after"})
-        self.assertIn("contradicts", str(ctx.exception))
+        self.assertIn("GOV_LOG_KEY", str(ctx.exception))
 
 
 class EraMarkingHonestyTest(unittest.TestCase):
-    """A dev-key record must never render as prod-grade in the evidence
-    export (demo/make_report.py key_status)."""
+    """Wave-81: there is no dev key anymore, so era-marking honesty is
+    about LABELS -- a non-production epoch label must never render as a
+    production custody claim, and forged labels must render as forgery
+    evidence."""
 
     def setUp(self):
         self.addCleanup(_clean_env())
@@ -547,36 +461,44 @@ class EraMarkingHonestyTest(unittest.TestCase):
         spec.loader.exec_module(mod)
         return mod
 
-    def test_dev_era_renders_dev_banner(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
+    def _entries(self):
+        return [json.loads(l) for l in
+                (self.tmp / "actions.jsonl").read_text(
+                    encoding="utf-8").splitlines() if l.strip()]
+
+    def test_nonprod_epoch_label_renders_cautious_banner(self):
+        # An operator-chosen non-production epoch label ("dev") verifies
+        # clean under the explicitly configured key, but the report must
+        # not render it as a production custody claim.
+        os.environ["GOV_LOG_KEY"] = "operator-key"
+        os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
         log = ActionLog(str(self.tmp / "actions.jsonl"))
         log.append({"event": "probe"})
-        entries = [json.loads(l) for l in
-                   (self.tmp / "actions.jsonl").read_text(
-                       encoding="utf-8").splitlines() if l.strip()]
+        entries = self._entries()
         verdict = log_mod._verify(str(self.tmp / "actions.jsonl"))
         self.assertTrue(verdict["ok"])
         mr = self._load_make_report()
         ks = mr.key_status(entries, verdict["key_epoch"])
         self.assertEqual(ks["status"], "dev")
-        self.assertIn("PUBLIC/DEVELOPMENT", ks["banner_line"])
-        self.assertIn("NOT tamper-evident", ks["integrity_note"])
+        self.assertIn("Non-production epoch label", ks["banner_line"])
+        self.assertNotIn("published in the source tree",
+                         ks["integrity_note"])
+        self.assertNotIn("PUBLIC/DEVELOPMENT", ks["banner_line"])
 
-    def test_forged_prod_labels_render_failed_never_prod(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        log_mod.enable_dev_keys()
-        os.environ["GOV_DEPLOYMENT_MODE"] = "staging"
+    def test_forged_labels_render_mismatch_never_clean(self):
+        # Forged epoch labels fail verification; the report binds to the
+        # VERIFIED (configured) epoch and flags the labels as forgery
+        # evidence -- never a clean production banner.
+        os.environ["GOV_LOG_KEY"] = "operator-key"
+        os.environ["GOV_LOG_KEY_EPOCH"] = "epoch-1"
         log = ActionLog(str(self.tmp / "actions.jsonl"))
         log.append({"event": "probe"})
-        entries = [json.loads(l) for l in
-                   (self.tmp / "actions.jsonl").read_text(
-                       encoding="utf-8").splitlines() if l.strip()]
+        entries = self._entries()
+        key = b"operator-key"
         for e in entries:
             e["key_epoch"] = "production"
             e["hash"] = log_mod._compute_mac(
-                _DEV_KEY, "production", e["prev_hash"],
+                key, "production", e["prev_hash"],
                 log_mod._canonical(e))
         forged = self.tmp / "forged.jsonl"
         forged.write_text("\n".join(
@@ -585,12 +507,14 @@ class EraMarkingHonestyTest(unittest.TestCase):
         verdict = log_mod._verify(str(forged))
         self.assertFalse(verdict["ok"])
         mr = self._load_make_report()
-        # The report binds to the VERIFIED epoch (the configured dev
-        # epoch here), never to the forged labels.
+        # The report binds to the VERIFIED epoch (the configured
+        # "epoch-1" here), never to the forged labels.
         ks = mr.key_status(entries, verdict["key_epoch"])
-        self.assertEqual(ks["status"], "dev")
+        self.assertEqual(ks["verified_epoch"], "epoch-1")
         self.assertTrue(ks["label_mismatch"])
-        self.assertNotIn("Operator-configured key", ks["banner_line"])
+        self.assertIn("LABEL MISMATCH", ks["banner_line"])
+        self.assertNotIn("Operator-configured key (verified epoch `production`",
+                         ks["banner_line"])
 
 
 class EnvelopeProviderTest(unittest.TestCase):
@@ -602,7 +526,7 @@ class EnvelopeProviderTest(unittest.TestCase):
 
     def test_envelope_provider_resolves(self):
         from gov import kms as kms_mod
-        os.environ["GOV_DEV_KEYS"] = "1"  # test-only provider wiring
+        # FakeKmsProvider is constructed directly in code (test-only).
         provider = kms_mod.FakeKmsProvider(["test-master-key"])
         ring = kms_mod.EnvelopeKeyRing.generate(
             provider, "test-master-key", epoch="epoch-1")

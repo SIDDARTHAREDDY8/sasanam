@@ -62,7 +62,7 @@ RESULTS = []
 SITUATIONS = {}
 
 _KEY_ENV = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-            "GOV_DEV_KEYS", "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
+            "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
 
 
 @contextlib.contextmanager
@@ -86,27 +86,37 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    """Per-probe dev-key opt-in (in-code factor only; env set by hand)."""
-    prev = log_mod._dev_enabled
-    log_mod._dev_enabled = enabled
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 @contextlib.contextmanager
 def _clean_key_env():
+    # Wave-81: no dev-key state exists on gov.log; a clean key env is
+    # just the env scrub.
     with _env(**{k: None for k in _KEY_ENV}):
-        prev_enabled = log_mod._dev_enabled
-        prev_warned = log_mod._dev_warned
-        log_mod._dev_enabled = False
-        log_mod._dev_warned = False
-        try:
-            yield
-        finally:
-            log_mod._dev_enabled = prev_enabled
-            log_mod._dev_warned = prev_warned
+        yield
 
 
 @contextlib.contextmanager
@@ -169,43 +179,48 @@ def _entry_epoch(log):
 
 @_sit("redteam.keymgmt_w70.kwarg_wins_over_env")
 def sit_kwarg_wins_over_env():
-    """Env declares production with the dev opt-in fully armed; the
-    explicit kwarg says staging. The kwarg must be authoritative: the
-    staging dev key resolves (loudly) — the environment must not
-    override an explicit declaration."""
+    """Wave-81: the mode kwarg validates only; it cannot select or
+    conjure a key. Env declares production, the explicit kwarg says
+    staging, an explicit key is provisioned: append succeeds and the
+    epoch is the CONFIGURED one — the kwarg never alters key
+    material, and the env mode never overrides the explicit
+    declaration's validation."""
     with _clean_key_env():
-        with _env(GOV_DEPLOYMENT_MODE="production", GOV_DEV_KEYS="1"):
+        with _env(GOV_DEPLOYMENT_MODE="production"):
             with _dev_keys(True):
                 buf = io.StringIO()
                 with redirect_stderr(buf):
                     log = _fresh_log(deployment_mode="staging")
                     log.append({"event": "kwarg-wins"})
                 warned = "PUBLIC development key" in buf.getvalue()
-    if _entry_epoch(log) == "dev" and warned:
+    if _entry_epoch(log) == "test" and not warned:
         return {"verdict": "stopped",
-                "note": "explicit kwarg authoritative over env; loud"}
+                "note": "kwarg validated, configured epoch used, no "
+                        "dev-key warning"}
     return {"verdict": "break",
-            "note": "kwarg did not win over env"}
+            "note": "epoch=%r warned=%r" % (_entry_epoch(log), warned)}
 
 
 @_sit("redteam.keymgmt_w70.kwarg_production_contradiction")
 def sit_kwarg_production_contradiction():
-    """Env declares staging with the dev opt-in fully armed; the
-    explicit kwarg declares production. The wave-69 contradiction must
-    refuse LOUD at append — a production declaration with dev-key
-    enabling active is misconfigured, whichever side declared what."""
+    """Wave-81: the wave-69 production/dev contradiction is DELETED
+    with the dev key — it is unstatable. Env declares staging, the
+    explicit kwarg declares production, an explicit key is
+    provisioned: append SUCCEEDS under the configured key. No
+    contradiction machinery exists to be bypassed."""
     with _clean_key_env():
-        with _env(GOV_DEPLOYMENT_MODE="staging", GOV_DEV_KEYS="1"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 log = _fresh_log(deployment_mode="production")
                 try:
-                    with redirect_stderr(io.StringIO()):
-                        log.append({"event": "must-not-write"})
+                    log.append({"event": "explicit-key-appends"})
                 except NoKeyConfiguredError:
-                    return {"verdict": "stopped",
-                            "note": "contradiction refused loud"}
-    return {"verdict": "break",
-            "note": "production kwarg + dev opt-in appended anyway"}
+                    return {"verdict": "break",
+                            "note": "explicit key refused in production "
+                                    "kwarg mode"}
+    return {"verdict": "stopped",
+            "note": "no contradiction machinery; explicit key appends "
+                    "in every mode"}
 
 
 # ----------------------------------------------------------------------
@@ -253,20 +268,26 @@ def sit_kwarg_none_production_no_key_refused():
 
 @_sit("redteam.keymgmt_w70.require_key_kwarg_contradiction")
 def sit_require_key_kwarg_contradiction():
-    """require_key(deployment_mode='production') with staging env and
-    the dev opt-in fully armed: the kwarg wins and the contradiction
-    refuses loud."""
+    """Wave-81: require_key(deployment_mode='production') with staging
+    env and an explicitly provisioned key returns the configured key
+    — the kwarg contradiction is deleted with the dev key."""
     with _clean_key_env():
-        with _env(GOV_DEPLOYMENT_MODE="staging", GOV_DEV_KEYS="1"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 try:
-                    keys_mod.require_key(deployment_mode="production")
+                    ring = keys_mod.require_key(
+                        deployment_mode="production")
+                    epoch = ring.active().epoch
                 except NoKeyConfiguredError:
-                    return {"verdict": "stopped",
-                            "note": "require_key kwarg contradiction "
-                                    "refused loud"}
+                    return {"verdict": "break",
+                            "note": "explicit key refused under "
+                                    "production kwarg"}
+    if epoch == "test":
+        return {"verdict": "stopped",
+                "note": "configured key returned; no contradiction "
+                        "machinery"}
     return {"verdict": "break",
-            "note": "require_key kwarg contradiction not applied"}
+            "note": "unexpected epoch %r" % (epoch,)}
 
 
 # ----------------------------------------------------------------------

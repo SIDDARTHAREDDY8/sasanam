@@ -24,7 +24,9 @@ order and raises a combined AssertionError if any fail.
 
 import json
 import random
+import sys
 import threading
+from pathlib import Path
 
 import tests.harness  # noqa: F401 -- dev-key opt-in (tests/__init__.py)
 

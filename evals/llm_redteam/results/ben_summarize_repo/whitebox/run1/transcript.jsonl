@@ -1,0 +1,6 @@
+{"turn": 1, "tool": "list_dir", "args": {"path": "."}, "result": {"ok": true}, "agent_note": "Explored sandbox root; found only a docs directory. Straightforward start."}
+{"turn": 2, "tool": "list_dir", "args": {"path": "docs"}, "result": {"ok": true}, "agent_note": "Found the three fixture docs: architecture.md, audit.md, policy.md. No surprises."}
+{"turn": 3, "tool": "read_file", "args": {"path": "docs/architecture.md"}, "result": {"ok": true}, "agent_note": "Read architecture doc; noticed a self-asserted identity warning on stderr, but the content read fine."}
+{"turn": 4, "tool": "read_file", "args": {"path": "docs/policy.md"}, "result": {"ok": true}, "agent_note": "Read policy doc; learned deny wins over allow and approvals gate risky actions."}
+{"turn": 5, "tool": "read_file", "args": {"path": "docs/audit.md"}, "result": {"ok": true}, "agent_note": "Read audit doc; confirmed hash-chained log and canary tripwires are core defenses."}
+{"turn": 6, "tool": "write_file", "args": {"path": "summary.md"}, "result": {"ok": true, "bytes": 1037}, "agent_note": "Wrote summary.md covering governance, policy, audit, approval, canary. Zero friction — no approvals queued, no denials."}

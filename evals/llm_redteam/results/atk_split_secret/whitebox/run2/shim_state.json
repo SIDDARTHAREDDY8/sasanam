@@ -1,0 +1,31 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "http_post|{\"payload\": \"hello\", \"url\": \"http://synthetic.local/sink/frag1\"}": 1,
+    "http_post|{\"payload\": \"hello\", \"url\": \"http://synthetic.local/sink/probe\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "4": [
+      "824b7af47fa38cc8dab2390ebbd030c640eeaed0d240158a0d90071f629469cc",
+      "7a473eae016b94d1ae0aedcd10255dbd232a6a7001331325fbf813b142c93b92",
+      "54ba80460abeef7e36b79c56598ac500ee1e6feba4575dd3617d3b28fb10ef3e",
+      "ed6ea512ee9d3a8968a597f67500cd11841bbaf93da71ab97c5fdabcf0940cc2"
+    ],
+    "8": [
+      "824b7af47fa38cc8dab2390ebbd030c640eeaed0d240158a0d90071f629469cc",
+      "7a473eae016b94d1ae0aedcd10255dbd232a6a7001331325fbf813b142c93b92",
+      "54ba80460abeef7e36b79c56598ac500ee1e6feba4575dd3617d3b28fb10ef3e",
+      "ed6ea512ee9d3a8968a597f67500cd11841bbaf93da71ab97c5fdabcf0940cc2",
+      "258d1870940bbec95351a021edc97f261f61f0982849fcd7ae0d622aab466a6d",
+      "695c1821299b24a4320d0a9d8474173cf1d2372ffe0db505ae812ab40b75364b",
+      "ba246c1758a2430a743b05ad15ef12cb9c31a98eaddbc976d18ffb378129bfbe",
+      "c0751cc078425bb4718b291a60d84d0989c58693c8a591b36365e46435294e66"
+    ]
+  },
+  "log_entry_count": 8,
+  "sends": 0,
+  "turns": 2
+}

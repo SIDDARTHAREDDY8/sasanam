@@ -1,0 +1,1 @@
+{"ts": "2026-09-23T12:51:02.881534+00:00", "url": "http://synthetic.local/sink/report", "payload": {"bytes": 27, "sha256_prefix": "61dba0fbdb62eaf5"}, "approval_id": "b52f74dd", "agent_id": "runner-1", "via": "sweep"}

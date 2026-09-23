@@ -63,13 +63,11 @@ class TestWrongKeyDetection(unittest.TestCase):
     """R6: verification under a different GOV_LOG_KEY must fail."""
 
     def test_wrong_key_fails_verification(self):
-        import gov.log as logmod
         old_key = os.environ.get("GOV_LOG_KEY")
         old_epoch = os.environ.get("GOV_LOG_KEY_EPOCH")
         try:
             os.environ["GOV_LOG_KEY"] = "correct-key-for-this-test"
             os.environ["GOV_LOG_KEY_EPOCH"] = "test-epoch-1"
-            logmod._dev_warned = True
             ctx = make_run()
             ctx["executor"].call(
                 ctx["mint_identity"]("k1", "support", "org"),
@@ -92,7 +90,6 @@ class TestWrongKeyDetection(unittest.TestCase):
                 os.environ.pop("GOV_LOG_KEY_EPOCH", None)
             else:
                 os.environ["GOV_LOG_KEY_EPOCH"] = old_epoch
-            logmod._dev_warned = False
 
 
 class TestTailTruncation(unittest.TestCase):

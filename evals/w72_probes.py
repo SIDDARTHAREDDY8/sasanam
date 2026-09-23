@@ -101,7 +101,7 @@ RESULTS = []
 SITUATIONS = {}
 
 _KEY_ENV = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-            "GOV_DEV_KEYS", "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
+            "GOV_DEPLOYMENT_MODE", "GOV_KEYRING_FILE")
 
 
 @contextlib.contextmanager
@@ -125,18 +125,31 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    """Per-probe dev-key opt-in (in-code factor only; env set by hand)."""
-    prev = log_mod._dev_enabled
-    prev_warned = log_mod._dev_warned
-    log_mod._dev_enabled = enabled
-    log_mod._dev_warned = False
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-        log_mod._dev_warned = prev_warned
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 @contextlib.contextmanager
 def _govrun():
     old = os.environ.get("TMPDIR")
@@ -161,8 +174,7 @@ def _sit(sid):
         def wrapper():
             try:
                 with _govrun():
-                    with _env(GOV_DEV_KEYS="1",
-                              GOV_DEPLOYMENT_MODE="staging"):
+                    with _env(GOV_DEPLOYMENT_MODE="staging"):
                         with _dev_keys(True):
                             with redirect_stderr(io.StringIO()):
                                 detail = fn()

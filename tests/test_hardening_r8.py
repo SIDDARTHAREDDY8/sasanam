@@ -31,14 +31,21 @@ _KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH")
 
 
 def _pin_dev_key_env():
-    """Pin the dev flow under R6c: scrub any configured key so the
-    harness double opt-in (tests/__init__: in-code enable_dev_keys() +
-    GOV_DEV_KEYS=1) resolves the public dev key. Explicitly configuring
-    dev material is rejected outright since the KMS milestone (F73) —
-    these tests pin the *dev-key behavior*, not the old config path."""
+    """Pin the key flow for the label-forgery tests: provision an EXPLICIT
+    test key via the production env path (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH;
+    wave-81 deleted the dev key from gov/).
+
+    The configured epoch label is "dev" (operator-chosen label only —
+    the key material is fresh random bytes per setUp). The F32 tests
+    forge entry/checkpoint *labels* and assert the report derives status
+    from the verifier-bound epoch, never from self-declared labels.
+    """
+    try:
+        from tests.keyfixture import provision_test_key
+    except ImportError:  # tests/ directly on sys.path
+        from keyfixture import provision_test_key
     saved = {n: os.environ.get(n) for n in _KEY_NAMES}
-    for n in _KEY_NAMES:
-        os.environ.pop(n, None)
+    provision_test_key(epoch="dev")
 
     def restore():
         for n, v in saved.items():
@@ -60,9 +67,14 @@ class _DevKeyPinnedCase(unittest.TestCase):
 
 def _forge_log(d, entry_epoch, checkpoint_epoch, key=None):
     """Build a 3-entry chained log whose entries/checkpoint carry the
-    given key_epoch labels, MAC'd under *key* (default: dev key)."""
+    given key_epoch labels, MAC'd under *key* (default: the explicitly
+    provisioned test key from the environment — wave-81 deleted the dev
+    key from gov/, so tests forge under their own configured key)."""
     import gov.log as L
-    key = key or L._DEV_KEY
+    # The env backend uses the GOV_LOG_KEY *string* as UTF-8 bytes
+    # (EnvKeyProvider.resolve); forge under exactly those bytes so the
+    # forged log verifies against the provisioned key.
+    key = key or os.environ["GOV_LOG_KEY"].encode("utf-8")
     prev = L.GENESIS
     entries = []
     for i in (1, 2, 3):
@@ -167,7 +179,7 @@ class TestF32LabelForgeryFailClosed(_DevKeyPinnedCase):
         ks = key_status(entries, v["key_epoch"])
         self.assertEqual(ks["status"], "dev")
         self.assertEqual(ks["label_mismatch"], [])
-        self.assertIn("PUBLIC/DEVELOPMENT", ks["banner_line"])
+        self.assertIn("Non-production epoch label", ks["banner_line"])
 
 
 # ---------------------------------------------------------------------------

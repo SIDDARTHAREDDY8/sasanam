@@ -51,7 +51,6 @@ from gov.egress_ledger import (  # noqa: E402
 )
 from gov.log import (  # noqa: E402
     ActionLog, verify_chain, _canonical, _compute_mac, _checkpoint_mac,
-    _DEV_KEY,
 )
 
 _ENV_VARS = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
@@ -64,13 +63,18 @@ def _seed(n):
 class CryptoGovBase(unittest.TestCase):
     def setUp(self):
         self._saved_env = {k: os.environ.get(k) for k in _ENV_VARS}
-        for k in _ENV_VARS:
-            os.environ.pop(k, None)
+        # Wave-81: no dev-key fallback. The key-holder attacker model is
+        # preserved by provisioning an EXPLICIT test key the test holds
+        # (the forger holds the actual configured key — the documented
+        # residual). Epoch label "dev" keeps the forged-entry labels
+        # consistent with the configured epoch.
+        try:
+            from tests.keyfixture import provision_test_key
+        except ImportError:  # tests/ directly on sys.path
+            from keyfixture import provision_test_key
+        rec = provision_test_key(epoch="dev")
+        self._forge_key = rec["key"]
         self.dirs = []
-        # tests/__init__ performs the dev-key double opt-in; the HMAC
-        # layer therefore uses the PUBLIC dev key here -- the documented
-        # attacker model (a key holder can forge HMAC; signatures must
-        # still hold).
         self.addCleanup(self._restore_env)
 
     def _restore_env(self):
@@ -453,7 +457,9 @@ class ProofTests(CryptoGovBase):
 
     def test_history_rewrite_breaks_proving(self):
         # F70-shaped attack against the signed log: the attacker holds
-        # the (public) dev HMAC key, rewrites a pre-tip entry, and
+        # the configured HMAC key (wave-81: the test holds its own
+        # explicitly provisioned key — the documented key-holder
+        # residual), rewrites a pre-tip entry, and
         # recomputes the HMAC suffix AND the checkpoint MACs -- every
         # HMAC-layer check still verifies, but the Ed25519-signed
         # Merkle head cannot be re-signed, so the log REFUSES to prove
@@ -474,22 +480,23 @@ class ProofTests(CryptoGovBase):
             # The chain links via the prev_hash FIELD as well as the
             # MAC's prev parameter: both must be re-pointed.
             e["prev_hash"] = prev
-            e["hash"] = _compute_mac(_DEV_KEY, "dev", prev,
+            e["hash"] = _compute_mac(self._forge_key, "dev", prev,
                                      _canonical(e))
             prev = e["hash"]
             new_hash[e["seq"]] = e["hash"]
         Path(path).write_text(
             "\n".join(json.dumps(e, ensure_ascii=True, default=str)
                       for e in entries) + "\n", encoding="utf-8")
-        # The attacker re-MACs the checkpoints too (they hold the dev
-        # HMAC key); the signed Merkle roots and sigs stay as-was.
+        # The attacker re-MACs the checkpoints too (they hold the
+        # configured HMAC key); the signed Merkle roots and sigs stay
+        # as-was.
         cp_path = Path(path).parent / "checkpoints.jsonl"
         cps = []
         for line in cp_path.read_text(encoding="utf-8").splitlines():
             cp = json.loads(line)
             cp["hash"] = new_hash[cp["seq"]]
             cp["mac"] = _checkpoint_mac(
-                _DEV_KEY, "dev", cp["seq"], cp["hash"])
+                self._forge_key, "dev", cp["seq"], cp["hash"])
             cps.append(json.dumps(cp, ensure_ascii=True, default=str))
         cp_path.write_text("\n".join(cps) + "\n", encoding="utf-8")
         self.assertTrue(verify_chain(path)[0])  # HMAC fully fooled

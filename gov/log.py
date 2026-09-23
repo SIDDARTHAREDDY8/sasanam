@@ -29,19 +29,16 @@ bound into every MAC), or from a file-backed keyring via
 ``GOV_KEYRING_FILE``. Resolution is STRICT (R6c) and lives in the
 ``gov.keyprovider`` chokepoint (see ``workstreams/architect/
 KEY_MANAGEMENT_DESIGN.md``): ``GOV_LOG_KEY`` unset raises
-``NoKeyConfiguredError`` — there is no silent fallback to the
-publicly-known development key (F73: unsetting one env var can no longer
-silently reduce the log to a key the whole world knows). The dev key is
-reachable only in a non-production deployment mode when the process
-explicitly called ``enable_dev_keys()`` in code AND ``GOV_DEV_KEYS=1``
-is set — test harnesses only; production entry points never opt in, so
-they fail closed. Deployment mode follows the wave-61 precedent:
+``NoKeyConfiguredError`` — there is no silent fallback and no dev-key
+path at all (wave-81: the public development key and every dev-key
+opt-in were deleted from ``gov/``; F73's lesson is now structural —
+unsetting one env var can no longer reduce the log to a key the whole
+world knows, because no such key exists in the codebase). Deployment
+mode follows the wave-61 precedent:
 ``GOV_DEPLOYMENT_MODE`` (or the ``deployment_mode=`` kwarg, which wins),
-default ``"production"`` (least-privilege). In production mode an
-explicit dev-key opt-in is a contradiction and refuses LOUD — dev keys
-are never valid in production, even when requested. Explicitly
-configuring dev-key material (the dev bytes, or the ``dev`` epoch) is
-rejected outright. Production deployments MUST set ``GOV_LOG_KEY`` (or
+default ``"production"`` (least-privilege); the mode is validated but
+no longer selects a key story — key provisioning is explicit in every
+mode. Production deployments MUST set ``GOV_LOG_KEY`` (or
 ``GOV_KEYRING_FILE``, or activate a keyring via ``gov.keys`` /
 ``gov.kms``). ``key_epoch`` is stored on every entry and
 checkpoint so key rotations are visible in the log.
@@ -193,61 +190,37 @@ def _append_locked(path):
     finally:
         f.close()
 
-# Publicly documented development key. Provides NO security; it exists so
-# the synthetic demo and test suite run with zero configuration. It is
-# reachable ONLY through the double opt-in below (in-code
-# enable_dev_keys() AND GOV_DEV_KEYS=1) — never silently.
-_DEV_KEY = b"agent-governance-dev-key-v1::NOT-FOR-PRODUCTION"
-_dev_warned = False
-
-# Process-level dev-key opt-in (R6c). Production constructors fail closed
-# unless the process explicitly called enable_dev_keys() in code AND
-# GOV_DEV_KEYS=1 is set in the environment. Env vars alone, or the
-# in-code call alone, are never sufficient (defense in depth: env is
-# attacker-influenceable, code is not, and vice versa for a compromised
-# dependency).
-_dev_enabled = False
-
-
-def enable_dev_keys():
-    """Explicit IN-CODE opt-in to dev keys for this process.
-
-    Test-harness entry points ONLY (``tests`` package init, eval/demo
-    mains). Production entry points (``python -m gov.verify`` default,
-    the ``gov-approve`` CLI, the executor service path) MUST NEVER call
-    this: with only ``GOV_DEV_KEYS=1`` set they still fail closed. Dev
-    keys additionally require ``GOV_DEV_KEYS=1`` in the environment —
-    env vars alone, or this call alone, are never sufficient.
-    """
-    global _dev_enabled
-    _dev_enabled = True
-
-
-def dev_keys_enabled():
-    """Whether :func:`enable_dev_keys` was called in this process."""
-    return _dev_enabled
+# Wave-81: the public development key and the dev-key double opt-in
+# (the in-code enabler plus the dev opt-in environment variable) were
+# DELETED from gov/ entirely. There is no key fallback of any kind on the log
+# path: _active_key() resolves configured keys only (GOV_LOG_KEY /
+# GOV_KEYRING_FILE via gov.keyprovider) and raises
+# NoKeyConfiguredError otherwise. Test harnesses provision an explicit
+# key (see tests/keyfixture.py) through the same env backend
+# production uses.
 
 
 def _active_key(deployment_mode=None):
-    """Return (key_bytes, key_epoch). STRICT (R6c) — F73 fix.
+    """Return (key_bytes, key_epoch). STRICT (R6c) — F73 fix, wave-81
+    final form.
 
     Resolution is delegated to :mod:`gov.keyprovider` (the wave-69
-    chokepoint): configured env key → configured keyring file →
-    production mode: refuse / non-production + double opt-in: dev key
-    (loud warning). Dev material (dev bytes, ``dev`` epoch, dev in the
-    archive) is rejected outright on every provider (F73/F77); the
-    production+dev contradiction (explicit dev-key opt-in in a declared
-    production deployment) refuses loud instead of warning-and-
-    continuing. See ``gov/keyprovider.py`` for the full rule table.
+    chokepoint): configured env key → configured keyring file → LOUD
+    ``NoKeyConfiguredError`` in every deployment mode. There is no
+    dev-key fallback on any path (wave-81 deleted the dev key and all
+    opt-ins from ``gov/``); configured keys are operator-chosen and
+    used as-is.
 
     ``deployment_mode`` (wave-70): an explicit mode declaration that
     wins over ``GOV_DEPLOYMENT_MODE`` for this resolution, exactly the
     ``resolve_active_key`` precedence (explicit kwarg > env > default
     ``"production"``). ``None`` (default) keeps the pre-wave-70
-    behavior byte-identical.
+    behavior byte-identical. The mode is validated (unknown modes fail
+    fast) but no longer selects a key story: provisioning is explicit
+    in every mode.
 
-    Behavior for every pre-wave-69 case is byte-identical (refusal
-    messages included); chain mechanics are untouched.
+    Behavior for every pre-wave-81 configured-key case is byte-identical
+    (refusal messages included); chain mechanics are untouched.
     """
     # Lazy import: gov/keyprovider.py imports gov/keys.py at its top
     # level, and gov/keys.py imports this module at its top level, so a
@@ -978,13 +951,12 @@ def _verify(path, _skip_malformed=False):
     F32 (HARDENING-R8): the verifier additionally BINDS every entry's
     ``key_epoch`` label to the CONFIGURED epoch. In single-key mode there
     is no label->key registry, so a label that is not the configured epoch
-    is either a label forgery (e.g. production labels HMAC'd under the
-    public dev key) or a misconfigured epoch — either way the verifier
-    fails closed with a label-mismatch error rather than blessing it. The
-    newest checkpoint's label is bound the same way. A log that spans a
-    key rotation does NOT verify here by design (fail-closed): use
-    KeyRing.verify_log for those (each label selects its own key there,
-    so a forged label fails the per-epoch MAC instead).
+    is either a label forgery or a misconfigured epoch — either way the
+    verifier fails closed with a label-mismatch error rather than
+    blessing it. The newest checkpoint's label is bound the same way. A
+    log that spans a key rotation does NOT verify here by design
+    (fail-closed): use KeyRing.verify_log for those (each label selects
+    its own key there, so a forged label fails the per-epoch MAC instead).
     """
     key, epoch = _active_key()
     p = Path(path)

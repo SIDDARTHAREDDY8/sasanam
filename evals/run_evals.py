@@ -2535,8 +2535,11 @@ def _w8_cli_trust_root():
                     and "operator_ident = AgentIdentity(" in src}
 
 def _w8_devkey_loudness():
-    # F29 CLOSED: report discloses dev key_epoch; no unqualified claim.
-    with _w8key(None), _w8tmp("w8d-") as d:
+    # Wave-81: the dev key is deleted; this legacy probe now asserts
+    # the explicit-key contract. (register_w19 overrides sit47 in the
+    # matrix gate, so this body only runs in direct calls.)
+    import secrets as _secrets
+    with _w8key(_secrets.token_hex(32)), _w8tmp("w8d-") as d:
         ap = str(d / "a.jsonl")
         ActionLog(ap).append({})
         proc = subprocess.run(
@@ -2556,11 +2559,10 @@ def _w8_devkey_loudness():
         texts = [p.read_text(encoding="utf-8")
                  for p in (REPO_ROOT / "reports").glob("*_audit_report.md")]
         return {
-            "verify_reports_dev": verdict.get("key_epoch") == "dev"
-                and "development key" in proc.stderr,
-            "report_discloses_dev": all(
-                s in md + ht for s in ("PUBLIC/DEVELOPMENT",
-                                       "NOT tamper-evident")),
+            "verify_reports_configured": verdict.get("ok") is True
+                and verdict.get("key_epoch") == "env",
+            "report_discloses_configured": "Operator-configured key"
+                in md + ht,
             "report_no_unqualified_claim": "tamper-evident log" not in md + ht,
             "shipped_reports_disclose": bool(texts) and all(
                 "PUBLIC/DEVELOPMENT" in t and "tamper-evident log" not in t
@@ -2843,7 +2845,7 @@ def _registry_oracle(entry):
 def run_registry_gate():
     import uuid
     import yaml
-    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes, w50rt_probes, w51_probes, w52_probes, w53_probes, w54_probes, w54swarm_probes, w63_probes, w64_probes, w65_probes, w66_probes, w67_probes, w68_probes, w69_probes, w70_probes, w71_probes, w72_probes, w73_probes, w74_probes, w75_probes, w76_probes, w77_probes, w78_probes, w79_probes
+    from evals import w21_probes, w_incident_probes, w22_probes, w23_probes, w24_probes, w25_probes, w25rt_probes, w26_probes, w26f94_probes, w26rt_probes, w27rt_probes, w27rt2_probes, w27rt3_probes, w27_probes, w33_probes, w35_probes, w35_sandbox_probes, w36_probes, w36_supplychain_probes, w37_monitor_eval, w39_probes, w40_probes, w41_probes, w42_probes, w42rt_probes, w43rt_probes, w44rt_probes, w45rt_probes, w46rt_probes, w48rt_probes, w49rt_probes, w50rt_probes, w51_probes, w52_probes, w53_probes, w54_probes, w54swarm_probes, w63_probes, w64_probes, w65_probes, w66_probes, w67_probes, w68_probes, w69_probes, w70_probes, w71_probes, w72_probes, w73_probes, w74_probes, w75_probes, w76_probes, w77_probes, w78_probes, w79_probes, w80_probes
 
     runid = "registry-gate-" + uuid.uuid4().hex[:8]
     # Wave-26 red-team hygiene: honor an already-set TMPDIR (a lane's
@@ -2916,7 +2918,8 @@ def run_registry_gate():
                 "evals/w76_probes.py": w76_probes,
                 "evals/w77_probes.py": w77_probes,
                 "evals/w78_probes.py": w78_probes,
-                "evals/w79_probes.py": w79_probes}
+                "evals/w79_probes.py": w79_probes,
+                "evals/w80_probes.py": w80_probes}
         reg_path = Path("evals/scenarios/registry.yaml")
         scenarios = yaml.safe_load(reg_path.read_text())["scenarios"]
         eval_entries = [e for e in scenarios
@@ -3012,16 +3015,17 @@ def run_registry_gate():
 
 
 def main():
-    # R6c dev-key opt-in (eval harness only): explicit in-code
-    # enable_dev_keys() PLUS the GOV_DEV_KEYS=1 env factor. Production
-    # entry points never do this — they fail closed without a key.
-    os.environ.setdefault("GOV_DEV_KEYS", "1")
+    # Wave-81: the dev-key opt-in is deleted from gov/. The eval
+    # harness is synthetic, not production — provision an explicit
+    # test key process-wide for the run. Production entry points
+    # still fail closed without a configured key.
+    import secrets as _secrets
+    os.environ.setdefault("GOV_LOG_KEY", _secrets.token_hex(32))
+    os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     # Wave-69: the eval harness is synthetic, not production — declare it
     # explicitly (wave-61 deployment_mode discipline). Probes inherit this
     # ambiently; probes that need production mode set it explicitly.
     os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-    from gov.log import enable_dev_keys
-    enable_dev_keys()
     if "--registry-gate" in sys.argv[1:]:
         return run_registry_gate()
     _ensure_legacy()

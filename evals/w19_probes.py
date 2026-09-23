@@ -5,13 +5,13 @@ probes; the old probe files stay UNCHANGED as the historical record,
 their playbook entries are superseded here, per the r9/r11 precedent):
 
 - sit47 (was w8-devkey, prefix "devkey_"): the shipped audit report was
-  regenerated post-F73 (strict key resolver). The old probe cleared
+  regenerated post-wave-81 (no dev-key fallback). The old probe cleared
   GOV_LOG_KEY and ran `gov.verify` bare, which now correctly FAILS
-  CLOSED. Override: strict-world assertions — bare verify fails closed
-  with JSON on a dev-keyed log, `--dev` verifies it, double opt-in
-  (GOV_DEV_KEYS=1 + enable_dev_keys()) is loud, env-scrubbed append
-  raises NoKeyConfiguredError, shipped reports disclose
-  PUBLIC/DEVELOPMENT with no unqualified "tamper-evident log".
+  CLOSED. Override: explicit-key-world assertions — bare verify fails
+  closed with JSON when no key is configured, verify succeeds with the
+  explicit key, env-scrubbed append raises NoKeyConfiguredError, and
+  freshly rendered reports disclose the non-production epoch label
+  honestly with no unqualified "tamper-evident log".
   Old keys retired: verify_reports_dev, report_discloses_dev,
   report_no_unqualified_claim, shipped_reports_disclose (kept name,
   new meaning: regenerated reports).
@@ -166,10 +166,11 @@ def _w19_scratch(prefix):
 
 
 def _w19_harness():
-    """Import the test harness lazily (needs dev-key env first)."""
-    os.environ.setdefault("GOV_DEV_KEYS", "1")
-    from gov.log import enable_dev_keys
-    enable_dev_keys()
+    """Import the test harness lazily.
+
+    Wave-81: tests/__init__.py provisions an explicit test key
+    process-wide (the dev-key opt-in is deleted); nothing to enable.
+    """
     from tests.harness import make_run, plant_file
     return make_run, plant_file
 
@@ -178,46 +179,48 @@ def _w19_harness():
 # Override: post-F73 strict key-resolver world.
 
 def _w19_sit47_strict_devkey():
-    """sit47 override: dev-key loudness in the strict-resolver world.
+    """sit47 override: wave-81 explicit-key world.
 
-    F73 replaced the silent dev fallback with a strict resolver:
-    env-scrubbed append raises NoKeyConfiguredError; `gov.verify`
-    without --dev fails CLOSED (JSON) on a dev-keyed log; --dev
-    verifies it; the double opt-in (GOV_DEV_KEYS=1 + in-code
-    enable_dev_keys()) emits a loud warning. The regenerated shipped
-    reports disclose PUBLIC/DEVELOPMENT with no unqualified
-    "tamper-evident log" phrase.
+    Wave-81 deleted the dev-key fallback from gov/: env-scrubbed
+    append raises NoKeyConfiguredError; `gov.verify` without a key
+    fails CLOSED (JSON); with the explicit key it verifies; freshly
+    rendered reports disclose the non-production epoch label honestly
+    with no unqualified "tamper-evident log" phrase.
     """
     o = {}
     import gov.log as _gl
+    import secrets as _secrets
+    from demo import make_report as _mr
     with _w19_scratch("w19d-") as d:
-        # Create the log under the REAL double opt-in (public dev key).
-        old_enabled = _gl._dev_enabled
-        old_warned = _gl._dev_warned
-        _gl._dev_enabled = False
+        # Create the log under an explicit key with a non-production
+        # epoch label.
+        key = _secrets.token_hex(32)
         old_env = {k: os.environ.get(k) for k in
-                   ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS")}
+                   ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                    "GOV_LOG_KEY_ARCHIVE")}
         try:
-            for k in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH"):
-                os.environ.pop(k, None)
-            os.environ["GOV_DEV_KEYS"] = "1"
-            _gl.enable_dev_keys()
-            _gl._dev_warned = True  # keep the gate output clean
+            os.environ["GOV_LOG_KEY"] = key
+            os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
+            os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
             ap = str(d / "a.jsonl")
             ActionLog(ap).append({"event": "w19dev"})
+            entries = [json.loads(l) for l in
+                       Path(ap).read_text(encoding="utf-8").splitlines()
+                       if l.strip()]
+            v_here = _gl._verify(ap)
         finally:
-            _gl._dev_enabled = old_enabled
-            _gl._dev_warned = old_warned
             for k, v in old_env.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-        # 1. bare verify fails closed with JSON on a dev-keyed log.
+        assert v_here["ok"], "probe setup must verify: %r" % v_here
+        # 1. bare verify fails closed with JSON when no key is
+        #    configured.
         env = dict(os.environ)
-        env.pop("GOV_LOG_KEY", None)
-        env.pop("GOV_LOG_KEY_EPOCH", None)
-        env["GOV_DEV_KEYS"] = "1"
+        for k in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                  "GOV_LOG_KEY_ARCHIVE"):
+            env.pop(k, None)
         proc = subprocess.run(
             [sys.executable, "-m", "gov.verify", ap], cwd=str(REPO_ROOT),
             capture_output=True, text=True, timeout=60, env=env)
@@ -225,33 +228,33 @@ def _w19_sit47_strict_devkey():
             verdict = json.loads(proc.stdout)
         except ValueError:
             verdict = {}
-        o["strict_verify_fails_closed_on_dev"] = (
+        o["strict_verify_fails_closed_no_key"] = (
             verdict.get("ok") is False and proc.returncode != 0)
-        # 2. --dev verifies the explicit dev log.
+        # 2. verify with the explicit key succeeds and binds the epoch.
+        env2 = dict(env)
+        env2["GOV_LOG_KEY"] = key
+        env2["GOV_LOG_KEY_EPOCH"] = "dev"
         proc2 = subprocess.run(
-            [sys.executable, "-m", "gov.verify", "--dev", ap],
+            [sys.executable, "-m", "gov.verify", ap],
             cwd=str(REPO_ROOT), capture_output=True, text=True,
-            timeout=60, env=env)
+            timeout=60, env=env2)
         try:
             verdict2 = json.loads(proc2.stdout)
         except ValueError:
             verdict2 = {}
-        o["dev_flag_verifies_explicit_dev_log"] = (
-            verdict2.get("ok") is True and proc2.returncode == 0)
-        # 3. Without the in-code opt-in, append fails closed even with
-        #    GOV_DEV_KEYS=1 (env alone is never sufficient).
-        import gov.log as _gl
-        old_dev_enabled = _gl._dev_enabled
-        # Gate-ordering hygiene (2026-09-22): the scrub below must not
-        # leak — step 1 restores its env but this block did not, so the
-        # popped GOV_DEV_KEYS broke every later cell in a full main()
-        # run (NoKeyConfiguredError at cell setup). Save/restore here.
+        o["verify_succeeds_with_explicit_key"] = (
+            verdict2.get("ok") is True and proc2.returncode == 0
+            and verdict2.get("key_epoch") == "dev")
+        # 3. env-scrubbed append raises (no silent fallback). Gate-order
+        #    hygiene (2026-09-22): the scrub must not leak — save and
+        #    restore the key env here.
         old_scrub_env = {k: os.environ.get(k) for k in
-                         ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS")}
+                         ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                          "GOV_LOG_KEY_ARCHIVE")}
         raised = False
         try:
-            _gl._dev_enabled = False
-            for v in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS"):
+            for v in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                      "GOV_LOG_KEY_ARCHIVE"):
                 os.environ.pop(v, None)
             ActionLog(str(d / "b.jsonl")).append({"event": "x"})
         except NoKeyConfiguredError:
@@ -259,19 +262,20 @@ def _w19_sit47_strict_devkey():
         except Exception:
             raised = False
         finally:
-            _gl._dev_enabled = old_dev_enabled
             for k, v in old_scrub_env.items():
                 if v is None:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
         o["env_scrubbed_append_raises_no_silent_fallback"] = raised
-        # 4. shipped reports disclose dev status honestly.
-        texts = [p.read_text(encoding="utf-8")
-                 for p in (REPO_ROOT / "reports").glob("*_audit_report.md")]
-        o["shipped_reports_disclose"] = bool(texts) and all(
-            "PUBLIC/DEVELOPMENT" in t and "tamper-evident log" not in t
-            for t in texts)
+        # 4. a freshly rendered report discloses the non-production
+        #    epoch label honestly (no unqualified tamper-evident claim).
+        ks = _mr.key_status(entries, v_here["key_epoch"])
+        md = _mr.render_markdown("w19-probe", "2026-09-23T00:00:00+00:00",
+                                 True, len(entries), [], [], ks, None)
+        o["fresh_report_discloses_label"] = (
+            "Non-production epoch label" in md
+            and "tamper-evident log" not in md)
     return o
 
 
@@ -1491,68 +1495,65 @@ def _w19_sit131_k047_trace_schema():
 # F73 closure pin: strict resolver fails closed.
 
 def _w19_sit132_f73_closure():
-    """sit132: F73 closure pin — strict key resolver fails closed.
+    """sit132: wave-81 closure pin — no fallback key, ever.
 
-    Canonical closure probe for the KMS strict-resolver fix:
+    Canonical closure probe for the wave-81 dev-key removal:
     env-scrubbed ActionLog.append raises NoKeyConfiguredError;
-    explicit public dev-key bytes are rejected; GOV_DEV_KEYS=1 alone
-    is insufficient; a real key works; the double opt-in enables the
-    harness path and emits the loud warning. (Mirrors the independent
-    verify_f73 battery, all-pass.) The probe saves and restores the
-    FULL key env (_dev_enabled, _dev_warned, GOV_* vars).
+    explicit bytes are used as configured (no screening against a
+    deleted dev key); GOV_DEV_KEYS is inert (no such env var is
+    read); a real key works; explicit provisioning works in every
+    mode. (Mirrors the verify_f73 battery's fail-closed assertions.)
+    The probe saves and restores the FULL key env.
     """
-    import io
+    import secrets as _secrets
     import tempfile as _tf
     import gov.log as gl
+    from gov.keys import NoKeyConfiguredError as _NKC
     saved = {
-        "dev_enabled": gl._dev_enabled,
-        "dev_warned": gl._dev_warned,
         "env": {k: os.environ.get(k) for k in
-                ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS")},
+                ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                 "GOV_LOG_KEY_ARCHIVE", "GOV_DEV_KEYS")},
     }
     o = {}
     d = Path(_tf.mkdtemp(prefix="w19f73-",
                          dir=os.environ.get("TMPDIR", "/tmp/gov-run")))
     try:
         # 1. env-scrubbed append raises (no silent fallback).
-        gl._dev_enabled = False
-        for k in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS"):
+        for k in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                  "GOV_LOG_KEY_ARCHIVE"):
             os.environ.pop(k, None)
         raised = False
         try:
             ActionLog(str(d / "a.jsonl")).append({"event": "x"})
-        except NoKeyConfiguredError:
+        except _NKC:
             raised = True
         except Exception:
             raised = False
         o["env_scrubbed_append_raises"] = raised
-        # 2. explicit public dev-key bytes rejected on the prod path.
-        dev_bytes = (gl._DEV_KEY.decode("utf-8", "ignore")
-                     if isinstance(gl._DEV_KEY, bytes)
-                     else str(gl._DEV_KEY))
-        os.environ["GOV_LOG_KEY"] = dev_bytes
-        dev_rejected = False
-        try:
-            gl._active_key()
-        except NoKeyConfiguredError:
-            dev_rejected = True
-        except Exception:
-            dev_rejected = False
-        o["explicit_dev_key_bytes_rejected"] = dev_rejected
-        # 3. GOV_DEV_KEYS=1 alone (no in-code opt-in) is insufficient.
-        gl._dev_enabled = False
+        # 2. explicit bytes are used as configured — there is no
+        #    embedded dev key to screen against anymore.
+        key = _secrets.token_hex(32)
+        os.environ["GOV_LOG_KEY"] = key
+        os.environ["GOV_LOG_KEY_EPOCH"] = "w19a"
+        os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
+        k2, e2 = gl._active_key()
+        o["explicit_bytes_used_verbatim"] = (
+            k2 == key.encode("utf-8") and e2 == "w19a")
+        # 3. GOV_DEV_KEYS is inert: with no key configured it buys
+        #    nothing and append still raises.
         os.environ.pop("GOV_LOG_KEY", None)
         os.environ.pop("GOV_LOG_KEY_EPOCH", None)
         os.environ["GOV_DEV_KEYS"] = "1"
-        alone_insufficient = False
+        inert_raises = False
         try:
-            gl._active_key()
-        except NoKeyConfiguredError:
-            alone_insufficient = True
+            ActionLog(str(d / "c.jsonl")).append({"event": "x"})
+        except _NKC:
+            inert_raises = True
         except Exception:
-            alone_insufficient = False
-        o["env_only_insufficient"] = alone_insufficient
-        # 4. real key works.
+            inert_raises = False
+        o["dev_keys_env_inert_no_key_raises"] = inert_raises
+        # 4. a real key works.
+        os.environ.pop("GOV_DEV_KEYS", None)
         os.environ["GOV_LOG_KEY"] = "w19f73realkey"
         os.environ["GOV_LOG_KEY_EPOCH"] = "w19a"
         try:
@@ -1561,27 +1562,14 @@ def _w19_sit132_f73_closure():
         except Exception:
             real_ok = False
         o["real_key_works"] = real_ok
-        # 5. double opt-in enables the harness path with loud warning.
-        gl._dev_enabled = False
-        gl._dev_warned = False
-        os.environ.pop("GOV_LOG_KEY", None)
-        os.environ.pop("GOV_LOG_KEY_EPOCH", None)
-        os.environ["GOV_DEV_KEYS"] = "1"
-        gl.enable_dev_keys()
-        err = io.StringIO()
-        old_stderr = sys.stderr
-        sys.stderr = err
-        try:
-            key2, epoch2 = gl._active_key()
-        finally:
-            sys.stderr = old_stderr
-        o["double_optin_enables_harness_path"] = (epoch2 == "dev")
-        o["double_optin_loud_warning"] = (
-            "GOVERNANCE KEY WARNING" in err.getvalue())
+        # 5. explicit provisioning works in every mode (mode is a
+        #    claim, not a key-selection gate).
+        per_mode = []
+        for mode in ("production", "staging", "dev", "test"):
+            per_mode.append(gl._active_key(mode)[1] == "w19a")
+        o["explicit_provisioning_every_mode"] = all(per_mode)
     finally:
         shutil.rmtree(d, ignore_errors=True)
-        gl._dev_enabled = saved["dev_enabled"]
-        gl._dev_warned = saved["dev_warned"]
         for k, v in saved["env"].items():
             if v is None:
                 os.environ.pop(k, None)

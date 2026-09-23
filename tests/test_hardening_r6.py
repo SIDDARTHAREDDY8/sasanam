@@ -29,6 +29,7 @@ import fcntl
 import json
 import multiprocessing
 import os
+import secrets
 import shutil
 import sys
 import tempfile
@@ -38,6 +39,7 @@ import unittest
 from gov.approvals import ApprovalQueue
 from gov.egress_ledger import EgressLedger, LedgerUnverifiableError
 from gov.identity import AgentIdentity, UnmintedIdentityError
+from gov.keys import NoKeyConfiguredError
 from gov.log import ActionLog, AppendLockError, verify_chain
 import gov.log as log_mod
 from gov.policy import PolicyEngine
@@ -47,8 +49,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_POLICY = os.path.join(ROOT, "policies", "default.yaml")
 
 _TEST_KEY = "round6-test-ledger-key-0000000000000001"
-_KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-              "GOV_DEV_KEYS")
+_KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
 
 
 def _scrub_key_env():
@@ -110,13 +111,13 @@ class TestF23LedgerStatCache(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(_scrub_key_env())
-        # R6c harness migration: this class pins dev-key BEHAVIOR ("no
-        # GOV_LOG_KEY", "only the public dev key"), so opt into the dev
-        # key explicitly. The in-code half of the double opt-in is set by
-        # tests/__init__.py; GOV_LOG_KEY stays unset here on purpose so
-        # _real_key_available() remains False (the real-key tests below
-        # configure GOV_LOG_KEY themselves and take precedence).
-        os.environ["GOV_DEV_KEYS"] = "1"
+        # Wave-81: the dev key is deleted from gov/ -- there is no
+        # dev-key behavior left to pin. Provision an EXPLICIT random key
+        # via the production env path (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH),
+        # fresh per test; the real-key tests below override with
+        # _TEST_KEY themselves.
+        os.environ["GOV_LOG_KEY"] = secrets.token_hex(32)
+        os.environ["GOV_LOG_KEY_EPOCH"] = "r6-f23"
         self.dir = tempfile.mkdtemp(prefix="r6f23-")
         self.addCleanup(shutil.rmtree, self.dir, True)
 
@@ -140,9 +141,22 @@ class TestF23LedgerStatCache(unittest.TestCase):
                     and json.loads(line).get("policy_id")
                     == "ledger-unverifiable"]
 
-    def test_utime_rewrite_detected_without_key(self):
-        """Exact W7-1 repro: no GOV_LOG_KEY, warm cache, same-length
-        rewrite + mtime restore -> the third call refuses."""
+    def test_no_key_refuses_fail_closed(self):
+        """Wave-81: with no key configured there is no dev-key fallback
+        anymore -- the chain refuses to START (fail-closed) instead of
+        building a stat cache on attacker-known key material. The old
+        "without key, tamper detected" shape is subsumed: no chain
+        exists to attack."""
+        for var in ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH",
+                    "GOV_LOG_KEY_ARCHIVE"):
+            os.environ.pop(var, None)
+        with self.assertRaises(NoKeyConfiguredError):
+            make_run(ledger_path=os.path.join(self.dir, "ledger.jsonl"))
+
+    def test_explicit_key_utime_rewrite_detected(self):
+        """With an explicitly provisioned key, the exact W7-1 repro --
+        warm cache, same-length rewrite + mtime restore -- refuses on
+        the third call."""
         lp = os.path.join(self.dir, "ledger.jsonl")
         ctx, ident = self._warmed_ctx(lp)
         _same_length_rewrite(lp, "synthetic.local", "synthetic.locax")
@@ -151,17 +165,6 @@ class TestF23LedgerStatCache(unittest.TestCase):
         refusals = self._audit_refusals(ctx)
         self.assertEqual(len(refusals), 1)
         self.assertEqual(refusals[0]["decision"], "denied")
-
-    def test_dev_key_is_not_an_integrity_anchor(self):
-        """With only the public dev key, the stat cache is bypassed:
-        _real_key_available() is False and the tamper is detected."""
-        from gov.egress_ledger import _real_key_available
-        self.assertFalse(_real_key_available())
-        lp = os.path.join(self.dir, "ledger.jsonl")
-        ctx, ident = self._warmed_ctx(lp)
-        _same_length_rewrite(lp, "synthetic.local", "synthetic.locax")
-        with self.assertRaises(LedgerUnverifiableError):
-            ctx["executor"].call(ident, "read_file", path="f.txt")
 
     def test_control_mtime_change_still_refuses(self):
         """Control: tamper WITHOUT restoring mtime still refuses (the

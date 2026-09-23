@@ -51,8 +51,7 @@ DEFAULT_POLICY = os.path.join(ROOT, "policies", "default.yaml")
 # action log's env backend: GOV_LOG_KEY / GOV_LOG_KEY_ARCHIVE.
 _TEST_KEY = "round5-test-ledger-key-0000000000000001"
 _TEST_KEY2 = "round5-test-ledger-key-0000000000000002"
-_KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-              "GOV_DEV_KEYS")
+_KEY_NAMES = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
 
 
 def _scrub_key_env():

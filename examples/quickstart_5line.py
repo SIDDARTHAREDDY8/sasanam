@@ -29,15 +29,15 @@ from gov.log import ActionLog, read_entries
 from gov.policy import PolicyEngine
 
 # ---------------------------------------------------------------------------
-# SCAFFOLD: dev-key opt-in (R6c). This is a synthetic demo script, not a
-# production entry point: explicit in-code enable_dev_keys() PLUS the
-# GOV_DEV_KEYS=1 env factor, so the example runs with zero configuration.
-# A real integration configures GOV_LOG_KEY and never calls this.
+# SCAFFOLD: key provisioning (wave-81). This is a synthetic demo script,
+# not a production entry point: the dev-key opt-in is deleted, so the
+# scaffold provisions an explicit local test key. A real integration
+# configures GOV_LOG_KEY and never does this.
 # ---------------------------------------------------------------------------
 import os
-os.environ.setdefault("GOV_DEV_KEYS", "1")
-from gov.log import enable_dev_keys as _enable_dev_keys
-_enable_dev_keys()
+import secrets
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
 
 _MINIMAL_POLICY = """\
 version: 2

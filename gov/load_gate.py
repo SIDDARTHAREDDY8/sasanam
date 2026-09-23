@@ -70,6 +70,7 @@ __all__ = [
     "verify_and_load",
     "load_file_verified",
     "SkillLoader",
+    "load_skill_content",
     "is_digest_pin",
 ]
 
@@ -491,3 +492,38 @@ class SkillLoader:
                 "bytes": len(verified.data),
             })
         return verified
+
+
+def load_skill_content(pinset, store, skill_name, *, log=None):
+    """The FORCED entry point for skill content into the sterile
+    ``skill_content`` channel (wave-80).
+
+    Loads the skill's bytes through :class:`SkillLoader` (the digest
+    gate — no TOFU, no references) and hands the deployment the
+    content wrapped in a ``sterile.Unvetted`` marker with
+    ``origin="skill_content"`` and the verified ``artifact_id`` +
+    ``digest`` in the marker's ``ack_context``. The marker is the
+    wave-64 D5 machine-readable "never vetted" envelope: content that
+    crossed the channel cannot be silently treated as trusted, and
+    the ack trail names the exact digest that was loaded.
+
+    There is no raw-bytes return path on purpose: callers that want
+    the bytes must unwrap the marker via ``acknowledge()`` (the
+    channel's only documented read), so every consumption is an
+    auditable, explicitly-never-vetted act. Reading a skill file off
+    disk directly and feeding it to the channel bypasses this
+    function — that is the legacy seam, refused-by-construction here
+    because the marker (with its digest) is what the channel's
+    downstream contract expects.
+    """
+    from .sterile import Unvetted
+    loader = SkillLoader(pinset, store, log=log)
+    verified = loader.load_skill(skill_name)
+    return Unvetted(
+        verified.data,
+        origin="skill_content",
+        ack_context={
+            "artifact_id": verified.artifact_id,
+            "digest": verified.digest,
+        },
+    )

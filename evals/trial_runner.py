@@ -53,6 +53,7 @@ import argparse
 import math
 import os
 import random
+import secrets
 import shutil
 import sys
 import tempfile
@@ -63,11 +64,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "tests"))
 
-os.environ.setdefault("GOV_DEV_KEYS", "1")
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
 # Wave-69: synthetic trial runner, not production (wave-61 discipline).
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-from gov.log import enable_dev_keys  # noqa: E402
-enable_dev_keys()
+# Wave-81: the dev-key opt-in is deleted from gov/; the trial runner
+# provisions an explicit test key process-wide instead.
 
 from evals import run_evals as R  # noqa: E402
 

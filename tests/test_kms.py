@@ -7,7 +7,7 @@ Covers: FakeKmsProvider protocol behavior (determinism, key-id binding,
 tamper-evidence, outage/disabled fail-closed), EnvelopeKeyRing
 (generate/rotate/rewrap/materialize/activate/verify, wrapped-only
 persistence, lazy retired-epoch unwrap), production key resolution
-(dev structurally rejected), the provider factory, and the RED-TEAM
+(no dev-key fallback: wave-81 deleted it), the provider factory, and the RED-TEAM
 regression tests:
 
 * Attack 1 (workstreams/kms/redteam/attack_env_dev_fallback.py):
@@ -18,39 +18,31 @@ regression tests:
 Deterministic: stdlib unittest only, no network, FakeKmsProvider only.
 """
 
-import io
 import json
 import os
 import tempfile
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 
 from gov import kms
 from gov.kms import KmsError, FakeKmsProvider, EnvelopeKeyRing
-from gov.keys import (KeyRing, NoKeyConfiguredError, require_production_key,
-                      _DEV_KEY_CANONICAL, _DEV_EPOCH)
+from gov.keys import (KeyRing, NoKeyConfiguredError, require_production_key)
 from gov.log import ActionLog
 import gov.log as gov_log
 
 
 def _clean_env():
-    """Scrub key env vars AND reset the process-level dev flags.
+    """Scrub key env vars; returns a restore closure.
 
-    The harness (tests/__init__) enables dev keys process-wide; these
-    tests need a pristine resolver per case, so the flags are saved and
-    restored — never hardcoded — to stay order-independent within the
-    suite.
+    The harness (tests/__init__) provisions an explicit key
+    process-wide; these tests need a pristine resolver per case, so the
+    env is snapshotted and restored to stay order-independent within the
+    suite. (Wave-81: there are no process-level dev flags anymore.)
     """
-    names = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-             "GOV_DEV_KEYS")
+    names = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
     saved = {n: os.environ.get(n) for n in names}
-    saved_dev_enabled = gov_log._dev_enabled
-    saved_dev_warned = gov_log._dev_warned
     for n in names:
         os.environ.pop(n, None)
-    gov_log._dev_enabled = False
-    gov_log._dev_warned = False
 
     def restore():
         for n, v in saved.items():
@@ -58,8 +50,6 @@ def _clean_env():
                 os.environ.pop(n, None)
             else:
                 os.environ[n] = v
-        gov_log._dev_enabled = saved_dev_enabled
-        gov_log._dev_warned = saved_dev_warned
     return restore
 
 
@@ -385,38 +375,19 @@ class EnvelopeKeyRingTest(_TmpMixin):
 # ---------------------------------------------------------------------------
 
 class StrictResolverTest(_TmpMixin):
-    """RED-TEAM Attack 1 regression: the strict production resolver in
-    gov/log.py fails closed when GOV_LOG_KEY is absent — env vars alone
-    can never enable dev keys; dev material is rejected even when
-    configured. This closes F73 (the HIGH finding: forged history
-    verified ok=True under the public dev key)."""
+    """Wave-81: the dev key is deleted from gov/ -- there is no fallback
+    in any mode. The key resolver in gov/log.py fails closed when no key
+    is provisioned, and the old double-opt-in names are absent. (F73's
+    forged-history finding is closed by deletion: there is no public dev
+    key left to forge with.)"""
 
-    def test_env_scrub_fails_closed_no_opt_in(self):
+    def test_env_scrub_fails_closed(self):
         with self.assertRaises(NoKeyConfiguredError):
             gov_log._active_key()
 
-    def test_env_scrub_fails_closed_even_with_dev_opt_in_env(self):
-        # Attacker sets GOV_DEV_KEYS=1, but the process never called
-        # enable_dev_keys() in code -> still fail closed (structural).
-        os.environ["GOV_DEV_KEYS"] = "1"
-        self.assertFalse(gov_log.dev_keys_enabled())
-        with self.assertRaises(NoKeyConfiguredError):
-            gov_log._active_key()
-
-    def test_code_opt_in_without_env_still_fails_closed(self):
-        gov_log.enable_dev_keys()  # in-code, but operator did not confirm
-        with self.assertRaises(NoKeyConfiguredError):
-            gov_log._active_key()
-
-    def test_explicit_double_opt_in_still_works_for_harness(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        gov_log.enable_dev_keys()
-        buf = io.StringIO()
-        with redirect_stderr(buf):
-            key, epoch = gov_log._active_key()
-        self.assertIn("WARNING", buf.getvalue())
-        self.assertEqual(key, _DEV_KEY_CANONICAL)
-        self.assertEqual(epoch, _DEV_EPOCH)
+    def test_old_dev_names_absent_from_log_module(self):
+        for name in ("enable_dev_keys", "dev_keys_enabled"):
+            self.assertFalse(hasattr(gov_log, name), name)
 
     def test_configured_key_works(self):
         os.environ["GOV_LOG_KEY"] = "prod-key-material"
@@ -425,20 +396,9 @@ class StrictResolverTest(_TmpMixin):
         self.assertEqual(key, b"prod-key-material")
         self.assertEqual(epoch, "epoch-7")
 
-    def test_configured_dev_bytes_rejected(self):
-        os.environ["GOV_LOG_KEY"] = _DEV_KEY_CANONICAL.decode("utf-8")
-        with self.assertRaises(NoKeyConfiguredError):
-            gov_log._active_key()
-
-    def test_configured_dev_epoch_rejected(self):
-        os.environ["GOV_LOG_KEY"] = "something"
-        os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
-        with self.assertRaises(NoKeyConfiguredError):
-            gov_log._active_key()
-
     def test_action_log_fails_closed_on_env_scrub(self):
-        """The full production path: ActionLog.append with no key and no
-        opt-in raises instead of silently using the public dev key."""
+        """The full production path: ActionLog.append with no key
+        provisioned raises -- there is no silent fallback."""
         with self.assertRaises(NoKeyConfiguredError):
             ActionLog(self.tmp / "actions.jsonl").append({"event": "x"})
 
@@ -449,13 +409,8 @@ class RequireProductionKeyTest(_TmpMixin):
         ring = require_production_key()
         self.assertEqual(ring.active().epoch, "env")
 
-    def test_unset_raises_despite_dev_opt_in(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        with self.assertRaises(NoKeyConfiguredError):
-            require_production_key()
-
-    def test_dev_bytes_configured_rejected(self):
-        os.environ["GOV_LOG_KEY"] = _DEV_KEY_CANONICAL.decode("utf-8")
+    def test_unset_raises(self):
+        # Wave-81: no fallback exists, so unset always refuses.
         with self.assertRaises(NoKeyConfiguredError):
             require_production_key()
 
@@ -465,17 +420,19 @@ class RequireProductionKeyTest(_TmpMixin):
 # ---------------------------------------------------------------------------
 
 class ProviderFactoryTest(_TmpMixin):
-    def test_factory_refuses_fake_without_dev_opt_in(self):
+    def test_factory_refuses_fake_unconditionally(self):
+        # Wave-81: the dev opt-in variable is deleted from gov/; the
+        # operator config surface never builds the fake KMS.
         with self.assertRaises(KmsError) as cm:
             kms.kms_provider_from_config(
                 {"provider": "fake", "key_ids": ["k1"]})
         self.assertIn("test-only", str(cm.exception))
 
-    def test_factory_fake_with_dev_opt_in(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        p = kms.kms_provider_from_config(
-            {"provider": "fake", "key_ids": ["k1"]})
-        self.assertIsInstance(p, FakeKmsProvider)
+    def test_fake_constructed_directly_in_code(self):
+        # Tests construct FakeKmsProvider directly (explicit, in-code).
+        p = FakeKmsProvider(["k1"])
+        blob = p.wrap_data_key("k1", b"\x00" * 32)
+        self.assertEqual(p.unwrap_data_key("k1", blob), b"\x00" * 32)
 
     def test_factory_real_providers_not_built(self):
         for name in ("aws", "gcp", "azure"):

@@ -229,8 +229,14 @@ class TestKeyRingVerifyLogFailClosed(_KeyPinnedCase):
 # ---------------------------------------------------------------------------
 
 class TestF29ReportKeyDisclosure(unittest.TestCase):
-    """Dev-key reports must disclose the key loudly and qualify
-    integrity claims; no unqualified "tamper-evident" claim."""
+    """Non-production key epochs must be disclosed loudly in reports and
+    integrity claims qualified; no unqualified "tamper-evident" claim.
+
+    Wave-81: the published development key was removed from gov/ and the
+    disclosure text changed from "PUBLIC/DEVELOPMENT" to the
+    non-production epoch label contract below. The disclosure duty is
+    unchanged — only the wording.
+    """
 
     def _dev_entries(self):
         return [{"event": "tool_call", "key_epoch": "dev"} for _ in range(3)]
@@ -239,16 +245,18 @@ class TestF29ReportKeyDisclosure(unittest.TestCase):
         from demo.make_report import key_status, render_markdown
         key = key_status(self._dev_entries(), "dev")
         md = render_markdown("run-x", "2026-09-21", True, 3, [], [], key)
-        self.assertIn("PUBLIC/DEVELOPMENT", md)
-        self.assertIn("NOT tamper-evident", md)
+        self.assertIn("Non-production epoch label", md)
+        self.assertIn("not a production custody claim", md)
+        self.assertIn("not tamper-evidence against third parties", md)
         self.assertNotIn("tamper-evident log", md)
 
     def test_html_dev_key_disclosure(self):
         from demo.make_report import key_status, render_html
         key = key_status(self._dev_entries(), "dev")
         ht = render_html("run-x", "2026-09-21", True, 3, [], [], key)
-        self.assertIn("PUBLIC/DEVELOPMENT", ht)
-        self.assertIn("NOT tamper-evident", ht)
+        self.assertIn("Non-production epoch label", ht)
+        self.assertIn("not a production custody claim", ht)
+        self.assertIn("not tamper-evidence against third parties", ht)
         self.assertNotIn("tamper-evident log", ht)
 
     def test_production_epoch_qualified_language(self):

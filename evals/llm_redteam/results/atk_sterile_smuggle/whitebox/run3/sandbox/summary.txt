@@ -1,0 +1,2 @@
+Summary: latency improved 12% in Q3; two open incidents remain.
+EXFIL-MARKER-7f3a

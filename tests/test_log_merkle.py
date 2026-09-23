@@ -15,7 +15,10 @@ Covers the P2 deliverables against ``workstreams/crypto/`` (prototype;
     keyless forger.
 
 Hermetic: each test uses a fresh temp dir; key env vars are saved and
-restored (tests force the documented public-dev-key attacker model).
+restored. Attacker model (wave-81): the tests provision an EXPLICIT key
+they hold — the key-holder forger — since the public dev key was deleted
+from gov/. HMAC-only checkpoints are forgeable by a key holder (pinned);
+Ed25519-signed checkpoints reject the keyless forger.
 """
 
 import json
@@ -38,7 +41,6 @@ from gov.log import (  # noqa: E402
     verify_chain_tip,
     write_chain_tip_from_tail,
     _active_key,
-    _DEV_KEY,
     _checkpoint_mac,
     _canonical,
     _compute_mac,
@@ -59,10 +61,17 @@ _ENV_VARS = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")
 class CryptoTestBase(unittest.TestCase):
     def setUp(self):
         self._saved_env = {k: os.environ.get(k) for k in _ENV_VARS}
-        # Documented attacker model: the PUBLIC dev key (nobody can claim
-        # the tests passed because of a secret test key).
-        for k in _ENV_VARS:
-            os.environ.pop(k, None)
+        # Wave-81: no dev-key fallback. The key-holder attacker model is
+        # preserved by provisioning an EXPLICIT test key the test holds
+        # (the forger holds the actual configured key — the documented
+        # residual). Epoch label "dev" keeps the forged-entry labels
+        # consistent with the configured epoch.
+        try:
+            from tests.keyfixture import provision_test_key
+        except ImportError:  # tests/ directly on sys.path
+            from keyfixture import provision_test_key
+        rec = provision_test_key(epoch="dev")
+        self._forge_key = rec["key"]
         self.tmp = Path(tempfile.mkdtemp(prefix="test-merkle-"))
 
     def tearDown(self):
@@ -252,11 +261,13 @@ class TestCheckpointVerification(CryptoTestBase):
 
 
 class TestForgedCheckpointGap(CryptoTestBase):
-    """Pins the HMAC-only gap the Ed25519 layer closes: with the PUBLIC
-    dev key, history rewrite + re-minted HMAC checkpoint verifies clean.
-    The same forgery shape against signed checkpoints is rejected."""
+    """Pins the HMAC-only gap the Ed25519 layer closes: a KEY HOLDER can
+    rewrite history + re-mint HMAC checkpoints and verify clean (the
+    documented residual — wave-81 deleted the public dev key, so the
+    forger here holds the explicitly configured test key). The same
+    forgery shape against signed checkpoints is rejected."""
 
-    def test_hmac_checkpoint_forgeable_with_dev_key(self):
+    def test_hmac_checkpoint_forgeable_by_key_holder(self):
         log = ActionLog(self.tmp / "actions.jsonl")
         for i in range(6):
             log.append({"event": "tool_call", "n": i})
@@ -271,7 +282,7 @@ class TestForgedCheckpointGap(CryptoTestBase):
             if e["seq"] == 3:
                 e["tool"] = "exfiltrate"
             e.pop("hash", None)
-            e["hash"] = _compute_mac(_DEV_KEY, "dev", prev, _canonical(e))
+            e["hash"] = _compute_mac(self._forge_key, "dev", prev, _canonical(e))
             prev = e["hash"]
             forged.append(e)
         p.write_text("\n".join(json.dumps(e, ensure_ascii=True, default=str)
@@ -279,7 +290,7 @@ class TestForgedCheckpointGap(CryptoTestBase):
         tail = forged[-1]
         cp = {"seq": tail["seq"], "hash": tail["hash"], "key_epoch": "dev",
               "format_version": 1,
-              "mac": _checkpoint_mac(_DEV_KEY, "dev",
+              "mac": _checkpoint_mac(self._forge_key, "dev",
                                      tail["seq"], tail["hash"])}
         (self.tmp / "checkpoints.jsonl").write_text(
             json.dumps(cp) + "\n", encoding="utf-8")

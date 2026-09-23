@@ -41,6 +41,7 @@ Env knobs: BENCH_THREADS (default "1,4,16,64"), BENCH_M1..M5
 """
 
 import os
+import secrets
 import shutil
 import statistics
 import sys
@@ -54,15 +55,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from gov.approvals import ApprovalQueue
-# F73 double opt-in: dev-key posture for local benchmark harnesses only.
-# Matches the suite's tests/__init__.py (in-code enable_dev_keys() +
-# GOV_DEV_KEYS=1). Ledger numbers stay worst-case for the ledger path
-# (no real GOV_LOG_KEY -> sig cache disabled).
-os.environ.setdefault("GOV_DEV_KEYS", "1")
+# Wave-81: gov/ has no dev key or dev-key opt-in. Provision an EXPLICIT
+# random key via the production env path (GOV_LOG_KEY/GOV_LOG_KEY_EPOCH),
+# matching tests/__init__.py. Ledger numbers stay worst-case for the
+# ledger path (fresh random key per run).
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "bench")
 # Wave-69: local benchmark harness, not production (wave-61 discipline).
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-from gov.log import enable_dev_keys as _bench_enable_dev_keys
-_bench_enable_dev_keys()
 from gov.egress_ledger import EgressLedger
 from gov.executor import ToolExecutor
 from gov.log import ActionLog, verify_chain

@@ -54,23 +54,27 @@ RESPONSE (``rotate_keyring`` implements the ceremony):
      compromised epoch after the compromise time are suspect; entries
      under the new epoch are clean.
 
-Dev keys
---------
-There is **no silent dev-key fallback on the production path**. A key is
-used only if (a) it is configured via the file or env backend, or (b) the
-process explicitly opts in with the double opt-in —
-``gov.log.enable_dev_keys()`` in code AND ``GOV_DEV_KEYS=1`` — in which
-case a loud multi-line warning is printed to stderr on every resolution
-(``require_key()`` enforces the same double opt-in as ``gov/log.py``;
-``require_production_key()`` has no dev fallback at all). The dev key is
-publicly documented and provides **zero** integrity.
+No dev keys — ever (wave-81)
+---------------------------
+There is no dev key in this module, and no dev-key fallback on any
+path. Wave-81 deleted the public development key — its canonical
+bytes, the dev epoch label, the dev() keyring constructor, and the
+dev-key opt-in environment variable — from ``gov/`` entirely: no code
+path mints, derives, or falls back to a dev key. ``require_key()`` raises
+``NoKeyConfiguredError`` loudly when no key is provisioned — in every
+deployment mode. ``require_production_key()`` is unchanged in spirit
+(configured keys only, no fallback). A deployment that wants a key
+configures one (env backend, keyring file, or KMS envelope); test
+harnesses provision explicit random keys via ``tests/keyfixture.py``
+through the same env backend production uses — the helper lives in
+``tests/``, never in ``gov/``.
 
-``require_production_key()`` (R6c) is the strictest resolver: configured
-keys only, and configured dev-key material (dev bytes, ``dev`` epoch or
-``dev`` status) is rejected outright — there is no ``GOV_DEV_KEYS``
-fallback on that path at all. ``gov/log.py`` enforces the same posture
-for the live log via its strict ``_active_key()`` (dev keys additionally
-require an in-code ``enable_dev_keys()`` call there).
+Note (honest boundary): the byte-exact screen that used to reject the
+retired public dev bytes on the production path is gone with the bytes
+themselves — the constant no longer exists anywhere under ``gov/`` to
+screen against. A deployment that pastes the old documented bytes into
+``GOV_LOG_KEY`` would be using a publicly-known key: that is now an
+operator-misconfiguration class, not a code fallback.
 """
 
 import hashlib
@@ -78,7 +82,6 @@ import hmac
 import json
 import os
 import secrets
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -95,15 +98,13 @@ FORMAT_VERSION = 1
 KEY_BYTES = 32  # 256-bit HMAC keys
 KEY_ID_LEN = 16  # hex chars of sha256(key) used as the public key identifier
 
-# Publicly documented development key. Canonical bytes are identical to
-# gov.log._DEV_KEY so MACs agree if both paths are ever mixed.
-_DEV_KEY_CANONICAL = b"agent-governance-dev-key-v1::NOT-FOR-PRODUCTION"
-_DEV_EPOCH = "dev"
+# Wave-81: the public development key is GONE from gov/ entirely — no
+# canonical dev bytes, no dev epoch label, no dev() constructor, no dev
+# opt-in variable. See the module docstring ("No dev keys — ever").
 
 _ENV_KEY = "GOV_LOG_KEY"
 _ENV_EPOCH = "GOV_LOG_KEY_EPOCH"
 _ENV_ARCHIVE = "GOV_LOG_KEY_ARCHIVE"  # JSON {epoch: key_string}
-_ENV_DEV_OPT_IN = "GOV_DEV_KEYS"
 
 _EPOCH_RE = None  # compiled lazily to keep import cheap
 
@@ -118,14 +119,6 @@ def _epoch_pattern():
 
 def _utcnow():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _warn_loud(message):
-    banner = ("=" * 70 + "\n"
-              "GOVERNANCE KEY WARNING\n"
-              "%s\n" % message +
-              "=" * 70 + "\n")
-    print(banner, file=sys.stderr)
 
 
 class NoKeyConfiguredError(RuntimeError):
@@ -301,24 +294,9 @@ class KeyRing:
         ring._active_epoch = epoch
         return ring
 
-    @classmethod
-    def dev(cls):
-        """Dev key ring. ONLY when GOV_DEV_KEYS=1, with loud warnings."""
-        if os.environ.get(_ENV_DEV_OPT_IN) != "1":
-            raise NoKeyConfiguredError(
-                "No production key configured (GOV_LOG_KEY unset and no "
-                "keyring file), and dev keys are not opted in. Set "
-                "GOV_DEV_KEYS=1 to explicitly allow the public development "
-                "key (zero integrity), or configure a real key.")
-        _warn_loud(
-            "GOV_DEV_KEYS=1: using the PUBLIC development key.\n"
-            "This log is NOT tamper-evident against anyone who has read the\n"
-            "source. Never use for real audit data.")
-        ring = cls()
-        ring._keys[_DEV_EPOCH] = KeyMaterial(
-            _DEV_EPOCH, _DEV_KEY_CANONICAL, status="dev")
-        ring._active_epoch = _DEV_EPOCH
-        return ring
+    # Wave-81: the dev() constructor is DELETED — the public dev key no
+    # longer exists in gov/. Test harnesses provision explicit random
+    # keys (tests/keyfixture.py) through the env backend, like production.
 
     @classmethod
     def from_env(cls):
@@ -348,15 +326,6 @@ class KeyRing:
                 if ep == epoch:
                     continue
                 key_bytes = str(kval).encode("utf-8")
-                # F77: the strict resolver screens the ACTIVE key for dev
-                # material; the archive must be screened too, or the
-                # public dev key can be smuggled in under a retired epoch
-                # and used to forge old-epoch history via verify_log.
-                if key_bytes == _DEV_KEY_CANONICAL or ep == _DEV_EPOCH:
-                    raise NoKeyConfiguredError(
-                        "GOV_LOG_KEY_ARCHIVE entry %r is the public "
-                        "development key (bytes or 'dev' epoch); dev keys "
-                        "are rejected in the archive" % (ep,))
                 ring._keys[ep] = KeyMaterial(ep, key_bytes,
                                              status="retired")
         return ring
@@ -647,61 +616,58 @@ class KeyRing:
 
 
 def require_key(*, deployment_mode=None):
-    """Fail-closed production key resolution.
+    """Fail-closed key resolution (wave-81 final form).
 
-    Prefers configured keys (env backend); dev keys only with the
-    explicit double opt-in — the in-code ``enable_dev_keys()`` call AND
-    ``GOV_DEV_KEYS=1`` — matching ``gov/log.py`` (wave-69: the old
-    env-only fallback's contract disagreed with the log path's, and no
-    production callers exist). Raises :class:`NoKeyConfiguredError`
-    otherwise — the production path must not silently fall back to a
-    public key. Prefer :func:`require_production_key` (no dev fallback
-    at all) for strict production use.
+    Configured keys only (env backend). Raises
+    :class:`NoKeyConfiguredError` LOUDLY when no key is provisioned —
+    in EVERY deployment mode. There is no dev-key fallback on this
+    path: wave-81 deleted the public dev key and every opt-in from
+    ``gov/``, so the old double opt-in is gone, not merely gated.
+    Prefer :func:`require_production_key` for the strictest form
+    (identical post-wave-81; kept as the named production entry point).
 
-    ``deployment_mode`` (wave-70): explicit mode declaration, keyword-
-    only; wins over ``GOV_DEPLOYMENT_MODE`` for the production/dev
-    contradiction check (wave-61 precedent). ``None`` (default) keeps
-    the pre-wave-70 behavior exactly.
+    ``deployment_mode`` (wave-70): explicit mode declaration,
+    keyword-only; still validated (unknown modes fail fast) but no
+    longer selects a key story — provisioning is explicit in every
+    mode. ``None`` (default) keeps the configured-key behavior
+    byte-identical.
     """
+    if deployment_mode is not None:
+        # Lazy: gov/keyprovider.py imports this module at top level; a
+        # top-level import back would be circular. By call time both
+        # are initialized.
+        from .keyprovider import resolve_deployment_mode
+        resolve_deployment_mode(deployment_mode)  # unknown modes fail fast
+    else:
+        # Also validate the env/default mode (wave-61 discipline): an
+        # unknown GOV_DEPLOYMENT_MODE never silently means "no guard".
+        # Lazy for the same circular-import reason.
+        from .keyprovider import resolve_deployment_mode as _rdm
+        _rdm(None)
     try:
         return KeyRing.from_env()
-    except NoKeyConfiguredError:
-        pass
-    if not _logmod.dev_keys_enabled():
+    except NoKeyConfiguredError as e:
         raise NoKeyConfiguredError(
-            "GOV_LOG_KEY is not set and dev keys are not enabled for this "
-            "process: dev fallback requires gov.log.enable_dev_keys() in "
-            "code AND GOV_DEV_KEYS=1 in the environment (test harnesses "
-            "only).")
-    from .keyprovider import production_contradiction, resolve_deployment_mode
-    contradiction = production_contradiction(
-        resolve_deployment_mode(deployment_mode))
-    if contradiction is not None:
-        raise contradiction
-    return KeyRing.dev()  # raises unless GOV_DEV_KEYS=1
+            "no key configured (%s). There is no dev-key fallback on "
+            "this path — wave-81 removed the dev key from gov/ entirely "
+            "— so configure a real key via GOV_LOG_KEY / GOV_LOG_KEY_EPOCH "
+            "(or GOV_KEYRING_FILE). Fail-closed: no key returned." % (e,))
 
 
 def require_production_key():
-    """Fail-closed PRODUCTION key resolution (R6c).
+    """Fail-closed PRODUCTION key resolution (R6c), wave-81 final form.
 
-    Configured keys only (env backend). Dev keys are rejected
-    *structurally*: there is no ``GOV_DEV_KEYS`` fallback on this path at
-    all, and a configured key whose bytes equal the public dev key — or
-    whose epoch/status is ``dev`` — is refused outright (pasting the dev
-    key into ``GOV_LOG_KEY`` does not make it a production key). Raises
-    :class:`NoKeyConfiguredError` otherwise. This closes F73 on the
-    keyring-resolution path; ``gov/log.py`` enforces the same posture on
-    the live-log path.
+    Configured keys only (env backend). Raises
+    :class:`NoKeyConfiguredError` when unset. There is no dev-key
+    fallback on this path — and since wave-81 there is no dev key
+    anywhere in ``gov/`` to screen for either: the retired byte-exact
+    screen for the old public dev bytes is gone with the bytes
+    themselves (see the module docstring for the honest boundary). Any
+    key the operator configures is used as-is. This keeps F73 closed
+    on the keyring-resolution path; ``gov/log.py`` enforces the same
+    posture on the live-log path via ``_active_key()``.
     """
-    ring = KeyRing.from_env()  # raises NoKeyConfiguredError when unset
-    active = ring.active()
-    if (active.key == _DEV_KEY_CANONICAL or active.epoch == _DEV_EPOCH
-            or active.status == "dev"):
-        raise NoKeyConfiguredError(
-            "the configured key is the public development key (bytes, "
-            "'dev' epoch, or 'dev' status); dev keys are not usable on "
-            "the production path")
-    return ring
+    return KeyRing.from_env()  # raises NoKeyConfiguredError when unset
 
 
 @contextmanager

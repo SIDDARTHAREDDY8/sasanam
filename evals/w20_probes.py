@@ -24,30 +24,27 @@ retired: ``forge_fails_single_key``, ``forge_typed_api_raises``,
 ``forge_report_stays_dev`` (the first two asserted pre-F73 behavior;
 the last three keep their meaning in the double-opt-in world).
 
-Strict-world assertions:
+Strict-world assertions (wave-81: the F73 strict resolver is deleted
+with the dev key — explicit material is used verbatim):
 
-- ``dev_key_config_rejected_loud``: ``GOV_LOG_KEY``=<dev bytes> /
-  ``GOV_LOG_KEY_EPOCH=dev`` -> the production-path resolver raises
-  ``NoKeyConfiguredError`` — the explicitly-configured public key is
-  rejected, so the forgery can never be misread as verifiable.
-- ``label_binding_survives_in_dev_world``: under the legitimate double
-  opt-in (``GOV_LOG_KEY`` unset, ``GOV_DEV_KEYS=1`` + in-code
-  ``enable_dev_keys()``), ``_verify`` still returns ``ok=False`` with a
+- ``explicit_bytes_used_verbatim``: ``GOV_LOG_KEY``=<retired dev bytes>
+  explicitly configured -> the resolver uses them as-is (no screening);
+  the forgery still fails closed at label binding, never misread.
+- ``label_binding_survives_with_explicit_key``: under legitimate
+  explicit provisioning, ``_verify`` still returns ``ok=False`` with a
   "key_epoch label mismatch" error — the F32 label-binding check is
-  intact wherever dev keys are legitimately usable.
-- ``typed_api_raises_in_dev_world``: ``require_verified`` raises the
-  typed ``LogUnverifiableError`` under the double opt-in.
-- ``prodkey_still_closed``: a real (non-dev) configured key still
-  closes on the dev-MAC'd forgery, now via MAC mismatch.
+  intact.
+- ``typed_api_raises_with_explicit_key``: ``require_verified`` raises
+  the typed ``LogUnverifiableError`` under explicit provisioning.
+- ``other_key_still_closed``: a different explicitly configured key
+  still closes on the insider-MAC'd forgery.
 - ``keyring_still_closed``: the KeyRing path is unchanged (label
-  selects the verifying key) — does not go through the strict resolver.
-- ``report_stays_dev_in_dev_world``: ``key_status`` under the double
-  opt-in renders the forgery ``dev`` with the 'production' label
-  mismatch flagged.
+  selects the verifying key).
+- ``report_flags_mismatch``: ``key_status`` renders the forgery with
+  the 'production' label mismatch flagged, never a production banner.
 
-Env hygiene (sit47 lesson): every mutation of ``os.environ`` and of the
-module-level ``_dev_enabled`` flag is saved and restored in a finally —
-nothing leaks into later cells.
+Env hygiene (sit47 lesson): every mutation of ``os.environ`` is saved
+and restored in a finally — nothing leaks into later cells.
 """
 
 import contextlib
@@ -66,18 +63,15 @@ from evals.w9_probes import (  # noqa: E402
     _forge_production_labeled_log, _tmp)
 from demo.make_report import key_status  # noqa: E402
 
-_DEV_BYTES = _logmod._DEV_KEY.decode("utf-8")
-
-_KEY_VARS = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DEV_KEYS")
+_KEY_VARS = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH")
 
 
 @contextlib.contextmanager
-def _key_env(key=None, epoch=None, dev_keys=None):
-    """Set GOV_LOG_KEY[/GOV_LOG_KEY_EPOCH][/GOV_DEV_KEYS], restoring all
-    afterwards. None means 'unset'."""
+def _key_env(key=None, epoch=None):
+    """Set GOV_LOG_KEY[/GOV_LOG_KEY_EPOCH], restoring all afterwards.
+    None means 'unset'."""
     old = {k: os.environ.get(k) for k in _KEY_VARS}
-    for k, v in (("GOV_LOG_KEY", key), ("GOV_LOG_KEY_EPOCH", epoch),
-                 ("GOV_DEV_KEYS", dev_keys)):
+    for k, v in (("GOV_LOG_KEY", key), ("GOV_LOG_KEY_EPOCH", epoch)):
         if v is None:
             os.environ.pop(k, None)
         else:
@@ -93,65 +87,58 @@ def _key_env(key=None, epoch=None, dev_keys=None):
 
 
 @contextlib.contextmanager
-def _dev_world():
-    """The legitimate double-opt-in dev posture: GOV_LOG_KEY unset,
-    GOV_DEV_KEYS=1, in-code enable_dev_keys(). Everything restored."""
-    old_enabled = _logmod._dev_enabled
-    with _key_env(key=None, epoch=None, dev_keys="1"):
-        _logmod.enable_dev_keys()
-        try:
-            yield
-        finally:
-            _logmod._dev_enabled = old_enabled
+def _explicit_world():
+    """Wave-81: the legitimate explicit-provisioning posture — an
+    explicitly configured key/epoch, everything restored afterwards."""
+    import secrets as _secrets
+    with _key_env(key=_secrets.token_hex(32), epoch="epoch-9"):
+        yield
 
 
 def _w20_sit48_strict_forge():
-    """sit48 override: F32 forgery in the F73 strict-resolver world."""
+    """sit48 override: F32 forgery in the wave-81 explicit-key world."""
     o = {}
     with _tmp("w20f-") as d:
         lp, entries = _forge_production_labeled_log(d)
-        # 1. The probe's old documented dev flow: explicitly configure the
-        #    public dev key and verify. F73 rejects the configuration
-        #    itself — fail closed at the resolver, never misread.
-        with _key_env(key=_DEV_BYTES, epoch="dev", dev_keys="1"):
-            rejected = False
-            try:
-                _logmod._verify(lp)
-            except NoKeyConfiguredError:
-                rejected = True
-            except Exception:
-                rejected = False
-        o["dev_key_config_rejected_loud"] = rejected
-        # 2-6. In the legitimate double-opt-in world the F32 claims hold.
-        with _dev_world():
+        # 1. Explicitly configuring the retired public dev bytes: used
+        #    verbatim (no screening anymore) — and the forgery still
+        #    fails closed at label binding, never misread as verifiable.
+        retired = "retired-public-dev-bytes-v1"
+        with _key_env(key=retired, epoch="epoch-9"):
             v = _logmod._verify(lp)
-            o["label_binding_survives_in_dev_world"] = (
+            o["explicit_bytes_used_verbatim"] = (
+                not v["ok"]
+                and "key_epoch label mismatch" in (v["error"] or ""))
+        # 2-4, 6. Under legitimate explicit provisioning the F32 claims
+        # hold.
+        with _explicit_world():
+            v = _logmod._verify(lp)
+            o["label_binding_survives_with_explicit_key"] = (
                 not v["ok"]
                 and "key_epoch label mismatch" in (v["error"] or ""))
             try:
                 _logmod.require_verified(lp)
-                o["typed_api_raises_in_dev_world"] = False
+                o["typed_api_raises_with_explicit_key"] = False
             except _logmod.LogUnverifiableError:
-                o["typed_api_raises_in_dev_world"] = True
+                o["typed_api_raises_with_explicit_key"] = True
             from demo.make_report import key_status as _ks
             ks = _ks(entries, v["key_epoch"])
-            o["report_stays_dev_in_dev_world"] = (
-                ks["status"] == "dev" and ks["verified_epoch"] == "dev"
+            o["report_flags_mismatch"] = (
+                ks["verified_epoch"] == v["key_epoch"]
                 and ks["label_mismatch"] == ["production"]
-                and "LABEL MISMATCH" in ks["banner_line"])
-        # A production-configured single-key verifier: still closed
-        # (MAC mismatch under a non-dev configured key).
-        with _key_env(key="prod-secret-not-public-xyz",
-                      epoch="production", dev_keys=None):
-            o["prodkey_still_closed"] = not _logmod._verify(lp)["ok"]
-        # The KeyRing path: the label selects the verifying key — no
-        # strict-resolver involvement, unchanged behavior.
+                and "LABEL MISMATCH" in ks["banner_line"]
+                and "verified epoch `production`" not in ks["banner_line"])
+        # A different explicitly configured key: still closed.
+        with _key_env(key="other-explicit-key", epoch="epoch-2"):
+            o["other_key_still_closed"] = not _logmod._verify(lp)["ok"]
+        # The KeyRing path: the label selects the verifying key —
+        # unchanged behavior.
         ring = KeyRing()
         ring._keys["production"] = KeyMaterial(
-            "production", b"prod-secret-not-public-xyz", status="active")
-        ring._keys["dev"] = KeyMaterial(
-            "dev", _logmod._DEV_KEY, status="dev")
-        ring._active_epoch = "production"
+            "production", b"other-explicit-key", status="active")
+        ring._keys["epoch-9"] = KeyMaterial(
+            "epoch-9", b"w9-insider-holds-this-key", status="active")
+        ring._active_epoch = "epoch-9"
         o["keyring_still_closed"] = not ring.verify_log(lp)["ok"]
     return o
 
@@ -188,7 +175,7 @@ def _w20_sit118_replay_shape():
     closure; the old "replay_accepted_ok" key is now asserted False.
     """
     o = {}
-    with _key_env(key="w25f72", epoch="w25a", dev_keys=None):
+    with _key_env(key="w25f72", epoch="w25a"):
         with _tmp("w25f72-") as d:
             from gov.log import (
                 ActionLog, write_chain_tip_from_tail, _tip_cache_path,
@@ -263,7 +250,7 @@ def _w20_sit115_replay_honesty():
     o["anchor_gen_check_in_source"] = (
         "_max_pinned_tip_gen(cp_bytes, key, active_epoch) > tip[\"gen\"]"
         in src)
-    with _key_env(key="w25f72h", epoch="w25a", dev_keys=None):
+    with _key_env(key="w25f72h", epoch="w25a"):
         with _tmp("w25f72h-") as d:
             from gov.log import (
                 ActionLog, write_chain_tip_from_tail, _tip_cache_path,

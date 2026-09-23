@@ -1,16 +1,14 @@
-"""Tests for gov/keys.py: rotation epochs, backends, dev-key gating,
-rotation ceremony, and cross-epoch log verification.
+"""Tests for gov/keys.py: rotation epochs, backends, no-dev-fallback
+refusal (wave-81), rotation ceremony, and cross-epoch log verification.
 
 Deterministic: keys are random but every assertion is over structure,
 round-trips, and verification verdicts — never over key values.
 """
 
-import io
 import json
 import os
 import sys
 import unittest
-from contextlib import redirect_stderr
 from pathlib import Path
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +26,7 @@ from gov.log import ActionLog
 def _clean_env():
     """Snapshot and scrub key-related env vars; returns a restore closure."""
     names = ("GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE",
-             "GOV_DEV_KEYS")
+             "GOV_DEPLOYMENT_MODE")
     saved = {n: os.environ.get(n) for n in names}
     for n in names:
         os.environ.pop(n, None)
@@ -138,56 +136,59 @@ class KeyRingTest(unittest.TestCase):
         self.assertIn(ring.active().key_id, blob)
 
 
-class DevKeyGatingTest(unittest.TestCase):
+class NoKeyRefusalTest(unittest.TestCase):
+    """Wave-81: the dev key is deleted from gov/ -- there is no fallback
+    in any deployment mode. require_key() / require_production_key()
+    raise NoKeyConfiguredError whenever no key is provisioned, and use
+    the explicitly configured key whenever one is."""
+
     def setUp(self):
         self.addCleanup(_clean_env())
 
-    def test_no_key_no_optin_fails_closed(self):
-        with self.assertRaises(NoKeyConfiguredError):
-            keys.require_key()
-        with self.assertRaises(NoKeyConfiguredError):
-            KeyRing.dev()
+    def _modes(self):
+        return ("production", "staging", "dev", "test")
 
-    def test_dev_opt_in_warns_loudly(self):
-        os.environ["GOV_DEV_KEYS"] = "1"
-        buf = io.StringIO()
-        with redirect_stderr(buf):
+    def test_no_key_refuses_in_every_mode(self):
+        for mode in self._modes():
+            os.environ["GOV_DEPLOYMENT_MODE"] = mode
+            with self.assertRaises(NoKeyConfiguredError, msg=mode):
+                keys.require_key()
+            with self.assertRaises(NoKeyConfiguredError, msg=mode):
+                keys.require_production_key()
+
+    def test_configured_key_used_in_every_mode(self):
+        # Deployment mode is validated but no longer selects a key story:
+        # an explicitly configured key works identically in every mode.
+        os.environ["GOV_LOG_KEY"] = "explicit-key-here"
+        for mode in self._modes():
+            os.environ["GOV_DEPLOYMENT_MODE"] = mode
             ring = keys.require_key()
-        out = buf.getvalue()
-        self.assertIn("WARNING", out)
-        self.assertIn("PUBLIC development key", out)
-        self.assertEqual(ring.active().epoch, "dev")
+            self.assertEqual(ring.active().epoch, "env")
+            self.assertEqual(ring.active().key, b"explicit-key-here")
+            ring2 = keys.require_production_key()
+            self.assertEqual(ring2.active().key, b"explicit-key-here")
 
-    def test_configured_key_beats_dev_opt_in(self):
-        os.environ["GOV_LOG_KEY"] = "prod-key-here"
-        os.environ["GOV_DEV_KEYS"] = "1"
-        ring = keys.require_key()
-        self.assertEqual(ring.active().epoch, "env")
-        self.assertNotEqual(ring.active().epoch, "dev")
+    def test_unknown_mode_fails_fast(self):
+        os.environ["GOV_DEPLOYMENT_MODE"] = "prod"
+        with self.assertRaises(ValueError):
+            keys.require_key()
+
+    def test_old_dev_names_are_absent(self):
+        # Break-first: the double opt-in API is gone from gov.log and
+        # the dev constructor is gone from KeyRing.
+        import gov.log
+        for name in ("enable_dev_keys", "dev_keys_enabled"):
+            self.assertFalse(hasattr(gov.log, name), name)
+        self.assertFalse(hasattr(KeyRing, "dev"))
+        with self.assertRaises(ImportError):
+            from gov.log import enable_dev_keys  # noqa: F401
 
     def test_require_production_key_unset_fails_closed(self):
-        with self.assertRaises(NoKeyConfiguredError):
-            keys.require_production_key()
-        # The GOV_DEV_KEYS opt-in is irrelevant on this path: dev keys
-        # are structurally unreachable here.
-        os.environ["GOV_DEV_KEYS"] = "1"
-        with self.assertRaises(NoKeyConfiguredError):
-            keys.require_production_key()
-
-    def test_require_production_key_rejects_configured_dev_material(self):
-        os.environ["GOV_LOG_KEY"] = keys._DEV_KEY_CANONICAL.decode("utf-8")
-        with self.assertRaises(NoKeyConfiguredError):
-            keys.require_production_key()
-
-    def test_require_production_key_rejects_dev_epoch(self):
-        os.environ["GOV_LOG_KEY"] = "something-not-dev-bytes"
-        os.environ["GOV_LOG_KEY_EPOCH"] = "dev"
         with self.assertRaises(NoKeyConfiguredError):
             keys.require_production_key()
 
     def test_require_production_key_accepts_configured_key(self):
         os.environ["GOV_LOG_KEY"] = "prod-key-here"
-        os.environ["GOV_DEV_KEYS"] = "1"
         ring = keys.require_production_key()
         self.assertEqual(ring.active().epoch, "env")
         self.assertEqual(ring.active().key, b"prod-key-here")

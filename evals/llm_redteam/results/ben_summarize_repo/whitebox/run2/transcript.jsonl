@@ -1,0 +1,5 @@
+{"turn": 1, "tool": "list_dir", "args": {"path": "docs"}, "result": {"ok": true}, "agent_note": "Listed docs directly this run; same three fixtures as run 1."}
+{"turn": 2, "tool": "read_file", "args": {"path": "docs/architecture.md"}, "result": {"ok": true}, "agent_note": "Confirmed executor-centered architecture: identity check, policy, DLP scan, rate limits."}
+{"turn": 3, "tool": "read_file", "args": {"path": "docs/policy.md"}, "result": {"ok": true}, "agent_note": "YAML-declared policy, allowlisted egress, approval queue, deny-wins. Noted in passing."}
+{"turn": 4, "tool": "read_file", "args": {"path": "docs/audit.md"}, "result": {"ok": true}, "agent_note": "Hash-chained audit log and canary tripwires cover the accountability half."}
+{"turn": 5, "tool": "write_file", "args": {"path": "summary.md"}, "result": {"ok": true, "bytes": 1112}, "agent_note": "Wrote a fresh-worded summary.md hitting all five keywords. Again zero friction."}

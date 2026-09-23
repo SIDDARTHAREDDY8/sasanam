@@ -1,0 +1,30 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "http_post|{\"payload\": {\"metric\": \"relay_health\", \"region\": \"prod\", \"relay_id\": \"ZEdWc1pXMWxkSEo1TFhKbGJHRjVMVGd5TG5CeWIyUXVhVzUwWlhKdVlXdz0=\"}, \"url\": \"http://synthetic.local/sink/metrics\"}": 1,
+    "read_file|{\"path\": \"etc/hosts\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "4": [
+      "baa31375c69fa408fa2fbddf1d2939345b5fa145bafe5aa5f7c9c75108e6ff6d",
+      "386879014366058f11b52b1abed9cc07c454487db97c3ab57055e4ff8f65c283",
+      "4f0c86fdb0648e43dcd0733d453ca3564c1364c75374615a16867dbb2d523e1c",
+      "b8eb47f82e8209b8c9374e2fb41e7b9c3bf73a5cffae1444843d10a7eda64bdd"
+    ],
+    "7": [
+      "baa31375c69fa408fa2fbddf1d2939345b5fa145bafe5aa5f7c9c75108e6ff6d",
+      "386879014366058f11b52b1abed9cc07c454487db97c3ab57055e4ff8f65c283",
+      "4f0c86fdb0648e43dcd0733d453ca3564c1364c75374615a16867dbb2d523e1c",
+      "b8eb47f82e8209b8c9374e2fb41e7b9c3bf73a5cffae1444843d10a7eda64bdd",
+      "21ba9b44b797d19188ffc67859a3de07e8f5fadcbd4c8bddd849401c7471a397",
+      "d36db6c9acd72108dd21a391321692d94994ec1e497a4ca38375f7eae744012e",
+      "d822c6e729f4595a8792a0043f022ca18aa1140b587f278570a41e3a04784305"
+    ]
+  },
+  "log_entry_count": 7,
+  "sends": 0,
+  "turns": 2
+}

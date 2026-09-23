@@ -99,11 +99,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    # SCAFFOLD dev-key opt-in (R6c): synthetic demo script, not a
-    # production entry point — explicit in-code enable_dev_keys() PLUS
-    # the GOV_DEV_KEYS=1 env factor, so it runs with zero configuration.
+    # SCAFFOLD key provisioning (wave-81): synthetic demo script, not a
+    # production entry point — the dev-key opt-in is deleted, so the
+    # scaffold provisions an explicit local test key. A real
+    # integration configures GOV_LOG_KEY and never does this.
     import os
-    os.environ.setdefault("GOV_DEV_KEYS", "1")
-    from gov.log import enable_dev_keys
-    enable_dev_keys()
+    import secrets
+    os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+    os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     asyncio.run(main())

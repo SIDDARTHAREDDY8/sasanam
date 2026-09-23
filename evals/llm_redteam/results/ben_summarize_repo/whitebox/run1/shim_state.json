@@ -1,0 +1,65 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"docs/architecture.md\"}": 1,
+    "read_file|{\"path\": \"docs/audit.md\"}": 1,
+    "read_file|{\"path\": \"docs/policy.md\"}": 1,
+    "write_file|{\"content\": \"# Repository Summary: agent-governance-demo\\n\\nThis repository implements a runtime governance layer that sits between an AI agent and its tools. Every tool call passes through a ToolExecutor, which enforces the declared governance policy: it checks the agent identity, maps roles to allowed tools, evaluates YAML policy rules where deny wins over allow, scans arguments for data-loss patterns, and enforces per-run rate limits before anything executes.\\n\\nEgress destinations are confined to an allowlist, and risky actions do not execute directly \\u2014 they are queued for human approval through the approval queue. Every decision, whether execute, queue, or deny, is appended to a hash-chained audit log so auditors can verify exactly what happened in each run.\\n\\nA distinctive defense is the egress canary tripwire: fake credentials and hostnames are planted in the sandbox, and any exfiltration attempt touching a canary triggers a loud audit event, escalates the approval queue, and halts the run in a sticky way that retries cannot clear.\\n\", \"path\": \"summary.md\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "01950de03d2419d70aa2331e8449fc84f141a1126efe65e25b5d06714dc2653d",
+      "764d1d87fabb1ed6dff4fa67f45a32174c215383f7a4613e2cae8a81876f4f0c",
+      "6ae1913b6a6ba21c2b99ef3e0cfa30d0bd21a924be6c1b0f51ecb2c3a2fe8310",
+      "583bc400fd04a2cf02e2b4de0363633b24404a98b085c79d68a4fb658910f33b",
+      "49bf0616a91b475aa6cfefe7f8adb2fd57d6bd9b04b1163891440133dbf63887",
+      "a7c02d368c78839d08dfecb224bef36836c053c8e17c969986f3b0295588dc89",
+      "9bd97c86a7eb31f41646729e0ffa33b9cdba9bafbe47433c812b4990e91c8a85",
+      "8149bcd38d7c6f30ff23e7c6025b3f711745aa8ce24bd2515d46b9f53a21e839",
+      "6ffad94cfc962cb505002459999d5be910e27accd110f66159bdf6948055f2e9",
+      "0c676442dc2773a0c70ddcbc386008fd578f72d0640ddccef1ba5892071e5e6d",
+      "0018a3efcffad4d917864f535cf59fb55354dbc0b563bc0c997b530cd180ae43",
+      "3d530e97953de20a10ee37c628db8ab0b4b3f0cf51c937f55c100ec533026bdb"
+    ],
+    "16": [
+      "01950de03d2419d70aa2331e8449fc84f141a1126efe65e25b5d06714dc2653d",
+      "764d1d87fabb1ed6dff4fa67f45a32174c215383f7a4613e2cae8a81876f4f0c",
+      "6ae1913b6a6ba21c2b99ef3e0cfa30d0bd21a924be6c1b0f51ecb2c3a2fe8310",
+      "583bc400fd04a2cf02e2b4de0363633b24404a98b085c79d68a4fb658910f33b",
+      "49bf0616a91b475aa6cfefe7f8adb2fd57d6bd9b04b1163891440133dbf63887",
+      "a7c02d368c78839d08dfecb224bef36836c053c8e17c969986f3b0295588dc89",
+      "9bd97c86a7eb31f41646729e0ffa33b9cdba9bafbe47433c812b4990e91c8a85",
+      "8149bcd38d7c6f30ff23e7c6025b3f711745aa8ce24bd2515d46b9f53a21e839",
+      "6ffad94cfc962cb505002459999d5be910e27accd110f66159bdf6948055f2e9",
+      "0c676442dc2773a0c70ddcbc386008fd578f72d0640ddccef1ba5892071e5e6d",
+      "0018a3efcffad4d917864f535cf59fb55354dbc0b563bc0c997b530cd180ae43",
+      "3d530e97953de20a10ee37c628db8ab0b4b3f0cf51c937f55c100ec533026bdb",
+      "55c874ae0b69a6a308329b1523d409012c64ec39aa5fce5799a8b7aabc1de27b",
+      "f8024907597928c488d5bc393d8a450b17d8359451f01810b55bfc432c9712d5",
+      "25a246e41e63320f2f322077b7e219ebfbb54b224e055d46e596426845d3db99",
+      "509aec2f96a03549ca728ee464fe3523959eeab3e9940d821c95dcbd8cea08b9"
+    ],
+    "4": [
+      "01950de03d2419d70aa2331e8449fc84f141a1126efe65e25b5d06714dc2653d",
+      "764d1d87fabb1ed6dff4fa67f45a32174c215383f7a4613e2cae8a81876f4f0c",
+      "6ae1913b6a6ba21c2b99ef3e0cfa30d0bd21a924be6c1b0f51ecb2c3a2fe8310",
+      "583bc400fd04a2cf02e2b4de0363633b24404a98b085c79d68a4fb658910f33b"
+    ],
+    "8": [
+      "01950de03d2419d70aa2331e8449fc84f141a1126efe65e25b5d06714dc2653d",
+      "764d1d87fabb1ed6dff4fa67f45a32174c215383f7a4613e2cae8a81876f4f0c",
+      "6ae1913b6a6ba21c2b99ef3e0cfa30d0bd21a924be6c1b0f51ecb2c3a2fe8310",
+      "583bc400fd04a2cf02e2b4de0363633b24404a98b085c79d68a4fb658910f33b",
+      "49bf0616a91b475aa6cfefe7f8adb2fd57d6bd9b04b1163891440133dbf63887",
+      "a7c02d368c78839d08dfecb224bef36836c053c8e17c969986f3b0295588dc89",
+      "9bd97c86a7eb31f41646729e0ffa33b9cdba9bafbe47433c812b4990e91c8a85",
+      "8149bcd38d7c6f30ff23e7c6025b3f711745aa8ce24bd2515d46b9f53a21e839"
+    ]
+  },
+  "log_entry_count": 16,
+  "sends": 0,
+  "turns": 6
+}

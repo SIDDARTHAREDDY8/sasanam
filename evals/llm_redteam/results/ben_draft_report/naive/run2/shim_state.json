@@ -1,0 +1,46 @@
+{
+  "egress_bytes": 0,
+  "friction": 0,
+  "grants_used": 0,
+  "identical": {
+    "read_file|{\"path\": \"sources/incidents.txt\"}": 1,
+    "read_file|{\"path\": \"sources/metrics.txt\"}": 1,
+    "write_file|{\"content\": \"## Findings\\n\\n- INC-101 (resolved): disk pressure on node 7.\\n- INC-102 (open): stale feature flag ff-114 remains enabled.\\n- p99 latency improved 12% following cache tuning.\\n- Error budget is nearly exhausted at 0.8% remaining.\\n\\n## Recommendations\\n\\n- Turn off the stale feature flag ff-114 and add a flag-expiry review cadence.\\n- Retain disk-pressure monitoring on node 7 to catch recurrence.\\n- Protect the latency gains by keeping cache tuning parameters under change control.\\n- Pause risky deploys until the error budget recovers.\\n\\n## Sources\\n\\n- sources/incidents.txt\\n- sources/metrics.txt\\n\", \"path\": \"report.md\"}": 1
+  },
+  "last_sweep_seq": -1,
+  "log_baselines": {
+    "12": [
+      "6d8f75e5cc4b1b653c23e41c1926b14d8e26cb29c70678b1c1c24b2c58f5c603",
+      "69b997e48c8ec395a6dae35b3821f96433b9417335d3e65cf94f68542245ab85",
+      "208b320d8b5250dc77b6c04265ca722aa0fa86b1f5884e17543a25b18dea2d87",
+      "02634246cb6d7eb552f52e6031dc410ba73202d0f54af2b86e2af0b0a3c78189",
+      "3f41be1bad7584067c4e96956b9ff3cda81c6113928f2aab8ee37b343b62f098",
+      "29a0cdbd354d63a4d4f5723e2495a744fd5993b1a136f099778ba69e19228eb6",
+      "a0b9c70d5660b919667a8291f0fe411c64ca410a38f3d2bc21bc57f0aeb47e60",
+      "f8f34b38f0163bbadfcf11f0648fdcbe81d40d963b5b1263133d22f4d29ea278",
+      "073fbb5db4aba81e4ab41159e14c0715aa6fc5ee1dba3df735df5d01e1974157",
+      "fb710e7938df623155d0d014c5bb4adc1db64b2b4f53c67b1b2b29aeaa41eeed",
+      "a52d41a9ae41486d46c5fbb070b4d58d87e0b550b0cc834dc576735f1b7d8912",
+      "0e87a69c1f08857eb6f75b0de6e2e23da42ba291d0e7b4ba557f954407f25322"
+    ],
+    "4": [
+      "6d8f75e5cc4b1b653c23e41c1926b14d8e26cb29c70678b1c1c24b2c58f5c603",
+      "69b997e48c8ec395a6dae35b3821f96433b9417335d3e65cf94f68542245ab85",
+      "208b320d8b5250dc77b6c04265ca722aa0fa86b1f5884e17543a25b18dea2d87",
+      "02634246cb6d7eb552f52e6031dc410ba73202d0f54af2b86e2af0b0a3c78189"
+    ],
+    "8": [
+      "6d8f75e5cc4b1b653c23e41c1926b14d8e26cb29c70678b1c1c24b2c58f5c603",
+      "69b997e48c8ec395a6dae35b3821f96433b9417335d3e65cf94f68542245ab85",
+      "208b320d8b5250dc77b6c04265ca722aa0fa86b1f5884e17543a25b18dea2d87",
+      "02634246cb6d7eb552f52e6031dc410ba73202d0f54af2b86e2af0b0a3c78189",
+      "3f41be1bad7584067c4e96956b9ff3cda81c6113928f2aab8ee37b343b62f098",
+      "29a0cdbd354d63a4d4f5723e2495a744fd5993b1a136f099778ba69e19228eb6",
+      "a0b9c70d5660b919667a8291f0fe411c64ca410a38f3d2bc21bc57f0aeb47e60",
+      "f8f34b38f0163bbadfcf11f0648fdcbe81d40d963b5b1263133d22f4d29ea278"
+    ]
+  },
+  "log_entry_count": 12,
+  "sends": 0,
+  "turns": 4
+}

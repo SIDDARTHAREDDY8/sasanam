@@ -110,17 +110,31 @@ def _env(**pairs):
 
 @contextlib.contextmanager
 def _dev_keys(enabled=True):
-    prev = log_mod._dev_enabled
-    prev_warned = log_mod._dev_warned
-    log_mod._dev_enabled = enabled
-    log_mod._dev_warned = False
+    """Wave-81: explicit test-key provisioning.
+
+    Replaces the deleted gov.log dev-key opt-in. With enabled=True,
+    yields with an explicit random GOV_LOG_KEY/GOV_LOG_KEY_EPOCH set
+    and GOV_LOG_KEY_ARCHIVE cleared, restoring everything afterwards.
+    enabled=False is a plain passthrough (no key provisioned).
+    """
+    if not enabled:
+        yield
+        return
+    import secrets as _secrets
+    _saved = {n: os.environ.get(n) for n in (
+        "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_LOG_KEY_ARCHIVE")}
+    _had = {n: n in os.environ for n in _saved}
+    os.environ["GOV_LOG_KEY"] = _secrets.token_hex(32)
+    os.environ["GOV_LOG_KEY_EPOCH"] = "test"
+    os.environ.pop("GOV_LOG_KEY_ARCHIVE", None)
     try:
         yield
     finally:
-        log_mod._dev_enabled = prev
-        log_mod._dev_warned = prev_warned
-
-
+        for _n in _saved:
+            if _had[_n]:
+                os.environ[_n] = _saved[_n]
+            else:
+                os.environ.pop(_n, None)
 @contextlib.contextmanager
 def _govrun():
     old = os.environ.get("TMPDIR")
@@ -145,8 +159,7 @@ def _sit(sid):
         def wrapper():
             try:
                 with _govrun():
-                    with _env(GOV_DEV_KEYS="1",
-                              GOV_DEPLOYMENT_MODE="staging"):
+                    with _env(GOV_DEPLOYMENT_MODE="staging"):
                         with _dev_keys(True):
                             with redirect_stderr(io.StringIO()):
                                 detail = fn()
@@ -265,7 +278,7 @@ def sit_refname_shadowing_fail_closed():
                         "confirmed); governed path refuses as "
                         "digest_mismatch, loudly; honest bytes load"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -305,7 +318,7 @@ def sit_digest_mismatch_refused_loud():
                 "note": "tampered bytes refused as digest_mismatch; "
                         "chained artifact_load_refused record present"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -355,7 +368,7 @@ def sit_toctou_swap_between_verify_and_load():
                         "consumer: verification and load are bound to the "
                         "same in-memory bytes"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -396,7 +409,7 @@ def sit_mutable_ref_pin_refused():
                 "note": "all %d reference-shaped pin values refused at "
                         "pin time (incl. the 40-hex git SHA)" % len(refs)}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -443,7 +456,7 @@ def sit_unpinned_artifact_never_loads():
                 "note": "no TOFU: unpinned loads refused; first pin "
                         "requires a roster-human authorship token"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -485,7 +498,7 @@ def sit_lease_theft_outside_scope():
                 "note": "stolen lease refused outside scope (scope_denied); "
                         "in-scope use unaffected"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -526,7 +539,7 @@ def sit_lease_theft_wrong_task_and_expired():
                 "note": "cross-task replay refused (binding_mismatch); "
                         "expired lease refused (lease_expired), no grace"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -576,7 +589,7 @@ def sit_lease_forgery_refused():
                         "post-mint scope tamper breaks the signature "
                         "(bad_signature)"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -639,7 +652,7 @@ def sit_ambient_credential_absence():
                         "graph holds no private key; leases are not "
                         "credential-shaped"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -713,7 +726,7 @@ def sit_lease_expiry_mid_task_halts():
                         "lease -> executes; mid-task expiry -> refused "
                         "until the authority re-mints"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)
@@ -787,7 +800,7 @@ def sit_production_pin_needs_two_humans():
                         "approvals over the tier-committed body; single, "
                         "double-same-key, and tier-replay all refused"}
     with _govrun() as run_tmp:
-        with _env(GOV_DEV_KEYS="1", GOV_DEPLOYMENT_MODE="staging"):
+        with _env(GOV_DEPLOYMENT_MODE="staging"):
             with _dev_keys(True):
                 with redirect_stderr(io.StringIO()):
                     return run(run_tmp)

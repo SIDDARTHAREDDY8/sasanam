@@ -31,6 +31,7 @@ version games — all pinned by the wave-73 break-first probes.
 
 import hashlib
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 # Envelope major version. Fail closed on unknown majors (§6 of the
@@ -519,6 +520,28 @@ def validate_provenance(entry):
             ds = pc.get("diff_summary")
             if not isinstance(ds, dict):
                 err("prov.policy.diff_summary must be an object")
+            # Wave-80: the bootstrap's genesis pin, when present, must
+            # be a well-formed governed-pin record — a forged or
+            # half-formed genesis_artifact must not chain.
+            ga = pc.get("genesis_artifact")
+            if ga is not None:
+                if not isinstance(ga, dict):
+                    err("prov.policy.genesis_artifact must be an object")
+                else:
+                    for k in ("artifact_id", "digest"):
+                        if not isinstance(ga.get(k), str) or not ga.get(k):
+                            err("prov.policy.genesis_artifact.%s must be a "
+                                "non-empty string" % k)
+                    if not re.match(r"^sha256:[0-9a-f]{64}$",
+                                    ga.get("digest") or ""):
+                        err("prov.policy.genesis_artifact.digest must be a "
+                            "sha256:<64-hex> digest pin, got %r"
+                            % ga.get("digest"))
+                    if not isinstance(ga.get("approvals"), list) or \
+                            any(not isinstance(a, str) or not a
+                                for a in ga["approvals"]):
+                        err("prov.policy.genesis_artifact.approvals must be "
+                            "a list of key-id strings")
             if not isinstance(approvals, list):
                 err("prov.approvals must be a list on 'policy_change' "
                     "records")
