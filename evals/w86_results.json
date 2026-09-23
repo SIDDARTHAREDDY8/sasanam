@@ -1,0 +1,218 @@
+{
+  "battery": "redteam.identity_w86",
+  "counts": {
+    "stopped": 26,
+    "break": 0,
+    "residual": 0
+  },
+  "probes": [
+    {
+      "id": "redteam.identity_w86.audience_missing_refused",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "aud-less tokens refused by the audience-configured verifier (DelegationBindingError)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.audience_spawn_inherits",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "spawn inherited aud=deployment-a; neither spawn mouth takes an audience parameter"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.chain_reorder_hops",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "root-last chain refused: hop 0 is not a depth-0 token (wrong roster + depth/position mismatch)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.chain_splice_parent_swap",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "parent swap refused both ways \u2014 the re-pointed child dies on its signature, the untampered child dies on the parent_token_hash link check"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.chain_truncate_depth_lie",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "depth-1 token with empty parent_chain refused (hop 0 claims delegation_depth 1 \u2014 chain position mismatch)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.child_executor_passes_gate",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "spawned child executor is governed: provisioned identity (agent-b/coder/alice) passes the real gate, run_id == session run_id"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.cross_deployment_replay",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "F132 fixed: deployment-A tokens refused by the deployment-B verifier (DelegationBindingError); aud-less tokens refused when the verifier sets an audience; own-deployment bind still works"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.cross_session_replay",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "cross-session replay refused: token bound to 'sess-w86-x', presented in 'sess-w86-y'"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.depth_cap_evade",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "depth-8 chain verifies and authorizes; depth 9 refused at issuance (swarm cap) \u2014 and since wave-86 verify_delegation_chain ALSO re-checks the cap, a hand-forged deep chain dies at verification too (see depth_cap_verify_side)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.depth_cap_verify_side",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "hand-forged depth-9 chain (all signatures valid, issuance bypassed) refused at verification (DelegationAttenuationError); depth-8 control verifies"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.expired_token_use",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "token expired 1h ago (+300s skew exhausted) refused at authorize time \u2014 per-action window re-check, not bind-time residue"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.future_not_before_refused",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "token with not_before 2h in the future refused (window is [nbf - skew, exp + skew], two-sided)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.issuer_keyid_swap",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "issuer key_id swapped to a different rostered key refused: the signature covers the issuer field"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.missing_delegation_fails_closed",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "agent-without-delegation fails closed on both mouths: no context at the executor gate, no token at bind"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.parent_signature_key_swap",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "child signed by a non-parent rostered key refused: hop issuer must match the session roster key for the claimed parent"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.revocation_propagates_to_descendants",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "revocation seam holds: revoked leaf refused and a revoked parent invalidates the descendant chain"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.revocation_wired_at_executor_gate",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "revocation is wired at the executor gate: revoked leaf refused, revoked ancestor refused for the child, raising checker fails closed as DelegationRevokedError"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.sibling_context_borrow",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "agent B's call with agent A's bound context refused (acting identity != delegation subject); agent A's own call passed the gate"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.spawn_budget_exhaustion",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "spawn budget enforced: second spawn at budget=1 refused (SpawnBudgetExhaustedError); negative/bool/str budgets refused at construction"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.spawn_lineage_invisible_to_log",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "F133 fixed: governed spawn chained one agent_spawn event with exact parent/child refs, scope, depth, aud; the child executor is governed (real gate passes) and inherits revocation wiring"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.spawn_unbound_parent_refused",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "spawn from an unbound parent refused: spawn requires a BOUND parent DelegationContext"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.spawn_widens_scope",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "scope widening refused at issuance (spawn) and at chain verify (parent-signed widened child) \u2014 attenuation is monotonic-decreasing on both seams"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.token_claim_tamper_scope",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "scope tamper refused: signature covers the canonical claims (forgery, wrong key, or tampered claims)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.token_forgery_resign_wrong_key",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "re-signed-with-attacker-key tokens refused on both variants (issuer not in roster / signature invalid against the rostered key)"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.token_substitution_user_swap",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "bob's user token presented under alice's delegation refused: leaf user_token_hash does not match the presented user token"
+      }
+    },
+    {
+      "id": "redteam.identity_w86.unbound_context_authorize",
+      "verdict": "stopped",
+      "detail": {
+        "verdict": "stopped",
+        "note": "unbound context refused: bind (verify) before authorizing"
+      }
+    }
+  ]
+}

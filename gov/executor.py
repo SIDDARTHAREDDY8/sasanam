@@ -138,6 +138,59 @@ class UngovernedConstructionError(Exception):
     """
 
 
+class SpawnBudgetExhaustedError(Exception):
+    """Wave-86 (governed spawn): the run's spawn budget is exhausted.
+
+    Fail-closed: a run that has spent its spawn allowance cannot spawn
+    further sub-agents. The chained ``agent_spawn`` events are the
+    detection story; the budget is the prevention story (swarm
+    control at the executor layer, complementing the delegation-depth
+    cap in gov/delegation_tokens.py).
+    """
+
+
+class _SpawnBudget:
+    """Mutable shared spawn-budget box: one lineage, one budget.
+
+    The box is shared by reference between a parent executor and every
+    child executor it spawns, so the budget bounds the whole spawn
+    tree, not each executor individually. ``None`` (no box) means
+    unlimited — documented, with the chained ``agent_spawn`` events as
+    the detection story.
+    """
+
+    def __init__(self, total):
+        self.total = total
+        self.remaining = total
+
+
+# Wave-86 (GAP 2): one-time loud disclosure that revocation is
+# TTL-only — same pattern as warn_self_asserted_identity_once in
+# gov/identity.py. Per-process, resettable by tests (poke the module
+# attribute).
+_revocation_ttl_only_warned = False
+
+
+def warn_revocation_ttl_only_once():
+    """Print the revocation TTL-only warning to stderr, once per
+    process. Called by ``ToolExecutor.__init__`` when a delegation
+    context is installed but no revocation_checker was provided: a
+    revoked token authorizes until expiry on the real path."""
+    global _revocation_ttl_only_warned
+    if _revocation_ttl_only_warned:
+        return
+    _revocation_ttl_only_warned = True
+    print(
+        "GOVERNANCE WARNING: delegation is installed but no "
+        "revocation_checker was provided — revocation is TTL-ONLY: a "
+        "revoked token still authorizes until its expiry on the "
+        "executor's real tool-call path. Pass "
+        "revocation_checker=<RevocationLedger or equivalent> for real "
+        "deployments; revocation then fails closed (leaf AND ancestors "
+        "checked per call, checker errors refuse).",
+        file=sys.stderr)
+
+
 # Wave-85: the GOVERNED CORE — the two opt-in components that are
 # load-bearing for the audit questions "who changed the policy" and
 # "who acted", and therefore the two whose absence makes a
@@ -363,7 +416,8 @@ class ToolExecutor:
                  policy_store=None, detection_monitor=None,
                  recovery=None, lease_verifier=None,
                  lease_gated_tools=(), precommit_gate=None,
-                 trifecta_floor=False, ungoverned_ack=None):
+                 trifecta_floor=False, ungoverned_ack=None,
+                 revocation_checker=None, spawn_budget=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -406,6 +460,30 @@ class ToolExecutor:
         # edit can disable it (the "agent without delegation" case
         # fails closed BY CONSTRUCTION).
         self._delegation_context = delegation_context
+        # Wave-86 (GAP 2): the revocation checker wired into the real
+        # verdict path. When provided, EVERY tool call checks the leaf
+        # AND its ancestors (gov/delegation_tokens.authorize_action
+        # implements the seam; a checker that errors fails closed as
+        # DelegationRevokedError). When None with delegation installed,
+        # revocation is TTL-only — disclosed loudly, once per process:
+        # a revoked token authorizes until expiry.
+        self._revocation_checker = revocation_checker
+        if delegation_context is not None and revocation_checker is None:
+            warn_revocation_ttl_only_once()
+        # Wave-86 (governed spawn): the run's spawn budget. None =
+        # unlimited (documented; the chained agent_spawn events are the
+        # detection story). An int bounds the whole spawn lineage —
+        # the box is shared by reference with child executors.
+        if spawn_budget is None:
+            self._spawn_budget = None
+        else:
+            if (isinstance(spawn_budget, bool)
+                    or not isinstance(spawn_budget, int)
+                    or spawn_budget < 0):
+                raise ValueError(
+                    "spawn_budget must be None or a non-negative int, "
+                    "got %r" % (spawn_budget,))
+            self._spawn_budget = _SpawnBudget(spawn_budget)
         # Wave-76 (detection): the behavioral circuit-breaker monitor
         # (gov/detection.BehavioralMonitor). Opt-in: None = pre-wave-76
         # behavior, zero behavior change. When installed, call()
@@ -928,6 +1006,161 @@ class ToolExecutor:
                            "and logged." % principal),
             })
         return ident
+
+    # -- governed spawn (wave-86, F133) ---------------------------------
+
+    def _register_spawn_parent_key(self, trust, parent_agent_id,
+                                   parent_signer):
+        """Register the spawning agent's workload key in the session's
+        agent_keys roster (the F133 "session-open agent_keys
+        registration" gap: outside tests nothing registered these).
+
+        The parent_signer is deployment/parent-agent custody,
+        caller-provided; registering its public key is a deployment act
+        performed here, at first spawn, so the child's parent-signed
+        token verifies against the roster. A DIFFERENT key already
+        registered for the same agent_id is a parent-signature key
+        swap — refused fail-closed. Returns True when the key was newly
+        registered (chained on the agent_spawn event), False when it
+        was already present and matching.
+        """
+        try:
+            pub = bytes(parent_signer.public_key)
+        except Exception as e:
+            raise _delegation_tokens.DelegationSignatureError(
+                "spawn refused: parent_signer exposes no usable "
+                "public_key (%s: %s)" % (type(e).__name__, e))
+        if len(pub) != 32:
+            raise _delegation_tokens.DelegationSignatureError(
+                "spawn refused: parent_signer public_key is not a "
+                "32-byte Ed25519 key")
+        existing = trust.agent_keys.get(parent_agent_id)
+        if existing is None:
+            trust.agent_keys[parent_agent_id] = pub
+            return True
+        if bytes(existing) != pub:
+            raise _delegation_tokens.DelegationSignatureError(
+                "spawn refused: a different key is already registered "
+                "for agent %r in the session roster (parent-signature "
+                "key swap refused)" % (parent_agent_id,))
+        return False
+
+    def spawn_sub_agent(self, sub_agent_id, sub_scope, parent_signer, *,
+                        role=None, principal=None, ttl_s=None):
+        """Wave-86 (F133): the governed spawn path.
+
+        Spawns a sub-agent under this executor's bound delegation
+        context: the child token is issued via
+        ``self._delegation_context.spawn(...)`` (per-hop scope
+        attenuation and the delegation-depth cap are enforced there;
+        the audience is inherited from the parent token — never a
+        parameter), the spawning agent's workload key is registered in
+        the session's agent_keys roster (fail-closed on key swap), and
+        an ``agent_spawn`` event is chained into the shared audit log
+        BEFORE returning — parent/child token refs (via token_ref),
+        scope, depth, delegator, session, audience — so the hash chain
+        covers the lineage.
+
+        ``parent_signer`` is caller-provided (deployment/parent-agent
+        custody); the executor never persists it.
+
+        Returns a child ToolExecutor sharing this run's log, policy,
+        policy store, approvals queue, canary registry, revocation
+        checker, and other governed components, constructed with the
+        child's BOUND delegation context and a provisioned session
+        identity ``(sub_agent_id, role or parent's role, principal or
+        parent's principal)`` — so the F55 provisioned-identity rule
+        and the wave-85 constructor gate both hold for the child. The
+        child's run_id == the session's run_id (same run_dir), so the
+        delegation gate's session binding passes.
+
+        Fail-closed: no (or unbound) parent DelegationContext →
+        DelegationRequiredError; exhausted spawn budget →
+        SpawnBudgetExhaustedError. ``spawn_budget=None`` (default) is
+        unlimited — documented; the chained spawn events are the
+        detection story.
+        """
+        ctx = self._delegation_context
+        if ctx is None or not ctx.bound:
+            raise _delegation_tokens.DelegationRequiredError(
+                "spawn refused: this executor has no bound parent "
+                "DelegationContext — sub-agents can only be spawned "
+                "under a verified three-token delegation (fail closed)")
+        budget = self._spawn_budget
+        if budget is not None and budget.remaining <= 0:
+            raise SpawnBudgetExhaustedError(
+                "spawn budget exhausted (%d of %d spawns used): "
+                "refusing to spawn %r — the run's spawn budget is a "
+                "fail-closed swarm control"
+                % (budget.total - budget.remaining, budget.total,
+                   sub_agent_id))
+        parent_claims = ctx.agent_token["claims"]
+        parent_agent_id = parent_claims["agent_id"]
+        key_registered = self._register_spawn_parent_key(
+            ctx.trust, parent_agent_id, parent_signer)
+        # The child token + bound child context: attenuation, depth,
+        # and audience inheritance are enforced inside.
+        child_ctx = ctx.spawn(sub_agent_id, sub_scope, parent_signer,
+                              ttl_s=ttl_s)
+        child_token = child_ctx.delegation_token
+        child_claims = child_token["claims"]
+        self.log.append({
+            "event": "agent_spawn",
+            "run_id": self.run_id,
+            "agent_id": parent_agent_id,
+            "role": parent_claims["role"],
+            "principal": parent_claims["principal"],
+            "decision": "spawned",
+            "policy_id": "delegation-spawn",
+            "sub_agent_id": sub_agent_id,
+            "sub_scope": list(child_claims["scope"]),
+            "delegation_depth": child_claims["delegation_depth"],
+            "delegator": child_claims["delegator"],
+            "session_id": child_ctx.session_id,
+            "aud": child_token.get("aud"),
+            "parent_token_ref": _delegation_tokens.token_ref(
+                ctx.delegation_token),
+            "child_token_ref": _delegation_tokens.token_ref(child_token),
+            "parent_key_registered": key_registered,
+            "reason": ("Sub-agent %r spawned by %r at delegation depth "
+                       "%d with scope %r (parent token %s... → child "
+                       "token %s...; audience %r; parent workload key "
+                       "%s in the session roster)."
+                       % (sub_agent_id, parent_agent_id,
+                          child_claims["delegation_depth"],
+                          list(child_claims["scope"]),
+                          _delegation_tokens.token_ref(
+                              ctx.delegation_token)[:12],
+                          _delegation_tokens.token_ref(
+                              child_token)[:12],
+                          child_token.get("aud"),
+                          "newly registered"
+                          if key_registered else "already registered")),
+        })
+        if budget is not None:
+            budget.remaining -= 1
+        child = ToolExecutor(
+            self.run_dir, self.policy, self.log, self.approvals,
+            principal_registry=self._principal_registry,
+            session_identity=(sub_agent_id,
+                              role or parent_claims["role"],
+                              principal or parent_claims["principal"]),
+            tool_ratings=self._tool_ratings,
+            credential_manifest=self._credential_manifest,
+            canary_registry=self.canary_registry,
+            delegation_context=child_ctx,
+            policy_store=self._policy_store,
+            detection_monitor=self._detection_monitor,
+            recovery=self._recovery,
+            lease_verifier=self._lease_verifier,
+            lease_gated_tools=self._lease_gated_tools,
+            precommit_gate=self._precommit_gate,
+            trifecta_floor=self._trifecta_floor,
+            revocation_checker=self._revocation_checker)
+        # One lineage, one budget: the child shares the parent's
+        # budget box by reference.
+        child._spawn_budget = self._spawn_budget
+        return child
 
     def _check_identity(self, identity):
         """Return None if OK, else a (policy_id, flag, reason) deny triple."""
@@ -3270,7 +3503,8 @@ class ToolExecutor:
         if self._delegation_context is not None:
             try:
                 _delegation_gate = _delegation_tokens.enforce_tool_call(
-                    self._delegation_context, identity, tool)
+                    self._delegation_context, identity, tool,
+                    revocation_checker=self._revocation_checker)
             except _delegation_tokens.DelegationError as e:
                 self.log.append({
                     "event": "tool_call",

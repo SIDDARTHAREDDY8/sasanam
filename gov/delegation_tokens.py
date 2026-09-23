@@ -50,6 +50,15 @@ probe pins this).
 
 Honest boundaries (also in IDENTITY_DESIGN.md §4/§8):
 
+* Audience (wave-86, F132): tokens MAY carry a signed ``aud`` claim
+  (the deployment id) and a ``DelegationTrust`` MAY set
+  ``audience``. When the verifier's audience is set, a missing or
+  mismatched ``aud`` is refused — the cross-deployment confused
+  deputy dies at verification. When it is NOT set (the default),
+  verification discloses this loudly on stderr once per process:
+  deployments sharing operator keys accept each other's tokens.
+  Spawn inherits ``aud`` from the parent token — never a parameter —
+  so a spawn cannot re-target a delegation at another deployment.
 * Revocation: the token carries ``revocation_endpoint`` + the verifier
   exposes a ``revocation_checker`` seam (reference: ``RevocationLedger``).
   Default is TTL-only — short TTLs paper over revocation; true
@@ -68,6 +77,7 @@ $0 spend, synthetic/local only. No credentials, no network.
 import hashlib
 import json
 import secrets
+import sys
 from datetime import datetime, timedelta, timezone
 
 from . import ed25519 as _ed
@@ -234,7 +244,7 @@ def _scope_covers(parent_scope, child_scope):
 # ---------------------------------------------------------------------------
 
 def _base_token(token_kind, signer, subject, session_id, claims,
-                ttl_s, now):
+                ttl_s, now, *, audience=None):
     if token_kind not in TOKEN_KINDS:
         raise ValueError("unknown token_kind %r" % (token_kind,))
     if not isinstance(subject, str) or not subject:
@@ -243,6 +253,10 @@ def _base_token(token_kind, signer, subject, session_id, claims,
         raise ValueError("session_id must be a non-empty string")
     if not isinstance(claims, dict):
         raise ValueError("claims must be a dict")
+    if audience is not None and (
+            not isinstance(audience, str) or not audience):
+        raise ValueError("audience must be a non-empty string (the "
+                         "deployment id) or None")
     ttl_s = DEFAULT_TTL_S if ttl_s is None else ttl_s
     if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
             or ttl_s <= 0 or ttl_s > MAX_TTL_S):
@@ -259,15 +273,25 @@ def _base_token(token_kind, signer, subject, session_id, claims,
         "session_id": session_id,
         "claims": claims,
     }
+    if audience is not None:
+        # Wave-86 (F132): the audience/deployment claim. It sits in the
+        # SIGNED body (top-level envelope, next to session_id — not
+        # inside claims, because it binds the token to a deployment,
+        # not to an authorization fact), so the signature covers it and
+        # no re-signing can move a token across deployments.
+        body["aud"] = audience
     body["sig"] = _sign_body(signer, body)
     return body
 
 
 def issue_user_token(user_issuer_signer, user_id, permissions,
-                     session_id, display_name=None, ttl_s=None, now=None):
+                     session_id, display_name=None, ttl_s=None, now=None,
+                     audience=None):
     """Issue a user token (the IdP stand-in signs in the local model).
 
     ``permissions``: the user's entitlement set (capability strings).
+    ``audience``: optional deployment id bound into the signed envelope
+    (wave-86, F132) — the verifier refuses the token outside it.
     """
     claims = {
         "user_id": user_id,
@@ -275,16 +299,18 @@ def issue_user_token(user_issuer_signer, user_id, permissions,
         "permissions": _check_scope_list(permissions, "permissions"),
     }
     return _base_token("user", user_issuer_signer, user_id, session_id,
-                       claims, ttl_s, now)
+                       claims, ttl_s, now, audience=audience)
 
 
 def issue_agent_token(authority_signer, agent_id, role, principal,
                       capabilities, session_id, workload_id=None,
-                      ttl_s=None, now=None):
+                      ttl_s=None, now=None, audience=None):
     """Issue an agent token (the agent as native client).
 
     Signed by the deployment's registration-authority key.
     ``capabilities``: what this agent build may do (capability strings).
+    ``audience``: optional deployment id bound into the signed envelope
+    (wave-86, F132).
     """
     for name, value in (("agent_id", agent_id), ("role", role),
                         ("principal", principal)):
@@ -298,13 +324,13 @@ def issue_agent_token(authority_signer, agent_id, role, principal,
         "capabilities": _check_scope_list(capabilities, "capabilities"),
     }
     return _base_token("agent", authority_signer, agent_id, session_id,
-                       claims, ttl_s, now)
+                       claims, ttl_s, now, audience=audience)
 
 
 def issue_delegation(human_signer, delegator_user_id, user_token,
                      agent_token, scope, session_id,
                      revocation_endpoint, audit_urls=None,
-                     ttl_s=None, now=None):
+                     ttl_s=None, now=None, audience=None):
     """Issue the human-signed delegation token (depth 0).
 
     ``human_signer``: the HUMAN DELEGATOR's key (``gov.signing.Signer``).
@@ -316,6 +342,9 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
     The token references the hashes of the other two tokens (South et
     al.'s binding) and carries scope, expiry, revocation endpoint, and
     audit URLs.
+
+    ``audience``: optional deployment id bound into the signed envelope
+    (wave-86, F132) — the verifier refuses the token outside it.
     """
     if not isinstance(delegator_user_id, str) or not delegator_user_id:
         raise ValueError("delegator_user_id must be a non-empty string")
@@ -343,7 +372,7 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
         "parent_token_hash": None,
     }
     return _base_token("delegation", human_signer, agent_token["subject"],
-                       session_id, claims, ttl_s, now)
+                       session_id, claims, ttl_s, now, audience=audience)
 
 
 # ---------------------------------------------------------------------------
@@ -364,10 +393,16 @@ class DelegationTrust:
     * ``agent_keys``: ``{agent_id: pub}`` — the session's agent key
       roster, for parent signatures on sub-delegation tokens (depth ≥ 1).
       Registered at session open, chained into the log with the session.
+    * ``audience`` (wave-86, F132): this deployment's id. When set,
+      verification refuses any token whose signed ``aud`` claim is
+      missing or different — the cross-deployment confused-deputy
+      replay dies here. When None (default), no audience check runs
+      and a loud one-time stderr disclosure says so: two deployments
+      sharing operator keys then accept each other's tokens.
     """
 
     def __init__(self, *, human_keys, authority_keys, user_issuer_keys,
-                 agent_keys=None):
+                 agent_keys=None, audience=None):
         self.human_keys = _clean_keymap(human_keys, "human_keys")
         self.authority_keys = _clean_keymap(authority_keys,
                                             "authority_keys")
@@ -380,6 +415,11 @@ class DelegationTrust:
                                  "agent_id strings")
             self.agent_keys[agent_id] = _clean_pub(pub, "agent_keys[%r]"
                                                    % agent_id)
+        if audience is not None and (
+                not isinstance(audience, str) or not audience):
+            raise ValueError("audience must be a non-empty string (the "
+                             "deployment id) or None")
+        self.audience = audience
 
     def describe(self):
         """Safe public description — key ids only, never key material."""
@@ -388,7 +428,37 @@ class DelegationTrust:
             "authority_keys": sorted(self.authority_keys),
             "user_issuer_keys": sorted(self.user_issuer_keys),
             "agent_keys": sorted(self.agent_keys),
+            "audience": self.audience,
         }
+
+
+# Wave-86 (F132): one-time loud disclosure that no audience is
+# configured — same pattern as warn_self_asserted_identity_once in
+# gov/identity.py. Per-process, resettable by tests (poke the module
+# attribute).
+_audience_unset_warned = False
+
+
+def warn_audience_unset_once():
+    """Print the audience-unset warning to stderr, once per process.
+
+    Called by :func:`verify_delegation_chain` when the effective
+    expected audience is None: cross-deployment confused-deputy replay
+    is not prevented in this configuration.
+    """
+    global _audience_unset_warned
+    if _audience_unset_warned:
+        return
+    _audience_unset_warned = True
+    print(
+        "GOVERNANCE WARNING: this DelegationTrust has no audience "
+        "(deployment id) configured — delegation tokens carry no "
+        "enforceable audience claim and cross-deployment confused-"
+        "deputy replay is NOT prevented: a token issued for another "
+        "deployment that shares these operator keys will verify here. "
+        "Set DelegationTrust(audience=<deployment id>) and issue "
+        "tokens with audience=<deployment id> for real deployments.",
+        file=sys.stderr)
 
 
 def _clean_pub(pub, what):
@@ -420,12 +490,15 @@ def _clean_keymap(mapping, what):
 # ---------------------------------------------------------------------------
 
 def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
-                 expected_session=None):
+                 expected_session=None, expected_audience=None):
     """Verify one token against ``trusted_keys`` ({key_id: pub}).
 
     Checks: well-formed envelope, ``token_kind``, issuer in the roster,
     Ed25519 signature, the ``[not_before - skew, expires_at + skew]``
-    window, session binding. Returns the token's ``claims`` dict.
+    window, session binding, and — when ``expected_audience`` is set —
+    the signed ``aud`` claim (wave-86, F132): a token with a missing or
+    mismatched audience is refused as :class:`DelegationBindingError`
+    (cross-deployment replay). Returns the token's ``claims`` dict.
     Raises a :class:`DelegationError` subclass fail-closed.
     """
     ref = _now_dt(now)
@@ -452,6 +525,14 @@ def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
         raise DelegationSignatureError(
             "token signature invalid (forgery, wrong key, or tampered "
             "claims)")
+    if expected_audience is not None:
+        aud = token.get("aud")
+        if aud != expected_audience:
+            raise DelegationBindingError(
+                "token audience %r does not match this deployment %r "
+                "(cross-deployment replay refused: the token was issued "
+                "for a different deployment)" % (aud,
+                                                 expected_audience))
     nbf = _parse_time(token.get("not_before"), "not_before")
     exp = _parse_time(token.get("expires_at"), "expires_at")
     skew = timedelta(seconds=CLOCK_SKEW_S)
@@ -472,7 +553,7 @@ def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
 
 def verify_delegation_chain(delegation_token, parent_chain, trust,
                             user_token, agent_token, *, now=None,
-                            expected_session=None):
+                            expected_session=None, expected_audience=None):
     """Verify a full delegation chain, root (human) to leaf.
 
     ``parent_chain``: ancestor delegation tokens, root-first (may be
@@ -485,22 +566,49 @@ def verify_delegation_chain(delegation_token, parent_chain, trust,
     user/agent tokens (South et al.'s binding); every token is
     session-bound and in-window.
 
+    Audience (wave-86, F132): ``expected_audience`` defaults to
+    ``trust.audience`` (the verifier's deployment id). When set, every
+    token in the chain — delegation hops AND the bound user/agent
+    tokens — must carry the matching signed ``aud`` claim, else
+    :class:`DelegationBindingError`. When unset, a loud one-time
+    stderr disclosure states that cross-deployment confused-deputy
+    replay is not prevented.
+
+    Depth (wave-86 defense-in-depth): the hop depth is re-checked
+    against :data:`MAX_DELEGATION_DEPTH` at verification, not just at
+    issuance — a smuggled deep token (valid signatures, depth past the
+    cap) fails here too.
+
     A recipient VERIFIES the chain, never trusts its claims. Returns
     the leaf's claims. Raises fail-closed.
     """
     ref = _now_dt(now)
+    if expected_audience is None:
+        expected_audience = trust.audience
+    if expected_audience is None:
+        warn_audience_unset_once()
     session = expected_session or delegation_token.get("session_id")
     chain = list(parent_chain or []) + [delegation_token]
     prev = None
     for i, tok in enumerate(chain):
         claims = verify_token(
             tok, _roster_for_depth(trust, i, tok), now=ref,
-            expected_kind="delegation", expected_session=session)
+            expected_kind="delegation", expected_session=session,
+            expected_audience=expected_audience)
         depth = claims.get("delegation_depth")
         if depth != i:
             raise DelegationSignatureError(
                 "hop %d claims delegation_depth %r (chain position "
                 "mismatch — reordered or forged depth)" % (i, depth))
+        if depth > MAX_DELEGATION_DEPTH:
+            # Defense-in-depth (wave-86): issuance caps depth, but a
+            # verifier must not trust the issuer to have enforced it —
+            # a smuggled deep token with otherwise-valid signatures
+            # fails closed HERE, at verification.
+            raise DelegationAttenuationError(
+                "hop %d claims delegation_depth %d exceeding the cap %d "
+                "(swarm control enforced at verification, not just "
+                "issuance)" % (i, depth, MAX_DELEGATION_DEPTH))
         if i == 0:
             if claims.get("parent_token_hash") is not None:
                 raise DelegationSignatureError(
@@ -529,11 +637,14 @@ def verify_delegation_chain(delegation_token, parent_chain, trust,
             "delegation token's agent_token_hash does not match the "
             "presented agent token")
     # The user/agent tokens themselves verify (kinds, roster, window,
-    # session) — the delegation is only as good as what it binds.
+    # session, audience) — the delegation is only as good as what it
+    # binds.
     verify_token(user_token, trust.user_issuer_keys, now=ref,
-                 expected_kind="user", expected_session=session)
+                 expected_kind="user", expected_session=session,
+                 expected_audience=expected_audience)
     verify_token(agent_token, trust.authority_keys, now=ref,
-                 expected_kind="agent", expected_session=session)
+                 expected_kind="agent", expected_session=session,
+                 expected_audience=expected_audience)
     return leaf_claims
 
 
@@ -602,7 +713,8 @@ class DelegationContext:
         self._leaf_claims = verify_delegation_chain(
             self.delegation_token, self.parent_chain, self.trust,
             self.user_token, self.agent_token, now=now,
-            expected_session=self.session_id)
+            expected_session=self.session_id,
+            expected_audience=self.trust.audience)
         self._bound = True
         return self
 
@@ -794,8 +906,12 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
 
     The user/agent token hashes are INHERITED from the parent — the
     chain records the full path back to the originating user (MongoDB
-    Pattern 4). Returns the child delegation token (unsigned-context);
-    :meth:`DelegationContext.spawn` wraps it in a bound child context.
+    Pattern 4). The audience (``aud``) is likewise INHERITED from the
+    parent's token — it is deliberately NOT a parameter, so a spawn
+    can never move a delegation across deployments (aud-swapping at
+    spawn is impossible by construction). Returns the child delegation
+    token (unsigned-context); :meth:`DelegationContext.spawn` wraps it
+    in a bound child context.
     """
     if parent_ctx is None or not isinstance(parent_ctx, DelegationContext) \
             or not parent_ctx.bound:
@@ -828,8 +944,14 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
         "delegation_depth": depth,
         "parent_token_hash": token_ref(parent_ctx.delegation_token),
     }
+    # Wave-86 (F132): the audience is inherited from the parent's
+    # token — never a parameter. A spawn that could set aud would let a
+    # compromised parent re-target its delegation at another
+    # deployment; inheritance makes that shape unrepresentable.
+    parent_aud = parent_ctx.delegation_token.get("aud")
     return _base_token("delegation", parent_signer, sub_agent_id,
-                       parent_ctx.session_id, claims, ttl_s, now)
+                       parent_ctx.session_id, claims, ttl_s, now,
+                       audience=parent_aud)
 
 
 # ---------------------------------------------------------------------------
