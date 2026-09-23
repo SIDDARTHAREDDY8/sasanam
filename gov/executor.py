@@ -71,6 +71,7 @@ from . import delegation_tokens as _delegation_tokens
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
+from . import skill_watch as _skill_watch
 from . import supplychain_install as sc_install
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
@@ -423,7 +424,9 @@ class ToolExecutor:
                  revocation_checker=None, spawn_budget=None,
                  message_bus=None, memory_firewall=None,
                  tool_inventory=None, trajectory_checkpoint_every=50,
-                 lineage_tracker=None):
+                 lineage_tracker=None, skill_watch=None,
+                 skill_tool_map=None, skill_mcp_map=None,
+                 skill_pin_path=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -872,6 +875,54 @@ class ToolExecutor:
             tool_inventory
             if tool_inventory is not None
             else _tool_continuity.ToolInventory())
+        # Wave-92 (stream C): continuous skill/MCP supply-chain
+        # verification (gov/skill_watch.SkillWatch). Opt-in: None =
+        # pre-integration behavior, zero behavior change. When
+        # installed, call() runs check_at_use() on the verdict path for
+        # every tool attributed to a registered skill (see
+        # skill_watch.skill_id_for_tool for the attribution rules); a
+        # mutated/unverifiable skill — or a watcher error — DENIES the
+        # call fail-closed with a loud audit entry, never a warning.
+        # Watcher events (install, sweep, mutation, quarantine, re-pin)
+        # are chained into the HMAC audit log carrying digests and
+        # provenance, never skill content. Attribution is deployment
+        # config: skill_tool_map={tool_name: skill_id} wins;
+        # skill_mcp_map={server_id: skill_id} attributes the mcp_server
+        # framing kwarg (default convention "mcp/<server_id>").
+        # skill_pin_path optionally names the JSON pin file: an
+        # EXISTING but corrupt pin file refuses construction loudly
+        # (fail-closed: never start a pinning deployment over
+        # unparseable pins); a missing file is a fresh registry. Pins
+        # are persisted automatically after each run_skill_sweep().
+        if skill_watch is not None and not isinstance(
+                skill_watch, _skill_watch.SkillWatch):
+            raise TypeError("skill_watch must be a "
+                            "gov.skill_watch.SkillWatch, got %r"
+                            % type(skill_watch).__name__)
+        self._skill_watch = skill_watch
+        self._skill_tool_map = dict(skill_tool_map or {})
+        self._skill_mcp_map = dict(skill_mcp_map or {})
+        self._skill_pin_path = (Path(skill_pin_path)
+                                if skill_pin_path is not None else None)
+        self._last_skill_sweep_at = None
+        if self._skill_watch is not None:
+            _sw_log = self.log
+
+            def _sw_emit(event, _log=_sw_log):
+                entry = {"event": "skill_watch"}
+                entry.update(event)
+                _log.append(entry)
+
+            self._skill_watch.set_emit(_sw_emit)
+            if self._skill_pin_path is not None \
+                    and self._skill_pin_path.exists():
+                # Integrity probe only: loading pins (with content
+                # sources) is the deployment's job — it owns the
+                # source factory. But a pinning deployment must never
+                # silently start over a corrupt pin file, so an
+                # existing file that fails validation refuses
+                # construction LOUD here.
+                _skill_watch.PinStore.peek(self._skill_pin_path)
         self._trajectory = _tool_continuity.TrajectoryReverifier(
             checkpoint_every=trajectory_checkpoint_every)
         # S2 (K-018): hard budget accrual. Tokens/spend accrue on the
@@ -3936,6 +3987,14 @@ class ToolExecutor:
         justification = kwargs.pop("justification", None)
         on_behalf_of = kwargs.pop("on_behalf_of", None)
         delegated_by = kwargs.pop("delegated_by", None)
+        # Wave-92 (stream C): MCP server attribution is a framing hint
+        # for skill verification, never a tool arg — popped here so it
+        # never reaches DLP scanning, policy matching, or the tool.
+        # The binding that makes it trustworthy is the deployment's
+        # skill_mcp_map, not the kwarg's value: a lying kwarg can only
+        # attribute to a deployment-mapped skill (fail-closed deny at
+        # worst), never to an unpinned one.
+        mcp_server = kwargs.pop("mcp_server", None)
         # P10: a delegation grant id is a server-side handle, never a
         # tool arg — popped here so it never reaches DLP scanning,
         # policy matching, or the tool itself.
@@ -4425,6 +4484,55 @@ class ToolExecutor:
             return {"status": "denied", "reason": _inv_entry["reason"],
                     "policy_id": "tool-inventory", "seq": _inv_entry["seq"]}
 
+        # Wave-92 (stream C): continuous skill verification on the
+        # verdict path, AFTER policy evaluation and the tool-inventory
+        # gate, BEFORE anything executes. When a skill watcher is
+        # installed and this tool attributes to a skill id, the
+        # watcher's use-time check runs here: a mutated or
+        # unverifiable skill — or ANY watcher/attribution error —
+        # DENIES the call fail-closed (loud audit entry, no
+        # execution). Unattributed tools and unregistered skills are
+        # NOT refused here: the inventory refuses to invent a refusal
+        # for a skill it never pinned; the policy's unknown-skill
+        # handling decides those (same precedent as the tool-inventory
+        # gate above).
+        if self._skill_watch is not None:
+            try:
+                _skill_id = _skill_watch.skill_id_for_tool(
+                    tool, tool_to_skill=self._skill_tool_map,
+                    mcp_server=mcp_server,
+                    mcp_server_to_skill=self._skill_mcp_map)
+                if _skill_id is None:
+                    _sw_ok, _sw_detail = True, "unattributed"
+                    _sw_err = None
+                else:
+                    _sw_ok, _sw_detail = self._skill_watch.check_at_use(
+                        _skill_id)
+                    _sw_err = None
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _skill_id = None
+                _sw_ok, _sw_detail, _sw_err = False, "watcher-error", e
+            if not _sw_ok:
+                _sw_entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "skill-watch",
+                    "flag": "skill_quarantined",
+                    "matched_rules": [],
+                    "skill_id": _skill_id,
+                    "skill_check": _sw_detail,
+                    "reason": ("Refusing to act: skill %r failed "
+                               "continuous verification (%s%s); "
+                               "quarantined pending explicit re-pin "
+                               "approval."
+                               % (_skill_id, _sw_detail,
+                                  (": %s" % _sw_err)
+                                  if _sw_err is not None else "")),
+                }))
+                return {"status": "denied",
+                        "reason": _sw_entry["reason"],
+                        "policy_id": "skill-watch",
+                        "seq": _sw_entry["seq"]}
+
         # S3 (K-041) wired wave-39: S3-GAP-1 closed. An unrated mutating
         # tool must never execute on a policy allow alone — the forced
         # require_approval downgrades an allow to queued human review.
@@ -4857,6 +4965,44 @@ class ToolExecutor:
             decided = decided.replace(tzinfo=timezone.utc)
         age = (datetime.now(timezone.utc) - decided).total_seconds()
         return age > ttl_hours * 3600
+
+    def persist_skill_pins(self):
+        """Persist skill pins to the configured pin file (atomic, 0600).
+
+        No-op when no watcher or no pin path is configured. Raises
+        PinStoreError LOUD on write failure — a deployment that cannot
+        persist its pins must know, not silently run on memory-only
+        pins that a restart would forget.
+        """
+        if self._skill_watch is None or self._skill_pin_path is None:
+            return None
+        return _skill_watch.PinStore.save(self._skill_watch,
+                                          self._skill_pin_path)
+
+    def run_skill_sweep(self):
+        """Run the scheduled skill-content sweep (the periodic trigger).
+
+        This tree has no in-process scheduler: the DEPLOYMENT's
+        scheduler/heartbeat calls this method every
+        ``skill_watch.SWEEP_INTERVAL_SECONDS`` (300s). The sweep
+        re-hashes EVERY registered skill (no stat prefilter — this is
+        the backstop that defeats forged mtime/size), quarantines
+        mutations/unverifiable skills fail-closed, chains a
+        ``skill_sweep_completed`` event into the audit log, persists
+        pins, and returns the report dict.
+
+        On mismatch the skill is quarantined: its tool calls are denied
+        at use time (see the call() gate) until an explicit operator
+        ``request_repin`` + ``approve_repin`` lifts the quarantine.
+        There is no silent auto-update, ever.
+        """
+        if self._skill_watch is None:
+            return {"checked": 0, "clean": [], "mutated": [],
+                    "unverifiable": [], "watcher": "not-installed"}
+        report = self._skill_watch.verify_all()
+        self._last_skill_sweep_at = time.time()
+        self.persist_skill_pins()
+        return report
 
     def execute_approved(self):
         """Execute approved-but-not-yet-executed actions.

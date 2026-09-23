@@ -64,6 +64,7 @@ from gov.egress_launcher import (  # noqa: E402
     SimulatedWallFixture,
     SimulatedWallProvider,
     WallComponentInventory,
+    WallPinRefused,
     install_simulated_wall,
     repin_after_fixture_fixup,
     dns_query,
@@ -87,7 +88,8 @@ def _fresh_wall_up(wall_id="f136rev"):
     launcher = FilteredEgressLauncher(
         manifest_path=os.path.join(sim, "wall_pins.json"),
         receipt_path=os.path.join(sim, "wall_receipt.json"),
-        wall_provider=fix.provider(), audit=events.append)
+        wall_provider=fix.provider(), audit=events.append,
+        trust=inv.trust)
     return sim, fix, inv, events, launcher
 
 
@@ -109,44 +111,58 @@ def probe_control_fresh_launch():
 # ---------------------------------------------------------------- P1
 
 def probe_repin_attack():
-    """R10: the receipt is sha256(manifest bytes) — self-consistent, not
-    operator-anchored. An attacker who can write the pin dir widens the
-    allowlist and re-runs install(); the launcher cannot tell
-    'operator re-pinned' from 'attacker re-pinned'."""
+    """F138 (was F136 R10): the receipt is sha256(manifest bytes) —
+    self-consistent, not operator-anchored. PRE-F138, an attacker who
+    could write the pin dir widened the allowlist and re-ran install();
+    the launcher could not tell 'operator re-pinned' from 'attacker
+    re-pinned'. POST-F138 the bare re-pin is refused
+    (pin_authorship_invalid): re-pinning requires a roster-human Ed25519
+    authorship token bound to the new pin digest, and pins chain through
+    the operator-held pin ledger. A human-authorized re-pin still
+    verifies and launches."""
     sim, fix, inv, events, launcher = _fresh_wall_up()
     try:
         allow = os.path.join(sim, "conf", "allowlist.txt")
         with open(allow, "a", encoding="utf-8") as f:
             f.write("evil.example:443\n")
         conf = os.path.join(sim, "conf")
-        WallComponentInventory.install(
-            {"nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
-             "proxy_allowlist": allow,
-             "dns_config": os.path.join(conf, "dns_config.txt"),
-             "dns_zone": os.path.join(conf, "dns_hosts.txt"),
-             "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
-             "seccomp_config": os.path.join(conf, "seccomp_config.txt")},
-            os.path.join(sim, "wall_pins.json"),
-            os.path.join(sim, "wall_receipt.json"))
+        try:
+            WallComponentInventory.install(
+                {"nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
+                 "proxy_allowlist": allow,
+                 "dns_config": os.path.join(conf, "dns_config.txt"),
+                 "dns_zone": os.path.join(conf, "dns_hosts.txt"),
+                 "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
+                 "seccomp_config": os.path.join(conf, "seccomp_config.txt")},
+                os.path.join(sim, "wall_pins.json"),
+                os.path.join(sim, "wall_receipt.json"))
+        except WallPinRefused as e:
+            if "pin_authorship_invalid" not in str(e):
+                return ("ERROR",
+                        "re-pin refused for the wrong reason: %s" % e)
+        else:
+            return ("RESIDUAL-CONFIRMED",
+                    "R10 still real: bare attacker re-pin accepted")
+        # The authorized path still works: a roster human re-pins the
+        # (widened, operator-approved) policy and the wall launches.
+        inv2 = repin_after_fixture_fixup(sim)
         launcher2 = FilteredEgressLauncher(
             manifest_path=os.path.join(sim, "wall_pins.json"),
             receipt_path=os.path.join(sim, "wall_receipt.json"),
-            wall_provider=SimulatedWallProvider(
-                sim, WallComponentInventory(
-                    os.path.join(sim, "wall_pins.json"),
-                    os.path.join(sim, "wall_receipt.json"))),
-            audit=events.append)
+            wall_provider=SimulatedWallProvider(sim, inv2),
+            audit=events.append, trust=inv2.trust)
         try:
             launcher2.verify()
         except EgressLaunchRefused as e:
-            return ("ERROR", "re-pinned wall should verify: %s" % e)
+            return ("ERROR",
+                    "human-authorized re-pin should verify: %s" % e)
         cp = launcher2.run_child(
             [sys.executable, "-c", "print('re-pinned')"],
             capture_output=True, text=True)
         if cp.returncode == 0:
-            return ("RESIDUAL-CONFIRMED",
-                    "R10 real: attacker re-pin verifies + launches; "
-                    "receipt is self-consistent, not operator-anchored")
+            return ("CLOSED",
+                    "bare re-pin refused (pin_authorship_invalid); "
+                    "human-authorized re-pin verifies + launches")
         return ("ERROR", "re-pinned launch failed rc=%r" % cp.returncode)
     finally:
         fix.__exit__()

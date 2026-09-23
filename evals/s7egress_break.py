@@ -56,7 +56,8 @@ def _fresh_wall_up():
     launcher = FilteredEgressLauncher(
         manifest_path=os.path.join(sim, "wall_pins.json"),
         receipt_path=os.path.join(sim, "wall_receipt.json"),
-        wall_provider=fix.provider(), audit=events.append)
+        wall_provider=fix.provider(), audit=events.append,
+        trust=inv.trust)
     return sim, fix, inv, events, launcher
 
 
@@ -138,7 +139,7 @@ def probe_wall_down_refused():
     launcher = FilteredEgressLauncher(
         manifest_path=paths["manifest"], receipt_path=paths["receipt"],
         wall_provider=SimulatedWallProvider(sim, inv),
-        audit=events.append)
+        audit=events.append, trust=inv.trust)
     sentinel = os.path.join(tmp, "sentinel")
     try:
         launcher.run_child(
@@ -380,7 +381,7 @@ def probe_startup_race_preexec_abort():
             manifest_path=os.path.join(sim, "wall_pins.json"),
             receipt_path=os.path.join(sim, "wall_receipt.json"),
             wall_provider=FlappingWallProvider(sim, inv),
-            audit=events.append)
+            audit=events.append, trust=inv.trust)
         sentinel = os.path.join(tmp, "sentinel")
         try:
             launcher.run_child(
@@ -477,7 +478,8 @@ def probe_algo_agility():
     except EgressLaunchRefused as e:
         return ("ERROR", "sha512-only install should verify: %s" % e)
     strict = WallComponentInventory(paths["manifest"], paths["receipt"],
-                                    supported_algos=("sha256",))
+                                    supported_algos=("sha256",),
+                                    trust=paths["trust"])
     try:
         strict.verify()
         return ("BREAK", "sha256-only verifier accepted sha512-only pins")

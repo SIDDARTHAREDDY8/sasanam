@@ -98,12 +98,24 @@ the netns/nftables/seccomp topology — the GCP lab did
 (netns setup, nftables backend, seccomp profile mechanics) needs a
 new privileged lab run, not just this battery.
 
-### R10. Receipt custody
+### R10. Receipt custody (narrowed by F138, 2026-09-23)
 The install receipt is the trust anchor: whoever can rewrite the
-receipt *and* the manifest can re-pin a malicious wall. Protect the
-receipt like a key (offline copy, separate custody from the wall
-host). The launcher cannot distinguish "operator re-pinned" from
-"attacker re-pinned" — that distinction is procedural.
+receipt *and* the manifest can re-pin a malicious wall — BUT re-pinning
+now requires a roster-human Ed25519 authorship token bound to the new
+pin digest (F138, the load-gate wave-75/78 construction applied to wall
+pins), and every pin appends a chained pin record to the operator-held
+pin ledger. The launcher verifies the pin record's authorship and the
+ledger's hash chain at every launch, so "attacker re-pinned" is now
+cryptographically distinguishable from "operator re-pinned": a bare
+`install()` call is refused (`pin_authorship_invalid`), a signature
+cannot be replayed across content, chain position, or tier, and a
+rewritten pin history is detected (`pin_chain_broken`). What REMAINS
+procedural: custody of the receipt + pin ledger files themselves
+(offline copy, separate custody from the wall host) — but their
+compromise now yields denial of launch, not silent policy change: a
+missing ledger refuses launches, and recovery is a human re-pin (which
+starts a new genesis record). The roster keys are the new trust anchor;
+guard them per `docs/KEY_CUSTODY_RUNBOOK.md`.
 
 ### R11. Long-lived wall, short-lived pins
 Component digests are verified at *launch* time. A component tampered

@@ -1,0 +1,503 @@
+{
+  "controls": [
+    {
+      "id": "A.2.2",
+      "note": "Product enforces a machine-readable policy; the organizational AI policy document itself (ethics stance, approved use cases) is organizational.",
+      "objective": "A.2 Policies related to AI",
+      "product_mechanisms": [
+        "gov/policy.py: machine-readable AI policy enforced fail-closed at the action boundary"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_policy_config.py"
+      ],
+      "title": "AI policy"
+    },
+    {
+      "id": "A.2.3",
+      "note": "Organizational process. Product supports via policy-as-code that can encode aligned rules, but alignment itself is a governance activity.",
+      "objective": "A.2 Policies related to AI",
+      "product_mechanisms": [],
+      "status": "organizational",
+      "tests": [],
+      "title": "Alignment with other organisational policies"
+    },
+    {
+      "id": "A.2.4",
+      "note": "Every policy change is a chained audit event, giving reviewers tamper-evident change history. The review cadence and sign-off are organizational.",
+      "objective": "A.2 Policies related to AI",
+      "product_mechanisms": [
+        "gov/policy_change.py: policy changes are audited events in the hash-chained log"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_policy_config.py"
+      ],
+      "title": "Review of the AI policy"
+    },
+    {
+      "id": "A.3.2",
+      "note": "Product binds actions to identities and routes decisions to human roles. Defining who holds those roles is organizational.",
+      "objective": "A.3 Internal organization",
+      "product_mechanisms": [
+        "gov/identity.py: agent identity and role binding",
+        "gov/approvals.py: human approval roles and quorum"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_w74_identity.py",
+        "tests/test_approvals_d1.py"
+      ],
+      "title": "AI roles and responsibilities"
+    },
+    {
+      "id": "A.3.3",
+      "note": "Concern-reporting has a machine path (detector trips are chained log events). Whistleblowing/HR channels are organizational.",
+      "objective": "A.3 Internal organization",
+      "product_mechanisms": [
+        "gov/detection.py: detector_trip provenance records",
+        "gov/monitor/infection.py: infection_suspected escalation"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_w76_detection.py"
+      ],
+      "title": "Reporting of concerns"
+    },
+    {
+      "id": "A.4.2",
+      "note": "No AI resource inventory primitive. Candidate for the agent-discovery workstream (direction-check 2026-09-23).",
+      "objective": "A.4 Resources for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Resource documentation"
+    },
+    {
+      "id": "A.4.3",
+      "note": "Data resource inventory is not modeled. gov/lineage.py tracks data lineage for governed flows only.",
+      "objective": "A.4 Resources for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Data resources"
+    },
+    {
+      "id": "A.4.4",
+      "note": "Tooling is pinned, verified, and quarantined on drift. Full tooling inventory across the estate is not covered.",
+      "objective": "A.4 Resources for AI systems",
+      "product_mechanisms": [
+        "gov/supplychain.py: tool supply-chain controls",
+        "gov/tool_continuity.py: tool definition pinning and drift quarantine"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_supplychain_f75.py",
+        "tests/test_w78_supplychain.py"
+      ],
+      "title": "Tooling resources"
+    },
+    {
+      "id": "A.4.5",
+      "note": "Compute inventory and capacity governance are out of scope of the current product.",
+      "objective": "A.4 Resources for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "System and computing resources"
+    },
+    {
+      "id": "A.4.6",
+      "note": "Staffing, competence, and training are organizational. Product provides the approval-queue workload signal.",
+      "objective": "A.4 Resources for AI systems",
+      "product_mechanisms": [],
+      "status": "organizational",
+      "tests": [],
+      "title": "Human resources"
+    },
+    {
+      "id": "A.5.2",
+      "note": "No impact-assessment workflow. The evals/ battery provides measurement evidence an assessment process could consume.",
+      "objective": "A.5 Assessing impacts of AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "AI system impact assessment process"
+    },
+    {
+      "id": "A.5.3",
+      "note": "See A.5.2.",
+      "objective": "A.5 Assessing impacts of AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Documentation of AI system impact assessments"
+    },
+    {
+      "id": "A.5.4",
+      "note": "See A.5.2.",
+      "objective": "A.5 Assessing impacts of AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Assessing AI system impact on individuals or groups of individuals"
+    },
+    {
+      "id": "A.5.5",
+      "note": "See A.5.2.",
+      "objective": "A.5 Assessing impacts of AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Assessing societal impacts of AI systems"
+    },
+    {
+      "id": "A.6.1.2",
+      "note": "Objectives are set by the organization. workstreams/architect/REALWORLD_BAR.md (B1-B6) is the product's own acceptance bar, usable as input.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [],
+      "status": "organizational",
+      "tests": [],
+      "title": "Objectives for responsible development of AI systems"
+    },
+    {
+      "id": "A.6.1.3",
+      "note": "The development process is the mission's build-test-break discipline with gates. Not a certified SDLC.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "evals/: break-probe battery and adversarial validation as design gate"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_policy_d1.py"
+      ],
+      "title": "Processes for responsible design and development of AI systems"
+    },
+    {
+      "id": "A.6.2.2",
+      "note": "Requirements exist as the B1-B6 bar and linted policy specs. Not a full requirements-management process.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "workstreams/architect/REALWORLD_BAR.md: B1-B6 acceptance bar",
+        "gov/dsl.py: machine-checkable policy specification language",
+        "gov/policy_lint.py: policy linting"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_policy_lint_regression.py"
+      ],
+      "title": "AI system requirements and specification"
+    },
+    {
+      "id": "A.6.2.3",
+      "note": "Design documentation is maintained continuously. No test proves documentation completeness; listed as partial honestly.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "BUILD_LOG.md: continuous build record",
+        "docs/: architecture and threat models",
+        "evals/FINDINGS.md: finding hygiene"
+      ],
+      "status": "partial",
+      "tests": [],
+      "title": "Documentation of AI system design and development"
+    },
+    {
+      "id_candidates": [
+        "A.6.2.4",
+        "A.6.2.6"
+      ],
+      "note": "ID numbering disputed between public sources; both candidates listed. Verification is the product's core discipline: independent red-team streams, gates stay green.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "evals/: break-probe battery and adversarial validation",
+        "tests/: canonical suite as verification gate",
+        "gov/eval_integrity.py: evaluation integrity controls"
+      ],
+      "status": "mapped",
+      "tests": [
+        "tests/test_policy_d1.py",
+        "tests/test_log_integrity.py"
+      ],
+      "title": "AI system verification and validation"
+    },
+    {
+      "id_candidates": [
+        "A.6.2.5",
+        "A.6.2.7"
+      ],
+      "note": "Deployment is fail-closed and digest-pinned. Full deployment pipeline (CI/CD, rollbacks) is organizational.",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "gov/egress_launcher.py: verified, digest-pinned deployment launcher",
+        "gov/keyprovider.py: deployment-mode resolution, fail-closed with no key"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_kms_vault.py"
+      ],
+      "title": "AI system deployment"
+    },
+    {
+      "id": "A.6.2.8",
+      "note": "Continuous monitoring with chained detector records plus named recovery operations (checkpoint/verify/resume-or-halt/decommission).",
+      "objective": "A.6 AI system life cycle",
+      "product_mechanisms": [
+        "gov/monitor/: infection monitoring, tripwires",
+        "gov/detection.py: detection breakers",
+        "gov/recovery.py: response/recovery operations"
+      ],
+      "status": "mapped",
+      "tests": [
+        "tests/test_w76_detection.py",
+        "tests/test_w77_recovery.py"
+      ],
+      "title": "AI system operation and monitoring"
+    },
+    {
+      "id": "A.7.2",
+      "note": "Training-data governance is out of scope; the product governs agent actions, not model development data.",
+      "objective": "A.7 Data for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Data for AI system development and enhancement"
+    },
+    {
+      "id": "A.7.3",
+      "note": "See A.7.2.",
+      "objective": "A.7 Data for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Data acquisition"
+    },
+    {
+      "id": "A.7.4",
+      "note": "See A.7.2.",
+      "objective": "A.7 Data for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Quality of data"
+    },
+    {
+      "id": "A.7.5",
+      "note": "Provenance is tracked for governed agent data flows (file writes, memory, messaging). Training-data provenance is not covered.",
+      "objective": "A.7 Data for AI systems",
+      "product_mechanisms": [
+        "gov/lineage.py: infection-lineage substrate with HMAC sidecars",
+        "gov/memory_provenance.py: memory provenance firewall"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_s6_lineage.py",
+        "tests/test_memory_provenance.py"
+      ],
+      "title": "Data provenance"
+    },
+    {
+      "id": "A.7.6",
+      "note": "See A.7.2.",
+      "objective": "A.7 Data for AI systems",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Data preparation"
+    },
+    {
+      "id": "A.8.2",
+      "note": "Documentation is extensive and exports are machine-verifiable. User-facing transparency notices are organizational.",
+      "objective": "A.8 Information for interested parties",
+      "product_mechanisms": [
+        "docs/: architecture, threat models, wiring guides",
+        "gov/evidence_exports.py: regulator-shaped exports (this workstream)"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_evidence_exports.py"
+      ],
+      "title": "System documentation and information for users"
+    },
+    {
+      "id": "A.8.3",
+      "note": "The generator produces the initial Art. 73(5) draft with every field traced to a log entry; the operator completes and files it. Prototype, not a filing service.",
+      "objective": "A.8 Information for interested parties",
+      "product_mechanisms": [
+        "gov/evidence_exports.py: EU AI Act Art. 73 draft serious-incident report generator with log-traced fields and sealed export manifest"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_evidence_exports.py"
+      ],
+      "title": "External reporting"
+    },
+    {
+      "id": "A.8.4",
+      "note": "Detection and draft reporting are mechanized; actual communication to authorities/affected parties is organizational.",
+      "objective": "A.8 Information for interested parties",
+      "product_mechanisms": [
+        "gov/detection.py: chained detector records",
+        "gov/monitor/: chained detector records",
+        "gov/evidence_exports.py: draft incident report"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_w76_detection.py",
+        "tests/test_evidence_exports.py"
+      ],
+      "title": "Incident communication"
+    },
+    {
+      "id": "A.8.5",
+      "note": "Notifying affected individuals is an organizational duty. The incident report's individuals_affected field is operator-supplied by design.",
+      "objective": "A.8 Information for interested parties",
+      "product_mechanisms": [],
+      "status": "organizational",
+      "tests": [],
+      "title": "Information to affected individuals"
+    },
+    {
+      "id": "A.9.2",
+      "note": "Responsible use is enforced at the action boundary: disallowed actions are blocked, critical ones wait for human approval.",
+      "objective": "A.9 Use of AI systems",
+      "product_mechanisms": [
+        "gov/policy.py: fail-closed policy engine on every governed action",
+        "gov/approvals.py: human approval for critical actions",
+        "gov/executor.py: governed execution"
+      ],
+      "status": "mapped",
+      "tests": [
+        "tests/test_policy_d1.py",
+        "tests/test_approvals_d1.py"
+      ],
+      "title": "Processes for responsible use of AI systems"
+    },
+    {
+      "id": "A.9.3",
+      "note": "Objectives are set by the organization; the product enforces whatever policy encodes them.",
+      "objective": "A.9 Use of AI systems",
+      "product_mechanisms": [],
+      "status": "organizational",
+      "tests": [],
+      "title": "Objectives for responsible use of AI systems"
+    },
+    {
+      "id": "A.9.4",
+      "note": "Intended-use boundaries are enforced for tools and roles. Documenting intended use per deployment is organizational.",
+      "objective": "A.9 Use of AI systems",
+      "product_mechanisms": [
+        "gov/tool_continuity.py: tool pinning prevents off-purpose tool drift",
+        "gov/identity.py: role-scoped agent authority"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_w86_identity.py"
+      ],
+      "title": "Intended use of AI systems"
+    },
+    {
+      "id": "A.10.2",
+      "note": "Contractual allocation between provider/deployer/customer is organizational. The incident report distinguishes provider_contact vs deployer_contact fields.",
+      "objective": "A.10 Third-party and customer relationships",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Allocation of responsibilities"
+    },
+    {
+      "id": "A.10.3",
+      "note": "Supply-chain verification covers tools and dependencies. Full supplier assessment (model providers, MLOps) is organizational.",
+      "objective": "A.10 Third-party and customer relationships",
+      "product_mechanisms": [
+        "gov/supplychain.py: supplier/tool supply-chain controls",
+        "tests/run_tests.py: F75 supply-chain preflight gate"
+      ],
+      "status": "partial",
+      "tests": [
+        "tests/test_supplychain_f75.py",
+        "tests/test_w78_supplychain.py"
+      ],
+      "title": "Suppliers"
+    },
+    {
+      "id": "A.10.4",
+      "note": "Customer-side responsibilities for inputs and oversight are contractual/organizational.",
+      "objective": "A.10 Third-party and customer relationships",
+      "product_mechanisms": [],
+      "status": "gap",
+      "tests": [],
+      "title": "Customers"
+    }
+  ],
+  "meta": {
+    "caveats": [
+      "Control IDs and titles compiled from public secondary summaries (scytale-labs GRC-Claude-Skills annex-a-ai-controls.md; Mindset Cyber ISO 42001 implementation checklist; genai-security-project crosswalk LLM_ISO42001.md; 6clicks ISO 42001 checklist; Bridewell ISO 42001 guide), all retrieved 2026-09-23. The official ISO/IEC 42001:2023 text is paywalled and was NOT consulted.",
+      "Public sources DISAGREE on A.6 sub-numbering (e.g. verification-and-validation appears as A.6.2.4 in one source and A.6.2.6 in another). Where numbering is disputed the control carries id_candidates listing both; verify against the official text before any certification use.",
+      "38 controls are expected per ISO; this file enumerates 36 distinct controls with 2 unaccounted (see unaccounted_controls). The file must not be presented as a complete or authoritative control list.",
+      "Status values: mapped = implemented in product with tests; partial = product provides mechanisms or evidence but the control is not fully covered; organizational = the control is an organizational process the product can supply evidence for but cannot itself satisfy; gap = not covered.",
+      "Module and test citations were verified to exist in the repository tree on 2026-09-23. They prove the mechanism exists and is tested, not that the control is satisfied for any particular deployment or auditor.",
+      "0.2.0 (integrated): stream-local citations re-pointed to gov/evidence_exports.py and tests/test_evidence_exports.py; all module/test citations re-verified against the main tree on 2026-09-23. Nothing else in the provisional mapping changed."
+    ],
+    "date": "2026-09-23",
+    "mapping_version": "0.2.0",
+    "produced_by": "agent-governance-demo gov/evidence_exports.py + docs/iso42001-mapping.json (integrated 2026-09-23 from workstreams/evidence STREAM-B prototype)",
+    "provisional": true,
+    "scope": "Annex A reference controls (AI management system)",
+    "sources": [
+      "https://github.com/scytale-labs/grc-claude-skills/blob/HEAD/skills/iso-42001/references/annex-a-ai-controls.md",
+      "https://mindsetcyber.com.au/downloads/MindsetCyber-ISO42001-Implementation-Checklist.pdf",
+      "https://github.com/genai-security-project/crosswalk/blob/HEAD/llm-top10/LLM_ISO42001.md",
+      "https://www.bridewell.com/insights/blogs/detail/why-is-iso-42001-certification-important"
+    ],
+    "standard": "ISO/IEC 42001:2023"
+  },
+  "status_summary": {
+    "gap": [
+      "A.4.2",
+      "A.4.3",
+      "A.4.5",
+      "A.5.2",
+      "A.5.3",
+      "A.5.4",
+      "A.5.5",
+      "A.7.2",
+      "A.7.3",
+      "A.7.4",
+      "A.7.6",
+      "A.10.2",
+      "A.10.4"
+    ],
+    "mapped": [
+      "A.6.2.4/A.6.2.6",
+      "A.6.2.8",
+      "A.9.2"
+    ],
+    "organizational": [
+      "A.2.3",
+      "A.4.6",
+      "A.6.1.2",
+      "A.8.5",
+      "A.9.3"
+    ],
+    "partial": [
+      "A.2.2",
+      "A.2.4",
+      "A.3.2",
+      "A.3.3",
+      "A.4.4",
+      "A.6.1.3",
+      "A.6.2.2",
+      "A.6.2.3",
+      "A.6.2.5/A.6.2.7",
+      "A.7.5",
+      "A.8.2",
+      "A.8.3",
+      "A.8.4",
+      "A.9.4",
+      "A.10.3"
+    ]
+  },
+  "unaccounted_controls": [
+    "ISO/IEC 42001:2023 Annex A is documented as containing 38 controls; the public secondary sources consulted enumerate 36 distinct controls above. 2 controls are unaccounted for in this provisional file. Do not treat this file as a complete control list; reconcile against the official text before certification use."
+  ]
+}

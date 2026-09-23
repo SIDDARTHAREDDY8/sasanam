@@ -40,6 +40,7 @@ from gov.egress_launcher import (  # noqa: E402
     SimulatedWallFixture,
     SimulatedWallProvider,
     WallComponentInventory,
+    WallPinRefused,
     install_simulated_wall,
     repin_after_fixture_fixup,
 )
@@ -65,7 +66,8 @@ class F136ReviewTests(unittest.TestCase):
         self.launcher = FilteredEgressLauncher(
             manifest_path=os.path.join(self.sim, "wall_pins.json"),
             receipt_path=os.path.join(self.sim, "wall_receipt.json"),
-            wall_provider=self.fix.provider(), audit=self.events.append)
+            wall_provider=self.fix.provider(), audit=self.events.append,
+            trust=self.inv.trust)
         self._wall_torn_down = False
 
     def tearDown(self):
@@ -97,33 +99,38 @@ class F136ReviewTests(unittest.TestCase):
         with self.assertRaises(EgressLaunchRefused):
             self.launcher.wall.child_recheck()
 
-    # -- P1: re-pin attack (documents R10) ---------------------------
-    def test_repin_attack_documents_r10(self):
-        """R10: receipt = sha256(manifest bytes) is self-consistent.
-        Anyone who can write the pin dir can widen the allowlist and
-        re-pin; the launcher verifies and launches. The trust anchor is
-        procedural (receipt custody), not cryptographic."""
+    # -- P1: re-pin attack (F138 closed the R10 residual) --------------
+    def test_repin_attack_now_refused_f138(self):
+        """F138 (was F136 R10 residual): the bare re-pin is refused —
+        re-pinning requires a roster-human Ed25519 authorship token, and
+        pins chain through the operator-held ledger. The receipt alone
+        is still self-consistent (procedural custody residual), but it
+        no longer suffices to move the pin."""
         allow = os.path.join(self.sim, "conf", "allowlist.txt")
         with open(allow, "a", encoding="utf-8") as f:
             f.write("evil.example:443\n")
         conf = os.path.join(self.sim, "conf")
-        WallComponentInventory.install(
-            {"nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
-             "proxy_allowlist": allow,
-             "dns_config": os.path.join(conf, "dns_config.txt"),
-             "dns_zone": os.path.join(conf, "dns_hosts.txt"),
-             "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
-             "seccomp_config": os.path.join(conf, "seccomp_config.txt")},
-            os.path.join(self.sim, "wall_pins.json"),
-            os.path.join(self.sim, "wall_receipt.json"))
+        with self.assertRaises(WallPinRefused) as cm:
+            WallComponentInventory.install(
+                {"nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
+                 "proxy_allowlist": allow,
+                 "dns_config": os.path.join(conf, "dns_config.txt"),
+                 "dns_zone": os.path.join(conf, "dns_hosts.txt"),
+                 "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
+                 "seccomp_config": os.path.join(conf, "seccomp_config.txt")},
+                os.path.join(self.sim, "wall_pins.json"),
+                os.path.join(self.sim, "wall_receipt.json"))
+        self.assertIn("pin_authorship_invalid", str(cm.exception))
+        # The authorized path still works: a roster human re-pins the
+        # (widened, operator-approved) policy; the launcher verifies and
+        # launches.
+        inv2 = repin_after_fixture_fixup(self.sim)
         launcher2 = FilteredEgressLauncher(
             manifest_path=os.path.join(self.sim, "wall_pins.json"),
             receipt_path=os.path.join(self.sim, "wall_receipt.json"),
-            wall_provider=SimulatedWallProvider(
-                self.sim, WallComponentInventory(
-                    os.path.join(self.sim, "wall_pins.json"),
-                    os.path.join(self.sim, "wall_receipt.json"))))
-        launcher2.verify()  # passes: re-pin is self-consistent
+            wall_provider=SimulatedWallProvider(self.sim, inv2),
+            trust=inv2.trust)
+        launcher2.verify()  # passes: human-authorized re-pin
         cp = launcher2.run_child(
             [sys.executable, "-c", "print('re-pinned')"],
             capture_output=True, text=True)

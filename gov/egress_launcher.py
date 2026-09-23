@@ -48,6 +48,11 @@ import subprocess
 import threading
 import time
 
+from .delegation_tokens import DelegationTrust
+from .ed25519 import generate_seed as _ed_generate_seed
+from .ed25519 import verify as _ed_verify
+from .signing import Ed25519Signer
+
 # ---------------------------------------------------------------------------
 # Errors — every refusal names itself (fail-closed, never degraded).
 # ---------------------------------------------------------------------------
@@ -69,6 +74,14 @@ class EgressLaunchRefused(RuntimeError):
     - ``preexec_recheck_failed`` — the wall flapped between the parent
       check and the child preexec; the child aborted before exec
       (exit 99) and nothing ungoverned ran.
+    - ``pin_authorship_invalid`` — the manifest's pin record is missing,
+      not bound to the manifest payload it ships with, or lacks valid
+      roster-human Ed25519 authorship (F138); legacy manifests without
+      pin records are refused — re-pin under human authorship.
+    - ``pin_chain_broken``      — the operator-held pin ledger is
+      missing/empty, a pin record fails its self-hash, prev-linkage is
+      broken, or the ledger tip does not match the manifest's pin
+      record (pin history rewritten).
     """
 
 
@@ -105,8 +118,9 @@ def negotiate_algo(manifest_algos, supported_algos=DEFAULT_ALGOS):
     return max(common, key=lambda a: _ALGO_STRENGTH.get(a, 0))
 
 
-MANIFEST_FORMAT = "egress-wall-pins/1"
-RECEIPT_FORMAT = "egress-wall-receipt/1"
+MANIFEST_FORMAT = "egress-wall-pins/2"  # /2: pins carry authorship (F138)
+PIN_RECORD_FORMAT = "egress-wall-pin-record/1"
+RECEIPT_FORMAT = "egress-wall-receipt/1"  # unchanged: sha256(manifest bytes)
 
 # The wall's pinned components. A deployment maps each name to the real
 # artifact path (e.g. /etc/agent-wall/agent0.nft); the localhost
@@ -121,30 +135,237 @@ WALL_COMPONENTS = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Pin authorship + chained pin history (F138).
+#
+# F136's R10 residual, filed as F138: install() re-pinned through a bare
+# function call — the receipt (sha256 over the manifest bytes) is
+# self-consistent, not operator-anchored, and no pin carried human
+# authorship evidence or history. The fix mirrors the wave-75/78
+# load-gate construction (gov/load_gate.py):
+#
+# * every pin (including the first) requires a roster-human Ed25519
+#   authorship token: a signature by a DelegationTrust human key over a
+#   domain-separated canonical body binding (tier, pin payload digest,
+#   previous pin-record digest, timestamp). The signature cannot be
+#   transplanted to different content, a different chain position, or a
+#   different tier — the tier is committed in the body, and production
+#   tier needs TWO distinct roster humans (the wave-75 nuclear rule).
+# * every pin appends a pin record to an operator-held JSONL ledger.
+#   Each record carries prev_pin_record_sha256, so history cannot be
+#   rewritten silently: dropping/rewriting records breaks the linkage
+#   and verify() refuses (pin_chain_broken). The tip record's prev
+#   transitively commits the whole history; the tip's authorship is
+#   verified live at every launch, while historical records are checked
+#   structurally (self-hash + linkage) so roster rotation cannot brick
+#   the wall.
+#
+# Reuses gov/ed25519 (sign/verify), gov/signing.Ed25519Signer
+# (operator-side signing), and gov/delegation_tokens.DelegationTrust
+# (the human roster). No new crypto: the chaining is the same
+# prev-hash-link construction as the audit log (gov/log.py).
+#
+# Operational notes: the ledger is operator-held custody alongside the
+# receipt (a missing ledger refuses launches — recovery is a human
+# re-pin, which starts a new genesis record). Concurrent installs must
+# be serialized by the operator; the ledger append is not interlocked.
+# ---------------------------------------------------------------------------
+
+
+class WallPinRefused(Exception):
+    """Install-time fail-closed refusal. The message carries a
+    machine-readable reason code:
+
+    - ``pin_authorship_invalid`` — no authorship token, unknown author
+      key, bad signature, tier-rule violation, or the pin record is not
+      bound to the manifest payload it ships with.
+    - ``pin_chain_broken`` — the pin ledger is missing/empty, a record
+      fails its self-hash, prev-linkage is broken, or the ledger tip
+      does not match the manifest's pin record.
+    """
+
+
+_PIN_RECORD_DOMAIN = b"gov-egress-wall-pin-record/v1\x00"
+_PIN_RECORD_ARTIFACT_ID = "egress-wall-pins"
+_PIN_TIERS = ("dev", "test", "staging", "production")
+_GENESIS_PREV = "genesis"
+
+
+def _canonical_json_bytes(obj):
+    return json.dumps(obj, sort_keys=True, indent=2,
+                      ensure_ascii=True).encode("utf-8")
+
+
+def _canonical_pin_record_body(tier, pin_payload_sha256,
+                              prev_pin_record_sha256, ts):
+    """Domain-separated body the roster human signs. Binds the tier, the
+    exact pin payload digest, the chain position (prev record digest),
+    and the timestamp — a signature cannot move across content, history
+    position, or tier."""
+    return b"|".join([
+        _PIN_RECORD_DOMAIN,
+        tier.encode("utf-8"),
+        _PIN_RECORD_ARTIFACT_ID.encode("utf-8"),
+        pin_payload_sha256.encode("utf-8"),
+        (prev_pin_record_sha256 or _GENESIS_PREV).encode("utf-8"),
+        ts.encode("utf-8"),
+    ])
+
+
+def _default_ledger_path(manifest_path):
+    return str(manifest_path) + ".pinlog"
+
+
+def _verify_pin_approval(trust, body, author_key_id, authorship_sig_hex):
+    pub = trust.human_keys.get(author_key_id)
+    if pub is None:
+        raise WallPinRefused(
+            "pin_authorship_invalid: unknown author key %r "
+            "(not in the roster)" % (author_key_id,))
+    try:
+        sig = bytes.fromhex(authorship_sig_hex)
+    except (TypeError, ValueError):
+        raise WallPinRefused(
+            "pin_authorship_invalid: malformed authorship signature")
+    if not _ed_verify(pub, body, sig):
+        raise WallPinRefused(
+            "pin_authorship_invalid: bad authorship signature for %r"
+            % (author_key_id,))
+    return author_key_id
+
+
+def _require_pin_approvals(trust, body, tier, author_key_id,
+                           authorship_sig_hex, second_author_key_id,
+                           second_authorship_sig_hex):
+    """The load-gate wave-75 tier rule, applied to wall pins: production
+    needs two DISTINCT roster-human approvals over the identical body;
+    dev/test/staging take single-human."""
+    approvals = [_verify_pin_approval(trust, body, author_key_id,
+                                      authorship_sig_hex)]
+    if tier == "production":
+        if not second_author_key_id or not second_authorship_sig_hex:
+            raise WallPinRefused(
+                "pin_authorship_invalid: production tier requires two "
+                "distinct human approvals (wave-75 nuclear rule)")
+        if second_author_key_id == author_key_id:
+            raise WallPinRefused(
+                "pin_authorship_invalid: production approvals must come "
+                "from two DISTINCT keys (same key twice refused)")
+        approvals.append(_verify_pin_approval(
+            trust, body, second_author_key_id, second_authorship_sig_hex))
+    return approvals
+
+
+def _read_pin_ledger(ledger_path):
+    """Pin records (list of dicts). A missing file reads as [] — the
+    caller decides whether that is genesis or a broken chain."""
+    try:
+        with open(ledger_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return []
+    records = []
+    for lineno, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            raise WallPinRefused(
+                "pin_chain_broken: ledger line %d is not JSON" % lineno)
+        if not isinstance(rec, dict):
+            raise WallPinRefused(
+                "pin_chain_broken: ledger line %d is not a record" % lineno)
+        records.append(rec)
+    return records
+
+
+def _record_sha256(pin_record):
+    """Self-hash of a pin record (the record_sha256 field itself is
+    excluded — it is the head pointer, not part of the hashed body)."""
+    body = {k: v for k, v in pin_record.items() if k != "record_sha256"}
+    return _digest_bytes(_canonical_json_bytes(body), "sha256")
+
+
+def _check_pin_ledger_structure(records):
+    """Structural chain check: every record's self-hash verifies and
+    every prev-link matches the previous record's digest. Returns the
+    tip digest (None for an empty ledger)."""
+    prev = None
+    for i, rec in enumerate(records):
+        if rec.get("format") != PIN_RECORD_FORMAT:
+            raise WallPinRefused(
+                "pin_chain_broken: record %d has bad format" % i)
+        if _record_sha256(rec) != rec.get("record_sha256"):
+            raise WallPinRefused(
+                "pin_chain_broken: record %d self-hash mismatch "
+                "(record edited)" % i)
+        if rec.get("prev_pin_record_sha256") != prev:
+            raise WallPinRefused(
+                "pin_chain_broken: record %d prev-linkage broken "
+                "(history rewritten)" % i)
+        prev = rec["record_sha256"]
+    return prev
+
+
+def _operator_roster(trust, operator_signers, tier):
+    """Test/sim operator roster. Generates ephemeral human keys unless
+    the caller supplies signers/trust. Production deployments pass
+    their real DelegationTrust and NEVER rely on generated keys."""
+    n = 2 if tier == "production" else 1
+    if operator_signers is None:
+        operator_signers = [Ed25519Signer(_ed_generate_seed())
+                            for _ in range(n)]
+    signers = list(operator_signers)
+    if len(signers) < n:
+        raise ValueError("tier %r needs %d operator signers, got %d"
+                         % (tier, n, len(signers)))
+    if trust is None:
+        filler = [Ed25519Signer(_ed_generate_seed()) for _ in range(2)]
+        trust = DelegationTrust(
+            human_keys={s.key_id: s.public_key for s in signers},
+            # authority/user-issuer slots are unused by pin verification;
+            # DelegationTrust requires non-empty mappings, so fill with
+            # throwaway keys (same shape as the load-gate tests).
+            authority_keys={filler[0].key_id: filler[0].public_key},
+            user_issuer_keys={filler[1].key_id: filler[1].public_key})
+    elif not isinstance(trust, DelegationTrust):
+        raise TypeError("trust must be a DelegationTrust")
+    return trust, signers
+
+
 class WallComponentInventory:
     """Install-time pinning + startup verification of wall components.
 
     Install (operator, privileged, reviewed): ``install()`` digests each
-    component file, writes the manifest, and writes the receipt — the
-    operator-held trust anchor binding the manifest bytes. Verify
-    (launcher, every launch): receipt -> manifest -> components.
+    component file, requires a roster-human Ed25519 authorship token
+    bound to the new pin digest (F138 — no bare re-pinning), writes the
+    manifest (with the pin record embedded), writes the receipt — the
+    operator-held trust anchor binding the manifest bytes — and appends
+    the pin record to the operator-held pin ledger (each record links
+    to the previous, so history cannot be rewritten silently).
+    Verify (launcher, every launch): receipt -> manifest -> pin record
+    authorship + ledger chain -> components.
     """
 
     def __init__(self, manifest_path, receipt_path,
-                 supported_algos=DEFAULT_ALGOS):
+                 supported_algos=DEFAULT_ALGOS, trust=None,
+                 ledger_path=None):
         self.manifest_path = str(manifest_path)
         self.receipt_path = str(receipt_path)
         self.supported_algos = tuple(supported_algos)
+        if trust is not None and not isinstance(trust, DelegationTrust):
+            raise TypeError("trust must be a DelegationTrust")
+        # The roster is required to verify pin authorship; a launcher
+        # without it fails closed at verify() time.
+        self.trust = trust
+        self.ledger_path = (str(ledger_path) if ledger_path is not None
+                            else _default_ledger_path(self.manifest_path))
 
-    # -- install ------------------------------------------------------
+    # -- pin payload --------------------------------------------------
     @staticmethod
-    def install(component_paths, manifest_path, receipt_path,
-                algos=DEFAULT_ALGOS):
-        """Pin components. ``component_paths``: name -> filesystem path.
-
-        Returns the manifest dict. Writes manifest JSON then the
-        receipt (sha256 over the exact manifest bytes).
-        """
+    def _build_pin_payload(component_paths, algos, installed_at):
         algos = tuple(algos)
         if not algos:
             raise ValueError("install requires at least one digest algo")
@@ -165,15 +386,126 @@ class WallComponentInventory:
                 "size": len(data),
                 "digests": component_digests(data, algos),
             })
-        manifest = {
+        return {
             "format": MANIFEST_FORMAT,
-            "installed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ",
-                                          time.gmtime()),
+            "installed_at": installed_at,
             "algos": list(algos),
             "components": entries,
         }
-        blob = json.dumps(manifest, sort_keys=True, indent=2,
-                          ensure_ascii=True).encode("utf-8")
+
+    @staticmethod
+    def _prepare_pin(component_paths, manifest_path, *, algos=DEFAULT_ALGOS,
+                     tier="production", ts=None, ledger_path=None):
+        """Shared pre-computation for proposal() and install(): build the
+        payload, hash it, and locate the chain tip. Refuses to build on a
+        broken ledger (fail closed — never extend rewritten history).
+
+        The timestamp is fixed ONCE here and stamps both the payload's
+        installed_at and the signed body: proposal() and install() called
+        with the same ts build byte-identical payloads, while a ts skew
+        (or any content change) between signing and install invalidates
+        the signature instead of pinning unauthenticated bytes.
+        """
+        if tier not in _PIN_TIERS:
+            raise WallPinRefused(
+                "pin_authorship_invalid: unknown tier %r" % (tier,))
+        ts = ts or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        payload = WallComponentInventory._build_pin_payload(
+            component_paths, algos, ts)
+        payload_sha = _digest_bytes(_canonical_json_bytes(payload), "sha256")
+        ledger_path = (ledger_path if ledger_path is not None
+                       else _default_ledger_path(manifest_path))
+        tip = _check_pin_ledger_structure(_read_pin_ledger(ledger_path))
+        body = _canonical_pin_record_body(tier, payload_sha, tip, ts)
+        return {"payload": payload, "pin_payload_sha256": payload_sha,
+                "prev_pin_record_sha256": tip, "ts": ts, "body": body,
+                "ledger_path": ledger_path}
+
+    # -- proposal (operator signing side) -------------------------------
+    @staticmethod
+    def proposal(component_paths, manifest_path, *, algos=DEFAULT_ALGOS,
+                 tier="production", ts=None, ledger_path=None):
+        """The exact canonical body a roster human must sign to authorize
+        a pin — computed WITHOUT writing anything.
+
+        Returns ``{"tier", "pin_payload_sha256",
+        "prev_pin_record_sha256", "ts", "body"}``. The operator signs
+        ``body`` with their Ed25519 seed and passes ``ts``/``tier`` and
+        the resulting signature back into :meth:`install` unchanged: a
+        signature over different content, chain position, timestamp, or
+        tier is refused.
+        """
+        prep = WallComponentInventory._prepare_pin(
+            component_paths, manifest_path, algos=algos, tier=tier, ts=ts,
+            ledger_path=ledger_path)
+        out = {k: prep[k] for k in ("pin_payload_sha256",
+                                   "prev_pin_record_sha256", "ts", "body")}
+        out["tier"] = tier
+        return out
+
+    # -- install ------------------------------------------------------
+    @staticmethod
+    def install(component_paths, manifest_path, receipt_path,
+                algos=DEFAULT_ALGOS, *, trust=None,
+                author_key_id=None, authorship_sig_hex=None,
+                ts=None, tier="production",
+                second_author_key_id=None, second_authorship_sig_hex=None,
+                ledger_path=None):
+        """Pin components under roster-human authorship.
+
+        ``trust`` is a DelegationTrust whose human_keys roster authorizes
+        the pin. ``authorship_sig_hex`` is the Ed25519 signature (by the
+        private key for ``author_key_id``) over the canonical pin body
+        from :meth:`proposal` — i.e. bound to the newly pinned digest,
+        the chain position, the tier, and the timestamp. ``tier`` commits
+        the deployment tier in the signed body: ``"production"`` (the
+        default) requires a SECOND approval from a DISTINCT roster human
+        key (the wave-75 nuclear rule); dev/test/staging take
+        single-human.
+
+        There is no bare install: missing trust or authorship is refused
+        with WallPinRefused (``pin_authorship_invalid``), never a
+        silent re-pin. Returns the manifest dict. Writes the manifest
+        JSON (with the pin record embedded), then the receipt (sha256
+        over the exact manifest bytes), then appends the pin record to
+        the ledger.
+        """
+        if tier not in _PIN_TIERS:
+            raise WallPinRefused(
+                "pin_authorship_invalid: unknown tier %r" % (tier,))
+        if trust is None or not isinstance(trust, DelegationTrust):
+            raise WallPinRefused(
+                "pin_authorship_invalid: re-pinning requires a "
+                "DelegationTrust roster (no bare install)")
+        if not author_key_id or not authorship_sig_hex:
+            raise WallPinRefused(
+                "pin_authorship_invalid: re-pinning requires a "
+                "roster-human Ed25519 authorship token bound to the new "
+                "pin digest (no bare install)")
+        prep = WallComponentInventory._prepare_pin(
+            component_paths, manifest_path, algos=algos, tier=tier, ts=ts,
+            ledger_path=ledger_path)
+        approvals = _require_pin_approvals(
+            trust, prep["body"], tier, author_key_id, authorship_sig_hex,
+            second_author_key_id, second_authorship_sig_hex)
+        pin_record = {
+            "format": PIN_RECORD_FORMAT,
+            "tier": tier,
+            "artifact_id": _PIN_RECORD_ARTIFACT_ID,
+            "pin_payload_sha256": prep["pin_payload_sha256"],
+            "prev_pin_record_sha256": prep["prev_pin_record_sha256"],
+            "author_key_ids": approvals,
+            "authorship_sigs": {
+                approvals[0]: authorship_sig_hex,
+                **({approvals[1]: second_authorship_sig_hex}
+                   if len(approvals) > 1 else {}),
+            },
+            "pinned_at": prep["ts"],
+        }
+        pin_record["record_sha256"] = _record_sha256(pin_record)
+        manifest = dict(prep["payload"])
+        manifest["pin_record"] = pin_record
+        blob = _canonical_json_bytes(manifest)
         with open(manifest_path, "wb") as f:
             f.write(blob)
         receipt = {
@@ -183,6 +515,8 @@ class WallComponentInventory:
         }
         with open(receipt_path, "w", encoding="utf-8") as f:
             json.dump(receipt, f, sort_keys=True, indent=2)
+        with open(prep["ledger_path"], "a", encoding="utf-8") as f:
+            f.write(json.dumps(pin_record, sort_keys=True) + "\n")
         return manifest
 
     # -- verify -------------------------------------------------------
@@ -215,16 +549,104 @@ class WallComponentInventory:
             raise EgressLaunchRefused(
                 "receipt_unverifiable: manifest not JSON: %s" % e)
         if not isinstance(manifest, dict) or \
-                manifest.get("format") != MANIFEST_FORMAT:
+                not isinstance(manifest.get("format"), str):
             raise EgressLaunchRefused(
                 "receipt_unverifiable: bad manifest format")
+        # NOTE: the manifest FORMAT version itself is authorized by
+        # _verify_pin_record: a legacy format without pin authorship is
+        # refused there with an actionable pin_authorship_invalid
+        # reason, not here.
         return manifest
+
+    def _verify_pin_record(self, manifest):
+        """F138: pin authorship + history. Every manifest must carry a
+        roster-human-authorized pin record bound to its payload, and the
+        operator-held pin ledger must hash-chain to that exact record.
+        WallPinRefused from the shared checks is surfaced as
+        EgressLaunchRefused (the launcher's fail-closed vocabulary)."""
+        try:
+            self._check_pin_record(manifest)
+        except WallPinRefused as e:
+            raise EgressLaunchRefused(str(e))
+
+    def _check_pin_record(self, manifest):
+        if manifest.get("format") != MANIFEST_FORMAT:
+            raise WallPinRefused(
+                "pin_authorship_invalid: legacy manifest format %r "
+                "carries no pin authorship (re-pin under human "
+                "authorship required)" % (manifest.get("format"),))
+        pin_record = manifest.get("pin_record")
+        if not isinstance(pin_record, dict) or \
+                pin_record.get("format") != PIN_RECORD_FORMAT:
+            raise WallPinRefused(
+                "pin_authorship_invalid: manifest has no pin record")
+        tier = pin_record.get("tier")
+        if tier not in _PIN_TIERS:
+            raise WallPinRefused(
+                "pin_authorship_invalid: unknown pin tier %r" % (tier,))
+        # 1. the pin record must bind the payload it ships with — a
+        #    manifest edited after pinning fails here even if the
+        #    receipt was re-minted.
+        payload = {k: v for k, v in manifest.items() if k != "pin_record"}
+        payload_sha = _digest_bytes(_canonical_json_bytes(payload), "sha256")
+        if pin_record.get("pin_payload_sha256") != payload_sha:
+            raise WallPinRefused(
+                "pin_authorship_invalid: pin record not bound to manifest "
+                "payload (manifest edited after pinning)")
+        # 2. the operator-held ledger must hash-chain to this exact pin
+        #    record — a missing/rewritten history refuses.
+        records = _read_pin_ledger(self.ledger_path)
+        if not records:
+            raise WallPinRefused(
+                "pin_chain_broken: pin ledger missing or empty "
+                "(operator-held pin history required)")
+        tip = _check_pin_ledger_structure(records)
+        if tip != pin_record.get("record_sha256"):
+            raise WallPinRefused(
+                "pin_chain_broken: ledger tip != manifest pin record "
+                "(history rewritten or manifest swapped)")
+        # 3. live authorship check on the tip record: the signature is
+        #    verified over the RECOMPUTED body, so a signature can never
+        #    be valid for tampered content.
+        if self.trust is None:
+            raise WallPinRefused(
+                "pin_authorship_invalid: no trust roster configured; "
+                "cannot verify pin authorship")
+        if _record_sha256(pin_record) != pin_record.get("record_sha256"):
+            raise WallPinRefused(
+                "pin_authorship_invalid: pin record self-hash mismatch "
+                "(record edited)")
+        body = _canonical_pin_record_body(
+            tier, payload_sha, pin_record.get("prev_pin_record_sha256"),
+            pin_record.get("pinned_at"))
+        key_ids = pin_record.get("author_key_ids") or []
+        sigs = pin_record.get("authorship_sigs") or {}
+        if not isinstance(key_ids, list) or \
+                not all(isinstance(k, str) for k in key_ids):
+            raise WallPinRefused(
+                "pin_authorship_invalid: malformed author_key_ids")
+        if tier == "production":
+            if len(key_ids) < 2:
+                raise WallPinRefused(
+                    "pin_authorship_invalid: production pin record "
+                    "carries fewer than two approvals")
+            first, second = key_ids[0], key_ids[1]
+        else:
+            if not key_ids:
+                raise WallPinRefused(
+                    "pin_authorship_invalid: pin record carries no "
+                    "approvals")
+            first, second = key_ids[0], None
+        _require_pin_approvals(
+            self.trust, body, tier, first, sigs.get(first), second,
+            sigs.get(second) if second else None)
 
     def verify(self):
         """Full chain verification. Returns (manifest, per-component
         digests). Raises EgressLaunchRefused on ANY failure."""
         receipt = self._load_receipt()
         manifest = self._load_manifest(receipt)
+        self._verify_pin_record(manifest)
         algos = manifest.get("algos") or []
         if negotiate_algo(algos, self.supported_algos) is None:
             raise EgressLaunchRefused(
@@ -358,12 +780,21 @@ PREEXEC_ABORT_CODE = 99
 
 
 def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
-                           wall_id="sim-wall-1"):
-    """Create a simulated wall install: components + manifest + receipt.
+                           wall_id="sim-wall-1", trust=None,
+                           operator_signers=None, tier="dev"):
+    """Create a simulated wall install: components + manifest + receipt +
+    pin ledger.
 
-    Returns (inventory, paths dict). The caller starts the stub servers
-    (see SimulatedWallFixture) which write endpoints.json and
-    wall_up.flag.
+    The pin is authorized by roster-human Ed25519 authorship (F138). The
+    caller may pass their own ``trust`` (DelegationTrust) and
+    ``operator_signers`` (list of Ed25519Signer); when omitted, an
+    ephemeral sim operator keypair is generated — honest for a localhost
+    fixture, never for production. ``tier`` defaults to ``"dev"``
+    (single-human); pass ``"production"`` for the two-human rule.
+
+    Returns (inventory, paths dict). The inventory is wired with the
+    trust + ledger so verify() checks authorship and chain. paths also
+    carries "ledger" and "trust" (public roster only).
     """
     sim_dir = os.path.abspath(sim_dir)
     conf_dir = os.path.join(sim_dir, "conf")
@@ -425,22 +856,37 @@ def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
 
     manifest_path = os.path.join(sim_dir, "wall_pins.json")
     receipt_path = os.path.join(sim_dir, "wall_receipt.json")
+    ledger_path = _default_ledger_path(manifest_path)
+    trust, signers = _operator_roster(trust, operator_signers, tier)
+    component_paths = {"nft_ruleset": nft_ruleset,
+                       "proxy_allowlist": allowlist,
+                       "dns_config": dns_config,
+                       "dns_zone": dns_zone,
+                       "proxy_impl": proxy_impl,
+                       "seccomp_config": seccomp_config}
+    prop = WallComponentInventory.proposal(
+        component_paths, manifest_path, algos=algos, tier=tier,
+        ledger_path=ledger_path)
+    sigs = [s.sign(prop["body"]).hex() for s in signers]
+    kids = [s.key_id for s in signers]
     WallComponentInventory.install(
-        {"nft_ruleset": nft_ruleset,
-         "proxy_allowlist": allowlist,
-         "dns_config": dns_config,
-         "dns_zone": dns_zone,
-         "proxy_impl": proxy_impl,
-         "seccomp_config": seccomp_config},
-        manifest_path, receipt_path, algos=algos)
+        component_paths, manifest_path, receipt_path, algos=algos,
+        trust=trust, author_key_id=kids[0], authorship_sig_hex=sigs[0],
+        ts=prop["ts"], tier=tier,
+        second_author_key_id=kids[1] if len(kids) > 1 else None,
+        second_authorship_sig_hex=sigs[1] if len(sigs) > 1 else None,
+        ledger_path=ledger_path)
     with open(os.path.join(sim_dir, "wall_id.txt"), "w",
               encoding="utf-8") as f:
         f.write(wall_id + "\n")
     paths = {"manifest": manifest_path, "receipt": receipt_path,
+             "ledger": ledger_path, "trust": trust,
              "conf_dir": conf_dir, "run_dir": run_dir,
              "allowlist": allowlist, "nft_ruleset": nft_ruleset,
              "dns_zone": dns_zone, "wall_id": wall_id}
-    return (WallComponentInventory(manifest_path, receipt_path), paths)
+    return (WallComponentInventory(manifest_path, receipt_path,
+                                  trust=trust, ledger_path=ledger_path),
+            paths)
 
 
 # ---------------------------------------------------------------------------
@@ -1122,25 +1568,45 @@ class SimulatedWallFixture:
         return FakePacketFilter(rules, eps)
 
 
-def repin_after_fixture_fixup(sim_dir, *, algos=DEFAULT_ALGOS):
+def repin_after_fixture_fixup(sim_dir, *, algos=DEFAULT_ALGOS, trust=None,
+                              operator_signers=None, tier="dev"):
     """Re-pin the manifest after the fixture rewrites the allowlist to
     the bound origin port. This is an INSTALL-TIME operator action (the
     allowlist content is deployment data); the battery calls it once
     per fresh sim dir before any launch, so digest verification still
-    covers every later tamper."""
+    covers every later tamper.
+
+    F138: the re-pin is authorized by a roster-human Ed25519 authorship
+    token and appended to the chained pin ledger — same operator-signing
+    flow as install_simulated_wall (ephemeral sim operator unless the
+    caller supplies trust/signers)."""
     sim_dir = os.path.abspath(sim_dir)
     conf = os.path.join(sim_dir, "conf")
     manifest_path = os.path.join(sim_dir, "wall_pins.json")
     receipt_path = os.path.join(sim_dir, "wall_receipt.json")
+    ledger_path = _default_ledger_path(manifest_path)
+    trust, signers = _operator_roster(trust, operator_signers, tier)
+    component_paths = {
+        "nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
+        "proxy_allowlist": os.path.join(conf, "allowlist.txt"),
+        "dns_config": os.path.join(conf, "dns_config.txt"),
+        "dns_zone": os.path.join(conf, "dns_hosts.txt"),
+        "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
+        "seccomp_config": os.path.join(conf, "seccomp_config.txt")}
+    prop = WallComponentInventory.proposal(
+        component_paths, manifest_path, algos=algos, tier=tier,
+        ledger_path=ledger_path)
+    sigs = [s.sign(prop["body"]).hex() for s in signers]
+    kids = [s.key_id for s in signers]
     WallComponentInventory.install(
-        {"nft_ruleset": os.path.join(conf, "agent0.nft.sim"),
-         "proxy_allowlist": os.path.join(conf, "allowlist.txt"),
-         "dns_config": os.path.join(conf, "dns_config.txt"),
-         "dns_zone": os.path.join(conf, "dns_hosts.txt"),
-         "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
-         "seccomp_config": os.path.join(conf, "seccomp_config.txt")},
-        manifest_path, receipt_path, algos=algos)
-    return WallComponentInventory(manifest_path, receipt_path)
+        component_paths, manifest_path, receipt_path, algos=algos,
+        trust=trust, author_key_id=kids[0], authorship_sig_hex=sigs[0],
+        ts=prop["ts"], tier=tier,
+        second_author_key_id=kids[1] if len(kids) > 1 else None,
+        second_authorship_sig_hex=sigs[1] if len(sigs) > 1 else None,
+        ledger_path=ledger_path)
+    return WallComponentInventory(manifest_path, receipt_path,
+                                  trust=trust, ledger_path=ledger_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1158,10 +1624,12 @@ class FilteredEgressLauncher:
 
     def __init__(self, *, manifest_path, receipt_path, wall_provider,
                  audit=None, lock_path=None,
-                 supported_algos=DEFAULT_ALGOS):
+                 supported_algos=DEFAULT_ALGOS, trust=None,
+                 ledger_path=None):
         self.inventory = WallComponentInventory(
             manifest_path, receipt_path,
-            supported_algos=supported_algos)
+            supported_algos=supported_algos, trust=trust,
+            ledger_path=ledger_path)
         self.wall = wall_provider
         self.audit = audit
         self.lock_path = (lock_path or str(manifest_path) + ".lock")
