@@ -26,10 +26,10 @@ closed, F95–F100 open, F72/F83 fixes landed with closure unrecorded).
 | Approval web UI | `gov/approval_web.py` | **Localhost operator console, stdlib only.** Bearer-token in memory; no SSO/OIDC/mTLS; in-memory sessions (no session persistence, no cross-process sharing); binds 127.0.0.1 by default and **refuses any non-localhost bind without TLS + real auth in front**. Wave-25/27 additions: bridge badges + foreign-bridge panels (`bridge_expired` records render unmistakably and can never execute, T12), framing-mediation quarantine zone (K-028), and a queue-health advisory panel + cluster-member banners surfacing the F4 fatigue-anomaly detector (read-only, advisory only). |
 | D1 bridges | `gov/bridges/` | Pluggable seam into competitors' governors (component posture, A12): `core.py` (BridgeAdapter ABC + fail-safe helpers), `agt.py` (in-process `DurableQueueApprovalHandler` for AGT-Python `CallbackApproval`; 240s bounded wait strictly under AGT's 5-min default; `bridge_expired` marker MAC-bound; late decisions audit-only, never executable). AGT .NET `WebhookApprover` ingress and the AWS AgentCore approval-event *producer* bridge are **sequenced later** (protocol risk; the docs state this honestly — do not claim they exist). |
 | Audit log | `gov/log.py` | Append-only, HMAC-SHA256 authenticated, hash-chained. Format-2 checkpoints add a Merkle root over entries 1..seq plus **Ed25519 signature(s)** over the checkpoint body (`gov/ed25519.py`, `gov/signing.py`, `gov/merkle.py`). |
-| KMS key lifecycle | `gov/kms.py` | Envelope encryption for the log's HMAC data keys: epoch data keys generated locally, stored only *wrapped* under a KMS master key; plaintext exists only in memory after explicit `unwrap`. **Fail-closed: every KMS failure raises `KmsError`; there is no fallback key and no dev-key fallback on this path, ever.** `FakeKmsProvider` is a test double refused outside `GOV_DEV_KEYS=1`. Key-id binding on unwrap (impersonator vector hardened). v1 plaintext `KeyRing` (`gov/keys.py`) remains the no-KMS/air-gapped backend, documented as weaker custody. |
+| KMS key lifecycle | `gov/kms.py` | Envelope encryption for the log's HMAC data keys: epoch data keys generated locally, stored only *wrapped* under a KMS master key; plaintext exists only in memory after explicit `unwrap`. **Fail-closed: every KMS failure raises `KmsError`; there is no fallback key and no dev-key fallback on this path, ever.** `FakeKmsProvider` is a test double refused unconditionally from operator config (the `GOV_DEV_KEYS` opt-in was deleted in wave-81; tests construct it directly in code). Key-id binding on unwrap (impersonator vector hardened). v1 plaintext `KeyRing` (`gov/keys.py`) remains the no-KMS/air-gapped backend, documented as weaker custody. |
 | Threshold custody | `gov/custody.py` | A5 threshold checkpoint signing: `SignerShareStore` wraps each checkpoint signer's Ed25519 seed under a KMS data key (separate artifact from log HMAC keys; role separation). Offline root key lives only on the ceremony machine. Ceremonies (genesis, rotate-share, rotate-roster, rewrap) recorded to a hash-chained transcript with root-signed tip manifests (F78). **The ceremony runbook now exists** (`workstreams/kms/CEREMONY_RUNBOOK.md`, written wave-26) — but no live ceremony has been run: threshold signing is procedure-written, ceremony-unpracticed. |
 | Egress ledger | `gov/egress_ledger.py` | Per-principal, tamper-evident, cross-run record of outbound API activity; fragment-shape (F13) and same-key-set (F14) heuristics for campaign detection. Queue-only, fail-safe — a signal, not a verdict. |
-| Sandbox | `gov/sandbox.py` | Real execution backend: `shell=False` argv vectors, fresh temp cwd, scrubbed env, process-group SIGKILL on timeout, bounded output drain, POSIX rlimits, netns/pidns when available, pivot_root + UID/GID drop + **seccomp-bpf allowlist** (`DEFAULT_SECCOMP_ALLOW`) behind env flags, with **fail-closed strict mode** (`GOV_SANDBOX_STRICT=1` / `require_pidns=True`, `require_netns=True`). Per-call honest isolation reporting (`network_isolated`, `pid_isolated`). **Honest limits:** not a chroot (filesystem authority is parent-side); defense-in-depth, not a container boundary against arbitrary hostile native code. **No filtered-egress / destination-allowlist mode** (finding F81, OPEN). |
+| Sandbox | `gov/sandbox.py` | Real execution backend: `shell=False` argv vectors, fresh temp cwd, scrubbed env, process-group SIGKILL on timeout, bounded output drain, POSIX rlimits, netns/pidns when available, pivot_root + UID/GID drop + **seccomp-bpf allowlist** (`DEFAULT_SECCOMP_ALLOW`) behind env flags, with **fail-closed strict mode** (`GOV_SANDBOX_STRICT=1` / `require_pidns=True`, `require_netns=True`). Per-call honest isolation reporting (`network_isolated`, `pid_isolated`). **Honest limits:** not a chroot (filesystem authority is parent-side); defense-in-depth, not a container boundary against arbitrary hostile native code. **Filtered-egress / destination-allowlist mode productized** (`gov/egress_launcher.py`; finding F81 CLOSED — validated by lab 2026-09-23): the launcher wraps execution behind the wall by default; fail-closed (wall unverifiable → launch refused, not degraded); component pinning (iptables/nft ruleset, proxy config, DNS filter config, allowlist) with pinned digests re-verified at startup. Residual threat model: `docs/egress_wall_threat_model.md`. |
 
 **Strategic positioning (D1–D5, `research/competitive-deep-dive.md` §0,
 `workstreams/architect/STRATEGY_ROADMAP.md`):** this is a component — the
@@ -100,7 +100,7 @@ and `GOV_INCIDENT_PROBE_SECRET` are red-team test scaffolding.
 
 | Variable | Purpose | Default / effect |
 |---|---|---|
-| `GOV_DEV_KEYS` | **Dev-key gate.** `=1` permits the `FakeKmsProvider` test double and the publicly-known development HMAC key. Any other value: refused outright — there is **no silent dev fallback**. | unset → dev keys unusable (fail-closed) |
+| `GOV_DEV_KEYS` | **Deleted in wave-81.** This dev-key gate no longer exists: the fake KMS is refused unconditionally from operator config and the publicly-known development HMAC key is gone from `gov/`. Any lingering reference to the variable is inert. | n/a (removed) |
 | `GOV_LOG_KEY` | Base64 HMAC key for the action log (STRICT resolution per `gov/log.py` R6c; unset → refuse to start). | **must be set in production** |
 | `GOV_LOG_KEY_EPOCH` | Names the key version; bound into every MAC. | optional |
 | `GOV_LOG_KEY_ARCHIVE` | Retired keys for cross-epoch verification. | retained by design |
@@ -120,9 +120,7 @@ Run the test suite after any sandbox change with seccomp on:
 ## 5. Operating procedures
 
 ### 5.1 Starting a governed run
-1. Set `GOV_LOG_KEY` (+ `GOV_LOG_KEY_EPOCH`) from your secrets store; **never
-   set `GOV_DEV_KEYS=1`** outside test harnesses — the factory refuses the fake
-   provider and dev keys without it, which is the safety property working.
+1. Set `GOV_LOG_KEY` (+ `GOV_LOG_KEY_EPOCH`) from your secrets store; **there are no dev-key shortcuts** — the factory refuses the fake KMS provider unconditionally and wave-81 deleted the dev opt-in, which is the safety property working.
 2. Set `GOV_SANDBOX_BACKEND=1 GOV_SANDBOX_STRICT=1` (plus the individual
    `GOV_SANDBOX_*` hardening flags) for tool execution with hostile content.
 3. Launch the approval console bound to **127.0.0.1 only**
@@ -407,7 +405,7 @@ primitive, not your deployment.
 ---
 
 ## 7. What not to do
-- Do not set `GOV_DEV_KEYS=1` anywhere near a real deployment.
+- There are no dev-key shortcuts to reach for: `GOV_DEV_KEYS` was deleted in wave-81 and there is no dev fallback.
 - Do not bind the approval console beyond localhost without TLS + OIDC/mTLS.
 - Do not run hostile code without `GOV_SANDBOX_STRICT=1` (fallback workers can
   signal the parent by explicit PID without the PID namespace — demonstrated

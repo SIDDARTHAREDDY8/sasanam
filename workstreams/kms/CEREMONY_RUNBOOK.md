@@ -52,23 +52,27 @@ protocol, FakeKmsProvider limits).
 
 Rehearse every ceremony below with `FakeKmsProvider` first. It is
 **test-only** (fixed wrap secret, zero production security) and the config
-factory refuses it unless `GOV_DEV_KEYS=1`:
+factory refuses it **unconditionally** — wave-81 deleted the
+`GOV_DEV_KEYS` opt-in, so the rehearsal constructs it directly in code
+(this is the only supported way to get one):
 
 ```python
-import os
-os.environ["GOV_DEV_KEYS"] = "1"
-from gov.kms import kms_provider_from_config
-provider = kms_provider_from_config({"provider": "fake",
-                                     "key_ids": ["test-kms-1", "test-kms-2"]})
+from gov.kms import FakeKmsProvider
+provider = FakeKmsProvider(key_ids=["test-kms-1", "test-kms-2"])
 ```
 
 Production KMS wiring: `kms_provider_from_config` raises `KmsError` for
 `aws`/`gcp`/`azure` — **real cloud adapters are not shipped** ($0 spend, no
-credentials, no network). A production deployment requires an
-operator-built `KmsProvider` subclass implementing `wrap_data_key`,
-`unwrap_data_key` (must authenticate key-id binding), and `describe_key`
-(limitation L2). `FakeKmsProvider.disable_key()` / `outage = True` exist
-only for rehearsing failure paths.
+credentials, no network). A HashiCorp Vault transit-engine adapter IS
+shipped (`gov/kms_vault.py`, `provider: vault`, credentials from
+`VAULT_ADDR`/`VAULT_TOKEN` in the environment — never the config file);
+it is validated against an in-memory fake transport only, so **real-server
+validation is required before any production claim**. Otherwise a
+production deployment requires an operator-built `KmsProvider` subclass
+implementing `wrap_data_key`, `unwrap_data_key` (must authenticate
+key-id binding), and `describe_key` (limitation L2).
+`FakeKmsProvider.disable_key()` / `outage = True` exist only for
+rehearsing failure paths.
 
 ---
 

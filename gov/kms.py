@@ -48,7 +48,8 @@ zero network and byte-identical outputs across runs. It provides **no**
 production security (fixed secret, no hardware backing) and the config
 factory refuses it unconditionally — tests construct
 ``FakeKmsProvider`` directly in code instead. Real cloud wiring is
-operator provider-config (``DESIGN.md`` §2, §9); no credentials ship here.
+operator provider-config (schema documented in this factory's
+docstring); no credentials ship here.
 """
 
 import abc
@@ -56,6 +57,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import threading
@@ -660,13 +662,20 @@ def rotate_envelope_keyring(path, provider, kms_key_id=None, new_epoch=None,
 # ---------------------------------------------------------------------------
 
 def kms_provider_from_config(mapping):
-    """Build a :class:`KmsProvider` from operator config (see ``DESIGN.md``
-    §9 for the schema).
+    """Build a :class:`KmsProvider` from operator config (schema: the
+    ``provider`` key plus provider-specific keys documented per branch
+    below).
 
     * ``provider: fake`` -> :class:`KmsError`, ALWAYS (test-only; the
       operator config surface never builds the fake KMS — tests
       construct :class:`FakeKmsProvider` directly in code). Wave-81:
       the old dev opt-in variable gate is deleted from ``gov/``.
+    * ``provider: vault`` -> :class:`gov.kms_vault.VaultKmsProvider`
+      against HashiCorp Vault's transit engine. Address and token come
+      from the environment (``VAULT_ADDR``, ``VAULT_TOKEN``) — never
+      from the config mapping; missing credentials fail closed.
+      Optional ``mount`` key overrides the transit mount
+      (default ``"transit"``).
     * ``provider: aws|gcp|azure`` -> :class:`KmsError`: real cloud adapters
       are not built in this repo ($0 spend, no credentials, no network).
     * anything else -> :class:`KmsError`.
@@ -680,6 +689,23 @@ def kms_provider_from_config(mapping):
             "refusing KMS provider 'fake' from operator config: the fake "
             "KMS is test-only and is never wired from config (construct "
             "FakeKmsProvider directly in test code)")
+    if name == "vault":
+        # Lazy import: gov/kms_vault.py imports from .kms, so a
+        # top-level import here would be circular.
+        from .kms_vault import VaultKmsProvider, UrllibVaultTransport
+        addr = os.environ.get("VAULT_ADDR", "").strip()
+        token = os.environ.get("VAULT_TOKEN", "")
+        if not addr:
+            raise KmsError(
+                "kms provider 'vault' requires VAULT_ADDR to be set "
+                "(fail-closed: no Vault address, no provider)")
+        if not token:
+            raise KmsError(
+                "kms provider 'vault' requires VAULT_TOKEN to be set "
+                "(fail-closed: no Vault token, no provider)")
+        mount = mapping.get("mount", "transit")
+        return VaultKmsProvider(UrllibVaultTransport(addr), token=token,
+                                mount=mount)
     if name in ("aws", "gcp", "azure"):
         raise KmsError(
             "real cloud KMS adapters (%s) are not built in this repo: "

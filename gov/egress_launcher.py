@@ -1298,7 +1298,7 @@ class FilteredEgressLauncher:
         if text:
             popen_kw["text"] = True
         proc = self.launch(argv, env=env, **popen_kw)
-        if popen_kw.get("capture_output"):
+        if capture:
             out, err = proc.communicate(timeout=30)
             rc = proc.returncode
         else:

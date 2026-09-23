@@ -115,6 +115,18 @@ def resolve_anchor_key(explicit=None):
                 "pubkey_hex": pub.hex(), "dev": False}
     key_file = os.environ.get("GOV_ANCHOR_KEY_FILE", "").strip()
     if key_file:
+        # Wave-91 (G1): uniform fail-closed permission posture. The
+        # permission gate runs BEFORE any key bytes are read; a
+        # group/world-accessible file is refused, not warned about.
+        # Migration note: chmod 600 the file. The refusal surfaces as
+        # NoAnchorKeyError so anchoring stays disabled and the chain
+        # continues operator-attested-only — never silently unanchored.
+        from .keyfiles import require_private_key_file
+        try:
+            require_private_key_file(key_file)
+        except (FileNotFoundError, PermissionError) as e:
+            raise NoAnchorKeyError(
+                "refusing GOV_ANCHOR_KEY_FILE %s: %s" % (key_file, e))
         try:
             seed_hex = Path(key_file).read_text(
                 encoding="utf-8").strip()
@@ -124,15 +136,6 @@ def resolve_anchor_key(explicit=None):
                 "cannot read GOV_ANCHOR_KEY_FILE: %s" % (e,))
         if len(seed) != 32:
             raise NoAnchorKeyError("anchor key file must hold 32 bytes hex")
-        try:
-            mode = os.stat(key_file).st_mode & 0o777
-            if mode & 0o077:
-                sys.stderr.write(
-                    "WARNING: anchor key file %s is group/world-accessible "
-                    "(mode %o); this is least-bad $0 custody, not HSM\n"
-                    % (key_file, mode))
-        except OSError:
-            pass
         pub = _ab.anchor_pubkey(seed)
         return {"seed": seed, "key_id": _ab.anchor_key_id(pub),
                 "pubkey_hex": pub.hex(), "dev": False}

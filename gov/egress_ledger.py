@@ -41,8 +41,8 @@ unexpired (24h TTL). Different principals never share taint.
 
 F17 (Round 5): the ledger is now a first-class authenticated record, not
 an unkeyed chain. Every entry carries an HMAC computed with the SAME
-key epochs as the action log (``GOV_LOG_KEY`` / ``GOV_LOG_KEY_ARCHIVE`` /
-the dev key; see ``gov/log.py``), plus a sequence number, and every
+key epochs as the action log (``GOV_LOG_KEY`` / ``GOV_LOG_KEY_ARCHIVE`` —
+historically also the dev key, deleted wave-81; see ``gov/log.py``), plus a sequence number, and every
 append writes an HMAC'd checkpoint to a sidecar file
 (``<ledger>.checkpoints``). All reads verify before trusting: a tampered
 or truncated ledger raises ``LedgerUnverifiableError`` instead of
@@ -61,19 +61,21 @@ kernel bumps it to "now" on every content/metadata change, including
 the utime call itself, and no userspace API sets it to the past), so
 the filed evasion deterministically misses the cache and falls through
 to full HMAC verification; (b) the cache is NEVER trusted without a
-verified integrity anchor — when only the public dev key is configured
-(``GOV_LOG_KEY`` unset) there is no anchor at all (a T6 attacker who
-read the docs knows the dev key and can forge MACs), so
-``require_verified`` bypasses the cache and re-reads + fully verifies
-on every decision. Residuals: (a) filesystems with coarse timestamp
+verified integrity anchor — historically, when only the public dev key
+was configured (``GOV_LOG_KEY`` unset) there was no anchor at all (a T6
+attacker who read the docs knew the dev key and could forge MACs), so
+``require_verified`` bypassed the cache and re-read + fully verified on
+every decision. The dev key was deleted in wave-81; today an unset
+``GOV_LOG_KEY`` refuses to start rather than falling back, so this
+branch is unreachable in practice. Residuals: (a) filesystems with coarse timestamp
 granularity weaken the ctime freshness argument — a rewrite inside the
 same ctime tick could still collide; (b) entries written by pre-Round-5
 builds have no MAC and do not verify (fail-closed: start a fresh
 ledger); (c) fresh-principal rotation remains a deployment trust
-boundary — see ``gov/identity.py`` ``PrincipalRegistry``; (d) under the
-dev key a re-MAC'd forgery is undetectable — the pre-existing,
-documented dev-key limitation (``gov/log.py``), not a silent cache
-trust.
+boundary — see ``gov/identity.py`` ``PrincipalRegistry``; (d) historically, under the dev key a re-MAC'd forgery was undetectable —
+the pre-existing, documented dev-key limitation (``gov/log.py``) at the
+time, not a silent cache trust. The dev key was deleted in wave-81;
+no dev-key path exists anymore.
 
 F20 (Round 5): ``registered_domain`` no longer uses the naive
 last-two-labels heuristic. IP literals are returned unchanged (never

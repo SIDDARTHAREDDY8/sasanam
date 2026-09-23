@@ -188,8 +188,16 @@ class LineageTracker(object):
     # -- run key (stamp HMAC) ------------------------------------------
 
     def _load_or_create_key(self):
+        from .keyfiles import require_private_key_file
         key_path = self._dir / _KEY_NAME
-        if key_path.is_file():
+        if key_path.is_file() or key_path.is_symlink():
+            # Wave-91 (G1): uniform fail-closed permission posture. An
+            # existing key file with group/world bits — or a symlink,
+            # or a non-regular path — is refused outright, never
+            # silently loaded. The check runs BEFORE any key bytes are
+            # read. Migration note: .key files created by this
+            # tracker are 0600; only hand-placed files can trip this.
+            require_private_key_file(key_path)
             key = key_path.read_bytes()
             if len(key) >= 16:
                 return key

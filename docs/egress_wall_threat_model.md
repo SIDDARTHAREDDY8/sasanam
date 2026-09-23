@@ -108,8 +108,11 @@ host). The launcher cannot distinguish "operator re-pinned" from
 ### R11. Long-lived wall, short-lived pins
 Component digests are verified at *launch* time. A component tampered
 *after* a child's launch is not detected until the next launch.
-Pair with runtime integrity monitoring for high-assurance
-deployments.
+Because the proxy and confined resolver re-read their config files per
+request, such tamper is live-exploitable by the already-running child
+without any new launch; the tamper is caught loudly
+(`component_tampered`) at the next launch — after the fact. Pair with
+runtime integrity monitoring for high-assurance deployments.
 
 ## Non-goals (never claimed)
 - Content inspection of allowed traffic (DLP layer's job).

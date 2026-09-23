@@ -45,10 +45,14 @@ approval-bypass families, `workstreams/evals/D2_BENCHMARK.md`).
   so threshold signing is procedure-written but not operationally real.
 - **No real KMS wired.** `gov/kms.py` is provider-neutral with a correct
   envelope contract (key-id binding, fail-closed `KmsError`) and a
-  test-double `FakeKmsProvider` that is refused outside `GOV_DEV_KEYS=1` —
-  but AWS/GCP/Azure provider implementations are "operator provider-config"
-  (docstring §2, §9 of DESIGN.md): **not built**. Until one exists, production
-  custody means either the weaker v1 plaintext `KeyRing` or hand-rolled wiring.
+  test-double `FakeKmsProvider` that is refused unconditionally from
+  operator config (wave-81 deleted the old `GOV_DEV_KEYS` opt-in) — but
+  AWS/GCP/Azure provider implementations are "operator provider-config":
+  **not built**. A HashiCorp Vault transit adapter now exists
+  (`gov/kms_vault.py`, wave-91) but is validated against a fake transport
+  only — **real-server validation is required before any production
+  claim**. Until one is proven, production custody means either the
+  weaker v1 plaintext `KeyRing` or hand-rolled wiring.
 - **F75 CLOSED 2026-09-22** (`evals/FINDINGS.md`): pinned dependency graph —
   `requirements.lock` (exact `==` pins + sha256 hashes for all artifacts),
   `gov/supplychain.py` package allowlist enforced by a fail-closed audit
