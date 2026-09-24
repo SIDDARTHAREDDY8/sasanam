@@ -25,6 +25,16 @@ individually policy-benign). This module is the governed channel:
   ``receive()`` diverted, ``ToolExecutor.call()`` denied,
   ``spawn_sub_agent()`` refused (quarantine escape closed).
   ``release()`` is the operator reversal, chained.
+- GAP-2 lineage joining: with ``lineage_tracker=`` attached, the bus
+  joins the infection-lineage substrate (gov/lineage.py). send() refuses
+  unlineaged senders fail-closed, stamps carry sender_lineage_id /
+  sender_lineage_depth / sender_infected, sends and receives feed the
+  population replication watch, and receive() records lineage_contact
+  (channel "bus") with taint propagation (live writer taint). A stamp
+  that cannot be tied to a chained send record — or whose lineage does
+  not verify against the live registry — is forged: the recipient is
+  taint-marked, bus-quarantined, and delivery is refused (loud, never
+  silent). Without a tracker, behavior is exactly as before.
 
 Honest ceiling (never claimed away): paraphrase-semantic stego,
 Schelling-point coordination, and tool-mediated covert channels are
@@ -194,12 +204,21 @@ class MessageBus(object):
     ``run_dir`` roots the operator-side inbox. ``notify`` is an optional
     callable(message_record) invoked on every accepted send (the
     infection monitor hooks here).
+
+    ``lineage_tracker`` (GAP-2) joins the bus to the run's infection
+    lineage substrate (gov/lineage.py): when attached, send() refuses
+    unlineaged senders fail-closed, the stamp carries the sender's
+    lineage id / depth / send-time taint bit, sends and receives feed
+    the tracker's population replication watch, and receive() records a
+    lineage_contact and propagates taint. Without a tracker the bus
+    behaves exactly as before (zero behavior change).
     """
 
-    def __init__(self, run_dir, log, notify=None):
+    def __init__(self, run_dir, log, notify=None, lineage_tracker=None):
         self._run_dir = Path(run_dir)
         self._log = log
         self._notify = notify
+        self._lineage_tracker = lineage_tracker
         self._inbox_root = self._run_dir / "messages"
         self._seq = {}        # sender agent_id -> next seq int
         self._last_seen = {}  # (recipient, sender) -> last delivered seq
@@ -207,6 +226,14 @@ class MessageBus(object):
         self._sent_bytes = {}  # sender -> byte count (bandwidth)
         self._quarantined = {}  # agent_id -> {"reason":..., "lineage":[...]}
         self._threads = []    # (sender, recipient) edges for lineage
+
+    def attach_lineage_tracker(self, tracker):
+        """Deployment wiring: join the bus to the run's infection-lineage
+        tracker after construction (e.g. when the tracker is created
+        after the bus). Same effect as the ``lineage_tracker=``
+        constructor kwarg."""
+        self._lineage_tracker = tracker
+        return tracker
 
     # -- quarantine state (operator side) ---------------------------------
 
@@ -294,6 +321,26 @@ class MessageBus(object):
         if _deny is not None:
             raise MessageRefusedError(
                 "send refused: identity check failed (%s)" % (_deny[1],))
+        # 1b. lineage check (GAP-2): on a run where the deployment
+        # installed the infection-lineage tracker, the sender must be
+        # birth-certified. Fail closed, mirroring call()'s refusal of
+        # unlineaged identities — the bus must not be the softer path.
+        tracker = self._lineage_tracker
+        if tracker is not None and not tracker.is_registered(sender):
+            self._log.append({
+                "event": "agent_message",
+                "run_id": self._run_dir.name,
+                "agent_id": sender,
+                "decision": "refused",
+                "policy_id": "infection-lineage",
+                "flag": "lineage_send_refused",
+                "reason": ("send refused: sender %r has no lineage record "
+                           "on a lineage-tracked run" % sender),
+                "recipient": recipient,
+            })
+            raise MessageRefusedError(
+                "send refused: sender %r has no lineage record "
+                "(fail closed)" % sender)
         # 2. quarantine check (send-side refusal).
         if self.is_quarantined(sender):
             self._log.append({
@@ -357,6 +404,16 @@ class MessageBus(object):
             "content_bytes": len(canonical),
             "steg_findings": steg_screen(text_for_screen),
         }
+        if tracker is not None:
+            # GAP-2: the stamp carries the sender's infection-lineage
+            # identity (id, depth, send-time taint bit) so the receive
+            # side can verify and propagate it. These fields ride the
+            # chained "sent" event below, which is the provenance root
+            # the receive side verifies against.
+            cert = tracker.certificate(sender)
+            stamp["sender_lineage_id"] = cert["lineage_id"]
+            stamp["sender_lineage_depth"] = cert.get("depth", 0)
+            stamp["sender_infected"] = tracker.is_infected(sender)
         # 6. operator-side store (full content NEVER goes in the chain).
         msg_dir = self._inbox_root / recipient
         msg_dir.mkdir(parents=True, exist_ok=True)
@@ -391,7 +448,75 @@ class MessageBus(object):
         if self._notify is not None:
             self._notify({"msg_id": msg_id, "stamp": stamp,
                           "canonical": canonical})
+        if tracker is not None:
+            # GAP-2: bus traffic feeds the population replication watch,
+            # so a payload spreading agent-to-agent over the bus fires
+            # infection_suspected exactly like the same bytes over files.
+            tracker.observe_content(stamp["content_sha256"], sender,
+                                    len(canonical))
         return msg_id
+
+    def _chained_send_matches(self, msg_id, stamp):
+        """True iff the audit chain carries an ``agent_message`` send
+        event for msg_id whose stamp matches the inbox file's stamp on
+        the provenance fields.
+
+        The chain is the provenance root: a stamp that cannot be tied
+        to a chained send was not issued by this bus (e.g. an attacker
+        hand-wrote an inbox file impersonating another sender).
+        """
+        try:
+            from .log import read_entries
+            events = read_entries(self._run_dir / "actions.jsonl")
+        except Exception:  # noqa: BLE001 - fail closed: unverifiable
+            return False
+        for e in events:
+            if (isinstance(e, dict)
+                    and e.get("event") == "agent_message"
+                    and e.get("decision") == "sent"
+                    and e.get("msg_id") == msg_id):
+                chained = e.get("stamp") or {}
+                return all(chained.get(k) == stamp.get(k) for k in (
+                    "sender", "seq", "recipient", "msg_type",
+                    "content_sha256", "sender_lineage_id"))
+        return False
+
+    def _refuse_unverifiable_message(self, tracker, recipient, msg_id,
+                                     reason):
+        """Full forged-lineage response for stamps the chained-send
+        check rejects: taint-mark the reader (when lineage-registered),
+        chain a LOUD lineage_stamp_forged event, then contain and refuse
+        via _contain_and_refuse."""
+        if (tracker.is_registered(recipient)
+                and not tracker.is_infected(recipient)):
+            tracker.mark_infected(
+                recipient,
+                "received bus message with forged lineage (%s)" % msg_id)
+        self._log.append({
+            "event": "lineage_stamp_forged",
+            "run_id": self._run_dir.name,
+            "agent_id": recipient,
+            "decision": "flagged",
+            "policy_id": "infection-lineage",
+            "channel": "bus",
+            "msg_id": msg_id,
+            "flag": "lineage_stamp_forged",
+            "reason": reason,
+        })
+        self._contain_and_refuse(recipient, msg_id, reason)
+
+    def _contain_and_refuse(self, recipient, msg_id, detail):
+        """Shared tail of both forged paths: bus-quarantine the
+        recipient (containment; reversible via release()) and refuse
+        delivery — loud, never silently dropped."""
+        self.quarantine(
+            recipient,
+            "bus message %r failed lineage verification: %s"
+            % (msg_id, detail))
+        raise MessageFlaggedError(
+            "receive refused: message %r failed lineage verification "
+            "(%s); recipient %r quarantined"
+            % (msg_id, detail, recipient))
 
     def receive(self, executor, identity, msg_id):
         """Read and validate a message. Returns (content, stamp, flags).
@@ -450,7 +575,37 @@ class MessageBus(object):
             })
             raise MessageFlaggedError(
                 "message %r failed integrity check (hash mismatch)" % msg_id)
+        # GAP-2: lineage verification on the receive path. The stamp is
+        # asserted by whoever wrote the inbox file; the tracker's live
+        # registry plus the chained send record are the verification.
+        tracker = self._lineage_tracker
+        lineage_status = None
+        if tracker is not None:
+            if not self._chained_send_matches(msg_id, stamp):
+                # The stamp cannot be tied to a chained send: it was not
+                # issued by this bus (e.g. an attacker hand-wrote the
+                # inbox file). note_message's registry checks would pass
+                # on a copied lineage id, so this check runs first.
+                self._refuse_unverifiable_message(
+                    tracker, recipient, msg_id,
+                    "no chained send record matches message %r: the stamp "
+                    "was not issued by this bus" % msg_id)
+            # note_message raises LineageError for an unlineaged
+            # recipient (fail closed, mirroring note_read); a forged
+            # lineage returns ("forged", detail) after chaining
+            # lineage_stamp_forged and taint-marking the reader.
+            lineage_status, detail = tracker.note_message(
+                recipient, msg_id, stamp)
+            if lineage_status == "forged":
+                self._contain_and_refuse(recipient, msg_id, detail)
+            # Contact/tainted messages are DELIVERED with the flag (the
+            # steg-flag precedent: flagged, never silently dropped), and
+            # the recipient lineage feeds the population watch.
+            tracker.observe_content(stamp["content_sha256"], recipient,
+                                    stamp.get("content_bytes") or 0)
         flags = []
+        if lineage_status in ("contact", "tainted"):
+            flags.append("lineage:" + lineage_status)
         last = self._last_seen.get((recipient, sender), -1)
         if stamp["seq"] <= last:
             flags.append("replay")

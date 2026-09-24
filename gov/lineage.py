@@ -707,6 +707,105 @@ class LineageTracker(object):
             return "tainted", stamp
         return "contact", stamp
 
+    def note_message(self, agent_id, msg_id, stamp):
+        """Record a governed-bus message read against the sender's
+        lineage (GAP-2). ``stamp`` is the message's provenance stamp
+        dict, as chained on the bus's ``agent_message`` send event.
+
+        Returns ``(status, detail)`` where status is one of:
+
+        - ``"contact"``: clean lineage contact; ``lineage_contact``
+          (channel ``"bus"``) chained.
+        - ``"tainted"``: the sender lineage was infected — at send time
+          (the stamp's ``sender_infected`` bit) or live, evaluated now —
+          and the reader was clean: the reader is now taint-marked
+          (propagation). Chained.
+        - ``"forged"``: the stamp carries no lineage fields, names an
+          unregistered sender, or the claimed lineage id does not match
+          the sender's live record — LOUD ``lineage_stamp_forged``
+          (channel ``"bus"``); the content is treated as tainted and
+          the reader is taint-marked. (The bus additionally verifies the
+          stamp against the chained send record before calling here; a
+          hand-written inbox file never reaches this method as clean.)
+
+        Raises ``LineageError`` for an unlineaged *recipient* (fail
+        closed), mirroring ``note_read``.
+        """
+        reader = self._by_agent.get(agent_id)
+        if reader is None:
+            raise LineageError(
+                "cannot record bus message for unlineaged agent %r (fail "
+                "closed)" % (agent_id,))
+        sender = stamp.get("sender")
+        claimed = stamp.get("sender_lineage_id")
+
+        def _forged(reason):
+            self._log.append({
+                "event": "lineage_stamp_forged",
+                "run_id": self._run_dir.name,
+                "agent_id": agent_id,
+                "decision": "flagged",
+                "policy_id": "infection-lineage",
+                "channel": "bus",
+                "msg_id": msg_id,
+                "flag": "lineage_stamp_forged",
+                "reason": reason,
+            })
+            if not self.is_infected(agent_id):
+                self.mark_infected(
+                    agent_id,
+                    "received bus message with forged lineage (%s)"
+                    % msg_id)
+            return "forged", reason
+
+        if not claimed or not isinstance(claimed, str):
+            return _forged(
+                "bus message %r carries no sender lineage provenance"
+                % (msg_id,))
+        rec = self._by_agent.get(sender)
+        if rec is None:
+            return _forged(
+                "bus message %r names unregistered sender %r"
+                % (msg_id, sender))
+        if rec["lineage_id"] != claimed:
+            return _forged(
+                "bus message %r claims lineage %s for sender %r; the "
+                "live record is %s"
+                % (msg_id, claimed, sender, rec["lineage_id"]))
+        # Live sender taint: the stamp is a point-in-time claim, but a
+        # sender taint-marked AFTER the send (e.g. by the replication
+        # watch) still taints later readers. The stamp binds content to
+        # a sender lineage; taint is evaluated live — the file-channel
+        # "live writer taint" rule, applied to the bus.
+        writer_tainted = (bool(stamp.get("sender_infected"))
+                          or self.is_infected(sender))
+        self._log.append({
+            "event": "lineage_contact",
+            "run_id": self._run_dir.name,
+            "agent_id": agent_id,
+            "decision": "contact",
+            "policy_id": "infection-lineage",
+            "channel": "bus",
+            "msg_id": msg_id,
+            "writer": sender,
+            "writer_lineage_id": claimed,
+            "writer_depth": stamp.get("sender_lineage_depth"),
+            "content_sha256": stamp.get("content_sha256"),
+            "stamp_infected": writer_tainted,
+            "flag": "lineage_contact",
+            "reason": ("Bus-mediated lineage contact: %r received message "
+                       "%r from %r (lineage %s%s)." % (
+                           agent_id, msg_id, sender, claimed,
+                           ", INFECTED" if writer_tainted else "")),
+        })
+        if writer_tainted and not self.is_infected(agent_id):
+            self.mark_infected(
+                agent_id,
+                "received bus message %r from infected lineage %s (%r)"
+                % (msg_id, claimed, sender))
+            return "tainted", "sender lineage infected"
+        return "contact", "clean"
+
     def note_delete(self, agent_id, real_path):
         """Remove the sidecar when the file is deleted (stale stamps
         must not haunt recreated files). When the DELETED path is
