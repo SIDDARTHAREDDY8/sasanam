@@ -103,7 +103,13 @@ available per Sandbox instance and via environment variables::
   family is allowed with scalar ``socket()`` argument filters
   (AF_UNIX/AF_INET only, SOCK_STREAM only — raw/packet/netlink die with
   EPERM), everything else stays default-deny; an unknown cage_mode
-  refuses loudly at construction (fail-closed).
+  refuses loudly at construction (fail-closed). With an
+  ``egress_launcher`` attached, ``filtered-egress`` instead spawns
+  through the wall (``FilteredEgressLauncher``): the wall helper is the
+  network seccomp (the cage filter is not double-installed), the wall
+  provides the netns, and the launch is audited as
+  ``egress_wall_launch`` — without a launcher the mode is the internal
+  profile only, and the result note says so loudly.
 
 Each layer has a ``require_*`` fail-closed twin (``require_pivot_root``,
 ``require_privdrop``, ``require_seccomp``): the child is stopped with
@@ -1631,7 +1637,8 @@ class Sandbox:
                  cage_mode="strict",
                  deployment_mode="production",
                  refusal_receipt_dir=None,
-                 pivot_extra_mounts=None, canary_plant=None):
+                 pivot_extra_mounts=None, canary_plant=None,
+                 egress_launcher=None):
         if require_netns and not use_netns:
             raise ValueError("require_netns=True conflicts with use_netns=False")
         if require_pidns and not use_pidns:
@@ -1654,6 +1661,11 @@ class Sandbox:
             raise ValueError("cage_mode='filtered-egress' requires "
                              "use_seccomp=True (fail-closed: the cage "
                              "profile is meaningless without the filter)")
+        if egress_launcher is not None and cage_mode != "filtered-egress":
+            raise ValueError(
+                "egress_launcher is only meaningful with "
+                "cage_mode='filtered-egress' (fail-closed: STRICT mode "
+                "is untouched by the wall launcher)")
         if deployment_mode not in _DEPLOYMENT_MODES:
             raise ValueError(
                 "unknown deployment_mode %r: must be one of %s "
@@ -1688,6 +1700,12 @@ class Sandbox:
         self.require_seccomp = bool(require_seccomp)
         self.cage_mode = cage_mode
         self.pivot_extra_mounts = dict(pivot_extra_mounts or {})
+        # F81/D10: an optional FilteredEgressLauncher (gov/egress_launcher.py).
+        # When cage_mode="filtered-egress" and a launcher is attached, the
+        # spawn goes through the wall: the launcher owns verify -> check ->
+        # wrap -> spawn -> audit, and the sandbox preexec rides along as a
+        # preexec_chain entry. STRICT mode never consults the launcher.
+        self.egress_launcher = egress_launcher
         # Wave-51 P1 egress canaries: optional planting hook
         # ``plant(jail_path, child_env) -> env_additions`` (see
         # gov.canary.make_canary_plant). Default None = nothing planted,
@@ -1737,6 +1755,41 @@ class Sandbox:
             _refuse_loud(str(e), kind="seccomp-log-tier-guard",
                          receipt_dir=self.refusal_receipt_dir,
                          extra={"deployment_mode": self.deployment_mode})
+        # F81/D10 + Fog decision 2 (composition): filtered-egress with an
+        # attached launcher spawns through the wall. The wall is the
+        # network boundary, so the sandbox keeps rlimits/filesystem/pidns
+        # and anything that conflicts with the wall spawn path refuses
+        # here, before any jail is created (fail-closed at launch).
+        launcher_mode = (self.cage_mode == "filtered-egress"
+                         and self.egress_launcher is not None)
+        if launcher_mode:
+            if self.drop_privs:
+                _refuse_loud(
+                    "egress-launcher mode cannot drop privileges in "
+                    "preexec: `ip netns exec` needs the operator's "
+                    "privilege (fail-closed)",
+                    kind="egress-launcher-conflict",
+                    receipt_dir=self.refusal_receipt_dir,
+                    extra={"conflict": "drop_privs"})
+            if self.require_seccomp:
+                _refuse_loud(
+                    "egress-launcher mode supersedes the cage seccomp "
+                    "filter with the wall helper: require_seccomp cannot "
+                    "be attested via the sandbox status pipe (the wall's "
+                    "attestation is the egress_wall_launch audit event)",
+                    kind="egress-launcher-conflict",
+                    receipt_dir=self.refusal_receipt_dir,
+                    extra={"conflict": "require_seccomp"})
+            if self.require_netns:
+                _refuse_loud(
+                    "egress-launcher mode provides the network namespace "
+                    "via the wall, not the sandbox's own unshare: "
+                    "require_netns cannot be attested via the sandbox "
+                    "status pipe (the wall's attestation is the "
+                    "egress_wall_launch audit event)",
+                    kind="egress-launcher-conflict",
+                    receipt_dir=self.refusal_receipt_dir,
+                    extra={"conflict": "require_netns"})
         timeout = self.timeout if timeout is None else timeout
         argv = self._checked_argv(argv)
         if stdin_data is not None and not isinstance(stdin_data, bytes):
@@ -1786,14 +1839,27 @@ class Sandbox:
             preexec = self._make_preexec(argv, child_env, status_w, str(jail),
                                           seccomp_tier)
             start = time.monotonic()
+            popen_kw = dict(
+                cwd=str(jail),
+                stdin=(subprocess.PIPE if stdin_data is not None
+                       else subprocess.DEVNULL),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                start_new_session=True, pass_fds=(status_w,))
             try:
-                proc = subprocess.Popen(
-                    argv, cwd=str(jail), env=child_env,
-                    stdin=(subprocess.PIPE if stdin_data is not None
-                           else subprocess.DEVNULL),
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    start_new_session=True, preexec_fn=preexec,
-                    pass_fds=(status_w,))
+                if launcher_mode:
+                    # The governed spawn path and the wall are one call:
+                    # the launcher owns lock -> verify -> check -> wrap ->
+                    # spawn -> audit; the sandbox preexec rides along as
+                    # a preexec_chain entry (the wall re-check runs
+                    # first, then sandbox hardening). The child env
+                    # merges under the wall's scrubbed/provided vars.
+                    proc = self.egress_launcher.launch(
+                        argv, env=child_env, preexec_chain=(preexec,),
+                        **popen_kw)
+                else:
+                    proc = subprocess.Popen(
+                        argv, env=child_env, preexec_fn=preexec,
+                        **popen_kw)
             finally:
                 # Parent never writes; the child (or its death) closes it.
                 os.close(status_w)
@@ -1881,6 +1947,28 @@ class Sandbox:
                                  % "+".join(fell_back))
                 result.note = (result.note + "; " + fallback_note
                                if result.note else fallback_note)
+            if launcher_mode:
+                # The wall is the network boundary for this run; the
+                # sandbox's per-call bytes report what the SANDBOX
+                # established, and the wall's attestation is the
+                # egress_wall_launch audit event.
+                wall_note = (
+                    "egress wall launcher: network isolation and network "
+                    "seccomp provided by the wall (see the "
+                    "egress_wall_launch audit event); the cage seccomp "
+                    "filter was not double-installed and the sandbox's "
+                    "own netns unshare was skipped")
+                result.note = (result.note + "; " + wall_note
+                               if result.note else wall_note)
+            elif self.cage_mode == "filtered-egress":
+                # No longer silent: without a launcher this mode is the
+                # internal cage seccomp profile only -- no netns/nftables
+                # wall stands behind it.
+                bare_note = (
+                    "filtered-egress without an egress launcher: internal "
+                    "cage seccomp profile only; no netns/nftables wall")
+                result.note = (result.note + "; " + bare_note
+                               if result.note else bare_note)
             if (self.use_seccomp and seccomp_active
                     and seccomp_tier == "log"):
                 # Staging tier honesty: LOG mode audit-logs denials but
@@ -1978,7 +2066,20 @@ class Sandbox:
 
     def _make_preexec(self, argv, child_env, status_w, jail_path,
                       seccomp_tier):
-        use_netns = self.use_netns
+        # F81/D10 + Fog decision 2 (composition): in egress-launcher
+        # mode the wall is the network boundary. The sandbox keeps
+        # rlimits/filesystem/pidns; its own netns unshare is skipped
+        # (the wall provides the netns) and its cage seccomp install is
+        # skipped (the wall helper provides the network filter --
+        # installing the cage filter too would KILL `ip netns exec`'s
+        # netlink syscalls, a fail-closed conflict). drop_privs /
+        # require_seccomp / require_netns with a launcher refuse in
+        # run(), before this point.
+        launcher_mode = (self.cage_mode == "filtered-egress"
+                         and self.egress_launcher is not None)
+        launcher_wall = (self.egress_launcher.wall
+                         if launcher_mode else None)
+        use_netns = self.use_netns and not launcher_mode
         use_pidns = self.use_pidns
         require_netns = self.require_netns
         require_pidns = self.require_pidns
@@ -1986,7 +2087,7 @@ class Sandbox:
         require_pivot = self.require_pivot_root
         drop_privs = self.drop_privs
         require_privdrop = self.require_privdrop
-        use_seccomp = self.use_seccomp
+        use_seccomp = self.use_seccomp and not launcher_mode
         require_seccomp = self.require_seccomp
         cage_mode = self.cage_mode
         # Wave-61: the seccomp default-action tier arrives as a resolved
@@ -2138,7 +2239,16 @@ class Sandbox:
                         _report(net_ok, True, pivot_done, priv_ok,
                                 seccomp_ok)
                         try:
-                            os.execvpe(argv[0], argv, child_env)
+                            # F81/D10: in launcher mode the pidns worker
+                            # execs the wall-wrapped argv (the wrap
+                            # happens here, in the child, after
+                            # hardening -- exactly once on this path;
+                            # the parent's Popen argv is unused here).
+                            spawn_argv = (
+                                launcher_wall.wrap_argv(argv)
+                                if launcher_wall is not None else argv)
+                            os.execvpe(spawn_argv[0], spawn_argv,
+                                       child_env)
                         except OSError:
                             os._exit(127)
                     # Intermediate: never hardens itself (it must stay

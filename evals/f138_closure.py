@@ -63,6 +63,7 @@ def _comp_paths(sim):
         "dns_zone": os.path.join(conf, "dns_hosts.txt"),
         "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
         "seccomp_config": os.path.join(conf, "seccomp_config.txt"),
+        "seccomp_helper": os.path.join(conf, "run_seccomp.py"),
     }
 
 

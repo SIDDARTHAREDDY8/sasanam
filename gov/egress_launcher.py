@@ -41,7 +41,9 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import select
+import shutil
 import socket
 import struct
 import subprocess
@@ -132,6 +134,9 @@ WALL_COMPONENTS = (
     "dns_zone",         # authoritative zone data for allowlisted names
     "proxy_impl",       # proxy implementation artifact / policy descriptor
     "seccomp_config",   # seccomp-BPF policy (blocked calls)
+    "seccomp_helper",   # the seccomp launcher artifact itself
+                        # (vendored gov/data/run_seccomp.py copied into
+                        # the conf dir at install; F81 launcher wave)
 )
 
 
@@ -365,10 +370,17 @@ class WallComponentInventory:
 
     # -- pin payload --------------------------------------------------
     @staticmethod
-    def _build_pin_payload(component_paths, algos, installed_at):
+    def _build_pin_payload(component_paths, algos, installed_at,
+                           *, live_digests=None):
         algos = tuple(algos)
         if not algos:
             raise ValueError("install requires at least one digest algo")
+        if live_digests:
+            unknown = set(live_digests) - set(component_paths)
+            if unknown:
+                raise EgressLaunchRefused(
+                    "live_digests for unknown components: %s"
+                    % sorted(unknown))
         entries = []
         for name in WALL_COMPONENTS:
             path = component_paths.get(name)
@@ -378,14 +390,22 @@ class WallComponentInventory:
             is_link = os.path.islink(path)
             with open(path, "rb") as f:
                 data = f.read()
-            entries.append({
+            entry = {
                 "name": name,
                 "path": os.path.abspath(path),
                 "realpath": os.path.realpath(path),
                 "is_symlink": bool(is_link),
                 "size": len(data),
                 "digests": component_digests(data, algos),
-            })
+            }
+            if live_digests and name in live_digests:
+                # Install-time live-state baseline (fog decision 1):
+                # e.g. the sha256 of the normalized deployed nftables
+                # ruleset. Part of the pin payload, so roster-human
+                # authorship binds the baseline too — drift detection
+                # cannot be silently re-based.
+                entry["live_sha256"] = live_digests[name]
+            entries.append(entry)
         return {
             "format": MANIFEST_FORMAT,
             "installed_at": installed_at,
@@ -395,7 +415,8 @@ class WallComponentInventory:
 
     @staticmethod
     def _prepare_pin(component_paths, manifest_path, *, algos=DEFAULT_ALGOS,
-                     tier="production", ts=None, ledger_path=None):
+                     tier="production", ts=None, ledger_path=None,
+                     live_digests=None):
         """Shared pre-computation for proposal() and install(): build the
         payload, hash it, and locate the chain tip. Refuses to build on a
         broken ledger (fail closed — never extend rewritten history).
@@ -411,7 +432,7 @@ class WallComponentInventory:
                 "pin_authorship_invalid: unknown tier %r" % (tier,))
         ts = ts or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         payload = WallComponentInventory._build_pin_payload(
-            component_paths, algos, ts)
+            component_paths, algos, ts, live_digests=live_digests)
         payload_sha = _digest_bytes(_canonical_json_bytes(payload), "sha256")
         ledger_path = (ledger_path if ledger_path is not None
                        else _default_ledger_path(manifest_path))
@@ -424,7 +445,8 @@ class WallComponentInventory:
     # -- proposal (operator signing side) -------------------------------
     @staticmethod
     def proposal(component_paths, manifest_path, *, algos=DEFAULT_ALGOS,
-                 tier="production", ts=None, ledger_path=None):
+                 tier="production", ts=None, ledger_path=None,
+                 live_digests=None):
         """The exact canonical body a roster human must sign to authorize
         a pin — computed WITHOUT writing anything.
 
@@ -434,10 +456,16 @@ class WallComponentInventory:
         the resulting signature back into :meth:`install` unchanged: a
         signature over different content, chain position, timestamp, or
         tier is refused.
+
+        ``live_digests`` optionally pins install-time live-state
+        baselines (e.g. the normalized nftables ruleset digest) on the
+        named components; it is part of the signed payload, so the
+        baseline cannot be re-based without new authorship. Pass the
+        identical mapping to install().
         """
         prep = WallComponentInventory._prepare_pin(
             component_paths, manifest_path, algos=algos, tier=tier, ts=ts,
-            ledger_path=ledger_path)
+            ledger_path=ledger_path, live_digests=live_digests)
         out = {k: prep[k] for k in ("pin_payload_sha256",
                                    "prev_pin_record_sha256", "ts", "body")}
         out["tier"] = tier
@@ -450,7 +478,7 @@ class WallComponentInventory:
                 author_key_id=None, authorship_sig_hex=None,
                 ts=None, tier="production",
                 second_author_key_id=None, second_authorship_sig_hex=None,
-                ledger_path=None):
+                ledger_path=None, live_digests=None):
         """Pin components under roster-human authorship.
 
         ``trust`` is a DelegationTrust whose human_keys roster authorizes
@@ -465,10 +493,12 @@ class WallComponentInventory:
 
         There is no bare install: missing trust or authorship is refused
         with WallPinRefused (``pin_authorship_invalid``), never a
-        silent re-pin. Returns the manifest dict. Writes the manifest
-        JSON (with the pin record embedded), then the receipt (sha256
-        over the exact manifest bytes), then appends the pin record to
-        the ledger.
+        silent re-pin. ``live_digests`` must be the identical mapping
+        passed to :meth:`proposal` (the signed body covers it; a skew
+        invalidates the signature). Returns the manifest dict. Writes
+        the manifest JSON (with the pin record embedded), then the
+        receipt (sha256 over the exact manifest bytes), then appends
+        the pin record to the ledger.
         """
         if tier not in _PIN_TIERS:
             raise WallPinRefused(
@@ -484,7 +514,7 @@ class WallComponentInventory:
                 "pin digest (no bare install)")
         prep = WallComponentInventory._prepare_pin(
             component_paths, manifest_path, algos=algos, tier=tier, ts=ts,
-            ledger_path=ledger_path)
+            ledger_path=ledger_path, live_digests=live_digests)
         approvals = _require_pin_approvals(
             trust, prep["body"], tier, author_key_id, authorship_sig_hex,
             second_author_key_id, second_authorship_sig_hex)
@@ -733,6 +763,18 @@ class WallStateProvider:
     def describe(self):
         return {"provider": type(self).__name__}
 
+    def wrap_argv(self, argv):
+        """Return the argv prefix that places the child in the wall.
+
+        The default is identity: providers that do not move the child
+        into a namespace (e.g. the simulated provider) spawn argv
+        unchanged. NetnsWallProvider overrides this to return
+        ``["ip", "netns", "exec", <netns>, <seccomp helper>, *argv]``.
+        FilteredEgressLauncher.launch() applies this at spawn time,
+        after verify + check and before Popen.
+        """
+        return list(argv)
+
     def child_env_extra(self):
         """Extra env vars injected into every launched child (e.g. the
         in-wall proxy endpoint). Production returns the well-known
@@ -781,7 +823,8 @@ PREEXEC_ABORT_CODE = 99
 
 def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
                            wall_id="sim-wall-1", trust=None,
-                           operator_signers=None, tier="dev"):
+                           operator_signers=None, tier="dev",
+                           live_digests=None):
     """Create a simulated wall install: components + manifest + receipt +
     pin ledger.
 
@@ -791,6 +834,12 @@ def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
     ephemeral sim operator keypair is generated — honest for a localhost
     fixture, never for production. ``tier`` defaults to ``"dev"``
     (single-human); pass ``"production"`` for the two-human rule.
+
+    ``live_digests`` (optional) maps component names to their
+    install-time *live* digests (e.g. {"nft_ruleset": <sha256 of the
+    normalized deployed ruleset>}); they are recorded on the manifest
+    entry for drift detection by live-state providers. The sim
+    provider ignores them; NetnsWallProvider requires them.
 
     Returns (inventory, paths dict). The inventory is wired with the
     trust + ledger so verify() checks authorship and chain. paths also
@@ -853,6 +902,16 @@ def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
                        "# PRODUCTION: pin the deployed BPF/profile bytes.\n"
                        "deny=socket(AF_PACKET) socket(SOCK_RAW) "
                        "unshare(CLONE_NEWNET) setns\n")
+    # The sim's stand-in for the vendored run_seccomp.py artifact: the
+    # real deployment pins the vendored bytes (gov/data/run_seccomp.py)
+    # copied into the conf dir. The sim provider never executes it
+    # (wrap_argv is identity there); what matters here is that the pin
+    # covers the helper's bytes, so tamper refuses.
+    seccomp_helper = w("run_seccomp.py",
+                       "# simulated seccomp-helper stand-in.\n"
+                       "# PRODUCTION: copy gov/data/run_seccomp.py here;\n"
+                       "# its bytes are what the pin binds.\n"
+                       "raise SystemExit('sim stand-in: never executed')\n")
 
     manifest_path = os.path.join(sim_dir, "wall_pins.json")
     receipt_path = os.path.join(sim_dir, "wall_receipt.json")
@@ -863,10 +922,11 @@ def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
                        "dns_config": dns_config,
                        "dns_zone": dns_zone,
                        "proxy_impl": proxy_impl,
-                       "seccomp_config": seccomp_config}
+                       "seccomp_config": seccomp_config,
+                       "seccomp_helper": seccomp_helper}
     prop = WallComponentInventory.proposal(
         component_paths, manifest_path, algos=algos, tier=tier,
-        ledger_path=ledger_path)
+        ledger_path=ledger_path, live_digests=live_digests)
     sigs = [s.sign(prop["body"]).hex() for s in signers]
     kids = [s.key_id for s in signers]
     WallComponentInventory.install(
@@ -875,7 +935,7 @@ def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
         ts=prop["ts"], tier=tier,
         second_author_key_id=kids[1] if len(kids) > 1 else None,
         second_authorship_sig_hex=sigs[1] if len(sigs) > 1 else None,
-        ledger_path=ledger_path)
+        ledger_path=ledger_path, live_digests=live_digests)
     with open(os.path.join(sim_dir, "wall_id.txt"), "w",
               encoding="utf-8") as f:
         f.write(wall_id + "\n")
@@ -1395,6 +1455,214 @@ class FlappingWallProvider(SimulatedWallProvider):
         return WallStateReport(WALL_DOWN, {"flap": "wall died mid-launch"})
 
 
+# ---------------------------------------------------------------------------
+# Production provider: the real netns/nftables/seccomp topology (F81
+# launcher wave).
+#
+# NetnsWallProvider(WallStateProvider) observes the LAB-validated wall:
+# netns agent0, in-namespace nftables, the proxy + confined DNS on
+# 10.200.0.1, and the pinned run_seccomp helper. check() runs the D5
+# ordered fail-closed sequence; wrap_argv() returns the spawn prefix
+# (D2/D3: ip netns exec agent0 <helper> … — netns entry, then the
+# seccomp filter, then the agent argv). child_recheck() is inherited
+# from WallStateProvider: the preexec child re-runs exactly these
+# host-visible D5 checks (still in the host netns, before it execs
+# `ip`) — D6 needs no override.
+#
+# The launcher REQUIRES privilege; it never grants it (D4): without
+# CAP_SYS_ADMIN the netns is invisible and check() reports WALL_DOWN
+# (netns_missing_or_unprivileged) — fail closed, never un-isolated.
+# The `ip` / `ip netns` host binary is host TCB (threat-model
+# non-goal): it is resolved once at construction and reported by
+# describe(), never re-resolved per launch.
+# ---------------------------------------------------------------------------
+
+# Well-known in-namespace endpoints (the lab topology, build.sh).
+WALL_NETNS = "agent0"
+WALL_PROXY_ADDR = ("10.200.0.1", 8080)
+WALL_DNS_ADDR = ("10.200.0.1", 53)
+
+
+def _normalize_nft_ruleset(text):
+    """Canonicalize `nft list ruleset` output for drift comparison.
+
+    Strips `#` comments, `handle N` tokens (kernel-assigned, churn
+    across loads), and whitespace runs; drops blank lines. This is
+    what makes the live-vs-pinned digest comparison robust to
+    nftables version formatting (fog decision 1): anything the
+    normalizer cannot bridge fails closed as ruleset_drift and the
+    operator re-pins. Deterministic: same semantic ruleset yields
+    the same bytes.
+    """
+    out = []
+    for line in text.splitlines():
+        line = re.sub(r"#.*$", "", line)
+        line = re.sub(r"\bhandle\s+\d+", "", line)
+        line = " ".join(line.split())
+        if line:
+            out.append(line)
+    return "\n".join(out) + "\n"
+
+
+class NetnsWallProvider(WallStateProvider):
+    """Wall-state checks against the production netns topology.
+
+    UP requires ALL of (D5, in order): the netns exists (bind-mount
+    or `ip netns list`), the installed seccomp-helper bytes match the
+    pinned `seccomp_helper` digests, the live in-namespace nftables
+    ruleset matches the install-time baseline digest, and the
+    proxy + confined-DNS listeners answer. Anything less is
+    DOWN/DEGRADED — and the launcher refuses either way
+    (fail-closed); the distinction is diagnostic only.
+    """
+
+    def __init__(self, inventory, *, netns_name=WALL_NETNS,
+                 netns_dir="/run/netns", ip_path=None, helper_path=None,
+                 proxy_addr=WALL_PROXY_ADDR, dns_addr=WALL_DNS_ADDR,
+                 probe_name="example.com"):
+        self.inventory = inventory
+        self.netns_name = netns_name
+        self.netns_dir = netns_dir
+        # Fog decision 3: the `ip` binary path is resolved ONCE at
+        # construction (shutil.which) and pinned-observable via
+        # describe(). A per-launch PATH lookup could silently swap
+        # the binary mid-deployment; construction-time resolution
+        # keeps the spawn prefix stable for the provider's lifetime.
+        self.ip_path = ip_path or shutil.which("ip")
+        if not self.ip_path:
+            raise EgressLaunchRefused(
+                "ip_not_found: no `ip` binary on PATH and no ip_path "
+                "given (netns entry is host-privileged; the launcher "
+                "requires the operator to provide it — refusing "
+                "fail-closed)")
+        self.helper_path = helper_path
+        self.proxy_addr = tuple(proxy_addr)
+        self.dns_addr = tuple(dns_addr)
+        self.probe_name = probe_name
+
+    # -- ip plumbing -------------------------------------------------
+    def _run_ip(self, *args, timeout=10.0):
+        """Run the pinned `ip` binary. Returns (rc, stdout, stderr);
+        (None, "", err) when the binary cannot run at all."""
+        try:
+            cp = subprocess.run(
+                [self.ip_path] + [str(a) for a in args],
+                capture_output=True, timeout=timeout)
+        except (OSError, subprocess.SubprocessError) as e:
+            return None, "", str(e)
+        return (cp.returncode, cp.stdout.decode("utf-8", "replace"),
+                cp.stderr.decode("utf-8", "replace"))
+
+    def _netns_present(self):
+        if os.path.exists(os.path.join(self.netns_dir,
+                                       self.netns_name)):
+            return True
+        rc, out, _ = self._run_ip("netns", "list")
+        if rc != 0:
+            return False
+        return any(line.split()[:1] == [self.netns_name]
+                   for line in out.splitlines())
+
+    # -- WallStateProvider -------------------------------------------
+    def check(self):
+        # D5 step 1: netns existence (bind-mount or ip listing).
+        if not self._netns_present():
+            return WallStateReport(
+                WALL_DOWN, {"reason": "netns_missing_or_unprivileged"})
+        # D5 step 2: the installed helper's bytes still match the pin.
+        try:
+            manifest, _ = self.inventory.verify()
+        except EgressLaunchRefused as e:
+            return WallStateReport(WALL_DOWN, {"pin_verify": str(e)})
+        helper_entry = nft_entry = None
+        for e in manifest.get("components", []):
+            if e.get("name") == "seccomp_helper":
+                helper_entry = e
+            elif e.get("name") == "nft_ruleset":
+                nft_entry = e
+        if helper_entry is None:
+            # D7: a v2 manifest without the helper is a
+            # pre-productization manifest — refused for the real
+            # provider, never a silent partial wall.
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "helper_not_pinned"})
+        if not self.helper_path:
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "helper_not_configured"})
+        try:
+            with open(self.helper_path, "rb") as f:
+                helper_bytes = f.read()
+        except OSError:
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "component_tampered",
+                                "component": "seccomp_helper",
+                                "detail": "helper unreadable"})
+        want = (helper_entry.get("digests") or {}).get("sha256")
+        if want != _digest_bytes(helper_bytes, "sha256"):
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "component_tampered",
+                                "component": "seccomp_helper"})
+        # D5 step 3: live ruleset vs pinned desired state (fog 1:
+        # normalized `nft list ruleset` digest vs the install-time
+        # baseline pinned in the manifest entry).
+        baseline = (nft_entry or {}).get("live_sha256")
+        if not baseline:
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "ruleset_baseline_missing"})
+        rc, out, err = self._run_ip("netns", "exec", self.netns_name,
+                                   "nft", "list", "ruleset", timeout=15.0)
+        if rc != 0:
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "ruleset_unreadable",
+                                "detail": err[:200]})
+        live = _digest_bytes(
+            _normalize_nft_ruleset(out).encode("utf-8"), "sha256")
+        if live != baseline:
+            return WallStateReport(
+                WALL_DEGRADED, {"reason": "ruleset_drift"})
+        # D5 step 4: listener liveness (the sim's probe pattern,
+        # pointed at the real in-ns addresses).
+        missing = []
+        try:
+            s = socket.create_connection(self.proxy_addr, timeout=3.0)
+            s.close()
+        except OSError:
+            missing.append("proxy unreachable %s:%d" % self.proxy_addr)
+        if dns_query(self.dns_addr[0], self.dns_addr[1],
+                     self.probe_name, timeout=3.0) is None:
+            missing.append("dns probe failed %s:%d" % self.dns_addr)
+        if missing:
+            return WallStateReport(WALL_DEGRADED, {"missing": missing})
+        return WallStateReport(
+            WALL_UP, {"netns": self.netns_name,
+                      "proxy": "%s:%d" % self.proxy_addr,
+                      "dns": "%s:%d" % self.dns_addr})
+
+    def wrap_argv(self, argv):
+        # D2/D3: netns entry (host-privileged `ip`), then the pinned
+        # seccomp helper installs the BPF filter, then execs the agent
+        # argv — the filter lands after namespace entry (the child
+        # cannot unshare/setns its way out) and before exec (the agent
+        # runs filtered from its first instruction).
+        if not self.helper_path:
+            raise EgressLaunchRefused(
+                "helper_not_configured: NetnsWallProvider needs the "
+                "installed seccomp-helper path (refusing fail-closed)")
+        return ([self.ip_path, "netns", "exec", self.netns_name,
+                 self.helper_path] + [str(a) for a in argv])
+
+    def describe(self):
+        return {"provider": "NetnsWallProvider",
+                "netns": self.netns_name,
+                "ip": self.ip_path,
+                "helper": self.helper_path}
+
+    def child_env_extra(self):
+        # Story 13: the child sees the in-namespace proxy endpoint.
+        return {"EGRESS_PROXY_ADDR": "%s:%d" % self.proxy_addr,
+                "EGRESS_DNS_ADDR": "%s:%d" % self.dns_addr}
+
+
 class SimulatedWallFixture:
     """Context manager: starts stub DNS + proxy + origin, writes
     endpoints.json and wall_up.flag. Yields self."""
@@ -1592,7 +1860,8 @@ def repin_after_fixture_fixup(sim_dir, *, algos=DEFAULT_ALGOS, trust=None,
         "dns_config": os.path.join(conf, "dns_config.txt"),
         "dns_zone": os.path.join(conf, "dns_hosts.txt"),
         "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
-        "seccomp_config": os.path.join(conf, "seccomp_config.txt")}
+        "seccomp_config": os.path.join(conf, "seccomp_config.txt"),
+        "seccomp_helper": os.path.join(conf, "run_seccomp.py")}
     prop = WallComponentInventory.proposal(
         component_paths, manifest_path, algos=algos, tier=tier,
         ledger_path=ledger_path)
@@ -1673,8 +1942,20 @@ class FilteredEgressLauncher:
         env[WALL_ID_ENV] = self._wall_id
         return env
 
-    def _preexec(self):
+    def _preexec(self, chain=()):
+        """Child preexec: wall re-check first, then the embedder chain.
+
+        The re-check runs before the chain so a fault-injected wall
+        death aborts before any embedder hardening; the chain (e.g. a
+        sandbox's rlimit/pivot/pidns setup) runs after, still before
+        exec. Chain entries are nullary callables; a chain failure
+        aborts the child loudly (exit 99) like a re-check failure --
+        nothing ungoverned runs. Embedders whose chain execs (rather
+        than returning) must place their exec inside the chain: the
+        re-check cannot run after a chain entry that never returns.
+        """
         provider = self.wall
+        chain = tuple(chain)
 
         def _child():
             try:
@@ -1687,13 +1968,57 @@ class FilteredEgressLauncher:
                 except OSError:
                     pass
                 os._exit(PREEXEC_ABORT_CODE)
+            for fn in chain:
+                try:
+                    fn()
+                except Exception as e:  # noqa: BLE001 - child must die
+                    try:
+                        os.write(2, ("EGRESS-WALL preexec chain abort: "
+                                     "%s\n"
+                                     % e).encode("utf-8", "replace"))
+                    except OSError:
+                        pass
+                    os._exit(PREEXEC_ABORT_CODE)
         return _child
 
-    def launch(self, argv, *, env=None, **popen_kw):
+    def _wall_proof(self):
+        """(manifest_sha256, receipt_sha256, pin_record_sha256) over
+        the install
+        verify() just checked. Reads the exact bytes the receipt pins,
+        so the launch audit binds the wall proof an auditor can
+        re-verify offline. Unreadable proof -> fail closed."""
+        try:
+            with open(self.inventory.manifest_path, "rb") as f:
+                manifest_blob = f.read()
+            with open(self.inventory.receipt_path, "rb") as f:
+                receipt_blob = f.read()
+        except OSError as e:
+            raise EgressLaunchRefused(
+                "wall_proof_unreadable: %s" % e)
+        manifest = json.loads(manifest_blob.decode("utf-8"))
+        pin_record_sha256 = (manifest.get("pin_record") or {}).get(
+            "record_sha256")
+        return (_digest_bytes(manifest_blob, "sha256"),
+                _digest_bytes(receipt_blob, "sha256"),
+                pin_record_sha256)
+
+    def launch(self, argv, *, env=None, agent_id=None, principal=None,
+               run_id=None, preexec_chain=(), **popen_kw):
         """Spawn argv behind the wall. Returns the Popen object.
 
         Raises EgressLaunchRefused (fail-closed) instead of spawning
         whenever the wall cannot be verified.
+
+        The provider's wrap_argv() places the child in the wall
+        (identity for the sim; ``ip netns exec agent0 <helper>``
+        for the production provider). agent_id / principal / run_id
+        are optional identity bindings recorded on the launch audit
+        event (nulls stay visible, never omitted). ``preexec_chain``
+        is a tuple of nullary callables an embedder (e.g.
+        gov/sandbox.py) wants run in the child after the wall
+        re-check, before exec; a chain failure aborts the child (exit
+        99) like a re-check failure. Remaining ``popen_kw`` go to
+        Popen (env and preexec_fn are owned by the launcher).
         """
         lock_fh = open(self.lock_path, "a+b")
         try:
@@ -1715,6 +2040,17 @@ class FilteredEgressLauncher:
                             "detail": str(e),
                             "wall_id": self._wall_id})
                 raise
+            # 1b. wall proof for the audit event (fail-closed: the
+            # launch is only auditable if the proof is readable).
+            try:
+                manifest_sha256, receipt_sha256, pin_record_sha256 = \
+                    self._wall_proof()
+            except EgressLaunchRefused as e:
+                self._emit({"event": "egress_wall_launch_refused",
+                            "reason": str(e).split(":")[0],
+                            "detail": str(e),
+                            "wall_id": self._wall_id})
+                raise
             # 2. wall state.
             report = self.wall.check()
             if not report.ok():
@@ -1727,12 +2063,23 @@ class FilteredEgressLauncher:
                             "wall_id": self._wall_id})
                 raise EgressLaunchRefused(
                     "%s: %r" % (reason, report.detail))
+            # 2b. provider spawn prefix (fail-closed: a provider that
+            # cannot place the child in the wall refuses here, before
+            # any spawn).
+            try:
+                spawn_argv = self.wall.wrap_argv(argv)
+            except EgressLaunchRefused as e:
+                self._emit({"event": "egress_wall_launch_refused",
+                            "reason": str(e).split(":")[0],
+                            "detail": str(e),
+                            "wall_id": self._wall_id})
+                raise
             # 3. spawn with child-side re-assert.
             popen_kw = dict(popen_kw)
             popen_kw["env"] = self._child_env(env)
-            popen_kw["preexec_fn"] = self._preexec()
+            popen_kw["preexec_fn"] = self._preexec(chain=preexec_chain)
             try:
-                proc = subprocess.Popen(argv, **popen_kw)
+                proc = subprocess.Popen(spawn_argv, **popen_kw)
             except OSError as e:
                 self._emit({"event": "egress_wall_launch_refused",
                             "reason": "spawn_failed",
@@ -1741,9 +2088,18 @@ class FilteredEgressLauncher:
                 raise EgressLaunchRefused("spawn_failed: %s" % e)
             self._emit({"event": "egress_wall_launch",
                         "argv0": os.path.basename(str(argv[0])),
+                        "spawn_argv0": os.path.basename(
+                            str(spawn_argv[0])),
+                        "provider": self.wall.describe(),
                         "wall_state": report.state,
                         "components": sorted(checked),
-                        "wall_id": self._wall_id})
+                        "wall_id": self._wall_id,
+                        "agent_id": agent_id,
+                        "principal": principal,
+                        "run_id": run_id,
+                        "manifest_sha256": manifest_sha256,
+                        "receipt_sha256": receipt_sha256,
+                        "pin_record_sha256": pin_record_sha256})
             return proc
         finally:
             try:
@@ -1752,7 +2108,8 @@ class FilteredEgressLauncher:
                 pass
             lock_fh.close()
 
-    def run_child(self, argv, *, env=None, **popen_kw):
+    def run_child(self, argv, *, env=None, agent_id=None, principal=None,
+                  run_id=None, **popen_kw):
         """launch() then wait; maps preexec-abort (exit 99) to
         EgressLaunchRefused so callers can treat a mid-launch wall
         death as a refusal, not a crash. ``capture_output=True`` is
@@ -1765,7 +2122,9 @@ class FilteredEgressLauncher:
             popen_kw["stderr"] = subprocess.PIPE
         if text:
             popen_kw["text"] = True
-        proc = self.launch(argv, env=env, **popen_kw)
+        proc = self.launch(argv, env=env, agent_id=agent_id,
+                           principal=principal, run_id=run_id,
+                           **popen_kw)
         if capture:
             out, err = proc.communicate(timeout=30)
             rc = proc.returncode

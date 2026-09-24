@@ -209,6 +209,21 @@ def upload_records_from_log_entries(entries):
             "seq": e.get("seq"),
             "tool": tool,
             "source": "action_log",
+            # F142: the chained log carries payload summaries only (F12),
+            # never full content hashes -- content-keyed correlation
+            # comes from the ledger records (see
+            # upload_records_from_ledger_entries).
+            "content_sha256_set": [],
+            # F142: response-minted resource URLs captured at the
+            # executor's API-execution boundary (additive; old log
+            # records predate the field and parse as empty).
+            "response_urls": [
+                n for n in (
+                    normalize_url(u)
+                    for u in (e.get("response_urls") or [])
+                    if isinstance(u, str)
+                ) if n
+            ],
         })
     return out
 
@@ -237,6 +252,23 @@ def upload_records_from_ledger_entries(entries):
             "seq": e.get("seq"),
             "ts": e.get("ts"),
             "source": "egress_ledger",
+            # F142: full content hashes of the uploaded payload's string
+            # leaves (written by the executor's _record_upload). Old
+            # ledger entries predate the field and parse as empty.
+            "content_sha256_set": [
+                str(h).lower() for h in (e.get("content_sha256_set") or [])
+                if isinstance(h, str) and h
+            ],
+            # F142: response-minted resource URLs captured at the
+            # executor's API-execution boundary (additive; old ledger
+            # entries predate the field and parse as empty).
+            "response_urls": [
+                n for n in (
+                    normalize_url(u)
+                    for u in (e.get("response_urls") or [])
+                    if isinstance(u, str)
+                ) if n
+            ],
         })
     return out
 
@@ -252,12 +284,25 @@ class CitationIndex:
 
     def __init__(self):
         self._by_url = {}
+        # F142: secondary key over full content hashes (exact 256-bit
+        # match only). hex digest (lowercased) -> [records].
+        self._by_content_hash = {}
 
     def add_upload_records(self, records):
         for r in records or []:
             n = r.get("url_normalized")
             if n:
                 self._by_url.setdefault(n, []).append(r)
+            # F142: index response-minted resource URLs as aliases of
+            # the same plant record (one record, many keys).
+            for alias in r.get("response_urls") or []:
+                a = normalize_url(alias)
+                if a and a != n:
+                    self._by_url.setdefault(a, []).append(r)
+            for h in r.get("content_sha256_set") or []:
+                key = str(h).lower()
+                if key:
+                    self._by_content_hash.setdefault(key, []).append(r)
         return self
 
     def add_log_entries(self, entries):
@@ -277,6 +322,17 @@ class CitationIndex:
         if n is None:
             return []
         return list(self._by_url.get(n, []))
+
+    def lookup_by_content_sha256(self, hex_digest):
+        """F142: upload records whose payload contained these exact bytes.
+
+        Exact 256-bit match only -- a near-miss digest is a miss (no
+        fuzzy/structural matching; accusation-unsafe). Returns matching
+        records, earliest first. Empty list on unparseable input.
+        """
+        if not isinstance(hex_digest, str):
+            return []
+        return list(self._by_content_hash.get(hex_digest.lower(), []))
 
     def __len__(self):
         return sum(len(v) for v in self._by_url.values())
@@ -358,6 +414,32 @@ def verify_citation(url, identity=None, *, index=None, log_entries=None,
                        (first.get("source"), up_principal, up_agent)),
         }
     host = _host_of(normalized)
+    # F142: content-keyed correlation. When the URL key misses but the
+    # evaluator fetched the cited content and hands us its sha256, an
+    # exact match against a governed upload's payload bytes is plant
+    # evidence -- and plant evidence beats trust anchors on both keys.
+    if content_sha256:
+        chits = idx.lookup_by_content_sha256(str(content_sha256))
+        if chits:
+            first = chits[0]
+            up_principal = first.get("principal")
+            up_agent = first.get("agent_id")
+            return {
+                "url": url,
+                "url_normalized": normalized,
+                "verdict": SELF_PLANTED,
+                "upload": first,
+                "n_uploads": len(chits),
+                "same_principal": (bool(principal) and bool(up_principal)
+                                   and principal == up_principal),
+                "same_agent": (bool(agent_id) and bool(up_agent)
+                               and agent_id == up_agent),
+                "reason": ("fetched content hash matches a governed "
+                           "upload (content-keyed correlation, source=%s, "
+                           "uploader=%s/%s); the cited evidence is not "
+                           "independent" %
+                           (first.get("source"), up_principal, up_agent)),
+            }
     if _host_trusted(host, trusted_sources):
         return {"url": url, "url_normalized": normalized,
                 "verdict": INDEPENDENT, "upload": None,
@@ -383,6 +465,89 @@ def verify_citation(url, identity=None, *, index=None, log_entries=None,
 
 
 _URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
+#: F142: explicit result keys that carry a response-minted resource URL,
+#: in preference order. The bare "url" key is handled separately: it is
+#: only a response URL when it differs from the called endpoint (an echo
+#: of the request URL is not minted).
+_RESPONSE_URL_KEYS = ("resource_url", "resource_urls", "location")
+
+#: F142: bounds for the heuristic string scan in
+#: extract_response_urls (see docstring).
+_RESPONSE_URL_SCAN_MAX_URLS = 25
+_RESPONSE_URL_SCAN_MAX_DEPTH = 3
+_RESPONSE_URL_SCAN_MAX_CHARS = 65536
+
+
+def extract_response_urls(tool, result, endpoint=None):
+    """F142: response-minted resource URLs from an upload-shaped result.
+
+    A real API plant's citable URL is minted in the API *response*, not
+    the request the agent made. This pulls candidate resource URLs out
+    of the result so the upload record can be indexed under them as
+    aliases of the plant.
+
+    Explicit well-known keys first (``resource_url``, ``resource_urls``,
+    ``location``), then the bare ``url`` key when it differs from the
+    called endpoint, then a bounded scan of string values for embedded
+    ``https?://`` URLs (max depth 3, ~64 KiB of string content, first 25
+    URLs). URLs are normalized; the called endpoint itself is never
+    reported (it is already the record's primary key).
+
+    Never raises: extraction is heuristic, and a capture bug must
+    degrade detection (missed alias), never break the result path.
+    ``tool`` names the upload-shaped tool (currently unused; part of
+    the seam contract for future tool-specific handling).
+    """
+    found = []
+    seen = set()
+    try:
+        if not isinstance(result, dict):
+            return []
+        endpoint_n = normalize_url(endpoint) if endpoint else None
+
+        def _add(raw):
+            n = normalize_url(raw)
+            if n and n != endpoint_n and n not in seen:
+                seen.add(n)
+                found.append(n)
+
+        for key in _RESPONSE_URL_KEYS:
+            v = result.get(key)
+            vals = v if isinstance(v, list) else [v]
+            for u in vals:
+                if isinstance(u, str) and len(found) < \
+                        _RESPONSE_URL_SCAN_MAX_URLS:
+                    _add(u)
+        u = result.get("url")
+        if isinstance(u, str):
+            _add(u)
+        budget = [_RESPONSE_URL_SCAN_MAX_CHARS]
+
+        def _scan(v, depth):
+            if (len(found) >= _RESPONSE_URL_SCAN_MAX_URLS
+                    or budget[0] <= 0
+                    or depth > _RESPONSE_URL_SCAN_MAX_DEPTH):
+                return
+            if isinstance(v, str):
+                chunk = v[:budget[0]]
+                budget[0] -= len(chunk)
+                for m in _URL_RE.finditer(chunk):
+                    if len(found) >= _RESPONSE_URL_SCAN_MAX_URLS:
+                        return
+                    _add(m.group(0).rstrip(".,;:!?"))
+            elif isinstance(v, dict):
+                for vv in v.values():
+                    _scan(vv, depth + 1)
+            elif isinstance(v, (list, tuple)):
+                for vv in v:
+                    _scan(vv, depth + 1)
+
+        _scan(result, 0)
+    except Exception:
+        # Fail-open: never break the result path on a capture bug.
+        pass
+    return found
 
 
 def extract_urls(text):
@@ -414,3 +579,46 @@ def payload_sha256_hex(payload):
     else:
         data = str(payload).encode("utf-8", "replace")
     return hashlib.sha256(data).hexdigest()
+
+
+#: F142: bounds for payload leaf hashing (see payload_content_hashes).
+_CONTENT_HASH_MAX_LEAVES = 32
+_CONTENT_HASH_MAX_LEAF_BYTES = 1048576
+
+
+def payload_content_hashes(payload):
+    """F142: full sha256 hex digests of a payload's string leaves.
+
+    Walks the payload (dict/list/tuple/str), hashing each string leaf
+    as UTF-8. Bounded: first 32 leaves, leaves longer than 1 MiB
+    skipped, empty leaves skipped, deduplicated, order-preserving.
+    Exact 256-bit match only downstream -- no fuzzy matching.
+
+    Never raises: hashing is a correlation aid, not a gate.
+    """
+    hashes = []
+    seen = set()
+
+    def _walk(v):
+        if len(hashes) >= _CONTENT_HASH_MAX_LEAVES:
+            return
+        if isinstance(v, str):
+            data = v.encode("utf-8", "replace")
+            if not data or len(data) > _CONTENT_HASH_MAX_LEAF_BYTES:
+                return
+            h = hashlib.sha256(data).hexdigest()
+            if h not in seen:
+                seen.add(h)
+                hashes.append(h)
+        elif isinstance(v, dict):
+            for vv in v.values():
+                _walk(vv)
+        elif isinstance(v, (list, tuple)):
+            for vv in v:
+                _walk(vv)
+
+    try:
+        _walk(payload)
+    except Exception:
+        pass
+    return hashes

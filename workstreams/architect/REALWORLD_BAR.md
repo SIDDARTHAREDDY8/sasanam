@@ -2209,3 +2209,39 @@ a decided strategy.
 - **B6:** No market action; repo stays private. Pushed at the clean boundary under standing approval.
 
 **Bottom line:** incident evidence keeps pace with the research lanes, and the red team keeps finding real holes in week-old primitives — the loop is honest. Still a prototype: F142 open, P8 by design, prod KMS validation and deployment hardening ahead.
+
+## 2026-09-24 — F143 (MEDIUM) filed (post-wave-95 red-team scout)
+
+- **B4:** **F143 (MEDIUM) FILED 2026-09-24** — unregistered skill IDs are fail-open in the executor's skill-watch gate. `check_at_use` returns `(True, "unregistered")` for a never-registered id; the verdict path explicitly declines to deny, deferring to "the policy's unknown-skill handling" — which does not exist in this tree (zero skill rules in `policies/default.yaml`, no unregistered handling in `gov/policy.py`). Break-first `evals/f143skillunreg_break.py`: 2 BREAK / 2 HELD / 0 ERROR, deterministic, centrally re-verified. Second leg: the MCP default convention *manufactures* unregistered ids (`"mcp/<server_id>"`), so the no-map deployment posture is fail-open by default. Controls hold: registered-clean executes; registered-mutated is denied by skill-watch quarantine. Closure direction: fail-closed at the seam with an explicit opt-out preserved. F142 (MEDIUM) remains OPEN. Next free finding: **F144**.
+- **B1/B2/B3/B5/B6:** unchanged by this filing (no new incident class, no control change, no gate run — the scout touched one new eval file only).
+
+**Bottom line:** the week-old skill-watch primitive has its second real hole (F142 leg B was the first) — registration is the load-bearing assumption and the unregistered path was never closed. Still a prototype.
+
+## 2026-09-24 — F144 (MEDIUM) filed (memory-poisoning scout)
+
+- **B4:** **F144 (MEDIUM) FILED 2026-09-24** — memory-firewall fingerprint ingestion covers `read_file`/`api_call` results only. Verbatim poison ingested via an `http_post` response body is never fingerprinted, tiers `agent`, and delivers on fresh-session read with zero warning — while the identical text via `api_call` quarantines. Break-first `evals/f143mem_break.py`: 5 BREAK / 2 HELD / 0 ERROR, deterministic, centrally re-verified; four of the five reds adjudicated documented residuals/by-design (F15 paraphrase class, tier-AND-instruction-shaped specification, heuristic limits, bounded fingerprint store) — only the `http_post` ingestion gap is the finding. Same adjacent-tool family as F140. Closure direction: fingerprint `http_post` results through the same ingestion path. F142 and F143 (both MEDIUM) remain OPEN. Next free finding: **F145**.
+- **B1/B2/B3/B5/B6:** unchanged by this filing (no new incident class, no control change, no gate run — the scout touched one new eval file only).
+
+**Bottom line:** the memory firewall's quarantine rule works as specified, but its *input* is incomplete — the second adjacent-tool gap in two days (F140, F144). The pattern to internalize: every new tool-result source must be checked against every provenance/fingerprint consumer.
+
+## 2026-09-24 — F143 (MEDIUM) CLOSED
+
+- **B4:** **F143 CLOSED 2026-09-24** — unregistered skill IDs now fail closed. `check_at_use` → `(False, "unregistered-no-pin")`; executor denies with operator-actionable reason; construction-time loud warning for unregistered ids in deployment maps. Break-first `evals/f143skillunreg_break.py`: 0 BREAK / 4 HELD / 0 ERROR (centrally re-verified, clean env). Canonical 3172 green. Explicit-`None` opt-out preserved; residuals documented. F142 and F144 (both MEDIUM) remain OPEN. Next free finding: **F145**.
+- **B1/B2/B3/B5/B6:** unchanged (no new incident class; no control-primitive change beyond the closed finding; gates per-lane green).
+
+## 2026-09-24 — F144 (MEDIUM) CLOSED
+
+- **B4:** **F144 CLOSED 2026-09-24** — `http_post` results now run the same fingerprint-ingestion machinery as `read_file`/`api_call` (verbatim-overlap tiering + DLP taint, with in-code rationale for the taint extension). Break-first `evals/f143mem_break.py`: 4 BREAK / 3 HELD / 0 ERROR (centrally re-verified, clean env) — p4 flips to HELD; benign-ingestion false-positive guard unit-tested. Canonical 3192 green (one disclosed environmental flake from concurrent sibling-lane tree edits, then two clean full runs). Only **F142 (MEDIUM)** remains OPEN. Next free finding: **F145**.
+- **B1/B2/B3/B5/B6:** unchanged (no new incident class; no control-primitive change beyond the closed finding; gates per-lane green).
+
+## 2026-09-24 — F142 (MEDIUM) CLOSED — all three findings closed
+
+- **B4:** **F142 CLOSED 2026-09-24** — response-minted URLs captured at the API execution boundary and correlated (URL alias + exact content hash; plant beats trust anchors); skill URL-target references bound at registration and rechecked at use (drift/unresolvable → fail-closed quarantine; governed re-pin with bait-and-switch refusal). Break-first `evals/f142_break.py`: 0 BREAK / 5 HELD / 0 ERROR (centrally re-verified, clean env). Central adjudication repaired two real issues: a spec/battery contradiction (minimal stub-resolver battery amendment, documented) and a stat-prefilter fast-path bug the unit tests missed (fixed + regression test). **Open findings: NONE (F142/F143/F144 all CLOSED).** Next free finding: **F145**.
+- **B1/B2/B3/B5/B6:** unchanged (no new incident class; gates per-lane green; full integration gate pending after the F81 implement lane lands).
+
+## 2026-09-24 — Wave-96 (F81 launcher implementation; F142/F143/F144 closed)
+
+- **B4:** **F142 CLOSED, F143 CLOSED, F144 CLOSED** (all verified this wave; next free finding **F145**). **F81 (LOW) stays OPEN** — production launcher implemented and unprivileged-green (`gov/egress_launcher.py` netns/seccomp prefix + audit binding; `gov/sandbox.py` `filtered_egress` cage mode; `evals/f81launcher_privileged.py` 10 close-when probes + control, skip-clean), but the close bar needs the genuine privileged run on f81-lab/privileged CI, which did not happen this wave (documented, not inflated).
+- **B1/B2:** unchanged (14/16 full; P13 partial, P8 by-design).
+- **B3:** gates green this wave — canonical 3249 OK, registry GREEN, matrix 3216/3216 SHIP-GATE GREEN, realistic 4/4.
+- **B5/B6:** unchanged (no new pressure ratchet this wave; product position unchanged — honestly tested prototype).

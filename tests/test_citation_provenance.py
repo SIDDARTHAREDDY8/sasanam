@@ -287,5 +287,213 @@ class ExtractUrlsTests(unittest.TestCase):
         self.assertEqual(cp.extract_urls(None), [])
 
 
+# ---------------------------------------------------------------------------
+# F142 Leg A, mechanism 2: content-keyed correlation (exact 256-bit match).
+# ---------------------------------------------------------------------------
+
+def _sha(b):
+    import hashlib
+    return hashlib.sha256(b).hexdigest()
+
+
+_PLANT_BODY = b"fabricated replication study content, exactly these bytes"
+_PLANT_HASH = _sha(_PLANT_BODY)
+# One-bit-flipped digest: must NOT match (exact-match only).
+_NEAR_MISS_HASH = ("0" if _PLANT_HASH[0] != "0" else "1") + _PLANT_HASH[1:]
+
+
+def _ledger_entry_with_content(url="https://h.test/bins/x",
+                               content_hashes=(_PLANT_HASH,)):
+    return {"kind": "upload", "url": url,
+            "url_normalized": cp.normalize_url(url),
+            "content_sha256_set": list(content_hashes),
+            "principal": "p", "agent_id": "a1"}
+
+
+class ContentKeyedCorrelationTests(unittest.TestCase):
+    def test_ledger_parses_content_sha256_set(self):
+        recs = cp.upload_records_from_ledger_entries(
+            [_ledger_entry_with_content()])
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["content_sha256_set"], [_PLANT_HASH])
+
+    def test_ledger_missing_content_set_is_empty(self):
+        recs = cp.upload_records_from_ledger_entries(
+            [{"kind": "upload", "url": "https://h.test/a",
+              "url_normalized": "https://h.test/a",
+              "principal": "p", "agent_id": "a1"}])
+        self.assertEqual(recs[0]["content_sha256_set"], [])
+
+    def test_lookup_by_content_sha256_hits(self):
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        hits = idx.lookup_by_content_sha256(_PLANT_HASH)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["url_normalized"], "https://h.test/bins/x")
+
+    def test_lookup_by_content_sha256_miss_on_near_miss(self):
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        self.assertEqual(idx.lookup_by_content_sha256(_NEAR_MISS_HASH), [])
+
+    def test_lookup_by_content_sha256_case_insensitive(self):
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        hits = idx.lookup_by_content_sha256(_PLANT_HASH.upper())
+        self.assertEqual(len(hits), 1)
+
+    def test_verify_citation_content_keyed_self_planted(self):
+        # TD-2: isolate the content-keyed path — the cited URL matches NO
+        # URL key in the index; only the supplied content hash correlates.
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        res = cp.verify_citation("https://h.test/bins/OTHER-URL",
+                                 {"principal": "p", "agent_id": "a1"},
+                                 index=idx, content_sha256=_PLANT_HASH,
+                                 trusted_content_hashes=())
+        self.assertEqual(res["verdict"], cp.SELF_PLANTED)
+        self.assertIsNotNone(res["upload"])
+        self.assertIn("content", res["reason"])
+
+    def test_content_keyed_plant_beats_trust_anchor(self):
+        # Plant evidence beats trust anchors on the content key too.
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger(
+            [_ledger_entry_with_content(url="https://www.nature.com/x")]))
+        res = cp.verify_citation("https://www.nature.com/y",
+                                 index=idx, content_sha256=_PLANT_HASH,
+                                 trusted_sources=("nature.com",))
+        self.assertEqual(res["verdict"], cp.SELF_PLANTED)
+
+    def test_content_sha256_no_match_stays_unknown(self):
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        res = cp.verify_citation("https://h.test/bins/OTHER-URL",
+                                 index=idx,
+                                 content_sha256=_sha(b"unrelated bytes"),
+                                 trusted_content_hashes=())
+        self.assertEqual(res["verdict"], cp.UNKNOWN)
+        self.assertIsNone(res["upload"])
+
+    def test_url_key_still_takes_precedence(self):
+        # URL-keyed hit wins even when a content hash is also supplied.
+        idx = cp.CitationIndex()
+        idx.add_ledger(FakeLedger([_ledger_entry_with_content()]))
+        res = cp.verify_citation("https://h.test/bins/x",
+                                 index=idx, content_sha256=_sha(b"other"))
+        self.assertEqual(res["verdict"], cp.SELF_PLANTED)
+        self.assertIn("URL was uploaded", res["reason"])
+
+
+# ---------------------------------------------------------------------------
+# F142 Leg A, mechanism 1: response-URL capture and alias indexing.
+# ---------------------------------------------------------------------------
+
+class ExtractResponseUrlsTests(unittest.TestCase):
+    def test_prefers_explicit_resource_url(self):
+        urls = cp.extract_response_urls(
+            "api_call",
+            {"status": 200, "resource_url": "https://h.test/bins/abc"},
+            endpoint="https://h.test/v3/publish")
+        self.assertEqual(urls, ["https://h.test/bins/abc"])
+
+    def test_collects_location_and_resource_urls_list(self):
+        urls = cp.extract_response_urls(
+            "api_call",
+            {"status": 201,
+             "location": "https://h.test/bins/one",
+             "resource_urls": ["https://h.test/bins/two"]},
+            endpoint="https://h.test/v3/publish")
+        # Preference order: resource_url, resource_urls, location, url.
+        self.assertEqual(urls, ["https://h.test/bins/two",
+                                "https://h.test/bins/one"])
+
+    def test_excludes_endpoint_echo(self):
+        # A result that merely echoes the called endpoint contributes no
+        # response-minted URL.
+        urls = cp.extract_response_urls(
+            "http_post",
+            {"status": 202, "url": "https://h.test/post"},
+            endpoint="https://h.test/post")
+        self.assertEqual(urls, [])
+
+    def test_bounded_scan_finds_embedded_urls(self):
+        urls = cp.extract_response_urls(
+            "api_call",
+            {"status": 200,
+             "body": {"message": "created at https://h.test/bins/deep",
+                      "nested": {"link": "https://h.test/bins/deeper"}}},
+            endpoint="https://h.test/v3/publish")
+        self.assertEqual(urls, ["https://h.test/bins/deep",
+                                "https://h.test/bins/deeper"])
+
+    def test_ignores_non_urls_and_normalizes(self):
+        urls = cp.extract_response_urls(
+            "api_call",
+            {"status": 200, "note": "no urls here",
+             "count": 3, "nothing": None,
+             "mixed": "https://H.TEST:443/Bins/Up"},
+            endpoint="https://h.test/v3/publish")
+        self.assertEqual(urls, ["https://h.test/Bins/Up"])
+
+    def test_never_raises_on_garbage(self):
+        self.assertEqual(cp.extract_response_urls("api_call", None), [])
+        self.assertEqual(cp.extract_response_urls("api_call", "junk"), [])
+        self.assertEqual(cp.extract_response_urls(
+            "api_call", {"a": object()}), [])
+
+    def test_bounded_at_25_urls(self):
+        result = {"items": ["https://h.test/bins/%d" % i for i in range(50)]}
+        urls = cp.extract_response_urls(
+            "api_call", result, endpoint="https://h.test/v3/publish")
+        self.assertEqual(len(urls), 25)
+
+
+class ResponseUrlAliasTests(unittest.TestCase):
+    def test_ledger_parses_response_urls(self):
+        entry = _ledger_entry_with_content()
+        entry["response_urls"] = ["https://h.test/bins/x"]
+        recs = cp.upload_records_from_ledger_entries([entry])
+        self.assertEqual(recs[0]["response_urls"],
+                         ["https://h.test/bins/x"])
+
+    def test_log_parses_response_urls(self):
+        e = _log_entry(tool="api_call")
+        e["args"] = {"endpoint": "https://h.test/v3/publish",
+                     "params": {"a": 1}}
+        e["response_urls"] = ["https://h.test/bins/x"]
+        recs = cp.upload_records_from_log_entries([e])
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["response_urls"],
+                         ["https://h.test/bins/x"])
+
+    def test_lookup_hits_response_url_alias(self):
+        # The plant record is keyed on the endpoint AND the captured
+        # response URL.
+        rec = {"url": "https://h.test/v3/publish",
+               "url_normalized": "https://h.test/v3/publish",
+               "response_urls": ["https://h.test/bins/x"],
+               "content_sha256_set": [], "principal": "p", "agent_id": "a1"}
+        idx = cp.CitationIndex()
+        idx.add_upload_records([rec])
+        hits = idx.lookup("https://h.test/bins/x")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["url_normalized"],
+                         "https://h.test/v3/publish")
+
+    def test_verify_citation_self_planted_via_response_url(self):
+        rec = {"url": "https://h.test/v3/publish",
+               "url_normalized": "https://h.test/v3/publish",
+               "response_urls": ["https://h.test/bins/x"],
+               "content_sha256_set": [], "principal": "p", "agent_id": "a1"}
+        idx = cp.CitationIndex()
+        idx.add_upload_records([rec])
+        res = cp.verify_citation("https://h.test/bins/x",
+                                 {"principal": "p", "agent_id": "a1"},
+                                 index=idx)
+        self.assertEqual(res["verdict"], cp.SELF_PLANTED)
+        self.assertIn("URL was uploaded", res["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

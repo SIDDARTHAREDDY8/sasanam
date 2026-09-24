@@ -87,6 +87,7 @@ import re
 import tempfile
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -98,6 +99,86 @@ class SkillWatchError(Exception):
 
 class PinStoreError(SkillWatchError):
     """Pin persistence failed fail-closed (corrupt/unwritable pin file)."""
+
+
+class ReferenceResolutionError(SkillWatchError):
+    """A referenced URL could not be resolved to bytes."""
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Referenced-URL content binding (F142 Leg B)
+#
+# A skill's pinned manifest can reference content that lives behind a
+# URL (SkillJacking dead-link shape: ~925 live skills pulling from dead
+# links). The manifest digest binds the manifest, not what it points
+# to -- an attacker who takes over the URL serves new instructions
+# under the original install-time approval. Leg B binds each referenced
+# http(s) URL to the sha256 of the bytes it served at registration;
+# use-time and sweep verification re-resolve and quarantine on drift
+# or resolution failure. Deployments supply a resolver that performs
+# real fetches; the default refuses (no network), in which case
+# references are audited but unenforced.
+# ---------------------------------------------------------------------------
+
+class ReferenceResolver(abc.ABC):
+    """Resolves a referenced URL to bytes for content binding."""
+
+    @abc.abstractmethod
+    def resolve(self, url):
+        """Return the current bytes served at ``url``.
+
+        Raise :class:`ReferenceResolutionError` when the URL cannot be
+        resolved (no network, DNS failure, 404, ...).
+        """
+
+
+class RefusingResolver(ReferenceResolver):
+    """Default resolver: refuses every fetch (no network, $0 spend).
+
+    With this resolver every referenced URL registers as
+    ``unverified`` -- audited in the event log, never enforced. A
+    deployment that wants enforcement supplies a resolver that
+    performs real (proxied, filtered) fetches.
+    """
+
+    def resolve(self, url):
+        raise ReferenceResolutionError(
+            "default reference resolver refuses network fetches: %r"
+            % (url,))
+
+
+_REFERENCE_URL_RE = re.compile(r"https?://[^\s<>\"')\]]+")
+
+#: F142: cap on references extracted per skill (bounded scan).
+_REFERENCE_MAX_URLS = 25
+
+_EVENT_REF_BOUND = "skill_reference_bound"
+_EVENT_REF_UNVERIFIED = "skill_reference_unverified"
+_EVENT_REF_DRIFT = "skill_reference_drift"
+_EVENT_REF_UNVERIFIABLE = "skill_reference_unverifiable"
+
+
+def _normalize_reference_url(url):
+    """Normalize a referenced URL for stable binding.
+
+    Lowercases scheme and host, drops the fragment and default ports.
+    Returns None for non-http(s) or unparseable URLs.
+    """
+    try:
+        parts = urlsplit(str(url).strip())
+    except Exception:
+        return None
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or not parts.hostname:
+        return None
+    host = parts.hostname.lower()
+    port = parts.port
+    default = 443 if scheme == "https" else 80
+    netloc = host if port in (None, default) else "%s:%d" % (host, port)
+    path = parts.path or "/"
+    query = ("?" + parts.query) if parts.query else ""
+    return "%s://%s%s%s" % (scheme, netloc, path, query)
 
 
 # ---------------------------------------------------------------------------
@@ -258,13 +339,20 @@ class SkillWatch:
     digests and provenance — never skill content.
     """
 
-    def __init__(self, emit=None):
+    def __init__(self, emit=None, reference_resolver=None):
         self._skills = {}  # skill_id -> record dict
         self._quarantined = set()
         self._repin_requests = {}  # skill_id -> request record
         self._events = []
         self._using_default_sink = emit is None
         self._emit = emit if emit is not None else self._events.append
+        # F142 Leg B: resolver for referenced-URL content binding.
+        # Defaults to RefusingResolver (no network): references are
+        # audited but unenforced unless the deployment supplies a
+        # resolver that performs real fetches.
+        self._reference_resolver = (
+            reference_resolver if reference_resolver is not None
+            else RefusingResolver())
 
     # -- introspection --------------------------------------------------------
 
@@ -362,10 +450,108 @@ class SkillWatch:
             "last_stat": last_stat,
             "last_verified_at": _utcnow(),
             "mutation_count": 0,
+            # F142 Leg B: referenced-URL content bindings (bound at
+            # registration; see _bind_references).
+            "references": self._bind_references(
+                skill_id, bytes(content)),
         }
         self._record_event(_EVENT_REGISTERED, skill_id,
                            pinned_digest=digest, origin=dict(origin))
         return digest
+
+    def _bind_references(self, skill_id, content):
+        """F142 Leg B: bind referenced http(s) URLs to content hashes.
+
+        Extracts up to 25 http(s) URLs from the skill content and
+        resolves each through the reference resolver, storing
+        {url, bound_sha256, status, bound_at} per reference. A URL the
+        resolver cannot fetch registers as ``unverified`` (audited via
+        an event, never enforced); a hostile or broken resolver must
+        not crash registration, so any resolver failure degrades to
+        unverified. Never raises.
+        """
+        refs = []
+        seen = set()
+        try:
+            text = bytes(content).decode("utf-8", "replace")
+        except Exception:
+            return refs
+        try:
+            for m in _REFERENCE_URL_RE.finditer(text):
+                if len(refs) >= _REFERENCE_MAX_URLS:
+                    break
+                url = _normalize_reference_url(
+                    m.group(0).rstrip(".,;:!?"))
+                if not url or url in seen:
+                    continue
+                seen.add(url)
+                try:
+                    body = self._reference_resolver.resolve(url)
+                except Exception as e:  # noqa: BLE001 — any resolver
+                    # failure (refusal, network, hostile resolver)
+                    # degrades to unverified, never crashes
+                    # registration.
+                    refs.append({"url": url, "bound_sha256": None,
+                                 "status": "unverified",
+                                 "bound_at": _utcnow()})
+                    self._record_event(_EVENT_REF_UNVERIFIED, skill_id,
+                                       url=url, reason=str(e)[:200])
+                    continue
+                if not isinstance(body, (bytes, bytearray)) or not body:
+                    refs.append({"url": url, "bound_sha256": None,
+                                 "status": "unverified",
+                                 "bound_at": _utcnow()})
+                    self._record_event(_EVENT_REF_UNVERIFIED, skill_id,
+                                       url=url,
+                                       reason="resolver returned empty/"
+                                              "non-bytes")
+                    continue
+                bound = _digest(bytes(body))
+                refs.append({"url": url, "bound_sha256": bound,
+                             "status": "bound", "bound_at": _utcnow()})
+                self._record_event(_EVENT_REF_BOUND, skill_id,
+                                   url=url, bound_sha256=bound)
+        except Exception:
+            # Binding is a correlation aid, never a registration gate.
+            pass
+        return refs
+
+    def _verify_references(self, skill_id):
+        """F142 Leg B: re-resolve bound references against their pins.
+
+        Returns (True, "references-clean") when every bound reference
+        still serves its pinned bytes. A bound reference whose content
+        drifted, or that can no longer be resolved, quarantines
+        fail-closed and returns (False, detail). ``unverified``
+        references are audited but unenforced (skipped).
+        """
+        rec = self._skills[skill_id]
+        for ref in rec.get("references") or []:
+            if ref.get("status") != "bound":
+                continue
+            url = ref["url"]
+            try:
+                body = self._reference_resolver.resolve(url)
+            except Exception as e:  # noqa: BLE001 — a bound reference
+                # that goes dark quarantines fail-closed (dead-link
+                # takeover / takedown both end enforcement here).
+                self._quarantine(skill_id, _EVENT_REF_UNVERIFIABLE,
+                                 url=url, reason=str(e)[:200])
+                return False, "reference-unresolvable-quarantined"
+            if not isinstance(body, (bytes, bytearray)):
+                self._quarantine(skill_id, _EVENT_REF_UNVERIFIABLE,
+                                 url=url,
+                                 reason="resolver returned non-bytes")
+                return False, "reference-unresolvable-quarantined"
+            observed = _digest(bytes(body))
+            if not hmac.compare_digest(observed,
+                                       ref.get("bound_sha256") or ""):
+                self._quarantine(
+                    skill_id, _EVENT_REF_DRIFT, url=url,
+                    previous_sha256=ref.get("bound_sha256"),
+                    observed_sha256=observed)
+                return False, "reference-drift-quarantined"
+        return True, "references-clean"
 
     # -- verification ----------------------------------------------------------
 
@@ -419,7 +605,7 @@ class SkillWatch:
         fail-closed.
         """
         report = {"checked": 0, "clean": [], "mutated": [],
-                  "unverifiable": []}
+                  "unverifiable": [], "reference_drift": []}
         for skill_id in sorted(self._skills):
             report["checked"] += 1
             rec = self._skills[skill_id]
@@ -432,10 +618,16 @@ class SkillWatch:
                 continue
             rec["last_stat"] = stat
             rec["last_verified_at"] = _utcnow()
-            if observed != rec["pinned_digest"]:
+            manifest_ok = (observed == rec["pinned_digest"])
+            if not manifest_ok:
                 report["mutated"].append(skill_id)
                 self._handle_mismatch(skill_id, observed)
-            else:
+            # F142 Leg B: referenced-URL content binding -- a clean
+            # manifest can still point at a rug-pulled URL.
+            rok, _ = self._verify_references(skill_id)
+            if not rok:
+                report["reference_drift"].append(skill_id)
+            if manifest_ok and rok:
                 report["clean"].append(skill_id)
         self._record_event(_EVENT_SWEEP, "-",
                            checked=report["checked"],
@@ -451,18 +643,32 @@ class SkillWatch:
         verification skips the re-hash. Any stat change — or any skill
         without a stat hint — triggers a full re-hash against the pin.
         Returns (ok, detail) where ok=False means the caller MUST deny
-        the tool call. Unregistered skills return (True, "unregistered"):
-        the inventory refuses to invent a refusal for a skill it never
-        pinned; the policy's unknown-skill handling decides those.
+        the tool call. Unregistered skills return (False,
+        "unregistered-no-pin"): an id the inventory never pinned is a
+        fail-closed denial, not a pass — a tool mapped (by typo, stale
+        config, or the MCP "mcp/<server>" default convention) to a
+        never-registered id carries zero verification. The ONLY
+        permitted "no pin, no denial" posture is the deployment's
+        explicit opt-out, which never reaches this seam:
+        skill_id_for_tool maps an explicit ``None`` entry to ``None``
+        ("unattributed"), and the executor declines to check those.
 
         Never raises for a registered skill: every source failure
-        quarantines fail-closed and returns (False, ...).
+        quarantines fail-closed and returns (False, ...). No
+        quarantine state is invented for an unregistered id: a later
+        register_skill for that id starts clean.
+
+        F142 Leg B: after the manifest digest check passes, bound
+        referenced URLs are re-resolved against their pinned content
+        hashes; drift or resolution failure quarantines fail-closed.
+        ``unverified`` references (default refusing resolver) are
+        audited but unenforced.
         """
         if skill_id in self._quarantined:
             return False, "quarantined"
         rec = self._skills.get(skill_id)
         if rec is None:
-            return True, "unregistered"
+            return False, "unregistered-no-pin"
         try:
             current_stat = rec["source"].stat_hint()
         except Exception as e:  # noqa: BLE001 — fail-closed on any stat fault
@@ -471,6 +677,15 @@ class SkillWatch:
             return False, "unverifiable-quarantined"
         if (current_stat is not None and rec["last_stat"] is not None
                 and current_stat == rec["last_stat"]):
+            # F142 Leg B: the stat prefilter only covers the manifest.
+            # The manifest being byte-identical is exactly the rug-pull
+            # shape (referenced URL content swapped, manifest
+            # untouched), so bound references are rechecked even on the
+            # fast path. Unverified references stay audited-but-
+            # unenforced inside _verify_references.
+            rok, rdetail = self._verify_references(skill_id)
+            if not rok:
+                return False, rdetail
             return True, "clean"
         # Stat changed (or no hint available): re-hash against the pin.
         try:
@@ -484,6 +699,12 @@ class SkillWatch:
         if observed != rec["pinned_digest"]:
             self._handle_mismatch(skill_id, observed)
             return False, "mutated-quarantined"
+        # F142 Leg B: the manifest digest binds the manifest, not what
+        # it references -- re-resolve bound URLs and quarantine on
+        # drift or resolution failure.
+        rok, rdetail = self._verify_references(skill_id)
+        if not rok:
+            return False, rdetail
         return True, "clean"
 
     # -- governed re-pinning ----------------------------------------------------
@@ -507,11 +728,26 @@ class SkillWatch:
                 % (skill_id, e))
         req_id = "%s:%d" % (skill_id, self._skills[skill_id][
             "mutation_count"])
+        # F142 Leg B: capture the currently observed reference content
+        # hashes so the approval can bind to them (bait-and-switch
+        # protection for references, mirroring the manifest digest).
+        ref_observed = {}
+        for ref in self._skills[skill_id].get("references") or []:
+            url = ref["url"]
+            try:
+                body = self._reference_resolver.resolve(url)
+                ref_observed[url] = (
+                    _digest(bytes(body))
+                    if isinstance(body, (bytes, bytearray)) and body
+                    else None)
+            except Exception:
+                ref_observed[url] = None
         self._repin_requests[skill_id] = {
             "request_id": req_id,
             "operator": operator,
             "observed_digest": observed,
             "requested_at": _utcnow(),
+            "observed_reference_hashes": ref_observed,
         }
         self._record_event(_EVENT_REPIN_REQUESTED, skill_id,
                            request_id=req_id, operator=operator,
@@ -558,11 +794,50 @@ class SkillWatch:
                 "approval new_digest does not match the currently observed "
                 "digest for skill %r: content changed after review; "
                 "re-review required (bait-and-switch refused)" % skill_id)
+        # F142 Leg B: re-bind references. Each claimed hash is verified
+        # against a FRESH resolution at approval time: if the reference
+        # changed again between the operator's review and this call,
+        # the stale hash is refused (bait-and-switch on the reference).
+        new_ref_hashes = approval.get("new_reference_hashes") or {}
+        if new_ref_hashes:
+            if not isinstance(new_ref_hashes, dict):
+                raise SkillWatchError(
+                    "approval new_reference_hashes must be a dict")
+            for url, claimed in new_ref_hashes.items():
+                try:
+                    body = self._reference_resolver.resolve(url)
+                except Exception as e:  # noqa: BLE001
+                    raise SkillWatchError(
+                        "cannot re-pin reference %r for skill %r: "
+                        "unresolvable at approval time (%s)"
+                        % (url, skill_id, e))
+                if not isinstance(body, (bytes, bytearray)) or not body:
+                    raise SkillWatchError(
+                        "cannot re-pin reference %r for skill %r: "
+                        "resolver returned empty/non-bytes at approval"
+                        % (url, skill_id))
+                fresh = _digest(bytes(body))
+                if not (isinstance(claimed, str)
+                        and hmac.compare_digest(claimed, fresh)):
+                    raise SkillWatchError(
+                        "approval new_reference_hashes[%r] does not match "
+                        "the currently served content for skill %r: "
+                        "reference changed after review; re-review "
+                        "required (bait-and-switch refused)"
+                        % (url, skill_id))
         rec = self._skills[skill_id]
         previous = rec["pinned_digest"]
         rec["pinned_digest"] = observed
         rec["last_stat"] = stat
         rec["last_verified_at"] = _utcnow()
+        if new_ref_hashes:
+            for ref in rec.get("references") or []:
+                if ref["url"] in new_ref_hashes:
+                    ref["bound_sha256"] = new_ref_hashes[ref["url"]]
+                    ref["status"] = "bound"
+                    ref["bound_at"] = _utcnow()
+            self._record_event("skill_reference_repinned", skill_id,
+                               urls=sorted(new_ref_hashes))
         self._quarantined.discard(skill_id)
         del self._repin_requests[skill_id]
         self._record_event(_EVENT_REPINNED, skill_id,
@@ -624,6 +899,9 @@ class PinStore:
                 "registered_at": rec["registered_at"],
                 "last_verified_at": rec["last_verified_at"],
                 "mutation_count": rec["mutation_count"],
+                # F142 Leg B: referenced-URL content bindings.
+                "references": [dict(r)
+                               for r in (rec.get("references") or [])],
             }
         return {
             "format": _PIN_FORMAT,
@@ -699,6 +977,27 @@ class PinStore:
                 raise PinStoreError(
                     "skill pin file %r: record %r origin not a dict"
                     % (path, skill_id))
+            # F142 Leg B: references are additive -- pin files written
+            # before Leg B load with an empty binding list.
+            refs = rec.get("references", [])
+            if not isinstance(refs, list):
+                raise PinStoreError(
+                    "skill pin file %r: record %r references not a list"
+                    % (path, skill_id))
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    raise PinStoreError(
+                        "skill pin file %r: record %r bad reference"
+                        % (path, skill_id))
+                for key in ("url", "bound_sha256", "status", "bound_at"):
+                    if key not in ref:
+                        raise PinStoreError(
+                            "skill pin file %r: record %r reference "
+                            "missing %r" % (path, skill_id, key))
+                if ref["status"] not in ("bound", "unverified"):
+                    raise PinStoreError(
+                        "skill pin file %r: record %r bad reference "
+                        "status %r" % (path, skill_id, ref["status"]))
         for skill_id in quarantined:
             _check_skill_id(skill_id)
             if skill_id not in pins:
@@ -708,19 +1007,23 @@ class PinStore:
         return data
 
     @staticmethod
-    def load(path, source_factory=None, emit=None):
+    def load(path, source_factory=None, emit=None, reference_resolver=None):
         """Rebuild a ``SkillWatch`` from a persisted pin file.
 
         ``source_factory(skill_id, origin)`` re-attaches content
         sources; defaults to :func:`default_source_factory` (file-backed
         skills with ``origin["content_path"]``). Sources that fail to
         attach make the load LOUD — a pin without observable content
-        is a trust hole, not a fresh registry.
+        is a trust hole, not a fresh registry. ``reference_resolver``
+        is passed through to the rebuilt watcher (F142 Leg B); without
+        one, restored ``bound`` references cannot be re-verified until
+        the deployment supplies a resolver.
         """
         data = PinStore.peek(path)
         factory = (source_factory if source_factory is not None
                    else default_source_factory)
-        watch = SkillWatch(emit=emit)
+        watch = SkillWatch(emit=emit,
+                           reference_resolver=reference_resolver)
         for skill_id in sorted(data["pins"]):
             rec = data["pins"][skill_id]
             try:
@@ -745,6 +1048,10 @@ class PinStore:
                 "last_stat": last_stat,
                 "last_verified_at": rec["last_verified_at"],
                 "mutation_count": rec["mutation_count"],
+                # F142 Leg B: restored bindings (pre-Leg-B pin files
+                # carry none).
+                "references": [dict(r)
+                               for r in (rec.get("references") or [])],
             }
         for skill_id in data["quarantined"]:
             watch._quarantined.add(skill_id)

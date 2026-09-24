@@ -24,6 +24,7 @@ from gov.egress_launcher import (  # noqa: E402
     EgressLaunchRefused,
     FakePacketFilter,
     FilteredEgressLauncher,
+    NetnsWallProvider,
     SimulatedWallFixture,
     SimulatedWallProvider,
     WallComponentInventory,
@@ -39,6 +40,13 @@ from gov.egress_launcher import (  # noqa: E402
 def _mk_tmp():
     return tempfile.mkdtemp(prefix="s7unit-",
                             dir=os.environ.get("TMPDIR", "/tmp"))
+
+
+def _nft_baseline(text):
+    """sha256 of the normalized ruleset text (fog decision 1)."""
+    from gov.egress_launcher import _digest_bytes, _normalize_nft_ruleset
+    return _digest_bytes(
+        _normalize_nft_ruleset(text).encode("utf-8"), "sha256")
 
 
 class DigestTests(unittest.TestCase):
@@ -304,6 +312,7 @@ class PinAuthorshipTests(unittest.TestCase):
             "dns_zone": os.path.join(conf, "dns_hosts.txt"),
             "proxy_impl": os.path.join(conf, "proxy_impl.txt"),
             "seccomp_config": os.path.join(conf, "seccomp_config.txt"),
+            "seccomp_helper": os.path.join(conf, "run_seccomp.py"),
         }
 
     def _signed_install(self, sim, paths, trust, signers, tier="dev"):
@@ -521,6 +530,684 @@ class PinAuthorshipTests(unittest.TestCase):
         self.assertIn("pin_authorship_invalid", str(cm.exception))
         self.assertIn("no trust roster", str(cm.exception))
 
+    def test_live_baseline_skew_between_proposal_and_install_refuses(self):
+        # Fog decision 1 / authorship binding: the live baseline is
+        # part of the signed pin body. Signing one baseline and
+        # installing with another must refuse — the baseline cannot
+        # be re-based without fresh roster authorship.
+        signers = [Ed25519Signer(_gen_seed())]
+        sim, inv, paths, trust = self._wall(signers)
+        comp_paths = self._comp_paths(sim)
+        prop = WallComponentInventory.proposal(
+            comp_paths, paths["manifest"], tier="dev",
+            ledger_path=paths["ledger"],
+            live_digests={"nft_ruleset": "a" * 64})
+        sig = signers[0].sign(prop["body"]).hex()
+        with self.assertRaises(WallPinRefused) as cm:
+            WallComponentInventory.install(
+                comp_paths, paths["manifest"], paths["receipt"],
+                trust=trust, author_key_id=signers[0].key_id,
+                authorship_sig_hex=sig, ts=prop["ts"], tier="dev",
+                ledger_path=paths["ledger"],
+                live_digests={"nft_ruleset": "b" * 64})
+        self.assertIn("pin_authorship_invalid", str(cm.exception))
 
-if __name__ == "__main__":
-    unittest.main()
+
+class SeccompHelperPinTests(unittest.TestCase):
+    """F81 launcher wave: the seccomp helper is the 7th pinned wall
+    component (spec D7). The sim fixture gains a dummy helper file;
+    the real deployment pins the vendored run_seccomp.py bytes."""
+
+    def test_wall_components_includes_seccomp_helper(self):
+        self.assertIn("seccomp_helper", WALL_COMPONENTS)
+        self.assertEqual(len(WALL_COMPONENTS), 7)
+
+    def test_sim_install_pins_helper_bytes(self):
+        sim = os.path.join(_mk_tmp(), "wall")
+        inv, paths = install_simulated_wall(sim, wall_id="f81unit")
+        manifest, checked = inv.verify()
+        names = [e["name"] for e in manifest["components"]]
+        self.assertIn("seccomp_helper", names)
+        self.assertIn("seccomp_helper", checked)
+        helper_path = os.path.join(sim, "conf", "run_seccomp.py")
+        with open(helper_path, "rb") as f:
+            want = component_digests(f.read())
+        entry = [e for e in manifest["components"]
+                 if e["name"] == "seccomp_helper"][0]
+        self.assertEqual(entry["digests"], want)
+
+    def test_helper_tamper_refuses_verify(self):
+        sim = os.path.join(_mk_tmp(), "wall")
+        inv, paths = install_simulated_wall(sim, wall_id="f81unit")
+        inv.verify()  # sane before tamper
+        helper_path = os.path.join(sim, "conf", "run_seccomp.py")
+        with open(helper_path, "r+b") as f:
+            data = bytearray(f.read())
+            data[0] ^= 0x01
+            f.seek(0)
+            f.write(data)
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            inv.verify()
+        self.assertIn("component_tampered", str(cm.exception))
+        self.assertIn("seccomp_helper", str(cm.exception))
+
+    def test_vendored_helper_is_never_imported_artifact(self):
+        # The vendored helper is data, not code: it must exist as a
+        # file carrying the lab's filter semantics (known-good
+        # literals), and nothing in gov may import it.
+        helper = os.path.join(REPO_ROOT, "gov", "data", "run_seccomp.py")
+        with open(helper, encoding="utf-8") as f:
+            src = f.read()
+        for literal in ("AF_PACKET", "CLONE_NEWNET", "setns",
+                        "os.execvp", "python3-seccomp"):
+            self.assertIn(literal, src)
+
+
+class WrapArgvSeamTests(unittest.TestCase):
+    """F81 launcher wave, spec D2: the namespace-entry seam.
+
+    wrap_argv(argv) -> argv is the provider seam that places the
+    child in the wall. The default is identity (the sim keeps
+    working; zero behavior change for existing callers)."""
+
+    def test_base_provider_wrap_argv_is_identity(self):
+        from gov.egress_launcher import WallStateProvider
+        argv = ["/bin/true", "--flag", "value"]
+        self.assertEqual(WallStateProvider().wrap_argv(argv), argv)
+
+    def test_sim_provider_wrap_argv_is_identity(self):
+        sim = os.path.join(_mk_tmp(), "wall")
+        inv, paths = install_simulated_wall(sim, wall_id="f81unit")
+        provider = SimulatedWallProvider(sim, inv)
+        argv = ["/usr/bin/agent", "--run-id", "abc"]
+        self.assertEqual(provider.wrap_argv(argv), argv)
+
+
+class NetnsWallProviderTests(unittest.TestCase):
+    """F81 launcher wave, spec D2/D5: the production provider.
+
+    The unit seam is a fake `ip` executable: the tests control the
+    namespace topology without privileges. (Real netns/nftables is
+    the privileged battery's job — evals/f81launcher_privileged.py.)"""
+
+    def _wall(self, wall_id="f81unit", live_digests=None):
+        sim = os.path.join(_mk_tmp(), "wall")
+        inv, paths = install_simulated_wall(sim, wall_id=wall_id,
+                                            live_digests=live_digests)
+        return sim, inv, paths
+
+    def _provider(self, inv, **kw):
+        kw.setdefault("ip_path", "/fake/ip")
+        kw.setdefault("helper_path", "/wall/run_seccomp.py")
+        return NetnsWallProvider(inv, **kw)
+
+    def test_wrap_argv_prefix_shape(self):
+        # Spec D2 (name locked): ["ip", "netns", "exec", "agent0",
+        # <helper_path>, *argv] — netns entry, then the seccomp
+        # helper, then the agent argv (D3 order).
+        _, inv, _ = self._wall()
+        provider = self._provider(inv)
+        self.assertEqual(
+            provider.wrap_argv(["/usr/bin/agent", "--run-id", "abc"]),
+            ["/fake/ip", "netns", "exec", "agent0",
+             "/wall/run_seccomp.py",
+             "/usr/bin/agent", "--run-id", "abc"])
+
+    def test_wrap_argv_honors_netns_name(self):
+        _, inv, _ = self._wall()
+        provider = self._provider(inv, netns_name="f81test0")
+        self.assertEqual(provider.wrap_argv(["/bin/true"])[3], "f81test0")
+
+    def test_describe_names_provider_and_pins_ip_path(self):
+        _, inv, _ = self._wall()
+        provider = self._provider(inv)
+        desc = provider.describe()
+        self.assertEqual(desc["provider"], "NetnsWallProvider")
+        self.assertEqual(desc["netns"], "agent0")
+        self.assertEqual(desc["ip"], "/fake/ip")
+        self.assertEqual(desc["helper"], "/wall/run_seccomp.py")
+
+    def test_child_env_extra_carries_in_ns_endpoints(self):
+        # Story 13: the child sees the in-namespace proxy endpoint.
+        _, inv, _ = self._wall()
+        provider = self._provider(inv)
+        extra = provider.child_env_extra()
+        self.assertEqual(extra["EGRESS_PROXY_ADDR"], "10.200.0.1:8080")
+        self.assertEqual(extra["EGRESS_DNS_ADDR"], "10.200.0.1:53")
+
+    # -- fake `ip` shim ------------------------------------------------
+    # The unit seam for the provider: a fake `ip` executable whose
+    # `netns list` and in-ns `nft list ruleset` answers are scripted
+    # via the environment. Real netns/nftables is the privileged
+    # battery's job (evals/f81launcher_privileged.py).
+
+    FAKE_IP_SCRIPT = (
+        "#!/usr/bin/env python3\n"
+        "import os, sys\n"
+        "args = sys.argv[1:]\n"
+        "if args[:2] == ['netns', 'list']:\n"
+        "    for name in os.environ.get('FAKE_IP_NETNS', '').split():\n"
+        "        print('%s (id: 3)' % name)\n"
+        "elif args[:2] == ['netns', 'exec']:\n"
+        "    rest = args[3:]\n"
+        "    if rest == ['nft', 'list', 'ruleset']:\n"
+        "        p = os.environ.get('FAKE_IP_RULESET_FILE', '')\n"
+        "        sys.stdout.write(open(p, encoding='utf-8').read()\n"
+        "                         if p else '')\n"
+        "    else:\n"
+        "        sys.exit(1)\n"
+        "else:\n"
+        "    sys.exit(1)\n"
+    )
+
+    def _fake_ip(self, netns_names=(), ruleset_text=""):
+        d = _mk_tmp()
+        ip = os.path.join(d, "ip")
+        with open(ip, "w", encoding="utf-8") as f:
+            f.write(self.FAKE_IP_SCRIPT)
+        os.chmod(ip, 0o755)
+        ruleset_file = os.path.join(d, "ruleset.txt")
+        with open(ruleset_file, "w", encoding="utf-8") as f:
+            f.write(ruleset_text)
+        env = {"FAKE_IP_NETNS": " ".join(netns_names),
+               "FAKE_IP_RULESET_FILE": ruleset_file,
+               "PATH": d + os.pathsep + "/usr/bin:/bin"}
+        return ip, env
+
+    def _empty_netns_dir(self):
+        return _mk_tmp()
+
+    def test_ip_path_resolved_once_at_construction(self):
+        # Fog decision 3: construction-time resolution, pinned and
+        # observable via describe(); a later PATH change cannot swap
+        # the binary mid-deployment.
+        _, inv, _ = self._wall()
+        ip, env = self._fake_ip()
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = env["PATH"]
+        try:
+            provider = NetnsWallProvider(inv, helper_path="/w/h.py")
+        finally:
+            os.environ["PATH"] = old_path
+        self.assertEqual(provider.ip_path, ip)
+        self.assertEqual(provider.describe()["ip"], ip)
+
+    def test_missing_ip_binary_refuses_at_construction(self):
+        _, inv, _ = self._wall()
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = "/nonexistent-path-dir"
+        try:
+            with self.assertRaises(EgressLaunchRefused) as cm:
+                NetnsWallProvider(inv, helper_path="/w/h.py")
+        finally:
+            os.environ["PATH"] = old_path
+        self.assertIn("ip_not_found", str(cm.exception))
+
+    def _check_with(self, provider, env):
+        import unittest.mock as _mock
+        with _mock.patch.dict(os.environ, env, clear=False):
+            return provider.check()
+
+    def test_check_wall_down_when_netns_absent(self):
+        # Spec D4/D5-step-1, close-when 1: no netns -> WALL_DOWN,
+        # and launch() must refuse with wall_not_up (slice 9).
+        from gov.egress_launcher import WALL_DOWN
+        _, inv, _ = self._wall()
+        ip, env = self._fake_ip(netns_names=())
+        provider = NetnsWallProvider(
+            inv, ip_path=ip, helper_path="/w/h.py",
+            netns_dir=self._empty_netns_dir())
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DOWN)
+        self.assertEqual(report.detail.get("reason"),
+                         "netns_missing_or_unprivileged")
+
+    def test_check_wall_down_when_ip_fails(self):
+        # `ip` failing (unprivileged) is indistinguishable from a
+        # missing netns: fail closed the same way (D4).
+        from gov.egress_launcher import WALL_DOWN
+        _, inv, _ = self._wall()
+        d = _mk_tmp()
+        dead = os.path.join(d, "ip")
+        with open(dead, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(dead, 0o755)
+        provider = NetnsWallProvider(
+            inv, ip_path=dead, helper_path="/w/h.py",
+            netns_dir=self._empty_netns_dir())
+        report = provider.check()
+        self.assertEqual(report.state, WALL_DOWN)
+        self.assertEqual(report.detail.get("reason"),
+                         "netns_missing_or_unprivileged")
+
+    def test_check_degraded_when_helper_tampered(self):
+        # Spec D5-step-2: the helper the provider will EXEC must match
+        # the pinned digests. Here the deployed component is intact
+        # but the staged helper_path copy is tampered -> DEGRADED
+        # naming seccomp_helper.
+        import shutil
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, paths = self._wall()
+        installed = os.path.join(paths["conf_dir"], "run_seccomp.py")
+        staged = os.path.join(_mk_tmp(), "run_seccomp.py")
+        shutil.copyfile(installed, staged)
+        with open(staged, "ab") as f:
+            f.write(b"X")
+        ip, env = self._fake_ip(netns_names=("agent0",))
+        provider = NetnsWallProvider(inv, ip_path=ip,
+                                     helper_path=staged)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"), "component_tampered")
+        self.assertEqual(report.detail.get("component"), "seccomp_helper")
+
+    def test_check_wall_down_when_installed_helper_tampered_in_place(self):
+        # Tampering the deployed component itself trips the pin chain:
+        # verify() fails -> WALL_DOWN, with pin_verify naming the
+        # component (fail-closed before the helper check is reached).
+        from gov.egress_launcher import WALL_DOWN
+        _, inv, paths = self._wall()
+        installed = os.path.join(paths["conf_dir"], "run_seccomp.py")
+        with open(installed, "ab") as f:
+            f.write(b"X")
+        ip, env = self._fake_ip(netns_names=("agent0",))
+        provider = NetnsWallProvider(inv, ip_path=ip,
+                                     helper_path=installed)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DOWN)
+        self.assertIn("seccomp_helper",
+                      report.detail.get("pin_verify", ""))
+
+    def test_check_degraded_when_helper_unreadable(self):
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, _ = self._wall()
+        ip, env = self._fake_ip(netns_names=("agent0",))
+        provider = NetnsWallProvider(inv, ip_path=ip,
+                                     helper_path="/no/such/helper.py")
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"), "component_tampered")
+        self.assertEqual(report.detail.get("component"), "seccomp_helper")
+
+    def test_check_degraded_when_manifest_lacks_helper(self):
+        # Spec D7: a v2 (pre-productization, 6-component) manifest is
+        # refused by the real provider — never a silent partial wall.
+        from gov.egress_launcher import WALL_DEGRADED
+
+        class NoHelperInventory:
+            def verify(self):
+                return ({"components": [
+                    {"name": "nft_ruleset",
+                     "digests": {"sha256": "abc"}}]}, {})
+
+        ip, env = self._fake_ip(netns_names=("agent0",))
+        provider = NetnsWallProvider(NoHelperInventory(), ip_path=ip,
+                                     helper_path="/w/h.py")
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"), "helper_not_pinned")
+
+    def test_check_degraded_when_helper_not_configured(self):
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, _ = self._wall()
+        ip, env = self._fake_ip(netns_names=("agent0",))
+        provider = NetnsWallProvider(inv, ip_path=ip, helper_path=None)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"),
+                         "helper_not_configured")
+
+    # -- nft drift (fog decision 1) ----------------------------------
+    RULESET_DESIRED = (
+        "table inet agent0 {\n"
+        "    chain egress {\n"
+        "        type filter hook output priority 0; policy drop;\n"
+        "        ip daddr 10.200.0.1 tcp dport 8080 accept\n"
+        "        ip daddr 10.200.0.1 udp dport 53 accept\n"
+        "    }\n"
+        "}\n"
+    )
+    RULESET_CHURNED = (
+        "# generated 2026-09-24; do not hand-edit\n"
+        "table inet agent0 { # the wall\n"
+        "    chain egress {  \n"
+        "        type filter hook output priority 0; policy drop; handle 12\n"
+        "        ip daddr 10.200.0.1 tcp dport 8080 accept handle 13\n"
+        "        ip daddr 10.200.0.1 udp dport 53 accept\n"
+        "    }\n"
+        "}\n"
+    )
+
+    def _baseline(self, text):
+        return _nft_baseline(text)
+
+    def _netns_provider(self, inv, paths, ip, **kw):
+        kw.setdefault("helper_path",
+                      os.path.join(paths["conf_dir"], "run_seccomp.py"))
+        return NetnsWallProvider(inv, ip_path=ip, **kw)
+
+    def test_normalize_nft_ruleset_bridges_formatting_churn(self):
+        # Fog decision 1: comments, handle tokens, and whitespace
+        # churn must not read as drift.
+        from gov.egress_launcher import _normalize_nft_ruleset
+        self.assertEqual(_normalize_nft_ruleset(self.RULESET_DESIRED),
+                         _normalize_nft_ruleset(self.RULESET_CHURNED))
+
+    def test_normalize_nft_ruleset_preserves_semantic_change(self):
+        from gov.egress_launcher import _normalize_nft_ruleset
+        changed = self.RULESET_DESIRED.replace("tcp dport 8080",
+                                               "tcp dport 9090")
+        self.assertNotEqual(_normalize_nft_ruleset(self.RULESET_DESIRED),
+                            _normalize_nft_ruleset(changed))
+
+    def test_install_with_live_digests_pins_baseline_on_manifest(self):
+        sim, inv, paths = self._wall(
+            live_digests={"nft_ruleset":
+                          self._baseline(self.RULESET_DESIRED)})
+        manifest, _ = inv.verify()  # the signed pin covers the baseline
+        entry = next(e for e in manifest["components"]
+                     if e["name"] == "nft_ruleset")
+        self.assertEqual(entry["live_sha256"],
+                         self._baseline(self.RULESET_DESIRED))
+
+    def test_check_degraded_when_ruleset_drifts(self):
+        # Fog decision 1 / spec D5-step-3: a SEMANTIC ruleset change
+        # (port 8080 -> 9090) fails the normalized digest comparison.
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, paths = self._wall(
+            live_digests={"nft_ruleset":
+                          self._baseline(self.RULESET_DESIRED)})
+        drifted = self.RULESET_DESIRED.replace("tcp dport 8080",
+                                               "tcp dport 9090")
+        ip, env = self._fake_ip(netns_names=("agent0",),
+                                ruleset_text=drifted)
+        provider = self._netns_provider(inv, paths, ip)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"), "ruleset_drift")
+
+    def test_check_degraded_when_ruleset_unreadable(self):
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, paths = self._wall(
+            live_digests={"nft_ruleset":
+                          self._baseline(self.RULESET_DESIRED)})
+        ip, env = self._fake_ip(netns_names=("agent0",),
+                                ruleset_text=self.RULESET_DESIRED)
+        env["FAKE_IP_RULESET_FILE"] = os.path.join(_mk_tmp(), "nope.txt")
+        provider = self._netns_provider(inv, paths, ip)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"), "ruleset_unreadable")
+
+    def test_check_degraded_when_baseline_missing(self):
+        # A wall installed before baselines existed cannot validate
+        # the live ruleset: DEGRADED, never a silent pass.
+        from gov.egress_launcher import WALL_DEGRADED
+        _, inv, paths = self._wall()  # no live_digests
+        ip, env = self._fake_ip(netns_names=("agent0",),
+                                ruleset_text=self.RULESET_DESIRED)
+        provider = self._netns_provider(inv, paths, ip)
+        report = self._check_with(provider, env)
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertEqual(report.detail.get("reason"),
+                         "ruleset_baseline_missing")
+
+    # -- listener liveness (spec D5-step-4) --------------------------
+    def _closed_port(self):
+        import socket as _socket
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        return port
+
+    def _wall_ready_for_listeners(self):
+        """A wall whose netns/pin/helper/ruleset steps all pass, so
+        check() reaches the listener probes."""
+        _, inv, paths = self._wall(
+            live_digests={"nft_ruleset":
+                          self._baseline(self.RULESET_DESIRED)})
+        ip, env = self._fake_ip(netns_names=("agent0",),
+                                ruleset_text=self.RULESET_DESIRED)
+        return inv, paths, ip, env
+
+    def test_check_degraded_when_proxy_unreachable(self):
+        from gov.egress_launcher import WALL_DEGRADED
+        import socket as _socket
+        from gov.egress_launcher import StubDnsServer
+        inv, paths, ip, env = self._wall_ready_for_listeners()
+        dns = StubDnsServer(
+            os.path.join(paths["conf_dir"], "dns_hosts.txt"))
+        dns.start()
+        try:
+            provider = self._netns_provider(
+                inv, paths, ip,
+                proxy_addr=("127.0.0.1", self._closed_port()),
+                dns_addr=("127.0.0.1", dns.port))
+            report = self._check_with(provider, env)
+        finally:
+            dns.stop()
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertTrue(any("proxy unreachable" in m
+                            for m in report.detail.get("missing", [])),
+                        report.detail)
+
+    def test_check_degraded_when_dns_probe_fails(self):
+        from gov.egress_launcher import WALL_DEGRADED
+        import socket as _socket
+        inv, paths, ip, env = self._wall_ready_for_listeners()
+        proxy_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        proxy_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        proxy_sock.bind(("127.0.0.1", 0))
+        proxy_sock.listen(5)
+        try:
+            provider = self._netns_provider(
+                inv, paths, ip,
+                proxy_addr=("127.0.0.1",
+                            proxy_sock.getsockname()[1]),
+                dns_addr=("127.0.0.1", self._closed_port()))
+            report = self._check_with(provider, env)
+        finally:
+            proxy_sock.close()
+        self.assertEqual(report.state, WALL_DEGRADED)
+        self.assertTrue(any("dns probe failed" in m
+                            for m in report.detail.get("missing", [])),
+                        report.detail)
+
+    def test_check_up_with_ruleset_formatting_churn(self):
+        # Full UP path: formatting churn in the live ruleset still
+        # matches the baseline, and the listeners answer on loopback.
+        # (The stub DNS server + a bare listening socket are used
+        # directly — SimulatedWallFixture rewrites conf files, which
+        # would trip the pin chain before the provider is reached.)
+        import socket as _socket
+        from gov.egress_launcher import (
+            WALL_UP, StubDnsServer)
+        sim, inv, paths = self._wall(
+            live_digests={"nft_ruleset":
+                          self._baseline(self.RULESET_DESIRED)})
+        ip, env = self._fake_ip(netns_names=("agent0",),
+                                ruleset_text=self.RULESET_CHURNED)
+        dns = StubDnsServer(
+            os.path.join(paths["conf_dir"], "dns_hosts.txt"))
+        dns.start()
+        proxy_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        proxy_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        proxy_sock.bind(("127.0.0.1", 0))
+        proxy_sock.listen(5)
+        try:
+            provider = self._netns_provider(
+                inv, paths, ip,
+                proxy_addr=("127.0.0.1",
+                            proxy_sock.getsockname()[1]),
+                dns_addr=("127.0.0.1", dns.port))
+            report = self._check_with(provider, env)
+        finally:
+            dns.stop()
+            proxy_sock.close()
+        self.assertEqual(report.state, WALL_UP)
+        self.assertEqual(report.detail.get("netns"), "agent0")
+        self.assertIn("proxy", report.detail)
+        self.assertIn("dns", report.detail)
+
+
+class NetnsLauncherLaunchTests(unittest.TestCase):
+    """launch() with the production provider (spec D2/D3/D8).
+
+    A spawn-logging fake `ip` observes the exact exec'd argv without
+    privilege: `netns list` / in-ns `nft list ruleset` are answered
+    for check(); the agent spawn itself is logged and exits 0."""
+
+    RULESET = NetnsWallProviderTests.RULESET_DESIRED
+
+    SPAWN_IP_TEMPLATE = (
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "NETNS = %(netns)r\n"
+        "RULESET = %(ruleset)r\n"
+        "SPAWN_LOG = %(log)r\n"
+        "args = sys.argv[1:]\n"
+        "if args[:2] == ['netns', 'exec'] and args[3:5] != ['nft', 'list']:\n"
+        "    open(SPAWN_LOG, 'a').write(' '.join(args) + chr(10))\n"
+        "    sys.exit(0)\n"
+        "if args[:2] == ['netns', 'list']:\n"
+        "    for _n in NETNS.split():\n"
+        "        print('%%s (id: 3)' %% _n)\n"
+        "elif args[:2] == ['netns', 'exec']:\n"
+        "    sys.stdout.write(RULESET)\n"
+        "else:\n"
+        "    sys.exit(1)\n"
+    )
+
+    def _ready(self, netns_names=("agent0",), live_ruleset_text=None):
+        """All-D5-green wall + provider + launcher. Returns
+        (launcher, events, ctx) where ctx carries the spawn log path
+        and helper path.
+
+        The pinned baseline is always RULESET; live_ruleset_text
+        overrides what the fake `ip` reports (drift simulation).
+        The fake `ip` has its answers baked in as literals: the
+        child's preexec re-check runs under the wall's scrubbed env,
+        so nothing may depend on ambient environment variables."""
+        import socket as _socket
+        from gov.egress_launcher import (
+            FilteredEgressLauncher, NetnsWallProvider, StubDnsServer)
+        tmp = _mk_tmp()
+        sim = os.path.join(tmp, "wall")
+        live_text = (self.RULESET if live_ruleset_text is None
+                     else live_ruleset_text)
+        inv, paths = install_simulated_wall(
+            sim, wall_id="f81launch",
+            live_digests={"nft_ruleset": _nft_baseline(self.RULESET)})
+        ipd = _mk_tmp()
+        ip = os.path.join(ipd, "ip")
+        spawn_log = os.path.join(ipd, "spawn.log")
+        with open(ip, "w", encoding="utf-8") as f:
+            f.write(self.SPAWN_IP_TEMPLATE % {
+                "netns": " ".join(netns_names),
+                "ruleset": live_text,
+                "log": spawn_log})
+        os.chmod(ip, 0o755)
+        helper = os.path.join(paths["conf_dir"], "run_seccomp.py")
+        dns = StubDnsServer(
+            os.path.join(paths["conf_dir"], "dns_hosts.txt"))
+        dns.start()
+        proxy_sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        proxy_sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+        proxy_sock.bind(("127.0.0.1", 0))
+        proxy_sock.listen(5)
+        provider = NetnsWallProvider(
+            inv, ip_path=ip, helper_path=helper,
+            proxy_addr=("127.0.0.1", proxy_sock.getsockname()[1]),
+            dns_addr=("127.0.0.1", dns.port))
+        events = []
+        launcher = FilteredEgressLauncher(
+            manifest_path=paths["manifest"],
+            receipt_path=paths["receipt"],
+            wall_provider=provider, audit=events.append,
+            trust=inv.trust)
+
+        def _teardown():
+            dns.stop()
+            proxy_sock.close()
+
+        self.addCleanup(_teardown)
+        return launcher, events, {
+            "spawn_log": spawn_log, "helper": helper}
+
+    def test_launch_spawns_prefixed_argv(self):
+        # Spec D2/D3: the spawned argv is [ip, netns, exec, agent0,
+        # <helper>, *agent_argv] — observed end to end via the
+        # spawn-logging fake `ip`.
+        launcher, events, ctx = self._ready()
+        proc = launcher.launch(["/usr/bin/agent", "--run-id", "9"])
+        self.assertEqual(proc.wait(timeout=30), 0)
+        with open(ctx["spawn_log"], encoding="utf-8") as f:
+            lines = [l for l in f.read().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+        parts = lines[0].split(" ")
+        self.assertEqual(parts[0:3], ["netns", "exec", "agent0"])
+        self.assertEqual(parts[3], ctx["helper"])
+        self.assertEqual(parts[4:], ["/usr/bin/agent", "--run-id", "9"])
+
+    def test_launch_audit_binds_wall_proof_and_identity(self):
+        # Spec D8: the launch event carries the manifest / receipt /
+        # pin-tip, the provider description, and the agent/principal/
+        # run identity (nulls stay visible, not omitted).
+        launcher, events, ctx = self._ready()
+        proc = launcher.launch(
+            ["/usr/bin/agent"], agent_id="agent-1",
+            principal="op@example", run_id="run-9")
+        self.assertEqual(proc.wait(timeout=30), 0)
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(len(launches), 1)
+        ev = launches[0]
+        self.assertEqual(ev["wall_id"], "f81launch")
+        self.assertEqual(ev["agent_id"], "agent-1")
+        self.assertEqual(ev["principal"], "op@example")
+        self.assertEqual(ev["run_id"], "run-9")
+        self.assertEqual(ev["provider"]["provider"], "NetnsWallProvider")
+        self.assertEqual(ev["provider"]["netns"], "agent0")
+        self.assertEqual(ev["spawn_argv0"], "ip")
+        self.assertEqual(ev["argv0"], "agent")
+        for key in ("manifest_sha256", "receipt_sha256", "pin_record_sha256"):
+            self.assertIn(key, ev)
+            self.assertEqual(len(ev[key]), 64)
+
+    def test_launch_audit_null_identity_stays_visible(self):
+        launcher, events, ctx = self._ready()
+        proc = launcher.launch(["/usr/bin/agent"])
+        self.assertEqual(proc.wait(timeout=30), 0)
+        ev = [e for e in events
+              if e["event"] == "egress_wall_launch"][0]
+        self.assertIn("agent_id", ev)
+        self.assertIsNone(ev["agent_id"])
+        self.assertIsNone(ev["principal"])
+        self.assertIsNone(ev["run_id"])
+
+    def test_launch_refuses_when_wall_down_and_spawns_nothing(self):
+        # Spec close-when 1: no netns -> wall_not_up refusal; the
+        # spawn log proves nothing was exec'd.
+        from gov.egress_launcher import EgressLaunchRefused
+        launcher, events, ctx = self._ready(netns_names=())
+        with self.assertRaises(EgressLaunchRefused):
+            launcher.launch(["/usr/bin/agent"])
+        self.assertFalse(os.path.exists(ctx["spawn_log"]))
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertIn("wall_not_up", refusals[0]["reason"])
+
+    def test_launch_refuses_when_ruleset_drifts(self):
+        # Spec close-when 2: drifted ruleset -> wall_degraded refusal.
+        from gov.egress_launcher import EgressLaunchRefused
+        drifted = self.RULESET.replace("tcp dport 8080", "tcp dport 9090")
+        launcher, events, ctx = self._ready(live_ruleset_text=drifted)
+        with self.assertRaises(EgressLaunchRefused):
+            launcher.launch(["/usr/bin/agent"])
+        self.assertFalse(os.path.exists(ctx["spawn_log"]))
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertIn("wall_degraded", refusals[0]["reason"])

@@ -35,7 +35,9 @@ Trust tiers are COMPUTED BY THE FIREWALL, never from a caller kwarg
   expenses"), are never quarantined: the agent's own history is its
   business.
 * ``untrusted_derived`` -- the bytes ARE traceably copied from untrusted
-  tool output (``read_file`` / ``api_call`` results). Paraphrase laundering
+  tool output (``read_file`` / ``api_call`` / ``http_post`` results;
+  http_post joined in F144 -- an http_post response body is untrusted
+  external content exactly like an api_call result). Paraphrase laundering
   (the agent rewords the poison instead of copying it) evades the verbatim
   match and is a DOCUMENTED residual, the same class as F15's paraphrase
   boundary.

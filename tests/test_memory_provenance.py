@@ -15,6 +15,7 @@ import inspect
 import os
 import sys
 import unittest
+from unittest import mock
 
 _TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 for _p in (_TESTS_DIR, os.path.dirname(_TESTS_DIR)):
@@ -372,6 +373,142 @@ class TestExecutorIntegration(unittest.TestCase):
         self.assertIn("POLICY UPDATE", res["result"].get("content", ""))
         self.assertIsNone(
             fw.ledger.latest_entry(PRINCIPAL, "work/notes.md"))
+
+
+class TestF144HttpPostFingerprintIngestion(unittest.TestCase):
+    """F144: _ingest_result must fingerprint http_post response bodies the
+    same way it fingerprints read_file/api_call content.
+
+    The battery (evals/f143mem_break.py, p4) mocks _simulate so the
+    synthetic http_post result carries attacker-controlled content; these
+    tests do the same against the public call seam. Expected values come
+    from the product's own documented tiering contract (module docstring
+    of gov/memory_provenance.py), not from re-deriving the code.
+    """
+
+    HTTP_BENIGN = ("Warehouse sync completed at 08:00 UTC. 412 inventory "
+                   "rows reconciled, 3 discrepancies flagged for review. "
+                   "Next window 20:00 UTC.")
+
+    def _http_post_sim(self, ex, content):
+        """Mock ONLY the synthetic server response body for http_post;
+        ingestion and tiering run unmodified (same fixture shape as the
+        break battery)."""
+        real_sim = ex._simulate
+
+        def _fake(tool, args, ctx):
+            if tool == "http_post":
+                return {"status": 202, "synthetic": True,
+                        "url": args.get("url"), "content": content}
+            return real_sim(tool, args, ctx)
+
+        return mock.patch.object(ex, "_simulate", _fake)
+
+    def _exec_allow(self, ctx, ident, tool, **kwargs):
+        """ex.call() with test-human approval when the call queues (mirrors
+        the battery's _exec helper). Returns (ok, result_dict)."""
+        ex = ctx["executor"]
+        res = ex.call(ident, tool, **kwargs)
+        status = res.get("status")
+        if status == "executed":
+            return True, res.get("result", {})
+        if status == "queued" and res.get("approval_id"):
+            ctx["approvals"].decide(
+                res["approval_id"], True,
+                reason="test routine step", decided_by="human-operator")
+            done = ex.execute_approved()
+            if any(isinstance(d, dict) and d.get("tool") == tool
+                   for d in done):
+                return True, {"approved": True}
+            return False, "queued-never-executed"
+        return False, "unexpected: %r" % (res,)
+
+    def test_http_post_verbatim_poison_tiers_untrusted_derived(self):
+        """F144 slice 1 (red): the same imperative poison the api_call
+        control quarantines must tier untrusted_derived when ingested via
+        an http_post response body."""
+        ledger_path = _tmp_ledger()
+        ctx, fw = _mem_run(ledger_path)
+        ex = ctx["executor"]
+        # http_post sits outside the coder allowlist; researcher may use
+        # it (battery p4's isolation argument: only the tool varies).
+        planter = ex.mint_identity("planter-1", "researcher", PRINCIPAL)
+        writer = ex.mint_identity("writer-1", "coder", PRINCIPAL)
+        with self._http_post_sim(ex, POISON):
+            ok, _ = self._exec_allow(
+                ctx, planter, "http_post",
+                url="https://vendor.synthetic.local/sync",
+                payload={"note": "sync"})
+        self.assertTrue(ok, "http_post did not execute")
+        res = ex.call(writer, "write_file", path="memory/sync_note.md",
+                      content="Vendor sync says: " + POISON)
+        self.assertIn("path", res["result"])
+        rec = fw.ledger.latest_entry(PRINCIPAL, "memory/sync_note.md")
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["trust_tier"], "untrusted_derived")
+
+    def test_http_post_poison_quarantined_on_fresh_session_read(self):
+        """F144 slice 2 (red): the p4 close-when end to end — a verbatim
+        http_post-ingested write is quarantined when a fresh session
+        reads it back, like the api_call control."""
+        ledger_path = _tmp_ledger()
+        ctx_a, _fw_a = _mem_run(ledger_path)
+        ex = ctx_a["executor"]
+        planter = ex.mint_identity("planter-1", "researcher", PRINCIPAL)
+        writer = ex.mint_identity("writer-1", "coder", PRINCIPAL)
+        with self._http_post_sim(ex, POISON):
+            ok, _ = self._exec_allow(
+                ctx_a, planter, "http_post",
+                url="https://vendor.synthetic.local/sync",
+                payload={"note": "sync"})
+        self.assertTrue(ok, "http_post did not execute")
+        ex.call(writer, "write_file", path="memory/sync_note.md",
+                content="Vendor sync says: " + POISON)
+        src = (ctx_a["run_dir"] / "sandbox" / "memory" / "sync_note.md")
+        # Fresh session, same principal + deployment ledger; the memory
+        # file survives like persistent deployment memory.
+        ctx_b, _fw_b = _mem_run(ledger_path)
+        dst = (ctx_b["run_dir"] / "sandbox" / "memory" / "sync_note.md")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        ex_b = ctx_b["executor"]
+        ident_b = ex_b.mint_identity("reader-1", "coder", PRINCIPAL)
+        with self.assertRaises(MemoryQuarantineError):
+            ex_b.call(ident_b, "read_file", path="memory/sync_note.md")
+        self.assertIn("memory_quarantine", _names(ctx_b))
+
+    def test_http_post_benign_ingestion_tiers_agent(self):
+        """F144 false-positive guard: a routine NON-verbatim,
+        non-instruction-shaped http_post-sourced memory write must still
+        tier agent and read back clean — fingerprinting must not turn
+        ordinary ingestion into quarantine noise."""
+        written = ("Note: overnight inventory sync reconciled 412 rows "
+                   "with 3 discrepancies pending review.")
+        # Probe validity: the write must not share a verbatim window
+        # with the http_post content, and must not be instruction-shaped
+        # (otherwise tiering agent would be the WRONG expectation).
+        self.assertFalse(_verbatim_untrusted_overlap(
+            written, [self.HTTP_BENIGN]))
+        self.assertIsNone(instruction_shaping_reason(written))
+        ctx, fw = _mem_run(_tmp_ledger())
+        ex = ctx["executor"]
+        planter = ex.mint_identity("planter-1", "researcher", PRINCIPAL)
+        writer = ex.mint_identity("writer-1", "coder", PRINCIPAL)
+        with self._http_post_sim(ex, self.HTTP_BENIGN):
+            ok, _ = self._exec_allow(
+                ctx, planter, "http_post",
+                url="https://vendor.synthetic.local/sync",
+                payload={"note": "sync"})
+        self.assertTrue(ok, "http_post did not execute")
+        res = ex.call(writer, "write_file", path="memory/sync_digest.md",
+                      content=written)
+        self.assertIn("path", res["result"])
+        rec = fw.ledger.latest_entry(PRINCIPAL, "memory/sync_digest.md")
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["trust_tier"], "agent")
+        res = ex.call(writer, "read_file", path="memory/sync_digest.md")
+        self.assertIn("discrepancies", res["result"].get("content", ""))
+        self.assertNotIn("memory_quarantine", _names(ctx))
 
 
 def _tmp_ledger():

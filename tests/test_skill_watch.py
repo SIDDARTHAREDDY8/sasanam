@@ -136,7 +136,8 @@ class TestSweep(unittest.TestCase):
         report = self.watch.verify_all()
         self.assertEqual(report,
                          {"checked": 2, "clean": ["a", "b"],
-                          "mutated": [], "unverifiable": []})
+                          "mutated": [], "unverifiable": [],
+                          "reference_drift": []})
         self.assertFalse(self.watch.is_quarantined("a"))
         sweep_evs = [e for e in self.watch.events
                      if e["event_type"] == "skill_sweep_completed"]
@@ -234,9 +235,22 @@ class TestCheckAtUse(unittest.TestCase):
         ok, detail = self.watch.check_at_use("w")
         self.assertEqual((ok, detail), (False, "quarantined"))
 
-    def test_unregistered_is_not_the_inventorys_refusal(self):
+    def test_unregistered_skill_denies_fail_closed(self):
+        # F143: an id the watcher never pinned must not read as a pass.
+        # Fail-closed at the seam: (False, "unregistered-no-pin"), and
+        # no quarantine state is invented for the unknown id — a later
+        # registration must still verify clean.
         ok, detail = self.watch.check_at_use("never-registered")
-        self.assertEqual((ok, detail), (True, "unregistered"))
+        self.assertEqual((ok, detail), (False, "unregistered-no-pin"))
+        self.assertFalse(self.watch.is_quarantined("never-registered"))
+        path2 = os.path.join(self.tmpdir, "later.skill")
+        with open(path2, "wb") as f:
+            f.write(V1)
+        self.watch.register_skill("never-registered",
+                                  FileContentSource(path2),
+                                  origin=ORIGIN)
+        ok2, detail2 = self.watch.check_at_use("never-registered")
+        self.assertEqual((ok2, detail2), (True, "clean"))
 
     def test_missing_file_quarantines(self):
         os.unlink(self.path)
@@ -672,13 +686,79 @@ class TestExecutorSkillWiring(unittest.TestCase):
         self.assertEqual(r["policy_id"], "skill-watch")
         self.assertIn("watcher-error", r["reason"])
 
-    def test_unregistered_skill_is_not_refused(self):
-        # The inventory refuses to invent a refusal for a skill it never
-        # pinned: the policy's unknown-skill handling decides those.
+    def test_unregistered_skill_is_refused(self):
+        # F143: fail-closed. A tool mapped to a skill id the watcher
+        # never pinned is DENIED with a loud audit entry, and the tool
+        # never executes.
         ex, ident, _ = self._wired(
             skill_tool_map={"read_file": "never-registered"})
+        # Construction warned LOUD about the map referencing an id
+        # with no pin (chained audit entry, not a crash).
+        warnings = [e for e in read_entries(self.run_dir / "actions.jsonl")
+                    if e.get("decision") == "warning"
+                    and e.get("flag") == "skill_map_unregistered_id"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["skill_id"], "never-registered")
+        self.assertEqual(warnings[0]["policy_id"], "skill-watch")
+        before = ex._executed.get("read_file", 0)
         r = ex.call(ident, "read_file", path="notes.txt")
+        self.assertEqual(r["status"], "denied")
+        self.assertEqual(r["policy_id"], "skill-watch")
+        self.assertEqual(ex._executed.get("read_file", 0), before)
+        denied = [e for e in read_entries(self.run_dir / "actions.jsonl")
+                  if e.get("decision") == "denied"
+                  and e.get("policy_id") == "skill-watch"]
+        self.assertEqual(len(denied), 1)
+        self.assertEqual(denied[0]["flag"], "skill_quarantined")
+        self.assertEqual(denied[0]["skill_id"], "never-registered")
+        self.assertEqual(denied[0]["skill_check"], "unregistered-no-pin")
+
+    def test_mcp_default_convention_unregistered_is_refused(self):
+        # F143 second leg: with no deployment map at all, the
+        # "mcp/<server>" default convention manufactures an
+        # unregistered id — also DENIED fail-closed.
+        ex, ident, _ = self._wired(skill_tool_map={})
+        r = ex.call(ident, "read_file", path="notes.txt",
+                    mcp_server="ghost-server")
+        self.assertEqual(r["status"], "denied")
+        self.assertEqual(r["policy_id"], "skill-watch")
+        denied = [e for e in read_entries(self.run_dir / "actions.jsonl")
+                  if e.get("decision") == "denied"
+                  and e.get("policy_id") == "skill-watch"]
+        self.assertEqual(len(denied), 1)
+        self.assertEqual(denied[0]["skill_id"], "mcp/ghost-server")
+        self.assertEqual(denied[0]["skill_check"], "unregistered-no-pin")
+
+    def test_construction_warning_only_for_unregistered_ids(self):
+        # Registered ids and explicit None opt-outs stay silent;
+        # one warning per DISTINCT unregistered id across both maps.
+        w = SkillWatch()
+        w.register_skill("weather", FileContentSource(self.skill_path),
+                         origin=file_origin(self.skill_path))
+        ex, ident, _ = _make_executor(
+            self.run_dir, w,
+            skill_tool_map={"read_file": "weather",
+                            "api_call": "ghost-skill"},
+            skill_mcp_map={"notes-svc": None,
+                           "ghost-server": "ghost-skill"})
+        warnings = [e for e in read_entries(self.run_dir / "actions.jsonl")
+                    if e.get("decision") == "warning"
+                    and e.get("flag") == "skill_map_unregistered_id"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["skill_id"], "ghost-skill")
+        self.assertEqual(warnings[0]["map_source"],
+                         "skill_tool_map,skill_mcp_map")
+
+    def test_mcp_explicit_none_opt_out_still_permits_unattributed(self):
+        # The legitimate "policy decides" posture survives: an
+        # explicit None entry in skill_mcp_map opts the server OUT of
+        # skill verification, and the tool executes unattributed.
+        ex, ident, _ = self._wired(
+            skill_mcp_map={"notes-svc": None})
+        r = ex.call(ident, "read_file", path="notes.txt",
+                    mcp_server="notes-svc")
         self.assertEqual(r["status"], "executed")
+        self.assertEqual(ex._executed.get("read_file", 0), 1)
 
     def test_unattributed_tool_untouched(self):
         ex, ident, _ = self._wired(skill_tool_map={})
@@ -814,3 +894,199 @@ class TestExecutorSkillWiring(unittest.TestCase):
             "reason": "reviewed: legitimate update"})
         r2 = ex.call(ident, "read_file", path="notes.txt")
         self.assertEqual(r2["status"], "executed")
+
+
+# ---------------------------------------------------------------------------
+# F142 Leg B: referenced-URL content binding (dead-link / rug-pull TOCTOU)
+# ---------------------------------------------------------------------------
+
+REF_URL = "https://dead-link.synthetic.local/skill.md"
+REF_V1 = b"reference content v1: benign instructions"
+REF_V2 = b"reference content v2: ATTACKER instructions"
+
+
+class FakeResolver(skill_watch.ReferenceResolver):
+    """In-memory URL -> bytes map; raises on unknown URLs."""
+
+    def __init__(self, mapping=None):
+        self.mapping = dict(mapping or {})
+        self.calls = []
+
+    def resolve(self, url):
+        self.calls.append(url)
+        if url in self.mapping:
+            return self.mapping[url]
+        raise skill_watch.ReferenceResolutionError(
+            "no such URL in fake resolver: %s" % url)
+
+
+def _manifest_with_ref(url=REF_URL):
+    return ("skill: link-skill\ninstructions_url: %s\n" % url).encode("utf-8")
+
+
+def _register_link_skill(watch, resolver_mapping=None, url=REF_URL):
+    src = CallableContentSource(lambda: _manifest_with_ref(url))
+    return watch.register_skill("link-skill", src, origin=dict(ORIGIN))
+
+
+class TestReferenceBinding(unittest.TestCase):
+    def test_default_resolver_refuses_no_network(self):
+        # The default resolver never touches the network: a referenced
+        # URL stays unverified.
+        with self.assertRaises(skill_watch.ReferenceResolutionError):
+            skill_watch.RefusingResolver().resolve(
+                "https://example.com/x.md")
+
+    def test_bind_at_registration(self):
+        w = SkillWatch(
+            reference_resolver=FakeResolver({REF_URL: REF_V1}))
+        _register_link_skill(w)
+        refs = w._skills["link-skill"]["references"]
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["url"], REF_URL)
+        self.assertEqual(refs[0]["status"], "bound")
+        self.assertEqual(refs[0]["bound_sha256"], sha(REF_V1))
+        self.assertIn("bound_at", refs[0])
+
+    def test_unresolvable_at_registration_is_unverified_not_blocked(self):
+        # Default posture: no resolver -> unverified, audited, and the
+        # skill still registers (fail-open at install; enforced only
+        # when a binding exists).
+        w = SkillWatch()
+        _register_link_skill(w)
+        refs = w._skills["link-skill"]["references"]
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["status"], "unverified")
+        self.assertIsNone(refs[0]["bound_sha256"])
+        ok, _ = w.check_at_use("link-skill")
+        self.assertTrue(ok)
+        # The unverified reference was audited.
+        kinds = [e["event_type"] for e in w.events]
+        self.assertIn("skill_reference_unverified", kinds)
+
+    def test_reference_url_cap_25(self):
+        urls = ["https://h.test/%d.md" % i for i in range(30)]
+        body = ("\n".join("ref: " + u for u in urls)).encode("utf-8")
+        w = SkillWatch(reference_resolver=FakeResolver({}))
+        w.register_skill("many-refs", CallableContentSource(lambda: body),
+                         origin=dict(ORIGIN))
+        self.assertEqual(len(w._skills["many-refs"]["references"]), 25)
+
+    def test_use_time_drift_quarantines(self):
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        ok, _ = w.check_at_use("link-skill")
+        self.assertTrue(ok)
+        # Post-approval rug-pull: the referenced URL now serves attacker
+        # bytes. The manifest digest is unchanged.
+        resolver.mapping[REF_URL] = REF_V2
+        ok, detail = w.check_at_use("link-skill")
+        self.assertFalse(ok)
+        self.assertIn("reference", detail)
+        self.assertTrue(w.is_quarantined("link-skill"))
+        kinds = [e["event_type"] for e in w.events]
+        self.assertIn("skill_reference_drift", kinds)
+
+    def test_stat_prefilter_fast_path_still_rechecks_references(self):
+        # Regression: the stat prefilter short-circuited check_at_use
+        # before _verify_references, so a drifted reference behind a
+        # byte-identical manifest passed as "clean" — the exact rug-pull
+        # shape. A real file-backed source engages the prefilter (unlike
+        # CallableContentSource above, which has no stat hint).
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        tmp = Path(tempfile.mkdtemp(prefix="gov-skillwatch-"))
+        manifest = tmp / "manifest.txt"
+        manifest.write_bytes(_manifest_with_ref())
+        w.register_skill("link-skill", FileContentSource(str(manifest)),
+                         origin=dict(ORIGIN))
+        ok, detail = w.check_at_use("link-skill")
+        self.assertTrue(ok)
+        self.assertEqual(detail, "clean")  # prefilter fast path
+        resolver.mapping[REF_URL] = REF_V2  # manifest untouched
+        ok, detail = w.check_at_use("link-skill")
+        self.assertFalse(ok)
+        self.assertIn("reference-drift", detail)
+        self.assertTrue(w.is_quarantined("link-skill"))
+
+    def test_bound_target_going_dark_quarantines(self):
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        del resolver.mapping[REF_URL]
+        ok, _ = w.check_at_use("link-skill")
+        self.assertFalse(ok)
+        self.assertTrue(w.is_quarantined("link-skill"))
+
+    def test_unverified_reference_never_blocks_use(self):
+        w = SkillWatch()  # default refusing resolver
+        _register_link_skill(w)
+        ok, detail = w.check_at_use("link-skill")
+        self.assertTrue(ok)
+        self.assertEqual(detail, "clean")
+
+    def test_verify_all_detects_reference_drift(self):
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        resolver.mapping[REF_URL] = REF_V2
+        report = w.verify_all()
+        self.assertIn("link-skill", report["reference_drift"])
+        self.assertTrue(w.is_quarantined("link-skill"))
+
+    def test_repin_flow_with_reference_hashes(self):
+        # Benign reference update -> drift quarantines -> operator
+        # reviews and re-pins the new reference hash -> use passes.
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        resolver.mapping[REF_URL] = REF_V2
+        ok, _ = w.check_at_use("link-skill")
+        self.assertFalse(ok)
+        req_id = w.request_repin("link-skill", operator="operator:alice")
+        self.assertTrue(req_id)
+        w.approve_repin("link-skill", {
+            "operator": "operator:alice",
+            "new_digest": w._skills["link-skill"]["pinned_digest"],
+            "new_reference_hashes": {REF_URL: sha(REF_V2)},
+            "reason": "reviewed: legitimate reference update"})
+        self.assertFalse(w.is_quarantined("link-skill"))
+        ok, _ = w.check_at_use("link-skill")
+        self.assertTrue(ok)
+        refs = w._skills["link-skill"]["references"]
+        self.assertEqual(refs[0]["bound_sha256"], sha(REF_V2))
+
+    def test_stale_reference_hash_after_reswap_is_refused(self):
+        # Bait-and-switch on the reference: the operator reviews v2,
+        # the attacker swaps to v3 before approval; the stale v2 hash
+        # must not bind.
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        resolver.mapping[REF_URL] = REF_V2
+        w.check_at_use("link-skill")
+        w.request_repin("link-skill", operator="operator:alice")
+        resolver.mapping[REF_URL] = b"reference content v3: attacker again"
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("link-skill", {
+                "operator": "operator:alice",
+                "new_digest": w._skills["link-skill"]["pinned_digest"],
+                "new_reference_hashes": {REF_URL: sha(REF_V2)},
+                "reason": "reviewed v2"})
+        self.assertTrue(w.is_quarantined("link-skill"))
+
+    def test_pinstore_persists_references(self):
+        resolver = FakeResolver({REF_URL: REF_V1})
+        w = SkillWatch(reference_resolver=resolver)
+        _register_link_skill(w)
+        with tempfile.TemporaryDirectory() as d:
+            pin_path = os.path.join(d, "pins.json")
+            PinStore.save(w, pin_path)
+            w2 = PinStore.load(pin_path, source_factory=lambda sid, o: (
+                CallableContentSource(lambda: _manifest_with_ref())))
+            refs = w2._skills["link-skill"]["references"]
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["url"], REF_URL)
+            self.assertEqual(refs[0]["status"], "bound")
+            self.assertEqual(refs[0]["bound_sha256"], sha(REF_V1))

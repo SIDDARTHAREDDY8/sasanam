@@ -880,10 +880,13 @@ class ToolExecutor:
         # verification (gov/skill_watch.SkillWatch). Opt-in: None =
         # pre-integration behavior, zero behavior change. When
         # installed, call() runs check_at_use() on the verdict path for
-        # every tool attributed to a registered skill (see
+        # every tool attributed to a skill id (see
         # skill_watch.skill_id_for_tool for the attribution rules); a
-        # mutated/unverifiable skill — or a watcher error — DENIES the
-        # call fail-closed with a loud audit entry, never a warning.
+        # mutated/unverifiable/unregistered skill — or a watcher
+        # error — DENIES the call fail-closed with a loud audit
+        # entry, never a warning. An id the watcher never pinned is
+        # fail-closed (F143): only the deployment's explicit None
+        # map entry ("unattributed") skips the check.
         # Watcher events (install, sweep, mutation, quarantine, re-pin)
         # are chained into the HMAC audit log carrying digests and
         # provenance, never skill content. Attribution is deployment
@@ -924,6 +927,52 @@ class ToolExecutor:
                 # existing file that fails validation refuses
                 # construction LOUD here.
                 _skill_watch.PinStore.peek(self._skill_pin_path)
+            # F143: construction-time validation of the attribution
+            # maps. Any id the maps reference that the watcher never
+            # pinned is a misconfiguration (typo, stale entry, or an
+            # MCP default-convention id the deployment never
+            # registered): WARN loud on the chained audit log, one
+            # entry per distinct id. This does NOT refuse
+            # construction — the use-time seam (check_at_use) denies
+            # those calls fail-closed. Explicit None entries (the
+            # deployment's "unattributed" opt-out) never warn.
+            _sw_registered = set(self._skill_watch.registered_skills())
+            _sw_map_sources = {}
+            for _tool_name, _sid in self._skill_tool_map.items():
+                if _sid is not None:
+                    _sw_map_sources.setdefault(_sid, []).append(
+                        "skill_tool_map")
+            for _server_id, _sid in self._skill_mcp_map.items():
+                if _sid is not None:
+                    _sw_map_sources.setdefault(_sid, []).append(
+                        "skill_mcp_map")
+            for _sid in sorted(_sw_map_sources):
+                if _sid in _sw_registered:
+                    continue
+                self.log.append({
+                    "event": "skill_map_unregistered_id",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "decision": "warning",
+                    "policy_id": "skill-watch",
+                    "flag": "skill_map_unregistered_id",
+                    "skill_id": _sid,
+                    "map_source": ",".join(_sw_map_sources[_sid]),
+                    "reason": (
+                        "WARNING: the skill attribution map(s) %s "
+                        "reference skill id %r, which the skill "
+                        "watcher never pinned (F143). Tools "
+                        "attributed to it will be DENIED at use time "
+                        "by the unregistered-no-pin check — "
+                        "attribution without verification is no "
+                        "longer a silent pass. Register the skill at "
+                        "install (register_skill / PinStore), or add "
+                        "an explicit None entry for this tool/server "
+                        "to opt it out of skill verification "
+                        "(unattributed: the policy decides)."
+                        % (", ".join(_sw_map_sources[_sid]), _sid)),
+                })
         self._trajectory = _tool_continuity.TrajectoryReverifier(
             checkpoint_every=trajectory_checkpoint_every)
         # S2 (K-018): hard budget accrual. Tokens/spend accrue on the
@@ -1479,7 +1528,16 @@ class ToolExecutor:
     # -- provenance / egress ----------------------------------------------
 
     def _ingest_result(self, tool, result, principal=None):
-        if tool in ("read_file", "api_call"):
+        # F144: http_post joins the fingerprinted set. read_file/api_call
+        # results were fingerprinted into the run's verbatim-overlap
+        # store, but http_post response bodies were not -- the identical
+        # imperative poison quarantined via api_call and sailed through
+        # via http_post (F140's mirror image: adjacent-tool
+        # incompleteness). An http_post response is untrusted external
+        # content exactly like an api_call result, so it runs the same
+        # machinery: same 64-char verbatim-overlap fingerprints, same
+        # 256 KiB FIFO store, same 64 KiB per-result cap.
+        if tool in ("read_file", "api_call", "http_post"):
             content = result.get("content")
             if content:
                 self._read_contents.append(content[:65536])
@@ -1496,7 +1554,14 @@ class ToolExecutor:
                     # the product models api_call as a simulated external
                     # API read, so a sensitive api_call RESULT taints the
                     # run exactly like a sensitive file read. DLP-clean
-                    # content does NOT taint.
+                    # content does NOT taint. F144: http_post response
+                    # bodies run the SAME taint path, not just the
+                    # fingerprint path -- splitting them would create a
+                    # fresh adjacent-tool gap (sensitive webhook content
+                    # followed by paraphrase/summary api_call exfil would
+                    # evade the approval gate). The false-positive cost
+                    # (a later api_call gated behind approval) is the
+                    # same precedent accepted for api_call results.
                     self._read_sensitive = True
                     # F15b: persist principal-scoped, so a confederate's
                     # FRESH run for the same principal inherits the taint
@@ -2531,7 +2596,8 @@ class ToolExecutor:
             except Exception:
                 pass
 
-    def _record_upload(self, tool, redacted_args, principal, agent_id):
+    def _record_upload(self, tool, redacted_args, principal, agent_id,
+                       response_urls=()):
         """F139/F140: cross-run upload memory for citation provenance.
 
         Called at the two execution boundaries for every EXECUTED
@@ -2550,6 +2616,14 @@ class ToolExecutor:
         as the log index (``citation_provenance.
         canonical_params_fingerprint``), so writer and reader agree.
 
+        F142: the record additionally carries ``response_urls``
+        (resource URLs minted in the API response, captured at the
+        execution boundary and indexed as aliases of this plant) and
+        ``content_sha256_set`` (full sha256 digests of the api_call
+        params' string leaves, for content-keyed correlation; empty
+        for http_post whose redacted payload is a summary, not
+        content). Both fields are additive -- old readers ignore them.
+
         Uses the REDACTED args: the URL is an audit field (readable by
         design) and the payload is the {bytes, sha256_prefix} summary --
         the same posture as the chained log, so the ledger learns
@@ -2566,6 +2640,7 @@ class ToolExecutor:
         if ledger is None:
             return
         args = redacted_args or {}
+        content_hashes = []
         if tool == "http_post":
             url = args.get("url")
             payload = args.get("payload")
@@ -2573,13 +2648,19 @@ class ToolExecutor:
             if isinstance(payload, dict):
                 sha_prefix = payload.get("sha256_prefix")
                 nbytes = payload.get("bytes")
+            # F142: the redacted http_post payload is a {bytes,
+            # sha256_prefix} summary, not content -- no string leaves
+            # to hash for content-keyed correlation.
         else:  # api_call: endpoint is URL-bearing; params carry the
             # payload (scrubbed dict in the redacted args, not a
-            # summary) -- fingerprint the canonical form.
+            # summary) -- fingerprint the canonical form, and hash the
+            # string leaves for F142 content-keyed correlation.
             url = args.get("endpoint")
             nbytes, sha_prefix = \
                 _citation_provenance.canonical_params_fingerprint(
                     args.get("params"))
+            content_hashes = _citation_provenance.payload_content_hashes(
+                args.get("params"))
         entry = {
             "kind": "upload",
             "ts": time.time(),
@@ -2592,6 +2673,12 @@ class ToolExecutor:
                 _citation_provenance.normalize_url(url),
             "payload_sha256_prefix": sha_prefix,
             "payload_bytes": nbytes,
+            # F142: response-minted resource URLs (aliases of this
+            # plant) and full content hashes of the payload's string
+            # leaves (content-keyed correlation backstop).
+            "response_urls": [u for u in (response_urls or [])
+                              if isinstance(u, str)],
+            "content_sha256_set": content_hashes,
         }
         try:
             # The write lock is held inside append (F74) -- no second
@@ -2769,8 +2856,23 @@ class ToolExecutor:
                 return {"deleted": True, "path": str(p)}
             return {"deleted": False, "note": "simulated; no file touched"}
         if tool == "api_call":
-            return {"status": 200, "synthetic": True,
+            resp = {"status": 200, "synthetic": True,
                     "endpoint": args.get("endpoint"), "items_returned": 2}
+            # F142: test seam -- mint a deterministic response-minted
+            # resource URL when the caller supplies a client-chosen slug,
+            # mirroring how real paste APIs mint URLs
+            # (https://<host>/bins/<slug>). Lets the synthetic battery
+            # exercise response-URL capture with no network.
+            params = args.get("params")
+            slug = params.get("slug") if isinstance(params, dict) else None
+            if isinstance(slug, str) and slug:
+                try:
+                    host = urlparse(args.get("endpoint") or "").hostname
+                except Exception:
+                    host = None
+                if host:
+                    resp["resource_url"] = "https://%s/bins/%s" % (host, slug)
+            return resp
         if tool == "http_post":
             return {"status": 202, "synthetic": True, "url": args.get("url")}
         if tool == "send_email":
@@ -4579,13 +4681,13 @@ class ToolExecutor:
         # gate, BEFORE anything executes. When a skill watcher is
         # installed and this tool attributes to a skill id, the
         # watcher's use-time check runs here: a mutated or
-        # unverifiable skill — or ANY watcher/attribution error —
-        # DENIES the call fail-closed (loud audit entry, no
-        # execution). Unattributed tools and unregistered skills are
-        # NOT refused here: the inventory refuses to invent a refusal
-        # for a skill it never pinned; the policy's unknown-skill
-        # handling decides those (same precedent as the tool-inventory
-        # gate above).
+        # unverifiable skill — or ANY watcher/attribution error — or
+        # an id the watcher never pinned (F143: fail-closed, no pin
+        # means no verification exists) — DENIES the call fail-closed
+        # (loud audit entry, no execution). Unattributed tools (the
+        # deployment's explicit None opt-out) are NOT refused here:
+        # the policy's unknown-skill handling decides those (same
+        # precedent as the tool-inventory gate above).
         if self._skill_watch is not None:
             try:
                 _skill_id = _skill_watch.skill_id_for_tool(
@@ -4603,6 +4705,24 @@ class ToolExecutor:
                 _skill_id = None
                 _sw_ok, _sw_detail, _sw_err = False, "watcher-error", e
             if not _sw_ok:
+                if _sw_detail == "unregistered-no-pin":
+                    _sw_reason = (
+                        "Refusing to act: skill %r is attributed by "
+                        "the deployment map but was never registered "
+                        "with the skill watcher (no pin: F143): "
+                        "executing it would run with attribution but "
+                        "zero verification. Register the skill at "
+                        "install, or add an explicit None opt-out "
+                        "entry for this tool/server in the deployment "
+                        "map, before use." % (_skill_id,))
+                else:
+                    _sw_reason = ("Refusing to act: skill %r failed "
+                                  "continuous verification (%s%s); "
+                                  "quarantined pending explicit re-pin "
+                                  "approval."
+                                  % (_skill_id, _sw_detail,
+                                     (": %s" % _sw_err)
+                                     if _sw_err is not None else ""))
                 _sw_entry = self.log.append(_base({
                     "decision": "denied",
                     "policy_id": "skill-watch",
@@ -4610,13 +4730,7 @@ class ToolExecutor:
                     "matched_rules": [],
                     "skill_id": _skill_id,
                     "skill_check": _sw_detail,
-                    "reason": ("Refusing to act: skill %r failed "
-                               "continuous verification (%s%s); "
-                               "quarantined pending explicit re-pin "
-                               "approval."
-                               % (_skill_id, _sw_detail,
-                                  (": %s" % _sw_err)
-                                  if _sw_err is not None else "")),
+                    "reason": _sw_reason,
                 }))
                 return {"status": "denied",
                         "reason": _sw_entry["reason"],
@@ -4928,8 +5042,19 @@ class ToolExecutor:
             # every executed upload-shaped call (http_post, api_call)
             # leaves a URL-bearing record in the shared ledger (no-op
             # for other tools / no ledger).
+            # F142: capture response-minted resource URLs at the
+            # execution boundary, so the plant record is indexed under
+            # the URLs the API response minted (extraction is
+            # fail-open: it never breaks the result path).
+            response_urls = ()
+            if tool in ("http_post", "api_call"):
+                response_urls = _citation_provenance.extract_response_urls(
+                    tool, result,
+                    endpoint=redacted_args.get(
+                        "endpoint" if tool == "api_call" else "url"))
             self._record_upload(tool, redacted_args, identity.principal,
-                                identity.agent_id)
+                                identity.agent_id,
+                                response_urls=response_urls)
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
@@ -4938,6 +5063,9 @@ class ToolExecutor:
                 "flag": decision.flag,
                 "result_summary": self._summarize(tool, result),
                 "authorization_seq": auth_entry["seq"],
+                # F142: response-minted resource URLs captured at the
+                # execution boundary (for response-URL alias indexing).
+                "response_urls": list(response_urls),
             }))
             return {"status": "executed", "result": result, "seq": entry["seq"]}
 
@@ -5854,9 +5982,22 @@ class ToolExecutor:
             # the approved upload-shaped call leaves a URL-bearing record
             # in the shared ledger (rec["args"] are the redacted approval
             # args).
+            # F142: capture response-minted resource URLs at the
+            # execution boundary, so the plant record is indexed under
+            # the URLs the API response minted (extraction is
+            # fail-open: it never breaks the result path).
+            approved_response_urls = ()
+            if rec["tool"] in ("http_post", "api_call"):
+                approved_response_urls = \
+                    _citation_provenance.extract_response_urls(
+                        rec["tool"], result,
+                        endpoint=rec["args"].get(
+                            "endpoint" if rec["tool"] == "api_call"
+                            else "url"))
             self._record_upload(rec["tool"], rec["args"],
                                 (rec.get("identity") or {}).get("principal"),
-                                rec.get("agent_id"))
+                                rec.get("agent_id"),
+                                response_urls=approved_response_urls)
             entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),
@@ -5879,6 +6020,9 @@ class ToolExecutor:
                           % (aid, rec.get("decision_reason")),
                 "result_summary": self._summarize(rec["tool"], result),
                 "authorization_seq": auth_entry["seq"],
+                # F142: response-minted resource URLs captured at the
+                # execution boundary (for response-URL alias indexing).
+                "response_urls": list(approved_response_urls),
             })
             # F39: the durable claim (mark_executed) happened BEFORE the
             # side effect above — nothing to mark here.
