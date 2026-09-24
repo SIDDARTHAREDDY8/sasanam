@@ -30,6 +30,23 @@ module provides:
    NEVER silently forgotten: a pin file that exists but cannot be
    parsed fails LOUD (:class:`PinStoreError`), and the executor refuses
    to start a pinning deployment over a corrupt pin file.
+6. **GAP-5 use-time bindings** — the content digest is not the whole
+   approved identity. A skill may additionally bind:
+   - a **version label** (``origin["version"]``): pinned at
+     registration, re-verified at every use and sweep against the
+     source's ``version_hint()``; drift or unobservability quarantines
+     fail-closed (the postmark-mcp shape: the version moves without a
+     governed re-pin);
+   - a **live wire identity** (``ContentSource.identity_bytes()``):
+     the sha256 of what the wire claims to be right now, pinned at
+     registration and re-verified at every use and sweep; drift, a
+     withdrawn observation, or an unreadable wire quarantines
+     fail-closed (the MCPoison shape: same server name, swapped
+     server). Both bindings are opt-in (``None`` = unbound); both are
+     re-bound only through ``approve_repin`` with fresh-observation
+     bait-and-switch protection (``new_version`` /
+     ``new_identity_digest`` must equal what the wire serves at
+     approval time).
 
 Fail-closed throughout: unreadable content, stat failures, and hash
 errors quarantine the skill — a watcher failure never reads as "clean".
@@ -202,6 +219,38 @@ class ContentSource(abc.ABC):
         """
         return None
 
+    def identity_bytes(self):
+        """Optional live wire-identity bytes, or None when unbound.
+
+        GAP-5: the *live identity* of the thing behind this skill id, as
+        observed through the governed channel right now — e.g. for an
+        MCP server, the canonical bytes of ``{server_id,
+        instructions_sha256, tools: [{name, metadata_hash}]}`` as served
+        by the session. This is deliberately separate from
+        ``read_bytes()``: the content pin covers the *approved artifact*;
+        the identity pin covers *what the wire claims to be*. For
+        file-backed skills they coincide; for MCP servers they are
+        different trust objects observed through different channels.
+        ``None`` (the default) leaves the skill identity-unbound
+        (opt-in). Non-None bytes are pinned at registration and
+        re-verified at every use and sweep; drift quarantines
+        fail-closed. Opaque bytes: no format is imposed, they are only
+        hashed and compared.
+        """
+        return None
+
+    def version_hint(self):
+        """Optional observed version label, or None when unobservable.
+
+        GAP-5: the version the live skill/server currently reports
+        (registry version, server ``version`` field). ``None`` (the
+        default) means the source cannot observe a version. A skill
+        whose origin pins a version requires a non-None hint at
+        registration; drift or unobservability afterwards quarantines
+        fail-closed.
+        """
+        return None
+
 
 class FileContentSource(ContentSource):
     """File-backed skill content (the production shape)."""
@@ -240,6 +289,9 @@ _EVENT_UNVERIFIABLE = "skill_unverifiable"
 _EVENT_REPIN_REQUESTED = "skill_repin_requested"
 _EVENT_REPINNED = "skill_repinned"
 _EVENT_SWEEP = "skill_sweep_completed"
+# GAP-5: use-time binding drift events (identity + version).
+_EVENT_IDENTITY_DRIFT = "skill_server_identity_drift"
+_EVENT_VERSION_DRIFT = "skill_version_drift"
 
 #: Recommended scheduled-sweep interval (seconds). The deployment's own
 #: scheduler/heartbeat calls ``executor.run_skill_sweep()`` this often.
@@ -407,8 +459,23 @@ class SkillWatch:
 
         ``origin`` must carry ``registry_url``, ``installer_identity``,
         and ``installed_at`` (a caller-supplied timestamp; the watcher
-        fills ``registered_at`` itself). Re-registering an existing id
-        fails closed — use the re-pin flow for updates.
+        fills ``registered_at`` itself). ``origin`` may also carry
+        ``version``: when present it is pinned as the skill's version
+        label and re-verified at every use and sweep (GAP-5). A pinned
+        version requires an observable version: the source's
+        ``version_hint()`` must return the same label at registration,
+        otherwise registration is refused — a version the deployment
+        cannot observe is a trust hole, not a pin.
+
+        GAP-5 server-identity binding: when ``source.identity_bytes()``
+        returns bytes, their sha256 is pinned as the skill's live wire
+        identity and re-verified at every use and sweep (the MCPoison
+        shape: same server name, swapped server). ``None`` leaves the
+        skill identity-unbound (opt-in); a raising ``identity_bytes()``
+        refuses registration fail-closed.
+
+        Re-registering an existing id fails closed — use the re-pin flow
+        for updates.
         """
         _check_skill_id(skill_id)
         if skill_id in self._skills:
@@ -442,6 +509,49 @@ class SkillWatch:
             # prefilter: every check re-hashes. Never fail registration
             # on the optimization path.
             last_stat = None
+        # GAP-5: pin the version label (from origin) and the live wire
+        # identity (from the source). Both are opt-in; both are
+        # fail-closed when promised but unobservable.
+        pinned_version = origin.get("version")
+        if pinned_version is not None:
+            if not isinstance(pinned_version, str) or not pinned_version:
+                raise SkillWatchError(
+                    "origin version for skill %r must be a non-empty "
+                    "string" % skill_id)
+            try:
+                observed_version = source.version_hint()
+            except Exception as e:  # noqa: BLE001 — fail closed
+                raise SkillWatchError(
+                    "cannot observe version for skill %r with pinned "
+                    "version %r (%s: %s): refusing an unverifiable "
+                    "version pin" % (skill_id, pinned_version,
+                                     type(e).__name__, e))
+            if observed_version is None:
+                raise SkillWatchError(
+                    "skill %r pins version %r but the source exposes no "
+                    "version_hint: refusing an unobservable version pin"
+                    % (skill_id, pinned_version))
+            if (not isinstance(observed_version, str)
+                    or not hmac.compare_digest(observed_version,
+                                               pinned_version)):
+                raise SkillWatchError(
+                    "skill %r: observed version %r does not match pinned "
+                    "origin version %r at registration"
+                    % (skill_id, observed_version, pinned_version))
+        try:
+            identity = source.identity_bytes()
+        except Exception as e:  # noqa: BLE001 — fail closed
+            raise SkillWatchError(
+                "cannot observe server identity for skill %r at "
+                "registration (%s: %s): refusing to pin an unverifiable "
+                "identity" % (skill_id, type(e).__name__, e))
+        identity_digest = None
+        if identity is not None:
+            if not isinstance(identity, (bytes, bytearray)) or not identity:
+                raise SkillWatchError(
+                    "identity_bytes() for skill %r must return non-empty "
+                    "bytes or None" % skill_id)
+            identity_digest = _digest(bytes(identity))
         self._skills[skill_id] = {
             "source": source,
             "pinned_digest": digest,
@@ -454,9 +564,14 @@ class SkillWatch:
             # registration; see _bind_references).
             "references": self._bind_references(
                 skill_id, bytes(content)),
+            # GAP-5: live wire-identity digest + pinned version label.
+            "identity_digest": identity_digest,
+            "pinned_version": pinned_version,
         }
         self._record_event(_EVENT_REGISTERED, skill_id,
-                           pinned_digest=digest, origin=dict(origin))
+                           pinned_digest=digest, origin=dict(origin),
+                           pinned_version=pinned_version,
+                           identity_bound=identity_digest is not None)
         return digest
 
     def _bind_references(self, skill_id, content):
@@ -597,15 +712,148 @@ class SkillWatch:
             observed_digest=observed_digest,
             mutation_count=rec["mutation_count"])
 
+    # -- GAP-5: live wire-identity + version bindings -------------------------
+
+    def _handle_binding_drift(self, skill_id, event_type, **fields):
+        """A bound value drifted: quarantine fail-closed, emit the drift.
+
+        Shared shape for manifest, wire-identity, and version drift:
+        every drift needs a governed re-pin, so the mutation count
+        moves and the quarantine + event carry the before/after values.
+        """
+        rec = self._skills[skill_id]
+        rec["mutation_count"] += 1
+        self._quarantine(skill_id, event_type,
+                         mutation_count=rec["mutation_count"], **fields)
+
+    def _handle_identity_drift(self, skill_id, observed_digest):
+        """Wire-identity drift: quarantine fail-closed, emit the drift.
+
+        The server on the wire is not the server that was approved
+        (MCPoison shape: same name, swapped server). Calls stop until a
+        governed re-pin re-binds the new identity.
+        """
+        self._handle_binding_drift(
+            skill_id, _EVENT_IDENTITY_DRIFT,
+            previous_identity_digest=self._skills[skill_id][
+                "identity_digest"],
+            observed_identity_digest=observed_digest)
+
+    def _handle_version_drift(self, skill_id, observed_version):
+        """Version-label drift: quarantine fail-closed, emit the drift.
+
+        The version moved without a governed re-pin (postmark-mcp
+        shape). The content digest may or may not have moved with it;
+        the label is part of the approved identity either way.
+        """
+        self._handle_binding_drift(
+            skill_id, _EVENT_VERSION_DRIFT,
+            previous_version=self._skills[skill_id]["pinned_version"],
+            observed_version=observed_version)
+
+    def _observe_identity(self, skill_id):
+        """Fresh wire-identity digest, or None when unbound.
+
+        Raises SkillWatchError when the bound identity cannot be
+        observed right now (source raised, withdrew the observation, or
+        returned malformed bytes) — the caller quarantines fail-closed.
+        """
+        rec = self._skills[skill_id]
+        if rec.get("identity_digest") is None:
+            return None
+        try:
+            identity = rec["source"].identity_bytes()
+        except Exception as e:  # noqa: BLE001 — fail closed, never escape
+            raise SkillWatchError("identity unreadable: %s: %s"
+                                  % (type(e).__name__, e))
+        if identity is None:
+            raise SkillWatchError(
+                "identity observation withdrew: the source no longer "
+                "exposes identity_bytes")
+        if not isinstance(identity, (bytes, bytearray)) or not identity:
+            raise SkillWatchError("identity_bytes() returned malformed "
+                                  "bytes")
+        return _digest(bytes(identity))
+
+    def _observe_version(self, skill_id):
+        """Fresh version label, or None when unpinned.
+
+        Raises SkillWatchError when a pinned version cannot be observed
+        right now — the caller quarantines fail-closed.
+        """
+        rec = self._skills[skill_id]
+        if rec.get("pinned_version") is None:
+            return None
+        try:
+            version = rec["source"].version_hint()
+        except Exception as e:  # noqa: BLE001 — fail closed, never escape
+            raise SkillWatchError("version unreadable: %s: %s"
+                                  % (type(e).__name__, e))
+        if version is None:
+            raise SkillWatchError(
+                "pinned version %r is no longer observable"
+                % (rec["pinned_version"],))
+        return version
+
+    def _verify_identity(self, skill_id):
+        """Re-verify the bound wire identity. Returns (ok, detail)."""
+        rec = self._skills[skill_id]
+        if rec.get("identity_digest") is None:
+            return True, "identity-unbound"
+        try:
+            observed = self._observe_identity(skill_id)
+        except SkillWatchError as e:
+            self._quarantine(skill_id, _EVENT_UNVERIFIABLE,
+                             reason=str(e)[:200])
+            return False, "identity-unverifiable-quarantined"
+        if not hmac.compare_digest(observed, rec["identity_digest"]):
+            self._handle_identity_drift(skill_id, observed)
+            return False, "identity-drift-quarantined"
+        return True, "identity-clean"
+
+    def _verify_version(self, skill_id):
+        """Re-verify the pinned version label. Returns (ok, detail)."""
+        rec = self._skills[skill_id]
+        if rec.get("pinned_version") is None:
+            return True, "version-unpinned"
+        try:
+            observed = self._observe_version(skill_id)
+        except SkillWatchError as e:
+            self._quarantine(skill_id, _EVENT_UNVERIFIABLE,
+                             reason=str(e)[:200])
+            return False, "version-unverifiable-quarantined"
+        if (not isinstance(observed, str)
+                or not hmac.compare_digest(observed,
+                                           rec["pinned_version"])):
+            self._handle_version_drift(skill_id, observed)
+            return False, "version-drift-quarantined"
+        return True, "version-clean"
+
+    def _verify_bindings(self, skill_id):
+        """GAP-5: re-verify identity + version bindings. (ok, detail).
+
+        Runs on BOTH the stat-prefilter fast path and the re-hash slow
+        path: the stat hint covers only the manifest file, while the
+        wire identity and version are independent observations (the
+        Leg B reasoning for references). Any drift, withdrawal, or
+        observation failure quarantines fail-closed.
+        """
+        ok, detail = self._verify_identity(skill_id)
+        if not ok:
+            return False, detail
+        return self._verify_version(skill_id)
+
     def verify_all(self):
         """Scheduled sweep: re-hash EVERY registered skill (no prefilter).
 
-        Returns {"checked": N, "clean": [...], "mutated": [...],
-        "unverifiable": [...]}. Mutations and read failures quarantine
+        Returns {"checked": N, "clean": [...], "mutated": [],
+        "unverifiable": [...], "reference_drift": [], "identity_drift":
+        [], "version_drift": []}. Mutations and read failures quarantine
         fail-closed.
         """
         report = {"checked": 0, "clean": [], "mutated": [],
-                  "unverifiable": [], "reference_drift": []}
+                  "unverifiable": [], "reference_drift": [],
+                  "identity_drift": [], "version_drift": []}
         for skill_id in sorted(self._skills):
             report["checked"] += 1
             rec = self._skills[skill_id]
@@ -627,7 +875,16 @@ class SkillWatch:
             rok, _ = self._verify_references(skill_id)
             if not rok:
                 report["reference_drift"].append(skill_id)
-            if manifest_ok and rok:
+            # GAP-5: wire-identity + version bindings -- a clean
+            # manifest can still sit behind a swapped server (MCPoison)
+            # or a moved version label (postmark-mcp).
+            iok, _ = self._verify_identity(skill_id)
+            if not iok:
+                report["identity_drift"].append(skill_id)
+            vok, _ = self._verify_version(skill_id)
+            if not vok:
+                report["version_drift"].append(skill_id)
+            if manifest_ok and rok and iok and vok:
                 report["clean"].append(skill_id)
         self._record_event(_EVENT_SWEEP, "-",
                            checked=report["checked"],
@@ -663,6 +920,13 @@ class SkillWatch:
         hashes; drift or resolution failure quarantines fail-closed.
         ``unverified`` references (default refusing resolver) are
         audited but unenforced.
+
+        GAP-5: after the manifest check, the bound wire identity and
+        the pinned version label are re-verified on BOTH the
+        stat-prefilter fast path and the re-hash slow path (the stat
+        hint covers only the manifest file; identity and version are
+        independent observations). Drift, withdrawal, or observation
+        failure quarantines fail-closed.
         """
         if skill_id in self._quarantined:
             return False, "quarantined"
@@ -686,6 +950,12 @@ class SkillWatch:
             rok, rdetail = self._verify_references(skill_id)
             if not rok:
                 return False, rdetail
+            # GAP-5: same reasoning for the wire identity and version --
+            # a swapped server (MCPoison) or a moved version label
+            # (postmark-mcp) never touches the manifest file.
+            bok, bdetail = self._verify_bindings(skill_id)
+            if not bok:
+                return False, bdetail
             return True, "clean"
         # Stat changed (or no hint available): re-hash against the pin.
         try:
@@ -705,9 +975,35 @@ class SkillWatch:
         rok, rdetail = self._verify_references(skill_id)
         if not rok:
             return False, rdetail
+        # GAP-5: re-verify the wire-identity and version bindings.
+        bok, bdetail = self._verify_bindings(skill_id)
+        if not bok:
+            return False, bdetail
         return True, "clean"
 
     # -- governed re-pinning ----------------------------------------------------
+
+    def _best_effort_version(self, skill_id):
+        """Currently observed version label, or None. Never raises."""
+        try:
+            version = self._skills[skill_id]["source"].version_hint()
+        except Exception:  # noqa: BLE001 — best-effort snapshot for the
+            # re-pin request record only; the approval-time fresh check
+            # enforces fail-closed, so any observation failure here
+            # degrades to None instead of crashing the request.
+            return None
+        return version if isinstance(version, str) and version else None
+
+    def _best_effort_identity_digest(self, skill_id):
+        """Currently observed wire-identity digest, or None. Never raises."""
+        try:
+            identity = self._skills[skill_id]["source"].identity_bytes()
+        except Exception:  # noqa: BLE001 — best-effort snapshot, same
+            # contract as _best_effort_version above.
+            return None
+        if not isinstance(identity, (bytes, bytearray)) or not identity:
+            return None
+        return _digest(bytes(identity))
 
     def request_repin(self, skill_id, operator):
         """Operator requests re-approval of a mutated/quarantined skill.
@@ -748,6 +1044,14 @@ class SkillWatch:
             "observed_digest": observed,
             "requested_at": _utcnow(),
             "observed_reference_hashes": ref_observed,
+            # GAP-5: capture the currently observed version label and
+            # wire-identity digest so the approval can bind to them
+            # (bait-and-switch protection, mirroring the manifest
+            # digest and reference hashes). Unobservable right now ->
+            # None; the approval-time fresh check enforces fail-closed.
+            "observed_version": self._best_effort_version(skill_id),
+            "observed_identity_digest":
+                self._best_effort_identity_digest(skill_id),
         }
         self._record_event(_EVENT_REPIN_REQUESTED, skill_id,
                            request_id=req_id, operator=operator,
@@ -764,6 +1068,14 @@ class SkillWatch:
         the skill stays quarantined (fail-closed against bait-and-switch).
         There is no silent auto-update: without a matching approval the
         pin never moves.
+
+        GAP-5: ``approval`` may also carry ``new_version`` and/or
+        ``new_identity_digest``. A version that is (or becomes) pinned,
+        and a wire identity that is (or becomes) bound, must be
+        observable right now and must equal what the approval claims --
+        the wire must not move under the operator's review. A skill
+        whose version drifted cannot be re-pinned without an explicit
+        ``new_version`` naming the reviewed label.
         """
         if skill_id not in self._skills:
             raise SkillWatchError("unknown skill %r" % (skill_id,))
@@ -827,6 +1139,79 @@ class SkillWatch:
                         % (url, skill_id))
         rec = self._skills[skill_id]
         previous = rec["pinned_digest"]
+        previous_version = rec.get("pinned_version")
+        previous_identity_digest = rec.get("identity_digest")
+        # GAP-5: re-bind the version label and wire identity with the
+        # same bait-and-switch protection as the manifest digest. Each
+        # claimed value is verified against a FRESH observation at
+        # approval time. All-or-nothing: the pins are validated here
+        # into locals and assigned only at the commit point below, so a
+        # refused approval cannot partially apply (a refused approval
+        # must leave the pin record exactly as it was).
+        new_version = approval.get("new_version")
+        validated_version = None
+        if rec.get("pinned_version") is not None or new_version is not None:
+            try:
+                fresh_version = rec["source"].version_hint()
+            except Exception as e:  # noqa: BLE001 — fail closed
+                raise SkillWatchError(
+                    "cannot re-pin skill %r: version unreadable at "
+                    "approval time (%s: %s)"
+                    % (skill_id, type(e).__name__, e))
+            if not isinstance(fresh_version, str) or not fresh_version:
+                raise SkillWatchError(
+                    "cannot re-pin skill %r: the pinned version is "
+                    "unobservable at approval time; refusing" % skill_id)
+            target_version = (new_version
+                              if new_version is not None
+                              else rec["pinned_version"])
+            if not isinstance(target_version, str) or not target_version:
+                raise SkillWatchError(
+                    "approval new_version for skill %r must be a "
+                    "non-empty string" % skill_id)
+            if not hmac.compare_digest(target_version, fresh_version):
+                raise SkillWatchError(
+                    "approval new_version %r does not match the currently "
+                    "observed version %r for skill %r: version changed "
+                    "after review; re-review required (bait-and-switch "
+                    "refused)" % (target_version, fresh_version, skill_id))
+            validated_version = target_version
+        new_identity_digest = approval.get("new_identity_digest")
+        validated_identity_digest = None
+        if (rec.get("identity_digest") is not None
+                or new_identity_digest is not None):
+            try:
+                fresh_id_bytes = rec["source"].identity_bytes()
+            except Exception as e:  # noqa: BLE001 — fail closed
+                raise SkillWatchError(
+                    "cannot re-pin skill %r: wire identity unreadable at "
+                    "approval time (%s: %s)"
+                    % (skill_id, type(e).__name__, e))
+            if (not isinstance(fresh_id_bytes, (bytes, bytearray))
+                    or not fresh_id_bytes):
+                raise SkillWatchError(
+                    "cannot re-pin skill %r: wire identity unobservable "
+                    "at approval time; refusing" % skill_id)
+            fresh_identity_digest = _digest(bytes(fresh_id_bytes))
+            target_identity = (new_identity_digest
+                               if new_identity_digest is not None
+                               else rec["identity_digest"])
+            if not (isinstance(target_identity, str)
+                    and hmac.compare_digest(target_identity,
+                                             fresh_identity_digest)):
+                raise SkillWatchError(
+                    "approval new_identity_digest does not match the "
+                    "currently observed wire identity for skill %r: "
+                    "identity changed after review; re-review required "
+                    "(bait-and-switch refused)" % skill_id)
+            validated_identity_digest = target_identity
+        # Commit point: every approval-time check passed. The version
+        # and identity pins move here, atomically with the manifest
+        # digest, so a refused approval above left them untouched.
+        if validated_version is not None:
+            rec["pinned_version"] = validated_version
+        if validated_identity_digest is not None:
+            rec["identity_digest"] = validated_identity_digest
         rec["pinned_digest"] = observed
         rec["last_stat"] = stat
         rec["last_verified_at"] = _utcnow()
@@ -842,6 +1227,10 @@ class SkillWatch:
         del self._repin_requests[skill_id]
         self._record_event(_EVENT_REPINNED, skill_id,
                            previous_digest=previous, new_digest=observed,
+                           previous_version=previous_version,
+                           new_version=rec.get("pinned_version"),
+                           previous_identity_digest=previous_identity_digest,
+                           new_identity_digest=rec.get("identity_digest"),
                            operator=operator, reason=str(reason)[:300])
         return observed
 
@@ -902,6 +1291,10 @@ class PinStore:
                 # F142 Leg B: referenced-URL content bindings.
                 "references": [dict(r)
                                for r in (rec.get("references") or [])],
+                # GAP-5: pinned version label + wire-identity digest
+                # (None when the skill never bound them).
+                "pinned_version": rec.get("pinned_version"),
+                "identity_digest": rec.get("identity_digest"),
             }
         return {
             "format": _PIN_FORMAT,
@@ -984,6 +1377,26 @@ class PinStore:
                 raise PinStoreError(
                     "skill pin file %r: record %r references not a list"
                     % (path, skill_id))
+            # GAP-5: version/identity bindings are additive too --
+            # pre-GAP-5 pin files carry neither.
+            pinned_version = rec.get("pinned_version")
+            if (pinned_version is not None
+                    and (not isinstance(pinned_version, str)
+                         or not pinned_version)):
+                raise PinStoreError(
+                    "skill pin file %r: record %r pinned_version not a "
+                    "non-empty string" % (path, skill_id))
+            identity_digest = rec.get("identity_digest")
+            if identity_digest is not None:
+                try:
+                    if (not isinstance(identity_digest, str)
+                            or len(identity_digest) != 64):
+                        raise ValueError
+                    bytes.fromhex(identity_digest)
+                except ValueError:
+                    raise PinStoreError(
+                        "skill pin file %r: record %r identity_digest not "
+                        "a 64-char hex digest" % (path, skill_id))
             for ref in refs:
                 if not isinstance(ref, dict):
                     raise PinStoreError(
@@ -1052,6 +1465,10 @@ class PinStore:
                 # carry none).
                 "references": [dict(r)
                                for r in (rec.get("references") or [])],
+                # GAP-5: restored version/identity bindings
+                # (pre-GAP-5 pin files carry neither).
+                "pinned_version": rec.get("pinned_version"),
+                "identity_digest": rec.get("identity_digest"),
             }
         for skill_id in data["quarantined"]:
             watch._quarantined.add(skill_id)

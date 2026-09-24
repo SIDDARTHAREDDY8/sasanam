@@ -137,7 +137,8 @@ class TestSweep(unittest.TestCase):
         self.assertEqual(report,
                          {"checked": 2, "clean": ["a", "b"],
                           "mutated": [], "unverifiable": [],
-                          "reference_drift": []})
+                          "reference_drift": [], "identity_drift": [],
+                          "version_drift": []})
         self.assertFalse(self.watch.is_quarantined("a"))
         sweep_evs = [e for e in self.watch.events
                      if e["event_type"] == "skill_sweep_completed"]
@@ -1090,3 +1091,390 @@ class TestReferenceBinding(unittest.TestCase):
             self.assertEqual(refs[0]["url"], REF_URL)
             self.assertEqual(refs[0]["status"], "bound")
             self.assertEqual(refs[0]["bound_sha256"], sha(REF_V1))
+
+
+# ---------------------------------------------------------------------------
+# GAP-5: use-time wire-identity + version bindings
+# ---------------------------------------------------------------------------
+
+class _WireSource(ContentSource):
+    """Test source observing a mutable live wire (identity + version)."""
+
+    def __init__(self, content, wire):
+        self._content = content
+        self._wire = wire
+
+    def read_bytes(self):
+        if isinstance(self._content, Exception):
+            raise self._content
+        return self._content
+
+    def stat_hint(self):
+        return None
+
+    def identity_bytes(self):
+        mode = self._wire.get("identity_mode", "ok")
+        if mode == "raise":
+            raise OSError("wire dark")
+        if mode == "none":
+            return None
+        if mode == "malformed":
+            return "not-bytes"
+        return self._wire["identity"]
+
+    def version_hint(self):
+        mode = self._wire.get("version_mode", "ok")
+        if mode == "raise":
+            raise OSError("version unreadable")
+        return self._wire.get("version")
+
+
+def _gap5_origin(version="1.0"):
+    o = dict(ORIGIN)
+    if version is None:
+        o.pop("version", None)
+    else:
+        o["version"] = version
+    return o
+
+
+def _gap5_register(w, skill_id="mcp/svc", content=b"approved artifact",
+                   identity=b"wire-identity-X", version="1.0"):
+    wire = {"identity": identity, "version": version}
+    w.register_skill(skill_id, _WireSource(content, wire),
+                     origin=_gap5_origin(version))
+    return wire
+
+
+class TestGap5Registration(unittest.TestCase):
+    def test_binds_version_and_identity(self):
+        w = SkillWatch()
+        _gap5_register(w)
+        rec = w._skills["mcp/svc"]
+        self.assertEqual(rec["pinned_version"], "1.0")
+        self.assertEqual(rec["identity_digest"], sha(b"wire-identity-X"))
+        registered = [e for e in w.events
+                      if e["event_type"] == "skill_registered"]
+        self.assertEqual(registered[0]["pinned_version"], "1.0")
+        self.assertTrue(registered[0]["identity_bound"])
+
+    def test_version_pinned_but_unobservable_refused(self):
+        w = SkillWatch()
+        wire = {"identity": b"id", "version": None}
+        with self.assertRaises(SkillWatchError):
+            w.register_skill("s", _WireSource(b"c", wire),
+                             origin=_gap5_origin("1.0"))
+        self.assertNotIn("s", w.registered_skills())
+
+    def test_version_mismatch_at_registration_refused(self):
+        w = SkillWatch()
+        # Origin claims 2.0 but the wire reports 1.0: the binding does
+        # not agree with itself at install -- refuse loudly.
+        wire = {"identity": b"wire-identity-X", "version": "1.0"}
+        with self.assertRaises(SkillWatchError):
+            w.register_skill("mcp/svc", _WireSource(b"c", wire),
+                             origin=_gap5_origin("2.0"))
+        self.assertNotIn("mcp/svc", w.registered_skills())
+
+    def test_identity_unreadable_at_registration_refused(self):
+        w = SkillWatch()
+        wire = {"identity": b"id", "version": "1.0",
+                "identity_mode": "raise"}
+        with self.assertRaises(SkillWatchError):
+            w.register_skill("s", _WireSource(b"c", wire),
+                             origin=_gap5_origin("1.0"))
+
+    def test_no_version_no_identity_stays_unbound(self):
+        w = SkillWatch()
+        wire = {"identity_mode": "none", "version": None}
+        w.register_skill("plain", _WireSource(b"c", wire),
+                         origin=_gap5_origin(None))
+        rec = w._skills["plain"]
+        self.assertIsNone(rec["pinned_version"])
+        self.assertIsNone(rec["identity_digest"])
+        ok, _ = w.check_at_use("plain")
+        self.assertTrue(ok)
+
+
+class TestGap5CheckAtUse(unittest.TestCase):
+    def test_identity_drift_quarantines(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["identity"] = b"wire-identity-Y"
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail), (False, "identity-drift-quarantined"))
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        drift = [e for e in w.events
+                 if e["event_type"] == "skill_server_identity_drift"]
+        self.assertEqual(len(drift), 1)
+        self.assertEqual(drift[0]["previous_identity_digest"],
+                         sha(b"wire-identity-X"))
+        self.assertEqual(drift[0]["observed_identity_digest"],
+                         sha(b"wire-identity-Y"))
+
+    def test_version_drift_quarantines(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["version"] = "2.0"
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail), (False, "version-drift-quarantined"))
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        drift = [e for e in w.events
+                 if e["event_type"] == "skill_version_drift"]
+        self.assertEqual(len(drift), 1)
+        self.assertEqual(drift[0]["previous_version"], "1.0")
+        self.assertEqual(drift[0]["observed_version"], "2.0")
+
+    def test_dark_wire_quarantines_fail_closed(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["identity_mode"] = "raise"
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertFalse(ok)
+        self.assertIn("unverifiable", detail)
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_withdrawn_identity_quarantines(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["identity_mode"] = "none"
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail),
+                         (False, "identity-unverifiable-quarantined"))
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_unobservable_version_quarantines(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["version"] = None
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail),
+                         (False, "version-unverifiable-quarantined"))
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_clean_wire_passes(self):
+        w = SkillWatch()
+        _gap5_register(w)
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail), (True, "clean"))
+
+    def test_fast_path_rechecks_bindings(self):
+        # The stat prefilter covers only the manifest file: a wire
+        # identity swap that never touches the manifest must still
+        # quarantine on the fast path (Leg B reasoning for references).
+        class Stable(_WireSource):
+            def stat_hint(self):
+                return (123, 456)
+
+        w = SkillWatch()
+        wire = {"identity": b"wire-identity-X", "version": "1.0"}
+        w.register_skill("mcp/svc", Stable(b"approved artifact", wire),
+                         origin=_gap5_origin("1.0"))
+        ok, _ = w.check_at_use("mcp/svc")
+        self.assertTrue(ok)  # fast path, everything clean
+        wire["identity"] = b"wire-identity-Y"
+        ok, detail = w.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail), (False, "identity-drift-quarantined"))
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        # And the version binding on the fast path too.
+        w2 = SkillWatch()
+        wire2 = {"identity": b"wire-identity-X", "version": "1.0"}
+        w2.register_skill("mcp/svc", Stable(b"approved artifact", wire2),
+                          origin=_gap5_origin("1.0"))
+        w2.check_at_use("mcp/svc")
+        wire2["version"] = "2.0"
+        ok, detail = w2.check_at_use("mcp/svc")
+        self.assertEqual((ok, detail), (False, "version-drift-quarantined"))
+
+    def test_sweep_reports_binding_drift(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        _gap5_register(w, skill_id="mcp/other", identity=b"id-other",
+                       version="1.0")
+        wire["identity"] = b"wire-identity-Y"
+        rep = w.verify_all()
+        self.assertEqual(rep["identity_drift"], ["mcp/svc"])
+        self.assertEqual(rep["version_drift"], [])
+        self.assertNotIn("mcp/svc", rep["clean"])
+        self.assertIn("mcp/other", rep["clean"])
+
+
+class TestGap5Repin(unittest.TestCase):
+    def _drifted(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["identity"] = b"wire-identity-Y"
+        wire["version"] = "2.0"
+        w.check_at_use("mcp/svc")
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        w.request_repin("mcp/svc", operator="operator:alice")
+        return w, wire
+
+    def test_repin_rebinds_identity_and_version(self):
+        w, wire = self._drifted()
+        w.approve_repin("mcp/svc", {
+            "operator": "operator:alice",
+            "new_digest": sha(b"approved artifact"),
+            "new_identity_digest": sha(b"wire-identity-Y"),
+            "new_version": "2.0",
+            "reason": "reviewed upgrade"})
+        self.assertFalse(w.is_quarantined("mcp/svc"))
+        rec = w._skills["mcp/svc"]
+        self.assertEqual(rec["identity_digest"], sha(b"wire-identity-Y"))
+        self.assertEqual(rec["pinned_version"], "2.0")
+        ok, _ = w.check_at_use("mcp/svc")
+        self.assertTrue(ok)
+
+    def test_repin_refuses_stale_identity(self):
+        w, wire = self._drifted()
+        wire["identity"] = b"wire-identity-Z"  # moved under review
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("mcp/svc", {
+                "operator": "operator:alice",
+                "new_digest": sha(b"approved artifact"),
+                "new_identity_digest": sha(b"wire-identity-Y"),
+                "new_version": "2.0",
+                "reason": "reviewed Y"})
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_refused_approval_mutates_nothing(self):
+        # A refused approval must not partially apply: the version and
+        # identity pins are assigned only when the whole approval
+        # commits. The version check passes here (wire serves 2.0) but
+        # the identity check refuses -- the pin record must be left
+        # exactly as it was.
+        w, wire = self._drifted()
+        wire["identity"] = b"wire-identity-Z"  # moved under review
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("mcp/svc", {
+                "operator": "operator:alice",
+                "new_digest": sha(b"approved artifact"),
+                "new_identity_digest": sha(b"wire-identity-Y"),
+                "new_version": "2.0",
+                "reason": "reviewed Y"})
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        rec = w._skills["mcp/svc"]
+        self.assertEqual(rec["pinned_version"], "1.0")
+        self.assertEqual(rec["identity_digest"], sha(b"wire-identity-X"))
+
+    def test_refused_approval_on_dark_wire_mutates_nothing(self):
+        # Same atomicity guarantee when the wire goes dark under
+        # review: version_hint still serves 2.0 but identity_bytes
+        # raises at approval time.
+        w, wire = self._drifted()
+        wire["identity_mode"] = "raise"
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("mcp/svc", {
+                "operator": "operator:alice",
+                "new_digest": sha(b"approved artifact"),
+                "new_identity_digest": sha(b"wire-identity-Y"),
+                "new_version": "2.0",
+                "reason": "reviewed Y"})
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+        rec = w._skills["mcp/svc"]
+        self.assertEqual(rec["pinned_version"], "1.0")
+        self.assertEqual(rec["identity_digest"], sha(b"wire-identity-X"))
+
+    def test_repin_refuses_version_drift_without_new_version(self):
+        w = SkillWatch()
+        wire = _gap5_register(w)
+        wire["version"] = "2.0"
+        w.check_at_use("mcp/svc")
+        w.request_repin("mcp/svc", operator="operator:alice")
+        # Approval names no new_version: the moved label is not approved.
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("mcp/svc", {
+                "operator": "operator:alice",
+                "new_digest": sha(b"approved artifact"),
+                "new_identity_digest": sha(b"wire-identity-X"),
+                "reason": "manifest-only re-pin"})
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_repin_refuses_wrong_new_version(self):
+        w, wire = self._drifted()
+        with self.assertRaises(SkillWatchError):
+            w.approve_repin("mcp/svc", {
+                "operator": "operator:alice",
+                "new_digest": sha(b"approved artifact"),
+                "new_identity_digest": sha(b"wire-identity-Y"),
+                "new_version": "9.9",  # wire serves 2.0
+                "reason": "typo'd version"})
+        self.assertTrue(w.is_quarantined("mcp/svc"))
+
+    def test_repin_without_bindings_untouched(self):
+        # A skill that never bound identity/version re-pins exactly as
+        # before (no new fields required).
+        w = SkillWatch()
+        content = {"bytes": b"c1"}
+        src = CallableContentSource(lambda: content["bytes"])
+        w.register_skill("plain", src, origin=dict(ORIGIN))
+        content["bytes"] = b"c2"
+        w.check_at_use("plain")
+        w.request_repin("plain", operator="operator:alice")
+        w.approve_repin("plain", {
+            "operator": "operator:alice",
+            "new_digest": sha(b"c2"),
+            "reason": "routine"})
+        self.assertFalse(w.is_quarantined("plain"))
+
+
+class TestGap5PinStore(unittest.TestCase):
+    def test_roundtrip_preserves_bindings(self):
+        w = SkillWatch()
+        _gap5_register(w)
+        with tempfile.TemporaryDirectory() as d:
+            pin_path = os.path.join(d, "pins.json")
+            PinStore.save(w, pin_path)
+            data = PinStore.peek(pin_path)
+            rec = data["pins"]["mcp/svc"]
+            self.assertEqual(rec["pinned_version"], "1.0")
+            self.assertEqual(rec["identity_digest"],
+                             sha(b"wire-identity-X"))
+            w2 = PinStore.load(
+                pin_path,
+                source_factory=lambda sid, o: _WireSource(
+                    b"approved artifact",
+                    {"identity": b"wire-identity-X", "version": "1.0"}))
+            ok, _ = w2.check_at_use("mcp/svc")
+            self.assertTrue(ok)
+
+    def test_pre_gap5_pin_file_loads_unbound(self):
+        w = SkillWatch()
+        _gap5_register(w)
+        with tempfile.TemporaryDirectory() as d:
+            pin_path = os.path.join(d, "pins.json")
+            PinStore.save(w, pin_path)
+            with open(pin_path) as f:
+                data = json.load(f)
+            del data["pins"]["mcp/svc"]["pinned_version"]
+            del data["pins"]["mcp/svc"]["identity_digest"]
+            with open(pin_path, "w") as f:
+                json.dump(data, f)
+            w2 = PinStore.load(
+                pin_path,
+                source_factory=lambda sid, o: _WireSource(
+                    b"approved artifact",
+                    {"identity": b"wire-identity-X", "version": "1.0"}))
+            rec = w2._skills["mcp/svc"]
+            self.assertIsNone(rec["pinned_version"])
+            self.assertIsNone(rec["identity_digest"])
+
+    def test_corrupt_binding_fields_fail_loud(self):
+        w = SkillWatch()
+        _gap5_register(w)
+        with tempfile.TemporaryDirectory() as d:
+            pin_path = os.path.join(d, "pins.json")
+            PinStore.save(w, pin_path)
+            with open(pin_path) as f:
+                data = json.load(f)
+            data["pins"]["mcp/svc"]["identity_digest"] = "not-hex"
+            with open(pin_path, "w") as f:
+                json.dump(data, f)
+            with self.assertRaises(PinStoreError):
+                PinStore.peek(pin_path)
+            # 64 chars but not hex: the length check alone would pass.
+            data["pins"]["mcp/svc"]["identity_digest"] = "z" * 64
+            with open(pin_path, "w") as f:
+                json.dump(data, f)
+            with self.assertRaises(PinStoreError):
+                PinStore.peek(pin_path)
