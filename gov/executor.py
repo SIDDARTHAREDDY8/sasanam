@@ -3,7 +3,10 @@
 Pipeline for each call (in order):
 
 1. **Identity.** The identity must be an ``AgentIdentity`` *minted by this
-   executor* via :meth:`mint_identity` (unforgeable within the process) and
+   executor* via :meth:`mint_identity` (unforgeable from model-controlled data —
+   a hand-built ``AgentIdentity`` with an identical field tuple is accepted by
+   the tuple check, which requires executing Python inside the trusted
+   deployment process, i.e. process compromise) and
    its ``run_id`` must match this run. A forged or cross-run identity is
    denied and logged; a structurally valid but unminted identity raises
    :class:`UnmintedIdentityError`. F55: when the deployment provisions a
@@ -1525,6 +1528,33 @@ class ToolExecutor:
             rp = Path(os.path.abspath(str(p)))
         return rp != self._sandbox_resolved and self._sandbox_resolved not in rp.parents
 
+    def _resolved_path_for_policy(self, path):
+        """Sandbox-relative resolved path for path-based policy matching.
+
+        F146 (PaperCut class): a symlink inside the sandbox can point
+        at an operator-excluded zone, so ``path_contains_any`` must be
+        evaluated against the resolved target as well as the declared
+        path. Shares the fail-safe resolve discipline of
+        ``_is_outside_sandbox`` / ``_lineage_real_path`` (OSError ->
+        lexical absolute path). Normalized to sandbox-relative when
+        the target stays inside the sandbox -- mirroring the memory
+        firewall's mem-key normalization -- so substring match keys
+        behave exactly as they do on declared relative paths (an
+        absolute prefix would let the sandbox's own directory name
+        match an exclusion substring: a false-positive factory). A
+        target outside the sandbox keeps its absolute form
+        (fail-safe: never hidden). On any failure the declared path
+        is returned unchanged -- matching then degrades exactly to
+        today's declared-only behavior and can never weaken."""
+        try:
+            real = self._lineage_real_path(path)
+        except Exception:
+            return str(path)
+        try:
+            return str(real.relative_to(self._sandbox_resolved))
+        except ValueError:
+            return str(real)
+
     # -- provenance / egress ----------------------------------------------
 
     def _ingest_result(self, tool, result, principal=None):
@@ -2712,6 +2742,13 @@ class ToolExecutor:
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
         if "path" in args:
             ctx["path_outside_sandbox"] = self._is_outside_sandbox(args["path"])
+            # F146 (PaperCut class): the symlink-resolved target of the
+            # declared path, sandbox-relative when inside. Policy._matches
+            # evaluates path_contains_any against declared OR resolved
+            # (fail-safe OR). Set here, it flows to both check-time
+            # evaluation (call) and use-time re-evaluation
+            # (_execute_approved_locked) through this single seam.
+            ctx["path_resolved"] = self._resolved_path_for_policy(args["path"])
         if tool in _SEND_TOOLS:
             ctx["domain_allowlisted"] = self._domain_allowlisted(tool, args)
             ctx["carries_read_content"] = self._carries_read_content(tool, args)
@@ -4647,6 +4684,11 @@ class ToolExecutor:
             # snapshot); None here is the honest snapshot — the engine
             # evaluates it as False for every tool call.
             "platform_egress": ctx.get("platform_egress"),
+            # F146: the symlink-resolved path target rides the snapshot
+            # so offline replay sees exactly what the engine saw (None
+            # when the tool takes no path arg — the engine then matches
+            # declared-only, the pre-F146 behavior).
+            "path_resolved": ctx.get("path_resolved"),
             "counters": dict(ctx.get("counters") or {}),
         }
         decision = policy.evaluate(action, ctx)

@@ -736,7 +736,23 @@ class PolicyEngine:
         args = action.get("args") or {}
         if "path_contains_any" in match:
             path = str(args.get("path", ""))
-            if not any(sub in path for sub in _as_list(match["path_contains_any"])):
+            # F146 (PaperCut class): match against the resolved target
+            # as well as the declared path. A symlink inside the
+            # sandbox pointing at an excluded zone otherwise defeats
+            # declared-only matching for reads and writes. Fail-safe OR:
+            # the rule matches when EITHER string contains a listed
+            # substring, so today's declared-match behavior is preserved
+            # as a subset; when the caller did not supply path_resolved
+            # (policy evaluated outside ToolExecutor._context), matching
+            # is exactly today's behavior. This broadens deny and allow
+            # rules symmetrically -- for deny rules that is the fail-safe
+            # direction; allow rules keyed on path substrings now also
+            # see the real target, which is the operator-visible
+            # semantic ("this rule is about the excluded-zone
+            # directory", not about the spelling of the path).
+            resolved = str(context.get("path_resolved") or "")
+            subs = _as_list(match["path_contains_any"])
+            if not any(sub in path or sub in resolved for sub in subs):
                 return False
         if "path_outside_sandbox" in match:
             if bool(context.get("path_outside_sandbox")) != bool(match["path_outside_sandbox"]):

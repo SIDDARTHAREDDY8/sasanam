@@ -154,5 +154,138 @@ class TestPolicyFileIntegrity(unittest.TestCase):
             os.unlink(path)
 
 
+class TestF146ResolvedPathMatching(unittest.TestCase):
+    """F146 (PaperCut class): path_contains_any is evaluated against the
+    symlink-resolved target as well as the declared path (fail-safe OR).
+    Red: the break battery evals/f146excl_break.py p2/p4/p5
+    (3 BREAK pre-fix, 0 BREAK post-fix)."""
+
+    EXCL_POLICY = """\
+version: 2
+roles:
+  coder: [read_file, write_file, delete_file]
+policies:
+  - id: deny-excluded-zone
+    effect: deny
+    match:
+      tool: [write_file, read_file]
+      path_contains_any: [excluded-zone]
+    reason: standing operator exclusion
+  - id: allow-files
+    effect: allow
+    match:
+      tool: [write_file, read_file]
+    reason: benign sandbox work
+"""
+
+    def _engine(self):
+        from gov.policy import PolicyEngine
+        return PolicyEngine(_tmp_policy(self.EXCL_POLICY))
+
+    @staticmethod
+    def _action(tool, path):
+        return {"tool": tool, "args": {"path": path}, "role": "coder",
+                "agent_id": "a1"}
+
+    def test_declared_path_still_matches(self):
+        eng = self._engine()
+        d = eng.evaluate(self._action("write_file", "excluded-zone/x.txt"),
+                         {})
+        self.assertEqual(d.effect, "deny")
+        self.assertEqual(d.policy_id, "deny-excluded-zone")
+
+    def test_resolved_path_matches_when_declared_does_not(self):
+        eng = self._engine()
+        d = eng.evaluate(self._action("write_file", "innocent-link/x.txt"),
+                         {"path_resolved": "excluded-zone/x.txt"})
+        self.assertEqual(d.effect, "deny")
+        self.assertEqual(d.policy_id, "deny-excluded-zone")
+
+    def test_neither_matches_falls_through_to_allow(self):
+        eng = self._engine()
+        d = eng.evaluate(self._action("write_file", "notes.txt"),
+                         {"path_resolved": "notes.txt"})
+        self.assertEqual(d.effect, "allow")
+
+    def test_missing_path_resolved_is_declared_only(self):
+        # Policy evaluated outside ToolExecutor._context (no resolved
+        # signal): behavior is exactly the pre-F146 declared-only match.
+        eng = self._engine()
+        d = eng.evaluate(self._action("write_file", "innocent-link/x.txt"),
+                         {})
+        self.assertEqual(d.effect, "allow")
+
+    def test_allow_rule_also_sees_resolved_target(self):
+        # Symmetric semantics: an allow rule keyed on a path substring
+        # matches via the resolved target too.
+        pol = ("version: 2\n"
+               "roles:\n"
+               "  coder: [read_file]\n"
+               "policies:\n"
+               "  - id: allow-docs\n"
+               "    effect: allow\n"
+               "    match:\n"
+               "      tool: [read_file]\n"
+               "      path_contains_any: [docs]\n"
+               "    reason: docs are public\n")
+        from gov.policy import PolicyEngine
+        eng = PolicyEngine(_tmp_policy(pol))
+        d = eng.evaluate(self._action("read_file", "d-link/m.txt"),
+                         {"path_resolved": "docs/m.txt"})
+        self.assertEqual(d.effect, "allow")
+
+    def test_executor_denies_write_through_symlink_to_excluded_zone(self):
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        ident = run["executor"].mint_identity("f146-a", "coder", "f146-p")
+        sb = Path(run["executor"].sandbox)
+        (sb / "excluded-zone").mkdir(exist_ok=True)
+        os.symlink(str(sb / "excluded-zone"), str(sb / "innocent-link"))
+        r = run["executor"].call(ident, "write_file",
+                                 path="innocent-link/p.txt", content="x")
+        self.assertEqual(r["status"], "denied")
+
+    def test_executor_denies_read_through_symlink_to_excluded_zone(self):
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        ident = run["executor"].mint_identity("f146-a", "coder", "f146-p")
+        sb = Path(run["executor"].sandbox)
+        (sb / "excluded-zone").mkdir(exist_ok=True)
+        (sb / "excluded-zone" / "n.txt").write_text("s3cr3t",
+                                                   encoding="utf-8")
+        os.symlink(str(sb / "excluded-zone"), str(sb / "innocent-link"))
+        r = run["executor"].call(ident, "read_file",
+                                 path="innocent-link/n.txt")
+        self.assertEqual(r["status"], "denied")
+
+    def test_executor_allows_write_through_benign_symlink(self):
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        ident = run["executor"].mint_identity("f146-a", "coder", "f146-p")
+        sb = Path(run["executor"].sandbox)
+        (sb / "docs").mkdir(exist_ok=True)
+        os.symlink(str(sb / "docs"), str(sb / "docs-link"))
+        r = run["executor"].call(ident, "write_file",
+                                 path="docs-link/m.txt", content="m")
+        self.assertEqual(r["status"], "executed")
+
+    def test_resolved_path_is_sandbox_relative(self):
+        # The absolute sandbox prefix must not participate in substring
+        # matching (false-positive factory); the resolved target stays
+        # sandbox-relative when inside the sandbox.
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        sb = Path(run["executor"].sandbox)
+        (sb / "docs").mkdir(exist_ok=True)
+        os.symlink(str(sb / "docs"), str(sb / "docs-link"))
+        resolved = run["executor"]._resolved_path_for_policy("docs-link/m.txt")
+        self.assertEqual(resolved, "docs/m.txt")
+        self.assertFalse(Path(resolved).is_absolute())
+
+    def test_resolved_path_failure_falls_back_to_declared(self):
+        # Resolution can never weaken matching: on failure the declared
+        # path is returned, i.e. exactly today's behavior.
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        resolved = run["executor"]._resolved_path_for_policy(
+            "nonexistent-dir/x.txt")
+        self.assertEqual(resolved, "nonexistent-dir/x.txt")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -41,7 +41,8 @@ authenticate the principal.
 
 | Attribute | Type | Populated from | Notes |
 |---|---|---|---|
-| `context.path` | String | tool-call `path` argument (`""` when absent) | `path_contains_any` → `context.path.contains("<sub>")` (substring, same as the engine's `in`) |
+| `context.path` | String | tool-call `path` argument (`""` when absent) | `path_contains_any` → `context.path.contains("<sub>") \|\| context.path_resolved.contains("<sub>")` (substring, same as the engine's `in`) |
+| `context.path_resolved` | String | symlink-resolved target of the tool-call `path` argument, sandbox-relative when the target stays inside the sandbox (absolute when outside) | F146: the PaperCut class — a symlink inside the sandbox pointing at an excluded zone; the engine matches declared OR resolved, fail-safe |
 | `context.path_outside_sandbox` | Bool | sandbox path check | engine: `bool(context["path_outside_sandbox"])` |
 | `context.domain_allowlisted` | Bool | `egress.domain_allowlist` membership of the request destination | the allowlist *values* are mapper config and are NOT exported |
 | `context.carries_read_content` | Bool | taint tracker | |

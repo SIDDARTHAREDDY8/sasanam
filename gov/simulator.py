@@ -103,7 +103,9 @@ def _reconstruct_context(entry, counters, policy):
     #
     # Some match keys are DERIVED by the engine, not looked up in the
     # evaluation context (see gov/policy.py::_matches): ``path_contains_any``
-    # is computed from action["args"]["path"], and the ``min_*`` keys are
+    # is computed from action["args"]["path"] plus context["path_resolved"]
+    # (F146: the symlink-resolved target, passed through from the
+    # snapshot below), and the ``min_*`` keys are
     # thresholds over context["counters"], which the simulator already
     # supplies. They must not count as needed context — only the true
     # context lookups belong here.
@@ -190,6 +192,13 @@ def _reconstruct_context(entry, counters, policy):
     # counts every attempt, including pre-policy rejections, before any
     # gate runs).
     context["counters"] = dict(snap.get("counters") or counters)
+    # F146: the symlink-resolved path target rides the snapshot so replay
+    # evaluates path_contains_any exactly as the engine did. Entries
+    # recorded before the key existed evaluate declared-only — which is
+    # exactly what the pre-F146 engine did — so absence is not
+    # indeterminacy.
+    if "path_resolved" in snap:
+        context["path_resolved"] = snap["path_resolved"]
     for key in needed:
         value, missing = _val(key)
         if missing:

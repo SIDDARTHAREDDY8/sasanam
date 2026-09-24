@@ -301,8 +301,13 @@ def _when_conditions(rule_id, match):
         if not subs:
             conds.append("false")
         else:
+            # F146: the engine matches the declared path OR the
+            # symlink-resolved target (context.path_resolved); the
+            # export must carry both disjuncts or exported policies
+            # would be weaker than the engine.
             conds.append("(%s)" % " || ".join(
-                "context.path.contains(%s)" % _cedar_str(s) for s in subs))
+                "(context.path.contains(%s) || context.path_resolved.contains(%s))"
+                % (_cedar_str(s), _cedar_str(s)) for s in subs))
 
     for key in ("path_outside_sandbox", "domain_allowlisted",
                 "carries_read_content", "source_untrusted", "read_sensitive",

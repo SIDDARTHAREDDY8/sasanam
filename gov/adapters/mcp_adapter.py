@@ -56,6 +56,29 @@ manifest, a missing or drifted pinned tool, or an advertised tool
 outside the pin set raises :class:`ServerProvenanceError` -- the
 session is never touched. Without these options the client keeps the
 P2 dynamic behavior (scan + pin at first sight).
+
+F145 server instructions
+------------------------
+The MCP ``instructions`` field (served at ``initialize`` /
+``server/discover``) is inlined into agent context *before* the first
+tool call and is NOT a tool, so the per-tool ``metadata_hash`` pin
+(``name + description + inputSchema``) can never cover it
+(MCP-2026-015) -- attacker prose there bypassed every control.
+``GovernedMCPClient`` therefore accepts an optional
+``server_instructions`` constructor argument (deployer-declared,
+trusted config: pinned at wrap into a server-level hash, NOT
+content-scanned -- the honest-path carve-out, mirroring F109's
+description allowlist) and otherwise reads the session's exposed
+``server_instructions`` at wrap time (untrusted server bytes:
+content-scanned with :func:`scan_tool_description`, hostile bytes
+refuse the wrap with :class:`MetadataPoisoningError`). Either way the
+value is hashed into a server-level pin
+(:func:`server_instructions_hash`, distinct from the per-tool pins)
+and re-verified on every listing: drift of a pinned value,
+appearance after a clean wrap, or a live value contradicting the
+deployer declaration raises :class:`ServerProvenanceError` -- fail
+closed, the session never touched past the attribute read. A server
+that serves no instructions pins nothing (back-compat).
 """
 
 from .core import AdapterError, GovernedBinding
@@ -713,6 +736,20 @@ def metadata_hash(name, description=None, schema=None):
     ).hexdigest()
 
 
+def server_instructions_hash(instructions):
+    """Hex digest pinning a server's initialize-time ``instructions``.
+
+    F145: the MCP ``instructions`` field is not a tool, so the
+    per-tool ``metadata_hash`` can never cover it. This is the
+    server-level pin for the field: sha256 over the canonical JSON
+    ``{"server_instructions": ...}``.
+    """
+    return hashlib.sha256(
+        json.dumps({"server_instructions": instructions},
+                   sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 class GovernedMCPClient:
     """Mediated façade over an MCP client session.
 
@@ -767,11 +804,23 @@ class GovernedMCPClient:
       the legacy behavior — the wave-80 documented residual on this
       seam (the K-012 ``pinned_tools`` / manifest-signature checks
       still apply).
+    * ``server_instructions`` (F145) -- deployer-declared
+      initialize-time server instructions (the MCP ``instructions``
+      field). Trusted deployer config: pinned at wrap into a
+      server-level hash (NOT content-scanned -- the honest-path
+      carve-out, mirroring F109's description allowlist) and
+      cross-checked against the session's live value on every
+      listing; a mismatch raises :class:`ServerProvenanceError`.
+      When omitted, the wrap reads the session's exposed
+      ``server_instructions`` instead (untrusted: content-scanned,
+      hostile bytes refuse the wrap) and pins whatever it finds; a
+      server that serves none pins nothing.
     """
 
     def __init__(self, binding, session, server_id=None, pinned_tools=None,
                  server_public_key=None, description_allowlist=None,
-                 listing_churn_guard=None, artifact_pinset=None):
+                 listing_churn_guard=None, artifact_pinset=None,
+                 server_instructions=None):
         if not isinstance(binding, GovernedBinding):
             raise TypeError("binding must be a GovernedBinding, got %r"
                             % type(binding).__name__)
@@ -849,10 +898,146 @@ class GovernedMCPClient:
                                 "ArtifactPinset, got %r"
                                 % type(artifact_pinset).__name__)
         self._artifact_pinset = artifact_pinset
+        # F145: initialize-time server `instructions` (MCP-2026-015).
+        # The field is served at initialize/server/discover and inlined
+        # into agent context BEFORE the first tool call; the per-tool
+        # metadata_hash can never cover it (it is not a tool). Two
+        # intake paths, one server-level pin:
+        #   * deployer-declared `server_instructions=` -- trusted
+        #     config (the K-012 philosophy: the deployer is the trust
+        #     root, as with pinned_tools and description_allowlist).
+        #     Pinned, NOT content-scanned -- the honest-path carve-out,
+        #     mirroring F109's description allowlist.
+        #   * session-exposed (first sight) -- untrusted server bytes:
+        #     content-scanned at wrap (hostile -> the wrap is refused)
+        #     and pinned like the P2 dynamic pins.
+        # Either way the pin is re-verified on every listing (see
+        # _verify_server_instructions): drift, appearance, or a
+        # deployer/live mismatch -> ServerProvenanceError, fail closed.
+        if server_instructions is not None and not isinstance(
+                server_instructions, str):
+            raise TypeError("server_instructions must be a string, got %r"
+                            % type(server_instructions).__name__)
+        if server_instructions == "":
+            server_instructions = None
+        self._deployer_instructions = server_instructions
+        self._server_instructions_pin = self._pin_server_instructions(
+            session, server_instructions)
 
     def _mcp_artifact_id(self, kind, name):
         """Pinset artifact id for an MCP artifact load."""
         return "mcp:%s:%s:%s" % (kind, self._server_id or "default", name)
+
+    @staticmethod
+    def _live_server_instructions(session):
+        """Read the session's exposed initialize-time instructions.
+
+        The ``initialize`` handshake is deployment-owned; a session
+        that carries what the handshake served exposes it here (a real
+        MCP initialize response carries ``instructions``). Empty string
+        normalizes to None (no instructions served).
+        """
+        live = getattr(session, "server_instructions", None)
+        if live == "":
+            return None
+        return live
+
+    def _pin_server_instructions(self, session, declared):
+        """Wrap-time intake for the F145 server-instructions seam.
+
+        Returns the server-level pin (hex digest) or None when the
+        server serves no instructions. Fail-closed: hostile first-sight
+        bytes refuse the wrap (:class:`MetadataPoisoningError`); a
+        deployer/live mismatch refuses the wrap
+        (:class:`ServerProvenanceError`). The accept is audit-logged
+        fail-closed, like the ``mcp_list_tools`` accept.
+        """
+        live = self._live_server_instructions(session)
+        if declared is not None:
+            if live is not None and live != declared:
+                try:
+                    self._audit_listing(
+                        "mcp_provenance_rejected",
+                        {"tool": "<server>",
+                         "reason": "server_instructions_mismatch",
+                         "server_id": self._server_id})
+                except Exception:
+                    pass
+                raise ServerProvenanceError(
+                    "<server>", "server_instructions_mismatch")
+            effective = declared
+        elif live is not None:
+            if not isinstance(live, str):
+                try:
+                    self._audit_listing(
+                        "mcp_server_instructions_rejected",
+                        {"tool": "<server>",
+                         "reason": "non_string_server_instructions",
+                         "server_id": self._server_id})
+                except Exception:
+                    pass
+                raise MetadataPoisoningError(
+                    "<server>", "non_string_server_instructions")
+            try:
+                scan_tool_description("<server>", live)
+            except MetadataPoisoningError as exc:
+                try:
+                    self._audit_listing(
+                        "mcp_server_instructions_rejected",
+                        {"tool": "<server>", "reason": exc.reason,
+                         "server_id": self._server_id})
+                except Exception:
+                    pass
+                raise
+            effective = live
+        else:
+            return None
+        pin = server_instructions_hash(effective)
+        # Fail-closed accept audit, like mcp_list_tools.
+        self._audit_listing(
+            "mcp_server_instructions_pinned",
+            {"tool": "<server>",
+             "instructions_hash": pin,
+             "source": ("deployer_declared"
+                        if declared is not None else "session_first_sight"),
+             "server_id": self._server_id})
+        return pin
+
+    def _verify_server_instructions(self):
+        """F145: re-verify the server-instructions pin on every listing.
+
+        Called from :meth:`_verify_provenance` (server identity is the
+        outer trust boundary). Any movement -- drift of a pinned value,
+        appearance after a clean wrap, or a live value contradicting
+        the deployer declaration -- fails closed with
+        :class:`ServerProvenanceError`; the session is never touched
+        past the attribute read.
+        """
+        live = self._live_server_instructions(self.__session)
+
+        def _reject(reason):
+            try:
+                self._audit_listing(
+                    "mcp_provenance_rejected",
+                    {"tool": "<server>", "reason": reason,
+                     "server_id": self._server_id})
+            except Exception:
+                pass
+            raise ServerProvenanceError("<server>", reason)
+
+        if self._deployer_instructions is not None:
+            if (live is not None
+                    and live != self._deployer_instructions):
+                _reject("server_instructions_mismatch")
+            return
+        if self._server_instructions_pin is not None:
+            if (not isinstance(live, str)
+                    or server_instructions_hash(live)
+                    != self._server_instructions_pin):
+                _reject("server_instructions_changed")
+            return
+        if live is not None:
+            _reject("server_instructions_appeared")
 
     @property
     def binding(self):
@@ -1027,6 +1212,11 @@ class GovernedMCPClient:
             for name in live:
                 if name not in self._deployer_pins:
                     _reject(name, "unpinned_tool_advertised")
+
+        # F145: the server-level instructions pin is re-verified on
+        # every listing, like the other provenance checks above --
+        # drift, appearance, or deployer/live mismatch fails closed.
+        self._verify_server_instructions()
 
     async def _fetch_and_verify_manifest(self, session):
         """Fetch and ed25519-verify the server's signed manifest.
@@ -1280,10 +1470,16 @@ class DeterministicFakeSession:
     ``get_server_manifest()``, which returns a signed JSON manifest of
     the current tool list. ``manifest_tamper=True`` corrupts the
     manifest *after* signing, simulating a tampered manifest.
+
+    F145: ``server_instructions`` carries the initialize-time
+    ``instructions`` field, as a real MCP initialize response does.
+    ``set_server_instructions()`` mutates it, simulating drift or
+    appearance after the wrap.
     """
 
     def __init__(self, results=None, tool_metadata=None, server_id=None,
-                 manifest_seed=None, manifest_tamper=False):
+                 manifest_seed=None, manifest_tamper=False,
+                 server_instructions=None):
         # results: {tool_name: result}. Missing names get a canned echo.
         self._results = dict(results or {})
         self._tool_metadata = {
@@ -1296,6 +1492,12 @@ class DeterministicFakeSession:
         self.server_id = server_id
         self._manifest_seed = manifest_seed
         self._manifest_tamper = bool(manifest_tamper)
+        # F145: initialize-time server instructions.
+        self.server_instructions = server_instructions
+
+    def set_server_instructions(self, instructions):
+        """Simulate a server-side instructions change (F145 drift)."""
+        self.server_instructions = instructions
 
     def set_description(self, name, description):
         """Simulate a server-side description change (rug pull)."""

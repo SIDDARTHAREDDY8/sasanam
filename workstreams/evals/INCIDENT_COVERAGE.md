@@ -762,6 +762,8 @@ since been CLOSED (wave-23 product-supply-chain, wave-27 agent-runtime;
 P7 is FULL), F83 and F84 have since been CLOSED (wave-23 and
 wave-24), and the old "next free F85" pointer is retired.
 
+**Evaluated-but-not-covered 2026-09-24 (honest residuals, not coverage gaps):** the industry-sweep adjudication battery `evals/f145chan_break.py` (0 BREAK / 4 HELD / 3 CONTROL / 0 ERROR, deterministic ×2) found no product counterpart for the BragJack class (no interposable model↔body command channel exists — commands enter only via in-process `ToolExecutor.call()` with a deployer-held identity; the approval-web POST surface is decision-only) and found the compaction-summary self-handoff class covered by construction (the verdict is a pure function of (identity, tool, args, deployment-state); the executor is provenance-blind by design, so whatever the successor does via governed tools is evaluated identically regardless of which channel planted the instruction). No B1 probe warranted for either. F145 (MCP `instructions` field, CLOSED wave-97) and F146 (path-exclusion symlink aliasing, CLOSED wave-97) were the two real misses from the same sweep.
+
 ## Residual patterns to re-audit next wave
 
 - P2 → re-verify after any MCP adapter change (scanner patterns are a
