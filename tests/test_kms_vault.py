@@ -564,7 +564,9 @@ class FactoryTest(unittest.TestCase):
     def test_vault_branch_rejects_bad_mount(self):
         with self._env_with(VAULT_ADDR="https://vault.internal:8200",
                             VAULT_TOKEN="t"):
-            with self.assertRaises((KmsError, ValueError)):
+            # F160 error-type contract: config-caused failures at the
+            # factory boundary raise the typed KmsError.
+            with self.assertRaises(KmsError):
                 kms_provider_from_config({"provider": "vault",
                                           "mount": "../evil"})
 

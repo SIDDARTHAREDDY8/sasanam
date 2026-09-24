@@ -22,6 +22,12 @@ Auth is the ``X-Vault-Token`` header. Any non-200 status carries
 ``{"errors": [...]}``; every such failure (plus any transport, auth, or
 parse failure) raises :class:`KmsError` — fail-closed, no fallback.
 
+``vault_provider_from_config`` is the operator config surface
+(``provider: vault``): it reads ``VAULT_ADDR``/``VAULT_TOKEN`` from the
+environment, applies the ``allow_http`` / ``ca_bundle`` / ``timeout_s``
+transport knobs, and raises :class:`KmsError` for any
+operator-caused misconfiguration.
+
 Key-id binding (Attack-2 hardening, cf. ``gov/kms.py`` module
 docstring): a Vault transit ciphertext embeds the key *version*, not the
 key *name*, so it cannot by itself prove which key id wrapped it. The
@@ -45,6 +51,8 @@ import base64
 import hmac
 import json
 import logging
+import math
+import os
 import re
 import ssl
 import urllib.error
@@ -334,3 +342,103 @@ def _safe_error_summary(resp_body):
     except Exception:
         pass
     return "unparseable error body (%d bytes)" % len(resp_body or b"")
+
+
+# ---------------------------------------------------------------------------
+# Config factory — the operator surface for ``provider: vault``.
+# ---------------------------------------------------------------------------
+
+_VAULT_DEFAULT_TIMEOUT_S = 10
+
+
+def _config_bool(mapping, key, default):
+    """Strict-bool knob: ambiguous truthiness is a config error, not a
+    silent default."""
+    val = mapping.get(key, default)
+    if not isinstance(val, bool):
+        raise KmsError(
+            "kms provider 'vault': %r must be a bool, got %s"
+            % (key, type(val).__name__))
+    return val
+
+
+def _config_timeout_s(mapping, default=_VAULT_DEFAULT_TIMEOUT_S):
+    """Positive finite seconds per request. Bool, non-numeric,
+    non-positive, or non-finite values are config errors."""
+    val = mapping.get("timeout_s", default)
+    if (isinstance(val, bool) or not isinstance(val, (int, float))
+            or not math.isfinite(val) or val <= 0):
+        raise KmsError(
+            "kms provider 'vault': 'timeout_s' must be a positive number "
+            "of seconds, got %r" % (val,))
+    return val
+
+
+def _config_ca_bundle(mapping):
+    """PEM CA-bundle path for HTTPS. Missing/unreadable bundles fail at
+    config time — never at the first request."""
+    val = mapping.get("ca_bundle")
+    if val is None:
+        return None
+    if not isinstance(val, str) or not val:
+        raise KmsError(
+            "kms provider 'vault': 'ca_bundle' must be a path string, "
+            "got %r" % (val,))
+    if not os.path.isfile(val):
+        raise KmsError(
+            "kms provider 'vault': 'ca_bundle' %r does not exist "
+            "(fail-closed: refusing an unverifiable trust configuration)"
+            % (val,))
+    return val
+
+
+def vault_provider_from_config(mapping):
+    """Build a :class:`VaultKmsProvider` from operator config — the
+    ``provider: vault`` branch of ``gov.kms.kms_provider_from_config``.
+
+    Address and token come from the environment (``VAULT_ADDR`` /
+    ``VAULT_TOKEN``) — never from the mapping; missing credentials fail
+    closed. Optional mapping keys:
+
+    * ``mount`` — transit mount (default ``"transit"``).
+    * ``allow_http`` — strict bool, default ``False``. Plaintext HTTP is
+      refused unless explicitly allowed (loopback/dev); the token must
+      not cross cleartext.
+    * ``ca_bundle`` — PEM CA-bundle path for HTTPS (default: system
+      trust).
+    * ``timeout_s`` — positive seconds per request (default 10).
+
+    Error-type contract: every failure caused by operator-controlled
+    input (environment or mapping) raises :class:`KmsError` — the
+    factory boundary never leaks the transport's bare ``ValueError``.
+    Direct construction of :class:`UrllibVaultTransport` keeps its
+    ``ValueError`` convention: that seam's caller is the wiring author
+    (programmer error), not the operator.
+    """
+    addr = os.environ.get("VAULT_ADDR", "").strip()
+    token = os.environ.get("VAULT_TOKEN", "")
+    if not addr:
+        raise KmsError(
+            "kms provider 'vault' requires VAULT_ADDR to be set "
+            "(fail-closed: no Vault address, no provider)")
+    if not token:
+        raise KmsError(
+            "kms provider 'vault' requires VAULT_TOKEN to be set "
+            "(fail-closed: no Vault token, no provider)")
+    mount = mapping.get("mount", "transit")
+    # Knob validation raises KmsError directly (operator config errors);
+    # it stays outside the try below so the ValueError/TypeError
+    # translation only ever covers the transport/provider constructors.
+    allow_http = _config_bool(mapping, "allow_http", False)
+    ca_bundle = _config_ca_bundle(mapping)
+    timeout_s = _config_timeout_s(mapping)
+    try:
+        transport = UrllibVaultTransport(addr, timeout_s=timeout_s,
+                                         allow_http=allow_http,
+                                         ca_bundle=ca_bundle)
+        return VaultKmsProvider(transport, token=token, mount=mount)
+    except (ValueError, TypeError) as e:
+        # Unusable address or bad mount from operator input: translate
+        # to the typed fail-closed error, preserving the refusal reason.
+        raise KmsError(
+            "kms provider 'vault': unusable configuration (%s)" % (e,))

@@ -675,7 +675,10 @@ def kms_provider_from_config(mapping):
       from the environment (``VAULT_ADDR``, ``VAULT_TOKEN``) — never
       from the config mapping; missing credentials fail closed.
       Optional ``mount`` key overrides the transit mount
-      (default ``"transit"``).
+      (default ``"transit"``); optional ``allow_http`` (strict bool,
+      default ``False``), ``ca_bundle`` (PEM bundle path), and
+      ``timeout_s`` (positive seconds, default 10) tune the transport.
+      Every config-caused failure raises :class:`KmsError`.
     * ``provider: aws|gcp|azure`` -> :class:`KmsError`: real cloud adapters
       are not built in this repo ($0 spend, no credentials, no network).
     * anything else -> :class:`KmsError`.
@@ -691,21 +694,11 @@ def kms_provider_from_config(mapping):
             "FakeKmsProvider directly in test code)")
     if name == "vault":
         # Lazy import: gov/kms_vault.py imports from .kms, so a
-        # top-level import here would be circular.
-        from .kms_vault import VaultKmsProvider, UrllibVaultTransport
-        addr = os.environ.get("VAULT_ADDR", "").strip()
-        token = os.environ.get("VAULT_TOKEN", "")
-        if not addr:
-            raise KmsError(
-                "kms provider 'vault' requires VAULT_ADDR to be set "
-                "(fail-closed: no Vault address, no provider)")
-        if not token:
-            raise KmsError(
-                "kms provider 'vault' requires VAULT_TOKEN to be set "
-                "(fail-closed: no Vault token, no provider)")
-        mount = mapping.get("mount", "transit")
-        return VaultKmsProvider(UrllibVaultTransport(addr), token=token,
-                                mount=mount)
+        # top-level import here would be circular. All vault config
+        # parsing (env + transport knobs) and factory-boundary error
+        # translation live in gov.kms_vault.vault_provider_from_config.
+        from .kms_vault import vault_provider_from_config
+        return vault_provider_from_config(mapping)
     if name in ("aws", "gcp", "azure"):
         raise KmsError(
             "real cloud KMS adapters (%s) are not built in this repo: "

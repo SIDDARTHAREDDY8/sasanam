@@ -2,15 +2,20 @@
 
 Stream 2 draft for central integration review. Covers provisioning the
 governance log's HMAC data keys under real key custody, two ways:
-**(a)** HashiCorp Vault via `gov/kms_vault.py::VaultKmsProvider` (integrated wave-91; validated against a fake transport only — real-server validation required before production use), and
+**(a)** HashiCorp Vault via `gov/kms_vault.py::VaultKmsProvider`
+(implemented wave-91 + F160 transport knobs; validated against a live
+Vault OSS v1.20.0 dev server — 20/20 live tests green,
+`tests/test_kms_vault_live.py`), and
 **(b)** AWS KMS via `EnvelopeKmsProvider` plus an operator-built AWS
 adapter. Also: rotation, what breaks when keys are lost, and explicit
 non-goals.
 
 **Status: DRAFT.** Every step that has not been exercised against a live
-backend is marked **UNTESTED**. The only tested path in this repo is the
-synthetic rehearsal with `FakeKmsProvider` (unit-tested; zero production
-security). Do not treat UNTESTED steps as verified.
+backend is marked **UNTESTED**. Tested paths: the synthetic rehearsal
+with `FakeKmsProvider` (unit-tested; zero production security) and the
+Vault adapter against a loopback Vault OSS v1.20.0 dev server
+(`tests/test_kms_vault_live.py`, 20/20 green). Do not treat UNTESTED
+steps as verified.
 
 **Background (verified in-tree):** wave-81 deleted the dev key, the
 dev-key provider, and every dev-key opt-in from `gov/`. Key resolution
@@ -47,77 +52,130 @@ operator does not mistake "KMS is set up" for "all keys are managed".
 
 ---
 
-## A. HashiCorp Vault path (via `gov/kms_vault.py::VaultKmsProvider` (integrated wave-91; validated against a fake transport only — real-server validation required before production use))
+## A. HashiCorp Vault path (via `gov.kms_vault.vault_provider_from_config` / `VaultKmsProvider` — implemented wave-91, F160 knobs; validated against live Vault OSS v1.20.0, 20/20 live tests green)
 
-> `VaultKmsProvider` does not exist in the repo yet. It is an
-> operator-built `gov.kms.KmsProvider` subclass backed by the Vault
-> **transit** secrets engine. The shape it must implement is fixed by
-> the `KmsProvider` ABC; everything below marked UNTESTED has not been
-> run against a live Vault.
+> `VaultKmsProvider` exists in `gov/kms_vault.py` (transit secrets
+> engine, Attack-2 key-id binding, fail-closed `KmsError`). It was
+> validated against a real Vault OSS **v1.20.0** dev server on
+> loopback: 20/20 live checks green (`tests/test_kms_vault_live.py`;
+> binary at `~/workspace/vaultbin/`). What is still UNTESTED is marked
+> below: production Vault provisioning, TLS end-to-end, non-token
+> auth, HA, and the operator ceremonies against a live server.
 
-### A.1 Provision Vault itself — UNTESTED
+### A.1 Provision Vault itself — production steps UNTESTED
+
+**Validated (dev server, loopback only):** the live battery spins up
+`vault server -dev -dev-listen-address=127.0.0.1:18200`, enables the
+transit engine, and creates the test keys — the dev-mode equivalent of
+steps 2–3 below. Everything production-grade in steps 1, 4, 5 is
+UNTESTED.
 
 1. Run Vault in production mode (not `vault server -dev`): Raft
    integrated storage or Consul backend, TLS on the API listener,
-   seal/unseal configured (Shamir shares or auto-unseal).
+   seal/unseal configured (Shamir shares or auto-unseal). — UNTESTED
 2. Enable the transit engine: `vault secrets enable transit`.
+   (Dev-equivalent exercised by the live battery.)
 3. Create the master key: `vault write -f transit/keys/governance-log-master`
    (default type `aes256-gcm96` is correct for envelope wrap).
+   (Dev-equivalent exercised by the live battery.)
 4. Create a policy granting ONLY the transit operations on that key:
    `transit/encrypt/governance-log-master`, `transit/decrypt/governance-log-master`,
    `transit/keys/governance-log-master` (read, for `describe_key`).
-   No other paths.
+   No other paths. — UNTESTED
 5. Choose an auth method for the governance host (AppRole with a wrapped
    secret-id, or the agent's platform identity — e.g. AWS/GCP auth).
    The Vault token (or AppRole credentials) is the new root of trust:
    protect it like the key itself (env var or file, 0600, never in the
-   repo).
+   repo). — UNTESTED (only token auth has been exercised, against the
+   dev server)
 
-### A.2 Write the `VaultKmsProvider` adapter — UNTESTED
+### A.2 The `VaultKmsProvider` adapter — IMPLEMENTED, live-validated
 
-Implement `gov.kms.KmsProvider` (`provider_name = "vault"`):
+`gov/kms_vault.py::VaultKmsProvider` implements `gov.kms.KmsProvider`
+(`provider_name = "vault"`) over the Vault **transit** engine:
 
 - `wrap_data_key(key_id, plaintext)` → `POST /v1/transit/encrypt/<key_id>`
-  with `plaintext = base64(plaintext)`. Return the `ciphertext` string
-  (`vault:v1:<b64>`) as the opaque wrapped blob.
-- `unwrap_data_key(key_id, wrapped)` → `POST /v1/transit/decrypt/<key_id>`
-  with the blob. **Key-id binding (mandatory):** the transit ciphertext
-  embeds the key name and version (`vault:v1:...`). The adapter MUST
-  verify the blob's embedded key name equals the requested `key_id`
-  before returning plaintext; a blob minted under a different key name
+  with `plaintext = base64(plaintext)`. The transit ciphertext
+  (`vault:v1:<...>`) is wrapped in a local envelope that binds the key
+  id (`VAULTKMS1 || u16be(kid_len) || kid || u32be(ct_len) || ct`) —
+  **key-id binding (mandatory):** `unwrap_data_key` verifies the
+  blob's embedded key id equals the requested `key_id` (constant-time
+  compare) before decrypting; a blob minted under a different key id
   raises `KmsError` even if Vault would decrypt it. (This is the
   Attack-2 impersonator hardening from `gov/kms.py`.)
-- `describe_key(key_id)` → `GET /v1/transit/keys/<key_id>`; map
-  `deletion_allowed`, `exportable=false`, latest version → `KeyDescription`.
-- Every transport/auth/outage failure raises `KmsError` — never a weaker
-  key, never a cached plaintext, never a fallback.
+- `unwrap_data_key(key_id, wrapped)` → envelope check, then
+  `POST /v1/transit/decrypt/<key_id>`.
+- `describe_key(key_id)` → `GET /v1/transit/keys/<key_id>` →
+  `KeyDescription` (a readable transit key reports enabled).
+- Every transport/auth/outage failure raises `KmsError` — never a
+  weaker key, never a cached plaintext, never a fallback. Plaintext,
+  ciphertexts, and the token are never logged or embedded in
+  exceptions.
 
-### A.3 Enroll the first data key — UNTESTED
+**Config surface** (`gov.kms.kms_provider_from_config({"provider":
+"vault", ...})`, parsed by
+`gov.kms_vault.vault_provider_from_config`): address and token come
+from the environment (`VAULT_ADDR`, `VAULT_TOKEN`) — never from the
+config mapping; missing credentials fail closed. Optional keys:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `mount` | string | `"transit"` | transit mount |
+| `allow_http` | strict bool | `false` | permit plaintext `http://` `VAULT_ADDR` (dev/test loopback only). Refused fail-closed by default — the token must not cross cleartext. |
+| `ca_bundle` | PEM path | system trust | CA bundle for HTTPS (TLS-terminating / private-CA setups). A missing path fails at config time. |
+| `timeout_s` | positive seconds | `10` | per-request timeout |
+
+Every config-caused failure (bad address, bad knob, bad mount,
+missing env) raises the typed `KmsError` at the factory boundary —
+never a bare `ValueError`.
+
+**Live validation (2026-09-24, `tests/test_kms_vault_live.py`,
+Vault OSS v1.20.0 dev server on loopback):** round-trip wrap/unwrap,
+key-id binding (wrong key id, tampered envelope, server-side
+cross-key decrypt refused), key rotation (old ciphertexts still
+decrypt, new wraps use the next version), `describe_key`
+(known/unknown keys), fail-closed on unreachable server / wrong token
+/ unknown mount, tampered-ciphertext and malformed-envelope
+rejection, empty-plaintext and invalid-key-id rejection, factory
+refusal of plaintext `VAULT_ADDR` without `allow_http`, and an
+`EnvelopeKeyRing` generate → save → load → materialize → rotate
+end-to-end against the live transit engine. 20/20 green.
+
+UNTESTED: TLS end-to-end (the dev server is plaintext loopback),
+non-token auth, HA/clustering, production hardening.
+
+### A.3 Enroll the first data key — live steps UNTESTED
 
 ```python
-from gov.kms import EnvelopeKeyRing
-provider = VaultKmsProvider(...)          # UNTESTED adapter from A.2
+from gov.kms import EnvelopeKeyRing, kms_provider_from_config
+provider = kms_provider_from_config({"provider": "vault"})  # IMPLEMENTED
 ring = EnvelopeKeyRing.generate(provider,
                                 kms_key_id="governance-log-master",
                                 epoch="epoch-1")
 ring.save("/etc/governance/log-envelope.json")  # wrapped only, 0600
 ```
 
+(The generate → save → load → materialize → rotate protocol against a
+live Vault transit engine is covered by
+`test_live_envelope_keyring_end_to_end` in
+`tests/test_kms_vault_live.py`; the operator ceremony above — real
+server, real paths, real permissions — is UNTESTED.)
+
 Verify the file contains no plaintext: it must hold `wrapped_b64`,
 `kms_key_id`, `key_id` (a fingerprint, not key material), epochs —
 grep the file for anything that looks like 32 raw bytes; there is
 nothing to find by construction.
 
-### A.4 Wire it into process start — UNTESTED
+### A.4 Wire it into process start — live steps UNTESTED
 
 `EnvelopeKmsProvider` is operator-driven, never auto-detected from env
 (so no attacker-influenceable variable selects the KMS story). The
 documented integration is materialize-once → activate:
 
 ```python
-from gov.kms import EnvelopeKeyRing
+from gov.kms import EnvelopeKeyRing, kms_provider_from_config
 from gov.keyprovider import EnvelopeKmsProvider
-provider = VaultKmsProvider(...)                       # UNTESTED
+provider = kms_provider_from_config({"provider": "vault"})  # IMPLEMENTED
 ring = EnvelopeKeyRing.load("/etc/governance/log-envelope.json")
 ring.activate(provider)   # publishes GOV_LOG_KEY / GOV_LOG_KEY_EPOCH /
                           # GOV_LOG_KEY_ARCHIVE into the process env
@@ -306,7 +364,9 @@ artifact by construction (`MaterializedKeyRing.save` refuses).
 - **No key escrow / break-glass for a lost KMS master.** By design:
   loss is fail-closed and irrecoverable. The mitigation is backups of
   wrapped material + protecting the master, not a recovery backdoor.
-- **`VaultKmsProvider` is not implemented.** The adapter shape is fixed
-  (§A.2); the code is operator work, UNTESTED.
+- **`VaultKmsProvider` beyond the validated scope.** The adapter is
+  implemented and live-validated against a Vault OSS v1.20.0 dev
+  server (loopback, token auth — §A.2). Still UNTESTED and not built
+  here: TLS end-to-end, non-token auth, HA, and production hardening.
 - **No ceremony CLI.** Ceremonies are Python API calls (limitation
 ...[truncated 1389 chars]

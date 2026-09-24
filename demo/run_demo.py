@@ -61,6 +61,25 @@ def show(desc, result):
         print("           approval_id=%s (log seq %s)" % (result.get("approval_id"), seq))
 
 
+def find_pending_by_tool(pending, tool):
+    """First pending approval record's id for *tool* — or fail loudly.
+
+    F159: the demo used to hardcode a tool name + ordinal ("approve the
+    6th api_call") and crashed with KeyError when the policy's verdicts
+    changed. Every human-review decision now derives from the actual
+    pending queue — and a demo that approves nothing is a lie, so a
+    missing record is a loud SystemExit, never a silent skip.
+    """
+    for rec in pending:
+        if rec.get("tool") == tool:
+            return rec["id"]
+    raise SystemExit(
+        "demo honesty: the current policy queued no '%s' action for human "
+        "approval, so the hero path cannot approve one — the demo refuses "
+        "to silently skip the approval step. The policy verdicts have "
+        "changed; update the demo narrative." % tool)
+
+
 def main():
     # Wave-81: the dev-key opt-in is deleted from gov/. This synthetic
     # demo, not production, provisions an explicit test key
@@ -149,7 +168,6 @@ def main():
     for rec in pending:
         print("    - %s | %s %s | %s" % (rec["id"], rec["agent_id"],
                                          rec["tool"], rec["policy_reason"]))
-    by_tool = {rec["tool"]: rec["id"] for rec in pending}
 
     def decide(cmd, aid, reason):
         # Wave-81: the approval CLI is a production entry point (never
@@ -170,14 +188,16 @@ def main():
             sys.stdout.write(buf_err.getvalue())
             raise SystemExit("approval CLI failed")
 
-    print("\n  Approving the 6th issue-tracker API call (read-only, needed for triage)...")
-    decide("approve", by_tool["api_call"],
-           "Read-only API call needed to finish triage; one-time budget exception granted.")
+    # F159: every decision below derives from the ACTUAL pending queue —
+    # never a hardcoded tool name + ordinal. If the policy queues nothing
+    # approvable for one of these beats, the demo fails loudly instead of
+    # silently skipping the approval step (a demo that approves nothing
+    # is a lie).
     print("\n  Approving the publisher's outreach email (content reviewed; recipient is synthetic)...")
-    decide("approve", by_tool["send_email"],
+    decide("approve", find_pending_by_tool(pending, "send_email"),
            "Email content reviewed; recipient is synthetic. Approved.")
     print("\n  Rejecting the builder's write outside the sandbox...")
-    decide("reject", by_tool["write_file"],
+    decide("reject", find_pending_by_tool(pending, "write_file"),
            "Writes outside the run sandbox are not permitted, even with approval.")
     print("\n  Leaving the CI webhook post pending for later human review.")
 

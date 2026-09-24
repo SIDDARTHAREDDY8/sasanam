@@ -31,11 +31,10 @@ from __future__ import annotations
 import hashlib
 import json
 
-from evals.safeguard_results import (
+from gov.safeguard_taxonomy import (
     CATEGORY_SEVERITY,
     REQUIRED_CATEGORIES,
     SEVERITY_WEIGHTS,
-    load_battery_results,
 )
 from gov import log as _log
 
@@ -234,6 +233,9 @@ class SafeguardAssessment:
         """Render the SAR dict. Every field carries provenance."""
         entries = self._load_verified(window)
         from_seq, to_seq = entries[0]["seq"], entries[-1]["seq"]
+        # F161: the battery loader stays in the eval harness and is
+        # imported lazily — gov/ never imports evals/ at module scope.
+        from evals.safeguard_results import load_battery_results
         records = load_battery_results(self.battery_results_path)
 
         from gov.capability_measure import CapabilityHarness
@@ -333,7 +335,7 @@ class SafeguardAssessment:
         }
 
     def _risk_section(self, records):
-        from evals.safeguard_results import UNCOVERED_CATEGORIES
+        from gov.safeguard_taxonomy import UNCOVERED_CATEGORIES
         by_cat = {}
         for r in records:
             by_cat.setdefault(r["category"], []).append(r)
