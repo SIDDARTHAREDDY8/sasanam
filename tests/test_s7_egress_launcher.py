@@ -370,6 +370,112 @@ class LauncherUnitTests(unittest.TestCase):
                     if e["event"] == "egress_wall_launch"]
         self.assertEqual(len(launches), 1)
 
+    def test_f150_chain_direct_exit127_no_launch_event(self):
+        # F150: a chain entry that terminates via a DIRECT os._exit(127)
+        # (the sandbox's documented fail-closed shape) must not leave a
+        # false egress_wall_launch event. The F149 98-conversion only
+        # catches raised exceptions; the parent cannot distinguish a
+        # chain _exit(127) from an exec'd child that exited 127, so the
+        # conversion has to happen child-side in the wrapper.
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _halt():
+            os._exit(127)
+
+        sentinel = os.path.join(sim, "sentinel")
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.launch(
+                [sys.executable, "-c",
+                 "open(%r, 'w').write('x')" % sentinel],
+                preexec_chain=(_halt,))
+        self.assertIn("preexec_chain_failed", str(cm.exception))
+        self.assertNotIn("preexec_recheck_failed", str(cm.exception))
+        self.assertFalse(os.path.exists(sentinel))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(launches, [])
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(refusals[0]["reason"], "preexec_chain_failed")
+
+    def test_f150_run_child_direct_exit127_truthful_reason(self):
+        # F150 via run_child(): the direct-_exit(127) chain must refuse
+        # truthfully (preexec_chain_failed) -- never a bare
+        # CompletedProcess(rc=127) as if the child executed, and never
+        # mislabeled preexec_recheck_failed.
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _halt():
+            os._exit(127)
+
+        sentinel = os.path.join(sim, "sentinel")
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.run_child(
+                [sys.executable, "-c",
+                 "open(%r, 'w').write('x')" % sentinel],
+                preexec_chain=(_halt,), capture_output=True)
+        self.assertIn("preexec_chain_failed", str(cm.exception))
+        self.assertNotIn("preexec_recheck_failed", str(cm.exception))
+        self.assertFalse(os.path.exists(sentinel))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(launches, [])
+
+    def test_f150_chain_raise_abort_contract_converts_to_98(self):
+        # F150 contract: a chain entry aborts by RAISING the dedicated
+        # PreexecChainAbort (never by calling os._exit() directly); the
+        # wrapper converts it to PREEXEC_CHAIN_ABORT_CODE (98) with a
+        # truthful refusal and no launch event.
+        from gov.egress_launcher import PreexecChainAbort, \
+            PREEXEC_CHAIN_ABORT_CODE
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _refuse():
+            raise PreexecChainAbort(
+                127, "simulated fail-closed layer refusal")
+
+        sentinel = os.path.join(sim, "sentinel")
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.launch(
+                [sys.executable, "-c",
+                 "open(%r, 'w').write('x')" % sentinel],
+                preexec_chain=(_refuse,))
+        self.assertIn("preexec_chain_failed", str(cm.exception))
+        self.assertEqual(PREEXEC_CHAIN_ABORT_CODE, 98)
+        self.assertFalse(os.path.exists(sentinel))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(launches, [])
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(refusals[0]["reason"], "preexec_chain_failed")
+
+    def test_f150_forked_grandchild_exit_not_intercepted(self):
+        # F150 regression guard: the child-side os._exit interception is
+        # scoped to the chain-running process. A chain entry that forks
+        # (the sandbox pidns intermediate pattern) keeps the real
+        # os._exit in the forked descendant, so the grandchild's exit
+        # code is preserved and the healthy launch still yields exactly
+        # one launch event.
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _fork_and_exit():
+            pid = os.fork()
+            if pid == 0:
+                os._exit(42)
+            _, status = os.waitpid(pid, 0)
+            assert os.waitstatus_to_exitcode(status) == 42, status
+
+        cp = launcher.run_child([sys.executable, "-c", "pass"],
+                                preexec_chain=(_fork_and_exit,),
+                                capture_output=True)
+        self.assertEqual(cp.returncode, 0)
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(len(launches), 1)
+
     def test_popen_kwargs_helper_scrubs_and_marks(self):
         sim, fix, inv, events, launcher = self._up_wall()
         kw = launcher.popen_kwargs(

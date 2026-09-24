@@ -112,9 +112,12 @@ available per Sandbox instance and via environment variables::
   profile only, and the result note says so loudly.
 
 Each layer has a ``require_*`` fail-closed twin (``require_pivot_root``,
-``require_privdrop``, ``require_seccomp``): the child is stopped with
-``_exit(127)`` *before* exec when the layer cannot be established, and
-``run()`` raises ``SandboxError``. The five per-call ground-truth flags
+``require_privdrop``, ``require_seccomp``): the child is stopped *before*
+exec when the layer cannot be established -- the chain entry raises
+``PreexecChainAbort`` (F150 raise-don't-exit contract; converted to exit
+98 under the filtered-egress launcher, translated back to the
+historical ``_exit(127)`` in standalone mode), and ``run()`` raises
+``SandboxError``. The five per-call ground-truth flags
 (``network_isolated``, ``pid_isolated``, ``pivot_active``,
 ``privdropped``, ``seccomp_active``) are reported over the status pipe
 by the worker itself, so a sporadic setup failure is never mislabeled.
@@ -181,6 +184,8 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from gov.egress_launcher import PreexecChainAbort
 
 # -- tunables ---------------------------------------------------------------
 
@@ -278,8 +283,10 @@ def pidns_available():
 #
 # All three are opt-in per Sandbox instance (use_pivot_root / drop_privs /
 # use_seccomp) and env-gated (see sandbox_config_from_env). Each has a
-# matching require_* fail-closed flag: when set, the child is stopped with
-# os._exit(127) BEFORE exec if the layer cannot be established, and run()
+# matching require_* fail-closed flag: when set, the child is stopped BEFORE
+# exec if the layer cannot be established (the chain entry raises
+# PreexecChainAbort per the F150 contract; a forked worker still uses the
+# historical os._exit(127)), and run()
 # raises SandboxError instead of returning a result. A sporadic setup
 # failure can therefore never be mislabeled as hardened (the same lesson
 # as the PID-namespace fallback regression).
@@ -1857,8 +1864,13 @@ class Sandbox:
                         argv, env=child_env, preexec_chain=(preexec,),
                         **popen_kw)
                 else:
+                    # Standalone (no launcher wrapper to convert the
+                    # F150 raise-don't-exit abort): translate it back to
+                    # the historical fail-closed os._exit(127) so this
+                    # path stays bit-identical.
                     proc = subprocess.Popen(
-                        argv, env=child_env, preexec_fn=preexec,
+                        argv, env=child_env,
+                        preexec_fn=self._standalone_preexec(preexec),
                         **popen_kw)
             finally:
                 # Parent never writes; the child (or its death) closes it.
@@ -2064,6 +2076,26 @@ class Sandbox:
                 raise ValueError("NUL byte in environment")
         return env
 
+    @staticmethod
+    def _standalone_preexec(chain_entry):
+        """Adapt a chain entry for raw Popen(preexec_fn=...) use (F150).
+
+        In launcher mode the launcher's _preexec wrapper converts
+        PreexecChainAbort to PREEXEC_CHAIN_ABORT_CODE (98). Standalone
+        there is no wrapper, and Popen would surface the raise as
+        SubprocessError('Exception occurred in preexec_fn.') -- so
+        translate the abort back to the historical fail-closed
+        os._exit(127) here, keeping standalone behavior bit-identical:
+        the status marker (written before the raise) or its EOF still
+        drives _refuse_loud at the call site.
+        """
+        def _preexec():
+            try:
+                chain_entry()
+            except PreexecChainAbort:
+                os._exit(127)
+        return _preexec
+
     def _make_preexec(self, argv, child_env, status_w, jail_path,
                       seccomp_tier):
         # F81/D10 + Fog decision 2 (composition): in egress-launcher
@@ -2141,8 +2173,11 @@ class Sandbox:
             """UID/GID drop + seccomp in the final worker, just before exec.
 
             Returns (priv_ok, seccomp_ok). With the matching require_*
-            flag, a setup failure stops the child with os._exit(127) BEFORE
-            exec: hostile code never runs without the required layer.
+            flag, a setup failure raises PreexecChainAbort (F150
+            raise-don't-exit): under the launcher wrapper it converts
+            to PREEXEC_CHAIN_ABORT_CODE (98); the forked worker
+            translates it back to the historical os._exit(127) (see the
+            worker branch below).
             """
             priv_ok = False
             if drop_privs:
@@ -2150,7 +2185,8 @@ class Sandbox:
                     _drop_to_nobody()
                 except OSError:
                     if require_privdrop:
-                        os._exit(127)
+                        raise PreexecChainAbort(
+                            127, "sandbox: required privdrop missing")
                 else:
                     priv_ok = True
             seccomp_ok = False
@@ -2161,7 +2197,8 @@ class Sandbox:
                         default_action=seccomp_tier)
                 except OSError:
                     if require_seccomp:
-                        os._exit(127)
+                        raise PreexecChainAbort(
+                            127, "sandbox: required seccomp missing")
                 else:
                     seccomp_ok = True
             return priv_ok, seccomp_ok
@@ -2178,9 +2215,12 @@ class Sandbox:
                     net_ok = True
             if require_netns and not net_ok:
                 # Fail closed BEFORE exec: hostile code never runs with the
-                # network still attached.
+                # network still attached. F150: raise-don't-exit -- the
+                # launcher wrapper converts this to PREEXEC_CHAIN_ABORT_CODE
+                # (98); the marker above still drives _refuse_loud.
                 _report(False, False, False, False, False)
-                os._exit(127)
+                raise PreexecChainAbort(
+                    127, "sandbox: required network namespace missing")
             # PID namespace unshared (provisionally) BEFORE the pivot setup:
             # a fresh /proc mounted later then binds to the NEW pid
             # namespace and hides host PIDs entirely. unshare() is not
@@ -2206,8 +2246,10 @@ class Sandbox:
             if require_pivot and not pivot_ok:
                 # Fail closed BEFORE exec: without the pivot the child's
                 # absolute-path writes could reach the host filesystem.
+                # F150: raise-don't-exit (see above).
                 _report(net_ok, False, False, False, False)
-                os._exit(127)
+                raise PreexecChainAbort(
+                    127, "sandbox: required pivot-root missing")
             if pidns:
                 # The worker becomes PID 1 in the descendant namespace, so
                 # /proc/<outer-pid>/environ is unreadable (cross-namespace
@@ -2235,7 +2277,15 @@ class Sandbox:
                                 if require_pivot:
                                     os._exit(127)
                                 pivot_done = False
-                        priv_ok, seccomp_ok = _harden_worker()
+                        try:
+                            priv_ok, seccomp_ok = _harden_worker()
+                        except PreexecChainAbort:
+                            # Forked worker: no launcher wrapper here to
+                            # convert the F150 abort -- keep the
+                            # historical fail-closed os._exit(127), with
+                            # no marker (EOF drives _refuse_loud, as
+                            # before).
+                            os._exit(127)
                         _report(net_ok, True, pivot_done, priv_ok,
                                 seccomp_ok)
                         try:
@@ -2269,8 +2319,10 @@ class Sandbox:
                 # Fail closed BEFORE exec: without the PID namespace a
                 # same-UID worker can os.kill() the parent by explicit PID
                 # (demonstrated). Never run hostile code this way.
+                # F150: raise-don't-exit (see above).
                 _report(net_ok, False, pivot_ok, False, False)
-                os._exit(127)
+                raise PreexecChainAbort(
+                    127, "sandbox: required PID namespace missing")
             # Fallback path (no PID namespace): finish the pivot here,
             # harden, report, then return — Popen execs argv directly.
             # Reported honestly as pid_isolated=False; callers that need
@@ -2281,8 +2333,10 @@ class Sandbox:
                     _finish_pivot()
                 except OSError:
                     if require_pivot:
+                        # F150: raise-don't-exit (see above).
                         _report(net_ok, False, False, False, False)
-                        os._exit(127)
+                        raise PreexecChainAbort(
+                            127, "sandbox: required pivot-root missing")
                     pivot_done = False
             priv_ok, seccomp_ok = _harden_worker()
             _report(net_ok, False, pivot_done, priv_ok, seccomp_ok)

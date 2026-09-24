@@ -831,6 +831,32 @@ PREEXEC_ABORT_CODE = 99
 # broke" -- the audit refusal must name the true cause.
 PREEXEC_CHAIN_ABORT_CODE = 98
 
+
+class PreexecChainAbort(Exception):
+    """Dedicated chain-abort signal (F150): the raise-don't-exit
+    contract for embedder preexec_chain entries.
+
+    A chain entry aborts the child by RAISING this, never by calling
+    os._exit() directly: a direct os._exit(N) in the chain is
+    parent-indistinguishable from an exec'd child that exited N
+    (verified: Popen returns normally, wait() reports N), so no
+    parent-side check can convert it -- the conversion must happen
+    child-side in the _preexec wrapper, which is the only place that
+    can tell "the chain aborted" from "the exec'd program exited".
+
+    Carries the exit code the entry would have used (e.g. 127 for the
+    sandbox's historical fail-closed refusal) plus a human reason, so
+    the wrapper's stderr line and the audit refusal stay truthful.
+    The wrapper converts every PreexecChainAbort to
+    PREEXEC_CHAIN_ABORT_CODE (98).
+    """
+
+    def __init__(self, exit_code, reason):
+        super().__init__("chain entry requested os._exit(%r): %s"
+                         % (exit_code, reason))
+        self.exit_code = exit_code
+        self.reason = reason
+
 # F149: post-ack chain-failure check. The F148 ack attests the wall
 # re-check, not the embedder chain (which runs after the ack; a
 # post-chain ack is impossible on pidns paths whose intermediate
@@ -840,17 +866,23 @@ PREEXEC_CHAIN_ABORT_CODE = 98
 # the child's actual exit -- so launch() does a brief (0.5s) wait for
 # a PREEXEC_CHAIN_ABORT_CODE (98) exit. A 98 means a chain entry
 # failed: refuse truthfully with no launch event (fail-closed,
-# mirroring the pre-ack EOF path). A child that survives the 0.5s --
-# or exits any other code (it exec'd) -- gets the witnessed launch
-# event. No 2-second grace: Popen already blocks through the chain.
+# mirroring the pre-ack EOF path). A child that survives the 0.5s
+# gets the witnessed launch event. No 2-second grace: Popen already
+# blocks through the chain.
 #
-# Explicit non-coverage (spec review): the sandbox's chain entry
-# (gov/sandbox.py) calls os._exit(127) -- not raise -- on hardening
-# failure, so the 98 path never engages there; a sandbox-layer failure
-# yields an unpaired egress_wall_launch (the sandbox's own 5-byte
-# status marker and _refuse_loud receipt remain that layer's audit
-# responsibility, per the F148 docstring carve-out). Only chain
-# entries that RAISE get the 98 treatment.
+# F150: raise-don't-exit contract. The 98 conversion above only
+# catches chain entries that RAISE. A direct os._exit(N) in a chain
+# entry is parent-indistinguishable from an exec'd child that exited
+# N, so the _preexec wrapper converts it child-side: while the chain
+# runs, os._exit in the chain-running process itself raises
+# PreexecChainAbort (converted to 98 like any chain failure). The
+# interception is PID-scoped -- forked descendants (e.g. the sandbox
+# pidns intermediate, which waitpids the worker and forwards its
+# status by design) keep the real os._exit. Residual: chain entries
+# that evade the interception -- a pre-bound os._exit reference
+# (``from os import _exit``), ctypes/raw syscalls, restoring
+# os._exit, or dying by fatal signal -- still bypass the conversion;
+# the parent cannot distinguish those exits from an exec'd child's.
 
 # F148: deadline for the child's preexec ack byte. The ack follows
 # the provider's child_recheck(); the production provider's check
@@ -2004,6 +2036,20 @@ class FilteredEgressLauncher:
         than returning) must place their exec inside the chain: the
         re-check cannot run after a chain entry that never returns.
 
+        F150 raise-don't-exit contract: chain entries are nullary
+        callables that abort by RAISING -- either any exception or the
+        dedicated ``PreexecChainAbort(exit_code, reason)`` -- never by
+        calling ``os._exit()`` directly. The wrapper converts a direct
+        ``os._exit()`` in the chain-running process itself into
+        ``PreexecChainAbort`` (PID-scoped: forked descendants keep the
+        real ``os._exit``), so every chain abort exits 98
+        (PREEXEC_CHAIN_ABORT_CODE -- distinct from the re-check
+        abort's 99, F149) and nothing ungoverned runs. Chain entries
+        that evade the interception (a pre-bound ``os._exit``
+        reference, ctypes/raw syscalls, restoring ``os._exit``, fatal
+        signals) bypass the conversion -- the residual the parent
+        cannot fix.
+
         ``_status_w`` (F148): when the launcher spawns via launch(),
         this is the write end of a status pipe. The child writes a
         single ack byte here immediately AFTER the re-check passes
@@ -2046,21 +2092,55 @@ class FilteredEgressLauncher:
                     os.close(_status_w)
                 except OSError:
                     pass
-            for fn in chain:
-                try:
-                    fn()
-                except Exception as e:  # noqa: BLE001 - child must die
-                    # F149: chain failure exits 98 (PREEXEC_CHAIN_ABORT_CODE),
-                    # distinct from the re-check abort (99): the re-check
-                    # passed (the ack was already written); the embedder
-                    # chain broke. Nothing ungoverned runs.
+            # F150: raise-don't-exit contract, enforced child-side. A
+            # chain entry that calls os._exit(N) directly would bypass
+            # the 98 conversion -- the parent cannot distinguish a
+            # chain _exit(N) from an exec'd child that exited N -- so
+            # while the chain runs, os._exit in THIS process raises
+            # PreexecChainAbort instead (converted to 98 below, like
+            # any chain failure). PID-scoped: forked descendants keep
+            # the real os._exit (the sandbox pidns intermediate must
+            # forward the worker's status by design). Restored in
+            # finally; the wrapper's own exits use the saved real one.
+            _real_exit = os._exit
+            _chain_pid = os.getpid()
+
+            def _guarded_exit(code):
+                if os.getpid() == _chain_pid:
+                    raise PreexecChainAbort(
+                        code, "direct os._exit() in chain entry")
+                _real_exit(code)
+
+            os._exit = _guarded_exit
+            try:
+                for fn in chain:
                     try:
-                        os.write(2, ("EGRESS-WALL preexec chain abort: "
-                                     "%s\n"
-                                     % e).encode("utf-8", "replace"))
-                    except OSError:
-                        pass
-                    os._exit(PREEXEC_CHAIN_ABORT_CODE)
+                        fn()
+                    except PreexecChainAbort as e:
+                        # F150: dedicated abort -- truthful message
+                        # naming the requested exit code, then 98.
+                        try:
+                            os.write(2, ("EGRESS-WALL preexec chain "
+                                         "abort: %s\n"
+                                         % e).encode("utf-8", "replace"))
+                        except OSError:
+                            pass
+                        _real_exit(PREEXEC_CHAIN_ABORT_CODE)
+                    except Exception as e:  # noqa: BLE001 - child must die
+                        # F149: chain failure exits 98
+                        # (PREEXEC_CHAIN_ABORT_CODE), distinct from the
+                        # re-check abort (99): the re-check passed (the
+                        # ack was already written); the embedder chain
+                        # broke. Nothing ungoverned runs.
+                        try:
+                            os.write(2, ("EGRESS-WALL preexec chain abort: "
+                                         "%s\n"
+                                         % e).encode("utf-8", "replace"))
+                        except OSError:
+                            pass
+                        _real_exit(PREEXEC_CHAIN_ABORT_CODE)
+            finally:
+                os._exit = _real_exit
         return _child
 
     @staticmethod
@@ -2130,11 +2210,17 @@ class FilteredEgressLauncher:
         After the ack, launch() observes the child for a short grace
         (``_POST_ACK_CHAIN_GRACE_S``): a chain-entry failure (child
         exit 98, ``PREEXEC_CHAIN_ABORT_CODE``) refuses truthfully with
-        ``preexec_chain_failed`` -- no launch event, fail-closed. A
-        chain that fails after the grace still yields a launch event
-        (the parent cannot distinguish a slow chain from an exec'd
-        child); ``run_child()`` then reports the truthful
-        ``preexec_chain_failed`` refusal when it reaps the 98.
+        ``preexec_chain_failed`` -- no launch event, fail-closed.
+        Chain failures are synchronous under Popen (it blocks on its
+        preexec error pipe until preexec completes), so every chain
+        failure lands inside the grace; the grace also reaps a child
+        that died in preexec (errpipe EOF can race the child's actual
+        exit). F150: the 98 conversion covers chain entries that
+        raise AND direct ``os._exit()`` calls in the chain-running
+        process (converted child-side by the wrapper's
+        raise-don't-exit contract); only chain exits that evade that
+        interception are parent-indistinguishable from an exec'd
+        child's exit.
 
         The provider's wrap_argv() places the child in the wall
         (identity for the sim; ``ip netns exec agent0 <helper>``
@@ -2144,10 +2230,13 @@ class FilteredEgressLauncher:
         is a tuple of nullary callables an embedder (e.g.
         gov/sandbox.py) wants run in the child after the wall
         re-check, before exec; a chain failure aborts the child (exit
-        98, ``PREEXEC_CHAIN_ABORT_CODE``) -- F149: launch() refuses
-        truthfully (``preexec_chain_failed``) with no launch event if
-        the failure lands within the post-ack grace, and
-        ``run_child()`` reports it truthfully if it lands later.
+        98, ``PREEXEC_CHAIN_ABORT_CODE``) -- F149/F150: launch()
+        refuses truthfully (``preexec_chain_failed``) with no launch
+        event. Chain entries abort by raising (the dedicated
+        ``PreexecChainAbort`` or any exception) -- never by calling
+        ``os._exit()`` directly; the wrapper converts a direct
+        ``os._exit()`` in the chain-running process into the abort
+        (see the F150 raise-don't-exit contract in ``_preexec``).
         Remaining ``popen_kw`` go to
         Popen (env and preexec_fn are owned by the launcher).
         """
