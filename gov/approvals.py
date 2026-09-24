@@ -57,6 +57,7 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
                   read_entries, read_entries_with_stats,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
+from . import approver_shield as _approver_shield
 
 
 def _utcnow():
@@ -280,6 +281,10 @@ _SECURITY_PAYLOAD_FIELDS = (
     "persuasion_score", "persuasion_markers", "prose_divergence",
     "packet_digest", "cooling_off_until",
     "packet_risk_score", "packet_risk_factors",
+    # GAP-3 approver shield: the capture tier and the capability signal
+    # are integrity-bound from birth (same fail-closed upgrade
+    # precedent: rewriting them after queueing breaks the MAC).
+    "shield_tier", "capability_verdict",
     # Wave-89 (stream s5-tool): the tool-definition digest pinned at
     # queue time and the deferred-effect details are integrity-bound
     # from birth. Rewriting tool_digest after queueing would let a
@@ -1009,13 +1014,17 @@ def canonical_packet(record):
     """
     score = record.get("packet_risk_score") or 0
     return {
-        "packet_version": 1,
+        "packet_version": 2,
         "action": record.get("tool"),
         "target": _packet_target(record.get("tool"), record.get("args")),
         "risk_tier": risk_level(score),
         "risk_score": score,
         "risk_factors": list(record.get("packet_risk_factors") or []),
         "blast_radius": _packet_blast_radius(record),
+        # GAP-3: the capture tier is part of what the human saw -- the
+        # friction the approver will face at decide time is bound by
+        # the same WYSINWYS digest.
+        "shield_tier": record.get("shield_tier"),
         "policy": {
             "policy_id": record.get("policy_id"),
             "policy_version": record.get("policy_version"),
@@ -1493,6 +1502,21 @@ class ApprovalQueueRiskMixin:
                     "delegated to %r: only the assignee may decide it; "
                     "batch decided_by %r does not match"
                     % (assignee, decided_by))
+                excluded.append(rec)
+                continue
+            # GAP-3 approver shield: capture-tier items need the
+            # per-item shield handshake (independent brief view +
+            # challenge) that a batch cannot perform. They are excluded
+            # from APPROVE batches (F21 safe-direction pattern:
+            # skipping is safe). Reject batches are unaffected --
+            # refusing is always safe.
+            if (approved
+                    and _approver_shield.is_capture_tier(records[i])):
+                rec = dict(records[i])
+                rec["batch_exclusion_reason"] = (
+                    "capture-tier (approver shield): approving requires "
+                    "the per-item shield handshake (independent brief + "
+                    "challenge) -- decide individually via decide()")
                 excluded.append(rec)
                 continue
             candidates.append(i)
@@ -2628,7 +2652,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             self._cooling_off_seconds = max(0, int(seconds))
 
     def _stamp_approval_integrity(self, record, preview, justification,
-                                  args):
+                                  args, capability_verdict=None):
         """S3 shield (wave-89): stamp the approval-integrity fields on a
         freshly-built record, BEFORE its args_digest is computed (they
         are MAC-bound from birth). Called from every queueing path —
@@ -2637,6 +2661,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         Bridge/foreign records get the same shield: their
         agent_justification is explicitly UNVERIFIED foreign prose, the
         highest-value persuasion surface.
+
+        GAP-3 approver shield: also stamps ``shield_tier`` ("capture"
+        when manipulation signals are present) and
+        ``capability_verdict`` (the executor-supplied capability signal,
+        or None). Both are MAC-bound from birth like every other shield
+        field.
         """
         _p_score, _p_markers = score_persuasion(
             "%s\n%s" % (preview, justification or ""))
@@ -2648,6 +2678,19 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         _p_risk, _p_factors = _score_factors(record, self.all())
         record["packet_risk_score"] = _p_risk
         record["packet_risk_factors"] = _p_factors
+        # GAP-3 approver shield: capture tier + capability signal,
+        # stamped BEFORE the canonical packet is computed -- the packet
+        # binds them (WYSINWYS covers the friction the approver will
+        # face), and decide()'s re-verification recomputes the packet
+        # from the stored record, so stamping after would break the
+        # digest on every record.
+        record["capability_verdict"] = (
+            str(capability_verdict) if capability_verdict is not None
+            else None)
+        record["shield_tier"] = _approver_shield.shield_tier(
+            record,
+            persuasion_risk_score=PERSUASION_RISK_SCORE,
+            critical_risk_score=COOLING_OFF_MIN_SCORE)
         _packet = canonical_packet(record)
         record["canonical_packet"] = _packet
         record["packet_digest"] = _packet_digest(_packet)
@@ -2893,7 +2936,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               delegation_delegator_chain=None,
               policy_context=None, policy_flag=None, egress_bytes=None,
               caller_identity=None, policy_version=None,
-              matched_rules=None, tool_digest=None, deferred_effect=None):
+              matched_rules=None, tool_digest=None, deferred_effect=None,
+              capability_verdict=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3099,8 +3143,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # computed by the queue from governor-held fields — never from
         # agent claims about the packet. Shared helper so queue() and
         # queue_external() stamp identically (no unstamped ingress).
+        # GAP-3: the executor may pass capability_verdict (the
+        # requester's capability signal); absent -> the brief reports
+        # explicit "unknown".
         self._stamp_approval_integrity(
-            record, preview, action.get("agent_justification"), args)
+            record, preview, action.get("agent_justification"), args,
+            capability_verdict=capability_verdict)
         # F43: the digest covers the record's security fields, computed
         # here from the stamped record itself.
         record["args_digest"] = approval_record_digest(record)
@@ -3291,7 +3339,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             [json.dumps(r, ensure_ascii=True, default=str) + "\n"
              for r in records])
 
-    def decide(self, approval_id, approved, reason, decided_by="human-operator"):
+    def decide(self, approval_id, approved, reason, decided_by="human-operator",
+               shield_ack=None, challenge_answers=None):
         """Record a human decision and log it. Returns (record, log_entry).
 
         Rejected decision *attempts* (unknown id, self-approval, or a
@@ -3303,6 +3352,16 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         decision is recorded — a record tampered with after queueing
         can never be decided (fail-closed ValueError, audit-logged);
         the decision then re-MACs the digest with the decider bound.
+
+        GAP-3 approver shield: on capture-tier records
+        (``shield_tier == "capture"`` -- persuasion tripwire, prose
+        divergence, or critical risk), an *approve* additionally
+        requires ``shield_ack`` equal to the record's ``packet_digest``
+        (proof the approver rendered the current independent brief)
+        and ``challenge_answers`` that pass the randomized shield
+        challenge (proof of engagement with the governor's signals,
+        not the agent's framing). Rejections never need the handshake;
+        standard-tier records ignore the new arguments.
         """
         records = self.all()
         target = None
@@ -3494,6 +3553,20 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "approval %r failed packet re-verification: the displayed "
                 "packet was tampered with after queueing — decision "
                 "refused" % approval_id)
+        # GAP-3 approver shield: capture-tier approves require the
+        # shield handshake. The ack must equal the packet digest
+        # verified above, so a stale or foreign brief cannot satisfy
+        # it; the challenge then proves engagement with the
+        # governor-computed signals rather than the agent's framing.
+        # Rejections skip the handshake (refusing is the safe
+        # direction, like every existing gate); standard-tier records
+        # are untouched. The handshake itself runs below, AFTER the
+        # cooling-off gate (spec: "pause first, then handshake").
+        # Audited; the record stays pending.
+        _shield_detail = "standard tier: no handshake required"
+        if _approver_shield.is_capture_tier(target):
+            _shield_detail = ("capture tier: rejection needs no handshake "
+                              "(safe direction)")
         if approved:
             # S3 shield (wave-89): cooling-off. A critical-tier approve
             # before the pause elapses is refused — the persuasion
@@ -3536,6 +3609,48 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                         "decision refused (cooling_off): approval %r is "
                         "critical-tier and cannot be approved until %s"
                         % (approval_id, target.get("cooling_off_until")))
+            # GAP-3 approver shield: capture-tier approves require the
+            # shield handshake, AFTER the cooling-off pause (spec:
+            # "pause first, then handshake"). The ack must equal the
+            # packet digest verified above, so a stale or foreign brief
+            # cannot satisfy it; the challenge then proves engagement
+            # with the governor-computed signals rather than the
+            # agent's framing. Audited; the record stays pending.
+            if _approver_shield.is_capture_tier(target):
+                if not _approver_shield.shield_ack_ok(target, shield_ack):
+                    _shield_detail = (
+                        "shield_ack missing or stale: the approver must "
+                        "render the current independent brief (ack must "
+                        "equal the packet digest)")
+                    _log_attempt(
+                        "rejected_attempt",
+                        "approval_shield_ack_refused: decision refused "
+                        "(shield_ack): capture-tier approval requires proof "
+                        "the approver viewed the current independent brief",
+                        agent_id=target.get("agent_id"),
+                        role=target.get("role"), tool=target.get("tool"))
+                    raise ValueError(
+                        "decision refused (shield_ack): approval %r is "
+                        "capture-tier (persuasion/divergence/critical risk); "
+                        "approving requires shield_ack equal to the packet "
+                        "digest -- render the shield brief first"
+                        % (approval_id,))
+                _challenge_ok, _challenge_detail = \
+                    _approver_shield.grade_challenge(
+                        target, challenge_answers,
+                        packet=target.get("canonical_packet"))
+                if not _challenge_ok:
+                    _shield_detail = _challenge_detail
+                    _log_attempt(
+                        "rejected_attempt",
+                        "approval_shield_challenge_failed: decision refused "
+                        "(shield_challenge): %s" % _challenge_detail,
+                        agent_id=target.get("agent_id"),
+                        role=target.get("role"), tool=target.get("tool"))
+                    raise ValueError(
+                        "decision refused (shield_challenge): approval %r: %s"
+                        % (approval_id, _challenge_detail))
+                _shield_detail = _challenge_detail
             # S3 shield (wave-89): fatigue escalation. A principal past
             # the decision-velocity threshold cannot solo-approve a
             # high-risk item — a DIFFERENT approver must decide it. This
@@ -3639,6 +3754,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "packet_digest": target.get("packet_digest"),
             "persuasion_score": target.get("persuasion_score"),
             "prose_divergence": target.get("prose_divergence"),
+            # GAP-3 approver shield: the tier and the handshake outcome
+            # ride the decision record -- the evidence trail shows not
+            # just what was approved but whether the approver engaged
+            # with the independent signals.
+            "shield_tier": target.get("shield_tier"),
+            "shield_handshake": _shield_detail,
         })
         # D1-core T11: the late decision is a second, distinct audit
         # entry — the decision above is recorded, but this entry marks
@@ -5509,6 +5630,55 @@ def _print_decision_target(r, full=None):
     print("    args_sha256: %s" % digest)
 
 
+def _print_shield_brief(brief, challenge):
+    """GAP-3: render the independent approver brief on the terminal.
+
+    The agent's justification appears ONLY in the labeled quarantine
+    zone, after every governor-computed signal. The challenge follows;
+    the operator answers it and passes the indices via
+    ``approve --challenge-answers`` with ``--shield-ack``.
+    """
+    action = brief.get("action") or {}
+    risk = brief.get("risk") or {}
+    cap = brief.get("capability") or {}
+    pers = brief.get("persuasion") or {}
+    quar = brief.get("quarantine") or {}
+    req = action.get("requested_by") or {}
+    print("INDEPENDENT SHIELD BRIEF (governor-computed, not agent prose)")
+    print("  tier: %s | approval: %s"
+          % (brief.get("tier"), brief.get("approval_id")))
+    print("  action: %s" % action.get("tool"))
+    print("  machine-verified target: %s" % action.get("target"))
+    print("  executor preview: %s" % action.get("executor_preview"))
+    print("  requested by: %s (%s/%s)"
+          % (req.get("agent_id"), req.get("role"), req.get("principal")))
+    print("  risk: %s (%s)" % (risk.get("tier"), risk.get("score")))
+    for f in risk.get("factors") or []:
+        print("    factor: %s" % f)
+    for h in risk.get("blast_radius") or []:
+        print("    blast radius: %s" % h)
+    print("  capability: %s -- %s" % (cap.get("verdict"), cap.get("note")))
+    for c in brief.get("citations") or []:
+        print("  citation: %s -> %s (%s)"
+              % (c.get("url"), c.get("verdict"), c.get("reason")))
+    if not brief.get("citations"):
+        print("  citations: none cited by the agent")
+    print("  persuasion score: %s" % pers.get("score"))
+    for m in pers.get("markers") or []:
+        print("    marker: %s" % m)
+    if pers.get("prose_divergence"):
+        print("    DIVERGENCE: %s" % pers.get("prose_divergence"))
+    print("  -- %s" % quar.get("label"))
+    print("  quarantined justification: %s" % quar.get("justification"))
+    print("  brief digest (shield-ack token): %s" % brief.get("packet_digest"))
+    if challenge:
+        print("SHIELD CHALLENGE -- answer with --challenge-answers i,j,k:")
+        for n, q in enumerate(challenge):
+            print("  Q%d: %s" % (n + 1, q["question"]))
+            for i, opt in enumerate(q["options"]):
+                print("    [%d] %s" % (i, opt))
+
+
 def _find_record_by_id(queue, approval_id):
     """Return the queued record with ``approval_id``, or None."""
     for r in queue.all():
@@ -5718,6 +5888,22 @@ def main(argv=None):
     p_approve.add_argument("--reason", required=True, help="why this is approved")
     p_approve.add_argument("--by", default="human-operator",
                            help="who is deciding (default: human-operator)")
+    p_approve.add_argument("--shield-ack", default=None,
+                           help="GAP-3: ack token proving the independent "
+                                "shield brief was viewed (required for "
+                                "capture-tier approves; shown by "
+                                "'shield-brief')")
+    p_approve.add_argument("--challenge-answers", default=None,
+                           help="GAP-3: comma-separated option indices "
+                                "answering the shield challenge (required "
+                                "for capture-tier approves)")
+
+    p_brief = sub.add_parser(
+        "shield-brief",
+        help="GAP-3: render the independent approver brief (governor-"
+             "computed signals, quarantined agent framing) plus the "
+             "shield challenge for a pending approval")
+    p_brief.add_argument("id", help="approval id")
 
     p_reject = sub.add_parser("reject", help="reject a pending action")
     p_reject.add_argument("id", help="approval id")
@@ -6017,6 +6203,24 @@ def main(argv=None):
         print("reason: %s" % args.reason)
         return 0
 
+    # GAP-3: render the independent approver brief + challenge without
+    # deciding anything.
+    if args.cmd == "shield-brief":
+        _bt = _find_record_by_id(queue, args.id)
+        if _bt is None:
+            print("error: approval id %r not found" % args.id,
+                  file=sys.stderr)
+            return 1
+        try:
+            _cindex = _approver_shield.citation_index_for_log(
+                queue.log.path)
+        except Exception:
+            _cindex = None
+        _print_shield_brief(
+            _approver_shield.shield_brief(_bt, citation_index=_cindex),
+            _approver_shield.shield_challenge(_bt))
+        return 0
+
     # F61 (R14) / F66 (R15): show the bounded decision target BEFORE
     # the decision is recorded — the decision is on the content below,
     # exactly as digested (a marker past the old 400-char cut is visible
@@ -6025,9 +6229,38 @@ def main(argv=None):
     if target is not None:
         print("decision target:")
         _print_decision_target(target)
+    # GAP-3: capture-tier approves need the shield handshake. Render
+    # the independent brief + challenge here so the operator sees the
+    # governor-computed signals (not just the agent's framing) before
+    # deciding. The operator must explicitly pass --shield-ack (the
+    # brief digest printed by 'shield-brief') and --challenge-answers;
+    # the ack is never auto-filled -- the explicit gesture is the
+    # proof of engagement the handshake is designed around.
+    shield_ack = getattr(args, "shield_ack", None)
+    challenge_answers = getattr(args, "challenge_answers", None)
+    if (target is not None and args.cmd == "approve"
+            and _approver_shield.is_capture_tier(target)):
+        try:
+            _cindex = _approver_shield.citation_index_for_log(
+                queue.log.path)
+        except Exception:
+            _cindex = None
+        _print_shield_brief(
+            _approver_shield.shield_brief(target, citation_index=_cindex),
+            _approver_shield.shield_challenge(target))
+        if challenge_answers:
+            try:
+                challenge_answers = [
+                    int(x) for x in str(challenge_answers).split(",")]
+            except (TypeError, ValueError):
+                print("error: --challenge-answers must be comma-separated "
+                      "option indices (e.g. 1,3,2)", file=sys.stderr)
+                return 1
     try:
         record, entry = queue.decide(args.id, args.cmd == "approve",
-                                     args.reason, decided_by=args.by)
+                                     args.reason, decided_by=args.by,
+                                     shield_ack=shield_ack,
+                                     challenge_answers=challenge_answers)
     except ValueError as e:
         print("error: %s" % e, file=sys.stderr)
         return 1
