@@ -820,6 +820,23 @@ _PROXY_ENV_NAMES = ("http_proxy", "https_proxy", "all_proxy", "no_proxy",
 # of a launched workload.
 PREEXEC_ABORT_CODE = 99
 
+# F148: deadline for the child's preexec ack byte. The ack follows
+# the provider's child_recheck(); the production provider's check
+# does an `nft list` (15s subprocess timeout) plus a TCP proxy
+# connect and a DNS query (3s each), so 30s is generous while still
+# bounding a hung child. Expiry kills the child and refuses (fail
+# closed) -- a launch event is never emitted without the ack.
+_PREEXEC_ACK_TIMEOUT_S = 30.0
+
+# F148: grace for reaping a child that died in preexec. EOF on the
+# status pipe means the child's write end is closed, but on Linux
+# fds are closed before the task becomes a zombie -- a single
+# poll() in that window returns None and would misreport a clean
+# preexec abort as a hang. wait() with this grace reaps it
+# deterministically; expiry (the process will not die) falls back
+# to kill + "preexec_child_died".
+_PREEXEC_REAP_GRACE_S = 5.0
+
 
 def install_simulated_wall(sim_dir, *, algos=DEFAULT_ALGOS,
                            wall_id="sim-wall-1", trust=None,
@@ -1942,7 +1959,7 @@ class FilteredEgressLauncher:
         env[WALL_ID_ENV] = self._wall_id
         return env
 
-    def _preexec(self, chain=()):
+    def _preexec(self, chain=(), _status_w=None):
         """Child preexec: wall re-check first, then the embedder chain.
 
         The re-check runs before the chain so a fault-injected wall
@@ -1953,6 +1970,21 @@ class FilteredEgressLauncher:
         nothing ungoverned runs. Embedders whose chain execs (rather
         than returning) must place their exec inside the chain: the
         re-check cannot run after a chain entry that never returns.
+
+        ``_status_w`` (F148): when the launcher spawns via launch(),
+        this is the write end of a status pipe. The child writes a
+        single ack byte here immediately AFTER the re-check passes
+        (before the chain), so the parent's ``egress_wall_launch``
+        audit event is a WITNESSED fact -- the child really was
+        placed behind a live wall -- not a prediction made at fork
+        time. The ack is placed before the chain deliberately: some
+        embedder chains never return (the sandbox pidns intermediate
+        waitpids and _exits by design), so a post-chain ack could
+        never be written on those paths; the chain's own status
+        reporting (e.g. the sandbox's 5-byte marker) remains the
+        chain's audit responsibility. Best-effort: a failed write
+        never aborts the launch -- the parent treats a missing ack
+        as a refusal (fail closed on the parent's side).
         """
         provider = self.wall
         chain = tuple(chain)
@@ -1968,6 +2000,19 @@ class FilteredEgressLauncher:
                 except OSError:
                     pass
                 os._exit(PREEXEC_ABORT_CODE)
+            if _status_w is not None:
+                # F148: witness the re-check for the parent's audit.
+                # Written BEFORE the chain (see docstring). Best
+                # effort -- never aborts the launch; close the fd so
+                # it cannot leak into the exec'd program.
+                try:
+                    os.write(_status_w, b"\x01")
+                except OSError:
+                    pass
+                try:
+                    os.close(_status_w)
+                except OSError:
+                    pass
             for fn in chain:
                 try:
                     fn()
@@ -1980,6 +2025,33 @@ class FilteredEgressLauncher:
                         pass
                     os._exit(PREEXEC_ABORT_CODE)
         return _child
+
+    @staticmethod
+    def _read_preexec_ack(status_r):
+        """Read the child's preexec ack byte (F148), deadline-bounded.
+
+        Returns True iff the child wrote the ack (its wall re-check
+        passed). EOF means the child died in preexec before
+        reporting; timeout means it hung. Both are "not witnessed".
+        """
+        deadline = time.monotonic() + _PREEXEC_ACK_TIMEOUT_S
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None  # hung: distinct from EOF
+            rlist, _, _ = select.select([status_r], [], [], remaining)
+            if not rlist:
+                return None  # hung: distinct from EOF
+            try:
+                chunk = os.read(status_r, 1)
+            except OSError:
+                return False
+            if not chunk:
+                return False  # EOF: child died before the ack
+            if chunk == b"\x01":
+                return True
+            # Any other byte is not the ack; keep waiting for EOF or
+            # the deadline rather than misreading it.
 
     def _wall_proof(self):
         """(manifest_sha256, receipt_sha256, pin_record_sha256) over
@@ -2008,6 +2080,14 @@ class FilteredEgressLauncher:
 
         Raises EgressLaunchRefused (fail-closed) instead of spawning
         whenever the wall cannot be verified.
+
+        F148: the ``egress_wall_launch`` audit event is witnessed, not
+        predicted -- it is emitted only after the child's preexec ack
+        byte arrives (the child-side wall re-check passed). A child
+        that dies or hangs in preexec is refused (and killed) with no
+        launch event; the refusal carries a named reason
+        (``preexec_recheck_failed`` / ``preexec_recheck_timeout`` /
+        ``preexec_child_died``).
 
         The provider's wrap_argv() places the child in the wall
         (identity for the sim; ``ip netns exec agent0 <helper>``
@@ -2074,18 +2154,90 @@ class FilteredEgressLauncher:
                             "detail": str(e),
                             "wall_id": self._wall_id})
                 raise
-            # 3. spawn with child-side re-assert.
+            # 3. spawn with child-side re-assert. F148: the
+            # egress_wall_launch event is WITNESSED, not predicted --
+            # it is emitted only after the child's preexec ack byte
+            # arrives (the child's wall re-check passed). A child
+            # that dies in preexec (wall flapped between the parent
+            # check and fork) yields EOF -> refusal, never a launch
+            # event; a hung child is killed and refused (fail closed).
+            status_r, status_w = os.pipe()
             popen_kw = dict(popen_kw)
             popen_kw["env"] = self._child_env(env)
-            popen_kw["preexec_fn"] = self._preexec(chain=preexec_chain)
+            popen_kw["preexec_fn"] = self._preexec(
+                chain=preexec_chain, _status_w=status_w)
+            popen_kw["pass_fds"] = (tuple(popen_kw.get("pass_fds", ()))
+                                    + (status_w,))
             try:
                 proc = subprocess.Popen(spawn_argv, **popen_kw)
             except OSError as e:
+                os.close(status_r)
+                os.close(status_w)
                 self._emit({"event": "egress_wall_launch_refused",
                             "reason": "spawn_failed",
                             "detail": str(e),
                             "wall_id": self._wall_id})
                 raise EgressLaunchRefused("spawn_failed: %s" % e)
+            # Parent never writes: with our copy closed, the child's
+            # death closes the last write end and the read sees EOF.
+            os.close(status_w)
+            try:
+                witnessed = self._read_preexec_ack(status_r)
+            finally:
+                os.close(status_r)
+            if witnessed:
+                # Ack received: the child's wall re-check passed.
+                # Fall through to the witnessed launch event below.
+                pass
+            elif witnessed is None:
+                # Truly hung in preexec: no ack and no EOF within the
+                # deadline. Kill it; nothing was exec'd (the ack is
+                # written before the chain, so the chain never ran
+                # without the re-check passing first).
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                proc.wait()
+                self._emit({"event": "egress_wall_launch_refused",
+                            "reason": "preexec_recheck_timeout",
+                            "detail": ("no preexec ack within %ss; child "
+                                       "killed before exec"
+                                       % _PREEXEC_ACK_TIMEOUT_S),
+                            "wall_id": self._wall_id})
+                raise EgressLaunchRefused(
+                    "preexec_recheck_timeout: no preexec ack within %ss; "
+                    "child killed before exec" % _PREEXEC_ACK_TIMEOUT_S)
+            else:
+                # EOF before the ack: the child died in preexec. Reap
+                # with a grace -- a single poll() can return None
+                # while the child is mid-_exit (fds already closed,
+                # not yet a zombie) and would misreport a clean abort
+                # as a hang.
+                try:
+                    rc = proc.wait(timeout=_PREEXEC_REAP_GRACE_S)
+                except subprocess.TimeoutExpired:
+                    # Fds closed but the process will not die: kill
+                    # it and record the anomaly.
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                    rc = proc.wait()
+                if rc == PREEXEC_ABORT_CODE:
+                    reason = "preexec_recheck_failed"
+                    detail = ("wall died between check and spawn; child "
+                              "aborted before exec")
+                else:
+                    reason = "preexec_child_died"
+                    detail = ("child died in preexec (exit %r) before "
+                              "the ack; wall re-check not witnessed"
+                              % (rc,))
+                self._emit({"event": "egress_wall_launch_refused",
+                            "reason": reason,
+                            "detail": detail,
+                            "wall_id": self._wall_id})
+                raise EgressLaunchRefused("%s: %s" % (reason, detail))
             self._emit({"event": "egress_wall_launch",
                         "argv0": os.path.basename(str(argv[0])),
                         "spawn_argv0": os.path.basename(

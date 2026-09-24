@@ -2863,32 +2863,71 @@ class ToolExecutor:
         use_outside = (ctx.get("path_outside_sandbox")
                        or ("path" in args
                            and self._is_outside_sandbox(args["path"])))
+        # F147 (PaperCut TOCTOU): the path_resolved verdict in ctx was
+        # computed at check time, and F146 evaluates path_contains_any
+        # against it. A symlink flipped between the verdict and the
+        # effect would let the use-time effect follow a target the
+        # policy never evaluated. Bind the check-time resolved target
+        # to the verdict: re-resolve at USE time and fail closed on
+        # any mismatch -- quarantine/deny rather than honoring the
+        # stale verdict. Absent path_resolved (non-executor callers,
+        # e.g. offline replay) the recheck is skipped: no behavior
+        # change.
+        check_resolved = ctx.get("path_resolved")
+        use_resolved = (self._resolved_path_for_policy(args["path"])
+                        if "path" in args else None)
+        target_changed = (check_resolved is not None
+                          and use_resolved is not None
+                          and check_resolved != use_resolved)
+        # Bind the verified target to the effect: when the recheck
+        # passes, operate on the resolved absolute path directly and
+        # never traverse the declared symlink again -- a flip of the
+        # declared link landing between the recheck and the effect
+        # then cannot redirect it. (Without a check-time resolved
+        # target, fall back to the legacy declared-path behavior: no
+        # change.) Irreducible residual: a flip of a PARENT directory
+        # component between the re-resolve and the effect is still a
+        # race -- the window is one open syscall wide and covers only
+        # the directory chain, no longer the declared link itself.
+        bound_path = None
+        if (not target_changed and check_resolved is not None
+                and use_resolved is not None
+                and not Path(use_resolved).is_absolute()):
+            bound_path = self._sandbox_resolved / use_resolved
         if tool == "read_file":
-            p = self._resolve(args["path"])
-            if not use_outside and p.is_file():
+            p = (bound_path if bound_path is not None
+                 else self._resolve(args["path"]))
+            if not use_outside and not target_changed and p.is_file():
                 return {"source": "sandbox",
                         "content": p.read_text(encoding="utf-8")[:4000]}
             return {"source": "simulated", "content": "[synthetic file contents]"}
         if tool == "write_file":
             content = args.get("content", "")
-            if use_outside:
+            if use_outside or target_changed:
                 # Even approved, an outside-sandbox write never touches the real
-                # path: it is quarantined inside the run directory.
+                # path: it is quarantined inside the run directory. A
+                # mid-call target change quarantines for the same reason:
+                # the verdict authorized the check-time target, not this one.
                 q = self.quarantine / Path(args["path"]).name
                 q.parent.mkdir(parents=True, exist_ok=True)
                 q.write_text(content if isinstance(content, str) else str(content),
                              encoding="utf-8")
-                return {"path": str(q),
-                        "note": "outside sandbox; quarantined inside run dir"}
-            p = self._resolve(args["path"])
+                note = ("outside sandbox; quarantined inside run dir"
+                        if use_outside else
+                        "symlink target changed between policy check and "
+                        "use (F147); quarantined inside run dir")
+                return {"path": str(q), "note": note}
+            p = (bound_path if bound_path is not None
+                 else self._resolve(args["path"]))
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content if isinstance(content, str) else str(content),
                          encoding="utf-8")
             return {"path": str(p),
                     "bytes": len(content if isinstance(content, str) else str(content))}
         if tool == "delete_file":
-            p = self._resolve(args["path"])
-            if not use_outside and p.is_file():
+            p = (bound_path if bound_path is not None
+                 else self._resolve(args["path"]))
+            if not use_outside and not target_changed and p.is_file():
                 p.unlink()
                 return {"deleted": True, "path": str(p)}
             return {"deleted": False, "note": "simulated; no file touched"}

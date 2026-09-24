@@ -2245,3 +2245,21 @@ a decided strategy.
 - **B1/B2:** unchanged (14/16 full; P13 partial, P8 by-design).
 - **B3:** gates green this wave — canonical 3249 OK, registry GREEN, matrix 3216/3216 SHIP-GATE GREEN, realistic 4/4.
 - **B5/B6:** unchanged (no new pressure ratchet this wave; product position unchanged — honestly tested prototype).
+
+## 2026-09-24 — Wave-97 (F145 + F146 filed and closed; industry-sweep break batteries)
+
+- **B4:** **F145 (MEDIUM) FILED + CLOSED** — MCP `initialize`-time `instructions` field was unpinned/unscanned (per-tool `metadata_hash` can't cover a non-tool field; `scan_tool_description` never invoked on it); closure: server-level `server_instructions_hash()`, wrap-time intake scan of session-exposed first-sight bytes, per-listing `_verify_provenance` re-validation, audit events. **F146 (MEDIUM) FILED + CLOSED** — `path_contains_any` evaluated against declared path, never resolving symlinks; closure: `path_resolved` context signal (fail-safe), declared-OR-resolved deny, snapshot + simulator replay, Cedar export `(context.path.contains(s) || context.path_resolved.contains(s))`. Both break-first (1→0 BREAK, 3→0 BREAK), centrally re-verified, two-axis PASS. **F81 (LOW) stays OPEN** — privileged battery never ran under real privilege. Next free finding: **F147**.
+- **B1/B2:** unchanged (14/16 full; P13 partial, P8 by-design; the BragJack command-channel and compaction-summary probes were non-findings).
+- **B3:** gates green — canonical 3270 OK, registry GREEN, matrix 3216/3216 SHIP-GATE GREEN, realistic 4/4.
+- **B5/B6:** unchanged (prototype position held).
+
+**Bottom line:** the F146 closure named its own TOCTOU residual honestly ("a future finding if demonstrated") — wave-98 demonstrates it.
+
+## 2026-09-24 — Wave-98 (F81 CLOSED by genuine privileged validation; F148 filed+closed; F147 filed+closed)
+
+- **B4:** **F81 (LOW) CLOSED** — the privileged battery ran under genuine privilege on f81-lab (root, `GOV_F81_PRIVILEGED=1`): post-F148-fix, **11/11 CLOSED, exit 0, deterministic ×2**. The last privileged-only unknown is retired; the wave-96/97 "never ran under real privilege" residual is gone. **F148 (LOW) FILED + CLOSED** — caught by that same privileged run: `launch()` emitted `egress_wall_launch` at fork time (a prediction) while the child aborted in its preexec re-check; the chained audit asserted a launch that never happened. Closure: the launch event is now witnessed via a child-to-parent ack pipe (ack after the re-check, before the embedder chain); EOF → refusal, hang → kill + timeout refusal, never a launch event. Two closure-time bugs fixed (reap race via `wait()` grace; unreachable success branch). Sim-level 79/79, 0/60 stress, s7 16/5 GREEN; privileged 11/11 ×2. **F147 (MEDIUM) FILED + CLOSED** — the F146 residual, demonstrated: symlink-swap TOCTOU on the direct-`call()` path (2 BREAK / 4 HELD / 1 INFO / 0 ERROR, centrally re-verified). Closure: `_simulate()` binds the check-time `path_resolved` verdict to the use-time effect (re-resolve, fail closed on mismatch; effect operates on the bound resolved path, never re-traversing the link). Post-fix **0 BREAK / 6 HELD / 1 INFO / 0 ERROR** in normal + clean env (flipper genuinely wins races; zero hostile landings/marker leaks). **Open findings: NONE. Next free: F149.**
+- **B1/B2:** unchanged (14/16 full; P13 partial, P8 by-design).
+- **B3:** gates green this wave — canonical **3276 OK** (3270 + 5 F147 + 1 F148 regression), skipped=8, expected failures=7; registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN** (1608/1608 provisional, 1608/1608 real); realistic **4/4**.
+- **B5/B6:** unchanged (honestly tested prototype; the evidence product's own audit contract — witnessed, not predicted — is now one finding stronger).
+
+**Bottom line:** the loop closed its own tail — F81's privileged run caught F148, F146's honest residual became F147, and all three closed in one wave. The finding count is zero; the bar is unchanged.

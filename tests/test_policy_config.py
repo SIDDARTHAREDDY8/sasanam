@@ -287,5 +287,104 @@ policies:
         self.assertEqual(resolved, "nonexistent-dir/x.txt")
 
 
+class TestF147UseTimeRecheck(unittest.TestCase):
+    """F147: symlink-swap TOCTOU between check-time policy evaluation
+    and use-time _simulate for path_contains_any (direct-call() path).
+
+    F146 evaluates path_contains_any against the check-time resolved
+    target, but _simulate never re-checks: a symlink flipped between
+    the verdict and the effect lets the use-time effect follow a
+    target the policy never evaluated. The fix binds the check-time
+    resolved target to the verdict and quarantines/denies at use time
+    on mismatch (wave-35 idiom: fail closed on a mid-call change).
+
+    Red: the break battery evals/f147toctou_break.py p1/p2
+    (2 BREAK pre-fix, 0 BREAK post-fix). These tests model the exact
+    TOCTOU window deterministically: the flip lands after check-time
+    policy evaluation, before the use-time effect."""
+
+    EXCL_POLICY = TestF146ResolvedPathMatching.EXCL_POLICY
+
+    def _run_with_link(self):
+        run = make_run(policy_path=_tmp_policy(self.EXCL_POLICY))
+        ex = run["executor"]
+        ident = ex.mint_identity("f147-a", "coder", "f147-p")
+        sb = Path(ex.sandbox)
+        (sb / "docs").mkdir(exist_ok=True)
+        (sb / "excluded-zone").mkdir(exist_ok=True)
+        link = sb / "hot-link"
+        os.symlink(str(sb / "docs"), str(link))
+        return run, ex, ident, sb, link
+
+    def _call_with_midcall_flip(self, ex, ident, tool, target, **kwargs):
+        """Run ex.call() with the symlink flipped to `target` after
+        check-time policy evaluation but before the use-time effect."""
+        sb = Path(ex.sandbox)
+        link = sb / "hot-link"
+        orig_simulate = ex._simulate
+
+        def flipping_simulate(t, a, c):
+            os.unlink(link)
+            os.symlink(str(target), str(link))
+            return orig_simulate(t, a, c)
+
+        ex._simulate = flipping_simulate
+        try:
+            return ex.call(ident, tool, **kwargs)
+        finally:
+            ex._simulate = orig_simulate
+
+    def test_write_quarantined_when_target_flips_to_excluded_mid_call(self):
+        run, ex, ident, sb, link = self._run_with_link()
+        r = self._call_with_midcall_flip(
+            ex, ident, "write_file", sb / "excluded-zone",
+            path="hot-link/p.txt", content="VICTIM")
+        # Fail-closed: nothing lands in the excluded zone...
+        self.assertFalse((sb / "excluded-zone" / "p.txt").exists())
+        # ...and nothing lands via the stale benign target either --
+        # the verdict authorized docs/p.txt, the effect would have hit
+        # excluded-zone/p.txt, so no effect takes place.
+        self.assertFalse((sb / "docs" / "p.txt").exists())
+
+    def test_read_leaks_nothing_when_target_flips_to_excluded_mid_call(self):
+        run, ex, ident, sb, link = self._run_with_link()
+        (sb / "docs" / "notes.txt").write_text("benign docs",
+                                               encoding="utf-8")
+        (sb / "excluded-zone" / "notes.txt").write_text(
+            "EXCLUDED-ZONE-MARKER", encoding="utf-8")
+        r = self._call_with_midcall_flip(
+            ex, ident, "read_file", sb / "excluded-zone",
+            path="hot-link/notes.txt")
+        content = (r.get("result") or {}).get("content", "")
+        self.assertNotIn("EXCLUDED-ZONE-MARKER", content)
+
+    def test_write_executes_cleanly_when_link_stable(self):
+        # False-positive guard: a stable benign symlink is unaffected.
+        run, ex, ident, sb, link = self._run_with_link()
+        r = ex.call(ident, "write_file", path="hot-link/m.txt",
+                    content="m")
+        self.assertEqual(r["status"], "executed")
+        self.assertTrue((sb / "docs" / "m.txt").exists())
+
+    def test_read_executes_cleanly_when_link_stable(self):
+        run, ex, ident, sb, link = self._run_with_link()
+        (sb / "docs" / "n.txt").write_text("hello", encoding="utf-8")
+        r = ex.call(ident, "read_file", path="hot-link/n.txt")
+        self.assertEqual(r["status"], "executed")
+        self.assertIn("hello", (r.get("result") or {}).get("content", ""))
+
+    def test_write_quarantined_when_flip_stays_between_benign_targets(self):
+        # A mid-call flip between two benign targets is still a target
+        # change: the check-time verdict no longer describes the
+        # use-time effect, so the effect is quarantined (fail closed).
+        run, ex, ident, sb, link = self._run_with_link()
+        (sb / "docs2").mkdir(exist_ok=True)
+        r = self._call_with_midcall_flip(
+            ex, ident, "write_file", sb / "docs2",
+            path="hot-link/q.txt", content="q")
+        self.assertFalse((sb / "docs2" / "q.txt").exists())
+        self.assertFalse((sb / "docs" / "q.txt").exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -237,7 +237,7 @@ def _handle_dns(conn):
         msg = _recv_all(conn, mlen)
         txid = struct.unpack(">H", msg[:2])[0]
         qname, qsec = _parse_qname(msg)
-        if qname.lower() in ALLOW:
+        if qname.decode("ascii", "ignore").lower() in ALLOW:
             flags, ancount = 0x8180, 1
         else:
             flags, ancount = 0x8183, 0
@@ -364,7 +364,11 @@ def _setup():
     # nftables live baseline is the normalized ruleset actually loaded
     # in the namespace.
     signer = Ed25519Signer(os.urandom(32))
-    trust = DelegationTrust(human_keys={signer.key_id: signer.public_key})
+    filler = [Ed25519Signer(os.urandom(32)), Ed25519Signer(os.urandom(32))]
+    trust = DelegationTrust(
+        human_keys={signer.key_id: signer.public_key},
+        authority_keys={filler[0].key_id: filler[0].public_key},
+        user_issuer_keys={filler[1].key_id: filler[1].public_key})
     wall_dir = os.path.join(ctx.tmp, "wall")
     live_digests = {"nft_ruleset": ctx.live_baseline}
     ctx.inv, ctx.paths = install_simulated_wall(
@@ -373,8 +377,8 @@ def _setup():
         live_digests=live_digests)
     manifest = json.loads(
         open(ctx.paths["manifest"], encoding="utf-8").read())
-    comp_paths = {n: c["path"]
-                  for n, c in manifest["components"].items()}
+    comp_paths = {e["name"]: e["path"]
+                  for e in manifest["components"]}
     with open(comp_paths["seccomp_helper"], "wb") as f:
         f.write(helper_bytes)
     prop = WallComponentInventory.proposal(
@@ -419,8 +423,8 @@ def _setup():
         receipt_path=ctx.paths["receipt"],
         wall_provider=ctx.provider, audit=ctx.events.append,
         trust=ctx.inv.trust)
-    state, _, _ = ctx.provider.check()
-    _require(state == "UP", "wall not UP after setup: %s" % (state,))
+    rep = ctx.provider.check()
+    _require(rep.state == "UP", "wall not UP after setup: %s" % (rep,))
     return ctx
 
 

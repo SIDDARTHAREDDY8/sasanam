@@ -266,6 +266,31 @@ class LauncherUnitTests(unittest.TestCase):
         self.assertFalse(os.path.exists(sentinel))
         self.assertEqual(PREEXEC_ABORT_CODE, 99)
 
+    def test_flapping_wall_emits_no_launch_event(self):
+        # F148: the egress_wall_launch audit event is witnessed, not
+        # predicted. A child that dies in the preexec re-check (wall
+        # flapped between the parent check and fork) must leave a
+        # refusal event only -- never a launch event for a child that
+        # never exec'd.
+        from gov.egress_launcher import FlappingWallProvider
+        sim, fix, inv, events, _ = self._up_wall()
+        launcher = FilteredEgressLauncher(
+            manifest_path=os.path.join(sim, "wall_pins.json"),
+            receipt_path=os.path.join(sim, "wall_receipt.json"),
+            wall_provider=FlappingWallProvider(sim, inv),
+            audit=events.append, trust=inv.trust)
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.run_child([sys.executable, "-c", "pass"],
+                               capture_output=True)
+        self.assertIn("preexec_recheck_failed", str(cm.exception))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(launches, [])
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(refusals[0]["reason"], "preexec_recheck_failed")
+
     def test_popen_kwargs_helper_scrubs_and_marks(self):
         sim, fix, inv, events, launcher = self._up_wall()
         kw = launcher.popen_kwargs(
