@@ -126,10 +126,33 @@ This is the answer to Türk's "independent verification rather than self-reporti
 
 Built on `gov/evidence_exports.py` conventions:
 
-- **Transport:** one directory per assessment: `report.json` (canonical, deterministic), `manifest.json` (seal metadata + inclusion bundles), `verify.py`-documented procedure pointer (the §4 steps), `VERSION` file carrying the schema version.
+- **Transport:** one directory per assessment, assembled by `gov/safeguard_bundle.py` (`bundle_assemble`): `report.json` (canonical, deterministic), `manifest.json` (seal metadata + inclusion bundles + receipt), `checkpoints.jsonl` (signed checkpoint heads extracted from the manifest's bundles), `keys/operator_ed25519.json` + `keys/checkpoint_keys.json` (the key envelope — keys travel with the bundle for integrity and checkpoint binding; the envelope is SELF-ASSERTED, so authorship still requires the operator's key to be bound out-of-band — published key directory, transparency log, or authenticated delivery channel — and passed as pinning inputs to `bundle_verify`; see §5 key-binding note and F151), `VERIFY.txt` (the §4 procedure pointer), `VERSION` (bundle format + schema versions), `BUNDLE_DIGEST.sha256` (transport checksum, not a signature). `bundle_verify(bundle_dir, *, expected_operator_key_id=..., ...)` verifies the bundle with the directory as its sole data input: version gate → required files → digest recompute → key envelope → authorship pinning (B6: pinned mismatches fail closed; unpinned is explicitly self-consistency-only) → checkpoint-head signatures + head binding → the seven §4 checks with `expect_sealed=True`. Any step failing fails the bundle closed.
 - **Determinism:** byte-identical output for identical inputs (deterministic `report_id`, canonical JSON) — bundles from different deployments are **directly comparable**, which is OpenAI's fragmentation argument as a product property.
 - **Jurisdiction-neutral core + mapping notes:** the report grades severity (S1–S4) and sufficiency against our declared thresholds. A `regime_notes` section (all `operator_must_supply` except computed clocks) maps to: EU AI Act Art. 73 incident shape (we already emit it via `evidence_exports.py`; the SAR incident section reuses its anchor/timeline structure), the International Network's Feb 2026 **consensus practices for automated AI evaluations** (our battery records evaluation documentation, difficulty/canary metadata per `gov/eval_integrity.py`), and CAISI's draft Best Practices for Automated Benchmark Evaluations. **No claim is made that any of these bodies accept the bundle** — the claim is only that the bundle is shaped to be ingestible.
 - `log_benchmark_receipt` gives the institute a chained receipt to cite.
+
+### §5 key-binding note (F151)
+
+The key envelope in a bundle is **self-asserted**: it travels with the bundle so checkpoint
+signatures and the manifest seal can be checked without log access, but it cannot tell the
+operator's bundle from a forger's self-sealed bundle (her own keys, her own log, a forged
+verdict). Authorship therefore has TWO modes:
+
+1. **Self-consistency (unpinned).** `bundle_verify(bundle_dir)` proves the bundle is internally
+   intact — digest, key envelope shape, checkpoint signatures, head binding, and the seven §4
+   checks. The B6 `authorship_pinning` check is explicitly `not_applicable` and names this
+   residual. A PASS here means "this bundle is internally intact", never "this bundle is the
+   operator's".
+2. **Authorship (pinned).** The evaluator binds the operator's Ed25519 public key out-of-band
+   (published key directory, transparency log, or authenticated delivery channel) and passes it
+   explicitly: `expected_operator_key_id` / `expected_operator_public_key_hex` /
+   `expected_checkpoint_key_ids`. A mismatch fails closed and skips §4 — the procedure never
+   verifies against the wrong operator's keys. **Pin by the full public key
+   (`expected_operator_public_key_hex`), not just the key_id** — pinning by key_id alone checks
+   the key's label; the bundled public key for that id is still self-asserted.
+
+"Zero out-of-band inputs" was the pre-F151 claim and is withdrawn: the bundle's *data* input is
+the directory alone, but authorship requires the out-of-band key binding above.
 
 ---
 

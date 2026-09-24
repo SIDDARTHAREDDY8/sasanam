@@ -305,7 +305,15 @@ class TestIsGoverned(unittest.TestCase):
         gov_approvals = ApprovalQueue(gov_dir, gov_log)
         governed = ToolExecutor(gov_dir, store.current_engine(), gov_log,
                                 gov_approvals, policy_store=store,
-                                delegation_context=_delegation_context())
+                                delegation_context=_delegation_context(),
+                                # Wave-100: the governed core is installed,
+                                # so the capability posture is declared
+                                # explicitly (out of scope for this wiring
+                                # test); declared, not silent.
+                                capability_ungoverned_ack=(
+                                    "is_governed test: fully governed wiring "
+                                    "built deliberately; the capability gate "
+                                    "is not the subject under test"))
         self.assertTrue(governed.is_governed)
         kinds = [e.get("event")
                  for e in read_entries(gov_dir / "actions.jsonl")]

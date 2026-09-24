@@ -114,6 +114,7 @@ from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    write_chain_tip_from_tail)
 from .memory_provenance import MemoryQuarantineError
 from . import citation_provenance as _citation_provenance
+from . import capability_gate as _capability_gate
 
 _SEND_TOOLS = ("send_email", "http_post")
 # S3 (K-041): tools that mutate state outside the run's read view. A
@@ -402,6 +403,162 @@ def _fail_closed_construction_check(run_id, log, policy_store,
             "declaration." % (exc,))
     return reason, missing
 
+
+def _capability_gate_construction_check(run_id, log, policy_store,
+                                        delegation_context,
+                                        capability_gate_binding,
+                                        capability_assessment,
+                                        capability_ungoverned_ack):
+    """Wave-100 (Stream 1): the capability-gate declaration check.
+
+    A deployment that LOOKS governed (governed core installed:
+    policy_store + delegation_context) must bind a capability gate or
+    explicitly acknowledge ungoverned capability mode. Without this,
+    the benchmark's SUFFICIENT grade is a story the runtime never
+    checks -- the deployment looks governed while running agents
+    against no capability assessment.
+
+    Returns ``(binding_or_None, assessment_or_None,
+    ack_reason_or_None)``. Raises
+    ``capability_gate.CapabilityGateBindingError`` fail-closed, before
+    anything executes, when the core is installed and neither a valid
+    binding nor a valid acknowledgement is present, or when the
+    declarations are contradictory/malformed. Refusals are chained
+    best-effort (the refusal stands even if the audit write fails); an
+    accepted acknowledgement MUST chain or the bypass is refused.
+
+    Raw-pipeline deployments (no governed core) are untouched: the
+    wave-85 ``ungoverned_ack`` already declares those runs ungoverned,
+    and the capability gate does not pretend to govern them.
+    """
+    from .keys import NoKeyConfiguredError
+
+    def _refuse(cause, detail):
+        try:
+            log.append({
+                "event": "capability_gate_unconfigured_refused",
+                "run_id": run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "refused",
+                "policy_id": "capability-gate",
+                "refusal_cause": cause,
+                "reason": detail,
+            })
+        except NoKeyConfiguredError:
+            raise
+        except Exception:
+            pass  # the refusal stands even if the audit write fails
+        raise _capability_gate.CapabilityGateBindingError(detail)
+
+    # Contradictory declarations: binding AND ack is a misconfiguration
+    # -- fail closed rather than guess which one the operator meant.
+    if (capability_gate_binding is not None
+            and capability_ungoverned_ack is not None):
+        _refuse(
+            "contradictory_declaration",
+            "REFUSED: capability_gate_binding AND "
+            "capability_ungoverned_ack were both given -- contradictory "
+            "declarations. Bind the gate or acknowledge ungoverned "
+            "capability mode, not both.")
+
+    binding = None
+    if capability_gate_binding is not None:
+        try:
+            binding = _capability_gate.validate_binding(
+                capability_gate_binding)
+        except _capability_gate.CapabilityGateError as e:
+            _refuse("malformed_binding",
+                    "REFUSED: malformed capability_gate_binding: %s" % (e,))
+
+    core_installed = (policy_store is not None
+                      and delegation_context is not None)
+    if binding is not None:
+        # The assessment itself is verified per call/spawn, not here:
+        # None just means "not yet installed" (rotation installs it
+        # later via update_capability_assessment).
+        return binding, capability_assessment, None
+
+    if capability_ungoverned_ack is None:
+        if core_installed:
+            _refuse(
+                "no_binding_no_ack",
+                "REFUSED: no capability gate configured -- this executor "
+                "has the governed core (policy_store + delegation_context) "
+                "installed and would LOOK governed while running agents "
+                "against no capability assessment. Configure "
+                "capability_gate_binding={'harness_id': ..., "
+                "'harness_digest': <sha256 of the harness/thresholds "
+                "config -- see gov/capability_gate.compute_harness_digest"
+                ">, 'freshness_seconds': <max assessment age>, "
+                "'trusted_keys': {<key_id>: <Ed25519 public key>}} or "
+                "explicitly acknowledge ungoverned capability mode with "
+                "capability_ungoverned_ack='<reason>' (a non-blank "
+                "reason; refused in production; the declaration is "
+                "chained into the audit log).")
+        # Raw pipeline: the wave-85 ungoverned_ack already declares this
+        # run ungoverned; the capability gate does not pretend otherwise.
+        return None, None, None
+
+    # Explicit acknowledgement: non-blank, recorded, refused outright
+    # in production -- the wave-85 posture, applied to the capability
+    # gate.
+    if (not isinstance(capability_ungoverned_ack, str)
+            or not capability_ungoverned_ack.strip()):
+        _refuse(
+            "blank_ack",
+            "REFUSED: capability_ungoverned_ack is blank/whitespace-only "
+            "-- a hollow justification. State a real reason or bind the "
+            "capability gate.")
+    from .keyprovider import resolve_deployment_mode
+    try:
+        mode = resolve_deployment_mode()
+    except Exception as exc:
+        _refuse(
+            "unresolvable_mode",
+            "REFUSED: deployment mode unresolvable (%s) -- failing "
+            "closed toward refusal; an unknown mode never silently "
+            "disables the capability gate." % (exc,))
+    if mode == "production":
+        _refuse(
+            "production",
+            "REFUSED: deployment mode is production -- ungoverned "
+            "capability mode is refused even with a declared reason. "
+            "Bind the capability gate or do not run here.")
+    reason = capability_ungoverned_ack.strip()
+    caller = _construction_caller()
+    try:
+        log.append({
+            "event": "capability_gate_ungoverned_declared",
+            "run_id": run_id,
+            "agent_id": "system",
+            "role": "system",
+            "decision": "declared",
+            "policy_id": "capability-gate",
+            "ungoverned_reason": reason,
+            "deployment_mode": mode,
+            "reason": (
+                "LOUD: ToolExecutor constructed with NO capability gate "
+                "under an explicit, recorded declaration. Declared "
+                "reason: %r. Deployment mode: %s. Declared by %s:%s in "
+                "%s. No capability assessment will be required or "
+                "verified for this run -- audit accordingly."
+                % (reason, mode, caller["caller_file"],
+                   caller["caller_line"], caller["caller_function"])),
+            "caller_file": caller["caller_file"],
+            "caller_line": caller["caller_line"],
+            "caller_function": caller["caller_function"],
+        })
+    except NoKeyConfiguredError:
+        raise
+    except Exception as exc:
+        raise _capability_gate.CapabilityGateBindingError(
+            "REFUSED: the capability_gate_ungoverned_declared declaration "
+            "could not be chained (%s) -- an unrecorded declaration is "
+            "not a declaration." % (exc,))
+    return None, None, reason
+
+
 # F17b: per-run identity issuance budget. Bounds identity sprawl / mint
 # abuse inside one run; deployments that legitimately mint more raise
 # the constant.
@@ -430,7 +587,9 @@ class ToolExecutor:
                  tool_inventory=None, trajectory_checkpoint_every=50,
                  lineage_tracker=None, skill_watch=None,
                  skill_tool_map=None, skill_mcp_map=None,
-                 skill_pin_path=None):
+                 skill_pin_path=None,
+                 capability_gate_binding=None, capability_assessment=None,
+                 capability_ungoverned_ack=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -460,6 +619,21 @@ class ToolExecutor:
                           ("lease_verifier", lease_verifier),
                           ("precommit_gate", precommit_gate),
                           ("trifecta_floor", trifecta_floor))))
+        # Wave-100 (Stream 1): the capability gate. A deployment that
+        # looks governed (governed core installed) must bind a
+        # capability gate or explicitly acknowledge ungoverned
+        # capability mode -- otherwise the benchmark's SUFFICIENT grade
+        # is a story the runtime never checks. Raw-pipeline deployments
+        # (no core) are untouched: the wave-85 ack already declares
+        # them ungoverned. The binding is normalized here (fail-closed
+        # on malformed); the assessment itself is verified per
+        # call/spawn so rotation and expiry are always current.
+        (self._capability_gate_binding, self._capability_assessment,
+         self._capability_ungoverned_ack) = (
+            _capability_gate_construction_check(
+                self.run_id, log, policy_store, delegation_context,
+                capability_gate_binding, capability_assessment,
+                capability_ungoverned_ack))
         # Wave-75 (governing the governors): the governed policy path.
         # Opt-in: None = pre-wave-75 behavior, zero behavior change.
         # When installed, call() snapshots the store's CURRENT engine
@@ -1282,6 +1456,18 @@ class ToolExecutor:
         unlimited — documented; the chained spawn events are the
         detection story.
         """
+        # Wave-100 (Stream 1): the capability gate binds the spawn
+        # lineage too -- checked before anything else, so a child
+        # executor can never run with a weaker (or no) gate than its
+        # parent. The child inherits the binding below.
+        _spawner = self._session_identity
+        self._check_capability_gate(
+            agent_id=(_spawner.agent_id if _spawner is not None
+                      else "unknown-spawner"),
+            role=(_spawner.role if _spawner is not None else None),
+            principal=(_spawner.principal if _spawner is not None
+                       else None),
+            tool="spawn_sub_agent", run_id=self.run_id)
         ctx = self._delegation_context
         if ctx is None or not ctx.bound:
             raise _delegation_tokens.DelegationRequiredError(
@@ -1410,7 +1596,16 @@ class ToolExecutor:
             precommit_gate=self._precommit_gate,
             trifecta_floor=self._trifecta_floor,
             revocation_checker=self._revocation_checker,
-            lineage_tracker=self._lineage_tracker)
+            lineage_tracker=self._lineage_tracker,
+            # Wave-100 (Stream 1): one lineage, one capability gate --
+            # the child inherits the parent's binding, current
+            # assessment, and (if declared) ungoverned acknowledgement,
+            # so the child's constructor re-enforces the same gate.
+            # In the acknowledged-ungoverned case the declaration
+            # chains once per child construction (loud, by design).
+            capability_gate_binding=self._capability_gate_binding,
+            capability_assessment=self._capability_assessment,
+            capability_ungoverned_ack=self._capability_ungoverned_ack)
         # Wave-90 (S6, F137): the child carries its birth certificate.
         # One lineage, one tracker: shared by reference like the bus.
         child._lineage_cert = lineage_cert
@@ -1423,6 +1618,82 @@ class ToolExecutor:
         # lineage. None stays None (opt-in preserved down the tree).
         child._message_bus = self._message_bus
         return child
+
+    def _check_capability_gate(self, *, agent_id, role, principal, tool,
+                               run_id):
+        """Wave-100 (Stream 1): enforce the capability gate on the run
+        path.
+
+        When a binding is installed, the deployment's capability
+        assessment is re-verified on every call/spawn -- no caching, so
+        rotation and expiry are always current. Fail-closed and loud:
+        the refusal is chained into the audit log before raising
+        ``capability_gate.CapabilityGateRefusal``. No binding (raw
+        pipeline, or acknowledged ungoverned mode) means no check.
+        """
+        binding = self._capability_gate_binding
+        if binding is None:
+            return
+        try:
+            _capability_gate.verify_assessment(
+                binding, self._capability_assessment)
+        except _capability_gate.CapabilityGateRefusal as e:
+            # Best-effort chaining, like the construction seam: the
+            # refusal stands even if the audit write fails; the
+            # exception the caller catches is always the refusal.
+            try:
+                self.log.append({
+                    "event": "capability_gate_refused",
+                    "run_id": run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "tool": tool,
+                    "decision": "refused",
+                    "policy_id": "capability-gate",
+                    "refusal_cause": e.refusal_cause,
+                    "reason": "Refusing to act: %s" % (e,),
+                })
+            except Exception:
+                pass
+            raise
+
+    def update_capability_assessment(self, assessment):
+        """Wave-100 (Stream 1): rotate the deployment's capability
+        assessment without reconstructing the executor.
+
+        The assessment is shape-checked here; full verification
+        (freshness, config digest, report digest, seal, verdict)
+        happens on the next ``call()`` / ``spawn_sub_agent()`` -- a bad
+        rotation is refused at the next run attempt, never silently
+        installed. The rotation is chained into the audit log.
+        """
+        if (assessment is not None
+                and not isinstance(assessment, collections.abc.Mapping)):
+            raise _capability_gate.CapabilityGateError(
+                "capability assessment must be a mapping with 'report' "
+                "and 'manifest', or None")
+        # The audit record is chained BEFORE the state swap: if the log
+        # write fails, the old assessment stays installed and the error
+        # propagates -- never a swapped assessment with no chained
+        # record of the rotation.
+        manifest = (assessment or {}).get("manifest") or {}
+        self.log.append({
+            "event": "capability_assessment_updated",
+            "run_id": self.run_id,
+            "agent_id": "system",
+            "role": "system",
+            "decision": "updated",
+            "policy_id": "capability-gate",
+            "report_id": manifest.get("report_id"),
+            "assessed_at": manifest.get("assessed_at"),
+            "reason": ("Deployment installed a new capability assessment "
+                       "(report %r); it will be fully verified on the "
+                       "next run attempt -- a bad rotation is refused "
+                       "there, never silently installed."
+                       % (manifest.get("report_id"),)),
+        })
+        self._capability_assessment = assessment
 
     def _check_identity(self, identity):
         """Return None if OK, else a (policy_id, flag, reason) deny triple."""
@@ -4074,6 +4345,13 @@ class ToolExecutor:
         if not isinstance(identity, AgentIdentity):
             raise TypeError("identity must be an AgentIdentity minted by "
                             "this executor, got %r" % type(identity).__name__)
+
+        # Wave-100 (Stream 1): the capability gate -- before anything
+        # agent-influenced runs. No valid assessment, no execution.
+        self._check_capability_gate(
+            agent_id=identity.agent_id, role=identity.role,
+            principal=identity.principal, tool=tool,
+            run_id=identity.run_id)
 
         # Wave-75 (governing the governors): snapshot the policy engine
         # at call start. On the governed path this is the store's

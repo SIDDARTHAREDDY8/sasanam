@@ -144,6 +144,12 @@ class TestF135ExecutionBoundaryDelegation(unittest.TestCase):
                 policy_store=g["policy_store"],
                 delegation_context=ctx2,
                 revocation_checker=g["ledger"],
+                # Wave-100: governed core installed, so the capability
+                # posture is declared explicitly (out of scope for F135).
+                capability_ungoverned_ack=(
+                    "w88 F135 test: executor rotation probe; the capability "
+                    "gate is not the subject under test; declared, not "
+                    "silent"),
                 session_identity=("agent-a", "scout", "alice"))
             done = ex2.execute_approved()
             self.assertEqual(done, [])

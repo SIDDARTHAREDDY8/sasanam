@@ -30,6 +30,7 @@ from gov.executor import (ToolExecutor,  # noqa: E402
 from gov.log import ActionLog, read_entries  # noqa: E402
 from gov.policy import PolicyEngine  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
+from gov.capability_gate import compute_harness_digest  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _BASE_POLICY = (REPO_ROOT / "policies" / "default.yaml").read_text(
@@ -124,7 +125,15 @@ class TestGovernedCoreConstructsWithoutAck(unittest.TestCase):
         r = _Run(self)
         keys, h1 = _Keys(), _human()
         ex = r.build(policy_store=_store([h1], log=r.log),
-                     delegation_context=_bound_ctx(keys))
+                     delegation_context=_bound_ctx(keys),
+                     # Wave-100: this test's subject is the wave-85
+                     # construction gate (full core needs no ungoverned
+                     # ACK). The capability gate is a separate, newer
+                     # seam, so the build declares that posture
+                     # explicitly; declared, not silent.
+                     capability_ungoverned_ack=(
+                         "w85 test: wave-85 subject is the construction "
+                         "gate; the capability gate is not under test"))
         self.assertTrue(ex.is_governed)
         # No bypass declaration was chained for a governed construction.
         kinds = [e.get("event") for e in r.entries()]
@@ -252,9 +261,22 @@ class TestProductionRefusesEvenDeclared(unittest.TestCase):
     def test_production_governed_core_still_constructs(self):
         r = _Run(self, mode="production")
         keys, h1 = _Keys(), _human()
+        # Wave-100: the capability-ungoverned ACK is refused in production,
+        # so a production governed deployment binds a real capability gate
+        # instead. Construction validates the binding shape; the assessment
+        # itself is verified per call, which this test never makes.
+        seal_key = Ed25519Signer(secrets.token_bytes(32))
+        binding = {
+            "harness_id": "w85-test-harness",
+            "harness_digest": compute_harness_digest(
+                "w85-test-harness", {"thresholds": "w85-test"}, 1),
+            "freshness_seconds": 3600,
+            "trusted_keys": {"seal-key": seal_key.public_key},
+        }
         ex = r.build(policy_store=_store([h1, _human()], log=r.log,
                                     mode="production"),
-                     delegation_context=_bound_ctx(keys))
+                     delegation_context=_bound_ctx(keys),
+                     capability_gate_binding=binding)
         self.assertTrue(ex.is_governed)
 
 
@@ -314,7 +336,14 @@ class TestSameRunAttribution(unittest.TestCase):
         keys, h1 = _Keys(), _human()
         gov_ex = r.build(policy_store=_store([h1], log=r.log),
                          delegation_context=_bound_ctx(
-                             keys, session=r.run_dir.name))
+                             keys, session=r.run_dir.name),
+                         # Wave-100: governed core installed, so the
+                         # capability posture is declared explicitly (out
+                         # of scope for this attribution probe).
+                         capability_ungoverned_ack=(
+                             "w85 attribution test: governed tool_call vs "
+                             "declared bypass; the capability gate is not "
+                             "the subject under test"))
         ident = gov_ex.mint_identity("agent-1", "scout", "user-7")
         r1 = gov_ex.call(ident, "read_file", path="notes.txt")
         self.assertEqual(r1["status"], "executed")

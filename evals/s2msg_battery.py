@@ -36,6 +36,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "s2battery")
+# Wave-100: the capability gate refuses declared-ungoverned construction
+# in production. This battery is a test harness, not a deployment.
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import delegation_tokens as _dt  # noqa: E402
 from gov import policy_change as _pc  # noqa: E402
@@ -125,7 +128,14 @@ def _fixture():
     ex = ToolExecutor(run_dir, engine, log, approvals,
                       ledger_path=run_dir / "egress_ledger.jsonl",
                       policy_store=store, delegation_context=ctx,
-                      message_bus=bus)
+                      message_bus=bus,
+                      # The capability gate is off-by-default and loud.
+                      # This battery's subject is S2 messaging, not the
+                      # capability gate; declared, not silent.
+                      capability_ungoverned_ack=(
+                          "s2msg battery: subject under test is "
+                          "inter-agent messaging, not the capability "
+                          "gate; declared, not silent"))
     id_a = ex.mint_identity("agent-a", "courier", "alice")
     return {"td": td, "keys": keys, "run_dir": run_dir, "log": log,
             "bus": bus, "monitor": monitor, "ex": ex, "id_a": id_a}

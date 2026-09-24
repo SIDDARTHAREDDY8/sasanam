@@ -183,6 +183,15 @@ def _governed_run(deleg_scope=("tool:read_file", "tool:send_email"),
                       policy_store=store,
                       delegation_context=ctx,
                       revocation_checker=ledger,
+                      # Wave-100: the capability gate is off-by-default and
+                      # loud. These identity probes install the governed
+                      # core, so the build declares its capability posture
+                      # explicitly: the capability gate is out of scope
+                      # here; declared, not silent.
+                      capability_ungoverned_ack=(
+                          "w88 identity probes: the subject under test is "
+                          "delegation identity, not the capability gate; "
+                          "declared, not silent"),
                       session_identity=("agent-a", "scout", "alice"))
     return {"td": td, "run_dir": run_dir, "log": log,
             "approvals": approvals, "engine": engine, "keys": keys,

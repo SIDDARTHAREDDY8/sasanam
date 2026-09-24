@@ -165,6 +165,14 @@ class _Run(object):
     def build(self, ctx, **kw):
         kw.setdefault("policy_store", self.store)
         kw.setdefault("delegation_context", ctx)
+        # Wave-100: the capability gate is off-by-default and loud. These
+        # identity tests install the governed core, so each build declares
+        # its capability posture explicitly rather than silently looking
+        # governed: the capability gate is out of scope for this suite.
+        kw.setdefault(
+            "capability_ungoverned_ack",
+            "w86 identity tests: the subject under test is spawn identity, "
+            "not the capability gate; declared, not silent")
         return ToolExecutor(self.run_dir, self.engine, self.log,
                             self.approvals, **kw)
 

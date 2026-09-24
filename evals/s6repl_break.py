@@ -664,6 +664,13 @@ class TestS6GovernedSpawnWiring(unittest.TestCase):
             ex = ToolExecutor(
                 r.run_dir, r.engine, r.log, r.approvals,
                 policy_store=store, delegation_context=ctx,
+                # The capability gate is off-by-default and loud. This
+                # battery's subject is S6 replication, not the
+                # capability gate; declared, not silent.
+                capability_ungoverned_ack=(
+                    "s6repl battery: subject under test is "
+                    "self-replication, not the capability gate; "
+                    "declared, not silent"),
                 session_identity=("agent-a", "mule", "alice"),
                 lineage_tracker=tracker)
             ident_a = ex.mint_identity("agent-a", "mule", "alice")

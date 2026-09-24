@@ -6,6 +6,7 @@ from .log import (ActionLog, LogUnverifiableError, read_entries,
 from .policy import PolicyDecision, PolicyEngine
 from .approvals import ApprovalQueue, record_digest
 from .executor import ToolExecutor
+from . import capability_gate
 from . import dlp
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "ApprovalQueue",
     "record_digest",
     "ToolExecutor",
+    "capability_gate",
     "dlp",
 ]

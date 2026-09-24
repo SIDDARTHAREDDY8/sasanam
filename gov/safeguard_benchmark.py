@@ -1039,14 +1039,23 @@ def log_benchmark_receipt(manifest, action_log):
     ``verify_report`` step 6), so third-party verification needs no
     log access. Returns the appended entry.
 
-    KNOWN DEBT (reviewer-noted, not built here): the spec §5 transport
-    bundle assembler does not exist — there is no writer that lays out
-    the one-directory-per-assessment bundle (report.json,
-    manifest.json, VERSION, verify-procedure pointer), and neither the
-    trusted checkpoint keys nor the operator's Ed25519 public key
-    travel with the bundle (verify_report takes them as separate
-    out-of-band inputs). The pieces (canonical report, manifest,
-    receipt) exist; the assembler plus a key-envelope is future work.
+    §5 TRANSPORT (shipped): the deterministic, self-contained bundle
+    assembler lives in ``gov/safeguard_bundle.py`` —
+    ``bundle_assemble(report, manifest, operator_key, checkpoint_keys,
+    out_dir)`` lays out the one-directory-per-assessment bundle
+    (report.json, manifest.json, checkpoints.jsonl, key envelope,
+    VERSION, VERIFY.txt, BUNDLE_DIGEST.sha256), and
+    ``bundle_verify(bundle_dir, *, expected_operator_key_id=...,
+    ...)`` verifies it with the bundle directory as its sole data
+    input; authorship requires pinning the operator's key, bound
+    out-of-band (F151 — the key envelope is self-asserted, so unpinned
+    verification is self-consistency only). The sealed report/manifest
+    bytes are written verbatim; the bundle digest is deterministic for
+    identical inputs. Remaining residuals
+    (documented in gov/safeguard_bundle.py): threshold (k-of-n)
+    checkpoint rosters are not transported (fail closed at verify);
+    the manifest's absolute log_path travels verbatim; the bundle
+    checksum is not a signature.
     """
     entry = action_log.append({
         "event": "safeguard_benchmark_sealed",

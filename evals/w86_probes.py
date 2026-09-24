@@ -92,6 +92,10 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+# Wave-100: the capability gate refuses declared-ungoverned construction
+# in production. This battery is a test harness, not a deployment.
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
 import gov.delegation_tokens as dt_mod  # noqa: E402
 from gov import policy_change as pc_mod  # noqa: E402
 from gov.approvals import ApprovalQueue  # noqa: E402
@@ -634,7 +638,11 @@ def sit_spawn_lineage_invisible_to_log():
     ex = ToolExecutor(run_dir, pstore.current_engine(), lg,
                       ApprovalQueue(run_dir, lg),
                       policy_store=pstore,
-                      delegation_context=s.ctx)
+                      delegation_context=s.ctx,
+                      capability_ungoverned_ack=(
+                          "w86 identity probes: subject under test is "
+                          "delegation identity, not the capability "
+                          "gate; declared, not silent"))
     ident = ex.mint_identity("agent-a", "coder", "alice")
     try:
         ex.call(ident, "read_file", path="notes.txt")
@@ -721,6 +729,14 @@ def _governed_executor_for_probe(prefix, audience=None, spawn_budget=None):
                       delegation_context=s.ctx,
                       revocation_checker=ledger,
                       spawn_budget=spawn_budget,
+                      # The capability gate is off-by-default and loud.
+                      # These probes' subject is delegation identity /
+                      # revocation / spawn budget, not the capability
+                      # gate; declared, not silent.
+                      capability_ungoverned_ack=(
+                          "w86 identity probes: subject under test is "
+                          "delegation identity, not the capability "
+                          "gate; declared, not silent"),
                       session_identity=("agent-a", "coder", "alice"))
     return run_dir, lg, ex, s, ledger
 
@@ -913,6 +929,10 @@ def sit_revocation_wired_at_executor_gate():
             run_dir2, ex2.policy, ex2.log, ex2.approvals,
             policy_store=ex2._policy_store,
             delegation_context=s2.ctx, revocation_checker=_boom,
+            capability_ungoverned_ack=(
+                "w86 identity probes: subject under test is "
+                "delegation identity, not the capability gate; "
+                "declared, not silent"),
             session_identity=("agent-a", "coder", "alice"))
         ok3, info3 = _refused(
             lambda: ex3.call(ex3._session_identity, "read_file",
@@ -957,6 +977,10 @@ def sit_spawn_budget_exhaustion():
                     ex.approvals, policy_store=ex._policy_store,
                     delegation_context=s.ctx,
                     session_identity=("agent-a", "coder", "alice"),
+                    capability_ungoverned_ack=(
+                        "w86 identity probes: subject under test is "
+                        "spawn budget, not the capability gate; "
+                        "declared, not silent"),
                     spawn_budget=bad),
                 ValueError)
             if not okb:

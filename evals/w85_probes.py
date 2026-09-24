@@ -78,6 +78,13 @@ from gov.signing import Ed25519Signer  # noqa: E402
 # been built yet. Probes use it only via isinstance guards, so the
 # battery runs (and breaks) against the unmodified machinery.
 _UCE = getattr(_exec_mod, "UngovernedConstructionError", None)
+# Wave-100 (Stream 1): the capability gate adds a second fail-closed
+# construction refusal. Same guard pattern -- the probe treats both
+# refusals as the gate doing its job.
+try:
+    from gov.capability_gate import CapabilityGateBindingError as _CGBE
+except Exception:
+    _CGBE = None
 
 RESULTS = []
 SITUATIONS = {}
@@ -196,8 +203,11 @@ def _stack(run_dir, policy_text=_ALLOW):
 
 
 def _refused_by_gate(exc):
-    """True when exc is the wave-85 fail-closed construction refusal."""
-    return _UCE is not None and isinstance(exc, _UCE)
+    """True when exc is a fail-closed construction refusal (wave-85
+    ungoverned refusal or wave-100 capability-gate refusal)."""
+    if _UCE is not None and isinstance(exc, _UCE):
+        return True
+    return _CGBE is not None and isinstance(exc, _CGBE)
 
 
 def _governed_pair(run_dir, policy_text=_ALLOW):
@@ -449,8 +459,11 @@ def sit_double_construction_attribution_confusion():
                               delegation_context=ctx)
     except Exception as exc:
         if _refused_by_gate(exc):
-            return {"verdict": "residual",
-                    "note": "full governed core refused: %s" % (exc,)}
+            # Wave-100: an unbound governed construction never executes
+            # -- the regime-confusion shape is closed at __init__.
+            return {"verdict": "stopped",
+                    "note": "full governed core refused at __init__: "
+                    "%s" % (exc,)}
         raise
     (gov_ex.sandbox / "notes.txt").write_text("hello", encoding="utf-8")
     gident = gov_ex.mint_identity("agent-1", "scout", "user-7")

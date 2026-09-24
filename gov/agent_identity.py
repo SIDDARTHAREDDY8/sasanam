@@ -1,0 +1,351 @@
+"""Inter-agent identity binding: sender identities bound to keys the
+governance layer issued.
+
+The problem (Stream 3): inter-agent messages carried the sender as a
+plain string (``gov/messaging.py`` stamps it, ``gov/identity.py`` mints
+in-process identities with no signing key), so nothing stopped agent B
+from sending a message that claims to be from agent A, and a captured
+message could be replayed with no detection at the identity layer.
+
+What this module provides:
+
+* ``KeyIssuanceRegistry``: the governance layer (deployment trust
+  domain) mints one Ed25519 keypair per registered (principal, agent_id)
+  and holds the private half. Agents never self-assert identity: they
+  receive an ``AgentSigningHandle`` that can seal messages only as their
+  own agent_id, and the handle exposes no seed material.
+* Signed envelopes: sender identity + issued key id + nonce +
+  per-sender sequence + body, with the signature covering the canonical
+  encoding of ALL of them (body tampering invalidates the signature).
+* ``verify_message``: the standalone verifier. Rejects unsigned
+  envelopes, envelopes whose key is unknown to the registry, envelopes
+  whose key is not bound to the claimed sender, bad signatures, replayed
+  nonces, and stale sequences. Fail-closed: malformed input raises,
+  never returns an accept; every rejection appends a chained
+  ``identity_message_rejected`` audit event when a log is supplied.
+
+INTEGRATION (for the messaging/executor owner -- Stream 1):
+the messaging path calls exactly one function before delivering a
+message to a recipient::
+
+    from gov.agent_identity import verify_message, IdentityRejection
+
+    try:
+        accepted = verify_message(envelope, registry, replay_cache,
+                                  log=run_log, run_id=run_id)
+    except IdentityRejection:
+        do_not_deliver()   # the rejection is already audit-chained
+
+``registry`` is constructed once per deployment (or per run) in the
+deployment trust domain and shared by reference; ``replay_cache`` is a
+``ReplayCache`` owned by the messaging path (bounded, per-key
+seen-nonce set + last sequence). This module never touches the
+executor: the executor keeps minting in-process identities, and the
+registry binds the agent_id strings it mints to issued keys.
+
+HONEST RESIDUALS (never claimed away):
+
+* The registry is itself a trust anchor: whoever can call
+  ``register_agent`` can mint keys for arbitrary agent_ids ("who guards
+  the minter?" is a deployment question -- registry construction and
+  storage are out-of-band admin acts, same trust model as
+  ``gov/identity.py``'s PrincipalRegistry).
+* The replay cache is bounded: a nonce evicted by the bound could be
+  replayed without tripping ``replayed_nonce``, but ``stale_sequence``
+  still holds for in-order senders. Size the bound to the deployment's
+  message volume.
+* Private keys live in the registry process's memory (like the HMAC log
+  key in ``gov/log.py``): process compromise = key compromise. The
+  handle design only stops agents from *reaching* each other's keys,
+  not from a compromised governance process leaking them.
+* This covers the message path only. Shared-state side channels outside
+  the message path (file channels, spawn lineage, tool-mediated
+  channels) are an explicit boundary -- see ``gov/covert_channel.py``.
+
+$0 spend, synthetic/local only. No credentials, no network.
+"""
+
+import hashlib
+import json
+import secrets
+from collections import OrderedDict
+
+from . import ed25519 as _ed
+from .identity import UnregisteredPrincipalError
+
+_DOMAIN = b"gov-agent-identity/v1\x00"
+_ENVELOPE_VERSION = 1
+_NONCE_BYTES = 16
+
+
+class DuplicateAgentRegistrationError(Exception):
+    """register_agent called twice for the same agent_id: the binding is
+    one key per agent_id, and re-registration would let a second caller
+    steal the identity."""
+
+
+class IdentityRejection(Exception):
+    """Raised by verify_message / ReplayCache on any rejection.
+
+    ``reason`` is one of: unsigned, unknown_key, unbound_key,
+    bad_signature, replayed_nonce, stale_sequence, malformed_envelope.
+    Fail-closed: callers must treat this as "do not deliver".
+    """
+
+    def __init__(self, reason, detail=""):
+        super().__init__("identity rejected (%s): %s" % (reason, detail))
+        self.reason = reason
+        self.detail = detail
+
+
+def _canonical_bytes(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, default=str).encode("utf-8")
+
+
+def _key_id_for_pubkey(pubkey):
+    return "kid-" + hashlib.sha256(pubkey).hexdigest()[:16]
+
+
+class KeyIssuanceRegistry(object):
+    """Governance-layer key issuance: mints and holds per-agent Ed25519
+    keys. Constructed in the deployment trust domain (operator side),
+    never from agent input.
+
+    ``principal_registry`` (optional): a ``gov/identity.py``
+    ``PrincipalRegistry`` consulted at registration so key issuance
+    respects the deployment's principal/role/agent_id authorizations.
+    Without one, any (principal, agent_id) registers -- the same
+    explicit deployment-trust residual as identity.py's dev mode.
+    """
+
+    def __init__(self, principal_registry=None):
+        self._principal_registry = principal_registry
+        self._keys = {}  # key_id -> {"agent_id", "principal", "seed", "pub"}
+
+    def register_agent(self, principal, agent_id, role="agent"):
+        """Mint a keypair for (principal, agent_id); returns the key_id.
+
+        Refuses: unregistered principals (via the PrincipalRegistry),
+        duplicate agent_id registration, malformed agent_id. The seed
+        never leaves this object.
+        """
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError("agent_id must be a non-empty string")
+        agent_id = agent_id.strip()
+        if not isinstance(principal, str) or not principal.strip():
+            raise ValueError("principal must be a non-empty string")
+        if self._principal_registry is not None:
+            self._principal_registry.check_identity(
+                principal, role, agent_id)
+        if any(rec["agent_id"] == agent_id for rec in self._keys.values()):
+            raise DuplicateAgentRegistrationError(
+                "agent_id %r is already registered to a key; "
+                "re-registration is refused" % agent_id)
+        seed = _ed.generate_seed()
+        pub = _ed.publickey(seed)
+        key_id = _key_id_for_pubkey(pub)
+        self._keys[key_id] = {"agent_id": agent_id,
+                              "principal": principal.strip(),
+                              "seed": seed, "pub": pub}
+        return key_id
+
+    def key_handle(self, agent_id):
+        """The signing handle for an agent: seals messages only as its
+        own agent_id. Raises KeyError for unregistered agent_ids."""
+        for key_id, rec in self._keys.items():
+            if rec["agent_id"] == agent_id:
+                return AgentSigningHandle(agent_id, key_id, self)
+        raise KeyError("agent_id %r has no issued key" % (agent_id,))
+
+    def public_key_for(self, key_id):
+        """32-byte public key for a key_id, or None if unknown."""
+        rec = self._keys.get(key_id)
+        return rec["pub"] if rec else None
+
+    def agent_for_key(self, key_id):
+        """The agent_id a key_id is bound to, or None if unknown."""
+        rec = self._keys.get(key_id)
+        return rec["agent_id"] if rec else None
+
+    def registered_key_ids(self):
+        return set(self._keys)
+
+    # Private seam: only AgentSigningHandle calls this. The handle
+    # never sees seed material.
+    def _sign_for(self, agent_id, data):
+        for rec in self._keys.values():
+            if rec["agent_id"] == agent_id:
+                return _ed.sign(rec["seed"], data)
+        raise KeyError("agent_id %r has no issued key" % (agent_id,))
+
+
+class AgentSigningHandle(object):
+    """What an agent holds: the ability to seal messages as its own
+    agent_id, nothing more. ``sender`` is stamped from the binding, not
+    from a caller argument, so a compromised agent process cannot sign
+    as another agent through this handle. No seed/private-key
+    attribute exists on this object by design."""
+
+    def __init__(self, agent_id, key_id, registry):
+        self._agent_id = agent_id
+        self._key_id = key_id
+        self._registry = registry
+
+    @property
+    def agent_id(self):
+        return self._agent_id
+
+    @property
+    def key_id(self):
+        return self._key_id
+
+    def seal(self, body, seq, nonce=None):
+        """Seal a message body into a signed envelope.
+
+        ``body``: JSON-serializable dict (the full message). ``seq``:
+        the sender's per-sender sequence int (>= 0). ``nonce``: optional
+        32-hex-char freshness value; generated when omitted.
+        """
+        if not isinstance(body, dict):
+            raise TypeError("body must be a dict")
+        if not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+            raise ValueError("seq must be a non-negative int")
+        if nonce is None:
+            nonce = secrets.token_bytes(_NONCE_BYTES).hex()
+        if not isinstance(nonce, str):
+            raise TypeError("nonce must be a hex string")
+        payload = {"v": _ENVELOPE_VERSION,
+                   "sender": self._agent_id,
+                   "key_id": self._key_id,
+                   "seq": seq,
+                   "nonce": nonce,
+                   "body": body}
+        # Fail fast on non-serializable bodies before signing.
+        _canonical_bytes(payload)
+        sig = self._registry._sign_for(
+            self._agent_id, _DOMAIN + _canonical_bytes(payload))
+        payload["sig"] = sig.hex()
+        return payload
+
+    def __repr__(self):
+        return "AgentSigningHandle(agent_id=%r, key_id=%r)" % (
+            self._agent_id, self._key_id)
+
+
+class ReplayCache(object):
+    """Bounded per-key replay state: seen nonces + last sequence.
+
+    ``check_and_record`` raises ``IdentityRejection`` for a repeated
+    nonce (``replayed_nonce``) or a sequence at/below the last seen for
+    that key (``stale_sequence``), and records fresh (nonce, seq)
+    otherwise. The nonce set is bounded (oldest-first eviction); the
+    eviction residual is documented in the module docstring.
+    """
+
+    def __init__(self, max_nonces_per_key=4096):
+        if max_nonces_per_key < 1:
+            raise ValueError("max_nonces_per_key must be >= 1")
+        self._max = max_nonces_per_key
+        self._nonces = {}   # key_id -> OrderedDict nonce -> None
+        self._last_seq = {}  # key_id -> int
+
+    def check_and_record(self, key_id, nonce, seq):
+        seen = self._nonces.setdefault(key_id, OrderedDict())
+        if nonce in seen:
+            raise IdentityRejection(
+                "replayed_nonce",
+                "nonce %s... already seen for key %s"
+                % (nonce[:8], key_id))
+        last = self._last_seq.get(key_id)
+        if last is not None and seq <= last:
+            raise IdentityRejection(
+                "stale_sequence",
+                "seq %d <= last seen %d for key %s"
+                % (seq, last, key_id))
+        seen[nonce] = None
+        while len(seen) > self._max:
+            seen.popitem(last=False)
+        self._last_seq[key_id] = seq
+
+
+def _reject(reason, detail, envelope, log, run_id):
+    claimed = envelope.get("sender") if isinstance(envelope, dict) \
+        else None
+    if log is not None:
+        log.append({
+            "event": "identity_message_rejected",
+            "run_id": run_id,
+            "agent_id": claimed,
+            "decision": "rejected",
+            "policy_id": "inter-agent-identity-binding",
+            "reason": reason,
+            "detail": detail,
+            "key_id": envelope.get("key_id")
+            if isinstance(envelope, dict) else None,
+        })
+    raise IdentityRejection(reason, detail)
+
+
+def verify_message(envelope, registry, replay_cache, log=None, run_id=""):
+    """Verify a sealed inter-agent envelope. Returns the accepted
+    message dict ``{"agent_id", "key_id", "seq", "nonce", "body"}``.
+
+    Rejections raise ``IdentityRejection`` with a machine-readable
+    ``reason``; when ``log`` (a chained ActionLog) is supplied, every
+    rejection first appends an ``identity_message_rejected`` audit event
+    (fail-closed: a logging failure never converts a reject into an
+    accept). Malformed envelopes raise with reason
+    ``malformed_envelope`` -- never an accept.
+
+    Check order is structural-first: malformed -> unsigned ->
+    unknown_key -> unbound_key -> bad_signature -> replay/freshness.
+    """
+    if not isinstance(envelope, dict):
+        _reject("malformed_envelope", "envelope is not a dict",
+                envelope, log, run_id)
+    body = {k: v for k, v in envelope.items() if k != "sig"}
+    sender = envelope.get("sender")
+    key_id = envelope.get("key_id")
+    nonce = envelope.get("nonce")
+    seq = envelope.get("seq")
+    sig_hex = envelope.get("sig")
+    msg_body = envelope.get("body")
+    malformed = (
+        envelope.get("v") != _ENVELOPE_VERSION
+        or not isinstance(sender, str) or not sender
+        or not isinstance(key_id, str) or not key_id
+        or not isinstance(nonce, str) or not nonce
+        or not isinstance(seq, int) or isinstance(seq, bool) or seq < 0
+        or not isinstance(msg_body, dict)
+    )
+    if malformed:
+        _reject("malformed_envelope",
+                "envelope failed structural validation", envelope,
+                log, run_id)
+    if not isinstance(sig_hex, str) or not sig_hex:
+        _reject("unsigned", "no signature present", envelope, log, run_id)
+    pub = registry.public_key_for(key_id)
+    if pub is None:
+        _reject("unknown_key", "key_id %r not issued by this registry"
+                % (key_id,), envelope, log, run_id)
+    if registry.agent_for_key(key_id) != sender:
+        _reject("unbound_key",
+                "key %s is bound to %r, not to claimed sender %r"
+                % (key_id, registry.agent_for_key(key_id), sender),
+                envelope, log, run_id)
+    try:
+        sig = bytes.fromhex(sig_hex)
+    except ValueError:
+        sig = None
+    if sig is None or not _ed.verify(
+            pub, _DOMAIN + _canonical_bytes(body), sig):
+        _reject("bad_signature",
+                "signature does not verify over the full envelope body",
+                envelope, log, run_id)
+    try:
+        replay_cache.check_and_record(key_id, nonce, seq)
+    except IdentityRejection as e:
+        _reject(e.reason, e.detail, envelope, log, run_id)
+    return {"agent_id": sender, "key_id": key_id, "seq": seq,
+            "nonce": nonce, "body": msg_body}
