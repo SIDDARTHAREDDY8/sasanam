@@ -42,11 +42,25 @@ def _candidate(tag, tamper=b""):
     return root
 
 
-def _paths(cand):
+def _paths(cand, release_id="rel-t"):
+    paths = {
+        "code_dir": str(cand / "code"),
+        "eval_results_path": str(cand / "eval_results.json"),
+        "sar_path": str(cand / "sar.md"),
+    }
+    if release_id is not None:
+        paths["release_id"] = release_id
+    return paths
+
+
+def _ship_kwargs(cand, anchor):
+    # ship_release takes no release_id: the record's MAC-bound args are
+    # authoritative; the caller never supplies one.
     return {
         "code_dir": str(cand / "code"),
         "eval_results_path": str(cand / "eval_results.json"),
         "sar_path": str(cand / "sar.md"),
+        "dest_dir": str(anchor),
     }
 
 
@@ -59,8 +73,8 @@ class _Ctx:
         self.executor = self.ctx["executor"]
         self.cand = _candidate(tag)
         self.approval_id = ra.propose_release(
-            self.queue, self.executor, release_id=release_id,
-            eligible_principals=eligible, **_paths(self.cand))
+            self.queue, self.executor,
+            eligible_principals=eligible, **_paths(self.cand, release_id))
 
     def voter(self, principal):
         return self.executor.mint_identity("v-%s" % principal, "voter",
@@ -96,22 +110,22 @@ class TestDigests(unittest.TestCase):
 
     def test_bit_flip_anywhere_changes_release_digest(self):
         cand = _candidate("flip")
-        base = ra.compute_candidate(**_paths(cand))
+        base = ra.compute_candidate(**_paths(cand, "flip"))
         # flip one bit in the code tree
         (cand / "code" / "lib.py").write_bytes(b"VERSION = 'tX'\n")
-        changed_code = ra.compute_candidate(**_paths(cand))
+        changed_code = ra.compute_candidate(**_paths(cand, "flip"))
         self.assertNotEqual(base["release_digest"],
                             changed_code["release_digest"])
         # flip one bit in the eval results
         (cand / "eval_results.json").write_text(
             json.dumps({"release": "t", "pass": False}), encoding="utf-8")
-        changed_eval = ra.compute_candidate(**_paths(cand))
+        changed_eval = ra.compute_candidate(**_paths(cand, "flip"))
         self.assertNotEqual(changed_code["release_digest"],
                             changed_eval["release_digest"])
         # flip one bit in the SAR
         (cand / "sar.md").write_text("# SAR\n\nrelease t: FAIL\n",
                                      encoding="utf-8")
-        changed_sar = ra.compute_candidate(**_paths(cand))
+        changed_sar = ra.compute_candidate(**_paths(cand, "flip"))
         self.assertNotEqual(changed_eval["release_digest"],
                             changed_sar["release_digest"])
 
@@ -120,7 +134,8 @@ class TestDigests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ra.compute_candidate(str(cand / "code"),
                                  str(cand / "eval_results.json"),
-                                 str(cand / "missing-sar.md"))
+                                 str(cand / "missing-sar.md"),
+                                 release_id="req")
 
 
 class TestPropose(unittest.TestCase):
@@ -130,7 +145,7 @@ class TestPropose(unittest.TestCase):
         with self.assertRaises(ValueError):
             ra.propose_release(ctx["approvals"], ctx["executor"],
                                release_id="r", eligible_principals=ELIGIBLE,
-                               min_approvals=1, **_paths(cand))
+                               min_approvals=1, **_paths(cand, None))
 
     def test_refuses_requester_in_eligible_set(self):
         ctx = make_run()
@@ -140,7 +155,7 @@ class TestPropose(unittest.TestCase):
                                release_id="r",
                                eligible_principals=["release-manager",
                                                     "ra-bob"],
-                               **_paths(cand))
+                               **_paths(cand, None))
 
     def test_queued_record_is_quorum_collecting_with_bound_digest(self):
         c = _Ctx(tag="bound")
@@ -149,7 +164,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(rec["quorum"]["min_approvals"], 2)
         self.assertEqual(
             rec["args"]["release_digest"],
-            ra.compute_candidate(**_paths(c.cand))["release_digest"])
+            ra.compute_candidate(**_paths(c.cand, "rel-t"))["release_digest"])
 
 
 class TestCeremony(unittest.TestCase):
@@ -171,7 +186,7 @@ class TestCeremony(unittest.TestCase):
         rec, finalized = c.vote("ra-bob")
         self.assertTrue(finalized)
         self.assertEqual(rec["status"], "approved")
-        want = ra.compute_candidate(**_paths(c.cand))["release_digest"]
+        want = ra.compute_candidate(**_paths(c.cand, "rel-t"))["release_digest"]
         granted = [e for e in read_entries(c.queue.log.path)
                    if e.get("event") == "release_approval_granted"
                    and e.get("approval_id") == c.approval_id]
@@ -290,7 +305,7 @@ class TestShip(unittest.TestCase):
         dest = Path(tempfile.mkdtemp(prefix="ra-ship-"))
         with self.assertRaises(ra.ReleaseNotApproved):
             ra.ship_release(queue=c.queue, approval_id=c.approval_id,
-                            dest_dir=str(dest), **_paths(c.cand))
+                            **_ship_kwargs(c.cand, dest))
         self.assertEqual(list(dest.iterdir()), [])
 
     def test_ship_copies_verified_release(self):
@@ -299,13 +314,95 @@ class TestShip(unittest.TestCase):
         c.vote("ra-bob")
         dest = Path(tempfile.mkdtemp(prefix="ra-ship-"))
         shipped = ra.ship_release(queue=c.queue, approval_id=c.approval_id,
-                                  dest_dir=str(dest), **_paths(c.cand))
+                                  **_ship_kwargs(c.cand, dest))
         self.assertTrue((shipped / "code" / "main.py").is_file())
         self.assertTrue((shipped / "eval_results.json").is_file())
         self.assertTrue((shipped / "sar.md").is_file())
         with self.assertRaises(ra.ReleaseNotApproved):
             ra.ship_release(queue=c.queue, approval_id=c.approval_id,
-                            dest_dir=str(dest), **_paths(c.cand))
+                            **_ship_kwargs(c.cand, dest))
+
+
+class TestF153ReleaseIdTraversal(unittest.TestCase):
+    """F153: the release_id must be digest-bound and ship-contained.
+
+    Red-first: on the unmodified tree, test_traversal_* FAIL because
+    ship_release writes the quorum-approved bytes outside dest_dir;
+    test_release_id_bound_into_digest FAILS because the digest ignores
+    the id; the verify_release release_id-param tests FAIL because the
+    seam does not exist yet. The legit-ship test is the control.
+    """
+
+    def _approved_with_id(self, tag, release_id):
+        ctx = make_run()
+        cand = _candidate(tag)
+        approval_id = ra.propose_release(
+            ctx["approvals"], ctx["executor"],
+            eligible_principals=ELIGIBLE, **_paths(cand, release_id))
+        for p in ("ra-alice", "ra-bob"):
+            ident = ctx["executor"].mint_identity("v-%s" % p, "voter", p)
+            ra.record_release_vote(ctx["approvals"], approval_id, ident,
+                                   True, "reviewed evidence for %s" % p)
+        return ctx, cand, approval_id
+
+    def test_traversal_release_id_ship_refused_and_contained(self):
+        ctx, cand, approval_id = self._approved_with_id(
+            "f153a", "../f153-escape")
+        anchor = Path(tempfile.mkdtemp(prefix="ra-f153-"))
+        with self.assertRaises(ra.ReleaseNotApproved):
+            ra.ship_release(queue=ctx["approvals"], approval_id=approval_id,
+                            **_ship_kwargs(cand, anchor))
+        # Nothing landed outside the anchor, and nothing landed inside it.
+        self.assertFalse((anchor.parent / "f153-escape").exists())
+        self.assertEqual(list(anchor.iterdir()), [])
+
+    def test_nested_traversal_variant_refused(self):
+        ctx, cand, approval_id = self._approved_with_id(
+            "f153b", "a/../../f153-escape2")
+        anchor = Path(tempfile.mkdtemp(prefix="ra-f153-"))
+        with self.assertRaises(ra.ReleaseNotApproved):
+            ra.ship_release(queue=ctx["approvals"], approval_id=approval_id,
+                            **_ship_kwargs(cand, anchor))
+        self.assertFalse((anchor.parent / "f153-escape2").exists())
+        self.assertEqual(list(anchor.iterdir()), [])
+
+    def test_release_id_bound_into_digest(self):
+        cand = _candidate("f153c")
+        d1 = ra.compute_candidate(
+            **_paths(cand, "rel-one"))["release_digest"]
+        d2 = ra.compute_candidate(
+            **_paths(cand, "rel-two"))["release_digest"]
+        self.assertNotEqual(d1, d2)
+
+    def test_verify_release_rejects_mismatched_release_id(self):
+        ctx, cand, approval_id = self._approved_with_id(
+            "f153d", "rel-match")
+        ok, reason = ra.verify_release(
+            queue=ctx["approvals"], approval_id=approval_id,
+            release_id="rel-other", **_paths(cand, None))
+        self.assertFalse(ok)
+        self.assertIn("release_id", reason)
+
+    def test_verify_release_accepts_matching_release_id(self):
+        ctx, cand, approval_id = self._approved_with_id(
+            "f153e", "rel-ok")
+        ok, reason = ra.verify_release(
+            queue=ctx["approvals"], approval_id=approval_id,
+            release_id="rel-ok", **_paths(cand, None))
+        self.assertTrue(ok, reason)
+
+    def test_legit_release_still_ships(self):
+        # Control: passes before and after the fix.
+        ctx, cand, approval_id = self._approved_with_id(
+            "f153f", "rel-legit")
+        anchor = Path(tempfile.mkdtemp(prefix="ra-f153-"))
+        shipped = ra.ship_release(queue=ctx["approvals"],
+                                  approval_id=approval_id,
+                                  **_ship_kwargs(cand, anchor))
+        self.assertEqual(shipped, anchor / "rel-legit")
+        self.assertTrue((shipped / "code" / "main.py").is_file())
+        self.assertTrue((shipped / "eval_results.json").is_file())
+        self.assertTrue((shipped / "sar.md").is_file())
 
 
 if __name__ == "__main__":

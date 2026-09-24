@@ -52,8 +52,8 @@ Policy outcomes:
   deny             -> do not execute, log "denied"
   require_approval -> do not execute; queue for a human, log "queued_pending".
                      After human approval, execute_approved() re-validates
-                     (expiry, integrity, current policy) and logs
-                     "approved_executed".
+                     (expiry, integrity, current policy, capability
+                     assessment) and logs "approved_executed".
 """
 
 import json
@@ -5592,9 +5592,9 @@ class ToolExecutor:
 
         Each approval is re-validated at execution time: expiry, integrity
         of the queued arguments, the run it was approved for (F38), the
-        policy it was approved under, and a fresh policy evaluation. Any
-        failure refuses the execution and logs why. Returns the list of
-        executed actions.
+        policy it was approved under, the capability assessment (F152),
+        and a fresh policy evaluation. Any failure refuses the execution
+        and logs why. Returns the list of executed actions.
 
         D1 bridges (wave-24): records queued via
         ``ApprovalQueue.queue_external`` carry ``bridge_id`` and are
@@ -6259,6 +6259,39 @@ class ToolExecutor:
                             "execution (%s)." % (aid, e),
                             "delegation_invalid_at_execution",
                             policy_id="delegation-execution-refused")
+                    continue
+
+            # F152 (wave-101): re-verify the capability gate at the
+            # actual execution boundary (TOCTOU guard). The call() path
+            # verifies the assessment on every call, but this sweep
+            # previously executed with no check at all: an assessment
+            # removed, expired, or downgraded between approval and the
+            # sweep still executed. The gate's contract is current-state
+            # verification — assessment exists, fresh, bound to this
+            # harness (id + config digest), report digest matching,
+            # sealed by a trusted key, aggregate verdict SUFFICIENT —
+            # so the same verify_assessment the call path enforces runs
+            # here. Like the F135 delegation re-validation above, the
+            # queued record stores no assessment reference: a refusal
+            # leaves the record approved-but-unexecuted (fail-safe,
+            # retriable — a fresh assessment lets a later sweep execute
+            # it). Executors with no gate bound (raw pipeline or
+            # acknowledged-ungoverned mode) have no gate to re-run and
+            # keep today's behavior.
+            if self._capability_gate_binding is not None:
+                try:
+                    _capability_gate.verify_assessment(
+                        self._capability_gate_binding,
+                        self._capability_assessment)
+                except _capability_gate.CapabilityGateRefusal as e:
+                    _refuse("Approval %s refused: the capability "
+                            "assessment does not verify at the execution "
+                            "boundary (%s: %s) — a bound, fresh, sealed "
+                            "SUFFICIENT assessment is required for "
+                            "governed execution." % (aid, e.refusal_cause,
+                                                     e),
+                            "capability_gate_failed_at_execution",
+                            policy_id="capability-gate-execution-refused")
                     continue
 
             # Write-ahead audit (fail-closed): the authorization is durably

@@ -9,7 +9,8 @@ path for anyone who must answer "was this release actually approved?".
 The ceremony
 ------------
 1. ``propose_release`` computes the release digest (code tree + eval
-   results + safeguard assessment report) and queues a ``ship_release``
+   results + safeguard assessment report + release_id, F153) and queues
+   a ``ship_release``
    approval through the existing queue with a quorum config of at
    least 2-of-N installed. The quorum snapshot is MAC-bound to the
    record at queue time by the queue itself.
@@ -40,6 +41,7 @@ Break battery: evals/release_approval_break_battery.py
 """
 
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -53,6 +55,12 @@ from .policy import PolicyDecision
 RELEASE_TOOL = "ship_release"
 RELEASE_POLICY_ID = "release-approval"
 RELEASE_POLICY_FLAG = "release_approval"
+
+# A release_id names the shipped directory (<dest_dir>/<release_id>), so
+# it is a single path segment by construction: no separators, no parent
+# references, no leading dot, bounded length. Anything else is refused
+# at the ship seam (fail closed, loudly) — see validate_release_id.
+_RELEASE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # The primitive refuses to install a quorum weaker than this. One-party
 # approval must never suffice for a release.
@@ -118,32 +126,68 @@ def tree_digest(root):
     return h.hexdigest()
 
 
-def release_digest(tree_hex, eval_hex, sar_hex):
-    """Combine the three sub-digests into one release digest.
+def release_digest(tree_hex, eval_hex, sar_hex, *, release_id):
+    """Combine the three sub-digests plus the release_id into one digest.
 
-    Domain-separated SHA-256 over (tree, eval-results, SAR). Any bit
-    flip in any of the three changes the release digest.
+    Domain-separated SHA-256 over (tree, eval-results, SAR,
+    release_id) — the ``release/v2`` combiner. The release_id is bound
+    with an explicit length prefix so (\"ab\", \"c\") and (\"a\", \"bc\")
+    can never collide. Any bit flip in any of the four inputs changes
+    the digest, so a quorum approval for release_id X can never be
+    transplanted onto release_id Y, and the id the humans approved is
+    part of what ``verify_release`` recomputes. (F153: the v1 combiner
+    bound only the three bit-inputs, leaving the id — and therefore the
+    ship destination — outside the digest.)
     """
     for label, value in (("tree", tree_hex), ("eval", eval_hex),
                          ("sar", sar_hex)):
         if not isinstance(value, str) or len(value) != 64:
             raise ValueError(
                 "release_digest: %s digest must be 64-char hex" % label)
+    if not isinstance(release_id, str):
+        raise ValueError(
+            "release_digest: release_id must be a string, got %s"
+            % type(release_id).__name__)
+    rid_b = release_id.encode("utf-8")
     h = sha256(_DIGEST_DOMAIN)
-    h.update(b"release/v1\x00")
+    h.update(b"release/v2\x00")
     for value in (tree_hex, eval_hex, sar_hex):
         h.update(bytes.fromhex(value))
+    h.update(len(rid_b).to_bytes(4, "big"))
+    h.update(rid_b)
     return h.hexdigest()
 
 
-def compute_candidate(code_dir, eval_results_path, sar_path):
-    """Digest a release candidate; returns the four digests.
+def validate_release_id(release_id):
+    """Check a release_id against the safe single-segment charset.
+
+    Returns the id unchanged when it is a non-empty string of
+    ``[A-Za-z0-9._-]`` (not starting with a dot, no ``..`` anywhere,
+    max 128 chars); raises :class:`ValueError` loudly otherwise. A
+    release_id becomes a directory name under the ship destination, so
+    path separators, parent references, and empty ids are never valid.
+    """
+    if not isinstance(release_id, str):
+        raise ValueError(
+            "release_id must be a string, got %s" % type(release_id).__name__)
+    if not _RELEASE_ID_RE.match(release_id) or ".." in release_id:
+        raise ValueError(
+            "release_id %r is not a safe single path segment "
+            "(allowed: 1-128 chars of [A-Za-z0-9._-], no leading dot, "
+            "no '..', no separators)" % (release_id,))
+    return release_id
+
+
+def compute_candidate(code_dir, eval_results_path, sar_path, *,
+                      release_id):
+    """Digest a release candidate; returns the five digests.
 
     ``code_dir`` is the release's code tree; ``eval_results_path`` is
     the eval-results file (e.g. the stratified battery results); and
     ``sar_path`` is the safeguard assessment report. All three are
     required — a release with no eval evidence or no SAR cannot be
-    proposed.
+    proposed. ``release_id`` is required and is bound into the release
+    digest (F153), so the approval covers the exact id being shipped.
     """
     for label, path in (("eval_results", eval_results_path),
                         ("sar", sar_path)):
@@ -158,13 +202,17 @@ def compute_candidate(code_dir, eval_results_path, sar_path):
         "tree_digest": tree_hex,
         "eval_results_digest": eval_hex,
         "sar_digest": sar_hex,
-        "release_digest": release_digest(tree_hex, eval_hex, sar_hex),
+        "release_id": release_id,
+        "release_digest": release_digest(tree_hex, eval_hex, sar_hex,
+                                         release_id=release_id),
     }
 
 
-def _candidate_or_none(code_dir, eval_results_path, sar_path):
+def _candidate_or_none(code_dir, eval_results_path, sar_path, *,
+                       release_id):
     try:
-        return compute_candidate(code_dir, eval_results_path, sar_path)
+        return compute_candidate(code_dir, eval_results_path, sar_path,
+                                 release_id=release_id)
     except (ValueError, OSError):
         return None
 
@@ -209,7 +257,8 @@ def propose_release(queue, executor, *, code_dir, eval_results_path,
         raise ValueError(
             "propose_release: the requester can never be in the eligible "
             "set (separation of duties)")
-    candidate = compute_candidate(code_dir, eval_results_path, sar_path)
+    candidate = compute_candidate(code_dir, eval_results_path, sar_path,
+                                  release_id=release_id)
     queue.set_quorum_config({
         "min_approvals": min_approvals,
         "eligible_principals": eligible,
@@ -315,7 +364,8 @@ def _parse_ts(ts):
 
 
 def verify_release(*, queue, approval_id, code_dir, eval_results_path,
-                   sar_path, max_age_hours=DEFAULT_APPROVAL_TTL_HOURS):
+                   sar_path, max_age_hours=DEFAULT_APPROVAL_TTL_HOURS,
+                   release_id=None):
     """Verify a release candidate against its chained approval.
 
     Recomputes the release digest from the candidate, re-reads the
@@ -324,33 +374,33 @@ def verify_release(*, queue, approval_id, code_dir, eval_results_path,
 
     1. the record exists and its keyed integrity digest verifies
        (forged or tampered records fail here);
-    2. the recomputed release digest equals the digest bound in the
-       record's MACed args (replay / transplant across digests fails);
-    3. the record is finalized ``approved`` under ``decision_mode ==
+    2. when the caller supplies ``release_id`` (the id the caller
+       EXPECTS to ship), it equals the record's MAC-bound release_id
+       (an approval for id X can never verify a candidate presented
+       as id Y);
+    3. the recomputed release digest — which binds the record's
+       release_id alongside tree/eval/SAR (F153) — equals the digest
+       bound in the record's MACed args (replay / transplant across
+       digests or ids fails);
+    4. the record is finalized ``approved`` under ``decision_mode ==
        "quorum"`` (single-approver / direct-decide attempts fail);
-    4. the MAC-bound quorum snapshot requires at least
+    5. the MAC-bound quorum snapshot requires at least
        ``MIN_QUORUM_APPROVALS`` and at least that many DISTINCT
        approval votes from eligible principals are present (no deny
        votes);
-    5. a matching ``release_approval_granted`` event is chained in the
+    6. a matching ``release_approval_granted`` event is chained in the
        audit log binding the same approval id and release digest — or,
        when humans voted through the queue's own surfaces (e.g. the
        ``gov.approve`` CLI), the queue's native ``quorum_finalized``
        entry for the approval id (the digest binding then rides the
        MAC-verified record's args);
-    6. the audit-log chain fully verifies;
-    7. the approval is within ``max_age_hours`` of its decision.
+    7. the audit-log chain fully verifies;
+    8. the approval is within ``max_age_hours`` of its decision.
 
     Returns ``(True, reason)`` when every check passes, else
     ``(False, reason)``. Fails closed: any mismatch, missing entry, or
     unverifiable chain is a refusal, never a warning.
     """
-    candidate = _candidate_or_none(code_dir, eval_results_path, sar_path)
-    if candidate is None:
-        return False, ("release candidate is incomplete or unreadable "
-                        "(code_dir, eval_results, and SAR are all required); "
-                        "refusing")
-    want = candidate["release_digest"]
     record = queue.get(approval_id)
     if record is None:
         return False, "no such release approval %r" % (approval_id,)
@@ -359,6 +409,24 @@ def verify_release(*, queue, approval_id, code_dir, eval_results_path,
                         "was forged or tampered with after queueing" %
                         (approval_id,))
     args = record.get("args") or {}
+    record_id = args.get("release_id")
+    if release_id is not None and str(release_id) != str(record_id):
+        return False, ("release_id mismatch: the caller expects %r but the "
+                        "approval binds %r — approvals never transfer "
+                        "across release ids"
+                        % (release_id, record_id))
+    try:
+        record_id = validate_release_id(record_id)
+    except ValueError as e:
+        return False, ("release approval %r binds an unsafe release_id: "
+                        "%s; refusing" % (approval_id, e))
+    candidate = _candidate_or_none(code_dir, eval_results_path, sar_path,
+                                   release_id=record_id)
+    if candidate is None:
+        return False, ("release candidate is incomplete or unreadable "
+                        "(code_dir, eval_results, and SAR are all required); "
+                        "refusing")
+    want = candidate["release_digest"]
     bound = args.get("release_digest")
     if bound != want:
         return False, ("release digest mismatch: the approval binds %s but "
@@ -448,6 +516,13 @@ def ship_release(*, queue, approval_id, code_dir, eval_results_path,
     on ANY mismatch. On success, copies the candidate into
     ``<dest_dir>/<release_id>/`` (code tree + eval results + SAR) and
     returns the release directory path.
+
+    F153 containment: the release_id comes from the record's MAC-bound
+    args (never from the caller), must pass ``validate_release_id``
+    (single safe path segment), and the resolved destination must be a
+    strict descendant of the resolved ``dest_dir`` — a hostile id like
+    ``../escape`` is refused loudly instead of writing outside the
+    destination, even though its digest verified.
     """
     ok, reason = verify_release(
         queue=queue, approval_id=approval_id, code_dir=code_dir,
@@ -457,8 +532,20 @@ def ship_release(*, queue, approval_id, code_dir, eval_results_path,
         raise ReleaseNotApproved(
             "ship refused for approval %r: %s" % (approval_id, reason))
     record = queue.get(approval_id)
-    release_id = (record.get("args") or {}).get("release_id") or approval_id
-    dest = Path(dest_dir) / str(release_id)
+    raw_id = (record.get("args") or {}).get("release_id")
+    try:
+        safe_id = validate_release_id(raw_id)
+    except ValueError as e:
+        raise ReleaseNotApproved(
+            "ship refused for approval %r: unsafe release_id: %s"
+            % (approval_id, e))
+    anchor = Path(dest_dir).resolve()
+    dest = (anchor / safe_id).resolve()
+    if dest == anchor or anchor not in dest.parents:
+        raise ReleaseNotApproved(
+            "ship refused for approval %r: resolved destination %s is not "
+            "inside dest_dir %s (release_id %r escapes containment)"
+            % (approval_id, dest, anchor, raw_id))
     if dest.exists():
         raise ReleaseNotApproved(
             "ship refused: destination %s already exists (refusing to "

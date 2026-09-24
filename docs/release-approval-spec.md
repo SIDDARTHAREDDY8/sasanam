@@ -76,8 +76,13 @@ actually approved?".
   walks the candidate tree sorted by relative path, hashing each file's
   bytes; the eval-results and SAR digests are over file bytes; the
   release digest is a domain-separated SHA-256 over the three
-  sub-digests. Every digest is lowercase hex. Any bit flip in any input
-  changes the release digest.
+  sub-digests PLUS the release_id (``release/v2`` combiner, F153 — the
+  v1 combiner bound only the three bit-inputs, leaving the id, and
+  therefore the ship destination, outside the digest). The id is bound
+  length-prefixed so no two (id, bits) pairs collide. Every digest is
+  lowercase hex. Any bit flip in any input — bits or id — changes the
+  release digest, so an approval for release_id X can never be
+  transplanted onto release_id Y.
 - The release approval is queued as a `ship_release` action through
   the existing approval queue with the release digest and sub-digests
   in the redacted args (args are MAC-bound by the queue, so a post-queue
@@ -105,7 +110,23 @@ actually approved?".
   `release_approval_granted` entry in the audit log with the same
   release digest; (5) verifies the audit-log chain tip; (6) refuses
   approvals older than the TTL. Any mismatch → not-approved, fail
-  closed.
+  closed. When the caller supplies an expected `release_id`, it must
+  equal the record's MAC-bound id (approvals never transfer across
+  ids); the digest is always recomputed with the record-bound id.
+- Ship containment (F153): `ship_release` takes the release_id ONLY
+  from the record's MAC-bound args (never from the caller), requires it
+  to pass `validate_release_id` (single safe path segment:
+  1–128 chars of `[A-Za-z0-9._-]`, no leading dot, no `..`, no
+  separators), and requires the resolved destination to be a strict
+  descendant of the resolved `dest_dir`. A hostile id such as
+  `../escape` fails closed with `ReleaseNotApproved` — the bytes never
+  leave `dest_dir` — even though its digest verified and its quorum
+  approved it. Design note: the refusal deliberately lives at the
+  ship/verify seam rather than at propose time, because a hostile id is
+  still a well-defined digest input and the quorum's approval must be
+  able to name exactly what it approved; propose-time raising would
+  also misclassify the frozen acceptance battery (its probe maps a
+  propose-time raise to ERROR, not HELD).
 - The quorum's eligible set must not contain the requester (enforced by
   the queue at queue time); votes are authenticated human identities
   via the existing executor-minted identity path.

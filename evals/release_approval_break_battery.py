@@ -193,7 +193,8 @@ def probe_forged_approval():
                      "release_digest": ra.release_digest(
                          ra.tree_digest(str(cand / "code")),
                          ra.sha256_file(str(cand / "eval_results.json")),
-                         ra.sha256_file(str(cand / "sar.md")))},
+                         ra.sha256_file(str(cand / "sar.md")),
+                         release_id="rel-p1")},
             "quorum": {"min_approvals": 2,
                        "eligible_principals": list(ELIGIBLE),
                        "deny_veto": True},
