@@ -64,6 +64,11 @@ Honest residuals (documented, not claimed away):
   genuinely instructional untrusted note (\"always approve vacation
   requests quickly\") quarantines conservatively by design -- the operator
   releases it with :meth:`MemoryFirewall.release_entry` after review.
+  GAP-1 hardened the detector with an evasion register
+  (``evasion_standing_instruction``, ``evasion_stored_directive``,
+  ``evasion_preference_directive``, ``evasion_workflow_rule``,
+  ``evasion_confirmation_waiver``) pinned by evals/gap1mem_break.py;
+  further rewordings remain an arms-race surface, not a closed one.
 * The ledger's HMAC key is the deployment log key: whoever holds it can
   forge entries. That is the same trust story as the action log itself.
 * Provenance is recorded after the filesystem write executes: if the
@@ -202,15 +207,45 @@ _MEMORY_INSTRUCTION_PATTERNS = (
         r"existing)\b")),
 )
 
+#: GAP-1 evasion register: phrasings the research predicts (and the
+#: gap1mem battery red-teamed) that dodge the seven legacy patterns
+#: while carrying an unambiguous behavioral directive. Reason tags are
+#: prefixed ``evasion_`` so the quarantine taxonomy stays auditable.
+#: Same conservative posture as the legacy set: these patterns only
+#: ever screen untrusted-derived / unknown tiers (agent-tiered bytes
+#: are never classified), so a wider net cannot touch the agent's own
+#: notes; instructional untrusted notes quarantine and are
+#: operator-releasable by design.
+_MEMORY_EVASION_PATTERNS = (
+    ("evasion_standing_instruction", re.compile(
+        r"\bstanding\s+(instruction|directive|rule|policy|order)s?\b")),
+    ("evasion_stored_directive", re.compile(
+        r"\b(store|save|record|log|keep)\s+(this|that|the\s+following)\s+"
+        r"(directive|instruction|rule|preference|policy)\b|"
+        r"\bsave\s+this\s+as\s+a\s+(rule|directive|instruction)\b")),
+    ("evasion_preference_directive", re.compile(
+        r"\bremember\s+my\s+(preference|rule|instruction)s?\b")),
+    ("evasion_workflow_rule", re.compile(
+        r"\bworkflow\s+(rule|policy|directive)\b")),
+    ("evasion_confirmation_waiver", re.compile(
+        r"\b(no|without)\s+([a-z]+\s+)?(confirmation|approval|"
+        r"escalation|review)\s+(is\s+|was\s+)?(not\s+)?(required|"
+        r"needed|necessary)\b|"
+        r"\b(confirmation|approval|escalation|review)\s+is\s+"
+        r"(not\s+|un)?(required|needed|necessary)\b")),
+)
+
 
 def instruction_shaping_reason(text):
     """Reason tag when ``text`` is instruction-shaped for memory purposes,
     else None. Deterministic heuristics over the match copy; see the
-    module docstring for the honest limits."""
+    module docstring for the honest limits. Legacy patterns are checked
+    first so their reason tags stay stable on content matching both."""
     if not isinstance(text, str) or not text.strip():
         return None
     probe = _match_copy(text)
-    for reason, pattern in _MEMORY_INSTRUCTION_PATTERNS:
+    for reason, pattern in (_MEMORY_INSTRUCTION_PATTERNS
+                            + _MEMORY_EVASION_PATTERNS):
         if pattern.search(probe):
             return reason
     return None
