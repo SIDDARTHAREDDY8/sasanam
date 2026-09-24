@@ -291,6 +291,85 @@ class LauncherUnitTests(unittest.TestCase):
         self.assertEqual(len(refusals), 1)
         self.assertEqual(refusals[0]["reason"], "preexec_recheck_failed")
 
+    def test_f149_chain_failure_raises_no_launch_event(self):
+        # F149: a child that dies in the embedder preexec_chain (after
+        # the F148 ack) must not leave a false egress_wall_launch
+        # event. launch() refuses (fail-closed, like the pre-ack EOF
+        # path) with a truthful preexec_chain_failed reason -- never
+        # preexec_recheck_failed (the re-check passed; the chain
+        # failed).
+        from gov.egress_launcher import PREEXEC_CHAIN_ABORT_CODE
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _boom():
+            raise RuntimeError("simulated chain failure")
+
+        sentinel = os.path.join(sim, "sentinel")
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.launch(
+                [sys.executable, "-c",
+                 "open(%r, 'w').write('x')" % sentinel],
+                preexec_chain=(_boom,))
+        self.assertIn("preexec_chain_failed", str(cm.exception))
+        self.assertNotIn("preexec_recheck_failed", str(cm.exception))
+        self.assertFalse(os.path.exists(sentinel))
+        self.assertEqual(PREEXEC_CHAIN_ABORT_CODE, 98)
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(launches, [])
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        self.assertEqual(len(refusals), 1)
+        self.assertEqual(refusals[0]["reason"], "preexec_chain_failed")
+
+    def test_f149_run_child_slow_chain_failure_truthful_reason(self):
+        # F149 slow path: Popen.__init__ blocks on its preexec error
+        # pipe until the chain completes, so even a slow chain failure
+        # is definitive by the time launch() regains control -- no
+        # launch event is emitted, only the truthful refusal.
+        # run_child() must refuse with preexec_chain_failed, never
+        # mislabel it preexec_recheck_failed.
+        import time
+        sim, fix, inv, events, launcher = self._up_wall()
+
+        def _slow_boom():
+            time.sleep(1.0)
+            raise RuntimeError("slow simulated chain failure")
+
+        with self.assertRaises(EgressLaunchRefused) as cm:
+            launcher.run_child(
+                [sys.executable, "-c", "pass"],
+                preexec_chain=(_slow_boom,), capture_output=True)
+        self.assertIn("preexec_chain_failed", str(cm.exception))
+        self.assertNotIn("preexec_recheck_failed", str(cm.exception))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(len(launches), 0)
+        refusals = [e for e in events
+                    if e["event"] == "egress_wall_launch_refused"]
+        reasons = [r["reason"] for r in refusals]
+        self.assertIn("preexec_chain_failed", reasons)
+
+    def test_f149_healthy_chain_still_emits_launch(self):
+        # Control: a healthy chain still yields exactly one launch
+        # event and the child exec's. (The chain runs in the child
+        # post-fork, so it signals via a file, not a parent list.)
+        sim, fix, inv, events, launcher = self._up_wall()
+        chain_marker = os.path.join(sim, "chain_marker")
+
+        def _ok():
+            with open(chain_marker, "w") as f:
+                f.write("x")
+
+        cp = launcher.run_child([sys.executable, "-c", "pass"],
+                                preexec_chain=(_ok,),
+                                capture_output=True)
+        self.assertEqual(cp.returncode, 0)
+        self.assertTrue(os.path.exists(chain_marker))
+        launches = [e for e in events
+                    if e["event"] == "egress_wall_launch"]
+        self.assertEqual(len(launches), 1)
+
     def test_popen_kwargs_helper_scrubs_and_marks(self):
         sim, fix, inv, events, launcher = self._up_wall()
         kw = launcher.popen_kwargs(

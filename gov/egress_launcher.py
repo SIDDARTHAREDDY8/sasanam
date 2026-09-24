@@ -76,6 +76,10 @@ class EgressLaunchRefused(RuntimeError):
     - ``preexec_recheck_failed`` — the wall flapped between the parent
       check and the child preexec; the child aborted before exec
       (exit 99) and nothing ungoverned ran.
+    - ``preexec_chain_failed`` — the embedder preexec_chain entry
+      failed AFTER the wall re-check passed (F149); the child aborted
+      before exec (exit 98) and nothing ungoverned ran. The re-check
+      itself passed — this is never a wall flap.
     - ``pin_authorship_invalid`` — the manifest's pin record is missing,
       not bound to the manifest payload it ships with, or lacks valid
       roster-human Ed25519 authorship (F138); legacy manifests without
@@ -819,6 +823,34 @@ _PROXY_ENV_NAMES = ("http_proxy", "https_proxy", "all_proxy", "no_proxy",
 # child before exec: observable by the parent, never a real exit code
 # of a launched workload.
 PREEXEC_ABORT_CODE = 99
+
+# F149: distinctive child exit code when an embedder preexec_chain
+# entry fails AFTER the wall re-check passed (i.e. after the F148 ack
+# was written). Distinct from PREEXEC_ABORT_CODE (99, re-check abort,
+# pre-ack) so the parent can tell "the wall flapped" from "the chain
+# broke" -- the audit refusal must name the true cause.
+PREEXEC_CHAIN_ABORT_CODE = 98
+
+# F149: post-ack chain-failure check. The F148 ack attests the wall
+# re-check, not the embedder chain (which runs after the ack; a
+# post-chain ack is impossible on pidns paths whose intermediate
+# _exits by design). Chain entries are synchronous pre-exec setup.
+# Popen.__init__ blocks on its preexec error pipe until the child's
+# preexec_fn completes, but returns on error-pipe EOF which can race
+# the child's actual exit -- so launch() does a brief (0.5s) wait for
+# a PREEXEC_CHAIN_ABORT_CODE (98) exit. A 98 means a chain entry
+# failed: refuse truthfully with no launch event (fail-closed,
+# mirroring the pre-ack EOF path). A child that survives the 0.5s --
+# or exits any other code (it exec'd) -- gets the witnessed launch
+# event. No 2-second grace: Popen already blocks through the chain.
+#
+# Explicit non-coverage (spec review): the sandbox's chain entry
+# (gov/sandbox.py) calls os._exit(127) -- not raise -- on hardening
+# failure, so the 98 path never engages there; a sandbox-layer failure
+# yields an unpaired egress_wall_launch (the sandbox's own 5-byte
+# status marker and _refuse_loud receipt remain that layer's audit
+# responsibility, per the F148 docstring carve-out). Only chain
+# entries that RAISE get the 98 treatment.
 
 # F148: deadline for the child's preexec ack byte. The ack follows
 # the provider's child_recheck(); the production provider's check
@@ -1966,8 +1998,9 @@ class FilteredEgressLauncher:
         death aborts before any embedder hardening; the chain (e.g. a
         sandbox's rlimit/pivot/pidns setup) runs after, still before
         exec. Chain entries are nullary callables; a chain failure
-        aborts the child loudly (exit 99) like a re-check failure --
-        nothing ungoverned runs. Embedders whose chain execs (rather
+        aborts the child loudly (exit 98, PREEXEC_CHAIN_ABORT_CODE --
+        distinct from the re-check abort's 99, F149) -- nothing
+        ungoverned runs. Embedders whose chain execs (rather
         than returning) must place their exec inside the chain: the
         re-check cannot run after a chain entry that never returns.
 
@@ -2017,13 +2050,17 @@ class FilteredEgressLauncher:
                 try:
                     fn()
                 except Exception as e:  # noqa: BLE001 - child must die
+                    # F149: chain failure exits 98 (PREEXEC_CHAIN_ABORT_CODE),
+                    # distinct from the re-check abort (99): the re-check
+                    # passed (the ack was already written); the embedder
+                    # chain broke. Nothing ungoverned runs.
                     try:
                         os.write(2, ("EGRESS-WALL preexec chain abort: "
                                      "%s\n"
                                      % e).encode("utf-8", "replace"))
                     except OSError:
                         pass
-                    os._exit(PREEXEC_ABORT_CODE)
+                    os._exit(PREEXEC_CHAIN_ABORT_CODE)
         return _child
 
     @staticmethod
@@ -2089,6 +2126,16 @@ class FilteredEgressLauncher:
         (``preexec_recheck_failed`` / ``preexec_recheck_timeout`` /
         ``preexec_child_died``).
 
+        F149: the ack attests the re-check, not the embedder chain.
+        After the ack, launch() observes the child for a short grace
+        (``_POST_ACK_CHAIN_GRACE_S``): a chain-entry failure (child
+        exit 98, ``PREEXEC_CHAIN_ABORT_CODE``) refuses truthfully with
+        ``preexec_chain_failed`` -- no launch event, fail-closed. A
+        chain that fails after the grace still yields a launch event
+        (the parent cannot distinguish a slow chain from an exec'd
+        child); ``run_child()`` then reports the truthful
+        ``preexec_chain_failed`` refusal when it reaps the 98.
+
         The provider's wrap_argv() places the child in the wall
         (identity for the sim; ``ip netns exec agent0 <helper>``
         for the production provider). agent_id / principal / run_id
@@ -2097,7 +2144,11 @@ class FilteredEgressLauncher:
         is a tuple of nullary callables an embedder (e.g.
         gov/sandbox.py) wants run in the child after the wall
         re-check, before exec; a chain failure aborts the child (exit
-        99) like a re-check failure. Remaining ``popen_kw`` go to
+        98, ``PREEXEC_CHAIN_ABORT_CODE``) -- F149: launch() refuses
+        truthfully (``preexec_chain_failed``) with no launch event if
+        the failure lands within the post-ack grace, and
+        ``run_child()`` reports it truthfully if it lands later.
+        Remaining ``popen_kw`` go to
         Popen (env and preexec_fn are owned by the launcher).
         """
         lock_fh = open(self.lock_path, "a+b")
@@ -2186,9 +2237,34 @@ class FilteredEgressLauncher:
             finally:
                 os.close(status_r)
             if witnessed:
-                # Ack received: the child's wall re-check passed.
+                # Ack received: the child's wall re-check passed. F149:
+                # the ack attests the re-check, NOT the embedder chain
+                # (which runs after the ack). Popen.__init__ blocks
+                # until preexec completes, but returns on error-pipe
+                # EOF which can race the child's actual exit: wait
+                # briefly for a 98 (chain-failed) exit. A 98 means a
+                # chain entry failed -- refuse truthfully with no
+                # launch event (fail-closed, mirroring the pre-ack EOF
+                # path). Timeout (child alive: it exec'd) or any other
+                # exit code gets the witnessed launch event below.
+                try:
+                    chain_rc = proc.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    chain_rc = None  # alive: chain done, exec'd
+                if chain_rc == PREEXEC_CHAIN_ABORT_CODE:
+                    self._emit({"event": "egress_wall_launch_refused",
+                                "reason": "preexec_chain_failed",
+                                "detail": ("embedder preexec_chain entry "
+                                           "failed after the wall "
+                                           "re-check passed; child "
+                                           "aborted before exec "
+                                           "(exit 98)"),
+                                "wall_id": self._wall_id})
+                    raise EgressLaunchRefused(
+                        "preexec_chain_failed: embedder preexec_chain "
+                        "entry failed after the wall re-check passed; "
+                        "child aborted before exec")
                 # Fall through to the witnessed launch event below.
-                pass
             elif witnessed is None:
                 # Truly hung in preexec: no ack and no EOF within the
                 # deadline. Kill it; nothing was exec'd (the ack is
@@ -2262,10 +2338,21 @@ class FilteredEgressLauncher:
 
     def run_child(self, argv, *, env=None, agent_id=None, principal=None,
                   run_id=None, **popen_kw):
-        """launch() then wait; maps preexec-abort (exit 99) to
+        """launch() then wait; maps preexec-abort exits to
         EgressLaunchRefused so callers can treat a mid-launch wall
-        death as a refusal, not a crash. ``capture_output=True`` is
-        honored (translated to pipes for Popen)."""
+        death or chain failure as a refusal, not a crash.
+        ``capture_output=True`` is honored (translated to pipes for
+        Popen).
+
+        F149: launch() only returns a proc after the child's preexec
+        ack (the wall re-check passed), so any preexec abort observed
+        here is a CHAIN failure, never a re-check failure. Exit 98
+        (``PREEXEC_CHAIN_ABORT_CODE``) maps to the truthful
+        ``preexec_chain_failed`` -- run_child() never mislabels it
+        ``preexec_recheck_failed``. (Exit 99 here is unreachable via
+        launch(), which raises on pre-ack re-check failure; it is
+        still mapped defensively.)
+        """
         popen_kw = dict(popen_kw)
         capture = popen_kw.pop("capture_output", False)
         text = popen_kw.pop("text", False)
@@ -2287,7 +2374,19 @@ class FilteredEgressLauncher:
                 out, err = proc.communicate(timeout=5)
             except Exception:
                 pass
+        if rc == PREEXEC_CHAIN_ABORT_CODE:
+            self._emit({"event": "egress_wall_launch_refused",
+                        "reason": "preexec_chain_failed",
+                        "detail": ("embedder preexec_chain entry failed; "
+                                   "child aborted before exec (exit 98)"),
+                        "wall_id": self._wall_id})
+            raise EgressLaunchRefused(
+                "preexec_chain_failed: embedder preexec_chain entry "
+                "failed; child aborted before exec")
         if rc == PREEXEC_ABORT_CODE:
+            # Unreachable via launch() (pre-ack re-check failure
+            # raises there); kept so a 99 observed by any other path
+            # still refuses fail-closed.
             self._emit({"event": "egress_wall_launch_refused",
                         "reason": "preexec_recheck_failed",
                         "wall_id": self._wall_id})
