@@ -427,6 +427,12 @@ class TestExecutorGovernedPath(unittest.TestCase):
         log = ActionLog(run_dir / "actions.jsonl")
         ex = ToolExecutor(run_dir, store.current_engine(), log,
                           ApprovalQueue(run_dir, log), policy_store=store,
+                          # F162: hermetic ledger inside the run dir —
+                          # the shared $TMPDIR ledger now carries
+                          # default-enforced velocity entries from other
+                          # modules under foreign test keys; the F17
+                          # fail-closed gate would (correctly) refuse.
+                          ledger_path=run_dir / "egress_ledger.jsonl",
                           # Wave-85: the governed store is the subject
                           # here; delegation identity is not installed, so
                           # the bypass is declared, not silent.

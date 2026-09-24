@@ -105,6 +105,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from .exchange_ledger import check_exchange_read
+
 from . import merkle as _merkle
 from . import signing as _signing
 from . import ed25519 as _ed25519
@@ -862,7 +864,13 @@ def read_entries_with_stats(path):
 
     Never raises on file CONTENT problems (F28): only real I/O
     failures (OSError) propagate.
+
+    F163: reads of another run's traces/exchanges are policy-checked
+    and recorded via the exchange-access ledger; a denied read raises
+    ``ExchangeAccessDenied`` (fail-closed policy denial, not a
+    content problem).
     """
+    check_exchange_read(path)
     p = Path(path)
     if not p.exists():
         return [], 0
@@ -881,10 +889,12 @@ def read_entries_with_stats(path):
             malformed += 1
             continue
         out.append(entry)
+    check_exchange_read(path, len(out))
     return out, malformed
 
 
 def read_entries(path):
+    check_exchange_read(path)
     p = Path(path)
     if not p.exists():
         return []
@@ -893,6 +903,7 @@ def read_entries(path):
         line = line.strip()
         if line:
             out.append(json.loads(line))
+    check_exchange_read(path, len(out))
     return out
 
 

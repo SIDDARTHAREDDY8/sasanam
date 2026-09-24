@@ -102,7 +102,7 @@ KNOWN_RULE_FIELDS = frozenset(
 KNOWN_TOP_LEVEL_KEYS = frozenset(
     {"version", "roles", "rate_limit", "egress", "approvals",
      "auto_approve", "campaign_allowlist", "delegation", "log_limits",
-     "budgets", "run_limits", "velocity", "policies",
+     "budgets", "run_limits", "velocity", "tempo", "policies",
      "critical_windows"})
 
 KNOWN_APPROVALS_KEYS = frozenset(
@@ -364,14 +364,22 @@ class PolicyEngine:
             cfg.get("delegation"))
         # F22: policy-configurable audit-log size guard.
         self.log_limits = self._normalize_log_limits(cfg.get("log_limits"))
-        # S2 (K-018): hard spend/token/action budgets. Absent section =
-        # unenforced (never zero); malformed values fail the load.
+        # S2 (K-018): hard spend/token/action budgets. Absent section ->
+        # {} here; the executor applies conservative deployment
+        # defaults on top (F162: absent is default-enforced, never
+        # silently unlimited). Explicit values always win; malformed
+        # values fail the load.
         self.budgets = self._normalize_budgets(cfg.get("budgets"))
-        # S4 (K-045): total-step budget per run. Absent = unenforced.
+        # S4 (K-045): total-step budget per run. Absent = {} here; the
+        # executor applies a conservative default (F162).
         self.run_limits = self._normalize_run_limits(cfg.get("run_limits"))
         # S5 (K-052): cross-run per-principal velocity thresholds.
-        # Absent = guard disabled.
+        # Absent = {} here; the executor applies conservative defaults
+        # (F162: default-enforced, never silently disabled).
         self.velocity = self._normalize_velocity(cfg.get("velocity"))
+        # F162: per-run, per-action-class time-window tempo tripwires.
+        # Absent = {} here; the executor applies conservative defaults.
+        self.tempo = self._normalize_tempo(cfg.get("tempo"))
         # S1: AgentSpec DSL provenance. apply_dsl() fills these in when a
         # DSL source is promoted; without a DSL they stay null and
         # behavior is unchanged.
@@ -485,10 +493,12 @@ class PolicyEngine:
         ``max_actions_per_run`` (non-negative int),
         ``price_per_1k_tokens`` (non-negative number, optional — converts
         accrued tokens into spend when the adapter reports tokens only).
-        Absent section -> {} (unenforced, never zero). Malformed values
-        raise ValueError (fail closed at load: a misconfigured ceiling
-        must never silently become "unlimited", and values are never
-        silently coerced).
+        Absent section -> {} here (the executor applies conservative
+        deployment defaults on top — F162; absent is default-enforced,
+        never silently unlimited). Malformed values raise ValueError
+        (fail closed at load: a misconfigured ceiling must never
+        silently become "unlimited", and values are never silently
+        coerced).
         """
         if cfg is None:
             return {}
@@ -524,7 +534,8 @@ class PolicyEngine:
         """Normalize the ``run_limits:`` section (S4 / K-045).
 
         Currently ``max_tool_calls_per_run`` (non-negative int): total
-        tool-call attempts per run. Absent section -> {} (unenforced).
+        tool-call attempts per run. Absent section -> {} here (the
+        executor applies a conservative deployment default — F162).
         Malformed values raise ValueError (fail closed at load).
         """
         if cfg is None:
@@ -553,8 +564,9 @@ class PolicyEngine:
         ``max_sends`` / ``max_writes`` (non-negative ints),
         ``max_egress_bytes`` (non-negative number). A threshold that is
         absent is unenforced for that dimension (never zero). Absent
-        section -> {} (guard disabled). Malformed values raise
-        ValueError (fail closed at load).
+        section -> {} here (the executor applies conservative defaults —
+        F162; the guard is never silently disabled). Malformed values
+        raise ValueError (fail closed at load).
         """
         if cfg is None:
             return {}
@@ -594,6 +606,50 @@ class PolicyEngine:
                     "velocity.max_egress_bytes must be a non-negative "
                     "number, got %r" % (v,))
             out[key] = v
+        return out
+
+    @staticmethod
+    def _normalize_tempo(cfg):
+        """Normalize the ``tempo:`` section (F162).
+
+        Keys: ``window_secs`` (positive number; defaults to 60 when the
+        section is present but the window is omitted), ``max_read`` /
+        ``max_write`` / ``max_egress`` (non-negative ints; per action
+        class — see gov/velocity.ACTION_CLASSES). A threshold that is
+        absent is unenforced for that class (never zero). Absent
+        section -> {} (the executor applies conservative defaults).
+        Malformed values raise ValueError (fail closed at load).
+        """
+        if cfg is None:
+            return {}
+        if not isinstance(cfg, dict):
+            raise ValueError("tempo must be a mapping")
+        for key in cfg:
+            if key not in ("window_secs", "max_read", "max_write",
+                           "max_egress"):
+                raise ValueError("tempo: unknown key %r" % (key,))
+        out = {}
+        if "window_secs" in cfg:
+            v = cfg["window_secs"]
+            if (isinstance(v, bool) or not isinstance(v, (int, float))
+                    or v <= 0):
+                raise ValueError(
+                    "tempo.window_secs must be a positive number, got %r"
+                    % (v,))
+            out["window_secs"] = float(v)
+        else:
+            # The section is configured but no window given: default to
+            # the per-minute tempo window. Absent *section* still means
+            # {} here (executor defaults apply).
+            out["window_secs"] = 60.0
+        for key in ("max_read", "max_write", "max_egress"):
+            if key in cfg:
+                v = cfg[key]
+                if isinstance(v, bool) or not isinstance(v, int) or v < 0:
+                    raise ValueError(
+                        "tempo.%s must be a non-negative integer, got %r"
+                        % (key, v))
+                out[key] = v
         return out
 
     @staticmethod

@@ -10,8 +10,9 @@ Verifies the S4 guard:
   denied (matches the existing write/delete guard convention).
 * Denials audit ``policy_id="step-budget"`` / flag
   ``"step_budget_exceeded"``.
-* Absent ``run_limits.max_tool_calls_per_run`` = unenforced;
-  malformed sections fail the policy load closed.
+* Absent ``run_limits.max_tool_calls_per_run`` = DEFAULT ceiling
+  enforced (F162: absent is default-enforced, never silently
+  unlimited); malformed sections fail the policy load closed.
 
 Deterministic, stdlib only (unittest), no network, no real systems.
 """
@@ -29,12 +30,17 @@ from gov.policy import PolicyEngine  # noqa: E402
 from tests.harness import make_run  # noqa: E402
 
 
-def _policy_text(run_limits=None):
+def _policy_text(run_limits=None, budgets=None):
     rl_yaml = ""
     if run_limits is not None:
         rl_yaml = "run_limits:\n"
         for k, v in run_limits.items():
             rl_yaml += "  %s: %s\n" % (k, v)
+    budgets_yaml = ""
+    if budgets is not None:
+        budgets_yaml = "budgets:\n"
+        for k, v in budgets.items():
+            budgets_yaml += "  %s: %s\n" % (k, v)
     return """\
 version: 2
 roles:
@@ -44,7 +50,7 @@ rate_limit:
   max_egress_bytes_per_run: 262144
 egress:
   domain_allowlist: [synthetic.local, localhost]
-%spolicies:
+%s%spolicies:
   - id: test-allow-api
     effect: allow
     match:
@@ -55,7 +61,7 @@ egress:
     match:
       tool: [delete_file]
     reason: Test policy queues deletes.
-""" % rl_yaml
+""" % (rl_yaml, budgets_yaml)
 
 
 def _tmpdir(prefix):
@@ -69,9 +75,15 @@ class TestStepBudget(unittest.TestCase):
         self.tmp = _tmpdir("govs4-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def _run(self, run_limits=None):
+    def _run(self, run_limits=None, tempo=None, budgets=None):
         p = self.tmp / ("policy_%d.yaml" % id(self))
-        p.write_text(_policy_text(run_limits), encoding="utf-8")
+        text = _policy_text(run_limits, budgets)
+        if tempo is not None:
+            text = text.replace("version: 2\n",
+                                "version: 2\ntempo:\n" +
+                                "".join("  %s: %s\n" % kv
+                                        for kv in tempo.items()), 1)
+        p.write_text(text, encoding="utf-8")
         run = make_run(policy_path=str(p))
         ident = run["mint_identity"]("w1", "worker", "acme")
         return run, ident
@@ -125,16 +137,28 @@ class TestStepBudget(unittest.TestCase):
         self.assertEqual(last["flag"], "step_budget_exceeded")
         self.assertIn("step budget", last["reason"])
 
-    def test_absent_key_unenforced(self):
-        """No run_limits.max_tool_calls_per_run -> no step-budget
-        enforcement; the counter still tracks attempts."""
-        run, ident = self._run(None)
+    def test_absent_key_default_enforced(self):
+        """F162: no run_limits.max_tool_calls_per_run -> the DEFAULT
+        step budget applies (absent is default-enforced, never silently
+        unlimited); the counter still tracks attempts. The tempo wire
+        is raised out of the way here so the step budget is what
+        trips (the tight loop would otherwise hit tempo first — the
+        designed layering)."""
+        run, ident = self._run(
+            None, tempo={"max_read": 10**6,
+                         "max_write": 10**6,
+                         "max_egress": 10**6},
+            budgets={"max_actions_per_run": 10000})
         ex = run["executor"]
-        for i in range(15):
+        for i in range(405):
             r = ex.call(ident, "api_call",
                         endpoint="https://synthetic.local/u%d" % i)
-            self.assertEqual(r["status"], "executed", r)
-        self.assertEqual(ex._total_calls, 15)
+            if r["status"] == "denied":
+                break
+        else:
+            self.fail("default step budget never engaged over 405 calls")
+        self.assertEqual(r["policy_id"], "step-budget", r)
+        self.assertEqual(ex._total_calls, 401)
 
     def test_zero_step_budget_denies_first_attempt(self):
         """max_tool_calls_per_run=0 is a valid config meaning 'no

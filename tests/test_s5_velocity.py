@@ -4,9 +4,11 @@ Verifies the executor rebase onto the landed F74 egress-ledger lock:
 the velocity query reuses ``_ledger_read_locked`` and the velocity
 record goes through ``EgressLedger.append`` (which holds
 ``_ledger_write_locked`` internally) — S5 adds NO competing lock.
-The guard is heuristic: it queues (never denies), fails open with a
-loud ``velocity_check_skipped`` audit entry on ledger trouble, and is
-unenforced when the ``velocity:`` policy section is absent.
+The guard is heuristic: it queues (never denies), FAILS CLOSED with a
+loud ``velocity_check_failed`` audit entry on ledger trouble (F162 —
+an unverifiable ledger must never read as "no velocity"), and is
+DEFAULT-ENFORCED when the ``velocity:`` policy section is absent
+(conservative thresholds; explicit values always win).
 
 Deterministic, stdlib only (unittest), no network, no real systems.
 """
@@ -136,10 +138,11 @@ class TestS5Velocity(unittest.TestCase):
         self.assertEqual(queued[-1]["policy_id"],
                          "approval-velocity-guard")
 
-    def test_velocity_query_failure_fails_open_with_loud_audit(self):
-        """A ledger-lock timeout during the velocity query must NOT
-        deny the call (fail-open) — but it must be audit-visible via
-        velocity_check_skipped."""
+    def test_velocity_query_failure_fails_closed_with_loud_audit(self):
+        """F162: a ledger-lock timeout during the velocity query FAILS
+        CLOSED — the call is routed to human review (queued via
+        approval-velocity-guard), never executed on an unverifiable
+        ledger, with a loud ``velocity_check_failed`` audit entry."""
         tmp = Path(tempfile.mkdtemp(prefix="govs5-"))
         ledger = tmp / "shared_ledger.jsonl"
         policy_path = _write_policy(tmp, max_sends=2)
@@ -155,15 +158,17 @@ class TestS5Velocity(unittest.TestCase):
         with mock.patch.object(exec_mod, "_ledger_read_locked",
                                side_effect=LedgerLockError("lock timeout")):
             r2 = _send(run["executor"], ident, body="two")
-        # Fail-open: the call still executes; it is NOT denied.
-        self.assertEqual(r2["status"], "executed", r2)
+        # Fail-closed: the call does NOT execute on an unverifiable
+        # ledger — it queues for human review.
+        self.assertEqual(r2["status"], "queued", r2)
+        self.assertEqual(r2["policy_id"], "approval-velocity-guard", r2)
 
-        skips = [e for e in run["read_log"]()
-                 if e.get("flag") == "velocity_check_skipped"]
-        self.assertTrue(skips,
-                        "expected a loud velocity_check_skipped audit entry")
-        self.assertIn("fail-open", skips[0]["reason"])
-        self.assertEqual(skips[0]["decision"], "velocity_check_skipped")
+        fails = [e for e in run["read_log"]()
+                 if e.get("flag") == "velocity_check_failed"]
+        self.assertTrue(fails,
+                        "expected a loud velocity_check_failed audit entry")
+        self.assertIn("CLOSED", fails[0]["reason"])
+        self.assertEqual(fails[0]["decision"], "velocity_check_failed")
 
     def test_velocity_records_at_both_execution_boundaries(self):
         """The allow path and the approved-execution path each record
@@ -204,21 +209,26 @@ class TestS5Velocity(unittest.TestCase):
         self.assertIn("velocity_exceeded",
                       approved[0]["policy_context"])
 
-    def test_velocity_unconfigured_is_unenforced(self):
-        """Without a velocity: section there is no query, no record, no
-        skip audit — the guard is unenforced, never zero."""
+    def test_velocity_unconfigured_uses_defaults(self):
+        """F162: without a velocity: section the guard is DEFAULT-
+        ENFORCED (conservative thresholds), never absent. A single
+        write executes and records normally; no check_failed audit."""
         tmp = Path(tempfile.mkdtemp(prefix="govs5-"))
         ledger = tmp / "shared_ledger.jsonl"
         run = make_run(ledger_path=ledger)  # default policy: no velocity:
-        self.assertEqual(run["policy"].velocity, {})
+        self.assertEqual(run["executor"]._velocity_cfg(),
+                         {"window_secs": 24.0 * 3600.0,
+                          "max_sends": 200,
+                          "max_writes": 500,
+                          "max_egress_bytes": 2097152})
         ident = run["mint_identity"]("coder-1", "coder", "acme")
         r = run["executor"].call(ident, "write_file", path="notes.txt",
                                  content="hello")
         self.assertEqual(r["status"], "executed", r)
-        self.assertEqual(_velocity_entries(ledger), [])
-        skips = [e for e in run["read_log"]()
-                 if e.get("flag") == "velocity_check_skipped"]
-        self.assertEqual(skips, [])
+        self.assertEqual(len(_velocity_entries(ledger)), 1)
+        fails = [e for e in run["read_log"]()
+                 if e.get("flag") == "velocity_check_failed"]
+        self.assertEqual(fails, [])
 
     def test_s5_reuses_ledger_lock_no_competing_lock(self):
         """The S5 query enters the ledger's own _ledger_read_locked and

@@ -115,6 +115,7 @@ from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
 from .memory_provenance import MemoryQuarantineError
 from . import citation_provenance as _citation_provenance
 from . import capability_gate as _capability_gate
+from . import velocity as _velocity
 
 _SEND_TOOLS = ("send_email", "http_post")
 # S3 (K-041): tools that mutate state outside the run's read view. A
@@ -126,6 +127,30 @@ _MUTATING_TOOLS = ("write_file", "delete_file", "send_email", "http_post")
 # (sends, writes, egress bytes). delete_file is out of scope: the
 # velocity thresholds name sends/writes/egress-bytes.
 _VELOCITY_TOOLS = ("send_email", "http_post", "api_call", "write_file")
+# F162 (HIGH): default-enforced ceilings. Absent policy keys are NOT
+# "unlimited" — the deployment (policy author) may raise them
+# explicitly, but silence can no longer disable the guard. The agent
+# can never set these: they come from policy only.
+_DEFAULT_MAX_ACTIONS_PER_RUN = 200      # S2 max_actions_per_run default
+_DEFAULT_MAX_TOOL_CALLS_PER_RUN = 400   # S4 max_tool_calls_per_run default
+# S5 cross-run velocity defaults when the velocity: section is absent
+# (conservative: they only ever queue for human review, never deny).
+_DEFAULT_VELOCITY = {
+    "window_secs": 24.0 * 3600.0,
+    "max_sends": 200,
+    "max_writes": 500,
+    "max_egress_bytes": 2.0 * 1024 * 1024,
+}
+# F162 per-run tempo tripwire defaults (60s window): machine-speed
+# misuse, not human tempo. 30 egress / 60 writes / 300 reads per minute.
+_DEFAULT_TEMPO = {
+    "window_secs": 60.0,
+    "max_read": 300,
+    "max_write": 60,
+    "max_egress": 30,
+}
+# F162: the reserved tool name for the run-resume approval record.
+_VELOCITY_RESUME_TOOL = "velocity_resume"
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
 
 
@@ -1160,6 +1185,26 @@ class ToolExecutor:
         self._tokens_used = 0
         self._spend_used = 0.0
         self._budget_actions = 0
+        # F162 (HIGH): per-run, per-action-class time-window tempo
+        # tripwire. Built from the deployment's policy (never the
+        # agent); absent tempo: section = conservative defaults
+        # (default-enforced, not opt-in). The clock is monotonic and
+        # injectable (self._tempo_clock) so tempo tests are
+        # deterministic without sleeps; the wire reads the CURRENT
+        # attribute through a lambda so late overrides (tests) take
+        # effect. The pause is run-scoped and sticky: a fleet rotating
+        # agent ids cannot evade it.
+        self._tempo_clock = time.monotonic
+        _tempo_cfg = self._tempo_cfg()
+        self._tempo_wire = _velocity.TempoWire(
+            _tempo_cfg.get("window_secs", 60.0),
+            {"read": _tempo_cfg.get("max_read"),
+             "write": _tempo_cfg.get("max_write"),
+             "egress": _tempo_cfg.get("max_egress")},
+            clock=lambda: self._tempo_clock())
+        self._tempo_paused = False
+        self._tempo_resume_aid = None
+        self._tempo_trip_class = None  # class that tripped, if paused
         # S4 (K-045): total-step budget. Counts every call() attempt
         # after the F17 ledger gate (denied/queued attempts included —
         # it is a budget on run activity and log growth). Ledger-refused
@@ -1877,6 +1922,11 @@ class ToolExecutor:
             self._tainted = True
             if tool not in self._taint_sources:
                 self._taint_sources.append(tool)
+        # F162 (S2-GAP-1): accrue result-path usage into the per-run
+        # meter. _mint_result_usage already stamped result["_usage"]
+        # (governed side); foreign results route through
+        # ingest_foreign_result which lands here too.
+        self._accrue_result_usage(result)
 
     def ingest_foreign_result(self, tool, result, principal=None):
         """F37: ingest a FOREIGN tool result into the provenance/taint store.
@@ -2726,7 +2776,243 @@ class ToolExecutor:
         return self._ledger.taint_active(
             principal, ttl_secs=SENSITIVE_TAINT_TTL_SECS)
 
-    # -- S5 (K-052): cross-run per-principal velocity -----------------------
+    # -- F162 (HIGH): default-enforced tempo + fail-closed velocity -----
+
+    def _tempo_cfg(self):
+        """Effective tempo config: policy values over conservative
+        defaults (F162: absent section = default-enforced, never
+        disabled)."""
+        cfg = dict(_DEFAULT_TEMPO)
+        cfg.update(getattr(self.policy, "tempo", None) or {})
+        return cfg
+
+    def _velocity_cfg(self):
+        """Effective cross-run velocity config: policy values over
+        conservative defaults (F162: absent section no longer
+        disables the guard)."""
+        cfg = dict(_DEFAULT_VELOCITY)
+        cfg.update(getattr(self.policy, "velocity", None) or {})
+        return cfg
+
+    def _check_tempo_paused(self, identity, tool):
+        """Fail-closed sticky run pause. Raises VelocityRunPausedError
+        (never returns a verdict) while the run is paused by a tempo
+        trip. The pause is run-scoped: every identity is refused."""
+        if self._tempo_paused:
+            raise _velocity.VelocityRunPausedError(
+                "run %r is paused by a velocity control (tempo trip or "
+                "budget exhaustion): no tool calls execute until a "
+                "human approves the filed resume request" % self.run_id)
+
+    def _charge_tempo(self, identity, tool, audit_identity=None):
+        """Charge one EXECUTION against the per-class tempo wire.
+
+        Called at the two F33 execution boundaries (direct allow path
+        and the approved-execution sweep). On trip: pause the run,
+        chain the trip record, file a human ``velocity_resume``
+        approval, and raise ``VelocityTempoTripError`` fail-closed.
+        Tools outside the taxonomy are uncharged (documented residual).
+
+        ``identity`` is the calling AgentIdentity on the call() path.
+        On the approved-execution sweep there is no calling identity:
+        pass None and ``audit_identity`` (a plain agent-info dict from
+        the approval record) for the trip record; the pause still
+        stands and resume then requires an operator-filed
+        ``velocity_resume`` record (see resume_after_velocity_pause).
+        """
+        trip_msg = None
+        try:
+            self._tempo_wire.charge(tool)
+            return
+        except _velocity.VelocityTempoTripError as trip:
+            # NOTE: the ``as`` target is deleted when the except block
+            # exits (Python 3), so capture the message here.
+            trip_msg = str(trip)
+        cls = _velocity.action_class_of(tool)
+        snapshot = self._tempo_wire.snapshot()
+        cfg = self._tempo_cfg()
+        self._tempo_paused = True
+        self._tempo_trip_class = cls
+        _ai = audit_identity or {}
+        trip_entry = {
+            "event": "tool_call",
+            "run_id": self.run_id,
+            "agent_id": (identity.agent_id if identity is not None
+                         else _ai.get("agent_id", "system")),
+            "role": (identity.role if identity is not None
+                     else _ai.get("role", "system")),
+            "principal": (identity.principal if identity is not None
+                          else _ai.get("principal", "system")),
+            "tool": tool,
+            "decision": "velocity_paused",
+            "policy_id": "velocity-tempo",
+            "flag": "velocity_tempo_trip",
+            "matched_rules": [],
+            "tempo_class": cls,
+            "tempo_window_secs": cfg.get("window_secs"),
+            "tempo_threshold": cfg.get("max_" + str(cls)),
+            "tempo_windowed_count": snapshot.get(cls),
+            "reason": ("Tempo tripwire fired: %s-class action rate "
+                       "exceeds the deployment threshold; the run is "
+                       "paused fail-closed. Resume requires a human "
+                       "approval of a velocity_resume request."
+                       % cls),
+        }
+        self.log.append(trip_entry)
+        # File the human re-approval demand. The record is a synthetic
+        # action (tool "velocity_resume") so the approval queue's
+        # separation-of-duties still applies: the agent can never
+        # approve its own resume.
+        aid = None
+        if identity is not None:
+            try:
+                aid = self.approvals.queue(
+                    {"tool": _VELOCITY_RESUME_TOOL,
+                     "args": {"run_id": self.run_id,
+                              "tempo_class": cls,
+                              "threshold": cfg.get("max_" + str(cls)),
+                              "window_secs": cfg.get("window_secs")},
+                     "identity": identity.as_dict(),
+                     "agent_justification": None,
+                     "redactions": []},
+                    PolicyDecision(
+                        "require_approval",
+                        "Velocity tripwire paused run %r: human review "
+                        "required before the run may resume."
+                        % self.run_id,
+                        policy_id="velocity-tempo",
+                        flag="velocity_tempo_trip"),
+                    "agent_direct",
+                    "resume run %r after velocity tempo trip (%s class)"
+                    % (self.run_id, cls),
+                    caller_identity=identity)
+            except Exception:
+                # The pause stands even if queueing the resume request
+                # fails: fail closed, never warn-and-continue. The trip
+                # record above is the audit trail; the operator files a
+                # manual velocity_resume request to resume.
+                aid = None
+        self._tempo_resume_aid = aid
+        raise _velocity.VelocityTempoTripError(trip_msg)
+
+    def resume_after_velocity_pause(self, approval_id):
+        """Resume a tempo-paused run after HUMAN re-approval.
+
+        Two shapes, both fail-closed:
+        * call()-path trip: the executor auto-filed a
+          ``velocity_resume`` record — ``approval_id`` must be that
+          record.
+        * approved-sweep trip (no auto-filed record): ``approval_id``
+          must be an operator-filed record with
+          ``tool == "velocity_resume"`` and
+          ``args.run_id == this run``.
+        In both cases the record must have ``status == "approved"`` (a
+        human decision via ``ApprovalQueue.decide`` — the requesting
+        agent can never self-approve) and be unconsumed; it is then
+        consumed single-use. Anything else raises and the run stays
+        paused.
+        """
+        if not self._tempo_paused:
+            raise _velocity.VelocityError(
+                "run %r is not paused by a velocity control" % self.run_id)
+        rec = self.approvals.get(approval_id)
+        if rec is None:
+            raise _velocity.VelocityError(
+                "resume refused: approval %r not found" % (approval_id,))
+        if self._tempo_resume_aid is not None:
+            if approval_id != self._tempo_resume_aid:
+                raise _velocity.VelocityError(
+                    "resume refused: %r is not this pause's "
+                    "velocity_resume approval" % (approval_id,))
+        else:
+            if rec.get("tool") != _VELOCITY_RESUME_TOOL:
+                raise _velocity.VelocityError(
+                    "resume refused: approval %r is not a "
+                    "velocity_resume request" % (approval_id,))
+            if (rec.get("args") or {}).get("run_id") != self.run_id:
+                raise _velocity.VelocityError(
+                    "resume refused: velocity_resume approval %r is for "
+                    "another run" % (approval_id,))
+        if rec.get("status") != "approved":
+            raise _velocity.VelocityError(
+                "resume refused: velocity_resume approval %r is not "
+                "human-approved (status %r)"
+                % (approval_id, rec.get("status")))
+        if rec.get("executed"):
+            raise _velocity.VelocityError(
+                "resume refused: velocity_resume approval %r already "
+                "consumed" % (approval_id,))
+        self.approvals.mark_executed(approval_id)
+        self._tempo_paused = False
+        self._tempo_resume_aid = None
+        # The human reviewed the burst and authorized continuation:
+        # the tripped class starts a fresh window (otherwise the very
+        # next call would re-trip inside the still-hot window and the
+        # resume would be useless).
+        self._tempo_wire.reset(self._tempo_trip_class)
+        self._tempo_trip_class = None
+        self.log.append({
+            "event": "tool_call",
+            "run_id": self.run_id,
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": _VELOCITY_RESUME_TOOL,
+            "decision": "velocity_resumed",
+            "policy_id": "velocity-tempo",
+            "flag": "velocity_resumed",
+            "matched_rules": [],
+            "approval_id": approval_id,
+            "reason": ("Run resumed after human approval of the "
+                       "velocity_resume request (F162)."),
+        })
+        return {"status": "resumed", "approval_id": approval_id}
+
+    def _mint_result_usage(self, tool, args, result):
+        """Attach deterministic synthetic usage to an executed result.
+
+        S2-GAP-1 wiring: usage is minted by the GOVERNED side from the
+        result (never from call kwargs), so the agent cannot forge or
+        deflate its meter. Overwrites any pre-existing ``_usage`` key.
+        """
+        if not isinstance(result, dict):
+            return result
+        usage = _velocity.mint_usage(tool, args, result)
+        budgets = getattr(self.policy, "budgets", None) or {}
+        usage["spend"] = _velocity.spend_for(
+            usage["tokens"], budgets.get("price_per_1k_tokens", 0.0))
+        result["_usage"] = usage
+        return result
+
+    def _accrue_result_usage(self, result):
+        """Accrue result-path usage into the per-run meter (S2-GAP-1).
+
+        Called from ``_ingest_result`` / ``ingest_foreign_result`` —
+        the RESULT path only. A forged ``_usage`` in CALL kwargs never
+        reaches here (``_mint_result_usage`` overwrites it).
+        """
+        usage = (result.get("_usage") if isinstance(result, dict)
+                 else None) or {}
+        try:
+            tokens = int(usage.get("tokens", 0) or 0)
+        except (TypeError, ValueError):
+            tokens = 0
+        try:
+            spend = float(usage.get("spend", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            spend = 0.0
+        if tokens < 0:
+            tokens = 0
+        if spend < 0:
+            spend = 0.0
+        self._tokens_used += tokens
+        self._spend_used += spend
+
+    def _budget_meter(self):
+        """Current per-run meter snapshot for chained entries."""
+        return {"tokens_used": self._tokens_used,
+                "spend_used": round(self._spend_used, 6),
+                "budget_actions": self._budget_actions}
     # A per-run guard cannot see a low-and-slow campaign spread over many
     # runs: each run stays under its own send/write/egress budgets. The
     # velocity guard keeps cross-run memory in the egress ledger
@@ -2747,16 +3033,18 @@ class ToolExecutor:
         """True when the principal's velocity thresholds are reached.
 
         Sums ``kind: "velocity"`` entries for ``principal`` inside the
-        configured window. Fail-OPEN with a loud ``velocity_check_skipped``
-        audit entry on ANY ledger trouble (lock timeout, unverifiable
-        ledger, I/O error): the velocity signal is heuristic — a ledger
-        outage must never deny legitimate calls, but it must never be
-        silent either. Returns False (not exceeded) when the ``velocity:``
-        policy section is absent (unenforced, never zero) or no ledger
-        history exists yet.
+        configured window. F162: FAIL-CLOSED on ANY ledger trouble
+        (lock timeout, unverifiable ledger, I/O error) — an
+        unverifiable ledger must never read as "no velocity". On
+        trouble the call is routed to human review (returns True, so
+        the ``approval-velocity-guard`` rule queues it) with a loud
+        ``velocity_check_failed`` audit entry. Returns False (not
+        exceeded) when no ledger history exists yet. The velocity:
+        section is default-enforced (conservative thresholds), never
+        silently disabled.
         """
-        velocity = getattr(self.policy, "velocity", None) or {}
-        if not velocity or not principal:
+        velocity = self._velocity_cfg()
+        if not principal:
             return False
         ledger = self._ledger
         if ledger is None:
@@ -2818,8 +3106,11 @@ class ToolExecutor:
                 return True
             return False
         except Exception as e:
-            # Fail open, LOUD. The call is NOT denied — but the missing
-            # cross-run signal is audit-visible.
+            # F162: fail CLOSED, loud. The ledger is unverifiable, so
+            # the call is treated as velocity-exceeded: the
+            # approval-velocity-guard rule queues it for human review
+            # instead of letting it proceed silently. An unverifiable
+            # ledger must never read as "no velocity".
             try:
                 self.log.append({
                     "event": "tool_call",
@@ -2827,16 +3118,19 @@ class ToolExecutor:
                     "agent_id": "system",
                     "role": "system",
                     "principal": principal,
-                    "decision": "velocity_check_skipped",
+                    "decision": "velocity_check_failed",
                     "policy_id": "velocity-guard",
-                    "flag": "velocity_check_skipped",
-                    "reason": ("Cross-run velocity check skipped (fail-open): "
-                               "%s: %s. The call proceeds without cross-run "
-                               "velocity memory." % (type(e).__name__, e)),
+                    "flag": "velocity_check_failed",
+                    "reason": ("Cross-run velocity check FAILED CLOSED: "
+                               "%s: %s. The call is routed to human "
+                               "review (velocity_exceeded=True) because "
+                               "an unverifiable ledger must never read "
+                               "as 'no velocity'."
+                               % (type(e).__name__, e)),
                 })
             except Exception:
                 pass
-            return False
+            return True
 
     def _record_velocity(self, tool, principal, agent_id, egress_bytes):
         """Record one execution of a velocity tool in the cross-run ledger.
@@ -2847,11 +3141,13 @@ class ToolExecutor:
         lock. Fail-OPEN with a loud ``velocity_check_skipped`` audit
         entry on ledger trouble: the call already executed, so a ledger
         outage must not break the result path — but the missing memory
-        must be audit-visible. No-op when the ``velocity:`` section is
-        absent (unenforced: no history to keep).
+        must be audit-visible. The velocity: section is
+        default-enforced (F162): cross-run memory is kept unless the
+        deployment explicitly zeroes every threshold.
         """
-        velocity = getattr(self.policy, "velocity", None) or {}
-        if not velocity:
+        velocity = self._velocity_cfg()
+        if not any((velocity.get("max_sends"), velocity.get("max_writes"),
+                    velocity.get("max_egress_bytes"))):
             return
         ledger = self._ledger
         if ledger is None:
@@ -4616,6 +4912,13 @@ class ToolExecutor:
                 pass  # marker is best-effort; the flag + audit stand
             raise
 
+        # F162 (HIGH): sticky velocity pause. A tempo trip (or budget
+        # exhaustion that pauses) halts the WHOLE run fail-closed — the
+        # canary pattern: catching the trip and calling again still
+        # raises, for every identity. Only a human-approved resume
+        # clears it.
+        self._check_tempo_paused(identity, tool)
+
         self.counters[tool] = self.counters.get(tool, 0) + 1
         # S4: every call() attempt that reaches here consumes step budget
         # (denied/queued attempts included).
@@ -4880,12 +5183,13 @@ class ToolExecutor:
         # (denied/queued included) — it is a budget on run activity and
         # log growth, the stated motivation. The `>` (not `>=`) matches
         # the existing write/delete guard convention: exactly N calls
-        # are allowed. Absent key = unenforced. Checked before policy
-        # evaluation, like every other step-4 guard.
+        # are allowed. F162: default-enforced — absent key is a
+        # conservative default, never "unlimited". Checked before
+        # policy evaluation, like every other step-4 guard.
         _run_limits = getattr(policy, "run_limits", None) or {}
-        _max_tool_calls = _run_limits.get("max_tool_calls_per_run")
-        if (_max_tool_calls is not None
-                and self._total_calls > _max_tool_calls):
+        _max_tool_calls = _run_limits.get(
+            "max_tool_calls_per_run", _DEFAULT_MAX_TOOL_CALLS_PER_RUN)
+        if self._total_calls > _max_tool_calls:
             entry = self.log.append(_base({
                 "decision": "denied",
                 "policy_id": "step-budget",
@@ -4902,43 +5206,46 @@ class ToolExecutor:
         # budget. Token/spend accrue on the RESULT path only (never call
         # kwargs); ceilings use >= on the accrued totals: the call that
         # crosses the ceiling completes (you cannot un-call a provider)
-        # and the NEXT call is denied. Absent budgets key = unenforced.
+        # and the NEXT call is denied. F162: max_actions_per_run is
+        # default-enforced — an absent budgets: section (or absent key)
+        # applies the conservative default, never "unlimited". Token
+        # and spend ceilings stay deployment-configured (no meaningful
+        # default without a price).
         _budgets = getattr(policy, "budgets", None) or {}
-        if _budgets:
-            # Count every call() invocation that reaches this guard.
-            self._budget_actions += 1
-            _budget_deny_reason = None
-            _max_actions = _budgets.get("max_actions_per_run")
-            if (_max_actions is not None
-                    and self._budget_actions > _max_actions):
-                _budget_deny_reason = (
-                    "Per-run action budget exceeded (%d actions, max %d)."
-                    % (self._budget_actions, _max_actions))
-            _max_tokens = _budgets.get("max_tokens_per_run")
-            if (_budget_deny_reason is None and _max_tokens is not None
-                    and self._tokens_used >= _max_tokens):
-                _budget_deny_reason = (
-                    "Per-run token budget reached (%d tokens accrued, max "
-                    "%d); the call that crossed the ceiling completed, "
-                    "further calls are denied."
-                    % (self._tokens_used, _max_tokens))
-            _max_spend = _budgets.get("max_spend_per_run")
-            if (_budget_deny_reason is None and _max_spend is not None
-                    and self._spend_used >= _max_spend):
-                _budget_deny_reason = (
-                    "Per-run spend budget reached (%.4f accrued, max "
-                    "%.4f); the call that crossed the ceiling completed, "
-                    "further calls are denied."
-                    % (self._spend_used, _max_spend))
-            if _budget_deny_reason is not None:
-                entry = self.log.append(_base({
-                    "decision": "denied",
-                    "policy_id": "budget-exceeded",
-                    "flag": "budget_exceeded",
-                    "reason": _budget_deny_reason,
-                }))
-                return {"status": "denied", "reason": entry["reason"],
-                        "policy_id": "budget-exceeded", "seq": entry["seq"]}
+        # Count every call() invocation that reaches this guard.
+        self._budget_actions += 1
+        _budget_deny_reason = None
+        _max_actions = _budgets.get(
+            "max_actions_per_run", _DEFAULT_MAX_ACTIONS_PER_RUN)
+        if self._budget_actions > _max_actions:
+            _budget_deny_reason = (
+                "Per-run action budget exceeded (%d actions, max %d)."
+                % (self._budget_actions, _max_actions))
+        _max_tokens = _budgets.get("max_tokens_per_run")
+        if (_budget_deny_reason is None and _max_tokens is not None
+                and self._tokens_used >= _max_tokens):
+            _budget_deny_reason = (
+                "Per-run token budget reached (%d tokens accrued, max "
+                "%d); the call that crossed the ceiling completed, "
+                "further calls are denied."
+                % (self._tokens_used, _max_tokens))
+        _max_spend = _budgets.get("max_spend_per_run")
+        if (_budget_deny_reason is None and _max_spend is not None
+                and self._spend_used >= _max_spend):
+            _budget_deny_reason = (
+                "Per-run spend budget reached (%.4f accrued, max "
+                "%.4f); the call that crossed the ceiling completed, "
+                "further calls are denied."
+                % (self._spend_used, _max_spend))
+        if _budget_deny_reason is not None:
+            entry = self.log.append(_base({
+                "decision": "denied",
+                "policy_id": "budget-exceeded",
+                "flag": "budget_exceeded",
+                "reason": _budget_deny_reason,
+            }))
+            return {"status": "denied", "reason": entry["reason"],
+                    "policy_id": "budget-exceeded", "seq": entry["seq"]}
 
         # S3 (K-041): an unrated mutating tool is never allowed silently.
         # _MUTATING_TOOLS names the known mutating tools (api_call is
@@ -5344,6 +5651,11 @@ class ToolExecutor:
                     "seq": entry["seq"]}
 
         if decision.effect == "allow":
+            # F162 (HIGH): charge the per-class tempo wire at this
+            # execution boundary, BEFORE the side effect. A trip
+            # pauses the whole run fail-closed (raises) — the call
+            # never executes.
+            self._charge_tempo(identity, tool)
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched: no log, no side effect.
@@ -5368,6 +5680,9 @@ class ToolExecutor:
                     lambda: self._simulate(tool, kwargs, ctx))
             else:
                 result = self._simulate(tool, kwargs, ctx)
+            # F162 (S2-GAP-1): mint deterministic synthetic usage on the
+            # result (governed side; overwrites any forged _usage).
+            self._mint_result_usage(tool, kwargs, result)
             # S1-MEM: memory provenance firewall (opt-in; no-op when the
             # firewall is None). Runs between execution and result
             # ingestion so a quarantined read never pollutes the run's
@@ -5425,6 +5740,11 @@ class ToolExecutor:
                 # F142: response-minted resource URLs captured at the
                 # execution boundary (for response-URL alias indexing).
                 "response_urls": list(response_urls),
+                # F162 (S2-GAP-1): metered accounting, chained and
+                # tamper-evident: this execution's minted usage plus
+                # the per-run accrued meter.
+                "usage": dict((result.get("_usage") or {})),
+                "budget_meter": self._budget_meter(),
             }))
             return {"status": "executed", "result": result, "seq": entry["seq"]}
 
@@ -5987,6 +6307,13 @@ class ToolExecutor:
         # F45: reconcile interrupted executions before sweeping — runs
         # under the queue lock held by execute_approved().
         self.approvals._reconcile_interrupted_executions()
+        # F162: a tempo-paused run executes nothing — not even
+        # human-approved records — until a human approves the resume.
+        if self._tempo_paused:
+            raise _velocity.VelocityRunPausedError(
+                "run %r is paused by a velocity control: approved "
+                "executions wait for a human-approved resume"
+                % self.run_id)
         done = []
         ttl = self.policy.approval_ttl_hours
         for rec in self.approvals.all():
@@ -6294,6 +6621,20 @@ class ToolExecutor:
                             policy_id="capability-gate-execution-refused")
                     continue
 
+            # F162: charge the per-class tempo wire at this execution
+            # boundary too (approved executions are executions). A trip
+            # pauses the run fail-closed before the side effect. There
+            # is no calling identity on the sweep path: the trip record
+            # carries the approval record's agent info, and resume
+            # requires an operator-filed velocity_resume approval.
+            _rec_identity = rec.get("identity") or {}
+            self._charge_tempo(
+                None, rec["tool"],
+                audit_identity={
+                    "agent_id": rec.get("agent_id"),
+                    "role": rec.get("role"),
+                    "principal": _rec_identity.get("principal"),
+                })
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched.
@@ -6338,6 +6679,8 @@ class ToolExecutor:
             # authorization was granted before the claim.
             self.approvals.mark_executed(aid)
             result = self._simulate(rec["tool"], rec["args"], ctx)
+            # F162 (S2-GAP-1): mint governed-side usage on the result.
+            self._mint_result_usage(rec["tool"], rec["args"], result)
             # S1-MEM: memory provenance firewall (opt-in; no-op when None).
             self._memory_firewall_hook(
                 rec["tool"], rec["args"], result,
@@ -6415,6 +6758,10 @@ class ToolExecutor:
                 # F142: response-minted resource URLs captured at the
                 # execution boundary (for response-URL alias indexing).
                 "response_urls": list(approved_response_urls),
+                # F162 (S2-GAP-1): metered accounting on the chained
+                # log (this execution's usage + per-run meter).
+                "usage": dict((result.get("_usage") or {})),
+                "budget_meter": self._budget_meter(),
             })
             # F39: the durable claim (mark_executed) happened BEFORE the
             # side effect above — nothing to mark here.

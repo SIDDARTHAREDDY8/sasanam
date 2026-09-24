@@ -5,20 +5,18 @@ Verifies the S2 guard:
 * ``max_actions_per_run``: ceiling uses ``>`` on the attempt count —
   the call that reaches the ceiling completes, the NEXT is denied.
 * Token/spend ceilings use ``>=`` on the accrued totals.
-* Usage accrues on the RESULT path only (``result["_usage"]``) — a
-  forged ``_usage``/``_tokens_used`` in CALL kwargs is ignored, so an
-  agent cannot inflate (or deflate) its own usage.
+* Usage accrues on the RESULT path only (``result["_usage"]`` minted by
+  the governed side — never call kwargs, so an agent cannot inflate
+  (or deflate) its own usage). F162 wired the accrual (was S2-GAP-1):
+  ``_simulate`` mints deterministic usage per executed tool,
+  ``_ingest_result`` accrues it, and every executed entry carries
+  ``usage`` + ``budget_meter`` on the chained log.
 * Denials audit ``policy_id="budget-exceeded"`` / flag
   ``"budget_exceeded"``.
-* Absent ``budgets:`` section = unenforced; malformed sections fail
-  the policy load closed.
-
-KNOWN GAP (S2-GAP-1, demonstrated pre-control): the result-path
-accrual wiring described in the executor comments does not exist yet —
-``_tokens_used``/``_spend_used`` are initialized to 0 and never
-incremented, so ``max_tokens_per_run`` / ``max_spend_per_run`` can never
-trip. The two accrual tests below are marked expectedFailure until the
-accrual lands; they flip to "unexpected success" when it does.
+* F162: absent ``budgets:`` section = DEFAULT action ceiling enforced
+  (absent is default-enforced, never silently unlimited); explicit
+  values always win. Token/spend ceilings stay deployment-configured.
+  Malformed sections fail the policy load closed.
 
 Deterministic, stdlib only (unittest), no network, no real systems.
 """
@@ -61,6 +59,14 @@ rate_limit:
   max_egress_bytes_per_run: 262144
 egress:
   domain_allowlist: [synthetic.local, localhost]
+# F162: tempo is raised out of the way in these budget tests so the
+# budget under test is what trips (the tight loops would otherwise
+# hit the default tempo tripwire first — the designed layering).
+tempo:
+  window_secs: 60
+  max_read: 1000000
+  max_write: 1000000
+  max_egress: 1000000
 %s%s""" % (budgets_yaml, rules)
 
 
@@ -178,14 +184,12 @@ class TestBudgets(unittest.TestCase):
         self.assertEqual(r["policy_id"], "budget-exceeded", r)
         self.assertIn("spend budget", r["reason"])
 
-    # -- the accrual gap (demonstrated pre-control) ------------------------
+    # -- the accrual gap (CLOSED by F162) ---------------------------------
 
-    @unittest.expectedFailure
     def test_token_accrual_from_result_path(self):
-        """S2-GAP-1: usage must accrue on the RESULT path — after
-        executed calls the token total is > 0 and a tiny
-        max_tokens_per_run ceiling trips. Currently the accrual wiring
-        is missing, so totals stay 0 forever."""
+        """F162 (was S2-GAP-1): usage accrues on the RESULT path —
+        after executed calls the token total is > 0 and a tiny
+        max_tokens_per_run ceiling trips."""
         run, ident = self._run({"max_tokens_per_run": 5})
         ex = run["executor"]
         statuses = [self._api(ex, ident, i)["status"] for i in range(10)]
@@ -194,10 +198,10 @@ class TestBudgets(unittest.TestCase):
         self.assertIn("denied", statuses,
                       "max_tokens_per_run=5 never tripped over 10 calls")
 
-    @unittest.expectedFailure
     def test_spend_accrual_from_result_path(self):
-        """S2-GAP-1 (spend leg): with a price configured, executed
-        calls accrue spend and a tiny max_spend_per_run ceiling trips."""
+        """F162 (was S2-GAP-1, spend leg): with a price configured,
+        executed calls accrue spend and a tiny max_spend_per_run
+        ceiling trips."""
         run, ident = self._run({"max_spend_per_run": 0.000001,
                                 "price_per_1k_tokens": 0.002})
         ex = run["executor"]
@@ -210,7 +214,10 @@ class TestBudgets(unittest.TestCase):
     def test_call_kwarg_usage_cannot_inflate_or_deflate(self):
         """An agent cannot forge its usage via call kwargs: ``_usage``,
         ``_tokens_used`` and ``_spend_used`` passed as kwargs are
-        ignored — accrual reads the RESULT, never the call."""
+        ignored — accrual reads the governed-minted RESULT usage, never
+        the call. F162: accrual is wired, so the assertion is now that
+        the accrued total equals the minted amount (small), not the
+        forged 10**12."""
         run, ident = self._run({"max_tokens_per_run": 10**9,
                                 "max_spend_per_run": 10**9})
         ex = run["executor"]
@@ -219,33 +226,42 @@ class TestBudgets(unittest.TestCase):
                     _usage={"tokens": 10**12, "spend": 10**12},
                     _tokens_used=10**12, _spend_used=10**12)
         self.assertEqual(r["status"], "executed", r)
-        self.assertEqual(ex._tokens_used, 0)
+        self.assertLess(ex._tokens_used, 1000,
+                        "forged _usage kwarg inflated the meter: %d"
+                        % ex._tokens_used)
         self.assertEqual(ex._spend_used, 0.0)
 
     # -- absent / malformed config -----------------------------------------
 
-    def test_absent_budgets_unenforced(self):
-        """No budgets: section -> no budget enforcement at all."""
+    def test_absent_budgets_default_enforced(self):
+        """F162: no budgets: section -> the DEFAULT action ceiling
+        applies (absent is default-enforced, never silently
+        unlimited)."""
         run, ident = self._run(None)
         ex = run["executor"]
-        for i in range(12):
-            r = self._api(ex, ident, i)
-            self.assertEqual(r["status"], "executed", r)
-        # The guard never engages when the section is absent: the
-        # action counter is not even incremented.
-        self.assertEqual(ex._budget_actions, 0)
+        statuses = [self._api(ex, ident, i)["status"]
+                    for i in range(205)]
+        self.assertIn("denied", statuses)
+        denied = [self._api(ex, ident, 999)]
+        self.assertEqual(denied[0]["status"], "denied", denied[0])
+        self.assertEqual(denied[0]["policy_id"], "budget-exceeded",
+                         denied[0])
+        # The guard engages on the default: the action counter tracks.
+        self.assertGreater(ex._budget_actions, 0)
 
     def test_absent_individual_keys_unenforced(self):
         """A budgets: section with only one key leaves the other
-        dimensions unenforced."""
+        dimensions unenforced (token/spend ceilings stay
+        deployment-configured; only the action ceiling has a
+        default)."""
         run, ident = self._run({"max_actions_per_run": 100})
         ex = run["executor"]
         for i in range(8):
             r = self._api(ex, ident, i)
             self.assertEqual(r["status"], "executed", r)
-        # Tokens/spend have no ceiling configured: totals may sit at 0
-        # (S2-GAP-1) without any denial.
-        self.assertEqual(ex._tokens_used, 0)
+        # Tokens/spend have no ceiling configured: accrual still runs
+        # (F162 wires it) but no denial follows.
+        self.assertGreater(ex._tokens_used, 0)
 
     def test_unknown_budget_key_fails_closed_at_load(self):
         p = self.tmp / "bad_budget.yaml"

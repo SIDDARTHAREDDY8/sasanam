@@ -113,6 +113,12 @@ class TestHaltMarker(unittest.TestCase):
                 url="https://%s/x" % host, data="x")
         ex2 = ToolExecutor(run["run_dir"], run["policy"], run["log"],
                            run["approvals"], canary_registry=reg,
+                           # F162: hermetic ledger — inherit make_run's
+                           # in-run-dir ledger instead of the shared
+                           # $TMPDIR one (foreign test keys would fail
+                           # the velocity require_verified fail-closed).
+                           ledger_path=(run["run_dir"]
+                                        / "egress_ledger.jsonl"),
                            # Wave-85: canary-halt persistence tests
                            # reconstruct over the same run dir; the raw
                            # pipeline is declared, not silent.

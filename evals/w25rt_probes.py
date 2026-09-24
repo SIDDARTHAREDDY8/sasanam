@@ -349,6 +349,15 @@ egress:
   domain_allowlist: [synthetic.local, localhost]
 budgets:
   max_actions_per_run: %d
+# F162: pin tempo high — this probe measures BUDGET atomicity under
+# contention (exactly 50 non-denied, counter reaches 200), not the
+# tempo tripwire. Default tempo (30 egress/60s) would trip at call 31
+# and pause the run before the budget counter sees all 200 attempts.
+tempo:
+  window_secs: 60.0
+  max_read: 100000
+  max_write: 100000
+  max_egress: 100000
 policies:
   - id: test-allow-api
     effect: allow

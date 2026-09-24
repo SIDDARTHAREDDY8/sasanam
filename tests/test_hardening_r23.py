@@ -334,6 +334,12 @@ class TestF72ReplayFreshness(unittest.TestCase):
         log = ActionLog(run_dir / "actions.jsonl")
         approvals = ApprovalQueue(run_dir, log)
         ex = ToolExecutor(run_dir, policy, log, approvals,
+                          # F162: hermetic ledger inside the run dir —
+                          # the shared $TMPDIR ledger now carries
+                          # default-enforced velocity entries from other
+                          # modules under foreign test keys; this test is
+                          # about tip freshness, not cross-run velocity.
+                          ledger_path=run_dir / "egress_ledger.jsonl",
                           # Wave-85: approval-execution tests exercise the
                           # raw pipeline; the bypass is declared, not
                           # silent.
