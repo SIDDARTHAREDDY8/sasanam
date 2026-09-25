@@ -5568,18 +5568,35 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         return self._queue_locked(timeout=timeout)
 
 
+def _default_runs_roots():
+    """Candidate run roots, in preference order (packaging: never the
+    installed package).
+
+    ``gov-approve`` used to resolve ``runs/`` relative to ``__file__``,
+    which lands inside site-packages for a wheel install -- runs would
+    be read from (and, worse, suggested to be written to) the installed
+    package. The default is now user-scoped: first the current working
+    directory (where ``gov-demo`` writes its runs), then the XDG user
+    data dir.
+    """
+    roots = [Path.cwd() / "runs"]
+    xdg = os.environ.get("XDG_DATA_HOME") or str(
+        Path.home() / ".local" / "share")
+    roots.append(Path(xdg) / "agent-governance" / "runs")
+    return roots
+
+
 def _resolve_rundir(args):
-    root = Path(__file__).resolve().parent.parent
-    if args.latest or not args.rundir:
-        runs = root / "runs"
-        if args.rundir:
-            return Path(args.rundir)
-        cands = [d for d in runs.iterdir()] if runs.exists() else []
+    if args.rundir:
+        return Path(args.rundir)
+    for root in _default_runs_roots():
+        cands = [d for d in root.iterdir()] if root.is_dir() else []
         cands = [d for d in cands if d.is_dir()]
-        if not cands:
-            raise SystemExit("no runs found; run python demo/run_demo.py first")
-        return max(cands, key=lambda d: d.stat().st_mtime)
-    return Path(args.rundir)
+        if cands:
+            return max(cands, key=lambda d: d.stat().st_mtime)
+    raise SystemExit(
+        "no runs found in %s; run gov-demo first or pass --rundir <dir>"
+        % ", ".join(str(r) for r in _default_runs_roots()))
 
 
 _DECISION_TARGET_CAP_BYTES = 65536  # F66 (R15): default human-view cap.

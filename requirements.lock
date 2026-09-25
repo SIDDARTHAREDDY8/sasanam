@@ -1,5 +1,14 @@
-# requirements.lock — pinned dependency graph for agent-governance
-# Generated from the PyPI JSON API. Install with:
+# requirements.lock — pinned GATE-TEST environment for agent-governance.
+#
+# SCOPE (authoritative): this file pins the exact dependency closure the
+# canonical test suite runs in. `tests/run_tests.py`'s F75 supply-chain
+# gate fails closed unless every installed distribution is allowlisted
+# here at the pinned version. It is NOT the product's install
+# dependencies: the `agent-governance` package itself is stdlib-only at
+# runtime (see pyproject.toml, which is authoritative for the
+# installable: runtime deps, extras, entry points, version).
+#
+# Rebuild a gate-test venv with:
 #   python -m pip install --require-hashes -r requirements.lock
 # Regenerate: python -m gov.supplychain --regen-lock
 # Every entry carries sha256 hashes for ALL published artifacts,

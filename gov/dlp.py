@@ -650,9 +650,26 @@ def scrub_pii(text):
             return "[REDACTED:%s]" % rule_id
         return rx.sub(_sub, s)
 
+    # F171: linear-time guards. The pii-email/phone/card regexes
+    # backtrack quadratically on long runs of word characters with no
+    # possible match (e.g. 60KB of 'd's: ~7s; 263KB: minutes), and
+    # scrub_pii runs inside executor.call() BEFORE the F33 byte-cap
+    # projection — an agent-controlled payload burned governor CPU
+    # before the cap could deny it. Each rule only runs when its
+    # trigger characters are present (a match is impossible
+    # otherwise), so the whole scrub stays linear in the input length.
+    # The triggers are necessary conditions of the patterns, never
+    # sufficient ones: redaction behavior is unchanged.
+    has_digit = any(ch.isdigit() for ch in text)  # O(n), early exit
+    _triggers_ok = {
+        "pii-ssn": "-" in text and has_digit,
+        "pii-email": "@" in text,
+        "pii-phone": has_digit,
+    }
     out = text
     for rule_id, rx in _PII_RULES:
-        out = _replace(rule_id, rx, out)
+        if _triggers_ok.get(rule_id, True):
+            out = _replace(rule_id, rx, out)
 
     def _card_sub(m):
         digits = re.sub(r"\D", "", m.group(0))
@@ -661,7 +678,10 @@ def scrub_pii(text):
             return "[REDACTED:pii-card]"
         return m.group(0)
 
-    out = _CARD_RE.sub(_card_sub, out)
+    # F171: the card pattern needs a digit to match; skip the regex
+    # (and its per-candidate Luhn check) when there is none.
+    if has_digit:
+        out = _CARD_RE.sub(_card_sub, out)
     return out, sorted(set(hits))
 
 

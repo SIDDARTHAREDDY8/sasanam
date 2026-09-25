@@ -1,5 +1,10 @@
 """gov: an agent-governance layer (synthetic demo, stdlib only)."""
 
+# Single source of truth for the package version (packaging, defect 6).
+# pyproject.toml reads this via [tool.setuptools.dynamic]; CHANGELOG.md
+# records what changed per version. No other file may hard-code it.
+__version__ = "0.2.0"
+
 from .identity import AgentIdentity, UnmintedIdentityError
 from .log import (ActionLog, LogUnverifiableError, read_entries,
                    require_verified, verify_chain)

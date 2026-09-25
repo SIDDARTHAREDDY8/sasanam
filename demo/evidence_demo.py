@@ -121,7 +121,7 @@ def _run_demo():
                             plant_canaries)
     from gov.policy import default_policy_path
 
-    run_id = "evidence-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_id = "evidence-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
     seed_sandbox(sandbox)
@@ -394,10 +394,28 @@ def _run_demo():
           "independent verifier's, not this script's.")
 
 
-def main():
+def main(argv=None):
     """Honest-failure wrapper (F63 discipline): an unexpected exception
     prints an honest RESULT: FAILURE summary, claims no verdicts, and
     returns a nonzero exit code."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in argv or "--help" in argv:
+        print("usage: python -m demo.evidence_demo [-h]")
+        print()
+        print("Synthetic evidence-bundle demo: a benign phase, a human")
+        print("approval, a canary-tripwire-stopped exfiltration, two")
+        print("anchored epochs, and an exported evidence bundle with an")
+        print("independent verifier verdict. Writes runs/<run-id>/ into")
+        print("the current working directory.")
+        print()
+        print("Options:")
+        print("  -h, --help   show this help and exit")
+        return 0
+    unknown = [a for a in argv if a not in ("-h", "--help")]
+    if unknown:
+        print("demo.evidence_demo: unknown argument(s): %s"
+              % " ".join(unknown), file=sys.stderr)
+        return 2
     try:
         _run_demo()
     except SystemExit:

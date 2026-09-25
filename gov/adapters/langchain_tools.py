@@ -32,7 +32,14 @@ later reassignment too).
 
 from typing import Any, Optional
 
-from pydantic import PrivateAttr, model_validator
+try:
+    from pydantic import PrivateAttr, model_validator
+except ImportError as _exc:
+    raise ImportError(
+        "gov.adapters.langchain_tools requires the 'langchain' extra "
+        "(langchain-core and pydantic). Install it with "
+        "`pip install agent-governance[langchain]`."
+    ) from _exc
 
 from .core import GovernedBinding, GovernedToolFacade, normalize_result
 
@@ -82,9 +89,9 @@ def _structured_tool_base():
         from langchain_core.tools import StructuredTool
     except ImportError as exc:
         raise ImportError(
-            "gov.adapters.langchain_tools requires the 'langchain-core' "
-            "package (verified against 1.6.3). Install it with "
-            "`pip install langchain-core`."
+            "gov.adapters.langchain_tools requires the 'langchain' extra "
+            "(langchain-core, verified against 1.6.x). Install it with "
+            "`pip install agent-governance[langchain]`."
         ) from exc
     return StructuredTool
 

@@ -71,6 +71,7 @@ from urllib.parse import urlparse
 from . import dlp
 from . import canary as _canary
 from . import delegation_tokens as _delegation_tokens
+from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
@@ -152,6 +153,15 @@ _DEFAULT_TEMPO = {
 # F162: the reserved tool name for the run-resume approval record.
 _VELOCITY_RESUME_TOOL = "velocity_resume"
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
+
+
+# F164 (HIGH): entry count for the exchange-ledger after-phase on the
+# agent read_file path. Non-blank lines of the FULL file text — the
+# .jsonl analog of the gov.log seam's parsed-entry count — computed
+# from the complete content, never from the 4000-char tool-result
+# truncation. The guard ignores it for non-exchange paths.
+def _exchange_entry_count(text):
+    return sum(1 for line in text.splitlines() if line.strip())
 
 
 class PolicyPinMismatchError(Exception):
@@ -1205,6 +1215,17 @@ class ToolExecutor:
         self._tempo_paused = False
         self._tempo_resume_aid = None
         self._tempo_trip_class = None  # class that tripped, if paused
+        # F167 (MEDIUM): the pause survives executor rotation (the F60
+        # fresh-executor-per-sweep deployment pattern). The pause is
+        # derived from the run's own chained log — the trip path chains
+        # a ``velocity_paused`` record, the resume path a
+        # ``velocity_resumed`` record — so a rotated executor starts
+        # paused iff the latest such record is a pause. The wire is
+        # deliberately NOT rehydrated: its hit timestamps are
+        # monotonic-per-boot and meaningless across a restart (the F166
+        # lesson); the pause makes the wire moot until resume, and
+        # resume resets the tripped class's window anyway.
+        self._rehydrate_tempo_pause()
         # S4 (K-045): total-step budget. Counts every call() attempt
         # after the F17 ledger gate (denied/queued attempts included —
         # it is a budget on run activity and log growth). Ledger-refused
@@ -1925,7 +1946,9 @@ class ToolExecutor:
         # F162 (S2-GAP-1): accrue result-path usage into the per-run
         # meter. _mint_result_usage already stamped result["_usage"]
         # (governed side); foreign results route through
-        # ingest_foreign_result which lands here too.
+        # ingest_foreign_result which lands here too — F168: with a
+        # _usage-less dict, so this line accrues 0 (no-op) and the
+        # foreign path's loud accrual is the single metering event.
         self._accrue_result_usage(result)
 
     def ingest_foreign_result(self, tool, result, principal=None):
@@ -1954,8 +1977,33 @@ class ToolExecutor:
             blob, opaque = self._foreign_normalize(result)
         except Exception:
             return
+        if result is None:
+            # Clean no-op boundary (unchanged).
+            return
+        # F168: production metering. Mint deterministic usage from the
+        # NORMALIZED blob via the governed pure function — never from
+        # caller-supplied anything (the foreign adapter's real call
+        # args are not visible on this path, so args={}; an
+        # adapter-asserted _usage on the input dict is never read, so a
+        # compromised adapter cannot forge or deflate its meter) — and
+        # accrue it on the RESULT path, exactly like the governed path.
+        # Metering is deliberately OUTSIDE the taint fail-open block
+        # below: the F168 defect was a silent 0-accrual, so metering
+        # failures are loud by design, while taint ingestion keeps its
+        # deliberate fail-open posture (the call already executed; the
+        # signal is heuristic, like the native path's ledger
+        # taint-mark). Opaque-only results (no text blob) accrue the
+        # tool's base rate: the execution happened, the content is
+        # invisible, the base is the honest minimum.
+        metered_src = {"content": blob} if blob else {}
+        self._accrue_result_usage(
+            self._mint_result_usage(tool, {}, metered_src))
         if blob:
             try:
+                # The dict handed to _ingest_result carries no _usage,
+                # so its internal _accrue_result_usage reads 0 (a true
+                # no-op): the loud accrual above is the single metering
+                # event — no double-count.
                 self._ingest_result(tool, {"content": blob}, principal)
             except Exception:
                 pass
@@ -2794,6 +2842,65 @@ class ToolExecutor:
         cfg.update(getattr(self.policy, "velocity", None) or {})
         return cfg
 
+    def _rehydrate_tempo_pause(self):
+        """F167: derive the tempo pause from the run's chained log.
+
+        A rotated executor (the F60 fresh-executor-per-sweep deployment
+        pattern) starts paused iff the latest ``velocity_paused`` /
+        ``velocity_resumed`` record in the run's own chained log is a
+        pause. The log is the deployment-owned, HMAC-chained substrate
+        — no sidecar file, no new MAC plumbing, and no marker-file
+        lifecycle (resume clears the pause automatically via its
+        chained ``velocity_resumed`` record).
+
+        Only entries carrying the log's own chain bookkeeping (integer
+        ``seq``, string ``hash`` — keys the log sets and strips from
+        caller input) are honored: malformed or planted lines are
+        skipped, never trusted (F28/F52 convention). The agent cannot
+        plant a resume: agent file writes are jailed to the sandbox,
+        and forging a chained entry requires the deployment HMAC key.
+
+        The scan reads the log file directly — never through the F163
+        exchange-read policy check, which at construction time would
+        mis-attribute the executor's own bookkeeping as a cross-run
+        read. I/O trouble is best-effort (canary-marker precedent):
+        the executor starts unpaused, and a truly unreadable log fails
+        closed at the first append anyway. The scan only ever ADDS a
+        pause; it cannot clear one (the flag starts False).
+        """
+        latest_paused = None
+        try:
+            path = Path(self.log.path)
+            if not path.exists():
+                return
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                decision = entry.get("decision")
+                if decision not in ("velocity_paused",
+                                    "velocity_resumed"):
+                    continue
+                if not isinstance(entry.get("seq"), int):
+                    continue
+                if not isinstance(entry.get("hash"), str):
+                    continue
+                latest_paused = (decision == "velocity_paused")
+        except (OSError, ValueError):
+            # Best-effort like the canary marker: unreadable log ->
+            # start unpaused (fail-closed surfaces at first append).
+            # ValueError covers undecodable bytes (F28: never crash on
+            # content) as well as malformed JSON handled above.
+            return
+        if latest_paused:
+            self._tempo_paused = True
+
     def _check_tempo_paused(self, identity, tool):
         """Fail-closed sticky run pause. Raises VelocityRunPausedError
         (never returns a verdict) while the run is paused by a tempo
@@ -2831,8 +2938,6 @@ class ToolExecutor:
         cls = _velocity.action_class_of(tool)
         snapshot = self._tempo_wire.snapshot()
         cfg = self._tempo_cfg()
-        self._tempo_paused = True
-        self._tempo_trip_class = cls
         _ai = audit_identity or {}
         trip_entry = {
             "event": "tool_call",
@@ -2858,7 +2963,14 @@ class ToolExecutor:
                        "approval of a velocity_resume request."
                        % cls),
         }
+        # F167: chain the trip record BEFORE setting the pause flag —
+        # a rotated executor derives the pause from this record, so
+        # memory and log must never diverge on an append failure.
+        # Fail-closed propagation is preserved: the append error
+        # raises and nothing executes.
         self.log.append(trip_entry)
+        self._tempo_paused = True
+        self._tempo_trip_class = cls
         # File the human re-approval demand. The record is a synthetic
         # action (tool "velocity_resume") so the approval queue's
         # separation-of-duties still applies: the agent can never
@@ -2943,14 +3055,11 @@ class ToolExecutor:
                 "resume refused: velocity_resume approval %r already "
                 "consumed" % (approval_id,))
         self.approvals.mark_executed(approval_id)
-        self._tempo_paused = False
-        self._tempo_resume_aid = None
-        # The human reviewed the burst and authorized continuation:
-        # the tripped class starts a fresh window (otherwise the very
-        # next call would re-trip inside the still-hot window and the
-        # resume would be useless).
-        self._tempo_wire.reset(self._tempo_trip_class)
-        self._tempo_trip_class = None
+        # F167: chain the resume record BEFORE clearing the pause flag —
+        # a rotated executor derives the pause from this record, so
+        # memory and log must never diverge on an append failure (the
+        # run stays paused, fail-closed, and the operator files a fresh
+        # resume demand).
         self.log.append({
             "event": "tool_call",
             "run_id": self.run_id,
@@ -2966,6 +3075,14 @@ class ToolExecutor:
             "reason": ("Run resumed after human approval of the "
                        "velocity_resume request (F162)."),
         })
+        self._tempo_paused = False
+        self._tempo_resume_aid = None
+        # The human reviewed the burst and authorized continuation:
+        # the tripped class starts a fresh window (otherwise the very
+        # next call would re-trip inside the still-hot window and the
+        # resume would be useless).
+        self._tempo_wire.reset(self._tempo_trip_class)
+        self._tempo_trip_class = None
         return {"status": "resumed", "approval_id": approval_id}
 
     def _mint_result_usage(self, tool, args, result):
@@ -3465,8 +3582,23 @@ class ToolExecutor:
             p = (bound_path if bound_path is not None
                  else self._resolve(args["path"]))
             if not use_outside and not target_changed and p.is_file():
+                # F164 (HIGH): exchange-access guard on the agent read
+                # path -- the two-phase pattern, exactly like the
+                # gov.log seam. The ambient reader is bound by the
+                # execution-boundary caller (call() / the approved
+                # sweep) via bind_reader. Before-phase (n_entries=None):
+                # policy + replay-tempo tripwire BEFORE any bytes are
+                # touched. After-phase: full-trace size tripwire + the
+                # extraction record. A denial raises
+                # ExchangeAccessDenied: fail-closed, the agent never
+                # receives the bytes (the simulated branch below
+                # returns no real bytes, so it needs no guard).
+                _exchange_ledger.check_exchange_read(str(p))
+                text = p.read_text(encoding="utf-8")
+                _exchange_ledger.check_exchange_read(
+                    str(p), _exchange_entry_count(text))
                 return {"source": "sandbox",
-                        "content": p.read_text(encoding="utf-8")[:4000]}
+                        "content": text[:4000]}
             return {"source": "simulated", "content": "[synthetic file contents]"}
         if tool == "write_file":
             content = args.get("content", "")
@@ -5673,13 +5805,23 @@ class ToolExecutor:
             # re-verifies and marks the ticket consumed before running
             # the thunk, so a second call presenting the same approval
             # id is refused (no replay through the executor).
-            if (self._precommit_gate is not None
-                    and _precommit.is_irreversible(tool)):
-                result = self._precommit_gate.commit(
-                    precommit_approval_id, tool, kwargs,
-                    lambda: self._simulate(tool, kwargs, ctx))
-            else:
-                result = self._simulate(tool, kwargs, ctx)
+            # F164 (HIGH): bind the ambient exchange reader around tool
+            # execution so the agent read_file path is policy-checked
+            # and recorded on the F163 exchange ledger. bind_reader is
+            # thread-local and restores the previous binding on exit,
+            # so nested/spawned executions attribute to the innermost
+            # reader. The pre-commit commit() thunk runs synchronously
+            # inside commit(), so the binding covers it too.
+            with _exchange_ledger.bind_reader(
+                    identity.principal, identity.run_id,
+                    action_log=self.log):
+                if (self._precommit_gate is not None
+                        and _precommit.is_irreversible(tool)):
+                    result = self._precommit_gate.commit(
+                        precommit_approval_id, tool, kwargs,
+                        lambda: self._simulate(tool, kwargs, ctx))
+                else:
+                    result = self._simulate(tool, kwargs, ctx)
             # F162 (S2-GAP-1): mint deterministic synthetic usage on the
             # result (governed side; overwrites any forged _usage).
             self._mint_result_usage(tool, kwargs, result)
@@ -6678,7 +6820,16 @@ class ToolExecutor:
             # entry above stays as the forensic marker that the
             # authorization was granted before the claim.
             self.approvals.mark_executed(aid)
-            result = self._simulate(rec["tool"], rec["args"], ctx)
+            # F164 (HIGH): same ambient-reader binding as the direct
+            # path -- the approval record carries the acting identity
+            # (principal/run_id) for attribution, so approved read_file
+            # executions are policy-checked and recorded on the F163
+            # exchange ledger too.
+            with _exchange_ledger.bind_reader(
+                    (rec.get("identity") or {}).get("principal"),
+                    rec.get("run_id", self.run_id),
+                    action_log=self.log):
+                result = self._simulate(rec["tool"], rec["args"], ctx)
             # F162 (S2-GAP-1): mint governed-side usage on the result.
             self._mint_result_usage(rec["tool"], rec["args"], result)
             # S1-MEM: memory provenance firewall (opt-in; no-op when None).

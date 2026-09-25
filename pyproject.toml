@@ -4,13 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-governance"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Policy enforcement, human approvals, and tamper-evident audit logs for AI agent tool use (synthetic demo)."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+# No license field: the licensing decision is deferred (no LICENSE file).
 authors = [{ name = "Siddartha Reddy Chinthala" }]
 keywords = ["ai-agents", "governance", "policy", "audit", "red-team"]
+
+[project.optional-dependencies]
+# Framework shims in gov/adapters/: the base package is stdlib-only;
+# install this extra for the LangChain StructuredTool adapter.
+langchain = ["langchain-core>=1.6", "pydantic>=2"]
 
 [project.scripts]
 gov-demo = "demo.run_demo:main"
@@ -22,7 +27,10 @@ gov-policy-export = "gov.policy_export:main"
 gov-report = "demo.make_report:main"
 
 [tool.setuptools]
-packages = ["gov", "gov.adapters", "demo"]
+packages = ["gov", "gov.adapters", "gov.bridges", "gov.monitor", "demo"]
+
+[tool.setuptools.dynamic]
+version = { attr = "gov.__version__" }
 
 [tool.setuptools.package-data]
 "*" = ["*.yaml", "data/*.yaml"]

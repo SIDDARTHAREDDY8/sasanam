@@ -80,7 +80,37 @@ def find_pending_by_tool(pending, tool):
         "changed; update the demo narrative." % tool)
 
 
-def main():
+def _print_usage():
+    print("usage: gov-demo [-h]")
+    print()
+    print("Synthetic agent-governance demo: a fake OSS-contribution pipeline")
+    print("(scout -> triage -> builder -> publisher) runs through the")
+    print("governance layer. Writes runs/<run-id>/ into the current working")
+    print("directory. Everything is synthetic: simulated tools, fake data,")
+    print("no network calls, no real credentials.")
+    print()
+    print("Options:")
+    print("  -h, --help   show this help and exit")
+
+
+def _new_run_id(prefix):
+    # Microsecond resolution: two demos started in the same second must
+    # not share a run directory (concurrent runs would interleave their
+    # logs and queues in one dir).
+    return "%s-%s" % (prefix, datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in argv or "--help" in argv:
+        _print_usage()
+        return 0
+    unknown = [a for a in argv if a not in ("-h", "--help")]
+    if unknown:
+        print("gov-demo: unknown argument(s): %s" % " ".join(unknown),
+              file=sys.stderr)
+        _print_usage()
+        return 2
     # Wave-81: the dev-key opt-in is deleted from gov/. This synthetic
     # demo, not production, provisions an explicit test key
     # process-wide. Production entry points never do this — they fail
@@ -90,7 +120,7 @@ def main():
     os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test")
     # Wave-69: the demo is synthetic, not production (wave-61 discipline).
     os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
-    run_id = "demo-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_id = _new_run_id("demo")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
     seed_sandbox(sandbox)
@@ -105,7 +135,15 @@ def main():
                       # and chained, never silent.
                       ungoverned_ack=(
                           "synthetic run_demo: multi-agent pipeline demo; "
-                          "governed core out of scope for the narrative"))
+                          "governed core out of scope for the narrative"),
+                      # Packaging (defect 9): per-run egress ledger. Each
+                      # demo provisions a fresh random HMAC key, so a
+                      # shared runs/egress_ledger.jsonl from an earlier
+                      # run (different key) would fail closed on verify.
+                      # The ledger is per-run evidence here; production
+                      # deployments with a stable key keep the shared
+                      # cross-run ledger default.
+                      ledger_path=run_dir / "egress_ledger.jsonl")
 
     # Identities are minted by the executor: the only identities it honors.
     scout = ex.mint_identity("scout-01", "scout", PRINCIPAL)
@@ -225,9 +263,9 @@ def main():
           % ("OK" if ok else "BROKEN at seq %s" % broken, count))
     print("\nRun directory: %s" % run_dir)
     print("Next steps:")
-    print("  python3 demo/make_report.py --rundir %s" % run_dir)
-    print("  python3 -m gov.approve --rundir %s list" % run_dir)
+    print("  gov-report --rundir %s" % run_dir)
+    print("  gov-approve --rundir %s list" % run_dir)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

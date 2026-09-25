@@ -1,0 +1,15 @@
+# v1 packaging: the sdist mirrors the wheel's product content.
+# tests/, evals/, and the research/workstream trees are the dev/red-team
+# harness, not the product (see docs/PACKAGING.md); examples/ and
+# policies/ are checkout-only authoring material (the canonical policy
+# ships as gov/data/default.yaml via package-data).
+prune tests
+prune evals
+prune research
+prune workstreams
+prune examples
+prune policies
+prune scripts
+prune docs
+global-exclude *.pyc
+global-exclude __pycache__

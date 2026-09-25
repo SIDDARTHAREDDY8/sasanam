@@ -311,8 +311,11 @@ def _run_demo_case(policy_text=None, preseed=None, pin_dt=None):
             with patcher:
                 if pin_dt is not None:
                     atk.datetime = pin_dt
-                    run_id = ("attack-"
-                              + pin_dt.now().strftime("%Y%m%d-%H%M%S"))
+                    # Poison the run dir the demo will actually use: derive
+                    # it from the demo's own _new_run_id (which honors the
+                    # patched datetime) so a run-id scheme change cannot
+                    # silently decouple the probe from the demo again.
+                    run_id = atk._new_run_id("attack")
                     rd = td / "runs" / run_id
                     rd.mkdir(parents=True, exist_ok=True)
                     (rd / "actions.jsonl").write_text(

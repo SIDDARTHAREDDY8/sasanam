@@ -105,7 +105,7 @@ def summarize_results(blocked, tamper_detected):
 
 
 def _run_demo():
-    run_id = "attack-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    run_id = _new_run_id("attack")
     run_dir = Path.cwd() / "runs" / run_id
     sandbox = run_dir / "sandbox"
     seed(sandbox)
@@ -121,7 +121,12 @@ def _run_demo():
                       # The bypass is declared and chained, never silent.
                       ungoverned_ack=(
                           "synthetic attack_scenario: attack/defense "
-                          "narrative; governed core out of scope"))
+                          "narrative; governed core out of scope"),
+                      # Packaging (defect 9): per-run egress ledger. Each
+                      # run provisions a fresh random HMAC key, so a
+                      # shared runs/egress_ledger.jsonl from an earlier
+                      # run (different key) would fail closed on verify.
+                      ledger_path=run_dir / "egress_ledger.jsonl")
 
     support = ex.mint_identity("support-01", "support", PRINCIPAL)
     log.append({"event": "run_started", "run_id": run_id,
@@ -229,7 +234,27 @@ def _run_demo():
     print("=" * 70)
 
 
-def main():
+def _print_usage():
+    print("usage: gov-attack-demo [-h]")
+    print()
+    print("Synthetic multi-agent attack scenario: prevented AND detected.")
+    print("An indirect prompt injection steers a support agent toward")
+    print("exfiltration and cover-up; each attempt is blocked, quarantined,")
+    print("or detected. Writes runs/<run-id>/ into the current working")
+    print("directory. Everything is synthetic: simulated tools, fake data,")
+    print("no network calls, no real credentials.")
+    print()
+    print("Options:")
+    print("  -h, --help   show this help and exit")
+
+
+def _new_run_id(prefix):
+    # Microsecond resolution: two scenarios started in the same second
+    # must not share a run directory.
+    return "%s-%s" % (prefix, datetime.now().strftime("%Y%m%d-%H%M%S-%f"))
+
+
+def main(argv=None):
     """F63 (R14): honest-failure wrapper around the demo flow.
 
     The scenario is a DEMO — its RESULT line is the artifact the
@@ -238,6 +263,16 @@ def main():
     implied success): it prints an honest ``RESULT: FAILURE``
     summary, claims no verdicts, and returns a nonzero exit code.
     """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in argv or "--help" in argv:
+        _print_usage()
+        return 0
+    unknown = [a for a in argv if a not in ("-h", "--help")]
+    if unknown:
+        print("gov-attack-demo: unknown argument(s): %s" % " ".join(unknown),
+              file=sys.stderr)
+        _print_usage()
+        return 2
     try:
         # Wave-81: the dev-key opt-in is deleted from gov/. This is a
         # synthetic attack demo, not production — it provisions an

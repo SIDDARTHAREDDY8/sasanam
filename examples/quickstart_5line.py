@@ -1,7 +1,9 @@
 """quickstart_5line.py -- the stranger bar, in one copy-pasteable script.
 
 INSTALL (once):
-    pip install agent-governance          # stdlib only; no dependencies
+    # not on PyPI yet — build the wheel and install it locally:
+    #   python -m pip wheel . --no-deps --no-build-isolation -w dist/
+    #   pip install dist/agent_governance-*-py3-none-any.whl   # stdlib only
 
 RUN:
     python3 quickstart_5line.py

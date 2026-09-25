@@ -1,10 +1,18 @@
 # Agent Governance — policy enforcement, human approvals, tamper-evident audit for AI agents
 
-## Try it in 60 seconds
+> **Not on PyPI yet** — install from a locally built wheel:
+>
+> ```bash
+> cd /path/to/agent-governance-demo          # the checkout
+> python -m pip wheel . --no-deps --no-build-isolation -w dist/
+> python -m venv /tmp/gov-venv
+> /tmp/gov-venv/bin/pip install dist/agent_governance-*-py3-none-any.whl
+> ```
+>
+> The base package is stdlib-only (no runtime dependencies). For the
+> LangChain adapter: `pip install "agent-governance[langchain]"`.
 
-```bash
-pip install agent-governance          # stdlib only; no dependencies
-```
+## Try it in 60 seconds
 
 Wrap any tool-using function in ~5 lines; every call is mediated
 (identity → role allowlist → DLP → fail-closed policy → audit log):
@@ -31,7 +39,7 @@ no network, no real systems):
 | Script | What it shows |
 |---|---|
 | `examples/quickstart_5line.py` | the 5-line wrap above, end to end: poisoned ticket → denied send → audit entry → `gov-verify` |
-| `examples/langchain_wrapped.py` | a real `langchain_core` `StructuredTool` governed; exfil invoked through LangChain is denied (`pip install langchain-core`) |
+| `examples/langchain_wrapped.py` | a real `langchain_core` `StructuredTool` governed; exfil invoked through LangChain is denied (`pip install "agent-governance[langchain]"`) |
 | `examples/mcp_wrapped.py` | `GovernedMCPClient`: denied calls never reach the MCP server (verified: zero session calls) |
 | `examples/openai_loop_wrapped.py` | OpenAI-style `tool_calls` loop; the denial becomes a tool message the model can react to |
 
@@ -44,11 +52,6 @@ gov-report --rundir <run_dir>             # severity-ranked Markdown + HTML repo
 gov-policy-lint policies/default.yaml     # lint the policy set
 ```
 
-> Known onboarding gaps (being fixed): `pip install agent-governance` currently
-> omits the `gov.adapters` subpackage, and `gov-demo` / `gov-attack-demo` need
-> the repo tree (they read `policies/` relative to the package). Until then,
-> run the examples and demos from a checkout. See `gov/adapters/README.md`.
-
 **SYNTHETIC DEMONSTRATION.** Every tool is simulated, every byte stays on
 this machine: no network calls, no real credentials, no real systems.
 What *is* real: the enforcement pipeline. Every agent action flows
@@ -58,22 +61,39 @@ anything executes.
 
 ## Five-minute quickstart
 
-```bash
-pip install -e .                      # stdlib only; no dependencies
-
-gov-demo                              # 1. run the 4-agent synthetic scenario
-gov-report                            # 2. verify the log, write reports/audit-*.md|html
-gov-verify runs/<latest>/actions.jsonl  # 3. offline chain verification (exit 0 = OK)
-
-python3 tests/run_tests.py             # 4. red-team suite: 36 tests, all green
-gov-policy-lint policies/default.yaml  # 5. lint the policy set
-```
-
-Then try the attack yourself:
+Install from a locally built wheel (not on PyPI yet), then run the
+demos in a fresh directory. The full cold-reader path — wheel only, no
+checkout — is `workstreams/architect/QUICKSTART.md`.
 
 ```bash
-gov-approve --latest list             # inspect the human approval queue
+python -m pip wheel . --no-deps --no-build-isolation -w dist/
+python -m venv /tmp/gov-venv
+/tmp/gov-venv/bin/pip install dist/agent_governance-*-py3-none-any.whl
+
+mkdir /tmp/gov-try && cd /tmp/gov-try
+export GOV_LOG_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+export GOV_LOG_KEY_EPOCH=test
+
+gov-demo                                  # 1. 4-agent scenario; risky steps queued, not executed
+RUN_DIR=$(ls -dt runs/*/ | head -1)
+gov-verify "$RUN_DIR/actions.jsonl"       # 2. offline chain verification (exit 0 = OK)
+gov-approve list                          # 3. inspect the human approval queue (latest run)
+gov-report --rundir "$RUN_DIR"            # 4. write reports/<run>_audit_report.md|html
+gov-attack-demo                           # 5. attack scenario: 4 blocked, 0 allowed, 1 tampering detected
 ```
+
+Then lint the policy that ships inside the wheel (no checkout needed):
+
+```bash
+POLICY=$(/tmp/gov-venv/bin/python -c "import importlib.resources as r; print(r.files('gov') / 'data' / 'default.yaml')")
+gov-policy-lint "$POLICY"                 # 2 info findings, 0 errors, 0 warnings
+```
+
+Key behavior to know: without a configured key every entry point fails
+closed (there is no dev-key fallback anywhere). `gov-demo` is the one
+exception — it self-provisions a test key for the synthetic run, so
+export `GOV_LOG_KEY` in the same shell if you want to verify the log
+afterwards.
 
 ## What it enforces (all demonstrated, all tested)
 
