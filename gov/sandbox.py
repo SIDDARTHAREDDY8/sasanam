@@ -2553,13 +2553,17 @@ class SandboxedToolBackend:
 
     def _read(self, args, ctx):
         if ctx.get("path_outside_sandbox"):
-            # H2 (wave-117 audit fix): an escaping read contained here
-            # must be LOUD, like the plain-executor path. The backend
-            # holds no chain writer, so it reports the containment via
-            # the result marker; ToolExecutor.call() turns the marker
-            # into the chained sandbox_traversal_contained event.
-            return {"source": "simulated",
-                    "content": "[synthetic file contents]",
+            # F-RA3 (wave-120): an escaping read is fail-closed DENIED
+            # here, mirroring the plain-executor path -- no content is
+            # returned (neither real outside bytes nor synthetic). The
+            # backend holds no chain writer, so it reports via the
+            # "traversal_contained" result marker; ToolExecutor.call()
+            # turns the marker into the chained
+            # sandbox_traversal_contained event.
+            return {"refused": True,
+                    "note": ("read_file path %r escapes the sandbox: "
+                             "denied (F-RA3); no content returned"
+                             % (args.get("path"),)),
                     "traversal_contained": True}
         # Defense in depth: re-resolve and confine at USE time, not just at
         # the executor's check time. A stale or dishonest ctx (or a symlink

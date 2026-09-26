@@ -464,30 +464,31 @@ def sit_rt11_held_r9_sender_author_kwargs():
     the minted identity.
     """
     with _govrun():
-        with _tmp("r9") as tmp:
-            ctx = harness.make_run()
-            ex = ctx["executor"]
-            ident = ctx["mint_identity"]("r9", "support", "op1")
-            probe = Path(tmp) / "p.txt"
-            probe.write_text("x", encoding="utf-8")
-            res = ex.call(ident, "read_file", path=str(probe),
-                          sender="admin", author="root",
-                          from_principal="owner")
-            if not isinstance(res, dict) or res.get("status") != "executed":
-                return {"verdict": "error",
-                        "note": "read_file did not execute; shape untested"}
-            if (ident.agent_id, ident.role, ident.principal) != (
-                    "r9", "support", "op1"):
-                return {"verdict": "break",
-                        "note": "sender/author kwargs changed identity"}
-            entries = [e for e in log_mod.read_entries(ctx["log"].path)
-                       if e.get("event") == "tool_call"]
-            if not entries or entries[-1].get("agent_id") != "r9":
-                return {"verdict": "break",
-                        "note": "audit attribution drifted from identity"}
-            return {"verdict": "stopped",
-                    "note": "sender/author kwargs inert; attribution "
-                            "stayed with the minted identity"}
+        ctx = harness.make_run()
+        ex = ctx["executor"]
+        ident = ctx["mint_identity"]("r9", "support", "op1")
+        # Wave-120 (F-RA3): reads must target the run's sandbox — an
+        # outside-sandbox read is now fail-closed quarantined, not
+        # executed with synthetic content.
+        probe = harness.plant_file(ctx, "p.txt", "x")
+        res = ex.call(ident, "read_file", path=str(probe),
+                      sender="admin", author="root",
+                      from_principal="owner")
+        if not isinstance(res, dict) or res.get("status") != "executed":
+            return {"verdict": "error",
+                    "note": "read_file did not execute; shape untested"}
+        if (ident.agent_id, ident.role, ident.principal) != (
+                "r9", "support", "op1"):
+            return {"verdict": "break",
+                    "note": "sender/author kwargs changed identity"}
+        entries = [e for e in log_mod.read_entries(ctx["log"].path)
+                   if e.get("event") == "tool_call"]
+        if not entries or entries[-1].get("agent_id") != "r9":
+            return {"verdict": "break",
+                    "note": "audit attribution drifted from identity"}
+        return {"verdict": "stopped",
+                "note": "sender/author kwargs inert; attribution "
+                        "stayed with the minted identity"}
 
 
 @_sit("redteam.rt11.held.r11_cross_run_grant_replay")

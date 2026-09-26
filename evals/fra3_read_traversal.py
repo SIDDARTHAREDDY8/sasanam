@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""H2 (F-RA3) red-first probe: read-side traversal containment must be LOUD.
+"""Wave-120 (F-RA3) closure battery: escaping read_file is fail-closed.
 
-Red pin (TODAY): ``read_file`` with an escaping ``..`` path is
-sandbox-contained silently — synthetic content returned, zero audit
-entries that name the containment (no chained
-``sandbox_traversal_contained`` event).
+Red pin (WAVE-117/H2): ``read_file`` with an escaping ``..`` path
+executed with synthetic content returned -- loud (chained
+``sandbox_traversal_contained``) since H2, but the agent received
+fabricated data as the real file.
 
-Green (AFTER): containment still holds (synthetic content, no real
-outside path touched) AND a chained ``sandbox_traversal_contained``
-event is emitted; benign in-sandbox reads emit no such event
-(regression guard).
+Green (WAVE-120): the policy queues the escaping read
+(``quarantine-outside-reads``, mirroring the write side); even an
+approved execution refuses with NO content returned (neither real
+outside bytes nor synthetic); the chained
+``sandbox_traversal_contained`` event still fires exactly once; benign
+in-sandbox reads (real file and missing file) are unchanged and
+quiet.
 
 Run:
     mkdir -p /tmp/gov-fra3
@@ -57,27 +60,44 @@ def _traversal_events(entries, agent_id=None):
     return out
 
 
-def p1_traversal_read_is_loud():
-    """read_file '../plan.txt' -> contained AND chained event emitted."""
+def p1_traversal_read_is_fail_closed():
+    """read_file '../plan.txt' -> queued, then refused on approval, loud."""
     ctx = make_run()
     ident = ctx["executor"].mint_identity("fra3-agent", "coder",
                                           "fra3-principal")
     outside = Path(ctx["run_dir"]).parent / "plan.txt"
     res = ctx["executor"].call(ident, "read_file", path="../plan.txt",
-                               justification="h2 probe")
-    result = res.get("result", {})
-    contained = (res.get("status") == "executed"
-                 and result.get("content") == "[synthetic file contents]")
+                               justification="wave-120 probe")
+    # 1. Fail-closed at the policy seam: queued, nothing returned.
+    queued = (res.get("status") == "queued"
+              and "result" not in res)
     untouched = not outside.exists()
+    # 2. The quarantine is loud at the queue seam (even if the
+    # approval is denied and _simulate never runs).
+    events_at_queue = _traversal_events(ctx["read_log"](),
+                                        agent_id="fra3-agent")
+    loud_at_queue = len(events_at_queue) == 1
+    # 3. Even approved, the execution refuses with no content, and no
+    # second event is emitted (exactly-once).
+    refused = False
+    if queued and res.get("approval_id"):
+        ctx["approvals"].decide(res["approval_id"], True,
+                                "wave-120 probe", "test-operator")
+        executed = ctx["executor"].execute_approved()
+        summaries = [e.get("result_summary", "")
+                     for e in ctx["read_log"]()
+                     if isinstance(e, dict)
+                     and e.get("decision") == "approved_executed"]
+        refused = (len(executed) == 1 and len(summaries) == 1
+                   and "refused=True" in summaries[0])
     events = _traversal_events(ctx["read_log"](), agent_id="fra3-agent")
-    loud = len(events) >= 1
-    note = ("contained=%s untouched=%s traversal_events=%d"
-            % (contained, untouched, len(events)))
-    if contained and untouched and loud:
+    loud = len(events) == 1
+    note = ("queued=%s untouched=%s loud_at_queue=%s refused=%s "
+            "traversal_events=%d"
+            % (queued, untouched, loud_at_queue, refused, len(events)))
+    if queued and untouched and loud_at_queue and refused and loud:
         return ("GREEN", note)
-    if contained and untouched and not loud:
-        return ("RED", note + " <- silent containment (F-RA3)")
-    return ("RED", note + " <- containment broken!")
+    return ("RED", note + " <- fail-closed closure broken!")
 
 
 def p2_benign_read_stays_quiet():
@@ -98,10 +118,31 @@ def p2_benign_read_stays_quiet():
             note + ("" if quiet else " <- noise on benign read!"))
 
 
+def p3_missing_in_sandbox_read_stays_quiet():
+    """Missing in-sandbox read -> quiet, synthetic, unchanged."""
+    ctx = make_run()
+    ident = ctx["executor"].mint_identity("fra3-missing", "coder",
+                                          "fra3-principal")
+    res = ctx["executor"].call(ident, "read_file",
+                               path="does-not-exist.txt",
+                               justification="wave-120 probe")
+    result = res.get("result", {})
+    ok = (res.get("status") == "executed"
+          and result.get("content") == "[synthetic file contents]")
+    events = _traversal_events(ctx["read_log"](), agent_id="fra3-missing")
+    quiet = len(events) == 0
+    note = ("synthetic=%s traversal_events=%d" % (ok, len(events)))
+    return ("GREEN" if (ok and quiet) else "RED",
+            note + ("" if quiet else " <- noise on missing read!"))
+
+
 def main():
-    for name, fn in (("p1_traversal_read_is_loud", p1_traversal_read_is_loud),
+    for name, fn in (("p1_traversal_read_is_fail_closed",
+                      p1_traversal_read_is_fail_closed),
                      ("p2_benign_read_stays_quiet",
-                      p2_benign_read_stays_quiet)):
+                      p2_benign_read_stays_quiet),
+                     ("p3_missing_in_sandbox_read_stays_quiet",
+                      p3_missing_in_sandbox_read_stays_quiet)):
         try:
             verdict, note = fn()
         except Exception as e:  # noqa: BLE001 - probe must report, not crash

@@ -1,14 +1,13 @@
 """Red-first regression tests for the stratified-100 claim pinning.
 
-The B2 battery (``realagent.battery.stratified_100``) scores 100/100
-since wave-117/H2, when the ``careless-typo-014`` miss (F-RA3, read-side
-traversal silently contained) became a loud-containment assertion and
-the claim was re-pinned with an empty residual set. F-RA3 itself stays
-OPEN (partial): the fail-closed deny/quarantine shape (no synthetic
-content) is still outstanding. ``evals/stratified_100_claim.json``
-pins the observation; ``evals/verify_stratified_100_claim.py``
-re-verifies it fail-closed. These tests exercise the verifier's exit
-verdict at the public seam:
+The B2 battery (``realagent.battery.stratified_100``) scores 100/100.
+Since wave-117/H2 the ``careless-typo-014`` miss (F-RA3, read-side
+traversal) became a loud-containment assertion; since wave-120 the
+escaping read is fail-closed quarantined (no synthetic content) and
+the profile asserts the quarantine AND the loud signal. F-RA3 is
+CLOSED. ``evals/stratified_100_claim.json`` pins the observation;
+``evals/verify_stratified_100_claim.py`` re-verifies it fail-closed.
+These tests exercise the verifier's exit verdict at the public seam:
 
 1. tampered claim (inflated score)        -> FAIL
 2. changed battery config (hash drift)   -> FAIL closed
@@ -117,7 +116,7 @@ class TestStratified100Claim(unittest.TestCase):
                         "genuine claim must verify: %s" % (verdict.reasons,))
 
     def test_unexpected_miss_fails(self):
-        """A failure outside the documented known miss must FAIL."""
+        """Any failure must FAIL (the residual set is empty)."""
         claim = _load_claim()
         bad = _genuine_run()
         bad["passed"] = 98

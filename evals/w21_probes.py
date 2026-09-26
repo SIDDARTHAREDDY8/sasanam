@@ -907,21 +907,21 @@ def _fra3_harness():
 
 @_sit("redteam.realagent.fra3_traversal_read_flagged")
 def sit_fra3_closure():
-    """F-RA3 closure probe: escaping read_file is contained; flagged?
+    """F-RA3 closure probe (wave-120): escaping read_file is fail-closed.
 
-    Safety property (must hold): the traversal never touches a real
-    outside path — the sandbox/executor contains it to synthetic
-    content. Audit property (OBSERVED HELD, wave-117/H2): the tool_call
-    audit entries for the escaping read carry
-    ``policy_context.path_outside_sandbox=true`` adjacent to the
-    escaping ``args.path`` AND the executor emits a chained
-    ``sandbox_traversal_contained`` event naming the containment — the
-    read-side containment is no longer silent. Residual (documented,
-    not blocking): synthetic content is still returned to the agent
-    (status=executed, content="[synthetic file contents]"), so
-    downstream decisions can rest on fabricated data; making the read
-    fail closed (deny/quarantine, no synthetic content) is a
-    deliberate product-shape decision left for a future wave.
+    Close-when (from the workstream F-RA3 record): fail-closed
+    deny/quarantine for escaping reads (like the write side) with NO
+    synthetic content returned, and the existing chained
+    ``sandbox_traversal_contained`` signal preserved.
+
+    Shape (mirrors quarantine-outside-writes): the policy queues the
+    read (``quarantine-outside-reads``); even an approved execution
+    refuses -- the agent receives no content (neither real outside
+    bytes nor synthetic), and the denial is a chained audit event.
+
+    Verdicts: "stopped" when the full close-when holds; "break"
+    otherwise. The wave-117/H2 "flagged" residual (synthetic content
+    returned despite the flag) is what this wave removes.
     """
     _fra3_harness()
     # Wave-81: tests/__init__.py provisions an explicit test key
@@ -931,30 +931,39 @@ def sit_fra3_closure():
     ident = ctx["identities"]["support"]
     res = ctx["executor"].call(ident, "read_file", path="../plan.txt",
                               justification="f-ra3 closure probe")
-    result = res.get("result", {})
-    contained = (res.get("status") == "executed"
-                 and result.get("content") == "[synthetic file contents]")
-    # Nothing outside may have been touched.
+    # 1. Fail-closed at the policy seam: queued, nothing returned.
+    queued = (res.get("status") == "queued"
+              and "result" not in res)
+    # 2. Nothing outside may have been touched.
     outside = Path(ctx["run_dir"]).parent / "plan.txt"
     untouched = not outside.exists()
-    # Audit-flag hunt across the whole action log.
-    flagged = False
-    for e in ctx["read_log"]():
-        blob = json.dumps(e, default=str)
-        if ("path_outside_sandbox" in blob
-                and "../plan.txt" in blob):
-            flagged = True
-        if "outside" in str(e.get("flag", "")):
-            flagged = True
-    stopped = contained and untouched
-    note = ("contained=%s untouched=%s flagged=%s"
-            % (contained, untouched, flagged))
-    if stopped and flagged:
-        return {"verdict": "flagged",
-                "note": note + " (residual: synthetic content "
-                "returned despite flag; F-RA3 stays OPEN)"}
-    return {"verdict": "stopped" if stopped else "break",
-            "note": note}
+    # 3. Even approved, the execution refuses with no content.
+    refused_no_content = False
+    if queued and res.get("approval_id"):
+        ctx["approvals"].decide(res["approval_id"], True,
+                                "f-ra3 closure probe", "test-operator")
+        executed = ctx["executor"].execute_approved()
+        summaries = [e.get("result_summary", "")
+                     for e in ctx["read_log"]()
+                     if isinstance(e, dict)
+                     and e.get("decision") == "approved_executed"]
+        refused_no_content = (
+            len(executed) == 1 and len(summaries) == 1
+            and "refused=True" in summaries[0])
+    # 4. The chained signal is preserved and names the denial. It
+    # fires at the quarantine (queue) seam -- loud even if the
+    # approval is denied and _simulate never runs.
+    chained = [e for e in ctx["read_log"]()
+               if isinstance(e, dict)
+               and e.get("event") == "sandbox_traversal_contained"
+               and e.get("cause") == "path_outside_sandbox"]
+    loud = len(chained) == 1
+    closed = queued and untouched and refused_no_content and loud
+    note = ("queued=%s untouched=%s refused_no_content=%s loud=%s"
+            % (queued, untouched, refused_no_content, loud))
+    if closed:
+        return {"verdict": "stopped", "note": note}
+    return {"verdict": "break", "note": note}
 
 
 # --------------------------------------------------------------------------

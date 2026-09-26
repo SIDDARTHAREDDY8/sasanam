@@ -590,7 +590,12 @@ class TestExecutorWiring(unittest.TestCase):
         for _ in range(30):
             monitor.observe_bucket(key, {"tool_call_rate": 10})
         monitor.observe_bucket(key, {"tool_call_rate": 100})
-        res = ex.call(ident, "read_file", path="/tmp/x.txt")
+        # Wave-120 (F-RA3): the read must target the sandbox -- an
+        # outside-sandbox path is now quarantined, not executed.
+        probe = run_dir / "sandbox" / "x.txt"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("x", encoding="utf-8")
+        res = ex.call(ident, "read_file", path=str(probe))
         self.assertEqual(res["status"], "executed")
 
     def test_no_monitor_zero_behavior_change(self):

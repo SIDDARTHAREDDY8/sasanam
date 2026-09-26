@@ -7685,3 +7685,40 @@ Trip opens the per-identity erosion breaker; `route_action` returns only `execut
 **Attack program:** row 9 GAP → PARTIAL (e4 + cross-run remain open; explicitly NOT COVERED). The GAP table is now empty. **Open findings: none.** Next free: **F176**.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-26 — Wave-120 (F-RA3 closure lane)
+
+**Finding:** F-RA3 (LOW, workstream) — escaping `read_file` returned `[synthetic file contents]` (loud since H2, but fabricated data as the real file). Close-when: fail-closed deny/quarantine for escaping reads (like the write side) with no synthetic content returned; chained `sandbox_traversal_contained` signal remains.
+
+**Red-first:** reproduced the pinned red (`evals/fra3_read_traversal.py` 2/2 green on the OLD loud-containment contract; registry probe `flagged` with the synthetic-content residual). Wrote failing tests first (4 red: queued-not-executed, approved-refuses-no-content, backend-dropin-refused, install-wiring).
+
+**Implementation (fail-closed quarantine, mirroring the write side):**
+- `policies/default.yaml` (+ `gov/data/default.yaml`, `evals/llm_redteam/policies/llm_redteam.yaml`): new `quarantine-outside-reads` rule (`read_file` + `path_outside_sandbox` → `require_approval`).
+- `gov/executor.py::_simulate`: escaping read returns `{refused: True, note}` with NO `content` key — even on the approved sweep (which re-runs `_simulate`). F147 `target_changed` (symlink-flip) deliberately untouched (still synthetic per F147's close-when).
+- `gov/sandbox.py::SandboxedToolBackend._read`: same refusal + `traversal_contained` marker.
+- **Loudness at the quarantine seam:** `call()` emits the chained `sandbox_traversal_contained` event when the rule fires (visible even if the approval is denied); `_simulate` deduplicates exactly-once per (agent, tool, path, cause).
+
+**Evidence (all green):**
+- `evals/fra3_read_traversal.py`: 3/3 green (`queued=True untouched=True loud_at_queue=True refused=True traversal_events=1`; benign + missing-file quiet).
+- `tests/test_sandbox.py`: 59/59 (new `TraversalReadFailClosedTest`, 4 tests; `InstallWiringTest` updated).
+- Closure probe `evals/w21_probes.py::sit_fra3_closure` → `stopped` (registry `flagged`→`stopped`).
+- Stratified-100: 100/100; `careless-typo-014` now asserts quarantine + signal; claim re-pinned (`--repin --commit 57f0474`, verifier PASS); `tests/test_stratified_100_claim.py` 5/5.
+- `evals/run_evals.py::pb_sit33` updated (trav_read queued, no content); `evals/matrix.py` sit33 summary/expected updated (`allowed-with-audit` → `queued`); `evals/w10_probes.py` sit57 backend assertion updated to refusal.
+
+**Records:** workstream `FINDINGS.md` F-RA3 → **CLOSED**. No new findings. Next free: **F176**. Open findings: none.
+
+**Gate-readiness:** NOT verified — the four-gate boundary is the parent's. `evals/artifacts/wave23_b2/battery_100_results.json` untouched.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+### Wave-120 pre-push boundary corrections (2026-09-26, parent verification)
+
+The standing red-first post-wave audit caught **three lane-introduced regressions** the lane's own gates missed (its BUILD_LOG entry above claims F147 "deliberately untouched" — the boundary proved otherwise):
+
+1. **F147 discriminator bug (REAL defect, `gov/executor.py`):** the lane's `if use_outside:` branch used the USE-time resolution to select the F-RA3 denial. A mid-call symlink flip (F147: check-time inside, use-time outside after the swap) has `use_outside=True`, so the F147 case was denied instead of contained to synthetic — `tests/test_w35_symlink_toctou.py::test_read_swap_between_check_and_use_stays_simulated` FAILED (`source` None, not `simulated`). Fix: discriminate on the CHECK-time verdict `ctx.get("path_outside_sandbox")` — only a declared escaping path is denied; the use-time flip keeps F147's synthetic containment. The lane's F147 battery (0 BREAK / 4 HELD / 1 INFO / 2 ERROR) is byte-identical to the pre-wave-120 baseline — no F147 regression.
+2. **Registry RED (2 mismatches):** `redteam.rt10.held.b1_framing_kwargs_no_privilege_change` and `redteam.rt11.held.r9_sender_author_kwargs` read `/tmp`-outside-sandbox probe files — correctly quarantined under the new rule, so the probes errored ("shape untested"). Fix: both probes now use `harness.plant_file(ctx, "p.txt", "x")` (in-sandbox). Product behavior correct; probe was sloppy.
+3. **Canonical `test_low_risk_still_executes_while_open`:** read `/tmp/x.txt` (outside sandbox) — correctly quarantined. Fix: reads an in-sandbox planted file.
+
+All three fixes are recorded here, not quietly patched. F-RA3 battery re-verified 3/3 green after the discriminator fix; TOCTOU 3/3 OK.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

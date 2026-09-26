@@ -3593,22 +3593,28 @@ class ToolExecutor:
     # -- simulated tools ---------------------------------------------------
 
     def _log_traversal_contained(self, tool, args, ctx, identity, cause):
-        """F-RA3 (H2): read-side traversal containment is LOUD.
+        """F-RA3 (H2/H120): read-side traversal attempts are LOUD.
 
-        When a ``read_file`` is contained to synthetic content because
-        the declared path escapes the sandbox (``cause ==
-        "path_outside_sandbox"``) or the use-time symlink target check
-        flipped (``cause == "symlink_target_changed"``, F147), the
-        containment was historically silent -- no denial, no
-        quarantine, no audit event naming the containment. The
-        traversal attempt is now a first-class chained audit event so
-        an auditor can see the escape was attempted AND contained.
-        Missing-file in-sandbox reads stay quiet: no traversal was
-        attempted, so there is nothing to flag.
+        When a ``read_file`` targets an escaping path (``cause ==
+        "path_outside_sandbox"``) the read is fail-closed DENIED
+        (wave-120: no content returned -- neither real outside bytes
+        nor synthetic) and the denial is a first-class chained audit
+        event. When the use-time symlink target check flips (``cause ==
+        "symlink_target_changed"``, F147) the read is contained to
+        synthetic content per F147's close-when, and the containment
+        is the chained event. Missing-file in-sandbox reads stay
+        quiet: no traversal was attempted, so there is nothing to
+        flag.
 
-        Best-effort with a stderr fallback (the containment already
-        happened; the event is the audit signal, not the control) --
-        mirrors the credential_binding_unenforced convention.
+        Best-effort with a stderr fallback (the denial/containment
+        already happened; the event is the audit signal, not the
+        control) -- mirrors the credential_binding_unenforced
+        convention.
+
+        Exactly-once per (agent, tool, path, cause): the wave-120
+        policy seam (quarantine-outside-reads) and the _simulate seam
+        (approved sweep / direct use) both call here; the first call
+        emits, later ones are suppressed.
         """
         if isinstance(identity, dict):
             agent_id = identity.get("agent_id")
@@ -3620,6 +3626,14 @@ class ToolExecutor:
             role = getattr(identity, "role", None)
             principal = getattr(identity, "principal", None)
             run_id = getattr(identity, "run_id", None) or self.run_id
+        # Exactly-once: the policy-quarantine seam and the _simulate
+        # seam both report here; emit only the first per key.
+        _tkey = (agent_id, tool, (args or {}).get("path"), cause)
+        _emitted = self.__dict__.setdefault("_traversal_events_emitted",
+                                            set())
+        if _tkey in _emitted:
+            return
+        _emitted.add(_tkey)
         entry = {
             "event": "sandbox_traversal_contained",
             "run_id": run_id,
@@ -3631,14 +3645,14 @@ class ToolExecutor:
             "policy_id": "sandbox-traversal-containment",
             "cause": cause,
             "path": (args or {}).get("path"),
-            "reason": ("read_file path %r %s: the read was contained to "
-                       "synthetic content (F-RA3) -- no real outside path "
-                       "was touched"
-                       % ((args or {}).get("path"),
-                          ("escaped the sandbox"
-                           if cause == "path_outside_sandbox"
-                           else "resolved to a different target between "
-                                "policy check and use (F147)"))),
+            "reason": (("read_file path %r escaped the sandbox: the read "
+                        "was denied (F-RA3) -- no content returned"
+                        % (args or {}).get("path"))
+                       if cause == "path_outside_sandbox"
+                       else ("read_file path %r resolved to a different "
+                             "target between policy check and use (F147): "
+                             "contained to synthetic content"
+                             % (args or {}).get("path"))),
         }
         try:
             self.log.append(entry)
@@ -3647,7 +3661,7 @@ class ToolExecutor:
             # loud control.
             print("GOVERNANCE WARNING: sandbox_traversal_contained "
                   "audit entry could not be chained (%s: %s); the "
-                  "read was still contained to synthetic content."
+                  "read was still denied/contained."
                   % (type(e).__name__, e), file=sys.stderr)
 
     def _invoke_simulate(self, tool, args, ctx, identity):
@@ -3742,15 +3756,40 @@ class ToolExecutor:
                     str(p), _exchange_entry_count(text))
                 return {"source": "sandbox",
                         "content": text[:4000]}
-            # F-RA3 (H2): the loud-containment seam. An escaping read is
-            # contained to synthetic content -- and the containment is
-            # now a chained audit event, not silence. A missing file
-            # inside the sandbox (not a traversal) stays quiet.
-            if use_outside or target_changed:
+            # F-RA3 (wave-120): an escaping read is FAIL-CLOSED -- no
+            # synthetic content is returned. The traversal attempt stays
+            # loud (chained sandbox_traversal_contained event, as since
+            # H2), but the agent receives a refusal, not fabricated
+            # data. Rationale: returning "[synthetic file contents]"
+            # lets the agent act on fake data believing it read the real
+            # file (integrity risk -- wrong-file sends, etc.). This
+            # mirrors the write side: quarantine-outside-writes queues
+            # the write and even an approved write is quarantined inside
+            # the run dir; here quarantine-outside-reads queues the read
+            # and even an approved execution (the approved sweep re-runs
+            # _simulate) returns this refusal -- never real outside
+            # bytes, never synthetic.
+            # F147's contract is deliberately untouched: a mid-call
+            # symlink-target flip (target_changed, not an escaping
+            # declared path) still contains to synthetic content, per
+            # F147's close-when. The discriminator is the CHECK-time
+            # verdict: only a declared escaping path
+            # (ctx["path_outside_sandbox"]) is denied. A use-time
+            # outside resolution with an inside check-time verdict is
+            # the F147 flip, not an F-RA3 escape. A missing file inside
+            # the sandbox (not a traversal) stays quiet below.
+            if ctx.get("path_outside_sandbox"):
                 self._log_traversal_contained(
                     tool, args, ctx, identity,
-                    cause=("symlink_target_changed"
-                           if target_changed else "path_outside_sandbox"))
+                    cause="path_outside_sandbox")
+                return {"refused": True,
+                        "note": ("read_file path %r escapes the sandbox: "
+                                 "denied (F-RA3); no content returned"
+                                 % (args.get("path"),))}
+            if target_changed:
+                self._log_traversal_contained(
+                    tool, args, ctx, identity,
+                    cause="symlink_target_changed")
             return {"source": "simulated", "content": "[synthetic file contents]"}
         if tool == "write_file":
             content = args.get("content", "")
@@ -6171,6 +6210,19 @@ class ToolExecutor:
         # require_approval: queue for a human, do NOT execute.
         provenance = ("untrusted_influenced" if self._tainted
                       else "agent_direct")
+        # F-RA3 (wave-120): an escaping read quarantined by policy is
+        # LOUD at the quarantine seam -- the chained
+        # sandbox_traversal_contained event fires here (not only at
+        # execution), so the traversal attempt is visible even when
+        # the approval is denied and _simulate never runs. Deduped
+        # against the _simulate seam (approved sweep) via the emitted
+        # set: exactly one event per (agent, tool, path, cause).
+        if (tool == "read_file"
+                and "quarantine-outside-reads"
+                in (decision.matched_rules or [])):
+            self._log_traversal_contained(
+                tool, kwargs, ctx, identity,
+                cause="path_outside_sandbox")
         # H3 (F142 Leg-A residual, wave-117): stash http_post payload
         # content hashes at queue time so the approved sweep can bind
         # the upload record to the payload content. Hashes only

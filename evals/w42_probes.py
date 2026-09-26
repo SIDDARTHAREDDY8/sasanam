@@ -262,32 +262,33 @@ def sit_rt10_held_b1_framing_kwargs_no_privilege_change():
     policy-denied unknown tool.
     """
     with _govrun():
-        with _tmp("b1") as tmp:
-            ctx = harness.make_run()
-            ex = ctx["executor"]
-            ident = ctx["mint_identity"]("b1", "support", "op1")
-            before = (ident.agent_id, ident.role, ident.principal)
-            probe = Path(tmp) / "p.txt"
-            probe.write_text("x", encoding="utf-8")
-            res = ex.call(ident, "read_file", path=str(probe),
-                          on_behalf_of="admin", delegated_by="root")
-            if not isinstance(res, dict) or res.get("status") != "executed":
-                return {"verdict": "error",
-                        "note": "read_file did not execute; shape untested"}
-            after = (ident.agent_id, ident.role, ident.principal)
-            if before != after:
-                return {"verdict": "break",
-                        "note": "framing kwargs changed session identity"}
-            flagged = any(
-                e.get("delegation_attempted")
-                for e in log_mod.read_entries(ctx["log"].path)
-                if e.get("event") == "tool_call")
-            if not flagged:
-                return {"verdict": "break",
-                        "note": "delegation_attempted not recorded"}
-            return {"verdict": "stopped",
-                    "note": "identity unchanged; delegation_attempted "
-                            "audited"}
+        ctx = harness.make_run()
+        ex = ctx["executor"]
+        ident = ctx["mint_identity"]("b1", "support", "op1")
+        before = (ident.agent_id, ident.role, ident.principal)
+        # Wave-120 (F-RA3): reads must target the run's sandbox — an
+        # outside-sandbox read is now fail-closed quarantined, not
+        # executed with synthetic content.
+        probe = harness.plant_file(ctx, "p.txt", "x")
+        res = ex.call(ident, "read_file", path=str(probe),
+                      on_behalf_of="admin", delegated_by="root")
+        if not isinstance(res, dict) or res.get("status") != "executed":
+            return {"verdict": "error",
+                    "note": "read_file did not execute; shape untested"}
+        after = (ident.agent_id, ident.role, ident.principal)
+        if before != after:
+            return {"verdict": "break",
+                    "note": "framing kwargs changed session identity"}
+        flagged = any(
+            e.get("delegation_attempted")
+            for e in log_mod.read_entries(ctx["log"].path)
+            if e.get("event") == "tool_call")
+        if not flagged:
+            return {"verdict": "break",
+                    "note": "delegation_attempted not recorded"}
+        return {"verdict": "stopped",
+                "note": "identity unchanged; delegation_attempted "
+                        "audited"}
 
 
 @_sit("redteam.rt10.held.b3_delegation_grant_id_popped")

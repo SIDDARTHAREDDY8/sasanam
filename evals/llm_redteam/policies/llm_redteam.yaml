@@ -219,6 +219,14 @@ policies:
       path_outside_sandbox: true
     reason: Write outside the sandbox requires approval; even approved, it is quarantined inside the run dir.
 
+  - id: quarantine-outside-reads
+    description: Outside-sandbox reads need approval and return no content.
+    effect: require_approval
+    match:
+      tool: [read_file]
+      path_outside_sandbox: true
+    reason: Read outside the sandbox requires approval; even approved, no content is returned -- neither real outside bytes nor synthetic (F-RA3).
+
   - id: approval-high-volume-api
     description: Slow down high-volume external reads.
     effect: require_approval

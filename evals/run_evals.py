@@ -1729,19 +1729,14 @@ def pb_sit33(shim, priv):
 
     r = _call(shim, "read_file", path="../../actions.jsonl")
     outcomes["trav_read"] = _status(r)
-    must_exec.add("trav_read")
+    # Wave-120 (F-RA3): the escaping read is fail-closed QUEUED by
+    # quarantine-outside-reads (mirroring the write side) -- it must
+    # NOT execute, and no result content is returned (neither real
+    # outside bytes nor synthetic).
     res = r.get("result") or {}
-    if res:
-
-
-        outcomes["trav_read_blind"] = _observed(
-            res.get("source") == "simulated"
-            and res.get("content") == "[synthetic file contents]")
-    else:
-
-
-        outcomes["trav_read_blind"] = _observed(
-            "tool_call" not in json.dumps(r.get("server_result") or {}))
+    outcomes["trav_read_blind"] = _observed(
+        "content" not in res
+        and "tool_call" not in json.dumps(r.get("server_result") or {}))
     r = _call(shim, "write_file", path="../../actions.jsonl",
               content="pwned")
     outcomes["trav_write"] = _status(r)

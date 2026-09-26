@@ -474,12 +474,15 @@ class InstallWiringTest(unittest.TestCase):
         self.assertIs(install(ctx["executor"], custom), custom)
 
     def test_install_escaping_read_is_loud_not_silent(self):
-        # H2 regression test (wave-117 audit): call() passes
-        # identity= to _simulate; the installed backend must accept it
-        # (it is a drop-in replacement), AND the escaping read must
-        # emit a chained sandbox_traversal_contained event -- the
-        # backend path contained silently, the exact defect H2 fixed
-        # on the plain-executor path.
+        # H2 regression test (wave-117 audit), updated for wave-120:
+        # call() passes identity= to _simulate; the installed backend
+        # must accept it (it is a drop-in replacement). The escaping
+        # read is fail-closed QUEUED by quarantine-outside-reads (the
+        # policy seam fires before the backend is involved), and the
+        # quarantine is LOUD: exactly one chained
+        # sandbox_traversal_contained event. The backend's own _read
+        # refusal (no synthetic content) is covered by
+        # TraversalReadFailClosedTest.test_backend_dropin_escaping_read_refused_loud.
         from tests.harness import make_run
         ctx = make_run()
         self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
@@ -488,9 +491,8 @@ class InstallWiringTest(unittest.TestCase):
         install(ctx["executor"])
         rec = ctx["executor"].call(ident, "read_file", path="../plan.txt",
                                    justification="h2 backend probe")
-        self.assertEqual(rec["status"], "executed")
-        self.assertEqual(rec["result"]["content"],
-                         "[synthetic file contents]")
+        self.assertEqual(rec["status"], "queued")
+        self.assertNotIn("result", rec)
         found = [e for e in ctx["read_log"]()
                  if e.get("event") == "sandbox_traversal_contained"]
         self.assertEqual(len(found), 1,
@@ -667,6 +669,12 @@ class TraversalContainmentLoudTest(unittest.TestCase):
                 and e.get("agent_id") == agent_id]
 
     def test_escaping_read_emits_chained_containment_event(self):
+        # F-RA3 (wave-120): the escaping read is fail-closed. The policy
+        # quarantines it (quarantine-outside-reads, mirroring the write
+        # side) and the quarantine itself is LOUD: the chained
+        # sandbox_traversal_contained event fires at the queue seam, so
+        # the attempt is visible even when the approval is denied and
+        # _simulate never runs.
         from tests.harness import make_run
         ctx = make_run()
         self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
@@ -677,11 +685,14 @@ class TraversalContainmentLoudTest(unittest.TestCase):
         rec = ctx["executor"].call(ident, "read_file",
                                    path="../plan.txt",
                                    justification="h2 unit test")
-        self.assertEqual(rec["status"], "executed")
-        self.assertEqual(rec["result"]["content"],
-                         "[synthetic file contents]")
+        self.assertEqual(rec["status"], "queued",
+                         "escaping read must queue, got %r" % (rec,))
         self.assertFalse(outside.exists(),
                          "containment must not touch the real path")
+        # The queue record names the rule that fired.
+        self.assertIn("quarantine-outside-reads",
+                      rec.get("policy_id", ""))
+        # The quarantine is loud: exactly one chained event.
         events = self._events(ctx, "loud-agent")
         self.assertEqual(len(events), 1,
                          "exactly one loud containment event, got %r"
@@ -693,6 +704,44 @@ class TraversalContainmentLoudTest(unittest.TestCase):
         self.assertEqual(ev["decision"], "contained")
         # The event is chained: it carries a sequence number.
         self.assertIn("seq", ev)
+
+    def test_simulate_seam_stays_loud_and_refused(self):
+        # Defense-in-depth: a direct _simulate call with an escaping
+        # path (no policy seam involved) is still loud AND refused --
+        # no synthetic content.
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ex = ctx["executor"]
+        ident = ex.mint_identity("seam-agent", "coder", "seam-principal")
+        res = ex._simulate("read_file", {"path": "../plan.txt"},
+                           {"path_outside_sandbox": True}, ident)
+        self.assertTrue(res.get("refused"))
+        self.assertNotIn("content", res)
+        events = self._events(ctx, "seam-agent")
+        self.assertEqual(len(events), 1,
+                         "exactly one loud containment event, got %r"
+                         % (events,))
+
+    def test_approved_sweep_emits_no_second_event(self):
+        # Exactly-once: the queue seam already emitted the event, so
+        # the approved sweep's _simulate must not emit a duplicate.
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ex = ctx["executor"]
+        ident = ex.mint_identity("dedup-agent", "coder", "dedup-principal")
+        rec = ex.call(ident, "read_file", path="../plan.txt",
+                      justification="f-ra3 unit test")
+        self.assertEqual(rec["status"], "queued")
+        self.assertEqual(len(self._events(ctx, "dedup-agent")), 1)
+        ctx["approvals"].decide(rec["approval_id"], True,
+                                "f-ra3 unit test", "test-operator")
+        ex.execute_approved()
+        self.assertEqual(len(self._events(ctx, "dedup-agent")), 1,
+                         "no duplicate event from the approved sweep")
 
     def test_benign_read_emits_no_containment_event(self):
         from tests.harness import make_run, plant_file
@@ -724,6 +773,132 @@ class TraversalContainmentLoudTest(unittest.TestCase):
                          "[synthetic file contents]")
         self.assertEqual(self._events(ctx, "miss-agent"), [],
                          "a missing in-sandbox file is not a traversal")
+
+
+class TraversalReadFailClosedTest(unittest.TestCase):
+    """F-RA3 (wave-120): escaping read_file is fail-closed denied/
+    quarantined -- no synthetic content returned.
+
+    Red-first: before the fix, an escaping read executed with
+    ``[synthetic file contents]`` (loud since H2, but the agent still
+    received fabricated data as the real file). After the fix the
+    policy queues the read (``quarantine-outside-reads``, mirroring
+    the write side) and even an approved execution returns a refusal
+    with no content -- neither real outside bytes nor synthetic.
+    """
+
+    def _events(self, ctx, agent_id):
+        return [e for e in ctx["read_log"]()
+                if isinstance(e, dict)
+                and e.get("event") == "sandbox_traversal_contained"
+                and e.get("agent_id") == agent_id]
+
+    def test_escaping_read_is_queued_not_executed(self):
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ident = ctx["executor"].mint_identity("queue-agent", "coder",
+                                              "queue-principal")
+        rec = ctx["executor"].call(ident, "read_file",
+                                   path="../plan.txt",
+                                   justification="f-ra3 unit test")
+        self.assertEqual(rec["status"], "queued",
+                         "escaping read must queue for approval, got %r"
+                         % (rec,))
+        self.assertIn("approval_id", rec)
+        # Nothing was returned to the agent -- no result content at all.
+        self.assertNotIn("result", rec)
+        # The quarantine is loud: the chained event fired at queue time.
+        self.assertEqual(len(self._events(ctx, "queue-agent")), 1)
+        # The real outside path is untouched.
+        outside = Path(ctx["run_dir"]).parent / "plan.txt"
+        self.assertFalse(outside.exists())
+
+    def test_approved_escaping_read_returns_no_content(self):
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ident = ctx["executor"].mint_identity("appr-agent", "coder",
+                                              "appr-principal")
+        rec = ctx["executor"].call(ident, "read_file",
+                                   path="../plan.txt",
+                                   justification="f-ra3 unit test")
+        self.assertEqual(rec["status"], "queued")
+        ctx["approvals"].decide(rec["approval_id"], True,
+                                "f-ra3 unit test", "test-operator")
+        executed = ctx["executor"].execute_approved()
+        self.assertEqual(len(executed), 1)
+        # Fail-closed even when approved: the approved_executed audit
+        # record's result summary shows the refusal -- no content was
+        # returned (neither real outside bytes nor synthetic).
+        summaries = [e.get("result_summary", "")
+                     for e in ctx["read_log"]()
+                     if isinstance(e, dict)
+                     and e.get("decision") == "approved_executed"]
+        self.assertEqual(len(summaries), 1,
+                         "one approved execution, got %r" % (summaries,))
+        self.assertIn("refused=True", summaries[0],
+                      "approved escaping read must refuse, got %r"
+                      % (summaries[0],))
+        # Loudness stays: the chained event names the denial.
+        events = self._events(ctx, "appr-agent")
+        self.assertEqual(len(events), 1,
+                         "exactly one traversal event, got %r" % (events,))
+        self.assertEqual(events[0]["cause"], "path_outside_sandbox")
+        outside = Path(ctx["run_dir"]).parent / "plan.txt"
+        self.assertFalse(outside.exists())
+
+    def test_backend_dropin_escaping_read_refused_loud(self):
+        from tests.harness import make_run
+        from gov.sandbox import SandboxedToolBackend
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        backend = SandboxedToolBackend(ctx["executor"].sandbox,
+                                         ctx["executor"].quarantine)
+        # Defense-in-depth at the _simulate seam: the drop-in itself
+        # refuses the escaping read (no synthetic content) and still
+        # reports via the traversal_contained marker.
+        res = backend._read({"path": "../plan.txt"},
+                            {"path_outside_sandbox": True})
+        self.assertTrue(res.get("refused"),
+                        "backend must refuse escaping reads, got %r"
+                        % (res,))
+        self.assertNotIn("content", res)
+        self.assertTrue(res.get("traversal_contained"),
+                        "the loud marker must still ride along")
+
+    def test_symlink_flip_read_still_synthetic_per_f147(self):
+        # F147's closed contract: a mid-call symlink-target flip
+        # contains to synthetic (unchanged by the F-RA3 closure, which
+        # scopes to path_outside_sandbox only).
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ex = ctx["executor"]
+        ident = ex.mint_identity("f147-agent", "coder", "f147-principal")
+        # Drive _simulate directly with a flipped target: check-time
+        # resolved != use-time resolved.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            real = Path(td) / "real.txt"
+            real.write_text("real-bytes")
+            link = Path(ctx["run_dir"]) / "hot-link"
+            link.symlink_to(real)
+            args = {"path": "hot-link"}
+            check_ctx = {"path_outside_sandbox": False,
+                         "path_resolved": "real.txt"}
+            # Flip the link to point outside between check and use.
+            link.unlink()
+            link.symlink_to("/etc/hostname")
+            res = ex._simulate("read_file", args, check_ctx)
+            self.assertEqual(res.get("content"),
+                             "[synthetic file contents]",
+                             "F147 flip containment is unchanged, got %r"
+                             % (res,))
 
 
 if __name__ == "__main__":
