@@ -1,3 +1,17 @@
+## 2026-09-26 — F81 privileged re-run (durable proof on the wave-126 tree)
+
+**Scope:** Re-verify F81's closure under genuine privilege on the current tree. F81 has been CLOSED since wave-98 (11/11 ×2 on f81-lab, 2026-09-24), but no durable run artifact existed and waves 99-126 changed code around those seams — the wave-113 honest residual ("not re-verifiable from today's tree"). This run retires that residual.
+
+**Method:** f81-lab VM (terminalbench-508900, us-central1-a) started via GCP console; today's tree (eb28f7f, no uncommitted changes) rsync'd to the VM; `evals/f81launcher_privileged.py` run under root (`sudo -n`, uid 0) with `GOV_F81_PRIVILEGED=1`, twice, in separate TMPDIRs. Battery builds/tears down its own topology (netns `f81test0`, veth pair, nftables default-deny, in-ns proxy/DNS).
+
+**Result: 11/11 CLOSED ×2 — F81-PRIVILEGED-BATTERY: GREEN.** All probes CLOSED both runs: control_governed_launch, wall_down_refuses, helper_tamper_refuses, ruleset_drift_refuses, child_is_in_agent0 (child netns != host), allowlist_enforced_end_to_end (proxy 200/403, direct SYN dropped, DNS allowlist/NXDOMAIN), seccomp_live (AF_PACKET/SOCK_RAW/unshare/setns → EPERM), prefix_strip_is_auditor_visible, audit_verification_procedure, unauthored_helper_pin_refused, preexec_abort_on_flap. Zero BREAK/SKIP/ERROR.
+
+**Durable artifact:** `evals/f81_privileged_run_2026-09-26.json` — full probe-by-probe results, environment, and tree pin. The F81 closure is now re-verifiable from the wave-126 tree.
+
+**Two-axis review:** Standards PASS (no product code touched; artifact is evidence-only JSON; $0). Spec PASS (genuine privilege: root, CAP_SYS_ADMIN confirmed via netns create/destroy, seccomp live).
+
+**Files:** `evals/f81_privileged_run_2026-09-26.json` (NEW), `BUILD_LOG.md` (this entry).
+
 ## 2026-09-26 — Wave-126 (H23 measured-absent + H24 anchor adapter seam)
 
 **Scope:** Two hardening-backlog items from `evals/v1_hardening_backlog_2026-09-26.md` (H23 F170 ledger bounded-growth, H24 anchor-ready transparency seam). No new findings filed; next free finding stays **F176**. Lane does not push (parent runs gates + push).
