@@ -73,8 +73,14 @@ see §1 for the residual).
   `tests/run_tests.py` runs before test collection, and artifact
   verification. The HIGH-for-production escalation is retired; residual:
   audit checks installed names/versions, not post-install file bytes.
-- **Open findings: none** (`evals/FINDINGS.md` tail, wave-112; next free finding
-  **F173**). Every finding ≤ F172 is recorded CLOSED (F163 re-closed 2026-09-24
+- **Open findings: F173, F174** (`evals/FINDINGS.md` tail, wave-114 lane 1;
+  next free finding **F175**). F173 (LOW): unsigned inclusion-coverage
+  downgrade — a no-key transport attacker can strip inclusion bundles
+  (or the receipt's own bundle), adjust the unsigned coverage counts,
+  recompute only the unsigned transport digest, and still get exit 0
+  VERIFIED. F174 (LOW): a VERIFIED bundle can carry an
+  authoritative-sounding `operator_id` the verifier never surfaces in
+  text or JSON output. Every finding ≤ F172 is recorded CLOSED (F163 re-closed 2026-09-24
   after the Wave-109 quality audit; the wave-112 post-wave red-first audit ran
   GO with zero overstatements). The **accepted residual is F81 (LOW, CLOSED
   2026-09-24)**: the filtered-egress wall was lab-validated on f81-lab

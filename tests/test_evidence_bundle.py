@@ -273,7 +273,7 @@ class TestEvidenceBundleSeal(_EBTestBase):
         eb, payload, manifest = self._sealed(s)
         sig = manifest["signing"]
         self.assertEqual(sig["scheme"], "ed25519")
-        self.assertEqual(sig["domain"], "evidence-bundle/v1")
+        self.assertEqual(sig["domain"], "evidence-bundle/v2")
         self.assertEqual(sig["key_id"], s.key_id)
         body = eb.signed_body(manifest)
         self.assertTrue(_e.verify(s.public_key, body,
@@ -328,7 +328,7 @@ class TestEvidenceBundleSeal(_EBTestBase):
         payload = eb.build()
         manifest = eb.seal(payload, signer=s)
         entry = log_evidence_bundle_receipt(
-            manifest, ActionLog(self.log_path, signer=s))
+            manifest, ActionLog(self.log_path, signer=s), signer=s)
         self.assertEqual(entry["event"], "evidence_bundle_sealed")
         self.assertEqual(entry["prev_hash"],
                          manifest["window"]["tip_hash"])
@@ -348,7 +348,7 @@ class TestEvidenceBundleAssemble(_EBTestBase):
         payload = eb.build()
         manifest = eb.seal(payload, signer=s)
         log_evidence_bundle_receipt(
-            manifest, ActionLog(self.log_path, signer=s))
+            manifest, ActionLog(self.log_path, signer=s), signer=s)
         op = {"key_id": s.key_id,
               "public_key_hex": s.public_key.hex()}
         out = os.path.join(self.tmp.name, name)
@@ -403,7 +403,7 @@ class TestEvidenceBundleAssemble(_EBTestBase):
         payload = eb.build()
         manifest = eb.seal(payload, signer=s)
         log_evidence_bundle_receipt(
-            manifest, ActionLog(self.log_path, signer=s))
+            manifest, ActionLog(self.log_path, signer=s), signer=s)
         wrong = {"key_id": other.key_id,
                  "public_key_hex": other.public_key.hex()}
         with self.assertRaises(EvidenceBundleError):
@@ -429,7 +429,8 @@ class TestEvidenceBundleAssemble(_EBTestBase):
         log_evidence_bundle_receipt(
             manifest, ActionLog(self.log_path, signer=tsigner,
                                 roster=roster,
-                                deployment_mode="staging"))
+                                deployment_mode="staging"),
+            signer=s1)
         op = {"key_id": s1.key_id,
               "public_key_hex": s1.public_key.hex()}
         out_dir = os.path.join(self.tmp.name, "threshold")

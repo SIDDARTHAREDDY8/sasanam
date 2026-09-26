@@ -142,7 +142,8 @@ def _assemble(tag, signer, *, hmac_only=False, unversioned_policy=False,
         manifest,
         ActionLog(log_path,
                   signer=None if hmac_only else use_signer,
-                  deployment_mode="staging"))
+                  deployment_mode="staging"),
+        signer=use_signer)
     key = use_signer
     op = {"key_id": key.key_id, "public_key_hex": key.public_key.hex()}
     out = os.path.join(tmp, "bundle")

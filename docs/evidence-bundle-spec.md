@@ -145,7 +145,9 @@ All fields carry provenance per the honesty contract. `null` +
 `operator_must_supply: true` wherever the log cannot supply a value — never
 synthesized, never defaulted.
 
-1. **`bundle_meta`.** `bundle_version` (`"evidence-bundle/1.0"`),
+1. **`bundle_meta`.** `bundle_version` (`"evidence-bundle/1.1"` —
+   bumped from 1.0 by the F173 fix, which bound inclusion/receipt
+   coverage into the signed claim),
    `evidence_schema_version` (`"evidence-schema/1.0"` — bumped if the schema
    ever changes; never silently re-interpreted), `generator`
    (`gov/evidence_bundle.py` + version), `exported_at` (UTC ISO-8601),
@@ -263,10 +265,16 @@ Mirrors `IncidentReport.seal` / `SafeguardAssessment.seal` exactly:
    §4.3 V12.
 - `signing`: `{scheme: "ed25519", key_id, public_key_hex,
   signature_hex, signed_bytes: "domain-separated manifest digest",
-  domain: "evidence-bundle/v1"}`. **There is no `"none"` option in v1** —
+  domain: "evidence-bundle/v2"}`. **There is no `"none"` option in v1** —
   an unsigned evidence bundle is not an evidence bundle (unlike the
   incident-report export, which tolerates HMAC-anchored-only manifests).
   A missing/invalid signature fails the bundle closed.
+- `receipt`: the operator-signed copy of the export receipt (presence +
+  reason bound into the signed claim, §4.2; canonical-checked against
+  the transported `receipt.json` by V12). Because the receipt is created
+  *after* `seal()` (it must chain onto the sealed window's tip), the
+  builder re-signs the extended claim when the receipt is attached —
+  the shipped signature always covers the receipt binding.
 
 ### 4.2 Signing
 
@@ -283,7 +291,7 @@ operator's signature key domain.
 **Domain separation (decision).** The anchor seed also signs transparency
 anchors. Signing two artifact classes with one seed is a hygiene smell, so
 the evidence signature is computed over a domain-separated body:
-`b"evidence-bundle/v1\x00" + export_sha256_bytes`. If the coordinator
+`b"evidence-bundle/v2\x00" + export_sha256_bytes`. If the coordinator
 prefers a distinct key domain (`GOV_EVIDENCE_KEY` via the same
 `resolve_anchor_key` idiom), the manifest's `domain` field and key-id
 accounting already support it — this is the one signing decision left to
@@ -296,15 +304,37 @@ manifest. Wire format is standard, so signatures verify across
 implementations.
 
 **What the signature covers.** The domain-separated `export_sha256` of
-canonical `evidence.json` — which transitively commits to every section,
-the window bounds, the tip hash, and the inclusion-coverage accounting —
-plus the manifest's own `chain_verified` and checkpoint list via their
-inclusion in the signed bytes: the signed body is
-`domain || export_sha256 || canonical({"window", "chain_verified",
-"checkpoints_digest"})`, where `checkpoints_digest` is sha256 over the
-canonical checkpoint heads. A signature that covered only the payload
-digest would let an attacker swap the chain-verification claim; the spec
-binds the claim into the signature.
+canonical `evidence.json` — which transitively commits to every payload
+section, the window bounds, and the tip hash — plus the manifest's own
+`chain_verified`, checkpoint list, inclusion-coverage accounting, and
+receipt binding via their inclusion in the signed bytes. The signed
+claim is exactly:
+
+```
+canonical({
+  "window":            {"from_seq", "to_seq", "tip_hash", "entry_count"},
+  "chain_verified":    bool,
+  "checkpoints_digest": sha256(canonical(checkpoint heads)),
+  "inclusion":         [{"seq", "bundle_present", "unavailable_reason"}...],
+  "inclusion_coverage": {"entries", "with_bundle"},
+  "receipt":           {"bundle_present", "unavailable_reason"},
+})
+```
+
+signed as `domain || export_sha256 || canonical(claim)` with
+`domain = b"evidence-bundle/v2\x00"`. A signature that covered only the
+payload digest would let an attacker swap the chain-verification claim;
+and a signature that stopped at the window/checkpoints would let a
+no-key attacker strip inclusion bundles (or the receipt's own bundle)
+and adjust the *unsigned* coverage counts while the bundle still
+VERIFIED (F173, 2026-09-26). Post-F173 the signature binds the
+per-entry presence vector, the coverage counts, and the receipt's
+bundle-presence/reason — any unsigned alteration fails V7. (The
+payload's per-entry `has_bundle`/`unavailable_reason` in
+`log_slice.coverage` remains transitively covered through
+`export_sha256`; the *manifest's* copies are the ones the signature
+binds directly, because the manifest is what a transport attacker can
+edit without touching the payload digest.)
 
 **Key rotation.** The manifest records `key_id` =
 `ed25519_key_id(public_key)` = `sha256(pub).hexdigest()[:16]` (the same
@@ -366,7 +396,11 @@ noted):
 - **V1 — version gate.** `VERSION` parses; `bundle_version` and
   `evidence_schema_version` are recognized. Foreign versions fail closed
   — the schema is never silently re-interpreted (same rule as
-  `bundle_verify` B1).
+  `bundle_verify` B1). Legacy `evidence-bundle/1.0` bundles fail closed
+  with an explicit F173 message: their signatures cannot prove
+  inclusion/receipt coverage was not stripped (the coverage binding did
+  not exist before 1.1), so they are never silently treated as verified —
+  the remedy is re-sealing under 1.1.
 - **V2 — required files.** All nine layout entries present (§4.1).
 - **V3 — transport digest.** Recompute `BUNDLE_DIGEST.sha256` over
   relative paths + contents; must equal the stored value (tamper-evidence
@@ -385,8 +419,14 @@ noted):
   `SELF_CONSISTENT` (exit 2) — an unpinned PASS means "internally intact",
   never "the operator's".
 - **V7 — operator signature.** Ed25519-verify the manifest signature over
-  the domain-separated body (`domain || export_sha256 || window digest`,
-  §4.2) with the envelope's operator pubkey.
+  the domain-separated body (`domain || export_sha256 || claim digest`,
+  §4.2; `domain` must be exactly `evidence-bundle/v2`) with the
+  envelope's operator pubkey. The claim binds the window, the
+  chain-verification result, the checkpoint digest, the per-entry
+  inclusion-bundle presence vector, the coverage counts, and the
+  receipt's bundle-presence/reason (F173) — so any unsigned alteration
+  of that accounting fails the signature rather than sailing through
+  to a VERIFIED verdict.
 - **V8 — checkpoint signatures.** Every checkpoint head in
   `checkpoints.jsonl` verifies against the bundled checkpoint keys
   (single-key or A5 k-of-n roster threshold via the vendored
@@ -413,9 +453,14 @@ noted):
   "policy unattested" rather than passing silently.
 - **V12 — export receipt.** (a) `receipt.json`'s `prev_hash` equals the
   slice tip hash and its `export_sha256` equals the manifest digest —
-  the receipt chains onto the exported window. (b, only with `--log`):
-  the receipt entry exists in the provided log's chain at the recorded
-  seq (re-run `verify_chain`-equivalent on the copy).
+  the receipt chains onto the exported window; its `bundle_present` /
+  `unavailable_reason` must equal the operator-signed manifest receipt
+  binding (F173 — a stripped receipt fails here even though the entry
+  itself is untouched). (b, only with `--log`): the receipt entry exists
+  in the provided log's chain at the recorded seq (re-run
+  `verify_chain`-equivalent on the copy). Note the binding is
+  content-addressed (tip + digest + seq), not bundle-instance-addressed:
+  a genuine receipt entry for the same export replays harmlessly.
 - **V13 — citation/approval cross-consistency.** Every
   `citation_check_completed` record with `accepted: true` has
   `n_self_planted == 0`; every `verdict_counts` sums to `n_citations`;
@@ -441,12 +486,22 @@ noted):
   "key_id": str|null}, "checks": [{"id": "V1", "name": ...,
   "ok": bool, "status": "pass|fail|not_applicable", "detail": str}],
   "failures": [...], "coverage": {"entries": n, "with_bundle": m},
+  "claimed_operator": {"value": str|null, "disclaimer":
+  "operator-supplied, not independently verified"},
   "what_this_does_not_prove": [...]}` — the honesty footer is part of
   the JSON, not just the text.
 - Human summary (`text`): the VERIFY.txt procedure pointer, one line per
   check (PASS/FAIL/N-A with detail), then a fixed "What this proves /
   what this does not prove" block drawn from §7. The summary never
   prints `VERIFIED` for an unpinned run.
+- **Claimed-operator disclosure (F174).** Both formats surface the
+  payload's operator-supplied `operator_id` on every verdict path —
+  text: `claimed operator: <value> (operator-supplied, not
+  independently verified)`; JSON: the `claimed_operator` field above.
+  This is disclosure, not rejection: pinning the operator's key proves
+  authorship of the bundle, not the truth of the name the operator
+  claims — the disclaimer keeps an auditor from mistaking the former
+  for the latter.
 
 ---
 
@@ -503,6 +558,17 @@ where noted), never 0:
 - **T10 — policy substitution.** Swap the policy section's hash to a
   different policy's. → V11 mismatch against the slice's
   `policy_loaded` events.
+
+**Beyond-§5 adversarial cases (F173/F174).** The adversarial battery
+(`evals/evidence_bundle_adversarial.py`) pins the two finding-shaped
+attacks as MUST-detect regression probes: **F1a** — no-key strip of
+inclusion bundles from the manifest with adjusted counts → V7 fails
+(the presence vector and counts are signature-bound); **F1b** — no-key
+strip of the receipt's own inclusion bundle with a fabricated reason →
+V12 fails (presence/reason binding); **D1** — a VERIFIED bundle carrying
+an authoritative-sounding `operator_id` → exit 0 with the claimed name
+surfaced WITH its unverified-assertion disclaimer in both text and
+JSON.
 
 **Benign controls.** A genuine bundle verifies exit 0 (pinned) and exit 2
 (unpinned, with the capped language); a bundle built from a log with
@@ -596,7 +662,10 @@ must carry these, and no sales or docs copy may contradict them.
    retention manifest, `operator_id`, and any `operator_must_supply`
    field are the operator's statements, carried with provenance labeled
    as such — the verifier checks their presence and schema, not their
-   truth.
+   truth. The verifier surfaces the claimed `operator_id` in both
+   output formats with an explicit "operator-supplied, not independently
+   verified" disclaimer (F174): pinning the operator's key proves
+   authorship of the bundle, never the truth of the name claimed.
 8. **Single-tenant scope.** The bundle describes one deployment's log.
    Cross-deployment or cross-tenant claims are out of scope (SHIP_PLAN
    v1 is single-tenant by decision).
@@ -638,8 +707,8 @@ Every item below was checked against the current tree; none is assumed.
   is proposed: the log is the source of truth.
 - **P5 — evidence signing key domain (coordinator decision).** The spec
   reuses `gov/anchorer.py::resolve_anchor_key` (`GOV_ANCHOR_KEY` /
-  `GOV_ANCHOR_KEY_FILE`) with domain separation (`evidence-bundle/v1`
-  prefix in the signed body). If the coordinator wants a distinct
+  `GOV_ANCHOR_KEY_FILE`) with domain separation (`evidence-bundle/v2`
+  prefix in the signed body, §4.2). If the coordinator wants a distinct
   `GOV_EVIDENCE_KEY` domain instead, it follows the same idiom; the
   verifier is unchanged either way.
 - **P6 — KMS-backed Ed25519 signing.** `VaultKmsProvider` wraps data

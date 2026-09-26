@@ -21,20 +21,25 @@ Integrity wiring (existing machinery, no parallel scheme):
   plus per-entry Merkle inclusion bundles (``gov.log.prove_inclusion``).
 - The manifest signature is REQUIRED in v1 (no ``"none"`` scheme): an
   unsigned evidence bundle is not an evidence bundle. The signature is
-  domain-separated (``evidence-bundle/v1``) over
+  domain-separated (``evidence-bundle/v2``) over
   ``export_sha256 || canonical({window, chain_verified,
-  checkpoints_digest})`` — the claim triple is bound into the
-  signature so the chain-verification claim cannot be swapped.
+  checkpoints_digest, inclusion, receipt})`` — the claim is bound into
+  the signature so the chain-verification, inclusion-coverage, and
+  receipt claims cannot be swapped (F173: the pre-fix triple covered
+  only window/chain_verified/checkpoints_digest, letting a no-key
+  attacker strip inclusion bundles and adjust the unsigned counts).
 - ``log_evidence_bundle_receipt()`` appends a hash-chained receipt of
   the sealed export back into the audit log (the
   ``evidence_export_sealed`` pattern from ``gov/evidence_exports.py``),
-  so the export itself is auditable in the same chain.
+  so the export itself is auditable in the same chain. Because the
+  receipt is created after ``seal()``, this function re-signs the
+  extended claim after attaching the receipt.
 
 P5 decision (signing key domain, coordinator call): reuse
 ``gov/anchorer.py::resolve_anchor_key`` (``GOV_ANCHOR_KEY`` /
 ``GOV_ANCHOR_KEY_FILE``) — the only existing operator-held Ed25519
 seed seam with a fail-closed provisioning idiom — with the
-``evidence-bundle/v1`` domain separation above. One fewer key to
+``evidence-bundle/v2`` domain separation above. One fewer key to
 provision; cross-artifact signature reuse is impossible by domain.
 
 $0 spend, synthetic/local only. No network.
@@ -81,13 +86,25 @@ def _resolve_operator_signer():
             "seal() refuses: resolved anchor key is not 32 bytes")
     return _Ed25519Signer(seed)
 
-BUNDLE_VERSION = "evidence-bundle/1.0"
+BUNDLE_VERSION = "evidence-bundle/1.1"
 EVIDENCE_SCHEMA_VERSION = "evidence-schema/1.0"
 GENERATOR = "gov/evidence_bundle.py"
 GENERATOR_VERSION = "1.0.0"
 
 #: Domain separation for the operator's manifest signature (P5).
-SIGN_DOMAIN = b"evidence-bundle/v1\x00"
+#: v2: the signed claim changed shape (F173 binds the inclusion
+#: presence vector, the inclusion_coverage counts, and the receipt
+#: bundle-presence/reason), so the domain is bumped to keep v1-claim
+#: signatures unpresentable as v2-claim signatures.
+SIGN_DOMAIN = b"evidence-bundle/v2\x00"
+
+#: Signature domain string recorded in manifest["signing"]["domain"].
+SIGN_DOMAIN_STR = "evidence-bundle/v2"
+
+#: Last bundle version whose signed claim does NOT bind inclusion
+#: coverage or the receipt (F173). The verifier fails these closed;
+#: see evals/f173_legacy_binding_decision.md.
+LEGACY_BUNDLE_VERSION = "evidence-bundle/1.0"
 
 #: Approval-queue event vocabulary (gov/approvals.py).
 APPROVAL_EVENTS = (
@@ -154,6 +171,49 @@ def _logprov(entry, field=None):
 
 def _utcnow_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _inclusion_claim(manifest):
+    """Presence vector + coverage counts bound into the signed claim.
+
+    F173: binding *presence* (not the proofs themselves — those are
+    anchored via checkpoints_digest and checked by V9) means a no-key
+    attacker cannot strip an inclusion bundle and adjust the unsigned
+    counts: the signature is over the operator-declared presence, so
+    the strip fails V7. An honestly-degraded seal (inclusion service
+    genuinely unavailable at seal time) signs bundle_present=False
+    with its reason — operator-declared degraded, still verifiable.
+    """
+    ic = manifest.get("inclusion_coverage") or {}
+    presence = []
+    for b in manifest.get("inclusion_bundles") or []:
+        presence.append({
+            "seq": b.get("seq"),
+            "bundle_present": b.get("bundle") is not None,
+            "unavailable_reason": b.get("unavailable_reason"),
+        })
+    return {
+        "coverage": {"entries": ic.get("entries"),
+                     "with_bundle": ic.get("with_bundle")},
+        "presence": presence,
+    }
+
+
+def _receipt_claim(manifest):
+    """Receipt bundle-presence/reason bound into the signed claim.
+
+    F173: the receipt's own inclusion bundle is the export's chaining
+    proof; binding its presence/reason stops a no-key attacker from
+    stripping receipt.json's bundle while the bundle VERIFIES. None
+    while the receipt is not yet attached (seal time) — the claim then
+    says "no receipt bound", and assemble() refuses receipt-less
+    manifests, so an unbound receipt can never ship.
+    """
+    r = manifest.get("receipt")
+    if r is None:
+        return None
+    return {"bundle_present": r.get("bundle") is not None,
+            "unavailable_reason": r.get("unavailable_reason")}
 
 
 class EvidenceBundle:
@@ -531,16 +591,27 @@ class EvidenceBundle:
     def signed_body(manifest):
         """Exact bytes the operator signature covers.
 
-        Domain-separated: ``evidence-bundle/v1`` || export_sha256 ||
-        canonical({window, chain_verified, checkpoints_digest}).
-        Binding the claim triple into the signature means a signature
-        over the payload digest alone cannot be re-presented with a
-        swapped chain-verification claim.
+        Domain-separated: ``evidence-bundle/v2`` || export_sha256 ||
+        canonical({window, chain_verified, checkpoints_digest,
+        inclusion, receipt}).
+
+        The F173 extension binds the per-entry inclusion-bundle
+        presence vector, the inclusion_coverage counts, and the
+        receipt's bundle-presence/reason into the claim: any unsigned
+        alteration of those fields fails the signature (V7) instead of
+        sailing through to a VERIFIED verdict. Binding the claim into
+        the signature means a signature over the payload digest alone
+        cannot be re-presented with a swapped chain-verification,
+        coverage, or receipt claim. Mirrored by the standalone
+        verifier's ``_signed_claim`` (gov/evidence_verify.py) — the
+        two must construct byte-identical claims.
         """
         claim = {
             "window": manifest["window"],
             "chain_verified": manifest["chain_verified"],
             "checkpoints_digest": manifest["checkpoints_digest"],
+            "inclusion": _inclusion_claim(manifest),
+            "receipt": _receipt_claim(manifest),
         }
         return (SIGN_DOMAIN
                 + bytes.fromhex(manifest["export_sha256"])
@@ -651,20 +722,7 @@ class EvidenceBundle:
             "receipt": None,  # attached by log_evidence_bundle_receipt
         }
         sig = signer.sign(self.signed_body(manifest))
-        manifest["signing"] = {
-            "scheme": "ed25519",
-            "key_id": signer.key_id,
-            "public_key_hex": signer.public_key.hex(),
-            "signature_hex": sig.hex(),
-            "domain": "evidence-bundle/v1",
-            "signed_bytes": ("domain || export_sha256 || "
-                             "canonical({window, chain_verified, "
-                             "checkpoints_digest})"),
-            "operator_key_custody": (
-                "operator-supplied signer object; v1 deployments use a "
-                "software-file key (0600, gov/keyfiles.py) unless the "
-                "deployment did better"),
-        }
+        manifest["signing"] = _signing_block(signer, sig)
         return manifest
 
     # -- transport assembly -------------------------------------------
@@ -879,7 +937,26 @@ accepted this format.
 """
 
 
-def log_evidence_bundle_receipt(manifest, action_log):
+def _signing_block(signer, sig):
+    """Build manifest["signing"] for an Ed25519 signature over the
+    F173-extended signed body."""
+    return {
+        "scheme": "ed25519",
+        "key_id": signer.key_id,
+        "public_key_hex": signer.public_key.hex(),
+        "signature_hex": sig.hex(),
+        "domain": SIGN_DOMAIN_STR,
+        "signed_bytes": ("domain || export_sha256 || "
+                         "canonical({window, chain_verified, "
+                         "checkpoints_digest, inclusion, receipt})"),
+        "operator_key_custody": (
+            "operator-supplied signer object; v1 deployments use a "
+            "software-file key (0600, gov/keyfiles.py) unless the "
+            "deployment did better"),
+    }
+
+
+def log_evidence_bundle_receipt(manifest, action_log, *, signer=None):
     """Append a hash-chained receipt of the sealed bundle to the audit log.
 
     Mirrors ``gov.evidence_exports.log_export_receipt``: the receipt
@@ -888,8 +965,22 @@ def log_evidence_bundle_receipt(manifest, action_log):
     sealed; the receipt (plus its Merkle inclusion bundle when signed
     checkpoints exist) is attached to the manifest in place.
 
+    F173: the receipt did not exist at seal time, so the seal-time
+    signature cannot bind it. This function therefore RE-SIGNS the
+    extended claim (``EvidenceBundle.signed_body`` — window,
+    chain_verified, checkpoints_digest, inclusion presence/coverage,
+    receipt bundle-presence/reason) after attaching the receipt and
+    replaces ``manifest["signing"]``. The transported bundle's only
+    operator signature is the post-receipt one; any unsigned
+    alteration of the inclusion or receipt bindings fails V7.
+    ``signer`` defaults to the operator key resolved via
+    ``gov.anchorer.resolve_anchor_key`` (same fail-closed idiom as
+    ``seal()``).
+
     Returns the appended entry.
     """
+    if signer is None:
+        signer = _resolve_operator_signer()
     entry = action_log.append({
         "event": "evidence_bundle_sealed",
         "bundle_id": manifest.get("bundle_id"),
@@ -916,4 +1007,8 @@ def log_evidence_bundle_receipt(manifest, action_log):
         "bundle": bundle,
         "unavailable_reason": reason,
     }
+    # F173 re-sign (see docstring): the seal-time signature predates
+    # the receipt; the shipped signature must bind it.
+    manifest["signing"] = _signing_block(
+        signer, signer.sign(EvidenceBundle.signed_body(manifest)))
     return entry

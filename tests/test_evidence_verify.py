@@ -86,7 +86,8 @@ class _VerifyBase(unittest.TestCase):
         manifest = eb.seal(payload, signer=self.signer)
         log_evidence_bundle_receipt(
             manifest, ActionLog(self.log_path, signer=self.signer,
-                                deployment_mode="staging"))
+                                deployment_mode="staging"),
+            signer=self.signer)
         op = {"key_id": self.signer.key_id,
               "public_key_hex": self.signer.public_key.hex()}
         out = os.path.join(self.tmp.name, name)
@@ -353,7 +354,8 @@ class TestEvidenceVerifyUnversionedPolicy(_VerifyBase):
         manifest = eb.seal(payload, signer=self.signer)
         log_evidence_bundle_receipt(
             manifest, ActionLog(uv_path, signer=self.signer,
-                                deployment_mode="staging"))
+                                deployment_mode="staging"),
+            signer=self.signer)
         op = {"key_id": self.signer.key_id,
               "public_key_hex": self.signer.public_key.hex()}
         out = os.path.join(self.tmp.name, "bundle-uv")
@@ -364,6 +366,175 @@ class TestEvidenceVerifyUnversionedPolicy(_VerifyBase):
         self.assertEqual(code, 0,
                          "genuine bundle with unversioned policy must "
                          "verify; got:\n%s" % stdout)
+
+
+class TestEvidenceVerifyF173F174(_VerifyBase):
+    """F173 (coverage/receipt binding) + F174 (operator_id disclosure).
+
+    Red-first: each test crafts the exact attacker/misleading shape
+    from the finding and asserts the verifier's verdict at the public
+    seam (real tools/evidence-verify subprocess, exit codes + check
+    lines). Nothing here weakens an existing assertion.
+    """
+
+    def _pin(self):
+        return ["--pin-operator-pubkey", self.signer.public_key.hex()]
+
+    # -- F173 ------------------------------------------------------
+
+    def test_f173_inclusion_strip_fails_v7(self):
+        # F1a shape: no-key attacker strips 2 inclusion bundles and
+        # adjusts the unsigned counts (no re-sign). The operator-signed
+        # claim now binds presence+counts, so V7 must fail — the strip
+        # can no longer sail through to VERIFIED.
+        man = json.loads(json.dumps(self.manifest))
+        n = 0
+        for ib in man["inclusion_bundles"]:
+            if ib["seq"] in (2, 4):
+                ib["bundle"] = None
+                ib["unavailable_reason"] = "stripped (simulated)"
+                n += 1
+        self.assertEqual(n, 2, "fixture must have bundles at seq 2 and 4")
+        man["inclusion_coverage"]["with_bundle"] -= n
+        self._rewrite("manifest.json", man)
+        _redigest(self.bundle_dir)
+        code, out, _ = self._run(self.bundle_dir, *self._pin())
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"\[FAIL\] V7 V7 operator signature")
+        self.assertNotIn("verdict: VERIFIED", out)
+
+    def test_f173_receipt_bundle_strip_fails_v12(self):
+        # F1b shape: strip receipt.json's own inclusion bundle with a
+        # fabricated reason. The transported receipt no longer matches
+        # the operator-signed manifest receipt binding -> V12 fails.
+        rpath = os.path.join(self.bundle_dir, "receipt.json")
+        receipt = json.loads(open(rpath, encoding="utf-8").read())
+        self.assertIsNotNone(receipt["bundle"],
+                             "fixture receipt must have a bundle")
+        receipt["bundle"] = None
+        receipt["unavailable_reason"] = "withheld (simulated strip)"
+        self._rewrite("receipt.json", receipt)
+        _redigest(self.bundle_dir)
+        code, out, _ = self._run(self.bundle_dir, *self._pin())
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"\[FAIL\] V12 V12 export receipt")
+        self.assertNotIn("verdict: VERIFIED", out)
+
+    def test_f173_honest_degraded_bundle_verifies_labeled(self):
+        # Honestly-degraded seal: an HMAC-only log has no signed
+        # checkpoints, so the operator seals with bundle_present=False
+        # + explicit reasons. The signature BINDS that degraded state,
+        # so the bundle still verifies — with explicitly labeled reduced
+        # coverage (attacker-stripped vs operator-declared-degraded are
+        # distinguished by the signature, not by the reason text).
+        from gov.log import ActionLog
+        from gov.evidence_bundle import (
+            EvidenceBundle, log_evidence_bundle_receipt)
+        d = os.path.join(self.tmp.name, "deg")
+        os.mkdir(d)
+        lp = os.path.join(d, "audit.log")
+        log = ActionLog(lp, signer=None, deployment_mode="staging")
+        log.append({"event": "policy_loaded", "policy_version": "p1",
+                    "policy_hash": "h" * 16,
+                    "policy_path": "policies/p1.yaml", "pinned": True})
+        for i in range(3):
+            log.append({"event": "tool_call", "decision": "allow",
+                        "tool": "tool-%d" % i})
+        eb = EvidenceBundle(lp, exported_at="2026-09-26T00:00:00+00:00",
+                            operator_id="degraded-test")
+        payload = eb.build()
+        manifest = eb.seal(payload, signer=self.signer)
+        self.assertEqual(manifest["inclusion_coverage"]["with_bundle"], 0)
+        self.assertEqual(manifest["inclusion_coverage"]["entries"], 4)
+        log_evidence_bundle_receipt(
+            manifest, ActionLog(lp, signer=None,
+                                deployment_mode="staging"),
+            signer=self.signer)
+        op = {"key_id": self.signer.key_id,
+              "public_key_hex": self.signer.public_key.hex()}
+        out = os.path.join(self.tmp.name, "bundle-deg")
+        eb.assemble(payload, manifest, operator_key=op,
+                    checkpoint_keys=[dict(op)], out_dir=out)
+        code, stdout, _ = self._run(out, *self._pin())
+        self.assertEqual(code, 0, "honestly-degraded bundle must verify;"
+                         " got:\n%s" % stdout)
+        self.assertRegex(stdout, r"\[PASS\] V7 V7 operator signature")
+        self.assertRegex(stdout, r"\[PASS\] V9 V9 log-slice integrity")
+        self.assertIn("0 inclusion bundles verified", stdout)
+        self.assertIn("4 reduced-coverage entries", stdout)
+
+    def test_f173_legacy_bundle_refused(self):
+        # 1.0 bundles have no coverage/receipt binding: the V1 gate
+        # fails them closed with the explicit F173 message (never a
+        # silent accept, never a VERIFIED-with-label).
+        vpath = os.path.join(self.bundle_dir, "VERSION")
+        lines = open(vpath, encoding="utf-8").read().splitlines()
+        lines[0] = "evidence-bundle/1.0"
+        with open(vpath, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        _redigest(self.bundle_dir)
+        code, out, _ = self._run(self.bundle_dir, *self._pin())
+        self.assertEqual(code, 1)
+        self.assertRegex(out, r"\[FAIL\] V1 V1 version gate")
+        self.assertIn("legacy bundle", out)
+        self.assertIn("F173", out)
+        self.assertNotIn("verdict: VERIFIED", out)
+
+    # -- F174 ------------------------------------------------------
+
+    def test_signed_body_builder_verifier_equivalence(self):
+        # The builder's EvidenceBundle.signed_body and the standalone
+        # verifier's _signed_claim must construct byte-identical signed
+        # bodies — otherwise V7 would reject genuine bundles (or, worse,
+        # the two sides would disagree on what the signature binds).
+        sys.path.insert(0, os.path.join(REPO, "gov"))
+        try:
+            import evidence_bundle as eb_mod
+            import evidence_verify as ev_mod
+        finally:
+            sys.path.pop(0)
+        manifest = json.loads(open(
+            os.path.join(self.bundle_dir, "manifest.json"),
+            encoding="utf-8").read())
+        builder_bytes = eb_mod.EvidenceBundle.signed_body(manifest)
+        verifier_bytes = (ev_mod.SIGN_DOMAIN
+                          + bytes.fromhex(manifest["export_sha256"])
+                          + ev_mod.canonical(
+                              ev_mod._signed_claim(manifest)))
+        self.assertEqual(builder_bytes, verifier_bytes,
+                         "builder and verifier disagree on the signed body")
+        # And the receipt-minted manifest (post-receipt re-sign) agrees
+        # too: strip the receipt and the bodies must differ (the claim
+        # binds the receipt), restore and they agree again.
+        no_receipt = json.loads(json.dumps(manifest))
+        del no_receipt["receipt"]
+        self.assertNotEqual(
+            eb_mod.EvidenceBundle.signed_body(no_receipt), builder_bytes)
+
+    def test_f174_claimed_operator_rendered_with_disclaimer(self):
+        # Disclosure, not rejection: the operator-supplied operator_id
+        # is visible in BOTH text and JSON summaries, always labeled as
+        # unverified — while the bundle still verifies exit 0.
+        code, out, _ = self._run(self.bundle_dir, *self._pin())
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "claimed operator: tamper-battery "
+            "(operator-supplied, not independently verified)", out)
+        code, jout, _ = self._run(self.bundle_dir, *self._pin(),
+                                  "--format", "json")
+        self.assertEqual(code, 0)
+        doc = json.loads(jout)
+        cop = doc["claimed_operator"]
+        self.assertEqual(cop["value"], "tamper-battery")
+        self.assertEqual(cop["disclaimer"],
+                         "operator-supplied, not independently verified")
+
+    def test_f174_claimed_operator_shown_when_unpinned(self):
+        # The disclosure rides the summary on every verdict path, not
+        # just the pinned one.
+        code, out, _ = self._run(self.bundle_dir)
+        self.assertEqual(code, 2)  # unpinned: SELF_CONSISTENT
+        self.assertIn("claimed operator: tamper-battery", out)
 
 
 class TestEvidenceVerifyCrypto(unittest.TestCase):

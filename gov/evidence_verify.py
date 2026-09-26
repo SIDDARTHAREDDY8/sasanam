@@ -21,8 +21,10 @@ Checks (V1-V13, see docs/evidence-bundle-spec.md):
   V6  pinned operator key: envelope pubkey matches an out-of-band pin
       (full 32-byte public key, not a key id); F151: V7 does not run
       against the wrong operator's keys
-  V7  Ed25519 manifest signature over the domain-separated signed body;
-      seal key == envelope operator key
+  V7  Ed25519 manifest signature over the domain-separated signed body
+      (window, chain_verified, checkpoints_digest, inclusion
+      presence/coverage, receipt binding — F173); seal key == envelope
+      operator key
   V8  checkpoint signatures (single-key or A5 k-of-n roster threshold)
       + Merkle roots recomputed from the slice; inclusion bundles
       verified per entry; embedded checkpoints cross-checked
@@ -32,8 +34,10 @@ Checks (V1-V13, see docs/evidence-bundle-spec.md):
       counts and coverage math consistent; no out-of-window seq refs
   V11 policy-version consistency: payload policy values equal the
       slice's policy_loaded events; policy_change_events complete
-  V12 receipt chains onto the window tip; receipt inclusion bundle
-      verified; V12b with --log checks receipt existence in source log
+  V12 receipt chains onto the window tip; receipt.json bundle-presence/
+      unavailable_reason equals the operator-signed manifest receipt
+      binding (F173); receipt inclusion bundle verified; V12b with
+      --log checks receipt existence in source log
   V13 citation/approval cross-consistency: accepted citations have no
       self-planted; verdict counts sum; approval shapes match vocabulary
   V14 deterministic bundle ID (v1 extension, non-normative)
@@ -486,9 +490,16 @@ def _verify_threshold(data, sig_entries, roster, trusted_root_pub):
 # Verifier proper (stdlib only).
 # ---------------------------------------------------------------------------
 
-BUNDLE_VERSION = "evidence-bundle/1.0"
+BUNDLE_VERSION = "evidence-bundle/1.1"
 EVIDENCE_SCHEMA_VERSION = "evidence-schema/1.0"
-SIGN_DOMAIN = b"evidence-bundle/v1\x00"
+SIGN_DOMAIN = b"evidence-bundle/v2\x00"
+
+#: Last bundle version whose signed claim does NOT bind inclusion
+#: coverage or the receipt (F173). The V1 gate fails these closed;
+#: see evals/f173_legacy_binding_decision.md. Kept as a module
+#: constant (not derived from gov.evidence_bundle) because this file
+#: is shipped standalone to auditors.
+LEGACY_BUNDLE_VERSION = "evidence-bundle/1.0"
 
 REQUIRED_FILES = (
     "VERSION",
@@ -630,6 +641,17 @@ def v1_version_gate(ctx):
     except OSError as e:
         return c.fail("cannot read VERSION: %s" % e)
     lines = text.splitlines()
+    if lines[:1] == [LEGACY_BUNDLE_VERSION]:
+        # F173 decision (evals/f173_legacy_binding_decision.md): 1.0
+        # bundles have no cryptographic binding of inclusion coverage
+        # or the receipt, so no unsigned alteration of those fields can
+        # fail — accepting them (even labeled) would preserve the exact
+        # downgrade F173 closes. Fail closed with the remedy named.
+        return c.fail(
+            "legacy bundle %r: inclusion coverage and receipt binding "
+            "are not cryptographically bound in this format version "
+            "(F173) — refusing to verify; re-seal with the current "
+            "builder" % LEGACY_BUNDLE_VERSION)
     if len(lines) < 2 or lines[0] != BUNDLE_VERSION:
         return c.fail("VERSION[0] %r != %r" % (lines[:1], BUNDLE_VERSION))
     if lines[1] != "schema: " + EVIDENCE_SCHEMA_VERSION:
@@ -738,6 +760,41 @@ def v6_authorship_pin(ctx):
                 "public key, not a key id)")
 
 
+def _signed_claim(manifest):
+    """Reconstruct the operator-signed claim.
+
+    Must build byte-identical canonical bytes to
+    ``gov.evidence_bundle.EvidenceBundle.signed_body`` (the builder).
+    F173: besides window/chain_verified/checkpoints_digest, the claim
+    binds the per-entry inclusion-bundle presence vector, the
+    inclusion_coverage counts, and the receipt's bundle-presence/reason
+    — so unsigned alteration of any of those fails V7.
+    """
+    ic = manifest.get("inclusion_coverage") or {}
+    presence = []
+    for b in manifest.get("inclusion_bundles") or []:
+        presence.append({
+            "seq": b.get("seq"),
+            "bundle_present": b.get("bundle") is not None,
+            "unavailable_reason": b.get("unavailable_reason"),
+        })
+    r = manifest.get("receipt")
+    receipt = (None if r is None else
+               {"bundle_present": r.get("bundle") is not None,
+                "unavailable_reason": r.get("unavailable_reason")})
+    return {
+        "window": manifest["window"],
+        "chain_verified": manifest["chain_verified"],
+        "checkpoints_digest": manifest["checkpoints_digest"],
+        "inclusion": {
+            "coverage": {"entries": ic.get("entries"),
+                         "with_bundle": ic.get("with_bundle")},
+            "presence": presence,
+        },
+        "receipt": receipt,
+    }
+
+
 def v7_operator_signature(ctx):
     c = Check("V7", "V7 operator signature")
     if getattr(ctx, "pin_failed", False):
@@ -763,9 +820,11 @@ def v7_operator_signature(ctx):
         return c.fail("seal key_id %r != envelope key_id %r: the bundle "
                       "ships a key that did not sign it"
                       % (seal.get("key_id"), env.get("key_id")))
-    claim = {"window": ctx.manifest["window"],
-             "chain_verified": ctx.manifest["chain_verified"],
-             "checkpoints_digest": ctx.manifest["checkpoints_digest"]}
+    if seal.get("domain") != "evidence-bundle/v2":
+        return c.fail("manifest signing domain %r != 'evidence-bundle/v2': "
+                      "the signature is not over the v2 claim (F173 "
+                      "inclusion/receipt binding)" % (seal.get("domain"),))
+    claim = _signed_claim(ctx.manifest)
     body = (SIGN_DOMAIN
             + bytes.fromhex(ctx.manifest["export_sha256"])
             + canonical(claim))
@@ -776,8 +835,9 @@ def v7_operator_signature(ctx):
     if not verify(pub, body, sig):
         return c.fail("Ed25519 signature over the domain-separated "
                       "signed body does NOT verify")
-    return c.ok("signature verifies; claim triple (window, "
-                "chain_verified, checkpoints_digest) bound")
+    return c.ok("signature verifies; claim (window, chain_verified, "
+                "checkpoints_digest, inclusion presence/coverage, "
+                "receipt binding) bound")
 
 
 def _verify_one_head(head, cp_keys, roster=None, pinned_cp_key_ids=None):
@@ -1319,6 +1379,30 @@ def v12_receipt(ctx):
     if entry.get("export_sha256") != ctx.manifest["export_sha256"]:
         return c.fail("receipt entry export_sha256 != manifest "
                       "export_sha256: the receipt is not for this bundle")
+    # F173: the transported receipt.json's bundle-presence/reason must
+    # match the operator-signed manifest receipt binding (whose
+    # presence/reason rides in the V7-signed claim). A no-key attacker
+    # who strips receipt.json's inclusion bundle (or fabricates its
+    # unavailable_reason) fails here even though the entry itself is
+    # untouched. Deliberately NOT a full-entry equality check: the
+    # receipt binding is content-addressed (tip + digest + seq, checked
+    # above), not bundle-instance-addressed — a genuine receipt entry
+    # for the same export (same tip/digest/seq, e.g. re-minted at a
+    # different wall-clock second) replays harmlessly (control B2).
+    # Timestamps are operator wall-clock, not a v1 security property.
+    signed_receipt = ctx.manifest.get("receipt")
+    if not isinstance(signed_receipt, dict):
+        return c.fail("manifest carries no signed receipt binding")
+    if (receipt.get("bundle") is not None) != \
+            (signed_receipt.get("bundle") is not None):
+        return c.fail("receipt.json bundle-presence does not match the "
+                      "operator-signed manifest receipt binding: the "
+                      "transported receipt was altered after sealing")
+    if receipt.get("unavailable_reason") != \
+            signed_receipt.get("unavailable_reason"):
+        return c.fail("receipt.json unavailable_reason does not match "
+                      "the operator-signed manifest receipt binding: "
+                      "the transported receipt was altered after sealing")
     bundle = receipt.get("bundle")
     detail = "receipt chains onto the slice tip"
     if bundle is None:
@@ -1470,6 +1554,28 @@ def _run_checks_v4_v16(ctx, run, checks):
     return True
 
 
+# F174: the operator_id disclaimer is the fix — the verifier must never
+# let key pinning be mistaken for verification of the claimed name.
+CLAIMED_OPERATOR_DISCLAIMER = ("operator-supplied, not independently "
+                               "verified")
+
+
+def _claimed_operator(ctx):
+    """F174: render bundle_meta.operator_id, always labeled.
+
+    The value is an operator assertion (payload provenance honestly
+    records ``operator_supplied``); the disclaimer rides with it in
+    both text and JSON summaries so an auditor skimming the verdict
+    cannot mistake the pinned key_id for verification of the name.
+    """
+    payload = getattr(ctx, "payload", None) or {}
+    op_id = (payload.get("bundle_meta") or {}).get("operator_id") or {}
+    return {
+        "value": op_id.get("value"),
+        "disclaimer": CLAIMED_OPERATOR_DISCLAIMER,
+    }
+
+
 def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
                    source_log=None):
     """Run V1–V16. Returns (exit_code, checks, summary_dict)."""
@@ -1559,6 +1665,8 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
             "pinned": pin_ok,
             "key_id": getattr(ctx, "authorship_key_id", None) if pin_ok else None,
         },
+        # F174: the claimed operator name, always with its disclaimer.
+        "claimed_operator": _claimed_operator(ctx),
         "checks": [c.as_dict() for c in checks],
         "failures": [{"id": c.id, "name": c.name, "detail": c.detail}
                      for c in failed],
@@ -1625,6 +1733,9 @@ def main(argv=None):
             "verdict": "FAILED",
             "exit_code": code,
             "authorship": {"pinned": False, "key_id": None},
+            "claimed_operator": {"value": None,
+                                 "disclaimer":
+                                 CLAIMED_OPERATOR_DISCLAIMER},
             "checks": [c.as_dict() for c in checks],
             "failures": [{"id": c.id, "name": c.name, "detail": c.detail}
                          for c in checks if c.status == "fail"],
@@ -1649,6 +1760,14 @@ def main(argv=None):
                 print("authorship: pinned operator %s" % auth.get("key_id"))
             else:
                 print("authorship: unpinned (self-consistency only)")
+            # F174: the claimed name is rendered WITH its disclaimer —
+            # disclosure, not rejection.
+            cop = summary.get("claimed_operator") or {}
+            cval = cop.get("value")
+            print("claimed operator: %s (%s)"
+                  % (cval if cval is not None else "(not supplied)",
+                     cop.get("disclaimer",
+                             CLAIMED_OPERATOR_DISCLAIMER)))
             if summary["failures"]:
                 print("failures:")
                 for f in summary["failures"]:
