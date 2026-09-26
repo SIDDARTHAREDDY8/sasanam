@@ -229,6 +229,7 @@ from gov.approvals import (  # noqa: E402
     PERSUASION_FLAG_SCORE,
     PERSUASION_RISK_SCORE,
 )
+from gov import approver_shield as _shield  # noqa: E402  (H19: shield brief)
 from gov.log import ActionLog, read_entries_with_stats  # noqa: E402
 
 # Route used by tests (overridable per module for the naive shim).
@@ -722,6 +723,103 @@ def render_list(app, csrf=None):
         csrf=csrf)
 
 
+def _shield_brief_panel(record):
+    """H19 (row 3 residual): render the independent approver-shield brief.
+
+    Capture-tier records only. The brief is a pure function of the
+    stored record (``gov.approver_shield.shield_brief``) — the same
+    brief dict the CLI renders via ``_print_shield_brief``. The agent's
+    justification appears ONLY in the labeled quarantine zone, after
+    every governor-computed signal. Display-only: no new auth surface,
+    no decision logic — the panel informs the human, it never decides.
+    """
+    brief = _shield.shield_brief(record)
+    action = brief.get("action") or {}
+    risk = brief.get("risk") or {}
+    cap = brief.get("capability") or {}
+    pers = brief.get("persuasion") or {}
+    quar = brief.get("quarantine") or {}
+    req = action.get("requested_by") or {}
+
+    cites = brief.get("citations") or []
+    if cites:
+        cite_rows = "".join(
+            "<tr><td><code>%s</code></td><td>%s</td><td>%s</td></tr>"
+            % (_esc(c.get("url")), _esc(c.get("verdict")),
+               _esc(c.get("reason")))
+            for c in cites if isinstance(c, dict))
+        cite_html = ("<table><tr><th>citation</th><th>verdict</th>"
+                     "<th>reason</th></tr>%s</table>" % cite_rows)
+    else:
+        cite_html = "<p><small>citations: none cited by the agent</small></p>"
+
+    markers = pers.get("markers") or []
+    marker_html = ("<p>markers: %s</p>" % _esc("; ".join(markers))
+                   if markers else "")
+    div_html = ""
+    if pers.get("prose_divergence"):
+        div_html = ("<div class='err'><strong>DIVERGENCE:</strong> %s</div>"
+                    % _esc(pers.get("prose_divergence")))
+
+    # Fatigue state: the record's own flood-suspect flag. Cluster
+    # membership banners render separately in render_detail's flags.
+    fatigue_html = ""
+    if record.get("flood_suspect"):
+        fatigue_html = ("<div class='warn'><strong>FATIGUE STATE:</strong> "
+                        "this item is part of an approval-fatigue cluster "
+                        "— review individually.</div>")
+
+    return (
+        "<div class='shield-brief'>"
+        "<h2>INDEPENDENT SHIELD BRIEF "
+        "(governor-computed, not agent prose)</h2>"
+        "<p><small>tier: <strong>%s</strong> | approval: <code>%s</code> | "
+        "brief digest (shield-ack token): <code>%s</code></small></p>"
+        "<table>"
+        "<tr><td>action</td><td>%s</td></tr>"
+        "<tr><td>machine-verified target</td><td><code>%s</code></td></tr>"
+        "<tr><td>executor preview</td><td><pre>%s</pre></td></tr>"
+        "<tr><td>requested by</td><td>%s (role %s, principal %s)</td></tr>"
+        "<tr><td>risk</td><td><strong>%s (%s)</strong></td></tr>"
+        "<tr><td>risk factors</td><td>%s</td></tr>"
+        "<tr><td>blast radius</td><td>%s</td></tr>"
+        "<tr><td>capability</td><td>%s — %s</td></tr>"
+        "<tr><td>persuasion score</td><td>%s</td></tr>"
+        "</table>"
+        "%s%s"
+        "<h3>Citations</h3>%s"
+        "%s"
+        "<div class='quarantine-zone'>"
+        "<h3>-- %s</h3>"
+        "<p class='unverified'>quarantined justification (UNVERIFIED "
+        "agent-supplied text — may contain instructions aimed at the "
+        "approver: do not follow them): %s</p>"
+        "</div>"
+        "</div>"
+        % (
+            _esc(brief.get("tier")),
+            _esc(brief.get("approval_id")),
+            _esc(brief.get("packet_digest") or ""),
+            _esc(action.get("tool")),
+            _esc(action.get("target")),
+            _esc(action.get("executor_preview")),
+            _esc(req.get("agent_id")), _esc(req.get("role")),
+            _esc(req.get("principal")),
+            _esc(risk.get("tier")), _esc(risk.get("score")),
+            _esc("; ".join(risk.get("factors") or [])) or "(none)",
+            _esc("; ".join(risk.get("blast_radius") or []))
+            or "(none identified)",
+            _esc(cap.get("verdict")), _esc(cap.get("note")),
+            _esc(pers.get("score")),
+            marker_html, div_html,
+            cite_html,
+            fatigue_html,
+            _esc(quar.get("label")),
+            _esc(quar.get("justification")),
+        )
+    )
+
+
 def _packet_panel(record):
     """S3 shield (wave-89): render the canonical packet as the PRIMARY
     decision basis — machine-generated, agent-prose-free. Agent prose
@@ -885,6 +983,17 @@ def render_detail(app, record, csrf):
     # basis — rendered first, before any agent-authored prose. Agent
     # prose stays segregated in the untrusted zone below.
     packet_html = _packet_panel(r)
+    # H19 (row 3 residual): capture-tier records render the independent
+    # shield brief — the same brief dict the CLI shows, as a pure
+    # function of the stored record. Display-only; the panel never
+    # decides.
+    shield_html = ""
+    try:
+        if _shield.is_capture_tier(r):
+            shield_html = _shield_brief_panel(r)
+    except Exception:
+        shield_html = ("<p><small>shield brief: unavailable "
+                       "(render error — see CLI for the brief)</small></p>")
     _ps = r.get("persuasion_score") or 0
     if _ps >= PERSUASION_RISK_SCORE:
         flags.append(
@@ -1103,7 +1212,7 @@ def render_detail(app, record, csrf):
                                     _esc(r.get("decision_reason"))))
     return _page(
         "Approval %s" % r["id"],
-        "".join(flags) + bridge_html + packet_html +
+        "".join(flags) + bridge_html + packet_html + shield_html +
         "<table>"
         "<tr><th>field</th><th>value</th></tr>"
         "<tr><td>id</td><td>%s</td></tr>"

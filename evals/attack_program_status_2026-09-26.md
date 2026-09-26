@@ -84,11 +84,14 @@ of the stored record), persuasion scoring + prose-divergence flags, capture-tier
 challenge handshake (ack == MAC-bound packet_digest + 3 deterministic questions),
 fatigue metering, cooling-off ordering, batch exclusion for capture-tier. F156
 CLOSED; `evals/gap3_approver_shield.py` post-fix **0 BREAK / 10 HELD / 0 ERROR**
-both envs (last run 2026-09-24). Residuals (deliberate): a determined, fatigued, or
-complicit approver who passes the challenge on purpose — the D4 "human-proof
-approvals" boundary stands; persuasion scoring is a bypassable heuristic
-(graceful degradation via the critical-risk leg); web UI does not render the brief
-(CLI + programmatic only); quorum `cast_vote` untouched.
+both envs (last run 2026-09-24). H19 (wave-124): the web UI now renders the
+independent shield brief on capture-tier detail pages (`gov/approval_web.py`
+`_shield_brief_panel`, pure `shield_brief()` data, display-only);
+`evals/h19_shield_brief_web.py` **3/3 GREEN** both envs. Residuals (deliberate):
+a determined, fatigued, or complicit approver who passes the challenge on purpose
+— the D4 "human-proof approvals" boundary stands; persuasion scoring is a
+bypassable heuristic (graceful degradation via the critical-risk leg); quorum
+`cast_vote` untouched.
 
 ### Row 4 — Sandbagging / eval-gaming (memo: GAP → now: PARTIAL)
 GAP-4 lane (wave-106): `gov/eval_harness.py` — `commit_battery()` (two-level
@@ -121,8 +124,13 @@ F142 CLOSED (response-minted URL correlation + skill URL-target TOCTOU —
 (`gov/skill_watch.py` — re-fetch, re-hash, digest-bound approvals, drift →
 quarantine + chained `supplychain_divergence`); F158 CLOSED;
 `evals/gap5_reverify_break.py` **0 BREAK / 9 HELD** on the post-push re-run
-(2026-09-24). Residuals: registry-root compromise (pin file is a trust anchor —
-key-custody class); byte-identical semantic drift (binding is on bytes, not
+(2026-09-24). H22 (wave-124): the pin file is now a MAC-authenticated trust
+anchor — `PinStore.save/peek/load` sign/verify with HMAC-SHA256
+(domain-separated) using the operator key; tamper refuses LOUD
+(`skill_pin_tamper`); `check_at_use()`/`verify_all()` revalidate post-load
+rewrites (mtime-gated) fail-closed; `evals/h22_pin_file_auth.py` **5/5 GREEN**
+both envs. Residuals: registry-root compromise (now requires the operator key,
+not just run-dir write); byte-identical semantic drift (binding is on bytes, not
 meaning); check→use TOCTOU inherent to at-use checks. The memo's DONE ("no
 artifact executes with a different digest than the one approved") holds within
 these residuals.

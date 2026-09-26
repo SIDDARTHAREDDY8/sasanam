@@ -78,6 +78,11 @@ ALLOWED_HMAC_SITES = {
         "ledger entry MAC; key from gov.log._active_key()",
     ("gov/egress_ledger.py", "_checkpoint_mac", 0):
         "ledger checkpoint MAC; key from gov.log._active_key()",
+    # gov/skill_watch.py (H22): the pin-manifest MAC. The key is the
+    # operator key resolved via keyprovider (no fallback — fail closed
+    # without a configured key), never hard-coded or derived in-repo.
+    ("gov/skill_watch.py", "_pin_manifest_mac", 0):
+        "pin-manifest MAC; key = operator key via keyprovider (H22, no fallback)",
     # gov/kms.py: the SYNTHETIC fake KMS test double. _FAKE_WRAP_SECRET
     # is a hard-coded test value, never a real key; the real envelope
     # path (EnvelopeKmsProvider) unwraps via the KMS backend, not HMAC.

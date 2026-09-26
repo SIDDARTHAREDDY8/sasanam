@@ -1153,7 +1153,14 @@ class ToolExecutor:
                 # silently start over a corrupt pin file, so an
                 # existing file that fails validation refuses
                 # construction LOUD here.
-                _skill_watch.PinStore.peek(self._skill_pin_path)
+                # H22: the probe verifies the manifest MAC with the
+                # operator key — a rewritten pin file refuses
+                # construction LOUD (skill_pin_tamper), it is never
+                # used silently.
+                from . import keyprovider as _kp
+                _pin_key, _ = _kp.resolve_active_key()
+                _skill_watch.PinStore.peek(self._skill_pin_path,
+                                           mac_key=_pin_key)
             # F143: construction-time validation of the attribution
             # maps. Any id the maps reference that the watcher never
             # pinned is a misconfiguration (typo, stale entry, or an
@@ -6371,11 +6378,18 @@ class ToolExecutor:
         PinStoreError LOUD on write failure — a deployment that cannot
         persist its pins must know, not silently run on memory-only
         pins that a restart would forget.
+
+        H22: the manifest is MAC-authenticated with the operator key
+        (same custody as the audit log) — a run-dir writer who
+        rewrites pins cannot re-anchor trust silently.
         """
         if self._skill_watch is None or self._skill_pin_path is None:
             return None
+        from . import keyprovider as _kp
+        _pin_key, _ = _kp.resolve_active_key()
         return _skill_watch.PinStore.save(self._skill_watch,
-                                          self._skill_pin_path)
+                                          self._skill_pin_path,
+                                          mac_key=_pin_key)
 
     def run_skill_sweep(self):
         """Run the scheduled skill-content sweep (the periodic trigger).

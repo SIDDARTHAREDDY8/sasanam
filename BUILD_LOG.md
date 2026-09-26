@@ -1,3 +1,28 @@
+## 2026-09-26 — Wave-124 (rows 3/6 hardening: H19, H22)
+
+**Scope:** Two hardening items from `evals/v1_hardening_backlog_2026-09-26.md` (H19 row 3, H22 row 6). Red-first; no new findings filed; next free finding stays **F176**. Lane does not push (parent runs gates + push).
+
+**H19 — approver-shield brief in web UI** (`evals/h19_shield_brief_web.py`, 3 tests): **GREEN** both envs (deterministic).
+- e1: capture-tier detail page renders `INDEPENDENT SHIELD BRIEF` with `shield-brief` class (the gap: previously absent — CLI/programmatic only).
+- e2: web brief carries the exact `packet_digest` bytes from `shield_brief()` (same data as CLI).
+- e3: brief is pure function of stored record; prose-divergence flags and quarantine zone rendered; fatigue state (`flood_suspect`) shown.
+- Fix: `gov/approval_web.py::_shield_brief_panel(record)` — renders `gov.approver_shield.shield_brief(record)` (the same pure dict the CLI shows) as a display-only panel on capture-tier detail pages, before the untrusted agent prose. All agent-controlled content HTML-escaped; no new auth surface.
+- **Repair (honest):** the first edit accidentally deleted `def _packet_panel()`'s header; restored immediately before wiring. The H19 battery initially imported the stale `workstreams/platform/approval_web.py` prototype; fixed to import `gov.approval_web` explicitly.
+
+**H22 — skill pin-file authentication** (`evals/h22_pin_file_auth.py`, 5 tests): **GREEN** both envs (deterministic).
+- RED confirmed pre-fix: rewriting a pinned digest in the pin file loaded silently; `check_at_use()` returned `(True, "clean")` on the attacker's pin.
+- e1: tampered digest → `PinStore.peek`/`load` raise `PinStoreError` LOUD with `skill_pin_tamper`.
+- e2: forged/stripped MAC field → refused.
+- e3: legitimate `request_repin`/`approve_repin` + save + load → `check_at_use` clean (control).
+- e4: post-load file rewrite → next `check_at_use()` revalidates (mtime-gated) and quarantines fail-closed.
+- e5: pre-H22 unsigned pin files still load without a key (backwards compat).
+- Fix: `gov/skill_watch.py` — `PinStore.save/peek/load` accept `mac_key`; HMAC-SHA256 (domain-separated `skill-pin-manifest-v1`) over canonical JSON; `hmac.compare_digest`; `SkillWatch` attaches pin path/MAC/key/stat on load/save; `check_at_use()`/`verify_all()` revalidate mtime-gated. `gov/executor.py` — construction probe and `persist_skill_pins()` resolve the operator key via `keyprovider` (no fallback).
+- **Test update (honest):** 2 existing `test_skill_watch.py` tests called `PinStore.peek/load` without the key on the now-signed file; updated to pass `_pin_key()`.
+
+**Two-axis review:** Standards PASS (H-numbers in comments; `hmac.compare_digest`; domain separation; key via standard chokepoint; no new deps; deterministic ×2 both envs; module-level GOV_DEPLOYMENT_MODE=staging on new batteries; $0 spend, synthetic/local). Spec PASS on H19/H22 acceptance: batteries demonstrate RED pre-fix and GREEN post-fix; legitimate re-pins unaffected; unsigned legacy files load; no auth-surface change (H19 display-only).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-26 — Wave-123 (rows 1/2 single-seam tightens: H17, H18, H26)
 
 **Scope:** Three single-seam tightens from `evals/v1_hardening_backlog_2026-09-26.md` (H17 row 1, H18 row 2, H26 row 2). Red-first; no new findings filed; next free finding stays **F176**. Lane does not push (parent runs gates + push).

@@ -24,6 +24,13 @@ from gov.skill_watch import (
     FileContentSource, CallableContentSource, skill_id_for_tool,
     sweep_due, SWEEP_INTERVAL_SECONDS,
 )
+from gov import keyprovider as _keyprovider
+
+
+def _pin_key():
+    """Resolve the operator key the executor uses to MAC the pin file (H22)."""
+    key, _ = _keyprovider.resolve_active_key()
+    return key
 
 ORIGIN = {"registry_url": "https://registry.synthetic.local/s/weather",
           "installer_identity": "operator:alice",
@@ -831,9 +838,9 @@ class TestExecutorSkillWiring(unittest.TestCase):
         report = ex.run_skill_sweep()
         self.assertEqual(report["mutated"], ["weather"])
         self.assertTrue(w.is_quarantined("weather"))
-        # Pins persisted automatically by the sweep.
+        # Pins persisted automatically by the sweep (H22: MAC-authenticated).
         self.assertTrue(os.path.exists(pin_path))
-        data = PinStore.peek(pin_path)
+        data = PinStore.peek(pin_path, mac_key=_pin_key())
         self.assertEqual(data["quarantined"], ["weather"])
         # Sweep completion is audit-logged.
         evs = [e for e in _skill_events(self.run_dir)
@@ -855,7 +862,8 @@ class TestExecutorSkillWiring(unittest.TestCase):
         self._mutate()
         ex.run_skill_sweep()  # quarantines + persists
         # Fresh process: deployment loads pins, builds a new executor.
-        w2 = PinStore.load(pin_path)
+        # H22: the deployment verifies the MAC with the operator key.
+        w2 = PinStore.load(pin_path, mac_key=_pin_key())
         run_dir2 = Path(self.tmpdir) / "run2"
         run_dir2.mkdir()
         ex2, ident2, _ = _make_executor(

@@ -405,6 +405,15 @@ class SkillWatch:
         self._reference_resolver = (
             reference_resolver if reference_resolver is not None
             else RefusingResolver())
+        # H22: when this watcher was loaded from (or saved to) an
+        # authenticated pin file, the path and the verified MAC are
+        # attached. check_at_use()/verify_all() revalidate the file
+        # (mtime-gated; full MAC only on change) so a post-load
+        # rewrite on disk is caught fail-closed.
+        self._pin_path = None
+        self._pin_mac = None
+        self._pin_mac_key = None
+        self._pin_stat = None
 
     # -- introspection --------------------------------------------------------
 
@@ -850,7 +859,18 @@ class SkillWatch:
         "unverifiable": [...], "reference_drift": [], "identity_drift":
         [], "version_drift": []}. Mutations and read failures quarantine
         fail-closed.
+
+        H22: revalidates the attached pin file first — a post-load
+        rewrite quarantines everything fail-closed before any skill is
+        checked.
         """
+        # H22: fail closed on pin-file tamper before checking skills.
+        if not self._revalidate_pin_file():
+            return {"checked": 0, "clean": [], "mutated": [],
+                    "unverifiable": list(self._skills),
+                    "reference_drift": [], "identity_drift": [],
+                    "version_drift": [],
+                    "pin_file_tamper": True}
         report = {"checked": 0, "clean": [], "mutated": [],
                   "unverifiable": [], "reference_drift": [],
                   "identity_drift": [], "version_drift": []}
@@ -893,6 +913,49 @@ class SkillWatch:
                            unverifiable=report["unverifiable"])
         return report
 
+    def _revalidate_pin_file(self):
+        """H22: revalidate the attached pin file (if any).
+
+        Mtime-gated: if the file is unchanged since load/save, returns
+        True immediately (no I/O beyond stat). If the file changed or
+        vanished, the MAC is re-verified with the attached key; on
+        failure every registered skill is quarantined fail-closed and
+        False is returned.
+        """
+        if self._pin_path is None or self._pin_mac is None:
+            return True
+        if self._pin_mac_key is None:
+            # No key to revalidate with: fail closed.
+            self._quarantine_all("pin-file-key-unavailable")
+            return False
+        try:
+            st = os.stat(self._pin_path)
+            cur = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            # Pin file vanished: fail closed.
+            self._quarantine_all("pin-file-missing")
+            return False
+        if self._pin_stat is not None and cur == self._pin_stat:
+            return True
+        # File changed: re-verify the MAC.
+        try:
+            data = PinStore.peek(self._pin_path,
+                                 mac_key=self._pin_mac_key)
+        except PinStoreError:
+            self._quarantine_all("pin-file-tamper")
+            return False
+        # MAC valid: update the stat hint.
+        self._pin_stat = cur
+        return True
+
+    def _quarantine_all(self, reason):
+        """Quarantine every registered skill (H22 fail-closed)."""
+        for skill_id in list(self._skills):
+            if skill_id not in self._quarantined:
+                self._quarantine(skill_id, "skill_pin_tamper",
+                                 reason="pin file %s: %s" % (
+                                     self._pin_path, reason))
+
     def check_at_use(self, skill_id):
         """Cheap use-time check for the governed call path.
 
@@ -928,6 +991,11 @@ class SkillWatch:
         independent observations). Drift, withdrawal, or observation
         failure quarantines fail-closed.
         """
+        # H22: revalidate the attached pin file (if any) before
+        # trusting the in-memory pins — a post-load rewrite on disk
+        # quarantines fail-closed.
+        if not self._revalidate_pin_file():
+            return False, "pin-file-tamper-quarantined"
         if skill_id in self._quarantined:
             return False, "quarantined"
         rec = self._skills.get(skill_id)
@@ -1241,6 +1309,30 @@ class SkillWatch:
 
 _PIN_FORMAT = "skill-pins/1"
 
+# H22 (row 6 residual): the pin file is a trust anchor. When a MAC key
+# is supplied, the manifest is authenticated with HMAC-SHA256 over the
+# canonical serialization (domain-separated); verification fails closed
+# and LOUD on tamper. The MAC covers everything except the MAC field
+# itself.
+_PIN_MAC_FIELD = "manifest_mac"
+_PIN_MAC_DOMAIN = b"skill-pin-manifest-v1"
+
+
+def _pin_manifest_mac(canonical_bytes, mac_key):
+    """HMAC-SHA256 over the canonical manifest bytes (H22)."""
+    if not isinstance(mac_key, (bytes, bytearray)) or not mac_key:
+        raise PinStoreError(
+            "pin-file MAC key must be non-empty bytes")
+    return hmac.new(mac_key,
+                    _PIN_MAC_DOMAIN + b"\x00" + bytes(canonical_bytes),
+                    hashlib.sha256).hexdigest()
+
+
+def _canonical_manifest_bytes(data):
+    """Canonical bytes the H22 MAC covers (same layout as the file)."""
+    return (json.dumps(data, indent=2, sort_keys=True)
+            .encode("utf-8") + b"\n")
+
 
 def default_source_factory(skill_id, origin):
     """Re-attach a content source for a persisted pin.
@@ -1304,19 +1396,32 @@ class PinStore:
         }
 
     @staticmethod
-    def save(watch, path):
-        """Atomically persist a watcher's pins to ``path`` (mode 0600)."""
+    def save(watch, path, *, mac_key=None):
+        """Atomically persist a watcher's pins to ``path`` (mode 0600).
+
+        H22: when ``mac_key`` (bytes) is given, the manifest is
+        authenticated with HMAC-SHA256 (domain-separated) and the hex
+        MAC is stored as the top-level ``manifest_mac`` field. When
+        ``mac_key`` is None the file is written unsigned (pre-H22
+        layout; still schema-validated on load).
+
+        H22: when a MAC is written, the pin path/auth state is attached
+        to the watcher for revalidation at check_at_use()/verify_all()
+        time.
+        """
         if not isinstance(watch, SkillWatch):
             raise PinStoreError("can only persist a SkillWatch")
         path = os.fspath(path)
         directory = os.path.dirname(os.path.abspath(path)) or "."
         data = PinStore._serialize(watch)
+        if mac_key is not None:
+            data[_PIN_MAC_FIELD] = _pin_manifest_mac(
+                _canonical_manifest_bytes(data), mac_key)
         fd, tmp = tempfile.mkstemp(prefix=".skill-pins-",
                                    dir=directory)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, sort_keys=True)
-                f.write("\n")
+                f.write(_canonical_manifest_bytes(data).decode("utf-8"))
             os.chmod(tmp, 0o600)
             os.replace(tmp, path)
         except OSError as e:
@@ -1326,15 +1431,33 @@ class PinStore:
                 pass
             raise PinStoreError("cannot persist skill pins to %r: %s"
                                 % (path, e))
+        # H22: attach the pin path/auth state for revalidation.
+        if mac_key is not None:
+            watch._pin_path = path
+            watch._pin_mac = data[_PIN_MAC_FIELD]
+            watch._pin_mac_key = mac_key
+            try:
+                st = os.stat(path)
+                watch._pin_stat = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                watch._pin_stat = None
         return path
 
     @staticmethod
-    def peek(path):
+    def peek(path, *, mac_key=None):
         """Parse + schema-validate a pin file; return the raw pin dict.
 
         Raises :class:`PinStoreError` when the file exists but is
         corrupt — the caller must fail closed, never silently start
         with an empty registry.
+
+        H22: when the manifest carries a ``manifest_mac``, ``mac_key``
+        is REQUIRED and the MAC is verified with
+        :func:`hmac.compare_digest`. A missing key or a MAC mismatch
+        raises :class:`PinStoreError` LOUD (``skill_pin_tamper``) —
+        a rewritten pin file is never used silently. A manifest
+        without a MAC (pre-H22 layout) loads as before when no key is
+        given.
         """
         path = os.fspath(path)
         try:
@@ -1344,12 +1467,39 @@ class PinStore:
             raise PinStoreError("skill pin file %r unreadable/corrupt: "
                                 "%s: %s"
                                 % (path, type(e).__name__, e))
-        if not isinstance(data, dict) or data.get("format") != _PIN_FORMAT:
+        if not isinstance(data, dict):
             raise PinStoreError(
                 "skill pin file %r has unknown format %r (expected %r)"
-                % (path, data.get("format")
-                   if isinstance(data, dict) else type(data).__name__,
-                   _PIN_FORMAT))
+                % (path, type(data).__name__, _PIN_FORMAT))
+        # H22: verify the manifest MAC before trusting anything else.
+        claimed_mac = data.pop(_PIN_MAC_FIELD, None)
+        if claimed_mac is not None:
+            if mac_key is None:
+                raise PinStoreError(
+                    "skill pin file %r is MAC-authenticated but no key "
+                    "was provided to verify it (fail-closed: refusing "
+                    "to use an unverifiable trust anchor)"
+                    % (path,))
+            if (not isinstance(claimed_mac, str)
+                    or not claimed_mac.strip()):
+                raise PinStoreError(
+                    "skill pin file %r has a malformed %r field "
+                    "(skill_pin_tamper)" % (path, _PIN_MAC_FIELD))
+            expected = _pin_manifest_mac(
+                _canonical_manifest_bytes(data), mac_key)
+            if not hmac.compare_digest(claimed_mac, expected):
+                raise PinStoreError(
+                    "skill pin file %r manifest MAC mismatch "
+                    "(skill_pin_tamper): the pin file was modified "
+                    "without the operator key — refusing to load"
+                    % (path,))
+            # H22: stash the verified MAC for the caller (load attaches
+            # it to the watcher for revalidation).
+            data["_verified_mac"] = claimed_mac
+        if data.get("format") != _PIN_FORMAT:
+            raise PinStoreError(
+                "skill pin file %r has unknown format %r (expected %r)"
+                % (path, data.get("format"), _PIN_FORMAT))
         pins = data.get("pins")
         quarantined = data.get("quarantined", [])
         if not isinstance(pins, dict) or not isinstance(quarantined, list):
@@ -1420,7 +1570,8 @@ class PinStore:
         return data
 
     @staticmethod
-    def load(path, source_factory=None, emit=None, reference_resolver=None):
+    def load(path, source_factory=None, emit=None, reference_resolver=None,
+             *, mac_key=None):
         """Rebuild a ``SkillWatch`` from a persisted pin file.
 
         ``source_factory(skill_id, origin)`` re-attaches content
@@ -1431,8 +1582,12 @@ class PinStore:
         is passed through to the rebuilt watcher (F142 Leg B); without
         one, restored ``bound`` references cannot be re-verified until
         the deployment supplies a resolver.
+
+        H22: ``mac_key`` is passed through to :meth:`peek` — a
+        MAC-authenticated manifest is verified, and tamper refuses
+        LOUD.
         """
-        data = PinStore.peek(path)
+        data = PinStore.peek(path, mac_key=mac_key)
         factory = (source_factory if source_factory is not None
                    else default_source_factory)
         watch = SkillWatch(emit=emit,
@@ -1475,4 +1630,16 @@ class PinStore:
         watch._record_event("skill_pins_restored", "-",
                            restored=len(data["pins"]),
                            quarantined_restored=len(data["quarantined"]))
+        # H22: attach the pin path/auth state for revalidation at
+        # check_at_use()/verify_all() time.
+        verified_mac = data.pop("_verified_mac", None)
+        if verified_mac is not None:
+            watch._pin_path = os.fspath(path)
+            watch._pin_mac = verified_mac
+            watch._pin_mac_key = mac_key
+            try:
+                st = os.stat(watch._pin_path)
+                watch._pin_stat = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                watch._pin_stat = None
         return watch
