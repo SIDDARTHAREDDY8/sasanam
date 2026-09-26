@@ -193,8 +193,22 @@ Canaries + DLP + sterile windows + egress ledger (mechanism class covered);
 F128 CLOSED (canary/DLP non-string-arg blind spot); F139/F140 CLOSED
 (citation-provenance over http_post + api_call); F81 CLOSED (filtered-egress wall).
 Residual: **authorized-channel exfil** (the ShareLeak lesson — exfil riding a
-legitimate, classifier-approved action; CamoLeak's platform-proxy shape) has no
-dedicated battery — the memo's wave-100 ask did not land as distinct work.
+legitimate, classifier-approved action; CamoLeak's platform-proxy shape). Wave-121
+measured it: `evals/row13_authorized_channel_break.py` (2 BREAK / 2 HELD) plus
+expanded `evals/row13_authorized_channel_expanded.py` (4 BREAK / 3 HELD / 0 ERROR,
+deterministic both envs). The 4 BREAKs (synonym paraphrase, restructured summary,
+3-way fragmentation, semantic re-encoding) are the pinned residual class — no new
+finding. The 3 HELDs include the finding that sandbox laundering does NOT defeat
+the verbatim chain (re-read re-taints) and 2 FP-ceiling probes (benign traffic
+correctly unflagged). Viability (wave-121, honest): no *content-based* mitigation
+is viable — empirically (benign paraphrases overlap MORE lexically than malicious
+ones: 7/13 vs 3–6/22) and theoretically (Simmons' prisoners' problem: a content
+warden provably loses to a paraphrase-capable encoder; no DLP vendor ships a
+per-secret paraphrase detector — `research/authorized-channel-exfil-2026-09-26.md`).
+The viable direction is **channel discipline, not a content oracle**: sterile egress
+windows (P1), canary-fact tripwires (P2), provenance-annotated declassify approvals
+(P3) — a product-semantics decision for the hardening backlog, not a pre-freeze
+red-first closure. Residual re-pinned honestly; no semantic-exfil control claimed.
 **Stale-evidence note:** F81's privileged validation (11/11 ×2 on f81-lab,
 wave-98) has no durable run artifact, and waves 99–112 changed code around those
 seams — the closure stands on the tree record (adjudicated wave-113) but is not

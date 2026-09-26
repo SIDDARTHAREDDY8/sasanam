@@ -7722,3 +7722,21 @@ The standing red-first post-wave audit caught **three lane-introduced regression
 All three fixes are recorded here, not quietly patched. F-RA3 battery re-verified 3/3 green after the discriminator fix; TOCTOU 3/3 OK.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-26 — Wave-121 (authorized-channel exfil lane, probe-only)
+
+**Scope:** Row-13 residual — DLP-clean paraphrased/semantic exfil over allowlisted, human-approved channels. Probe-only; no closure claimed.
+
+**Red-first baseline:** reproduced the H10 pinned BREAKs on the current tree before any new work: `evals/row13_authorized_channel_break.py` = **2 BREAK / 2 HELD / 0 ERROR**, deterministic in both envs (q2 ShareLeak paraphrase via approved http_post; q3 CamoLeak paraphrase in api_call params).
+
+**Expanded battery** (`evals/row13_authorized_channel_expanded.py`, 7 probes): **4 BREAK / 3 HELD / 0 ERROR**, deterministic in both envs.
+- BREAK (pinned residual class, NOT new findings): e1 synonym paraphrase, e2 restructured summary, e3 meaning fragmented across 3 approved posts (no cross-call correlation exists), e5 semantic re-encoding via api_call params.
+- HELD: e4 sandbox-laundering — the re-read re-taints `_read_contents`, so the verbatim chain SURVIVES a laundering hop (read_before_send fires); the control holds through laundering. e6/e7 FP-ceiling: benign paraphrase and legitimate summary correctly unflagged.
+- No new defects found; next free finding stays F176.
+
+**Mitigation viability (honest):** NOT viable pre-freeze. Empirical FP measurement: benign paraphrases share MORE words with their sources (7/13) than malicious paraphrases share with the sensitive source (3-6/22) — paraphrase decreases lexical overlap while preserving meaning, the inverse of what any lexical/statistical threshold needs. Any threshold catching the malicious fires harder on benign traffic. Semantic understanding is required; that is research-grade (industry research note: `research/authorized-channel-exfil-2026-09-26.md`).
+- Residuals re-pinned: semantic exfil over authorized channels remains the named row-13 residual; no semantic-exfil control claimed.
+
+**Two-axis review:** Standards PASS (module-level GOV_DEPLOYMENT_MODE=staging, standalone verified under env -u, real product code, deterministic, $0); Spec PASS (reproduced baseline, expanded scope, honest measurement, no closure claimed, no new findings filed).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
