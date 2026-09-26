@@ -7,8 +7,8 @@ Organization: **§1 blocks production** (deploying without these is negligent);
 **§2 is nice-to-have** (deferrable without lying). Every gap is grounded in the
 code or the dated record — nothing is aspirational marketing.
 
-**Since wave-27:** waves 80–112 filed and closed findings F138–F172 (next free:
-F173; open findings: none): citation-provenance controls (F139–F142),
+**Since wave-27:** waves 80–115 filed and closed findings F138–F174 (next free:
+F175; open findings: none): citation-provenance controls (F139–F142),
 skill-watch fail-closed (F143), memory-poisoning ingestion (F144), MCP server
 instructions (F145), path-symlink TOCTOU (F146/F147), launcher audit-witness
 (F148/F149), the Anthropic Sept-2026-report velocity/economic battery
@@ -73,14 +73,16 @@ see §1 for the residual).
   `tests/run_tests.py` runs before test collection, and artifact
   verification. The HIGH-for-production escalation is retired; residual:
   audit checks installed names/versions, not post-install file bytes.
-- **Open findings: F173, F174** (`evals/FINDINGS.md` tail, wave-114 lane 1;
-  next free finding **F175**). F173 (LOW): unsigned inclusion-coverage
-  downgrade — a no-key transport attacker can strip inclusion bundles
-  (or the receipt's own bundle), adjust the unsigned coverage counts,
-  recompute only the unsigned transport digest, and still get exit 0
-  VERIFIED. F174 (LOW): a VERIFIED bundle can carry an
-  authoritative-sounding `operator_id` the verifier never surfaces in
-  text or JSON output. Every finding ≤ F172 is recorded CLOSED (F163 re-closed 2026-09-24
+- **Open findings: none** (next free finding **F175**). F173 (LOW) and
+  F174 (LOW), filed by the wave-114 adversarial rerun, were **CLOSED
+  2026-09-26** (Wave-115, red-first): F173 — bundle format
+  `evidence-bundle/1.1`, signature domain `evidence-bundle/v2`, the
+  operator-signed claim now binds inclusion presence/coverage + receipt
+  bundle-presence/reason (unsigned stripping fails V7/V12; legacy 1.0
+  bundles fail V1 closed); F174 — verifier renders `operator_id` in text
+  and JSON labeled as operator-supplied/unverified. Adversarial battery
+  post-fix: CAUGHT=9 MISS=0 BREAK=0. Every finding ≤ F174 is recorded
+  CLOSED (F163 re-closed 2026-09-24
   after the Wave-109 quality audit; the wave-112 post-wave red-first audit ran
   GO with zero overstatements). The **accepted residual is F81 (LOW, CLOSED
   2026-09-24)**: the filtered-egress wall was lab-validated on f81-lab
@@ -166,11 +168,13 @@ see §1 for the residual).
 - **Evals integration:** wave-21+ situations should live in `evals/run_evals.py`
   (noted as not-yet-integrated in REALWORLD_BAR.md v1) — still noted, not
   blocking.
-- **Stratified-100 artifact pinning:** the in-gate battery reports 99/100 with
-  the single miss (`careless-typo-014` / F-RA3) pinned in code — but the result
-  artifact is regenerated every gate run and reverted pre-commit, so the pushed
-  tree carries no pinned record. A wave-113 sibling lane is building the honest
-  pinned claim; until it lands, "99/100" stands as recorded, not re-verified.
+- **Stratified-100 artifact pinning:** landed wave-113 — the in-gate battery's
+  99/100 (single miss `careless-typo-014` / F-RA3) is pinned by
+  `evals/stratified_100_claim.json` with a fail-closed verifier
+  (`evals/verify_stratified_100_claim.py`, 5/5 unit tests). The generated
+  result artifact is still regenerated every gate run and reverted
+  pre-commit; the pushed tree carries the pinned claim + verifier, not the
+  raw artifact.
 - **Multi-tenancy, policy hot-reload/versioning-rollback, approval fatigue
   auto-deny** (AGT has the latter): all legitimate roadmap items, none blocking
   a first honest pilot — but a pilot is not production. **v1 is explicitly

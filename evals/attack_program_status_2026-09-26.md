@@ -20,6 +20,8 @@ adversarial rerun) are dated 2026-09-26.
 **No regressions found → no findings filed. Open findings: none. Next free: F173.**
 
 > **Same-day addendum (wave-114 coordinator, 2026-09-26):** this document was written by Lane 3 before Lane 1's adversarial battery filed its results. Lane 1 subsequently filed **F173** and **F174** (both LOW, OPEN — see `evals/FINDINGS.md` tail; next free is now **F175**). Both arise from the evidence bundle, which is in this report's PARTIAL rows; they do not contradict any claim in this status (no row is marked covered on evidence-bundle verdict integrity). Read the "Open findings: none" line above as of Lane 3's writing time.
+>
+> **Same-day addendum 2 (wave-116 coordinator, 2026-09-26):** F173 and F174 were **CLOSED 2026-09-26** (Wave-115, red-first — bundle `evidence-bundle/1.1`, signature domain `evidence-bundle/v2`, signed claim binds inclusion coverage + receipt binding; `operator_id` rendered as operator-supplied/unverified). Open findings: **none**. Next free: **F175**.
 
 ## Summary
 

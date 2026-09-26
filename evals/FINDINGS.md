@@ -5136,7 +5136,7 @@ Refusal is fail-closed and audited (`approval_execution_refused` with flag `dele
 **Closure verification (2026-09-23):** break-first battery 8 STOPPED / 1 residual (declared-ungoverned, by design) / 0 BREAK — both I6 and I7 return STOPPED with the fix, and both return BREAK with the fix block temporarily removed (verified both directions, exact block restored). Unit closure tests `tests/test_w88_f135.py`: 5/5 OK — revocation at execution refused + audited; deterministic expiry at execution refused + audited; valid delegation still executes (no regression); ungoverned executor keeps legacy behavior; revocation holds across executor rotation (fresh executor, same run dir, shared ledger).
 
 
-## F81 — LOW — CLOSED 2026-09-23 (validated-by-lab)
+### F81 privileged-lab validation record (2026-09-23) — continuation of the F81 entry above
 
 **Privileged lab validation.** The wave-25 closure-probe family required a real implementation passing all probes in privileged network topology. Validated 2026-09-23 on GCP VM `f81-lab` (project terminalbench-508900, us-central1-a, e2-micro, Ubuntu 24.04): composed wall entirely inside netns `agent0` (veth pair; default-deny nftables allowing only DNS+proxy to 10.200.0.1; confined dnsmasq with `stop-dns-rebind` and `--cache-size=0`, allowlist-only forwarding; stdlib CONNECT proxy resolving destinations ONLY through the confined resolver via a hand-rolled DNS client, per-connection allowlist re-read fail-closed; seccomp-BPF blocking AF_PACKET/AF_INET raw sockets, `unshare(CLONE_NEWNET)`, `setns` with EPERM). Host nftables stayed at 0 lines throughout (SSH never at risk). VM powered off after the session per standing orders.
 

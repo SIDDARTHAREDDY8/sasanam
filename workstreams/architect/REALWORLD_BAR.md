@@ -2419,3 +2419,21 @@ no re-verifiable artifact on today's tree — carry decision
 **bar-documentation gap — closed by this section** (B6 MET: the bar can
 now see the whole window, waves 80→113).
 Still a prototype against the bar; no victory on green tests.
+
+**Wave-114/115 addendum (2026-09-26, B6 maintained).** The wave-114
+adversarial rerun filed two genuine evidence-bundle findings (F173 LOW:
+unsigned inclusion-coverage downgrade; F174 LOW: `operator_id`
+invisible in verifier output) and closed them red-first in wave-115:
+bundle `evidence-bundle/1.1`, signature domain `evidence-bundle/v2`,
+the signed claim binds inclusion presence/coverage + receipt
+bundle-presence/reason (legacy 1.0 fails V1 closed), and the verifier
+renders `operator_id` as operator-supplied/unverified in text and JSON.
+The F69 pin_off adversarial rerun was a clean negative result (17/17
+HELD). The 18-row attack program stands at 3 COVERED / 14 PARTIAL / 1
+GAP (row 9, tool-result caution erosion — genuinely unbuilt, carried
+into the v1 scope as OUT). New honest boundaries for v1:
+`docs/V1_SCOPE.md` (wave-116) names the v1 feature set, the 13 deferred
+items, and the 10-21 freeze criteria; `evals/v1_scope_inventory_2026-09-26.md`
+is the full thread ledger (11 CLOSE / 7 HARDEN / 41 DEFER). Open
+findings: none; next free F175. B6 MET — the window now covers waves
+80→115.
