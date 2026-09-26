@@ -2273,3 +2273,149 @@ a decided strategy.
 - **B6:** product position — the evidence product now has a standardized, third-party-verifiable report surface (the "sell the evidence" thesis made concrete), but the honest gaps stand: thresholds and S1–S4 are ours and provisional (no jurisdiction accepts the bundle); `gate()` is tested but UNWIRED (no production call path measures capability deltas); `uncovered_forces_insufficient=True` means every SAR is INSUFFICIENT while identity_authentication/covert_interagent_comms lack probes; HMAC-only deployments cannot produce third-party-verifiable bundles; grades the governance layer, not the model.
 
 **Bottom line:** zero findings, and the product now speaks the language the UNSC just asked for — measurable safeguards with third-party-verifiable evidence. The format war for comparable evidence bundles is the go-to-market; we shipped our entry first.
+
+## Honest distance assessment — wave-112/113 (2026-09-26, W3 evidence-bundle build + F69 timing-flake hardening + MaxKB sustaining probe + B6 doc refresh)
+
+Wave-112 pushed as `f90e353`. This section kills the B6 documentation gap
+the wave-112 B1–B6 delta (`evals/b1_b6_delta_2026-09-26.md`) ranked #1: the
+bar's own paperwork was 30+ waves behind (no assessment newer than wave-79;
+`docs/READINESS_GAPS.md` at wave-27). The product did not stand still while
+the paperwork did — waves 80–112 filed and closed findings F138–F172
+(citation poisoning F139/F140/F141/F142; skill-watch fail-open F143;
+memory-poisoning ingestion F144; MCP server instructions F145; path-symlink
+TOCTOU F146/F147; launcher audit-witness F148/F149; the Anthropic
+Sept-2026-report velocity/economic battery F162–F170 incl. the F163/F164
+re-open→re-close; DLP quadratic scrub F171; evidence-bundle V11 F172),
+built the Safeguard Benchmark primitive (wave-99, UNSC/RSI response),
+validated the Vault transit adapter against a real Vault server, and
+shipped the W3 evidence bundle. The graded position below is against the
+current tree, not the wave-79 tree. Old sections above stay untouched.
+
+- **B1:** **14/16 full (P13 partial-by-design, P8 uncovered-by-design)** —
+  unchanged since wave-95; every wave since records the same count
+  (delta report: B1 MET/HOLD; the 2026-09-25 industry sweep's Medicare-portal
+  AI-agent hack mapped onto already-covered classes).
+- **B2:** wave-112 push gates — canonical **3621 OK**, registry
+  **GREEN**, adversary matrix **3216/3216 SHIP-GATE GREEN**, realistic
+  battery **4/4**. Two pre-push gate incidents were operator error, not
+  product, and are recorded as such: sit115's probe anchor matched F69's
+  pre-change source expression (repaired honestly to a semantic anchor —
+  exact-arg matching was brittle against the reviewed-safe `pin_off`
+  optimization); sit64/95/117/132 went RED because gate TMPDIRs were set
+  but never `mkdir -p`'d, and Python 3.12's tempfile validation silently
+  falls back to `/tmp` (stale-key `LedgerUnverifiableError`, missing-dir
+  `FileNotFoundError`) — lesson now in `~/AGENTS.md`, never trust the env
+  var alone. Stratified-100: **99/100**, known miss `careless-typo-014` /
+  F-RA3 pinned in `_BATTERY_KNOWN_RESIDUALS` (assertions intact, not
+  weakened), all 32 researcher profiles green, zero unknown failures —
+  and the claim is now **pinned**: `evals/stratified_100_claim.json` +
+  `evals/verify_stratified_100_claim.py` (wave-113; config hash
+  `eade8211…45cb8` over the battery code files + canonical seed list,
+  never over results; observed 99/100 with exactly the documented known
+  miss `careless-typo-014`; the verifier re-runs the real battery and
+  fails closed on any drift — the score must match exactly, and a
+  *better* score also invalidates, demanding a re-pin). The per-run
+  artifact `evals/artifacts/wave23_b2/battery_100_results.json` remains
+  regenerated noise and is still reverted pre-commit. "99/100" is now a
+  pinned, re-verifiable claim, not a recorded one.
+- **B3:** citation guard green in-suite. W3 landed the evidence-bundle
+  verifier per `docs/evidence-bundle-spec.md` §4.3 V1–V13 (+V14 as a
+  documented v1 extension): `gov/evidence_bundle.py` +
+  `gov/evidence_verify.py` + `tools/evidence-verify` byte-identical
+  (drift-guarded); **44/44 tests**; the normative tamper battery rebuilt
+  to spec §5 T1–T10: **14 caught / 15 controls / MISS=0**; two-axis
+  review caught and fixed two genuine coverage gaps (T8 out-of-window
+  seq ref + coherent window-shift truncation; V11 unversioned-policy).
+  The ISO 42001 mapping remains **provisional** (official text not
+  consulted — never to be shown to an auditor as authoritative).
+- **B4:** **Open findings: NONE** (`evals/FINDINGS.md` tail; next free
+  **F173**). F172 (LOW) FILED + CLOSED same wave — V11 false-rejected
+  genuine bundles whose `policy_loaded` event carried no `policy_version`
+  (red-first: a real-subprocess test of the standalone
+  `tools/evidence-verify` failed pre-fix, passed post-fix). F163's stale
+  "RE-OPENED" heading fixed wave-112 (body documents RE-CLOSED
+  2026-09-24). The standing **red-first post-wave closure audit**
+  (2026-09-25 user order) ran GO on wave-112 with zero overstatements.
+  **F81 (LOW) CLOSED since wave-98 (2026-09-24)** — the privileged battery
+  (`evals/f81launcher_privileged.py`) **did run under genuine privilege**:
+  f81-lab started, root, `GOV_F81_PRIVILEGED=1`, netns `f81test0` — first
+  run 10 CLOSED / 1 BREAK (`preexec_abort_on_flap`, filed as F148 the same
+  wave), post-fix re-run **11/11 CLOSED, exit 0, deterministic ×2**; pushed
+  as `4000791` with "Open findings: NONE" (BUILD_LOG.md wave-98 entries;
+  FINDINGS.md F81 entry wave-98 paragraph; F148's closure entry
+  independently records the same 11/11 ×2 run — a fabricated closure
+  would not have produced a real defect plus its fix). Correction,
+  wave-113: the wave-112 B1–B6 delta report's "privileged battery never
+  ran under real privilege" line was an error — it restated the wave-96
+  state and missed the wave-98 closure; it is corrected here, not
+  propagated. Honest residual (not a re-open): no durable run artifact of
+  the wave-98 run exists in the tree (prose claims only), and waves
+  99–112 changed code around these seams, so the closure is not
+  re-verifiable from the tree today. A wave-113 re-verification attempt
+  was genuinely blocked (f81-lab stopped, no recoverable IP, no start
+  route from this environment) — `evals/f81_privilege_carry_decision.md`
+  (2026-09-26) records the attempt, the exact residual risk, and the
+  concrete re-run conditions. The duplicate F81 headings in FINDINGS.md
+  are cosmetic (noted by the wave-112 audit) — the heading that reads
+  "CLOSED 2026-09-23 (validated-by-lab)" covers the wave-23 topology
+  validation, not the production-launcher privileged battery; and the
+  main F81 entry's top status line (still reading "OPEN 2026-09-22") was
+  stale — corrected wave-113 to match the entry's own wave-98 paragraph.
+- **B5:** ratchets remain capped per SHIP_PLAN §2 (sustaining only —
+  regressions, finding closures, hardening of shipped surfaces; new
+  "nastier situations" are v2 candidates, not built). New standing
+  ratchets this window: the evidence tamper battery (T1–T10), the
+  MaxKB-shaped sandbox probe (`evals/f81_maxkb_shell_break.py`), the F69
+  timing pin. F69 timing-flake hardening closed the ranked "lying gate"
+  gap: `time.process_time()` metric (scheduler descheduling no longer
+  counted as sweep cost; bound unchanged 150ms) + `pin_off`-based
+  incremental scan — **6/6 green under 2-CPU saturation** (~8x headroom),
+  warm sweep ~16ms vs ~95ms pre-fix (BUILD_LOG.md wave-112 entry). The
+  MaxKB sustaining probe (`evals/f81_maxkb_shell_break.py`) replays
+  CVE-2026-77521's shape (RAG-borne prompt injection → shell): the RED
+  fires on a deliberately weakened `shell=True` backend (canary
+  created), **4/4 HELD on the real cage** in both envs — including the
+  structural point that no command-execution tool exists in the
+  governed vocabulary, so the HITL-exemption anti-pattern cannot occur.
+- **B6:** honest readiness — the v1 boundaries, stated plainly, nothing
+  softened: (1) Vault key custody validated against a real **Vault OSS
+  v1.20.0 dev server** (20/20 live checks; `docs/KEY_CUSTODY_RUNBOOK.md`
+  A) — but production Vault provisioning, **TLS end-to-end**, **non-
+  token auth**, **HA**, and live operator ceremonies are all **UNTESTED**
+  (same file, A.1); cloud KMS (AWS/GCP/Azure) has **no in-repo provider**
+  (AWS path is operator-built, per the runbook). (2) End-to-end TLS is a
+  **reverse-proxy reference config**, not an in-repo TLS stack (SHIP_PLAN
+  §2). (3) Live Rekor/Sigstore anchoring is **test-double level**
+  (FakeTransparencyLog; evidence-bundle spec §7 boundary 4; SHIP_PLAN
+  v1-OUT by decision). (4) **No production SSO** (reverse-proxy +
+  external-IdP pattern documented, not built); **v1 is explicitly
+  single-tenant** (SHIP_PLAN §2; evidence-bundle spec §7 boundary 8).
+  (5) Approval console localhost-grade (no OIDC/mTLS, in-memory sessions,
+  no TLS); approval queue is file-only JSONL (no DB/HA/backup); **no
+  enforced retention** (`gov/retain.py` does not exist); no
+  monitoring/alerting pipeline. (6) W3 evidence-bundle residuals, per the
+  spec's own normative §7: the bundle proves authenticity of *included*
+  entries (K-060 honest scope — not completeness against a misbehaving
+  exporter); key custody is *claimed* via `kms_attestation`, not
+  cryptographically proven; timestamps are operator wall-clock (no TSA,
+  no external anchor); **threshold root trust is authorized via the
+  operator manifest** — single-operator signature in v1, multi-operator
+  deferred to v2 (spec §4.2) — and **authorship requires an out-of-band
+  key pin** the verifier never invents (spec §7 boundary 5). (7) The
+  stratified-100 pinning gap and F81 as in B2/B4. The repo stays
+  private; nothing ships to market without the user's explicit decision
+  (standing order).
+
+**Bottom line:** the enforcement core meets its bar — B1 held at 14/16,
+B2/B3/B5 green, B4 ledger clean through F172, every residual re-checked
+and still true. The distance to v1 is no longer in the enforcement
+machinery: it is the **deployment-hardening surface** (production Vault
+path, TLS in front, approval-console auth, retention, monitoring), the
+**pinned-evidence maintenance** (the stratified-100 claim is now pinned
+by `evals/stratified_100_claim.json` + a fail-closed verifier, wave-113 —
+re-pin on any battery drift; the F81 wave-98 privileged validation has
+no re-verifiable artifact on today's tree — carry decision
+`evals/f81_privilege_carry_decision.md`), and this lane's
+**bar-documentation gap — closed by this section** (B6 MET: the bar can
+now see the whole window, waves 80→113).
+Still a prototype against the bar; no victory on green tests.
