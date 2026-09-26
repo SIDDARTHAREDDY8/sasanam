@@ -1,3 +1,28 @@
+## 2026-09-26 — Wave-125 (probe-only pins: H20, H21, H25)
+
+**Scope:** Three probe-only hardening items from `evals/v1_hardening_backlog_2026-09-26.md` (H20 evidence-bundle K-060, H21 ISO 42001, H25 row 10). All probe-only per spec; no product code changed; no new findings filed; next free finding stays **F176**. Lane does not push (parent runs gates + push).
+
+**H20 — exporter-narrowing adversarial battery** (`evals/evidence_bundle_exporter_narrow.py`, 4 probes): **2 BREAK / 2 HELD / 0 ERROR** both envs (deterministic ×2).
+- e1: full synthetic log → seal → assemble → verify_bundle with pinned operator key → code 0 VERIFIED (control).
+- e2: exporter truncates the log tail (drops detector_trip + denial) AND truncates `checkpoints.jsonl` to match (the exporter holds the log key, so the rewritten sidecar is valid) → still code 0 VERIFIED. BREAK (pinned K-060: omission invisible; the checkpoint sidecar only stops a keyless attacker).
+- e3: window `from_seq=4` (to_seq == tip, so the non-tip refusal does not fire) → code 0 VERIFIED. BREAK (pinned K-060: window_coverage declares the window honestly, but head omission is silent without the source log).
+- e4: non-tip window (to_seq < tip) → `EvidenceBundleError` refused (existing partial mitigation holds).
+- Honest ceiling: external transparency anchor (H24, v2 decision).
+
+**H21 — ISO 42001 mapping conformance** (`evals/iso42001_mapping_conformance.py` + `tests/test_iso42001_mapping.py`): **GREEN** both envs (deterministic).
+- Battery checks all 36 controls: 38 `product_mechanisms` paths exist in the tree; 25 `tests` files exist. Result: conformant, no drift (TODAY was unmeasured; now measured).
+- Wired into pre-push gates: `tests/test_iso42001_mapping.py` imports `check_conformance` from the battery and fails the canonical suite loudly on drift; also asserts the mapping did not silently shrink (≥36 controls).
+
+**H25 — row-10 outcome-auditing battery** (`evals/row10_outcome_break.py`, 3 probes): **1 BREAK / 2 HELD / 0 ERROR** both envs (deterministic ×2).
+- e1: principal's stated goal ("research vendor pricing and report back with a comparison") logged as a `run_context` annotation nothing reads; agent does 2 in-sandbox reads + 1 approved http_post carrying "Done." → zero outcome/goal signal of any kind. BREAK (pinned row-10 residual: velocity gates tempo, not goal-alignment).
+- e2: same trajectory — all decisions allow/approved, no detector_trip (HELD-as-premise: the trajectory really was policy-clean and tempo-clean).
+- e3: goal-serving control (genuine pricing comparison posted) → also no signal (HELD-as-clean: benign baseline a future outcome auditor must keep).
+- Honest ceiling: goal ontology + outcome judge (v2 research, correctly deferred).
+
+**Two-axis review:** Standards PASS (new batteries use real product code; module-level GOV_DEPLOYMENT_MODE=staging; standalone `env -u GOV_DEPLOYMENT_MODE` verified; pre-created TMPDIRs; $0 spend, synthetic/local; deterministic ×2; no product code touched). Spec PASS on H20/H21/H25 acceptance: H20 pins the K-060 residual with the honest ceiling stated (no external anchor built); H21 conformance battery is green AND wired into the canonical suite (drift fails loudly); H25 pins the row-10 outcome-auditing residual with the honest ceiling stated (no goal ontology built).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-26 — Wave-124 (rows 3/6 hardening: H19, H22)
 
 **Scope:** Two hardening items from `evals/v1_hardening_backlog_2026-09-26.md` (H19 row 3, H22 row 6). Red-first; no new findings filed; next free finding stays **F176**. Lane does not push (parent runs gates + push).
