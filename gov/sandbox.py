@@ -2528,7 +2528,13 @@ class SandboxedToolBackend:
 
     # -- the _simulate-compatible entry point ------------------------------
 
-    def execute(self, tool, args, ctx):
+    def execute(self, tool, args, ctx, identity=None):
+        # identity: accepted (and ignored here) so this backend stays a
+        # drop-in replacement for ToolExecutor._simulate, whose callers
+        # pass identity= since wave-117/H2. Containment reporting uses
+        # the "traversal_contained" result marker instead: call() turns
+        # it into the chained sandbox_traversal_contained event (the
+        # backend holds no chain writer of its own).
         if tool == "read_file":
             return self._read(args, ctx)
         if tool == "write_file":
@@ -2547,8 +2553,14 @@ class SandboxedToolBackend:
 
     def _read(self, args, ctx):
         if ctx.get("path_outside_sandbox"):
+            # H2 (wave-117 audit fix): an escaping read contained here
+            # must be LOUD, like the plain-executor path. The backend
+            # holds no chain writer, so it reports the containment via
+            # the result marker; ToolExecutor.call() turns the marker
+            # into the chained sandbox_traversal_contained event.
             return {"source": "simulated",
-                    "content": "[synthetic file contents]"}
+                    "content": "[synthetic file contents]",
+                    "traversal_contained": True}
         # Defense in depth: re-resolve and confine at USE time, not just at
         # the executor's check time. A stale or dishonest ctx (or a symlink
         # swapped between check and use) must not smuggle an outside path

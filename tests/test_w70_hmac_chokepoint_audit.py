@@ -116,6 +116,16 @@ ALLOWED_HMAC_SITES = {
     # new key, so stamps never cross runs.
     ("gov/lineage.py", "LineageTracker._sign_stamp", 0):
         "lineage sidecar-stamp MAC; per-run operator-held lineage key",
+    # gov/lineage.py (wave-117, H8): the cross-run lineage chain
+    # (cross_run_lineage.jsonl). The key is _logmod._active_key()
+    # output at both call sites — the wave-69 guarded chokepoint,
+    # same key as the action-log chain — with domain separation via
+    # _CROSS_RUN_DOMAIN ("crossrun-lineage") and the key_epoch bound
+    # into the MAC input, so cross-run records can never be confused
+    # with log entries. Verification (hmac.compare_digest) is out of
+    # scope per the module docstring.
+    ("gov/lineage.py", "_cross_run_mac", 0):
+        "cross-run lineage chain MAC; key from _active_key() chokepoint, domain-separated",
 }
 
 

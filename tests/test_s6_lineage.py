@@ -402,5 +402,160 @@ class TestExecutorLineageGate(unittest.TestCase):
         self.assertNotEqual(r.get("status"), "denied-by-lineage")
 
 
+class TestCrossRunLineage(unittest.TestCase):
+    """H8: cross-run infection lineage keyed by principal (wave-117).
+
+    The deployment passes a shared ``cross_run_root``; taint-marks
+    export signed per-principal records and the next run's genesis for
+    the same principal is born infected with a chaining
+    ``cross_run_parent`` link. Without the opt-in the substrate is
+    byte-for-byte the old per-run behavior.
+    """
+
+    def setUp(self):
+        from tests.keyfixture import provision_test_key
+        provision_test_key()
+        self._td = tempfile.TemporaryDirectory(prefix="govxlin-")
+        self.addCleanup(self._td.cleanup)
+        self.xroot = Path(self._td.name) / "cross_run"
+        self.xroot.mkdir()
+
+    def _run(self, name, xroot=True):
+        run_dir = Path(self._td.name) / name
+        run_dir.mkdir()
+        log = _StubLog()
+        tracker = LineageTracker(
+            run_dir, log,
+            cross_run_root=self.xroot if xroot else None)
+        return tracker, log, run_dir
+
+    def _events(self, log, name):
+        return [e for e in log.events if e.get("event") == name]
+
+    def _store(self):
+        return self.xroot / "cross_run_lineage.jsonl"
+
+    def test_no_cross_run_root_zero_behavior_change(self):
+        t, log, _ = self._run("run_a", xroot=False)
+        t.genesis("a", principal="alice")
+        t.mark_infected("a", "seed")
+        self.assertFalse(self._store().exists())
+        self.assertEqual(self._events(log, "lineage_cross_run_adopt"), [])
+        self.assertEqual(self._events(log, "lineage_cross_run_export"), [])
+
+    def test_adopt_chains_run_a_into_run_b(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seeded plant")
+        tb, logb, _ = self._run("run_b")
+        tb.genesis("agent-b", principal="alice")
+        self.assertTrue(tb.is_infected("agent-b"))
+        parent = tb.cross_run_parent("agent-b")
+        self.assertIsNotNone(parent)
+        self.assertEqual(parent["lineage_id"], ta.lineage_id("agent-a"))
+        self.assertEqual(parent["run_id"], "run_a")
+        self.assertEqual(parent["principal"], "alice")
+        adopts = self._events(logb, "lineage_cross_run_adopt")
+        self.assertEqual(len(adopts), 1)
+        self.assertEqual(adopts[0]["parent_lineage_id"],
+                         ta.lineage_id("agent-a"))
+        self.assertEqual(adopts[0]["parent_run_id"], "run_a")
+        # heredity carries the adopted taint forward within run B
+        tb.birth("agent-b", "agent-c")
+        self.assertTrue(tb.is_infected("agent-c"))
+
+    def test_benign_cross_run_links_nothing(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="carol")
+        tb, logb, _ = self._run("run_b")
+        tb.genesis("agent-b", principal="carol")
+        self.assertFalse(tb.is_infected("agent-b"))
+        self.assertIsNone(tb.cross_run_parent("agent-b"))
+        self.assertEqual(self._events(logb, "lineage_cross_run_adopt"), [])
+
+    def test_principal_isolation(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seed")
+        tb, _, _ = self._run("run_b")
+        tb.genesis("agent-x", principal="bob")
+        self.assertFalse(tb.is_infected("agent-x"))
+        self.assertIsNone(tb.cross_run_parent("agent-x"))
+
+    def test_forged_store_born_tainted_and_loud(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seed")
+        store = self._store()
+        lines = store.read_text(encoding="utf-8").splitlines()
+        rec = json.loads(lines[-1])
+        rec["lineage_id"] = "lin_forged00000000"
+        lines[-1] = json.dumps(rec, sort_keys=True)
+        store.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tb, logb, _ = self._run("run_b")
+        tb.genesis("agent-b", principal="alice")
+        # fail-closed on trust: a forgery can never launder taint into
+        # a clean birth
+        self.assertTrue(tb.is_infected("agent-b"))
+        self.assertIsNone(tb.cross_run_parent("agent-b"))
+        forged = self._events(logb, "lineage_stamp_forged")
+        self.assertEqual(len(forged), 1)
+        self.assertEqual(forged[0].get("channel"), "cross-run")
+
+    def test_torn_tail_born_tainted_and_loud(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seed")
+        store = self._store()
+        store.write_text(store.read_text(encoding="utf-8") + "not-json\n",
+                         encoding="utf-8")
+        tb, logb, _ = self._run("run_b")
+        tb.genesis("agent-b", principal="alice")
+        self.assertTrue(tb.is_infected("agent-b"))
+        self.assertEqual(len(self._events(logb, "lineage_stamp_forged")), 1)
+
+    def test_clear_cross_run_lineage(self):
+        ta, loga, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seed")
+        ta.clear_cross_run_lineage("alice")
+        cleared = self._events(loga, "lineage_cross_run_cleared")
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(cleared[0]["principal"], "alice")
+        tb, logb, _ = self._run("run_b")
+        tb.genesis("agent-b", principal="alice")
+        self.assertFalse(tb.is_infected("agent-b"))
+        self.assertIsNone(tb.cross_run_parent("agent-b"))
+        self.assertEqual(self._events(logb, "lineage_cross_run_adopt"), [])
+
+    def test_clear_requires_opt_in(self):
+        t, _, _ = self._run("run_a", xroot=False)
+        with self.assertRaises(LineageError):
+            t.clear_cross_run_lineage("alice")
+
+    def test_latest_record_wins(self):
+        ta, _, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.birth("agent-a", "agent-b", principal="alice")
+        ta.birth("agent-a", "agent-c", principal="alice")
+        ta.mark_infected("agent-b", "first plant")
+        ta.mark_infected("agent-c", "second plant")
+        tb, _, _ = self._run("run_b")
+        tb.genesis("agent-x", principal="alice")
+        parent = tb.cross_run_parent("agent-x")
+        self.assertEqual(parent["agent_id"], "agent-c")
+        self.assertEqual(parent["lineage_id"], ta.lineage_id("agent-c"))
+
+    def test_export_chained_event(self):
+        ta, loga, _ = self._run("run_a")
+        ta.genesis("agent-a", principal="alice")
+        ta.mark_infected("agent-a", "seeded plant")
+        exports = self._events(loga, "lineage_cross_run_export")
+        self.assertEqual(len(exports), 1)
+        self.assertEqual(exports[0]["lineage_id"],
+                         ta.lineage_id("agent-a"))
+        self.assertEqual(exports[0]["principal"], "alice")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -51,6 +51,36 @@ filesystem access outside governed tools must protect
 forged or mismatched stamp is LOUD (``lineage_stamp_forged``) and the
 content is treated as tainted.
 
+Cross-run lineage (H8, wave-117): the per-run substrate forgets
+everything at the run boundary — a Morris-II agent plants in run A and
+spreads in run B with no lineage link between the runs. When the
+deployment passes ``cross_run_root`` (a deployment-shared directory),
+the tracker maintains an authenticated, deployment-scoped
+``cross_run_lineage.jsonl`` keyed by PRINCIPAL. Every taint-mark exports
+a signed taint record for the agent's principal; the next run's
+``genesis()`` for the same principal re-reads the store and, if the
+principal's latest record is an infected taint, the new root agent is
+BORN infected with a ``cross_run_parent`` link chaining run A's
+infected lineage into run B's substrate (chained
+``lineage_cross_run_adopt`` event). A forged/tampered cross-run record
+gets the same LOUD ``lineage_stamp_forged`` treatment as forged
+file/bus stamps — and the agent is born TAINTED anyway: fail-closed on
+trust, because a forgery can never launder taint into a clean birth.
+Benign cross-run activity (principal never tainted, or explicitly
+cleared via ``clear_cross_run_lineage``) links nothing: ``genesis()``
+for a clean principal is silent.
+
+H8 trust notes: the cross-run store is HMAC-chained with the
+deployment's log key material (operator trust domain, same epoch
+keyring as the egress ledger) and a distinct domain separation string,
+so a per-run ``.key`` compromise does not forge cross-run records and
+vice versa. Keyed by PRINCIPAL, not by agent id: the same agent-id
+string in a later run is a different execution unless the principal
+binding matches — a recycled agent id with a different principal
+adopts nothing. Writers assume a single deployment-owned writer; the
+store is read-verify-at-use, so a torn tail fails the HMAC chain at
+genesis and fails closed (tainted) rather than silently unlinking.
+
 Deployment wiring contract (the deployment owns this; the tracker is
 opt-in at deployment, mandatory within the run once installed):
   1. ``tracker = LineageTracker(run_dir, action_log)`` — one per run,
@@ -66,6 +96,11 @@ opt-in at deployment, mandatory within the run once installed):
      token refs. Deployments that mint identities outside the
      executor MUST birth them first (``tracker.birth(parent, child)``
      fails closed on unregistered parents).
+  5. H8 (optional): ``LineageTracker(run_dir, action_log,
+     cross_run_root=<deployment-shared dir>)`` — enables cross-run
+     infection lineage keyed by principal (Morris-II: plant in run A,
+     spread in run B). Omit it and the substrate is purely per-run
+     (zero behavior change).
   5. ``call()`` refuses unlineaged identities fail-closed (loud,
      audit-logged) — there is no execution path that bypasses the
      gate when the tracker is installed.
@@ -131,6 +166,44 @@ _KEY_NAME = ".key"
 _STAMP_SUFFIX = ".lineage.json"
 _STAMP_VERSION = 1
 
+# Cross-run lineage store (H8): deployment-scoped, keyed by principal.
+_CROSS_RUN_STORE_NAME = "cross_run_lineage.jsonl"
+_CROSS_RUN_VERSION = 1
+_CROSS_RUN_DOMAIN = "crossrun-lineage"
+_CROSS_RUN_TAINT = "cross_run_taint"
+_CROSS_RUN_CLEAR = "cross_run_clear"
+
+from . import log as _logmod  # noqa: E402  (key epoch keyring; log never imports lineage)
+
+
+def _cross_run_keyring():
+    """Deployment log key material, mirroring the egress-ledger keyring."""
+    key, epoch = _logmod._active_key()
+    keys = {epoch: key}
+    archive = os.environ.get("GOV_LOG_KEY_ARCHIVE")
+    if archive:
+        for entry in archive.split(","):
+            entry = entry.strip()
+            if not entry or "=" not in entry:
+                continue
+            ep, hexkey = entry.split("=", 1)
+            ep, hexkey = ep.strip(), hexkey.strip()
+            if ep and hexkey and ep not in keys:
+                keys[ep] = bytes.fromhex(hexkey)
+    return keys
+
+
+def _cross_run_mac(key, key_epoch, prev_hash, canonical_body):
+    return hmac.new(
+        key,
+        b"|".join((
+            _CROSS_RUN_DOMAIN.encode("utf-8"),
+            key_epoch.encode("utf-8"),
+            prev_hash.encode("utf-8"),
+            canonical_body,
+        )),
+        hashlib.sha256).hexdigest()
+
 
 class LineageError(Exception):
     """Fail-closed lineage refusal: unlineaged execution, unregistered
@@ -163,7 +236,7 @@ class LineageTracker(object):
     file content.
     """
 
-    def __init__(self, run_dir, log):
+    def __init__(self, run_dir, log, cross_run_root=None):
         self._run_dir = Path(run_dir)
         self._log = log
         self._dir = self._run_dir / "lineage"
@@ -182,6 +255,16 @@ class LineageTracker(object):
         self._stamped = set()         # real paths with a live stamp
                                       # (reserved-namespace
                                       # disambiguation for deletes)
+        # H8 cross-run lineage: deployment-scoped store keyed by
+        # principal. None (the default) keeps the pure per-run
+        # substrate — genesis/mark_infected behave exactly as before.
+        self._cross_run_root = (Path(cross_run_root)
+                                if cross_run_root is not None else None)
+        self._cross_run_path = (self._cross_run_root / _CROSS_RUN_STORE_NAME
+                                if self._cross_run_root is not None
+                                else None)
+        self._cross_run_broken = None  # failure detail when the cross-run
+                                       # store fails verification
         self._load_registry()
         self._replay_file_state()
 
@@ -315,6 +398,26 @@ class LineageTracker(object):
         lineage_id = "lin_" + _sha256_hex(
             ("genesis|" + self._run_dir.name + "|" + agent_id).encode(
                 "utf-8"))[:16]
+        # H8 cross-run adoption: the deployment-scoped store may carry a
+        # taint record for this principal from an earlier run. Keyed by
+        # principal, never by agent id alone.
+        cross_parent, adopt_status = self._lookup_cross_run(principal)
+        infected = adopt_status in ("tainted", "forged")
+        if adopt_status == "tainted":
+            infected_reason = (
+                "cross-run adoption: principal %r tainted in run %r "
+                "(%s)" % (principal, cross_parent["run_id"],
+                          cross_parent.get("infected_reason") or
+                          "earlier run"))
+        elif adopt_status == "forged":
+            infected_reason = (
+                "cross-run store failed verification for principal %r "
+                "(%s): fail-closed, born tainted" % (principal,
+                                                     cross_parent or
+                                                     "unverifiable"))
+            cross_parent = None
+        else:
+            infected_reason = None
         rec = self._append_record({
             "kind": "birth",
             "agent_id": agent_id,
@@ -323,12 +426,15 @@ class LineageTracker(object):
             "depth": 0,
             "role": role,
             "principal": principal,
-            "infected": False,
-            "infected_reason": None,
+            "infected": infected,
+            "infected_reason": infected_reason,
+            "cross_run_parent": cross_parent,
             "parent_token_ref": None,
             "child_token_ref": None,
             "issued_at": _utcnow_iso(),
         })
+        if infected:
+            self._tainted[agent_id] = infected_reason
         self._log.append({
             "event": "lineage_birth",
             "run_id": self._run_dir.name,
@@ -341,6 +447,41 @@ class LineageTracker(object):
             "reason": ("Lineage genesis minted for %r: the run's root "
                        "birth certificate." % agent_id),
         })
+        if adopt_status == "tainted":
+            self._log.append({
+                "event": "lineage_cross_run_adopt",
+                "run_id": self._run_dir.name,
+                "agent_id": agent_id,
+                "decision": "born-infected",
+                "policy_id": "infection-lineage",
+                "lineage_id": lineage_id,
+                "parent_lineage_id": cross_parent["lineage_id"],
+                "parent_run_id": cross_parent["run_id"],
+                "principal": principal,
+                "flag": "lineage_cross_run_adopt",
+                "reason": ("Cross-run adoption: principal %r was tainted "
+                           "in run %r (lineage %s); %r is born infected "
+                           "with that lineage as its cross-run parent."
+                           % (principal, cross_parent["run_id"],
+                              cross_parent["lineage_id"], agent_id)),
+            })
+        elif adopt_status == "forged":
+            # Same loud treatment as forged file/bus stamps — and the
+            # agent is born tainted regardless (see above): a forgery
+            # can never launder taint into a clean birth.
+            self._log.append({
+                "event": "lineage_stamp_forged",
+                "run_id": self._run_dir.name,
+                "agent_id": agent_id,
+                "decision": "flagged",
+                "policy_id": "infection-lineage",
+                "channel": "cross-run",
+                "lineage_id": lineage_id,
+                "flag": "lineage_stamp_forged",
+                "reason": ("cross-run lineage record for principal %r "
+                           "failed verification (%s)"
+                           % (principal, self._cross_run_broken)),
+            })
         return rec
 
     def birth(self, parent_agent_id, child_agent_id, parent_token_ref=None,
@@ -478,7 +619,207 @@ class LineageTracker(object):
             "reason": "Lineage %s (%r) taint-marked: %s" % (
                 rec["lineage_id"], agent_id, reason),
         })
+        # H8: export the taint to the deployment-scoped cross-run store
+        # keyed by the agent's principal, so the NEXT run's genesis for
+        # the same principal is born infected with a chaining link.
+        if self._cross_run_root is not None:
+            principal = rec.get("principal") or ""
+            if principal:
+                self._export_cross_run_taint(agent_id, principal,
+                                             rec["lineage_id"], reason)
         return rec
+
+    # -- cross-run lineage (H8) -------------------------------------------
+
+    def _load_cross_run_store(self):
+        """Read + verify the deployment-scoped cross-run store.
+
+        Returns a dict principal -> latest verified record. Any
+        verification failure (bad HMAC, broken chain, malformed line)
+        marks the store broken: the deployment fails closed by
+        tainting (see _lookup_cross_run) rather than silently
+        unlinking.
+        """
+        self._cross_run_broken = None
+        if self._cross_run_path is None:
+            return {}
+        path = self._cross_run_path
+        if not path.is_file():
+            return {}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            self._cross_run_broken = "unreadable: %s" % (exc,)
+            return {}
+        keyring = _cross_run_keyring()
+        by_principal = {}
+        prev_hash = "GENESIS"
+        seq = 0
+        for lineno, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                self._cross_run_broken = (
+                    "line %d: malformed JSON" % lineno)
+                return {}
+            seq += 1
+            body = {k: v for k, v in record.items() if k != "hmac"}
+            canonical = _canonical(body)
+            key_epoch = record.get("key_epoch")
+            key = keyring.get(key_epoch)
+            want = (_cross_run_mac(key, key_epoch, prev_hash, canonical)
+                    if key is not None else None)
+            if (not isinstance(record.get("hmac"), str)
+                    or not hmac.compare_digest(record["hmac"], want or "")):
+                self._cross_run_broken = (
+                    "line %d: HMAC verification failed (forged or "
+                    "tampered cross-run record)" % lineno)
+                return {}
+            if record.get("v") != _CROSS_RUN_VERSION:
+                self._cross_run_broken = (
+                    "line %d: unsupported version %r" % (
+                        lineno, record.get("v")))
+                return {}
+            if record.get("seq") != seq or record.get("prev") != prev_hash:
+                self._cross_run_broken = (
+                    "line %d: hash chain broken (seq/prev mismatch)" %
+                    lineno)
+                return {}
+            prev_hash = _sha256_hex(canonical)
+            principal = record.get("principal")
+            if isinstance(principal, str) and principal:
+                by_principal[principal] = record
+        return by_principal
+
+    def _append_cross_run_record(self, kind, principal, agent_id,
+                                 lineage_id, infected_reason):
+        """Append one verified-chained record to the cross-run store."""
+        self._cross_run_root.mkdir(parents=True, exist_ok=True)
+        self._load_cross_run_store()
+        if self._cross_run_broken:
+            raise LineageError(
+                "cross-run store refused: %s" % (self._cross_run_broken,))
+        # Recompute the chain head from the verified records (the loader
+        # above verified the HMAC chain; a torn tail would have failed
+        # it).
+        prev_hash = "GENESIS"
+        seq = 0
+        if self._cross_run_path.is_file():
+            for line in self._cross_run_path.read_text(
+                    encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                seq += 1
+                prev_hash = _sha256_hex(_canonical(
+                    {k: v for k, v in json.loads(line).items()
+                     if k != "hmac"}))
+        key, key_epoch = _logmod._active_key()
+        record = {
+            "v": _CROSS_RUN_VERSION,
+            "kind": kind,
+            "seq": seq + 1,
+            "prev": prev_hash,
+            "key_epoch": key_epoch,
+            "principal": principal,
+            "agent_id": agent_id,
+            "lineage_id": lineage_id,
+            "run_id": self._run_dir.name,
+            "infected_reason": infected_reason,
+            "issued_at": _utcnow_iso(),
+        }
+        record["hmac"] = _cross_run_mac(
+            key, key_epoch, prev_hash, _canonical(record))
+        with self._cross_run_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+        return record
+
+    def _export_cross_run_taint(self, agent_id, principal, lineage_id,
+                                reason):
+        record = self._append_cross_run_record(
+            _CROSS_RUN_TAINT, principal, agent_id, lineage_id, reason)
+        self._log.append({
+            "event": "lineage_cross_run_export",
+            "run_id": self._run_dir.name,
+            "agent_id": agent_id,
+            "decision": "exported",
+            "policy_id": "infection-lineage",
+            "lineage_id": lineage_id,
+            "principal": principal,
+            "flag": "lineage_cross_run_export",
+            "reason": ("Taint for principal %r (lineage %s) exported to "
+                       "the cross-run store: the next run's genesis for "
+                       "this principal is born infected. (%s)"
+                       % (principal, lineage_id, reason)),
+        })
+        return record
+
+    def _lookup_cross_run(self, principal):
+        """Re-read and verify the cross-run store at genesis time.
+
+        Returns (cross_parent_summary, status) where status is
+        "tainted" (adopt), "forged" (store failed verification ->
+        fail-closed), or (None, None) (nothing to adopt).
+        """
+        if self._cross_run_root is None or not principal:
+            return None, None
+        by_principal = self._load_cross_run_store()
+        if self._cross_run_broken:
+            return self._cross_run_broken, "forged"
+        record = by_principal.get(principal)
+        if record is None or record.get("kind") == _CROSS_RUN_CLEAR:
+            return None, None
+        if record.get("kind") != _CROSS_RUN_TAINT:
+            return None, None
+        return {
+            "run_id": record.get("run_id"),
+            "lineage_id": record.get("lineage_id"),
+            "principal": principal,
+            "agent_id": record.get("agent_id"),
+            "infected_reason": record.get("infected_reason"),
+            "issued_at": record.get("issued_at"),
+        }, "tainted"
+
+    def cross_run_parent(self, agent_id):
+        """The cross-run parent link for an agent, or None.
+
+        Set at genesis when the principal's cross-run record chains an
+        earlier run's infected lineage into this run's substrate.
+        """
+        rec = self._by_agent.get(agent_id)
+        parent = rec.get("cross_run_parent") if rec else None
+        return dict(parent) if parent else None
+
+    def clear_cross_run_lineage(self, principal):
+        """Operator act: clear a principal's cross-run taint record.
+
+        Appends a signed CLEAR record (latest-wins): the next run's
+        genesis for the principal links nothing. Detection proposes;
+        the operator disposes. Chained and loud.
+        """
+        if self._cross_run_root is None:
+            raise LineageError(
+                "clear_cross_run_lineage: no cross-run root configured "
+                "(deployment did not opt in)")
+        if not principal:
+            raise LineageError(
+                "clear_cross_run_lineage: principal is required")
+        self._append_cross_run_record(
+            _CROSS_RUN_CLEAR, principal, None, None, "operator cleared")
+        self._log.append({
+            "event": "lineage_cross_run_cleared",
+            "run_id": self._run_dir.name,
+            "agent_id": None,
+            "decision": "cleared",
+            "policy_id": "infection-lineage",
+            "principal": principal,
+            "flag": "lineage_cross_run_cleared",
+            "reason": ("Cross-run lineage cleared for principal %r by "
+                       "operator act: the next run's genesis for this "
+                       "principal links nothing." % (principal,)),
+        })
 
     # -- file stamps (raw-channel interposition) ---------------------------
 

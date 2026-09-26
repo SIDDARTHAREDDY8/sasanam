@@ -46,7 +46,8 @@ import math
 import random
 
 from .detection import identity_key_of
-from .eval_integrity import EvalCanary, report_eval_integrity_violation
+from .eval_integrity import (EvalCanary, accept_report,
+                             report_eval_integrity_violation)
 from .log import read_entries
 
 EVAL_HARNESS_VERSION = "gap4-eval-harness-v1"
@@ -438,6 +439,10 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
                         identity=None, identity_key=None,
                         consistency_monitor=None, consistency_family=None,
                         deployment_model_identity=None,
+                        results_text=None, citation_index=None,
+                        log_entries=None, ledger=None,
+                        trusted_sources=(), trusted_content_hashes=(),
+                        fetched_content_hashes=None,
                         policy_version=_POLICY_VERSION):
     """Governed acceptance checkpoint for eval RESULTS (GAP-4).
 
@@ -461,11 +466,29 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
        capability = mean(1 - difficulty) over the battery's canaries
        (``canary_underperformance``);
     8. longitudinal consistency when a ``CapabilityConsistencyMonitor``
-       and family are supplied (``eval_capability_drift``).
+       and family are supplied (``eval_capability_drift``);
+    9. citation provenance (H9, wave-117): ``check_citations`` over the
+       results/report text (``results_text``) BEFORE acceptance --
+       SELF_PLANTED citations refuse acceptance with a violation
+       payload (same semantics as
+       ``eval_integrity.accept_report``); UNKNOWN citations never
+       violate. A ``citation_check_completed`` record is always
+       chained, so the ``eval_sessions_missing_citation_check`` lint
+       covers harness sessions too (it still covers non-harness
+       paths).
+
+    ``results_text``: evaluator-facing results/report text (URLs are
+    extracted) or an explicit URL list; None scans as empty text (the
+    completion record still chains). ``citation_index``: a prebuilt
+    ``CitationIndex``; otherwise one is built from ``log_entries``
+    (this run's chained log) and/or ``ledger`` (the cross-run
+    EgressLedger). ``trusted_sources`` / ``trusted_content_hashes`` /
+    ``fetched_content_hashes``: same semantics as
+    ``eval_integrity.check_citations``.
 
     Always chains an ``eval_results_checked`` record (accepted flag +
     reason + verdict breakdown). Returns {"accepted", "reason", "entry",
-    "violations", "canary", "consistency"}.
+    "violations", "canary", "consistency", "citation_check"}.
     """
     tuples = _recompute_manifest(manifest)  # ValueError on tamper
     battery_id = manifest["battery_id"]
@@ -477,6 +500,7 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
     violations = []
     canary_result = {"verdict": "not_run"}
     consistency_result = {"verdict": "not_run"}
+    citation_check = {"verdict": "not_run"}
     submitted = None  # filled after structural validation; _refuse reads
     # it at call time so refused records still bind whatever outcomes
     # were submitted (forensic value), when any exist.
@@ -503,7 +527,8 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
         })
         return {"accepted": False, "reason": reason, "entry": entry,
                 "violations": violations, "canary": canary_result,
-                "consistency": consistency_result}
+                "consistency": consistency_result,
+                "citation_check": citation_check}
 
     # -- structural validation of the submitted outcomes -----------------
     if not isinstance(outcomes, list) or not outcomes:
@@ -620,6 +645,35 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
                 evidence={"battery_id": battery_id,
                           "consistency": consistency_result})
 
+    # -- (9) citation provenance (H9): default-on, before acceptance -----
+    # The results/report text is scanned for citations and each is
+    # verified against governed upload records (F139). Same semantics
+    # as eval_integrity.accept_report: SELF_PLANTED -> violation
+    # payloads are filed inside check_citations (detector_trip +
+    # breaker + halt-request) and acceptance is refused here; UNKNOWN
+    # never violates. The citation_check_completed record chains even
+    # when the text cites nothing, so the coverage lint sees harness
+    # sessions (it still covers non-harness paths).
+    report = accept_report(
+        results_text if results_text is not None else "",
+        monitor=monitor, log=log, identity=identity,
+        identity_key=identity_key, session_id=session_id,
+        session_open=session_open, citation_index=citation_index,
+        log_entries=log_entries, ledger=ledger,
+        trusted_sources=trusted_sources,
+        trusted_content_hashes=trusted_content_hashes,
+        fetched_content_hashes=fetched_content_hashes,
+        policy_version=policy_version)
+    violations.extend(report["check"]["violations"])
+    citation_check = report
+    n_planted = report["check"]["n_self_planted"]
+    n_cited = len(report["check"]["citations"])
+    if not report["accepted"]:
+        return _refuse(
+            "eval results cite self-planted evidence (%d self-planted "
+            "citation(s) of %d cited): tainted evidence refused"
+            % (n_planted, n_cited))
+
     entry = log.append({
         "event": "eval_integrity",
         "signal": "eval_results_checked",
@@ -633,6 +687,8 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
         "n_canary": len(canary_tasks),
         "canary_verdict": canary_result["verdict"],
         "consistency_verdict": consistency_result["verdict"],
+        "citation_n": n_cited,
+        "citation_n_self_planted": n_planted,
         # The per-task outcomes ride the acceptance record itself: the
         # "what happened" half of the evidence lives in the artifact,
         # cross-checkable against the chained eval_task_outcome records.
@@ -645,7 +701,8 @@ def accept_eval_results(outcomes, *, manifest, attested_model_identity,
     })
     return {"accepted": True, "reason": entry["reason"], "entry": entry,
             "violations": violations, "canary": canary_result,
-            "consistency": consistency_result}
+            "consistency": consistency_result,
+            "citation_check": citation_check}
 
 
 # ---------------------------------------------------------------------------

@@ -425,9 +425,17 @@ def _w10_sandbox():
         try:
             rr = be.execute("read_file", {"path": "../real_secret.txt"},
                             {"path_outside_sandbox": True})
-            dotdot_blocked = rr == {
-                "source": "simulated",
-                "content": "[synthetic file contents]"}
+            # H2 (wave-117): the contained read is LOUD now — the result
+            # carries the traversal_contained marker (call() turns it into
+            # the chained sandbox_traversal_contained event). The probe's
+            # contract is unchanged: no real bytes escape, the content is
+            # synthetic, and the marker is present.
+            dotdot_blocked = (
+                isinstance(rr, dict)
+                and rr.get("source") == "simulated"
+                and rr.get("content") == "[synthetic file contents]"
+                and rr.get("traversal_contained") is True
+                and "TOP SECRET" not in json.dumps(rr))
         except ValueError:
             dotdot_blocked = True
         o["backend_blocks_path_escapes_parent_side"] = (

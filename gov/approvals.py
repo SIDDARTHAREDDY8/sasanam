@@ -297,6 +297,17 @@ _SECURITY_PAYLOAD_FIELDS = (
     # automatically after the upgrade — queued items must be decided
     # or drained before upgrading.
     "tool_digest", "deferred_effect",
+    # H3 (F142 Leg-A residual, wave-117): the http_post payload content
+    # hashes (hex digests, F12-safe) are integrity-bound from birth.
+    # Rewriting them after queueing would let a tampered record point
+    # the citation-correlation content key at different content than
+    # the human approved — post-queue hash laundering breaks the MAC
+    # and is refused, never silently re-MACed. FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/F101/F103): records queued
+    # BEFORE this change do not carry this field, so their digests
+    # fail verification automatically after the upgrade — queued items
+    # must be decided or drained before upgrading.
+    "content_sha256_set",
 )
 
 
@@ -3037,6 +3048,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "tool": action.get("tool"),
             "args": args,
             "redactions_applied": action.get("redactions") or [],
+            # H3 (F142 Leg-A residual, wave-117): http_post payload
+            # content hashes (hex digests) carried MAC-bound on the
+            # record (see _SECURITY_PAYLOAD_FIELDS) so the approved
+            # sweep can bind the upload record to the payload content
+            # the human actually approved.
+            "content_sha256_set": (list(action.get("content_sha256_set"))
+                                   if action.get("content_sha256_set")
+                                   else []),
             "agent_justification": action.get("agent_justification"),
             "provenance": provenance,
             "preview": preview,

@@ -485,5 +485,294 @@ class TestEvidenceBundleAssemble(_EBTestBase):
         self.assertEqual(va, vb)
 
 
+# ---------------------------------------------------------------------------
+# H5 (wave-117): unknown-agent discovery snapshot in the evidence bundle.
+# ---------------------------------------------------------------------------
+
+class TestDiscoverySnapshot(_EBTestBase):
+    def _ledger_path_with(self, kinds_by_candidate):
+        """Build a DiscoveryLedger file with one candidate per entry.
+
+        kinds_by_candidate: list of signal-kind lists; each inner list
+        becomes one candidate (distinct source -> distinct candidate).
+        Returns the ledger path.
+        """
+        from gov.discovery import DiscoveryLedger
+        path = os.path.join(self.tmp.name, "discovery.jsonl")
+        ledger = DiscoveryLedger(path)
+        for i, kinds in enumerate(kinds_by_candidate):
+            sigs = [{"kind": k, "source": "scanner-%d" % i,
+                     "strength": 1.0,
+                     "detail": {"path": "/proj/agent-%d" % i}}
+                    for k in kinds]
+            self.assertTrue(ledger.note_signals(sigs),
+                            "signals became candidates")
+        if not kinds_by_candidate:
+            # A wired discovery integration owns its ledger path: the
+            # file exists even when nothing was ever sighted (a missing
+            # file is a misconfiguration, which the builder refuses).
+            # Touch the empty ledger to model the legitimate zero.
+            open(path, "a", encoding="utf-8").close()
+        return path
+
+    def _build_test_log(self):
+        _build_log(self.log_path)
+
+    def test_discovery_snapshot_present_with_candidates(self):
+        self._build_test_log()
+        lp = self._ledger_path_with([["harness_config"],
+                                     ["mcp_server", "credential"]])
+        b = self._bundle(discovery_ledger_path=lp)
+        payload = b.build()
+        snap = payload["discovery"]
+        self.assertIsNotNone(snap)
+        self.assertEqual(snap["inventoried_count"], 2)
+        self.assertEqual(snap["unregistered_candidate_count"], 2)
+        self.assertEqual(sorted(snap["candidate_kinds"]),
+                         ["credential", "harness_config", "mcp_server"])
+        # Privacy: counts and kinds only -- no candidate ids, sources,
+        # details, or PII.
+        blob = json.dumps(snap)
+        self.assertNotIn("scanner-", blob)
+        self.assertNotIn("agent-", blob)
+
+    def test_discovery_snapshot_zero_candidates(self):
+        self._build_test_log()
+        lp = self._ledger_path_with([])
+        b = self._bundle(discovery_ledger_path=lp)
+        snap = b.build()["discovery"]
+        self.assertEqual(snap["inventoried_count"], 0)
+        self.assertEqual(snap["unregistered_candidate_count"], 0)
+        self.assertEqual(snap["candidate_kinds"], [])
+
+    def test_discovery_absent_without_ledger_input(self):
+        self._build_test_log()
+        payload = self._bundle().build()
+        self.assertIsNone(payload.get("discovery"))
+
+    def test_discovery_corrupt_ledger_fails_closed(self):
+        self._build_test_log()
+        lp = self._ledger_path_with([["harness_config"]])
+        with open(lp, "a", encoding="utf-8") as f:
+            f.write('{"kind": "sighting", "tampered": true}\n')
+        from gov.evidence_bundle import EvidenceBundleError
+        with self.assertRaises(EvidenceBundleError):
+            self._bundle(discovery_ledger_path=lp).build()
+
+    def test_discovery_registered_candidate_not_unregistered(self):
+        from gov.discovery import DiscoveryLedger
+        self._build_test_log()
+        lp = self._ledger_path_with([["harness_config"], ["mcp_server"]])
+        ledger = DiscoveryLedger(lp)
+        cands = ledger.candidates(status="candidate")
+        ledger.mark_registered(cands[0]["candidate_id"], "operator-1")
+        snap = self._bundle(discovery_ledger_path=lp).build()["discovery"]
+        self.assertEqual(snap["inventoried_count"], 2)
+        self.assertEqual(snap["unregistered_candidate_count"], 1)
+        self.assertEqual(snap["candidate_kinds"], ["mcp_server"])
+
+    def test_discovery_missing_path_fails_closed(self):
+        # An explicitly supplied ledger path that does not exist is a
+        # misconfiguration, not a zero count: DiscoveryLedger over a
+        # missing path silently represents "no candidates".
+        from gov.evidence_bundle import EvidenceBundleError
+        self._build_test_log()
+        missing = os.path.join(self.tmp.name, "no-such-ledger.jsonl")
+        with self.assertRaises(EvidenceBundleError) as cm:
+            self._bundle(discovery_ledger_path=missing).build()
+        self.assertIn("does not exist", str(cm.exception))
+
+    def test_discovery_snapshot_has_exactly_acceptance_fields(self):
+        # H5 acceptance names exactly three fields; no timestamp,
+        # chain flag, or provenance wrapper at the signed boundary.
+        self._build_test_log()
+        lp = self._ledger_path_with([["harness_config"]])
+        snap = self._bundle(discovery_ledger_path=lp).build()["discovery"]
+        self.assertEqual(sorted(snap.keys()),
+                         ["candidate_kinds", "inventoried_count",
+                          "unregistered_candidate_count"])
+
+
+class TestDiscoveryVerifyRendering(_EBTestBase):
+    """H5: the verifier renders the discovery snapshot loudly when
+    nonzero, quietly for the zero control."""
+
+    def _assembled_with_discovery(self, name, kinds_by_candidate,
+                                  provide_ledger=True):
+        from gov.log import ActionLog
+        from gov.evidence_bundle import (
+            EvidenceBundle, log_evidence_bundle_receipt)
+        from gov.signing import Ed25519Signer
+        s = Ed25519Signer(bytes.fromhex("33" * 32))
+        _build_log(self.log_path, signer=s)
+        kw = {}
+        if provide_ledger:
+            kw["discovery_ledger_path"] = self._ledger_path_with(
+                kinds_by_candidate)
+        eb = EvidenceBundle(self.log_path, **kw)
+        payload = eb.build()
+        manifest = eb.seal(payload, signer=s)
+        log_evidence_bundle_receipt(
+            manifest, ActionLog(self.log_path, signer=s), signer=s)
+        op = {"key_id": s.key_id, "public_key_hex": s.public_key.hex()}
+        out = os.path.join(self.tmp.name, name)
+        eb.assemble(payload, manifest, operator_key=op,
+                    checkpoint_keys=[dict(op)], out_dir=out)
+        return out
+
+    def _ledger_path_with(self, kinds_by_candidate):
+        from gov.discovery import DiscoveryLedger
+        path = os.path.join(self.tmp.name, "discovery.jsonl")
+        ledger = DiscoveryLedger(path)
+        for i, kinds in enumerate(kinds_by_candidate):
+            sigs = [{"kind": k, "source": "scanner-%d" % i,
+                     "strength": 1.0,
+                     "detail": {"path": "/proj/agent-%d" % i}}
+                    for k in kinds]
+            ledger.note_signals(sigs)
+        if not kinds_by_candidate:
+            # A wired discovery integration owns its ledger path: the
+            # file exists even when nothing was ever sighted (a missing
+            # file is a misconfiguration, which the builder refuses).
+            open(path, "a", encoding="utf-8").close()
+        return path
+
+    def test_verify_summary_carries_discovery(self):
+        from gov.evidence_verify import verify_bundle
+        out = self._assembled_with_discovery(
+            "d1", [["harness_config"], ["mcp_server"]])
+        code, checks, summary = verify_bundle(out)
+        disc = summary["discovery"]
+        self.assertIsNotNone(disc)
+        self.assertEqual(disc["unregistered_candidate_count"], 2)
+        self.assertEqual(disc["inventoried_count"], 2)
+        self.assertEqual(sorted(disc["candidate_kinds"]),
+                         ["harness_config", "mcp_server"])
+
+    def test_verify_text_loud_when_nonzero(self):
+        import io
+        from contextlib import redirect_stdout
+        from gov.evidence_verify import main
+        out = self._assembled_with_discovery("d2", [["harness_config"]])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            main([out])
+        text = buf.getvalue()
+        self.assertIn("1 unregistered candidates at export time", text)
+        self.assertIn("UNREGISTERED AGENTS PRESENT", text)
+
+    def test_verify_text_quiet_when_zero(self):
+        import io
+        from contextlib import redirect_stdout
+        from gov.evidence_verify import main
+        out = self._assembled_with_discovery("d3", [])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            main([out])
+        text = buf.getvalue()
+        self.assertIn("no unregistered candidates at export time", text)
+        self.assertNotIn("UNREGISTERED AGENTS PRESENT", text)
+
+    def test_verify_summary_none_without_ledger(self):
+        from gov.evidence_verify import verify_bundle
+        out = self._assembled_with_discovery(
+            "d4", [], provide_ledger=False)
+        code, checks, summary = verify_bundle(out)
+        self.assertIsNone(summary["discovery"])
+
+
+# ---------------------------------------------------------------------------
+# H6 (wave-117): seal-time KMS/retention claims bound against the live
+# deployment config.
+# ---------------------------------------------------------------------------
+
+class TestLiveConfigBinding(_EBTestBase):
+    def _kp(self):
+        from gov import keyprovider as _kp
+        return _kp.EnvKeyProvider()
+
+    def _live_kms(self, kp, **over):
+        import hashlib as _h
+        key_bytes, epoch = kp.resolve()
+        cfg = {"provider": kp.provider_name,
+               "key_id": _h.sha256(bytes(key_bytes)).hexdigest()[:16],
+               "epoch": epoch}
+        cfg.update(over)
+        return cfg
+
+    def _manifest(self):
+        return {"retention_policy": "90d", "window_coverage": "full",
+                "archive_locations": ["s3://vault/evidence"]}
+
+    def test_matching_live_config_builds_and_binds(self):
+        from gov.evidence_bundle import EvidenceBundle
+        _build_log(self.log_path)
+        kp = self._kp()
+        live = {"kms": self._live_kms(kp),
+                "retention": dict(self._manifest())}
+        payload = EvidenceBundle(
+            self.log_path, key_provider=kp,
+            retention_manifest=self._manifest(),
+            live_config=live).build()
+        att = payload["kms_attestation"]
+        self.assertEqual(att["live_config_binding"]["result"], "match")
+        ret = payload["retention_manifest"]
+        self.assertEqual(ret["live_config_binding"]["result"], "match")
+
+    def test_mismatched_key_id_refuses(self):
+        from gov.evidence_bundle import EvidenceBundle, EvidenceBundleError
+        _build_log(self.log_path)
+        kp = self._kp()
+        live = {"kms": self._live_kms(kp, key_id="0" * 16)}
+        with self.assertRaises(EvidenceBundleError) as cm:
+            EvidenceBundle(self.log_path, key_provider=kp,
+                           live_config=live).build()
+        self.assertIn("key_id", str(cm.exception))
+
+    def test_mismatched_epoch_refuses(self):
+        from gov.evidence_bundle import EvidenceBundle, EvidenceBundleError
+        _build_log(self.log_path)
+        kp = self._kp()
+        live = {"kms": self._live_kms(kp, epoch="epoch-tampered")}
+        with self.assertRaises(EvidenceBundleError):
+            EvidenceBundle(self.log_path, key_provider=kp,
+                           live_config=live).build()
+
+    def test_mismatched_provider_refuses(self):
+        from gov.evidence_bundle import EvidenceBundle, EvidenceBundleError
+        _build_log(self.log_path)
+        kp = self._kp()
+        live = {"kms": self._live_kms(kp, provider="vault")}
+        with self.assertRaises(EvidenceBundleError):
+            EvidenceBundle(self.log_path, key_provider=kp,
+                           live_config=live).build()
+
+    def test_tampered_retention_manifest_refuses(self):
+        from gov.evidence_bundle import EvidenceBundle, EvidenceBundleError
+        _build_log(self.log_path)
+        kp = self._kp()
+        tampered = dict(self._manifest())
+        tampered["retention_policy"] = "7d"
+        live = {"kms": self._live_kms(kp), "retention": self._manifest()}
+        with self.assertRaises(EvidenceBundleError):
+            EvidenceBundle(self.log_path, key_provider=kp,
+                           retention_manifest=tampered,
+                           live_config=live).build()
+
+    def test_no_live_config_unchanged_behavior(self):
+        # Without live_config the builder behaves exactly as before:
+        # attestation derived, manifest asserted, no binding claim.
+        from gov.evidence_bundle import EvidenceBundle
+        _build_log(self.log_path)
+        kp = self._kp()
+        payload = EvidenceBundle(
+            self.log_path, key_provider=kp,
+            retention_manifest=self._manifest()).build()
+        self.assertNotIn("live_config_binding",
+                         payload["kms_attestation"])
+        self.assertNotIn("live_config_binding",
+                         payload["retention_manifest"])
+
+
 if __name__ == "__main__":
     unittest.main()

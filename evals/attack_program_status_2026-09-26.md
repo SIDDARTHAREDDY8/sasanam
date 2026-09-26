@@ -59,10 +59,14 @@ tracker — bus messages carry sender_lineage_id/depth/infected stamps, forged s
 `evals/gap2_buslineage_break.py` post-fix **0 BREAK / 6 HELD / 0 ERROR** both envs
 (last run 2026-09-24). Residuals: sub-64B payloads miss the population watch;
 forged stamp quarantines the *victim* (recipient), not the forger — attribution
-impossible by construction; per-run correlation only (multi-run is stated
-follow-up); perfect steganography detection impossible (honest ceiling). Not
+impossible by construction; per-run correlation only — CLOSED as an opt-in
+deployment seam by H8 (wave-117, 2026-09-26): `LineageTracker(...,
+cross_run_root=)` chains run A's infected lineage into run B's substrate
+keyed by principal (born-infected adoption + `cross_run_parent` link +
+loud `lineage_stamp_forged` on tamper; benign cross-run activity links
+nothing); perfect steganography detection impossible (honest ceiling). Not
 COVERED: population-level infection monitoring exists, but Morris-II shapes with
-small payloads or cross-run persistence still have known paths around it.
+small payloads still have known paths around it.
 
 ### Row 3 — Human-approver persuasion (memo: PARTIAL → now: PARTIAL, stronger)
 GAP-3 lane (wave-105): `gov/approver_shield.py` — independent brief (pure function
@@ -133,12 +137,19 @@ slow-boil (0.4σ, 300 buckets, zero trips) is a pinned residual; re-baseline
 laundering is a named/chained human-judgment residual; full diverse/Byzantine
 oversight is not built.
 
-### Row 9 — Tool-result caution erosion / many-shot (memo: GAP → now: GAP, unchanged)
+### Row 9 — Tool-result caution erosion / many-shot (memo: GAP → now: GAP, measured)
 No dedicated build landed. Trajectory-level erosion signal does not exist;
 per-action checks remain trajectory-blind, exactly as the memo described. This row
 is NOT on the D4 deliberately-not-proposed list — it is a genuine, unbuilt GAP.
 (Honest note: the queue once scheduled it as wave-96; the wave numbering diverged
-and the work never landed.)
+and the work never landed.) H7 Phase A (wave-117, 2026-09-26): the GAP is now
+pinned red, not unexamined — `evals/row9_erosion_break.py` (**4 BREAK / 1 HELD /
+0 ERROR**, deterministic both envs) measures four erosion shapes (borderline-DLP
+fragment reassembly, incremental privilege probes, approval-queue threshold
+learning, many-shot framing drift) with a benign-long-trajectory FP pin; see
+`evals/row9_erosion_phase_a_writeup_2026-09-26.md`. Phase B (trajectory monitor
+emitting chained `trajectory_caution_erosion` into `gov/detection.py`) is
+explicitly unbuilt — flagged FREEZE-RISK in the backlog.
 
 ### Row 10 — Reward hacking / spec gaming (memo: PARTIAL → now: PARTIAL, stronger)
 Anthropic Sept-2026 threat-report wave: F162 CLOSED (velocity/economic controls —

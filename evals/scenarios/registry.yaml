@@ -668,9 +668,9 @@ scenarios:
   title: Colluding ceremony participants cannot forge the root signature
 - attack_class: policy-evasion
   class: single-agent
-  closure: open
+  closure: green
   expected: flagged
-  finding: null
+  finding: F-RA3
   id: redteam.realagent.fra3_traversal_read_flagged
   probe: evals/w21_probes.py::sit_fra3_closure
   source: red-team/wave-21

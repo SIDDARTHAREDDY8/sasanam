@@ -307,6 +307,7 @@ def check_citations(text_or_urls, *, monitor, log, identity=None,
                     identity_key=None, session_id, session_open,
                     citation_index=None, log_entries=None, ledger=None,
                     trusted_sources=(), trusted_content_hashes=(),
+                    fetched_content_hashes=None,
                     policy_version="eval-integrity-s4"):
     """Scan evaluator-facing text (or a URL list) for citations and verify
     each one against governed upload records (F139).
@@ -332,6 +333,17 @@ def check_citations(text_or_urls, *, monitor, log, identity=None,
     ``log_entries`` (this run's chained log) and/or ``ledger`` (the
     cross-run EgressLedger).
 
+    H3 (F142 Leg-A residual, wave-117): ``fetched_content_hashes`` is
+    an optional {url: sha256 hex digest} map of the content the
+    evaluator fetched from the cited URLs (the f142_break.py p3
+    modeling). When the URL key misses -- response-minted or
+    query-mutated plant URLs -- the fetched-content hash enables the
+    content-keyed correlation in ``verify_citation``: an exact match
+    against a governed upload's payload bytes is plant evidence, and
+    plant evidence beats trust anchors on both keys. The map is
+    evaluator-supplied (never guessed); URLs without a fetched hash
+    are checked URL-keyed only.
+
     Evaluator guidance: treat bare-URL citations in agent output as
     untrusted-by-default until verified -- see docs/citation-provenance.md.
 
@@ -352,6 +364,7 @@ def check_citations(text_or_urls, *, monitor, log, identity=None,
     citations = []
     violations = []
     seen = set()
+    fetched = fetched_content_hashes or {}
     for url in urls:
         if url in seen:
             continue
@@ -359,6 +372,7 @@ def check_citations(text_or_urls, *, monitor, log, identity=None,
         res = _citation_provenance.verify_citation(
             url, identity,
             index=index,
+            content_sha256=fetched.get(url),
             trusted_sources=trusted_sources,
             trusted_content_hashes=trusted_content_hashes)
         citations.append(res)
@@ -392,6 +406,7 @@ def accept_report(report_text, *, monitor, log, identity=None,
                   log_entries=None, ledger=None, citation_index=None,
                   trusted_sources=(),
                   trusted_content_hashes=(),
+                  fetched_content_hashes=None,
                   policy_version="eval-integrity-s4"):
     """Governed eval-report acceptance checkpoint (F141).
 
@@ -423,6 +438,7 @@ def accept_report(report_text, *, monitor, log, identity=None,
         log_entries=log_entries, ledger=ledger,
         trusted_sources=trusted_sources,
         trusted_content_hashes=trusted_content_hashes,
+        fetched_content_hashes=fetched_content_hashes,
         policy_version=policy_version)
     verdict_counts = {}
     for c in check["citations"]:

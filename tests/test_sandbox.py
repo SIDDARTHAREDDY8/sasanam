@@ -473,6 +473,32 @@ class InstallWiringTest(unittest.TestCase):
                                       sandbox=Sandbox(timeout=3))
         self.assertIs(install(ctx["executor"], custom), custom)
 
+    def test_install_escaping_read_is_loud_not_silent(self):
+        # H2 regression test (wave-117 audit): call() passes
+        # identity= to _simulate; the installed backend must accept it
+        # (it is a drop-in replacement), AND the escaping read must
+        # emit a chained sandbox_traversal_contained event -- the
+        # backend path contained silently, the exact defect H2 fixed
+        # on the plain-executor path.
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ident = ctx["identities"]["coder"]
+        install(ctx["executor"])
+        rec = ctx["executor"].call(ident, "read_file", path="../plan.txt",
+                                   justification="h2 backend probe")
+        self.assertEqual(rec["status"], "executed")
+        self.assertEqual(rec["result"]["content"],
+                         "[synthetic file contents]")
+        found = [e for e in ctx["read_log"]()
+                 if e.get("event") == "sandbox_traversal_contained"]
+        self.assertEqual(len(found), 1,
+                         "escaping read through the installed backend "
+                         "must emit exactly one chained "
+                         "sandbox_traversal_contained event")
+        self.assertEqual(found[0].get("cause"), "path_outside_sandbox")
+
 
 
 class PidNamespaceTest(unittest.TestCase):
@@ -624,6 +650,80 @@ class PidNamespaceFallbackTest(unittest.TestCase):
                          "subprocess died: stdout=%r stderr=%r"
                          % (p.stdout, p.stderr))
         self.assertIn("REFUSED-OK", p.stdout)
+
+
+class TraversalContainmentLoudTest(unittest.TestCase):
+    """F-RA3 (H2): read-side traversal containment is a chained audit
+    event, not silence.
+
+    Red-first: before the fix, an escaping read_file was contained to
+    synthetic content with zero audit entries naming the containment.
+    """
+
+    def _events(self, ctx, agent_id):
+        return [e for e in ctx["read_log"]()
+                if isinstance(e, dict)
+                and e.get("event") == "sandbox_traversal_contained"
+                and e.get("agent_id") == agent_id]
+
+    def test_escaping_read_emits_chained_containment_event(self):
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ident = ctx["executor"].mint_identity("loud-agent", "coder",
+                                              "loud-principal")
+        outside = Path(ctx["run_dir"]).parent / "plan.txt"
+        rec = ctx["executor"].call(ident, "read_file",
+                                   path="../plan.txt",
+                                   justification="h2 unit test")
+        self.assertEqual(rec["status"], "executed")
+        self.assertEqual(rec["result"]["content"],
+                         "[synthetic file contents]")
+        self.assertFalse(outside.exists(),
+                         "containment must not touch the real path")
+        events = self._events(ctx, "loud-agent")
+        self.assertEqual(len(events), 1,
+                         "exactly one loud containment event, got %r"
+                         % (events,))
+        ev = events[0]
+        self.assertEqual(ev["cause"], "path_outside_sandbox")
+        self.assertEqual(ev["path"], "../plan.txt")
+        self.assertEqual(ev["tool"], "read_file")
+        self.assertEqual(ev["decision"], "contained")
+        # The event is chained: it carries a sequence number.
+        self.assertIn("seq", ev)
+
+    def test_benign_read_emits_no_containment_event(self):
+        from tests.harness import make_run, plant_file
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        plant_file(ctx, "notes.txt", "hello")
+        ident = ctx["executor"].mint_identity("quiet-agent", "coder",
+                                              "quiet-principal")
+        rec = ctx["executor"].call(ident, "read_file", path="notes.txt",
+                                   justification="h2 unit test")
+        self.assertEqual(rec["status"], "executed")
+        self.assertIn("hello", rec["result"]["content"])
+        self.assertEqual(self._events(ctx, "quiet-agent"), [],
+                         "benign reads must stay quiet")
+
+    def test_missing_in_sandbox_read_stays_quiet(self):
+        from tests.harness import make_run
+        ctx = make_run()
+        self.addCleanup(lambda: shutil.rmtree(ctx["run_dir"],
+                                              ignore_errors=True))
+        ident = ctx["executor"].mint_identity("miss-agent", "coder",
+                                              "miss-principal")
+        rec = ctx["executor"].call(ident, "read_file",
+                                   path="does-not-exist.txt",
+                                   justification="h2 unit test")
+        self.assertEqual(rec["status"], "executed")
+        self.assertEqual(rec["result"]["content"],
+                         "[synthetic file contents]")
+        self.assertEqual(self._events(ctx, "miss-agent"), [],
+                         "a missing in-sandbox file is not a traversal")
 
 
 if __name__ == "__main__":

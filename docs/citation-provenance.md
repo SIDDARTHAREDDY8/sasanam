@@ -71,6 +71,22 @@ than self-planting — investigate accordingly.
   `endpoint` and the payload summary is a canonical fingerprint of
   `params`. Queued-but-never-approved calls are not plants — they never
   reached the host — and are not recorded.
+- Response-minted resource URLs are captured at the execution boundary
+  and indexed as aliases of the plant record (F142); full sha256
+  digests of the payload's string leaves are stored in
+  `content_sha256_set` for **both** `api_call` and `http_post` (H3,
+  wave-117 — `http_post` hashes are computed from the raw payload at
+  the execution boundary and ride MAC-bound on the approval record for
+  the approved path, because the F12-redacted summary has no leaves).
+  Hashes only, never content.
+- `fetched_content_hashes`: `check_citations` / `accept_report` accept
+  an optional `{url: sha256 hex}` map of the content the evaluator
+  fetched from the cited URLs (H3). When the URL key misses —
+  response-minted or query-mutated plant URLs — the supplied hash
+  enables content-keyed correlation: an exact match against a governed
+  upload's payload bytes is plant evidence, and plant evidence beats
+  trust anchors on both keys. URLs without a fetched hash are checked
+  URL-keyed only; the map is evaluator-supplied, never guessed.
 - The per-run chained log already carries what the index needs
   (`tool_call` entries: readable URL/endpoint, payload summary,
   uploader identity), so same-run verification works with no new
@@ -91,7 +107,10 @@ than self-planting — investigate accordingly.
    matching, but content *moved to a new URL* is a fresh plant to catch.
    Fuzzy/structural content matching is follow-up work.
 2. **Query-string evasion.** `?x=1` appended to a planted URL normalizes
-   to a different URL (conservative against false accusation). Canonical
+   to a different URL (conservative against false accusation), so the
+   URL key misses. The content key backstops this: when the evaluator
+   supplies the fetched-content hash (`fetched_content_hashes`), a
+   query-mutated plant URL still correlates (H3, wave-117). Canonical
    query-param handling is follow-up.
 3. **Out-of-governance plants are invisible.** Uploads from a personal
    device, an ungoverned second agent, or a URL memorized from training
@@ -108,12 +127,14 @@ than self-planting — investigate accordingly.
 6. **Deny-all outbound posting** closes the plant path entirely but
    disables legitimate publisher workflows — a deployment tradeoff,
    not a product default.
-7. **Response-URL gap (F140 follow-up, not closed).** A real API
-   plant's citable URL is usually a *resource* URL returned in the API
-   response, not the endpoint the agent called. This primitive
-   correlates the endpoint; a citation of a response-minted resource
-   URL has no governed record to match. Closing that needs response
-   capture or endpoint→content bindings.
+7. **Response-URL gap (F142, closed).** A real API plant's citable URL
+   is usually a *resource* URL returned in the API response, not the
+   endpoint the agent called. The executor captures response-minted
+   resource URLs at the execution boundary and indexes them as aliases
+   of the plant record, and content-keyed correlation (`content_sha256_set`
+   for `api_call`, extended to `http_post` in wave-117) backstops
+   response shapes the extractor misses — exact 256-bit match only;
+   paraphrased payloads are follow-up.
 8. **The checkpoint must be invoked.** `accept_report` is opt-in: a
    deployment that never routes reports through it gets no citation
    protection. The `eval_sessions_missing_citation_check` lint makes

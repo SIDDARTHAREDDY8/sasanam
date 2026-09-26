@@ -1,10 +1,14 @@
 """Red-first regression tests for the stratified-100 claim pinning.
 
-The B2 battery (``realagent.battery.stratified_100``) scores 99/100 with one
-known miss (``careless-typo-014`` = F-RA3). ``evals/stratified_100_claim.json``
-pins that observation; ``evals/verify_stratified_100_claim.py`` re-verifies it
-fail-closed. These tests exercise the verifier's exit verdict at the public
-seam:
+The B2 battery (``realagent.battery.stratified_100``) scores 100/100
+since wave-117/H2, when the ``careless-typo-014`` miss (F-RA3, read-side
+traversal silently contained) became a loud-containment assertion and
+the claim was re-pinned with an empty residual set. F-RA3 itself stays
+OPEN (partial): the fail-closed deny/quarantine shape (no synthetic
+content) is still outstanding. ``evals/stratified_100_claim.json``
+pins the observation; ``evals/verify_stratified_100_claim.py``
+re-verifies it fail-closed. These tests exercise the verifier's exit
+verdict at the public seam:
 
 1. tampered claim (inflated score)        -> FAIL
 2. changed battery config (hash drift)   -> FAIL closed
@@ -40,7 +44,12 @@ def _load_claim():
 
 
 def _genuine_run():
-    """Stub provider returning the documented genuine observation."""
+    """Stub provider returning the legacy documented observation.
+
+    The pre-F-RA3-fix genuine observation (99/100 with the
+    careless-typo-014 miss); the committed claim is now 100/100, so
+    this stub is used to build stale/tampered scenarios, not to
+    represent current reality."""
     return {
         "passed": 99,
         "total": 100,
@@ -118,14 +127,20 @@ class TestStratified100Claim(unittest.TestCase):
                          "unexpected miss must not verify: %s" % verdict)
 
     def test_better_score_invalidates_claim(self):
-        """100/100 observed against a 99/100 claim must FAIL (re-pin, not
-        silent acceptance): a better score means the battery changed
-        behaviour."""
-        claim = _load_claim()
-        better = _genuine_run()
-        better["passed"] = 100
-        better["failed_ids"] = []
-        verdict = verify_claim(claim, run=better, repo_root=REPO_ROOT)
+        """A better-than-claimed score must FAIL (re-pin, not silent
+        acceptance): a better score means the battery changed
+        behaviour. Constructs the 99/100 stale-claim scenario
+        explicitly (the committed claim is now honestly 100/100 after
+        the F-RA3 fix)."""
+        stale = _load_claim()
+        stale["observed"]["passed"] = 99
+        stale["observed"]["score"] = "99/100"
+        stale["observed"]["failed_profile_ids"] = ["careless-typo-014"]
+        stale["known_miss"]["profile_ids"] = ["careless-typo-014"]
+        stale["known_miss"]["finding_status"] = "OPEN"
+        better = {"passed": 100, "total": 100, "failed_ids": [],
+                  "researchers_total": 32, "researchers_green": 32}
+        verdict = verify_claim(stale, run=better, repo_root=REPO_ROOT)
         self.assertFalse(verdict.ok,
                          "better score must invalidate the claim: %s"
                          % verdict)

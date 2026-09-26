@@ -62,6 +62,7 @@ import fcntl
 import sys
 import time
 import hashlib
+import inspect
 import collections.abc
 import itertools
 from datetime import datetime, timezone
@@ -3311,7 +3312,7 @@ class ToolExecutor:
                 pass
 
     def _record_upload(self, tool, redacted_args, principal, agent_id,
-                       response_urls=()):
+                       response_urls=(), content_hashes=None):
         """F139/F140: cross-run upload memory for citation provenance.
 
         Called at the two execution boundaries for every EXECUTED
@@ -3333,10 +3334,15 @@ class ToolExecutor:
         F142: the record additionally carries ``response_urls``
         (resource URLs minted in the API response, captured at the
         execution boundary and indexed as aliases of this plant) and
-        ``content_sha256_set`` (full sha256 digests of the api_call
-        params' string leaves, for content-keyed correlation; empty
-        for http_post whose redacted payload is a summary, not
-        content). Both fields are additive -- old readers ignore them.
+        ``content_sha256_set`` (full sha256 digests of the params/
+        payload string leaves, for content-keyed correlation).
+        H3 (wave-117): ``content_hashes`` (hex digests) is now also
+        populated for http_post -- hashed from the RAW payload at the
+        execution boundary by the caller, because the redacted form is
+        a {bytes, sha256_prefix} summary whose leaves are unrecoverable
+        (the approved path recovers them from the MAC-bound approval
+        record instead). Both fields are additive -- old readers ignore
+        them.
 
         Uses the REDACTED args: the URL is an audit field (readable by
         design) and the payload is the {bytes, sha256_prefix} summary --
@@ -3354,6 +3360,11 @@ class ToolExecutor:
         if ledger is None:
             return
         args = redacted_args or {}
+        # H3 (wave-117): http_post content hashes arrive from the caller
+        # (hashed at the execution boundary from the raw payload);
+        # renamed so the api_call branch's local below does not shadow
+        # the parameter.
+        caller_content_hashes = content_hashes
         content_hashes = []
         if tool == "http_post":
             url = args.get("url")
@@ -3362,9 +3373,15 @@ class ToolExecutor:
             if isinstance(payload, dict):
                 sha_prefix = payload.get("sha256_prefix")
                 nbytes = payload.get("bytes")
-            # F142: the redacted http_post payload is a {bytes,
-            # sha256_prefix} summary, not content -- no string leaves
-            # to hash for content-keyed correlation.
+            # H3 (wave-117): content-keyed correlation backstop for
+            # http_post -- the redacted payload is a {bytes,
+            # sha256_prefix} summary with no string leaves, so the
+            # caller hashes the raw payload at the execution boundary
+            # (approved path: recovered from the MAC-bound approval
+            # record). Deduped + sorted for deterministic records.
+            content_hashes = sorted(set(
+                h for h in (caller_content_hashes or [])
+                if isinstance(h, str) and h))
         else:  # api_call: endpoint is URL-bearing; params carry the
             # payload (scrubbed dict in the redacted args, not a
             # summary) -- fingerprint the canonical form, and hash the
@@ -3537,7 +3554,95 @@ class ToolExecutor:
 
     # -- simulated tools ---------------------------------------------------
 
-    def _simulate(self, tool, args, ctx):
+    def _log_traversal_contained(self, tool, args, ctx, identity, cause):
+        """F-RA3 (H2): read-side traversal containment is LOUD.
+
+        When a ``read_file`` is contained to synthetic content because
+        the declared path escapes the sandbox (``cause ==
+        "path_outside_sandbox"``) or the use-time symlink target check
+        flipped (``cause == "symlink_target_changed"``, F147), the
+        containment was historically silent -- no denial, no
+        quarantine, no audit event naming the containment. The
+        traversal attempt is now a first-class chained audit event so
+        an auditor can see the escape was attempted AND contained.
+        Missing-file in-sandbox reads stay quiet: no traversal was
+        attempted, so there is nothing to flag.
+
+        Best-effort with a stderr fallback (the containment already
+        happened; the event is the audit signal, not the control) --
+        mirrors the credential_binding_unenforced convention.
+        """
+        if isinstance(identity, dict):
+            agent_id = identity.get("agent_id")
+            role = identity.get("role")
+            principal = identity.get("principal")
+            run_id = identity.get("run_id", self.run_id)
+        else:
+            agent_id = getattr(identity, "agent_id", None)
+            role = getattr(identity, "role", None)
+            principal = getattr(identity, "principal", None)
+            run_id = getattr(identity, "run_id", None) or self.run_id
+        entry = {
+            "event": "sandbox_traversal_contained",
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "tool": tool,
+            "decision": "contained",
+            "policy_id": "sandbox-traversal-containment",
+            "cause": cause,
+            "path": (args or {}).get("path"),
+            "reason": ("read_file path %r %s: the read was contained to "
+                       "synthetic content (F-RA3) -- no real outside path "
+                       "was touched"
+                       % ((args or {}).get("path"),
+                          ("escaped the sandbox"
+                           if cause == "path_outside_sandbox"
+                           else "resolved to a different target between "
+                                "policy check and use (F147)"))),
+        }
+        try:
+            self.log.append(entry)
+        except Exception as e:  # noqa: BLE001 - log best-effort; the
+            # containment already happened. The stderr line is the
+            # loud control.
+            print("GOVERNANCE WARNING: sandbox_traversal_contained "
+                  "audit entry could not be chained (%s: %s); the "
+                  "read was still contained to synthetic content."
+                  % (type(e).__name__, e), file=sys.stderr)
+
+    def _invoke_simulate(self, tool, args, ctx, identity):
+        """Call the ``_simulate`` seam, passing ``identity`` only when the
+        installed callable accepts it.
+
+        Wave-117/H2 added the ``identity`` kwarg to the seam so the
+        executor's own ``_simulate`` can chain the
+        ``sandbox_traversal_contained`` event. But ``_simulate`` is a
+        documented drop-in point (``gov/sandbox.py::install``,
+        test doubles in ``evals/``/``tests/``), and older drop-ins take
+        only ``(tool, args, ctx)`` — passing the kwarg unconditionally
+        broke them with ``TypeError`` (matrix sit52/57/88). The
+        containment reporting itself travels via the
+        ``traversal_contained`` result marker, which the executor pops
+        and logs with its own identity below — so a drop-in that
+        ignores ``identity`` loses nothing.
+        """
+        sim = self._simulate
+        try:
+            params = inspect.signature(sim).parameters
+        except (TypeError, ValueError):
+            params = {}
+        accepts_identity = (
+            "identity" in params
+            or any(p.kind == inspect.Parameter.VAR_KEYWORD
+                   for p in params.values())
+        )
+        if accepts_identity:
+            return sim(tool, args, ctx, identity=identity)
+        return sim(tool, args, ctx)
+
+    def _simulate(self, tool, args, ctx, identity=None):
         # Wave-35 (Docker CVE-2026-77179/79994 class): the
         # path_outside_sandbox verdict in ctx was computed at check
         # time. The filesystem can change between check and use
@@ -3599,6 +3704,15 @@ class ToolExecutor:
                     str(p), _exchange_entry_count(text))
                 return {"source": "sandbox",
                         "content": text[:4000]}
+            # F-RA3 (H2): the loud-containment seam. An escaping read is
+            # contained to synthetic content -- and the containment is
+            # now a chained audit event, not silence. A missing file
+            # inside the sandbox (not a traversal) stays quiet.
+            if use_outside or target_changed:
+                self._log_traversal_contained(
+                    tool, args, ctx, identity,
+                    cause=("symlink_target_changed"
+                           if target_changed else "path_outside_sandbox"))
             return {"source": "simulated", "content": "[synthetic file contents]"}
         if tool == "write_file":
             content = args.get("content", "")
@@ -5819,9 +5933,23 @@ class ToolExecutor:
                         and _precommit.is_irreversible(tool)):
                     result = self._precommit_gate.commit(
                         precommit_approval_id, tool, kwargs,
-                        lambda: self._simulate(tool, kwargs, ctx))
+                        lambda: self._invoke_simulate(tool, kwargs, ctx,
+                                                     identity))
                 else:
-                    result = self._simulate(tool, kwargs, ctx)
+                    result = self._invoke_simulate(tool, kwargs, ctx,
+                                                  identity)
+            # H2 (wave-117 audit fix): the SandboxedToolBackend is a
+            # drop-in _simulate replacement with no chain writer of its
+            # own; it reports a contained escaping read via the
+            # "traversal_contained" result marker, and the containment
+            # becomes a chained event here. (The plain-executor
+            # _simulate logs the event itself, so exactly one path
+            # ever fires per contained read.)
+            if isinstance(result, dict) and result.pop(
+                    "traversal_contained", False):
+                self._log_traversal_contained(
+                    tool, kwargs, ctx, identity,
+                    cause="path_outside_sandbox")
             # F162 (S2-GAP-1): mint deterministic synthetic usage on the
             # result (governed side; overwrites any forged _usage).
             self._mint_result_usage(tool, kwargs, result)
@@ -5862,15 +5990,29 @@ class ToolExecutor:
             # execution boundary, so the plant record is indexed under
             # the URLs the API response minted (extraction is
             # fail-open: it never breaks the result path).
+            # H3 (F142 Leg-A residual, wave-117): also capture content
+            # hashes for http_post. The F12-redaction summary erases the
+            # payload's string leaves, so hash the RAW payload (pre-DLP,
+            # at the execution boundary) — hashes only, never the raw
+            # content; one-way, same as api_call's hashes. Fail-open:
+            # hashing must never break the execution path.
             response_urls = ()
+            content_hashes = None
             if tool in ("http_post", "api_call"):
                 response_urls = _citation_provenance.extract_response_urls(
                     tool, result,
                     endpoint=redacted_args.get(
                         "endpoint" if tool == "api_call" else "url"))
+            if tool == "http_post":
+                try:
+                    content_hashes = _citation_provenance.\
+                        payload_content_hashes(kwargs.get("payload"))
+                except Exception:  # noqa: BLE001 - fail-open hashing
+                    content_hashes = None
             self._record_upload(tool, redacted_args, identity.principal,
                                 identity.agent_id,
-                                response_urls=response_urls)
+                                response_urls=response_urls,
+                                content_hashes=content_hashes)
             entry = self.log.append(_base({
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
@@ -5904,10 +6046,24 @@ class ToolExecutor:
         # require_approval: queue for a human, do NOT execute.
         provenance = ("untrusted_influenced" if self._tainted
                       else "agent_direct")
+        # H3 (F142 Leg-A residual, wave-117): stash http_post payload
+        # content hashes at queue time so the approved sweep can bind
+        # the upload record to the payload content. Hashes only
+        # (hex digests, F12-safe: they are one-way and never show raw
+        # content); the approval queue record is HMAC-bound by the
+        # ApprovalQueue like the rest of the action dict.
+        queued_content_hashes = []
+        if tool == "http_post":
+            try:
+                queued_content_hashes = _citation_provenance.\
+                    payload_content_hashes(kwargs.get("payload"))
+            except Exception:  # noqa: BLE001 - fail-open hashing
+                queued_content_hashes = []
         approval_action = {"tool": tool, "args": redacted_args,
                            "identity": identity.as_dict(),
                            "agent_justification": justification,
-                           "redactions": redactions}
+                           "redactions": redactions,
+                           "content_sha256_set": queued_content_hashes}
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
@@ -6829,7 +6985,18 @@ class ToolExecutor:
                     (rec.get("identity") or {}).get("principal"),
                     rec.get("run_id", self.run_id),
                     action_log=self.log):
-                result = self._simulate(rec["tool"], rec["args"], ctx)
+                # F-RA3 (H2): the approved sweep carries the acting
+                # identity on the record; pass it through so a loud
+                # traversal containment names the right agent.
+                _approved_identity = {
+                    "agent_id": rec.get("agent_id"),
+                    "role": rec.get("role"),
+                    "principal": (rec.get("identity") or {}).get(
+                        "principal"),
+                    "run_id": rec.get("run_id", self.run_id),
+                }
+                result = self._invoke_simulate(rec["tool"], rec["args"], ctx,
+                                              _approved_identity)
             # F162 (S2-GAP-1): mint governed-side usage on the result.
             self._mint_result_usage(rec["tool"], rec["args"], result)
             # S1-MEM: memory provenance firewall (opt-in; no-op when None).
@@ -6872,7 +7039,14 @@ class ToolExecutor:
             # execution boundary, so the plant record is indexed under
             # the URLs the API response minted (extraction is
             # fail-open: it never breaks the result path).
+            # H3 (F142 Leg-A residual, wave-117): http_post payload
+            # content hashes ride MAC-bound on the approval record from
+            # queue time (gov/approvals.py), so the sweep binds the
+            # record to exactly the payload the human approved — the
+            # redacted queue form is a summary the hashes cannot be
+            # recovered from. .get default: pre-upgrade records.
             approved_response_urls = ()
+            approved_content_hashes = None
             if rec["tool"] in ("http_post", "api_call"):
                 approved_response_urls = \
                     _citation_provenance.extract_response_urls(
@@ -6880,10 +7054,13 @@ class ToolExecutor:
                         endpoint=rec["args"].get(
                             "endpoint" if rec["tool"] == "api_call"
                             else "url"))
+            if rec["tool"] == "http_post":
+                approved_content_hashes = rec.get("content_sha256_set")
             self._record_upload(rec["tool"], rec["args"],
                                 (rec.get("identity") or {}).get("principal"),
                                 rec.get("agent_id"),
-                                response_urls=approved_response_urls)
+                                response_urls=approved_response_urls,
+                                content_hashes=approved_content_hashes)
             entry = self.log.append({
                 "event": "tool_call",
                 "run_id": rec.get("run_id", self.run_id),

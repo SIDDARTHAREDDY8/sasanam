@@ -309,9 +309,9 @@ def _w11_doubleexec():
         barrier = threading.Barrier(2)
         orig_sim = ToolExecutor._simulate
 
-        def _sim_with_rendezvous(self, tool, args, c):
+        def _sim_with_rendezvous(self, tool, args, c, identity=None):
             barrier.wait(timeout=30)
-            return orig_sim(self, tool, args, c)
+            return orig_sim(self, tool, args, c, identity=identity)
 
         ToolExecutor._simulate = _sim_with_rendezvous
         try:

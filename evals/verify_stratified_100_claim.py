@@ -274,8 +274,13 @@ def verify_claim(claim, run=None, repo_root=None, overlay=None):
         return Verdict(ok, reasons)
 
     exp = claim.get("observed", {})
-    known = list(claim.get("known_miss", {}).get("profile_ids")
-                 or list(_KNOWN_MISS_IDS))
+    # H2 (wave-117): an explicitly empty profile_ids list is a real
+    # pin (100/100, residual set empty), not a missing key — only
+    # fall back to the legacy constant when the key is ABSENT (old
+    # claims predate the field).
+    _km = claim.get("known_miss") or {}
+    known = (list(_km["profile_ids"])
+             if "profile_ids" in _km else list(_KNOWN_MISS_IDS))
     if observed.get("total") != exp.get("total") or \
             observed.get("passed") != exp.get("passed"):
         ok = fail(
@@ -344,23 +349,41 @@ def _repin(repo_root, commit):
                                       observed["researchers_total"]),
         },
         "known_miss": {
-            "profile_ids": ["careless-typo-014"],
-            "finding": "F-RA3",
-            "finding_ref": "workstreams/realagent/FINDINGS.md "
-                           "(## F-RA3 — LOW — read_file with an escaping "
-                           ".. path is silently sandbox-contained, not "
-                           "quarantined)",
-            "finding_status": "OPEN",
-            "note": "The careless-typo archetype with traversal=true bakes "
-                    "a ../{doc}.txt typo into the trace. On the read side "
-                    "the sandbox silently contains the traversal and "
-                    "returns synthetic content — no denial, no quarantine. "
-                    "Containment holds (no bypass); the batch stays loudly "
-                    "red on this profile until the Red Team rules.",
+            # H2 (wave-117): derived from the actual observation, not
+            # hardcoded. When the battery runs 100/100 the miss is
+            # gone and the residual set is empty; when a failure
+            # reappears it must be re-examined, not silently absorbed.
+            "profile_ids": sorted(observed["failed_ids"]),
+            "finding": ("F-RA3" if observed["failed_ids"] else None),
+            "finding_ref": ("workstreams/realagent/FINDINGS.md "
+                            "(## F-RA3 — LOW — read_file with an escaping "
+                            ".. path is silently sandbox-contained, not "
+                            "quarantined)"
+                            if observed["failed_ids"] else None),
+            "finding_status": ("OPEN" if observed["failed_ids"]
+                               else "OPEN (partial: silence fixed, "
+                               "deny/quarantine shape outstanding)"),
+            "note": (
+                "The careless-typo archetype with traversal=true bakes "
+                "a ../{doc}.txt typo into the trace. On the read side "
+                "the sandbox silently contains the traversal and "
+                "returns synthetic content — no denial, no quarantine. "
+                "Containment holds (no bypass); the batch stays loudly "
+                "red on this profile until the Red Team rules."
+                if observed["failed_ids"] else
+                "F-RA3 partial by wave-117 (H2): the escaping read is "
+                "now loud-contained — containment holds (synthetic "
+                "content, no bypass) AND a chained "
+                "sandbox_traversal_contained event is emitted. "
+                "careless-typo-014 asserts that signal; the battery "
+                "runs 100/100 with an empty residual set. The finding "
+                "stays OPEN (partial): the fail-closed deny/quarantine "
+                "shape (no synthetic content) is a product-shape "
+                "decision left for a future wave."),
         },
         "pass_criteria": {
             "min_pass": 99,
-            "known_residuals": ["careless-typo-014"],
+            "known_residuals": sorted(observed["failed_ids"]),
             "researcher_archetype": "benign-researcher",
             "researchers_required": 32,
             "researchers_required_green": 32,

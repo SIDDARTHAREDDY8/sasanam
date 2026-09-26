@@ -1576,6 +1576,17 @@ def _claimed_operator(ctx):
     }
 
 
+def _discovery_snapshot(ctx):
+    """H5 (wave-117): render the discovery snapshot, if present.
+
+    The section is OPTIONAL (not in PAYLOAD_SECTIONS): old bundles
+    without it stay V10-green. Returns the snapshot dict verbatim
+    (already inside the signed payload) or None.
+    """
+    payload = getattr(ctx, "payload", None) or {}
+    return payload.get("discovery")
+
+
 def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
                    source_log=None):
     """Run V1–V16. Returns (exit_code, checks, summary_dict)."""
@@ -1667,6 +1678,8 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
         },
         # F174: the claimed operator name, always with its disclaimer.
         "claimed_operator": _claimed_operator(ctx),
+        # H5: the discovery snapshot, when the bundle carries one.
+        "discovery": _discovery_snapshot(ctx),
         "checks": [c.as_dict() for c in checks],
         "failures": [{"id": c.id, "name": c.name, "detail": c.detail}
                      for c in failed],
@@ -1740,6 +1753,7 @@ def main(argv=None):
             "failures": [{"id": c.id, "name": c.name, "detail": c.detail}
                          for c in checks if c.status == "fail"],
             "coverage": {"entries": 0, "with_inclusion_bundle": 0},
+            "discovery": None,
             "what_this_does_not_prove": HONESTY_FOOTER_LIST,
         }
         print(json.dumps(payload, indent=2, sort_keys=True))
@@ -1768,6 +1782,22 @@ def main(argv=None):
                   % (cval if cval is not None else "(not supplied)",
                      cop.get("disclaimer",
                              CLAIMED_OPERATOR_DISCLAIMER)))
+            # H5 (wave-117): the discovery snapshot, loud when nonzero
+            # candidates, quiet for the zero control, absent when the
+            # bundle was built without a discovery ledger.
+            disc = summary.get("discovery") or {}
+            if disc:
+                n = disc.get("unregistered_candidate_count") or 0
+                kinds = ", ".join(disc.get("candidate_kinds") or [])
+                inv = disc.get("inventoried_count") or 0
+                if n:
+                    print("discovery: %d unregistered candidates at "
+                          "export time (kinds: %s; inventoried: %d) -- "
+                          "UNREGISTERED AGENTS PRESENT"
+                          % (n, kinds or "(none listed)", inv))
+                else:
+                    print("discovery: no unregistered candidates at "
+                          "export time (inventoried: %d)" % inv)
             if summary["failures"]:
                 print("failures:")
                 for f in summary["failures"]:

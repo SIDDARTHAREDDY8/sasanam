@@ -53,6 +53,7 @@ import os
 from datetime import datetime, timezone
 
 from gov import log as _log
+from gov.discovery import DiscoveryLedger, LedgerCorruptError
 from gov.safeguard_bundle import (
     compute_bundle_digest as _compute_bundle_digest,
 )
@@ -222,7 +223,8 @@ class EvidenceBundle:
     def __init__(self, log_path, *, window=None, operator_id=None,
                  retention_manifest=None, key_provider=None,
                  sar_manifest=None, eval_session_ids=None,
-                 exported_at=None, roster=None):
+                 exported_at=None, roster=None,
+                 discovery_ledger_path=None, live_config=None):
         self.log_path = str(log_path)
         self._window_req = window
         self._operator_id = operator_id
@@ -236,6 +238,17 @@ class EvidenceBundle:
         # keys/checkpoint_roster.json so the verifier can check the
         # k-of-n signatures.
         self._roster = roster
+        # H5 (wave-117): path to the unknown-agent DiscoveryLedger to
+        # snapshot into the bundle (counts + signal kinds only). None
+        # means no discovery integration -- the discovery section is
+        # then honestly null, not silently empty.
+        self._discovery_ledger_path = discovery_ledger_path
+        # H6 (wave-117): the deployment's live config to bind the
+        # seal-time KMS/retention claims against:
+        # {"kms": {"provider", "key_id", "epoch"},
+        #  "retention": {...}}. None means no binding check (previous
+        # behavior: attestation derived, manifest asserted).
+        self._live_config = live_config
         self._entries = None
         self._window = None
 
@@ -308,10 +321,16 @@ class EvidenceBundle:
             "benchmark": self._build_benchmark(window_entries),
             "kms_attestation": None,
             "retention_manifest": self._build_retention(),
+            "discovery": self._build_discovery(),
             "sections_meta": {},
         }
         payload["kms_attestation"], meta = self._build_kms_attestation()
         payload["sections_meta"]["kms_attestation"] = meta
+        # H6 (wave-117): bind the seal-time KMS/retention claims against
+        # the deployment's live config. Mismatch refuses the build
+        # loudly -- a bundle whose attestation contradicts the live
+        # config is worse than no bundle.
+        self._bind_live_config(payload)
         # Deterministic identity: hash of the payload without bundle_id.
         body = canonical(payload)
         payload["bundle_meta"]["bundle_id"] = (
@@ -579,6 +598,159 @@ class EvidenceBundle:
                                "note": ("operator assertion; presence and "
                                         "schema checked, truth not "
                                         "verified")}}
+
+    def _build_discovery(self):
+        """H5 (wave-117): unknown-agent discovery snapshot (P8).
+
+        When a discovery ledger path was supplied, verify its hash
+        chain (fail closed: corruption raises EvidenceBundleError --
+        a snapshot over an unverified inventory is worse than none)
+        and record counts plus signal kinds. Privacy-preserving by
+        construction: NO candidate ids, sources, details, or PII --
+        only ``inventoried_count`` (every candidate ever inventoried),
+        ``unregistered_candidate_count`` (currently in ``candidate``
+        status), and ``candidate_kinds`` (sorted signal kinds among
+        the unregistered). The section rides inside the signed
+        evidence.json payload, so the operator signature binds it.
+        """
+        path = self._discovery_ledger_path
+        if path is None:
+            return None
+        # An explicitly supplied path that does not exist is a caller
+        # error, not an empty inventory: DiscoveryLedger over a missing
+        # path silently represents "no candidates", which would seal a
+        # false zero. Fail closed instead.
+        if not os.path.exists(path):
+            raise EvidenceBundleError(
+                "refusing to snapshot discovery: ledger path %r does "
+                "not exist (an explicit discovery_ledger_path with no "
+                "ledger is a misconfiguration, not a zero count)"
+                % (path,))
+        try:
+            ledger = DiscoveryLedger(path)
+            ledger.verify()
+        except LedgerCorruptError as e:
+            raise EvidenceBundleError(
+                "refusing to snapshot discovery: ledger chain does not "
+                "verify (%s). A discovery count over a corrupted "
+                "inventory is worse than no count." % (e,))
+        except OSError as e:
+            raise EvidenceBundleError(
+                "refusing to snapshot discovery: cannot read ledger %r "
+                "(%s)" % (path, e))
+        inventoried = ledger.candidates()
+        unregistered = [c for c in inventoried
+                        if c.get("status") == "candidate"]
+        kinds = sorted({s.get("kind") for c in unregistered
+                        for s in (c.get("signals") or [])
+                        if s.get("kind")})
+        # Exactly the acceptance's three fields (H5): counts and
+        # fingerprint kinds only. No snapshot_at (the payload already
+        # carries exported_at), no chain_verified flag (verification
+        # is proven by the build not refusing), no provenance wrapper
+        # -- data minimization at the signed boundary.
+        return {
+            "inventoried_count": len(inventoried),
+            "unregistered_candidate_count": len(unregistered),
+            "candidate_kinds": kinds,
+        }
+
+    def _bind_live_config(self, payload):
+        """H6 (wave-117): bind seal-time claims to the live config.
+
+        ``live_config`` is the deployment's declared configuration
+        (``{"kms": {"provider", "key_id", "epoch"}, "retention": {...}}``)
+        -- independent of the key_provider object and the retention
+        manifest handed to the builder. When both sides of a binding
+        are present they must agree exactly, or the build refuses
+        loudly (fail closed: a sealed bundle whose attestation
+        contradicts the live deployment would be evidence FOR a lie).
+        On a match the section records the binding so an auditor can
+        see the check happened; the verifier needs no change (a sealed
+        bundle with live_config always matched, and passes quietly).
+
+        Bindings only apply when BOTH sides are present: no live_config
+        means no check (previous behavior); a missing attestation or
+        an unlabeled-absent manifest means there is nothing to bind
+        (the absence is already labeled honestly elsewhere).
+        """
+        live = self._live_config
+        if live is None:
+            return
+        if not isinstance(live, dict):
+            raise EvidenceBundleError(
+                "live_config must be a dict")
+        self._bind_live_kms(payload, live.get("kms"))
+        self._bind_live_retention(payload, live.get("retention"))
+
+    def _bind_live_kms(self, payload, want):
+        if want is None:
+            return
+        if not isinstance(want, dict) or not all(
+                isinstance(want.get(k), str)
+                for k in ("provider", "key_id", "epoch")):
+            raise EvidenceBundleError(
+                "live_config['kms'] must be a dict with string "
+                "'provider', 'key_id', 'epoch'")
+        att = payload.get("kms_attestation")
+        if att is None:
+            raise EvidenceBundleError(
+                "live_config['kms'] supplied but no key provider was "
+                "given to the builder: there is no attestation to bind "
+                "the live config against")
+        for field in ("provider", "key_id", "epoch"):
+            if att.get(field) != want[field]:
+                raise EvidenceBundleError(
+                    "live config KMS mismatch: attestation %s=%r != "
+                    "live_config %r -- refusing to seal a bundle whose "
+                    "key-custody claim contradicts the deployment's "
+                    "live config" % (field, att.get(field), want[field]))
+        att["live_config_binding"] = {
+            "checked": True,
+            "result": "match",
+            "provenance": {
+                "kind": "operator_supplied",
+                "detail": ("seal-time attestation (derived from the live "
+                           "key provider) matches the deployment's "
+                           "declared live_config.kms"),
+            },
+        }
+
+    def _bind_live_retention(self, payload, want):
+        if want is None:
+            return
+        if not isinstance(want, dict):
+            raise EvidenceBundleError(
+                "live_config['retention'] must be a dict")
+        section = payload.get("retention_manifest") or {}
+        manifest = section.get("value")
+        if manifest is None:
+            # No manifest supplied: the absence is already labeled
+            # (operator_must_supply); there is nothing to bind.
+            return
+        got = canonical({"value": {k: manifest[k]
+                                   for k in RETENTION_MANIFEST_SCHEMA
+                                   if k in manifest}})
+        exp = canonical({"value": {k: want[k]
+                                   for k in RETENTION_MANIFEST_SCHEMA
+                                   if k in want}})
+        if got != exp:
+            raise EvidenceBundleError(
+                "live config retention mismatch: the supplied retention "
+                "manifest does not match live_config['retention'] -- "
+                "refusing to seal a bundle whose retention claim "
+                "contradicts the deployment's live config")
+        section["live_config_binding"] = {
+            "checked": True,
+            "result": "match",
+            "provenance": {
+                "kind": "operator_supplied",
+                "detail": ("the retention manifest matches the "
+                           "deployment's declared live_config.retention; "
+                           "presence and schema checked, truth of the "
+                           "live config not verified"),
+            },
+        }
 
     # -- canonical form + sealing -------------------------------------
 

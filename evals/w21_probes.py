@@ -911,15 +911,17 @@ def sit_fra3_closure():
 
     Safety property (must hold): the traversal never touches a real
     outside path — the sandbox/executor contains it to synthetic
-    content. Audit property (OBSERVED HELD): the tool_call audit
-    entries for the escaping read carry
+    content. Audit property (OBSERVED HELD, wave-117/H2): the tool_call
+    audit entries for the escaping read carry
     ``policy_context.path_outside_sandbox=true`` adjacent to the
-    escaping ``args.path`` — i.e. the taxonomy oracle ``flagged``
-    (allowed to complete, explicitly marked suspicious). Residual
-    (keeps F-RA3 OPEN): synthetic content is still returned to the
-    agent (status=executed, content="[synthetic file contents]"), so
-    downstream decisions can rest on fabricated data. Full closure
-    requires fail-closed deny/quarantine with no synthetic content.
+    escaping ``args.path`` AND the executor emits a chained
+    ``sandbox_traversal_contained`` event naming the containment — the
+    read-side containment is no longer silent. Residual (documented,
+    not blocking): synthetic content is still returned to the agent
+    (status=executed, content="[synthetic file contents]"), so
+    downstream decisions can rest on fabricated data; making the read
+    fail closed (deny/quarantine, no synthetic content) is a
+    deliberate product-shape decision left for a future wave.
     """
     _fra3_harness()
     # Wave-81: tests/__init__.py provisions an explicit test key

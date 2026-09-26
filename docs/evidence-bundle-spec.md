@@ -230,7 +230,11 @@ synthesized, never defaulted.
    provisioned per `docs/KEY_CUSTODY_RUNBOOK.md`"), signed with the same
    operator key that signs the manifest. It is a **claim about the
    provisioning story, not cryptographic proof of hardware custody** —
-   see §7 (honest boundaries).
+   see §7 (honest boundaries). When the builder is given
+   `live_config.kms` (`provider`, `key_id`, `epoch`), the derived
+   attestation is cross-checked against it and the build refuses
+   loudly on any mismatch (H6); a match is recorded on the section as
+   `live_config_binding.result: "match"`.
 9. **`retention_manifest`.** Operator-supplied retention record: the
    retention policy in force, the window's coverage (e.g. "window covers
    the full retention period" or explicit gaps), and archive locations.
@@ -240,6 +244,27 @@ synthesized, never defaulted.
    checks presence and schema only, never truth. If no manifest is
    supplied, the section is `null` with `operator_must_supply: true` and
    the bundle is still sealable — the absence is labeled, not hidden.
+   When the builder is given `live_config.retention`, the manifest is
+   cross-checked against it and the build refuses loudly on mismatch
+   (H6); a match is recorded on the section as
+   `live_config_binding.result: "match"`.
+10. **`discovery`** (optional, H5 wave-117). Unknown-agent discovery
+    snapshot: when the builder is given `discovery_ledger_path`, the
+    bundle carries `inventoried_count` (every candidate ever
+    inventoried), `unregistered_candidate_count` (currently in
+    `candidate` status), and `candidate_kinds` (sorted signal kinds
+    among the unregistered) — counts and kinds only, never candidate
+    ids, sources, details, or PII. The builder verifies the ledger's
+    hash chain before snapshotting; a corrupt, unreadable, or
+    nonexistent ledger path fails the build closed (a supplied path
+    with no ledger is a misconfiguration, not a zero count). The section rides inside the signed
+    payload, so the operator signature binds it. When no ledger path
+    is supplied the section is `null` (honest: no discovery
+    integration — not "zero candidates"). The verifier renders the
+    snapshot loudly when `unregistered_candidate_count > 0`
+    ("N unregistered candidates at export time"), quietly for the zero
+    control, and says nothing when the section is absent. A bundle
+    without the section makes NO claim about unknown agents — see §7.
 
 #### 4.1.2 Manifest (`manifest.json`)
 
@@ -632,7 +657,12 @@ must carry these, and no sales or docs copy may contradict them.
    tool call the executor never saw, an approval granted outside the
    queue, an unregistered agent (`gov/discovery.py` candidates the
    deployment never inventoried) — is not in the bundle and the bundle
-   does not claim otherwise.
+   does not claim otherwise. The optional `discovery` section (§4.1.1(10),
+   H5) narrows this for unknown agents *only when the deployment wires
+   the discovery ledger into the export*: the bundle then carries the
+   export-time counts and signal kinds. A bundle *without* the section
+   makes no claim about unknown agents — the absence is honest ("no
+   discovery integration"), never "zero candidates".
 2. **Integrity ≠ truth (garbage-in limits).** If entries were recorded
    under a compromised HMAC key, or the deployment's policy was wrong,
    the bundle faithfully attests to false or misguided events. The
@@ -643,7 +673,13 @@ must carry these, and no sales or docs copy may contradict them.
    key id, epoch, runbook reference). It is not cryptographic proof of
    HSM custody, and in v1 the operator signing key itself is a
    software-file key (0600) unless the deployment did better — the
-   bundle says which.
+   bundle says which. **Live-config binding (H6, wave-117):** when the
+   deployment passes `live_config.kms` (`provider`, `key_id`,
+   `epoch`), the builder cross-checks the derived attestation against
+   it and **refuses the build loudly on any mismatch** — a sealed
+   bundle whose key-custody claim contradicts the deployment's live
+   config cannot exist. Without `live_config` the attestation is
+   derived-but-uncorroborated, exactly as before.
 4. **Timestamps are operator wall-clock.** Entry `ts` values and
    `exported_at` come from the operator's clock (`gov/log.py::_utcnow`).
    v1 has no trusted timestamp authority and no external anchor
@@ -666,6 +702,12 @@ must carry these, and no sales or docs copy may contradict them.
    output formats with an explicit "operator-supplied, not independently
    verified" disclaimer (F174): pinning the operator's key proves
    authorship of the bundle, never the truth of the name claimed.
+   **Live-config binding (H6, wave-117):** when the deployment passes
+   `live_config.retention`, the builder cross-checks the retention
+   manifest against it and **refuses the build loudly on mismatch**;
+   when both are absent the absence stays labeled (`operator_must_supply`),
+   and a manifest without a live config to check against is asserted
+   exactly as before.
 8. **Single-tenant scope.** The bundle describes one deployment's log.
    Cross-deployment or cross-tenant claims are out of scope (SHIP_PLAN
    v1 is single-tenant by decision).

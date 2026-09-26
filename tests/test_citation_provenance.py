@@ -2,8 +2,14 @@
 """Unit tests for gov/citation_provenance.py (F139 closure)."""
 
 import os
+import secrets
 import sys
+import tempfile
 import unittest
+
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "test-citation-prov")
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for _p in (_REPO, os.path.join(_REPO, "tests")):
@@ -11,6 +17,7 @@ for _p in (_REPO, os.path.join(_REPO, "tests")):
         sys.path.insert(0, _p)
 
 from gov import citation_provenance as cp  # noqa: E402
+from harness import make_run  # noqa: E402
 
 
 def _log_entry(url="https://pastebin.synthetic.local/claims/study-7",
@@ -493,6 +500,73 @@ class ResponseUrlAliasTests(unittest.TestCase):
                                  index=idx)
         self.assertEqual(res["verdict"], cp.SELF_PLANTED)
         self.assertIn("URL was uploaded", res["reason"])
+
+
+# ---------------------------------------------------------------------------
+# H3 (F142 Leg-A residual, wave-117): http_post upload records carry
+# content hashes (parity with api_call).
+# ---------------------------------------------------------------------------
+
+class HttpPostContentHashRecordTests(unittest.TestCase):
+    def _ex(self):
+        tmp = tempfile.mkdtemp(prefix="govh3-")
+        ctx = make_run(ledger_path=os.path.join(tmp, "egress.jsonl"))
+        return ctx["executor"]
+
+    def _redacted_post(self):
+        return {"url": "https://pasteapi.synthetic.local/v3/bins/publish",
+                "payload": {"bytes": 11, "sha256_prefix": "ab" * 8}}
+
+    def test_http_post_record_carries_content_hashes(self):
+        ex = self._ex()
+        h1, h2 = _sha(b"alpha"), _sha(b"beta")
+        ex._record_upload("http_post", self._redacted_post(), "p", "a1",
+                          content_hashes=[h2, h1])
+        recs = ex._ledger.uploads()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["content_sha256_set"], sorted([h1, h2]))
+
+    def test_http_post_record_sanitizes_and_dedupes(self):
+        ex = self._ex()
+        h1 = _sha(b"alpha")
+        ex._record_upload("http_post", self._redacted_post(), "p", "a1",
+                          content_hashes=[h1, h1, 42, "", None])
+        recs = ex._ledger.uploads()
+        self.assertEqual(recs[0]["content_sha256_set"], [h1])
+
+    def test_http_post_record_empty_without_hashes(self):
+        # Pre-upgrade call shape (no content_hashes kwarg): fail-open,
+        # empty set, record still written.
+        ex = self._ex()
+        ex._record_upload("http_post", self._redacted_post(), "p", "a1")
+        recs = ex._ledger.uploads()
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["content_sha256_set"], [])
+
+    def test_api_call_record_still_hashes_params(self):
+        # Parity regression: the api_call path is untouched.
+        ex = self._ex()
+        ex._record_upload("api_call",
+                          {"endpoint": "https://h.test/e",
+                           "params": {"content": "hello"}},
+                          "p", "a1")
+        recs = ex._ledger.uploads()
+        self.assertEqual(recs[0]["content_sha256_set"],
+                         [_sha(b"hello")])
+
+    def test_http_post_hashes_are_content_indexed(self):
+        # The hashes the record carries must be findable through the
+        # public content-keyed lookup.
+        ex = self._ex()
+        h1 = _sha(b"alpha")
+        ex._record_upload("http_post", self._redacted_post(), "p", "a1",
+                          content_hashes=[h1])
+        idx = cp.CitationIndex()
+        idx.add_ledger(ex._ledger)
+        hits = idx.lookup_by_content_sha256(h1)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["url_normalized"],
+                         "https://pasteapi.synthetic.local/v3/bins/publish")
 
 
 if __name__ == "__main__":
