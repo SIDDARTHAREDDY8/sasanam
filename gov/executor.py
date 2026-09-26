@@ -1905,7 +1905,18 @@ class ToolExecutor:
         # content exactly like an api_call result, so it runs the same
         # machinery: same 64-char verbatim-overlap fingerprints, same
         # 256 KiB FIFO store, same 64 KiB per-result cap.
-        if tool in ("read_file", "api_call", "http_post"):
+        # F175: send_email joins the fingerprinted set (F144's documented
+        # next step). The product's built-in _simulate returns no content
+        # body for send_email -- it is an outbound action -- so the
+        # native path ingests nothing and is unaffected. But a
+        # response-carrying mail relay / MCP email adapter reply (the
+        # F37 ingest_foreign_result path, which routes REAL foreign
+        # results through this same method) is untrusted external
+        # content exactly like a webhook response: the identical
+        # imperative poison quarantined via api_call/http_post and sailed
+        # through via send_email (p8 in evals/f143mem_break.py). Same
+        # machinery, one tuple element -- mirroring F144.
+        if tool in ("read_file", "api_call", "http_post", "send_email"):
             content = result.get("content")
             if content:
                 self._read_contents.append(content[:65536])
@@ -1930,6 +1941,18 @@ class ToolExecutor:
                     # evade the approval gate). The false-positive cost
                     # (a later api_call gated behind approval) is the
                     # same precedent accepted for api_call results.
+                    # F175: send_email response bodies run the SAME taint
+                    # path for the same reason -- an attacker-influenced
+                    # relay reply carrying credential-shaped material
+                    # followed by paraphrase/summary api_call exfil is
+                    # the F15a shape, and splitting send_email out would
+                    # reopen the adjacent-tool gap F144 just closed for
+                    # http_post. Routine sends never taint: the built-in
+                    # no-content send_email result carries no "content"
+                    # key, so this block is skipped entirely; only a
+                    # response-carrying relay/adapter reply can trip the
+                    # DLP patterns -- and DLP-clean mail replies do NOT
+                    # taint, exactly like DLP-clean webhook bodies.
                     self._read_sensitive = True
                     # F15b: persist principal-scoped, so a confederate's
                     # FRESH run for the same principal inherits the taint

@@ -7606,3 +7606,36 @@ Files changed: `gov/log.py` (MODIFIED), `tests/test_hardening_r16.py` (MODIFIED)
 **Open findings after push:** F175 (MEDIUM, OPEN — send_email/foreign-adapter fingerprint gap); F-RA3 (workstream-internal, OPEN partial — loud containment done, deny/quarantine shape outstanding). Next free: **F176**.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-26 — Wave-118: F175 CLOSED (send_email fingerprint gap)
+
+**Scope:** single-finding closure lane. F175 (MEDIUM, OPEN) — `ToolExecutor._ingest_result` fingerprinted `read_file`/`api_call`/`http_post` result content but not `send_email` response bodies (F144's documented next step, filed by wave-117 H11).
+
+**Red-first:** reproduced the p8 BREAK on the current tree before touching product code (battery pre-fix: 5 BREAK / 3 HELD / 0 ERROR, p8 BREAK as filed). Wrote `TestF175SendEmailFingerprintIngestion` (4 tests) before the fix: the 2 poison slices FAILED (tiering + fresh-session quarantine), the 2 benign guards passed — the exact red shape of the defect.
+
+**Fix (gov/executor.py, mirroring F144):** added `"send_email"` to the `_ingest_result` ingestion tuple — one tuple element, same 64-char verbatim-overlap fingerprints, same 256 KiB FIFO store, same 64 KiB per-result cap. The DLP taint path (`_content_is_sensitive` → `_read_sensitive`) extends with it, deliberately and argued in-code: a response-carrying relay/adapter reply is untrusted external content like a webhook response; splitting send_email out would reopen the adjacent-tool gap (F15a shape); false-positive cost is approval-gating, the api_call/http_post precedent. Routine sends never taint (no "content" key → block skipped). `ingest_foreign_result` (F37) needed no change — verified directly that foreign send_email results now fingerprint. `gov/memory_provenance.py` module docstring updated (send_email joined in F175). Retired the F145-candidate investigative battery `evals/f144sendmail_break.py` with an honest retirement note (its question is answered; p8 is the durable pin).
+
+**Close-when verification (all three met verbatim):**
+1. Identical machinery via the shared tuple — no forked code path.
+2. p8 → HELD (quarantined, chained `memory_quarantine` event); benign-send guards pass (response-carrying benign tiers agent; native no-content path tiers agent, no taint, no quarantine noise).
+3. Battery post-fix: **4 BREAK / 4 HELD / 0 ERROR** — p2/p3/p5/p6 documented residuals unchanged; deterministic ×2; both envs (normal + `env -u GOV_DEPLOYMENT_MODE`).
+
+**Two-axis review:** Standards PASS (F144 precedent followed exactly; stale battery retired honestly, not deleted; docstring contract kept current); Spec PASS (close-when met verbatim).
+
+**No new findings.** Next free: **F176**. Open findings: none (F-RA3 remains OPEN partial in workstreams/realagent/FINDINGS.md — untouched by this wave).
+
+**Gate-readiness:** NOT verified — the four-gate boundary is the parent's. Unit scope: `tests.test_memory_provenance` 37/37 OK; `evals/f143mem_break.py` 4/4/0 both envs.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-26 — Wave-118 PUSH BOUNDARY (parent-run gates + red-first re-verification)
+
+**Central re-verification of the lane's F175 closure (red-first rule):** p8 re-verified HELD with chained `memory_quarantine` event; battery independently re-ran **4 BREAK / 4 HELD / 0 ERROR**; tuple verified as one element (`("read_file", "api_call", "http_post", "send_email")`) — all three close-when criteria hold. One stale cross-entry line in FINDINGS.md ("Open findings: F175" inside the F174 block) corrected to none; the F174 closure text itself was re-verified byte-intact after the repair.
+
+**Infrastructure note:** mid-boundary service restart wiped /tmp (512 MB tmpfs) — push clone, gate TMPDIRs, and workstream symlinks all gone. Rebuilt per AGENTS.md (fresh clone at 7aabeed, 6 wave-118 files re-copied, sibling symlinks re-verified with `ls /tmp/workstreams/platform/approval_web.py`).
+
+**Final four-gate boundary (push clone, `~/workspace/.gov-venv`, pre-created TMPDIRs):** canonical **OK (3682 tests)**, registry GREEN, matrix **3216/3216 SHIP-GATE GREEN**, realistic 7/7.
+
+**Open findings after push: none.** (F-RA3 remains OPEN partial in workstreams/realagent/FINDINGS.md.) Next free: **F176**.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

@@ -2,6 +2,17 @@
 """F145 candidate battery: is the `send_email` fingerprint gap a REAL
 attack shape, or a mock artifact? (diagnosing-bugs Phase 1-3 loop.)
 
+RETIRED 2026-09-26 (wave-118): the battery's question was answered YES
+-- the shape was filed as F175 (MEDIUM) and closed in wave-118 by
+adding `send_email` to the `_ingest_result` fingerprint tuple. p2 now
+HELDs by design ("unexpected: read quarantined") and p4's isolation
+premise (send_email NOT fingerprinted) is inverted, so p4 ERRORs.
+This battery is kept as the investigation record; the durable
+regression pin is p8 in evals/f143mem_break.py, and the unit tests are
+TestF175SendEmailFingerprintIngestion in
+tests/test_memory_provenance.py. Do not re-run expecting the old
+verdicts.
+
 Lead: the F144 closure extended `ToolExecutor._ingest_result`
 fingerprinting to `http_post` results but deliberately left `send_email`
 response bodies unfingerprinted ("out of scope -- a future finding if
