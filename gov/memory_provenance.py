@@ -502,16 +502,34 @@ class MemoryFirewall:
         digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
         if entry is None:
             tier = TRUST_TIER_UNKNOWN
+            tainted_run = False
         elif entry.get("content_sha256") != digest:
             # Changed outside governance after recording: the recorded
             # tier no longer describes these bytes.
             tier = TRUST_TIER_UNKNOWN
+            tainted_run = False
         else:
             tier = entry.get("trust_tier") or TRUST_TIER_UNKNOWN
-        if tier == TRUST_TIER_AGENT:
+            # H17: the planting run's taint bit. A tainted run escalates:
+            # agent-tiered bytes from a tainted run do NOT take the early
+            # allow below; they face the instruction-shaping check like
+            # any non-agent tier. (Releases/seeds record tainted_run=False
+            # or omit it, so operator blessings are unaffected.)
+            tainted_run = bool(entry.get("tainted_run"))
+        if tier == TRUST_TIER_AGENT and not tainted_run:
             return "allow", "agent_tiered"
         shaping = instruction_shaping_reason(content)
         if shaping is not None:
+            if tainted_run and tier == TRUST_TIER_AGENT:
+                # H17 escalation: instruction-shaped content planted by a
+                # tainted run quarantines even when tiered agent. The
+                # tainted_run tag makes the escalation auditable; the FP
+                # gate is that non-instruction-shaped tainted-run content
+                # still reads clean (see evals/h17_tainted_run_escalation.py).
+                # Non-agent tiers keep their existing {tier}:{shaping}
+                # reason below (no behavior change there).
+                return ("quarantine",
+                        "tainted_run:%s" % shaping)
             return ("quarantine",
                     "%s:%s" % (tier, shaping))
         return "allow", "%s_not_instruction_shaped" % tier

@@ -42,29 +42,38 @@ rows 16–18 remain COVERED. No full-row GAP remains.
 ### Row 1 — Memory poisoning (memo: GAP → now: PARTIAL)
 GAP-1 lane (wave-103): `gov/memory_provenance.py` (per-entry source-trust ledger,
 retrieval re-checks, cross-session ledger scan at session open — the January→June
-test pins it), `tests/test_memory_provenance.py` 33/33. F143 (api_call ingestion),
+test pins it), `tests/test_memory_provenance.py` 37/37. F143 (api_call ingestion),
 F144 (http_post response bodies), F154 (evasion-register phrasings) all CLOSED.
 `evals/gap1mem_break.py` post-fix **0 BREAK / 9 HELD / 0 ERROR** in normal and clean
-envs (last run at integration, 2026-09-24). Documented residuals: paraphrase
-laundering (MINJA — pinned as a miss), 256 KiB fingerprint FIFO eviction, descriptive-practice
-framing dodge, `tainted_run` recorded-but-unused (deferred, FP cost). Not COVERED:
-the detector is deterministic heuristics, not semantics; this is an arms race the
-memo's DONE criteria ("poisoned retrievals flagged or blocked") hold for the
-battery's shapes, not for arbitrary phrasing.
+envs (last run at integration, 2026-09-24). Wave-123 tightens (2026-09-26):
+H17 — `tainted_run` recorded-but-unused is now USED: instruction-shaped agent-tier
+notes from tainted runs quarantine (`tainted_run:{shaping}`; FP 0/6 on benign
+corpus; operator releases/seeds unaffected). H26 — 256 KiB fingerprint FIFO eviction
+is now priority eviction (instruction-shaped fingerprints survive junk floods;
+bound and per-result caps unchanged). `evals/f143mem_break.py` now **2 BREAK / 6 HELD /
+0 ERROR** (p2 paraphrase and p6 eviction flip to HELD; p3 factual, p5 heuristic-dodge
+remain documented residuals). Documented residuals: paraphrase laundering NARROWED
+(H17 catches instruction-shaped paraphrases from tainted runs; non-instruction-shaped
+paraphrases and untainted runs remain a miss — MINJA class), descriptive-practice
+framing dodge. Not COVERED: the detector is deterministic heuristics, not semantics;
+this is an arms race the memo's DONE criteria ("poisoned retrievals flagged or
+blocked") hold for the battery's shapes, not for arbitrary phrasing.
 
 ### Row 2 — Multi-agent prompt infection (memo: GAP → now: PARTIAL)
 F137 CLOSED (file-channel self-replication across spawns, infection-lineage
 substrate). GAP-2 lane (wave-104): `gov/lineage.py` + `gov/messaging.py` lineage
-tracker — bus messages carry sender_lineage_id/depth/infected stamps, forged stamps
-→ loud `lineage_stamp_forged` + recipient taint/quarantine; F155 CLOSED.
-`evals/gap2_buslineage_break.py` post-fix **0 BREAK / 6 HELD / 0 ERROR** both envs
-(last run 2026-09-24). Residuals: sub-64B payloads miss the population watch;
-forged stamp quarantines the *victim* (recipient), not the forger — attribution
-impossible by construction; per-run correlation only — CLOSED as an opt-in
-deployment seam by H8 (wave-117, 2026-09-26): `LineageTracker(...,
-cross_run_root=)` chains run A's infected lineage into run B's substrate
-keyed by principal (born-infected adoption + `cross_run_parent` link +
-loud `lineage_stamp_forged` on tamper; benign cross-run activity links
+tracker — bus messages carry sender_lineage_id/depth/infected stamps. Wave-123 H18
+(2026-09-26): forged stamps → loud `lineage_stamp_forged` + **delivering sender
+bus-quarantined** (the actionable endpoint); recipient (victim) taint-marked +
+warned via `forged_stamp_recipient_warned`, NOT quarantined (quarantining the victim
+lets a forger DOS arbitrary recipients). `evals/gap2_buslineage_break.py` **7/7 OK**
+both envs. F155 CLOSED. Residuals: sub-64B payloads miss the population watch;
+forged-stamp attribution is to the claimed/delivering sender endpoint (the stamp
+itself is untrusted — true forger identity remains impossible by construction);
+per-run correlation only — CLOSED as an opt-in deployment seam by H8 (wave-117,
+2026-09-26): `LineageTracker(..., cross_run_root=)` chains run A's infected lineage
+into run B's substrate keyed by principal (born-infected adoption + `cross_run_parent`
+link + loud `lineage_stamp_forged` on tamper; benign cross-run activity links
 nothing); perfect steganography detection impossible (honest ceiling). Not
 COVERED: population-level infection monitoring exists, but Morris-II shapes with
 small payloads still have known paths around it.

@@ -33,8 +33,10 @@ individually policy-benign). This module is the governed channel:
   (channel "bus") with taint propagation (live writer taint). A stamp
   that cannot be tied to a chained send record — or whose lineage does
   not verify against the live registry — is forged: the recipient is
-  taint-marked, bus-quarantined, and delivery is refused (loud, never
-  silent). Without a tracker, behavior is exactly as before.
+  taint-marked and warned (not quarantined), the delivering sender is
+  bus-quarantined (H18: the actionable endpoint, not the victim), and
+  delivery is refused (loud, never silent). Without a tracker, behavior
+  is exactly as before.
 
 Honest ceiling (never claimed away): paraphrase-semantic stego,
 Schelling-point coordination, and tool-mediated covert channels are
@@ -481,12 +483,13 @@ class MessageBus(object):
                     "content_sha256", "sender_lineage_id"))
         return False
 
-    def _refuse_unverifiable_message(self, tracker, recipient, msg_id,
-                                     reason):
+    def _refuse_unverifiable_message(self, tracker, sender, recipient,
+                                     msg_id, reason):
         """Full forged-lineage response for stamps the chained-send
         check rejects: taint-mark the reader (when lineage-registered),
         chain a LOUD lineage_stamp_forged event, then contain and refuse
-        via _contain_and_refuse."""
+        via _contain_and_refuse (H18: the delivering sender is
+        quarantined, the recipient warned)."""
         if (tracker.is_registered(recipient)
                 and not tracker.is_infected(recipient)):
             tracker.mark_infected(
@@ -503,20 +506,39 @@ class MessageBus(object):
             "flag": "lineage_stamp_forged",
             "reason": reason,
         })
-        self._contain_and_refuse(recipient, msg_id, reason)
+        self._contain_and_refuse(sender, recipient, msg_id, reason)
 
-    def _contain_and_refuse(self, recipient, msg_id, detail):
+    def _contain_and_refuse(self, sender, recipient, msg_id, detail):
         """Shared tail of both forged paths: bus-quarantine the
-        recipient (containment; reversible via release()) and refuse
-        delivery — loud, never silently dropped."""
+        DELIVERING SENDER (H18: the actionable endpoint, not the victim
+        recipient; containment is reversible via release()) and refuse
+        delivery — loud, never silently dropped. The recipient is warned
+        (taint-marked by the caller), not quarantined."""
+        # H18: the claimed sender identity cannot be fully trusted, but
+        # the delivering sender endpoint is the actionable entity. The
+        # recipient (victim) is warned, not quarantined — quarantining
+        # the victim lets a forger DOS arbitrary recipients.
         self.quarantine(
-            recipient,
-            "bus message %r failed lineage verification: %s"
-            % (msg_id, detail))
+            sender,
+            "bus message %r failed lineage verification (delivering "
+            "sender quarantined): %s" % (msg_id, detail))
+        self._log.append({
+            "event": "agent_message",
+            "run_id": self._run_dir.name,
+            "agent_id": recipient,
+            "decision": "warned",
+            "policy_id": "message-lineage-quarantine",
+            "flag": "forged_stamp_recipient_warned",
+            "reason": ("message %r failed lineage verification; recipient "
+                       "warned (not quarantined); delivering sender %r "
+                       "quarantined" % (msg_id, sender)),
+            "msg_id": msg_id,
+        })
         raise MessageFlaggedError(
             "receive refused: message %r failed lineage verification "
-            "(%s); recipient %r quarantined"
-            % (msg_id, detail, recipient))
+            "(%s); delivering sender %r quarantined, recipient %r warned "
+            "(not quarantined)"
+            % (msg_id, detail, sender, recipient))
 
     def receive(self, executor, identity, msg_id):
         """Read and validate a message. Returns (content, stamp, flags).
@@ -587,7 +609,7 @@ class MessageBus(object):
                 # inbox file). note_message's registry checks would pass
                 # on a copied lineage id, so this check runs first.
                 self._refuse_unverifiable_message(
-                    tracker, recipient, msg_id,
+                    tracker, sender, recipient, msg_id,
                     "no chained send record matches message %r: the stamp "
                     "was not issued by this bus" % msg_id)
             # note_message raises LineageError for an unlineaged
@@ -597,7 +619,7 @@ class MessageBus(object):
             lineage_status, detail = tracker.note_message(
                 recipient, msg_id, stamp)
             if lineage_status == "forged":
-                self._contain_and_refuse(recipient, msg_id, detail)
+                self._contain_and_refuse(sender, recipient, msg_id, detail)
             # Contact/tainted messages are DELIVERED with the flag (the
             # steg-flag precedent: flagged, never silently dropped), and
             # the recipient lineage feeds the population watch.

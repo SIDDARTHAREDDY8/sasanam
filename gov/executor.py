@@ -114,7 +114,7 @@ from .tool_ratings import normalize_tool_ratings
 from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    refusal_ts_within_window, verify_chain_tip,
                    write_chain_tip_from_tail)
-from .memory_provenance import MemoryQuarantineError
+from .memory_provenance import MemoryQuarantineError, instruction_shaping_reason
 from . import citation_provenance as _citation_provenance
 from . import capability_gate as _capability_gate
 from . import velocity as _velocity
@@ -1304,6 +1304,17 @@ class ToolExecutor:
         self._read_sensitive = False  # F9: a read returned DLP-sensitive
         # content this run; api_call afterwards is taint-gated.
 
+    def _eviction_index(self):
+        """H26: index into ``_read_contents`` of the oldest
+        NON-instruction-shaped fingerprint (the preferred eviction
+        victim under store pressure), or 0 when every fingerprint is
+        instruction-shaped (FIFO fallback). Instruction-shaped
+        fingerprints are the poison links; they survive junk floods."""
+        for i, c in enumerate(self._read_contents):
+            if instruction_shaping_reason(c) is None:
+                return i
+        return 0
+
     # -- identity ---------------------------------------------------------
 
     def _provision_session_identity(self, spec):
@@ -1937,7 +1948,16 @@ class ToolExecutor:
                 self._read_contents.append(content[:65536])
                 total = sum(len(c) for c in self._read_contents)
                 while total > _MAX_READ_STORE and self._read_contents:
-                    total -= len(self._read_contents.pop(0))
+                    # H26: priority eviction. Drop the oldest
+                    # NON-instruction-shaped fingerprint first, so
+                    # instruction-shaped fingerprints (poison links)
+                    # survive junk pressure. If every fingerprint is
+                    # instruction-shaped, fall back to FIFO. Shaping is
+                    # computed at eviction time (infrequent; bounded by
+                    # the 256 KiB store) so no parallel structure can
+                    # desync from _read_contents.
+                    total -= len(self._read_contents.pop(
+                        self._eviction_index()))
                 if self._content_is_sensitive(content):
                     # F9/F15a: taint, not similarity. Content tripping DLP
                     # sensitive patterns (credential regexes or PII) marks
