@@ -228,7 +228,10 @@ class TestAckShape(unittest.TestCase):
         self.assertEqual(decls[0]["missing_components"],
                          ["policy_store", "delegation_context"])
         self.assertEqual(decls[0]["absent_non_core_components"],
-                         ["detection_monitor", "recovery",
+                         # Wave-119: erosion_monitor joins the declared
+                         # non-core set (opt-in trajectory monitor,
+                         # detection_monitor precedent).
+                         ["detection_monitor", "erosion_monitor", "recovery",
                           "lease_verifier", "precommit_gate",
                           "trifecta_floor"])
 

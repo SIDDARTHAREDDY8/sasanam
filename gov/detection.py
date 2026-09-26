@@ -28,8 +28,11 @@ inside the agent's trust domain.
 import json
 import math
 import os
+import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
+
+from . import dlp as _dlp
 
 __all__ = [
     "EWMA_ALPHA",
@@ -59,6 +62,19 @@ __all__ = [
     "build_detector_trip",
     "TRIP_KINDS",
     "SLOW_BOIL_BOUNDARY",
+    "REASSEMBLY_MIN_LEAVES",
+    "REASSEMBLY_MAX_LEAVES",
+    "REASSEMBLY_MAX_BYTES",
+    "BORDERLINE_CALLS_TRIP",
+    "BORDERLINE_MIN_TOKEN",
+    "BORDERLINE_ENTROPY_BITS",
+    "QUEUE_CLUSTER_TRIP",
+    "PRIV_ASCENT_TRIP",
+    "EROSION_EGRESS_TOOLS",
+    "shannon_entropy",
+    "is_borderline",
+    "sensitivity_rank",
+    "TrajectoryErosionMonitor",
 ]
 
 # ---------------------------------------------------------------------------
@@ -1136,6 +1152,341 @@ class BehavioralMonitor:
                           "that drift stays under."
                           % (CUSUM_H, CUSUM_K)),
         }
+
+
+# ---------------------------------------------------------------------------
+# Row-9 Phase B (wave-119): trajectory-level caution-erosion monitor.
+#
+# Per-action checks are trajectory-blind: individually-benign steps can
+# reassemble to a credential (e1), map the enforcement substrate (e2),
+# or learn a volume threshold (e3) with zero trajectory-level signal.
+# This monitor accumulates four erosion counters over a RUN (not a
+# baseline window) and emits a chained ``trajectory_caution_erosion``
+# SIGNAL on trip -- a breaker INPUT, never a verdict. Detection
+# proposes; the breaker and the operator dispose.
+#
+# Opt-in at the executor (``erosion_monitor=None`` = zero behavior
+# change, mirroring the wave-76 ``detection_monitor`` pattern). The
+# monitor is per-run: counters live and die with the run. The chained
+# signal carries counter values and metadata only -- never raw content
+# or raw params. The fragment buffer (C1) is run-scoped, in-memory,
+# never chained, never persisted.
+#
+# Honest ceilings (see evals/row9_phase_b_spec.md): framing drift (e4)
+# is NOT measured (semantic, research-grade -- named residual);
+# cross-run erosion is out of scope (per-run monitor); the borderline
+# band and sensitivity ranks are heuristic, not oracles.
+# ---------------------------------------------------------------------------
+
+#: C1: minimum buffered string leaves before a DLP-tripping join counts
+#: as fragment reassembly (a single call's params tripping DLP is
+#: already caught per-action; the trajectory shape is *fragments*).
+REASSEMBLY_MIN_LEAVES = 4
+#: C1: fragment buffer bounds (run-scoped, in-memory).
+REASSEMBLY_MAX_LEAVES = 128
+REASSEMBLY_MAX_BYTES = 8192
+#: C2: borderline-band calls in a run that trip the monitor.
+BORDERLINE_CALLS_TRIP = 6
+#: C2 borderline band: minimum token length and Shannon entropy
+#: (bits/character) for a high-entropy-but-unmatched token. 3.75 bits
+#: catches near-uniform hex (max 4.0) while staying above typical
+#: 16+ char English words (~3.0-3.6). Heuristic, not an oracle.
+BORDERLINE_MIN_TOKEN = 16
+BORDERLINE_ENTROPY_BITS = 3.75
+#: C3: consecutive queued egress calls to one endpoint that trip.
+QUEUE_CLUSTER_TRIP = 4
+#: C4: strictly-ascending sensitivity-rank reads that trip (4 ascents =
+#: 5 reads of increasing rank).
+PRIV_ASCENT_TRIP = 4
+
+#: Egress tools whose params feed the C1/C2/C3 counters.
+EROSION_EGRESS_TOOLS = frozenset({"send_email", "http_post", "api_call"})
+
+#: Known credential *prefixes* for the C2 borderline band. A token
+#: starting with one of these WITHOUT matching a full DLP credential
+#: pattern is a near-miss (borderline), not a hit. Heuristic, not a
+#: credential oracle -- see is_borderline().
+_CREDENTIAL_PREFIXES = (
+    "AKIA",          # AWS access key id prefix
+    "sk-live-", "sk-test-",  # Stripe-style secret prefix
+    "ghp_", "gho_",  # GitHub token prefixes
+    "xoxb-", "xoxp-", "xoxa-",  # Slack token prefixes
+    "AIza",          # Google API key prefix
+)
+
+
+def shannon_entropy(s):
+    """Shannon entropy of a string in bits per character."""
+    if not s:
+        return 0.0
+    n = len(s)
+    freq = {}
+    for ch in s:
+        freq[ch] = freq.get(ch, 0) + 1
+    return -sum((c / n) * math.log2(c / n) for c in freq.values())
+
+
+def is_borderline(text):
+    """C2 borderline band: DLP-clean but erosion-relevant.
+
+    True when ``text`` is DLP-clean AND contains a token that is either
+    (a) a near-miss credential shape (known credential prefix without
+    the full pattern -- which would be a DLP hit, not borderline), or
+    (b) a high-entropy-but-unmatched token (>= ``BORDERLINE_MIN_TOKEN``
+    chars, >= ``BORDERLINE_ENTROPY_BITS`` Shannon entropy bits/char).
+    Both are heuristic; neither is a credential oracle. Empty/non-string
+    input is never borderline.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return False
+    if _dlp.find_credential(text):
+        return False  # a hit is per-action DLP's job, not borderline
+    for token in re.split(r"[^A-Za-z0-9_+=/.-]+", text):
+        if len(token) >= 4:
+            for prefix in _CREDENTIAL_PREFIXES:
+                if token.startswith(prefix):
+                    return True
+        if (len(token) >= BORDERLINE_MIN_TOKEN
+                and shannon_entropy(token) >= BORDERLINE_ENTROPY_BITS):
+            return True
+    return False
+
+
+def sensitivity_rank(path):
+    """C4 sensitivity rank for a read_file target (approximate).
+
+    A coarse, documented-as-approximate ordering over run-internal
+    record paths -- NOT a sensitivity oracle. 0 = own sandbox files;
+    1 = other agents' files; 2 = the chained audit log; 3 = checkpoints;
+    4 = the cross-run ledger.
+    """
+    p = str(path or "")
+    if "checkpoints" in p:
+        return 3
+    if "egress_ledger.jsonl" in p:
+        return 4
+    if "actions.jsonl" in p:
+        return 2
+    if "peer_" in p:
+        return 1
+    return 0
+
+
+def _string_leaves(value, _depth=0):
+    """Collect string leaves from tool args (bounded depth)."""
+    out = []
+    if _depth > 4:
+        return out
+    if isinstance(value, str):
+        if value:
+            out.append(value[:256])
+    elif isinstance(value, dict):
+        for v in value.values():
+            out.extend(_string_leaves(v, _depth + 1))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            out.extend(_string_leaves(v, _depth + 1))
+    return out
+
+
+def _content_leaves(tool, args):
+    """String leaves of the tool's CONTENT params (C1/C2 observation).
+
+    Fragment reassembly is about content -- the params that carry
+    fragments across calls -- not endpoints/URLs. Feeding endpoint
+    strings into the reassembly buffer interleaves them with fragments
+    and breaks the contiguous join that DLP must see, so C1/C2 observe
+    only the content subtree: ``params`` for api_call, ``payload`` for
+    http_post, ``body`` for send_email.
+    """
+    args = args or {}
+    if tool == "api_call":
+        content = args.get("params")
+    elif tool == "http_post":
+        content = args.get("payload")
+    elif tool == "send_email":
+        content = args.get("body")
+    else:
+        content = None
+    return _string_leaves(content)
+
+
+def _erosion_endpoint(tool, args):
+    """Per-endpoint key for the C3 queue-clustering counter."""
+    args = args or {}
+    if tool == "api_call":
+        return str(args.get("endpoint") or "api_call")
+    if tool == "http_post":
+        return str(args.get("url") or "http_post")
+    return tool  # send_email and others: per-tool bucket
+
+
+class TrajectoryErosionMonitor:
+    """Per-run caution-erosion monitor (row 9, Phase B).
+
+    Fed from the executor's verdict path (next to the wave-89
+    trajectory note) via :meth:`note_call`. On any counter trip, opens
+    its per-identity erosion breaker and yields exactly one chained
+    ``trajectory_caution_erosion`` signal per CLOSED->OPEN transition.
+    The executor consults :meth:`route_action` on its verdict path: an
+    OPEN breaker downgrades allow->require_approval on high-risk tools
+    (breaker input, never a verdict -- no single action is denied
+    because of the trajectory signal).
+    """
+
+    def __init__(self, run_dir=None):
+        self.run_dir = run_dir
+        self._breakers = {}          # identity_key -> CircuitBreaker
+        self._fragments = {}         # identity_key -> [str] (C1 buffer)
+        self._fragment_bytes = {}    # identity_key -> int
+        self._borderline_calls = {}  # identity_key -> int (C2)
+        self._queue_runs = {}        # identity_key -> {endpoint: int} (C3)
+        self._priv_peak = {}         # identity_key -> int (C4 run peak)
+        self._priv_ascents = {}      # identity_key -> int (C4)
+        self._trips_emitted = []     # drained chained-signal payloads
+
+    # -- observation ----------------------------------------------------
+
+    def note_call(self, identity, tool, args, decision_effect):
+        """Feed one verdict-path call. Returns the chained-signal
+        payload on a CLOSED->OPEN trip, else None.
+
+        ``decision_effect`` is the final PolicyDecision effect
+        ("allow" / "deny" / "require_approval") at the trajectory-note
+        site -- i.e. AFTER the breaker downgrade check, so a queued
+        call counts as queued regardless of which rule queued it.
+        """
+        key = identity_key_of(identity)
+        args = args or {}
+        if tool in EROSION_EGRESS_TOOLS:
+            trip = self._note_egress(key, tool, args, decision_effect)
+            if trip is not None:
+                return trip
+        if tool == "read_file":
+            trip = self._note_read(key, args)
+            if trip is not None:
+                return trip
+        return None
+
+    def _note_egress(self, key, tool, args, decision_effect):
+        leaves = _content_leaves(tool, args)
+        # C1: fragment reassembly -- individually DLP-clean fragments
+        # whose call-ordered join trips DLP.
+        buf = self._fragments.setdefault(key, [])
+        for leaf in leaves:
+            if len(buf) >= REASSEMBLY_MAX_LEAVES:
+                break
+            if self._fragment_bytes.get(key, 0) + len(leaf) > \
+                    REASSEMBLY_MAX_BYTES:
+                break
+            buf.append(leaf)
+            self._fragment_bytes[key] = \
+                self._fragment_bytes.get(key, 0) + len(leaf)
+        if len(buf) >= REASSEMBLY_MIN_LEAVES:
+            rule = _dlp.find_credential("".join(buf))
+            if rule:
+                return self._trip(key, "fragment_reassembly", {
+                    "dlp_rule": str(rule),
+                    "buffered_leaves": len(buf),
+                })
+        # C2: borderline-result rate.
+        if any(is_borderline(leaf) for leaf in leaves):
+            n = self._borderline_calls.get(key, 0) + 1
+            self._borderline_calls[key] = n
+            if n >= BORDERLINE_CALLS_TRIP:
+                return self._trip(key, "borderline_result_rate", {
+                    "borderline_calls": n,
+                })
+        # C3: queue clustering -- consecutive queued egress calls to
+        # one endpoint (the probing pattern, not any one queued call).
+        endpoint = _erosion_endpoint(tool, args)
+        runs = self._queue_runs.setdefault(key, {})
+        if decision_effect == "require_approval":
+            runs[endpoint] = runs.get(endpoint, 0) + 1
+            if runs[endpoint] >= QUEUE_CLUSTER_TRIP:
+                return self._trip(key, "queue_clustering", {
+                    "endpoint": endpoint,
+                    "consecutive_queues": runs[endpoint],
+                })
+        elif decision_effect == "allow":
+            runs[endpoint] = 0
+        return None
+
+    def _note_read(self, key, args):
+        rank = sensitivity_rank(args.get("path"))
+        peak = self._priv_peak.get(key)
+        if peak is None:
+            self._priv_peak[key] = rank
+            self._priv_ascents[key] = 0
+            return None
+        if rank > peak:
+            asc = self._priv_ascents.get(key, 0) + 1
+            self._priv_ascents[key] = asc
+            self._priv_peak[key] = rank
+            if asc >= PRIV_ASCENT_TRIP:
+                return self._trip(key, "privilege_probe_sequencing", {
+                    "ascents": asc,
+                    "peak_rank": rank,
+                })
+        else:
+            # Non-ascending read restarts the gradient run.
+            self._priv_peak[key] = rank
+            self._priv_ascents[key] = 0
+        return None
+
+    # -- trip / breaker ---------------------------------------------------
+
+    def _trip(self, key, counter, detail):
+        br = self._breakers.setdefault(key, CircuitBreaker())
+        was = br.trip({
+            "trip_kind": "erosion_trip",
+            "counter": counter,
+            "identity_key": key,
+            **detail,
+        })
+        if was != CircuitBreaker.OPEN:
+            signal = {
+                "event": "trajectory_caution_erosion",
+                "signal": "trajectory_caution_erosion",
+                "flag": "trajectory_caution_erosion",
+                "counter": counter,
+                "identity_key": key,
+                "at": _utcnow(),
+                **{k: v for k, v in detail.items()
+                   if k in ("dlp_rule", "buffered_leaves",
+                            "borderline_calls", "endpoint",
+                            "consecutive_queues", "ascents",
+                            "peak_rank")},
+            }
+            self._trips_emitted.append(signal)
+            return signal
+        return None
+
+    def breaker_state(self, identity):
+        """Erosion breaker state for an identity ("closed" / "open")."""
+        key = identity_key_of(identity)
+        return self._breakers.get(key, CircuitBreaker()).state
+
+    def route_action(self, identity, tool):
+        """Verdict-path routing for the executor.
+
+        Mirrors BehavioralMonitor.route_action: CLOSED -> "execute";
+        OPEN -> "queue" for high-risk tools, "execute" otherwise. Never
+        "deny": the monitor is a signal and a breaker input, never a
+        verdict. Fail-closed is the CALLER's job (the executor treats a
+        monitor exception as OPEN).
+        """
+        key = identity_key_of(identity)
+        state = self._breakers.get(key, CircuitBreaker()).state
+        if state == CircuitBreaker.CLOSED:
+            return "execute"
+        return "queue" if tool in HIGH_RISK_TOOLS else "execute"
+
+    def pending_trips(self):
+        """Chained-signal payloads since the last drain (one per
+        CLOSED->OPEN transition)."""
+        trips, self._trips_emitted = self._trips_emitted, []
+        return trips
 
 
 #: Measured CUSUM detection lag for a sustained +1.0 sigma shift in

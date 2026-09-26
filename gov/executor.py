@@ -615,6 +615,7 @@ class ToolExecutor:
                  tool_ratings=None, credential_manifest=None,
                  canary_registry=None, delegation_context=None,
                  policy_store=None, detection_monitor=None,
+                 erosion_monitor=None,
                  recovery=None, lease_verifier=None,
                  lease_gated_tools=(), precommit_gate=None,
                  trifecta_floor=False, ungoverned_ack=None,
@@ -651,6 +652,7 @@ class ToolExecutor:
                 self.run_id, log, policy_store, delegation_context,
                 ungoverned_ack,
                 non_core=(("detection_monitor", detection_monitor),
+                          ("erosion_monitor", erosion_monitor),
                           ("recovery", recovery),
                           ("lease_verifier", lease_verifier),
                           ("precommit_gate", precommit_gate),
@@ -752,6 +754,18 @@ class ToolExecutor:
         # read-only and operator-owned; it never executes, approves, or
         # writes queue records.
         self._detection_monitor = detection_monitor
+        # Row-9 Phase B (wave-119): the trajectory-level caution-erosion
+        # monitor (gov/detection.TrajectoryErosionMonitor). Opt-in:
+        # None = pre-wave-119 behavior, zero behavior change. When
+        # installed, call() feeds it every verdict-path call (next to
+        # the wave-89 trajectory note) and consults its breaker on the
+        # verdict path: an OPEN erosion breaker downgrades allow
+        # verdicts on high-risk tools to require_approval (a breaker
+        # INPUT, never a verdict -- no single action is denied because
+        # of the trajectory signal). The monitor is per-run; its
+        # breaker lives and dies with the run (no half-open, no human
+        # reset in v1).
+        self._erosion_monitor = erosion_monitor
         # Wave-77 (recovery): the recovery controller
         # (gov/recovery.RecoveryController). Opt-in: None = pre-wave-77
         # behavior, zero behavior change. When installed, call()
@@ -1657,6 +1671,7 @@ class ToolExecutor:
             delegation_context=child_ctx,
             policy_store=self._policy_store,
             detection_monitor=self._detection_monitor,
+            erosion_monitor=self._erosion_monitor,
             recovery=self._recovery,
             lease_verifier=self._lease_verifier,
             lease_gated_tools=self._lease_gated_tools,
@@ -5771,6 +5786,41 @@ class ToolExecutor:
                     flag="behavioral_breaker_half_open",
                 )
 
+        # Row-9 Phase B (wave-119): trajectory-erosion breaker. When the
+        # erosion monitor's breaker is OPEN for the acting identity, an
+        # allow verdict on a high-risk tool is downgraded to
+        # require_approval (fail-closed direction only: a deny stays
+        # denied, an existing require_approval is untouched). The
+        # trajectory signal is a breaker INPUT, never a verdict: it
+        # trips the RUN/trajectory, never any single action. Fail-closed:
+        # a monitor error is treated as OPEN. No monitor installed =
+        # zero behavior change.
+        if (decision.effect == "allow"
+                and self._erosion_monitor is not None):
+            try:
+                _eroute = self._erosion_monitor.route_action(
+                    identity, tool)
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _eroute = "queue"
+                self.log.append(_base({
+                    "decision": "breaker_fail_closed",
+                    "policy_id": "trajectory-erosion",
+                    "flag": "erosion_monitor_unreachable",
+                    "matched_rules": [],
+                    "reason": ("Trajectory-erosion monitor unreachable "
+                               "(%s); treating breaker as OPEN." % e),
+                }))
+            if _eroute == "queue":
+                decision = PolicyDecision(
+                    "require_approval",
+                    ("Trajectory-erosion breaker is OPEN for this "
+                     "identity; a caution-erosion signal fired on this "
+                     "run's trajectory -- human review is required "
+                     "before execution (row-9 Phase B)."),
+                    policy_id="trajectory-erosion",
+                    flag="erosion_breaker_open",
+                )
+
         # Wave-79 (rules tiering): lethal-trifecta approval floor.
         # Opt-in via trifecta_floor= (default off: zero behavior
         # change). The session's tier is computed over its EFFECTIVE
@@ -5887,6 +5937,58 @@ class ToolExecutor:
                            "detected (wave-89 tool continuity)."
                            % self._trajectory.calls),
             }))
+
+        # Row-9 Phase B (wave-119): feed the trajectory-erosion monitor.
+        # Every call that reaches a final gate verdict is observed;
+        # decision.effect here is post-breaker-check, so a queued call
+        # counts as queued whichever rule queued it. On a CLOSED->OPEN
+        # trip the monitor yields the chained-signal payload, which is
+        # appended here (counter values and metadata only -- never raw
+        # content or raw params). One signal per open transition.
+        # A feed failure is a DETECTION gap, not a verdict failure: the
+        # verdict is already decided, so log loudly and continue rather
+        # than crashing the run. (The routing check above is the
+        # safety-relevant path and fails closed to OPEN.)
+        if self._erosion_monitor is not None:
+            try:
+                _erosion_signal = self._erosion_monitor.note_call(
+                    identity, tool, kwargs, decision.effect)
+            except Exception as e:  # noqa: BLE001 - loud, then continue
+                self.log.append(_base({
+                    "decision": "erosion_feed_failed",
+                    "policy_id": "trajectory-erosion",
+                    "flag": "erosion_feed_failed",
+                    "matched_rules": [],
+                    "reason": ("Trajectory-erosion feed failed (%s); "
+                               "this call went unobserved by the erosion "
+                               "monitor -- detection gap, verdict "
+                               "unaffected." % e),
+                }))
+                _erosion_signal = None
+            if _erosion_signal is not None:
+                self.log.append(_base({
+                    "decision": "erosion_signal",
+                    "event": "trajectory_caution_erosion",
+                    "signal": "trajectory_caution_erosion",
+                    "policy_id": "trajectory-erosion",
+                    "flag": "trajectory_caution_erosion",
+                    "matched_rules": [],
+                    "erosion_counter": _erosion_signal.get("counter"),
+                    "erosion_detail": {
+                        k: _erosion_signal.get(k)
+                        for k in ("dlp_rule", "buffered_leaves",
+                                  "borderline_calls", "endpoint",
+                                  "consecutive_queues", "ascents",
+                                  "peak_rank")
+                        if _erosion_signal.get(k) is not None
+                    },
+                    "reason": ("Trajectory-level caution-erosion signal: "
+                               "counter %r tripped on this run's "
+                               "trajectory (row-9 Phase B). Signal, not "
+                               "verdict: the erosion breaker now routes "
+                               "high-risk actions to human approval."
+                               % (_erosion_signal.get("counter"),)),
+                }))
 
         # Wave-79 (pre-commit): irreversible tools on the allow path.
         # When the gate is installed, an irreversible tool (the frozen

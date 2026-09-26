@@ -306,7 +306,7 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
              break_glass_tickets=(), session_identity=None,
              credential_manifest=None, precommit_gate=None,
              trifecta_floor=False, memory_firewall=None,
-             lineage_tracker=None):
+             lineage_tracker=None, erosion_monitor=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -354,6 +354,14 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
     zero behavior change. When installed, call() refuses unlineaged
     identities fail-closed and file writes/reads are lineage-stamped.
     The battery/harness mints genesis explicitly after make_run().
+
+    ``erosion_monitor`` (row 9, Phase B): a
+    ``gov.detection.TrajectoryErosionMonitor`` installed on the
+    executor. Default None = pre-wave-119 behavior, zero behavior
+    change. When installed, call() feeds it every verdict-path call
+    and consults its breaker (allow -> require_approval on high-risk
+    tools when the erosion breaker is OPEN -- a breaker input, never a
+    verdict).
     """
     run_dir = Path(tempfile.mkdtemp(prefix="govred-"))
     try:
@@ -385,6 +393,7 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             trifecta_floor=trifecta_floor,
                             memory_firewall=memory_firewall,
                             lineage_tracker=lineage_tracker,
+                            erosion_monitor=erosion_monitor,
                             # Wave-85: the harness deliberately exercises
                             # the raw (pre-wave-74/75) pipeline — no
                             # policy_store, no delegation_context — so
