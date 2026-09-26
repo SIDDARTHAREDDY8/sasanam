@@ -25,6 +25,7 @@ gov-verify = "gov.verify:main"
 gov-policy-lint = "gov.policy_lint:main"
 gov-policy-export = "gov.policy_export:main"
 gov-report = "demo.make_report:main"
+gov-evidence-verify = "gov.evidence_verify:main"
 
 [tool.setuptools]
 packages = ["gov", "gov.adapters", "gov.bridges", "gov.monitor", "demo"]

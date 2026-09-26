@@ -679,3 +679,19 @@ Every item below was checked against the current tree; none is assumed.
   v1 does not duplicate it.
 - `demo/make_report.py`: the human-readable report precedent for the
   verifier's text summary.
+
+### 8.4 v1 implementation extensions (non-normative)
+
+The reference implementation (`gov/evidence_verify.py`) performs three
+checks beyond the normative V1–V13. These are v1 conveniences, not
+conformance requirements; a verifier implementing only V1–V13 is
+conformant.
+
+- **V14 deterministic bundle ID** — the bundle ID is derived
+  deterministically from the window contents, so re-exports of the same
+  window produce the same ID.
+- **V15 provenance** — the manifest's provenance block (exporter version,
+  build host, source-log identity) is present and well-formed.
+- **V16 retention schema** — the manifest's retention block conforms to
+  the declared schema (retention/operator-supplied values are assertions;
+  only schema/presence is verified).

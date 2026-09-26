@@ -244,12 +244,21 @@ def _w20_sit115_replay_honesty():
     corrupt keys must flip relative to the control; keys that hold on
     all three are safety invariants. Proves the re-derived sit118 pin
     is discriminating, not vacuous.
+
+    The anchor is scoped to _read_tip_cache's own source (not the whole
+    file) and checks for the comparison's presence, not its exact
+    argument text: the Wave-112 F69 hardening legitimately changed the
+    scan window from the whole sidecar to cp_bytes[tip["pin_off"]:]
+    (a sound, reviewed optimization — any pin that could stale this tip
+    sits at or past pin_off), which broke the old exact-string match.
     """
     o = {}
-    src = (REPO_ROOT / "gov" / "log.py").read_text(encoding="utf-8")
+    import inspect as _inspect
+    from gov.log import _read_tip_cache as _rtc_fn
+    fn_src = _inspect.getsource(_rtc_fn)
     o["anchor_gen_check_in_source"] = (
-        "_max_pinned_tip_gen(cp_bytes, key, active_epoch) > tip[\"gen\"]"
-        in src)
+        "_max_pinned_tip_gen(" in fn_src
+        and '> tip["gen"]' in fn_src)
     with _key_env(key="w25f72h", epoch="w25a"):
         with _tmp("w25f72h-") as d:
             from gov.log import (

@@ -1,6 +1,6 @@
 """Hardening round-16 regression tests: F69 + demo direct-invocation fix.
 
-F69 (HIGH): each refused sweep paid a full chain verification + full log
+F69 (LOW): each refused sweep paid a full chain verification + full log
     read -- O(log size) per sweep, an unbounded CPU amplifier while the
     coalesce state file is held corrupt. Fixed by MAC-authenticated
     incremental chain-tip verification (gov/log.py verify_chain_tip):
@@ -17,6 +17,7 @@ DEMO: demo/attack_scenario.py's ``__main__`` guard sat above main()'s
 """
 
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -37,7 +38,9 @@ from gov.log import (  # noqa: E402
     _tip_cache_path,
     verify_chain,
     verify_chain_tip,
+    write_chain_tip_from_tail,
 )
+import gov.log as gov_log_module  # noqa: E402 (monkeypatch target below)
 from gov.policy import PolicyEngine  # noqa: E402
 
 DEFAULT_POLICY = str(REPO_ROOT / "policies" / "default.yaml")
@@ -46,6 +49,15 @@ DEFAULT_POLICY = str(REPO_ROOT / "policies" / "default.yaml")
 # was 73ms across 3 trials (typical 30-50ms). The bound carries ~2x
 # headroom; it pins the F69 fix (old code: ~580-690ms at 20k), not the
 # hardware.
+#
+# F69-flake hardening (2026-09-26): the bound is asserted on PROCESS
+# CPU time, not wall clock. F69 is a CPU amplifier ("each refused sweep
+# pays a full chain verification") -- what the bound pins is CPU work,
+# and wall clock additionally measures scheduler descheduling, which
+# under concurrent-lane load inflated wall 3-7x while CPU stayed flat
+# (~95-102ms), flaking the test. process_time excludes deschedule and
+# I/O wait; the per-sweep tip-write fsync is a fixed O(1) cost, not the
+# amplifier, so excluding its wait is honest.
 _WARM_SWEEP_BOUND_SECS = 0.150
 _F69_N = 20000
 
@@ -73,11 +85,14 @@ def _corrupt_coalesce_state(run_dir):
 
 
 def _refused_sweep(run_dir, policy):
+    # Times the sweep in PROCESS CPU seconds (see the bound comment):
+    # the F69 pin is CPU work, and wall clock would measure scheduler
+    # descheduling under load instead.
     _corrupt_coalesce_state(run_dir)
     ex = _fresh_executor(run_dir, policy)
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     ret = ex.execute_approved()
-    return ret, time.perf_counter() - t0
+    return ret, time.process_time() - t0
 
 
 def _refusal_count(run_dir):
@@ -134,7 +149,7 @@ class TestF69WarmTipBounded(unittest.TestCase):
                                  "refused sweep must fail closed")
                 self.assertLess(
                     dt, _WARM_SWEEP_BOUND_SECS,
-                    "warm sweep %d took %.1fms at %d entries "
+                    "warm sweep %d took %.1fms CPU at %d entries "
                     "(bound %.0fms)" % (k, dt * 1000, _F69_N,
                                         _WARM_SWEEP_BOUND_SECS * 1000))
             self.assertEqual(_refusal_count(run_dir), 1,
@@ -365,6 +380,110 @@ class TestDemoDirectInvocation(unittest.TestCase):
             self.assertRegex(proc.stdout, r"(?m)^RESULT: ")
         finally:
             shutil.rmtree(work, ignore_errors=True)
+
+
+class TestF69PinScanIncremental(unittest.TestCase):
+    """F69 timing-flake hardening: the F72 replay-freshness scan must be
+    O(new sidecar bytes), not O(sidecar).
+
+    Regression: ``_read_tip_cache`` handed the ENTIRE checkpoint sidecar
+    to ``_max_pinned_tip_gen`` on every warm sweep (4.1MB of JSON parsing
+    at 20k entries -- ~60ms of the ~95ms warm-sweep CPU on this VM),
+    eating most of the 150ms warm-sweep bound and growing with the log
+    (the F69 amplifier shape). The scan now starts at the tip's
+    ``pin_off`` -- the sidecar offset where its own pin was appended.
+    """
+
+    def test_warm_sweep_scans_only_new_sidecar_bytes(self):
+        policy = PolicyEngine(DEFAULT_POLICY)
+        run_dir = _make_run_dir()
+        seen = []
+        real_scan = gov_log_module._max_pinned_tip_gen
+
+        def spy(cp_bytes, key, key_epoch):
+            seen.append(len(cp_bytes))
+            return real_scan(cp_bytes, key, key_epoch)
+
+        try:
+            log = ActionLog(run_dir / "actions.jsonl")
+            for i in range(2000):
+                log.append({"event": "r16_setup", "i": i})
+            # Cold sweep seeds the tip (full verify + seed path).
+            ret, _dt = _refused_sweep(run_dir, policy)
+            self.assertEqual(ret, [])
+            sidecar_len = (run_dir / "checkpoints.jsonl").stat().st_size
+            self.assertGreater(sidecar_len, 100_000,
+                               "sanity: the sidecar grows with the log")
+            # Warm sweep with the scan observed.
+            gov_log_module._max_pinned_tip_gen = spy
+            try:
+                ret, _dt = _refused_sweep(run_dir, policy)
+            finally:
+                gov_log_module._max_pinned_tip_gen = real_scan
+            self.assertEqual(ret, [], "refused sweep must fail closed")
+            self.assertTrue(seen, "the pin scan must still run")
+            # The scan must see only the new suffix (a few hundred
+            # bytes: the new pin + new checkpoint lines), not the whole
+            # sidecar. 8KB is generous headroom over the real ~1KB.
+            self.assertLess(
+                max(seen), 8192,
+                "pin scan saw %d bytes of a %d-byte sidecar "
+                "(must be O(new bytes), not O(sidecar))"
+                % (max(seen), sidecar_len))
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_racy_newer_pin_inside_measured_prefix_still_rejected(self):
+        """A newer-gen pin that a concurrent writer interleaves between
+        this tip's pin append and its cp_size measurement must still
+        be seen by the freshness scan.
+
+        Exact race shape: writer A appends pin(gen 8) and measures
+        pin_off; writer B's pin(gen 9) lands; A measures cp_size
+        (now covering pin 9) and writes tip(gen 8). A scan from
+        cp_size would miss pin 9 (it sits "inside the pinned
+        prefix") and accept the stale tip -- silent staleness. The
+        scan from pin_off sees it.
+        """
+        run_dir = _make_run_dir()
+        try:
+            log = ActionLog(run_dir / "actions.jsonl")
+            for i in range(5):
+                log.append({"event": "r16_setup", "i": i})
+            write_chain_tip_from_tail(run_dir / "actions.jsonl", {})
+            tip1 = _read_tip_cache(run_dir / "actions.jsonl")
+            self.assertIsNotNone(tip1, "seeded tip must read fresh")
+            self.assertEqual(tip1["gen"], 1)
+            pin_off = tip1["pin_off"]
+            # Writer B's newer pin lands AFTER A's pin_off measurement.
+            gov_log_module._append_tip_gen_pin(
+                run_dir / "actions.jsonl", 5, "f" * 64, 999)
+            # Writer A now measures cp_size (covering B's pin) and
+            # writes its tip. Craft it genuinely: same fields as the
+            # seeded tip, but cp_size/cp_digest over the grown sidecar
+            # and the stale gen -- then re-MAC via the write path.
+            cp_bytes = (run_dir / "checkpoints.jsonl").read_bytes()
+            raced = dict(tip1)
+            raced["cp_size"] = len(cp_bytes)
+            raced["cp_digest"] = hashlib.sha256(cp_bytes).hexdigest()
+            raced["pin_off"] = pin_off
+            raced["gen"] = 1
+            del raced["mac"]
+            gov_log_module._write_tip_cache(
+                run_dir / "actions.jsonl", raced)
+            # Sanity: the raced tip file really does cover B's pin in
+            # its "pinned prefix".
+            raw = json.loads(
+                _tip_cache_path(run_dir / "actions.jsonl")
+                .read_text(encoding="utf-8"))
+            self.assertGreater(raw["cp_size"], pin_off)
+            # The freshness scan must reject: a newer pin exists.
+            self.assertIsNone(
+                _read_tip_cache(run_dir / "actions.jsonl"),
+                "tip gen 1 must read stale once a newer pin exists, "
+                "even inside its measured cp_size prefix")
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

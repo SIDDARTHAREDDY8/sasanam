@@ -1750,7 +1750,12 @@ def _tip_body(tip):
 
     ``gen`` is the tip generation (F72): every tip write bumps it and
     appends a MAC'd generation pin to the checkpoint sidecar, so a
-    replayed older tip is recognized as stale. ``markers`` is the
+    replayed older tip is recognized as stale. ``pin_off`` is the
+    sidecar byte offset where this tip's own pin was appended
+    (measured before the append): the replay-freshness scan starts
+    there, which keeps the scan O(new bytes) while remaining sound
+    under concurrent tip writers -- any pin newer than this tip sits
+    at or past pin_off. ``markers`` is the
     marker manifest (F70): approval_id -> latest ``execution_authorized``
     seq for approvals interrupted over the verified prefix. It is
     derived ONLY from MAC-verified bytes (seeded after a full verify,
@@ -1763,6 +1768,7 @@ def _tip_body(tip):
         "key_epoch": tip["key_epoch"],
         "refusals": tip["refusals"],
         "cp_size": tip["cp_size"],
+        "pin_off": tip["pin_off"],
         "cp_digest": tip["cp_digest"],
         "cp_newest": tip["cp_newest"],
         "tip_off": tip["tip_off"],
@@ -1794,6 +1800,7 @@ def _read_tip_cache(path):
             "key_epoch": raw["key_epoch"],
             "refusals": raw["refusals"],
             "cp_size": int(raw["cp_size"]),
+            "pin_off": int(raw["pin_off"]),
             "cp_digest": raw["cp_digest"],
             "cp_newest": raw["cp_newest"],
             "tip_off": int(raw["tip_off"]),
@@ -1846,6 +1853,18 @@ def _read_tip_cache(path):
         return None
     if tip["tip_off"] < 0 or tip["end_off"] < tip["tip_off"]:
         return None
+    if tip["cp_size"] < 0:
+        # A negative prefix bound would make the F72 suffix scan below
+        # read from the end of the sidecar instead of the pinned
+        # prefix's end -- reject like the other range violations.
+        return None
+    if tip["pin_off"] < 0 or tip["pin_off"] > tip["cp_size"]:
+        # pin_off is the sidecar offset where this tip's own pin was
+        # appended: every pin with a generation newer than this tip
+        # that could make it stale sits at or past pin_off, so the
+        # freshness scan below starts there. An out-of-range pin_off
+        # breaks that invariant -- reject (fail-closed).
+        return None
     key, active_epoch = _active_key()
     if tip["key_epoch"] != active_epoch:
         # Key rotation (or a foreign tip): the cached prefix was
@@ -1861,12 +1880,39 @@ def _read_tip_cache(path):
     # caller falls back to full verification, which re-verifies the
     # stale-but-genuine prefix and reseeds). A sidecar that cannot be
     # read cannot vouch freshness: reject as well (fail-closed).
+    #
+    # F69-flake hardening: the scan used to JSON-parse the ENTIRE
+    # sidecar on every warm sweep -- O(sidecar) with a large constant,
+    # eating most of the warm-sweep CPU bound (and growing with the
+    # log, the F69 amplifier shape). Pins are append-only, so instead
+    # of the whole sidecar the scan starts at this tip's pin_off --
+    # the offset measured before its own pin was appended. Any pin appended
+    # after that measurement sits at or past pin_off and the scan sees it.
+    # A writer that raced an interleaved pin append BEFORE the measurement
+    # can leave a genuine pin with a higher generation sitting before
+    # pin_off; then a stale-but-genuine tip may be accepted. That is safe,
+    # not a replay hole: the tip is MAC-authentic and vouches a
+    # genuinely-verified prefix, and the incremental walk below still
+    # re-verifies the entire live tail with full per-entry checks --
+    # staleness costs redundant work, never trust in unverified bytes.
+    # (The new scan window [pin_off:] is a superset of the old [cp_size:]
+    # window, so every tip accepted under the new code was also accepted
+    # under the old -- the change only adds rejections.)
+    # This preserves the replay property under concurrent tip writers
+    # (multi-process sweeps sharing a run dir): a racy newer pin that
+    # lands inside the measured cp_size prefix is still at or past
+    # pin_off, so the scan sees it and the stale tip is rejected.
+    # A rewritten prefix or a shrunk sidecar still fails the
+    # prefix-hash / shrink checks in verify_chain_tip (full-verify
+    # fallback), and the documented F72 residual (truncate + replay ->
+    # one redundant full re-verification) is unchanged.
     try:
         cp_bytes = (Path(str(path)).parent / "checkpoints.jsonl"
                     ).read_bytes()
     except OSError:
         return None
-    if _max_pinned_tip_gen(cp_bytes, key, active_epoch) > tip["gen"]:
+    if _max_pinned_tip_gen(cp_bytes[tip["pin_off"]:], key,
+                           active_epoch) > tip["gen"]:
         return None
     return tip
 
@@ -2127,6 +2173,13 @@ def verify_chain_tip(path, flags=()):
     # never verification.
     new_gen = tip["gen"] + 1
     all_cp = cp_bytes if cp_bytes is not None else b""
+    # F72/pin_off: record the sidecar size BEFORE our pin lands. The
+    # freshness scan in _read_tip_cache starts at pin_off, so any pin
+    # newer than this tip -- including one a concurrent writer
+    # interleaves between our pin and our size measurement -- sits at
+    # or past pin_off and is seen. (On pin failure the size is still a
+    # sound lower bound: future pins only ever append past it.)
+    pin_off = len(all_cp)
     try:
         _append_tip_gen_pin(path, count, prev, new_gen)
         all_cp = cp_path.read_bytes()
@@ -2160,6 +2213,7 @@ def verify_chain_tip(path, flags=()):
         "refusals": refusals,
         "cp_size": len(all_cp),
         "cp_digest": hashlib.sha256(all_cp).hexdigest(),
+        "pin_off": pin_off,
         "cp_newest": new_cp_newest,
         "tip_off": new_tip_off,
         "end_off": new_end_off,
@@ -2277,6 +2331,9 @@ def write_chain_tip_from_tail(path, refusals):
     # tip file lands (best-effort: a pin failure only weakens replay
     # detection for this generation, never verification).
     gen = _max_pinned_tip_gen(cp_bytes, key, epoch) + 1
+    # F72/pin_off: see the advance path above -- the size before our
+    # pin lands is the sound scan start for this tip's freshness.
+    pin_off = len(cp_bytes)
     try:
         _append_tip_gen_pin(path, last_seq, last_hash, gen)
         cp_bytes = cp_path.read_bytes()
@@ -2292,6 +2349,7 @@ def write_chain_tip_from_tail(path, refusals):
         "refusals": {flag: refusals.get(flag) for flag in refusals},
         "cp_size": len(cp_bytes),
         "cp_digest": hashlib.sha256(cp_bytes).hexdigest(),
+        "pin_off": pin_off,
         "cp_newest": ({"seq": newest["seq"], "hash": newest["hash"],
                        "mac": newest.get("mac"),
                        "key_epoch": newest.get("key_epoch")}
