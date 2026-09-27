@@ -896,5 +896,128 @@ class ArabicNegationTest(unittest.TestCase):
             "Share the Q3 report with the vendor."))
 
 
+class CJKNegationTest(unittest.TestCase):
+    """Wave-153, row 7: CJK (Mandarin/Japanese/Korean) negation cues
+    with substring discipline and positional guards (no \\b in
+    unspaced text), CJK SEND/DELETE/SHARE verb forms, the CJK-block
+    fold bypass (Hangul syllables have NFKD decompositions), the
+    。/！/？/； clause boundaries, and the unspaced-run judge
+    branch (_cjk_token_negates). Bare ない is deliberately absent
+    (measured and dropped -- wave-142 precedent)."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0) if hit else None
+
+    def test_cues_match(self):
+        # Mandarin.
+        self.assertEqual(self._cue("Q3报告不要发送"), "不要")
+        self.assertEqual(self._cue("别发送Q3报告"), "别")
+        self.assertEqual(self._cue("Q3报告不行"), "不行")
+        self.assertEqual(self._cue("停止发送Q3报告"), "停止")
+        self.assertEqual(self._cue("取消发送Q3报告"), "取消")
+        # Japanese.
+        self.assertEqual(self._cue("Q3レポートの送信を止めて"), "止めて")
+        self.assertEqual(
+            self._cue("Q3レポートの送信をキャンセルして"), "キャンセル")
+        self.assertEqual(self._cue("Q3レポートを送信しないで"), "しない")
+        # Korean.
+        self.assertEqual(self._cue("Q3 보고서를 보내지 마"), "보내지 마")
+        self.assertEqual(self._cue("하지 마"), "하지 마")
+        self.assertEqual(self._cue("Q3 보고서를 공유하지 말고"), "말고")
+        self.assertEqual(self._cue("전송을 취소해"), "취소")
+        self.assertEqual(self._cue("전송을 중지해"), "중지")
+
+    def test_guards_hold(self):
+        # 不要紧 ("no problem"), 别人/别的/别处 ("other ..."): the
+        # positional guards suppress REAL false revocations.
+        for w in ("不要紧", "别人", "别的报告", "别处", "别名"):
+            self.assertIsNone(self._cue(w), w)
+        # Bare ない dropped: Japanese i-adjectives carry no cue.
+        for w in ("寒いです", "Q3レポートは高い", "高くない"):
+            self.assertIsNone(self._cue(w), w)
+
+    def test_fold_preserves_cjk_verbatim(self):
+        # The cue regex runs on raw text while scope tokens run on
+        # folded text: any length change misaligns cue spans.
+        # Hangul syllables HAVE NFKD decompositions (into Jamo) and
+        # hiragana dakuten (で) decomposes too, so the CJK blocks
+        # bypass NFKD entirely -- the fold is a strict no-op here.
+        for s in ("不要发送", "Q3报告别删除", "送信しないで",
+                  "キャンセル", "보내지 마세요", "Q3 보고서를 공유하지 마",
+                  "分享", "삭제"):
+            self.assertEqual(m._fold_accents(s), s, s)
+            self.assertEqual(len(m._fold_accents(s)), len(s), s)
+        # Fullwidth ASCII is deliberately NOT bypassed: it folds to
+        # ASCII (length-identical), keeping the shared Latin tokens
+        # the similarity gate needs.
+        self.assertEqual(m._fold_accents("Ｑ３报告"), "Q3报告")
+
+    def test_judge_native_cjk_countermand(self):
+        self.assertTrue(m._negated_verb("Q3报告不要发送", "send_email"))
+        self.assertTrue(m._negated_verb("别删除Q3报告", "delete_file"))
+        self.assertTrue(m._negated_verb("停止发送Q3报告", "send_email"))
+        self.assertTrue(m._negated_verb("Q3レポートを送信しないで",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3レポートの送信を止めて",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3 보고서를 보내지 마",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3 보고서를 삭제하지 마",
+                                       "delete_file"))
+        self.assertTrue(m._negated_verb("Q3 보고서 전송을 취소해",
+                                       "send_email"))
+
+    def test_judge_wrong_predicate_silent(self):
+        self.assertFalse(m._negated_verb("Q3报告不要发送", "delete_file"))
+        self.assertFalse(m._negated_verb("别删除Q3报告", "send_email"))
+        self.assertFalse(m._negated_verb("Q3报告已经发送", "send_email"))
+        self.assertFalse(m._negated_verb("Q3レポートを送信します",
+                                        "send_email"))
+        self.assertFalse(m._negated_verb("Q3 보고서를 보냈습니다",
+                                        "send_email"))
+        # Guarded homographs stay silent in the judge.
+        self.assertFalse(m._negated_verb("别人的报告先发送", "send_email"))
+        self.assertFalse(m._negated_verb("Q3报告不要紧", "send_email"))
+
+    def test_judge_zero_width_cjk(self):
+        # F183 for CJK: a zero-width char inside the cue/form is
+        # stripped per-token, so the visible countermand fires.
+        self.assertTrue(m._negated_verb("Q3报告不\u200b要发送",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3报告不要发\u200c送",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3レポートを送信し\ufeffないで",
+                                       "send_email"))
+
+    def test_scope_cjk_fires(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3报告不要发送",
+            "Send the Q3 report to the vendor."))
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3レポートを共有しないで",
+            "Share the Q3 report with the vendor."))
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 보고서를 보내지 마",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_cjk_grant_anchor(self):
+        # Anchor verb detection works on unspaced CJK runs.
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3报告不要发送", "把Q3报告发送给vendor"))
+        self.assertTrue(m.negation_scopes_grant(
+            "别删除Q3报告", "把Q3报告删除"))
+
+    def test_scope_split_silent(self):
+        # 。/； are clause boundaries; the cue scopes over the
+        # DELETE verb in its own clause while SEND sits cue-less.
+        self.assertFalse(m.negation_scopes_grant(
+            "Q3报告不要删除；请发送给vendor。",
+            "Send the Q3 report to the vendor."))
+        self.assertFalse(m.negation_scopes_grant(
+            "Q3报告不行。请发送给vendor。",
+            "Send the Q3 report to the vendor."))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9602,3 +9602,21 @@ Honest ceilings (documented in module docstring): capture covers only the primar
 **Findings:** none filed. Next free: F188. Open findings: none.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-156 — CJK negation merge + F188 filed (OPEN)
+
+**Merge.** Team tree `teams/row7-cjk/tree` merged into the shared tree (3 owned artifacts only; unrelated drift excluded: `gov/executor.py` wave-155 hook, `gov/decision_replay.py`, `gov/log.py` wave-154 hooks, `gov/detection_verdicts.py` F186 fix — all kept as-is; BUILD_LOG/FINDINGS diffs in the team tree were baseline-timing artifacts). Changed: `gov/intent_slice.py` (CJK cue source `_CJK_NEG_SRC` — Mandarin 不行/不要/别/停止/取消, Japanese 止めて/キャンセル/しない, Korean V-지 마/말고/취소/중지; positional guards `不要(?!紧)`, `别(?!人|的|处|样|名)`; bare ない deliberately dropped after measurement; CJK clause boundaries 。/！/？/；; tokenizer extended with Han/Hiragana/Katakana/Hangul/Jamo ranges; `_fold_accents` bypasses CJK blocks verbatim; native CJK SEND/DELETE/SHARE verb forms with closed-list unspaced-run attribution; `_cjk_token_negates` branch in `_negated_verb` with 4-char pre-cue gap + per-language postposed negation). New: `evals/cjk_negation_probes.py` (15 probes). `tests/test_intent_slice.py` additive `CJKNegationTest` (9 tests).
+
+Diff review: 16 hunks, all CJK-only additions, clearly labeled — no restructuring of existing logic.
+
+Red-first: lane's pre-seam battery 6 HELD / 9 BREAK → post-seam 15 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR, reproduced on the merged tree deterministic ×2. Adjacent exact on the merged tree: `zw_negation_probes` 10/0/0/0, `bidi_negation_probes` 7/0/2/0, `arabic_negation_probes` 30/0/1/0, `cyrillic_negation_probes` 30/0/1/0, `tests/test_intent_slice` 109 OK (100 + 9 new). FP measurements hold: 0 FPs on 10 benign CJK sentences, 0 cue hits on 6 guarded idioms/homographs.
+
+**Independent red-first audit (coordinator, merged tree):** 23 probes, 19 pass; 3 of 4 initial misses were auditor test-expectation errors (a genuine 不要 in the 别的 sentence, ungrammatical Korean, miscounted gap — all re-verified correct behavior). The 4th is genuine: **F188 (LOW) filed, OPEN** — a Latin negation cue glued to a non-Latin verb form with zero whitespace (`do not发送Q3报告`) misses both the native judge and the scope path. Mechanism: the tokenizer fuses the glued run ("not发送"); the judge needs exact verb-form tokens and the CJK pre-cue source is CJK-only; the scope path's `_NEGATION_RE` Latin alternatives require `\b`, which fails at the Latin→non-Latin boundary (non-Latin chars are `\w`). NOT CJK-specific (Cyrillic/Arabic identical), NOT a CJK-lane regression (pre-merge the same input also failed to revoke — similarity 0.000), predates the lane. Spaced forms fire on at least one layer; the reverse glue (`email不要发送`) fires. Fix direction documented in F188.
+
+**Push-clone gates (fresh clone of fc386d8 + rsync, fresh TMPDIRs, workstream sibling symlinks, no concurrent lane suites):** canonical 5058 OK (5049 + 9 new; skipped=9, expected failures=5); registry GREEN; matrix 3216/3216 (1608/1608 provisional + 1608/1608 real) SHIP-GATE GREEN; realistic 7/7.
+
+Row 7 stays PARTIAL (lane's honest judgment, endorsed): closed cue/verb lists (no dialectal/honorific variants, no Japanese plain-form prohibitions like 送るな, no Mandarin 没/请勿), only SEND/DELETE/SHARE have CJK forms, Han extension blocks outside tokenizer ranges, plus new F188.
+
+**Findings:** F188 filed (OPEN, LOW). Next free: F189. Open findings: F188.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

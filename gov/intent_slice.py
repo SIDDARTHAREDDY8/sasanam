@@ -278,6 +278,45 @@ _CYRILLIC_NEG_SRC = (
 _ARABIC_NEG_SRC = (
     r"(?:\b[وبل]?لا\b|\bو?(?:لم|لن|ما|ليس)\b)"
 )
+# Wave-153 (row 7): CJK negation cues (pilot -- Mandarin, Japanese,
+# Korean; other CJK languages/scripts remain untouched).
+# CJK text has no word spaces, so \b-style boundary discipline does
+# NOT apply: cues match as substrings (不要 in 不要发送), with
+# explicit positional guards on measured benign idioms (wave-145
+# discipline -- each guard below suppresses a REAL false
+# revocation, pinned in evals/cjk_negation_probes.py):
+#   - 不要 does NOT cue in 不要紧 ("no problem" -- the Chinese
+#     parallel of the wave-145 "no problem" guard);
+#   - 别 does NOT cue in 别人/别的/别处/别样/别名 ("other ...",
+#     the 别 homograph disambiguation: imperative "don't" vs the
+#     "other" prefix);
+#   - bare ない was measured and DROPPED (wave-142 "non"/"mat"
+#     precedent): it fires on every Japanese i-adjective, and
+#     "Q3レポートは高くない" ("the Q3 report is not expensive")
+#     scores 0.571 against the SEND grant -- a REAL false
+#     revocation. The prohibitive force is carried by しない
+#     (which covers しないで as a substring).
+# Korean is spaced (eojeol), so the prohibition is the productive
+# V-지 마 construction (보내지 마, 하지 마), matched as \S+지\s+마
+# (which covers 하지 마 -- 하지 ends in 지). 말고/취소/중지
+# parallel the English "instead-of / cancel / stop" cues.
+# Deliberately out of scope (documented residuals): Mandarin 没/请勿,
+# Japanese plain-form prohibitions (送るな/するな), Korean honorific
+# variants beyond the 마 prefix, dialectal forms.
+_CJK_CHAR_RE = re.compile(
+    r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u1100-\u11ff"
+    r"\u3130-\u318f]")
+_CJK_NEG_SRC = (
+    r"(?:"
+    r"不行|不要(?!紧)|别(?!人|的|处|样|名)|"
+    r"停止|取消"              # "stop" / "cancel"
+    r"|止めて"                # "stop it" (te-form request)
+    r"|キャンセル"            # "cancel" (katakana loanword)
+    r"|しない"                # plain negative (covers しないで)
+    r"|(?:\S+지\s+마)"         # V-지 마 prohibition (covers 하지 마)
+    r"|말고|취소|중지"         # "instead-of" / "cancel" / "stop"
+    r")"
+)
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
     r"no(?!\s+problems?\b)|stop|halt|"
@@ -289,7 +328,8 @@ _NEGATION_RE = re.compile(
     + r"|" + _DEVA_NEG_SRC
     + r"|" + _CYRILLIC_NI_PAIR_SRC
     + r"|" + _CYRILLIC_NEG_SRC
-    + r"|" + _ARABIC_NEG_SRC,
+    + r"|" + _ARABIC_NEG_SRC
+    + r"|" + _CJK_NEG_SRC,
     re.IGNORECASE,
 )
 
@@ -336,7 +376,14 @@ _NEGATION_SCOPE_WINDOW = 8
 # texts never contain U+061F/U+061B, so existing behaviour is
 # unchanged. The Arabic comma U+060C is deliberately NOT a boundary
 # (parallel to the Latin comma).
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965\u061F\u061B]+")
+# Wave-153 (row 7): CJK sentence terminators added as clause
+# boundaries, parallel to the above: U+3002 (。 ideographic full
+# stop), U+FF01 (！ fullwidth exclamation), U+FF1F (？ fullwidth
+# question mark), U+FF1B (； fullwidth semicolon). Latin/
+# Cyrillic/Devanagari/Arabic texts never contain these, so existing
+# behaviour is unchanged. U+3001 (、 ideographic comma) is
+# deliberately NOT a boundary (parallel to the Latin/Arabic comma).
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965\u061F\u061B\u3002\uff01\uff1f\uff1b]+")
 # Wave-149 (row 7): Devanagari block added so Hindi scope windows can
 # be walked. U+0964/U+0965 are deliberately excluded so "भेजें।"
 # tokenises as "भेजें" (the verb form must match exactly for
@@ -403,6 +450,21 @@ _INVISIBLE_FORMAT_CLASS = (
 )
 _SCOPE_WORD_RE = re.compile(
     r"[a-z0-9'\u0400-\u04FF\u0900-\u0963\u0966-\u097F\u0600-\u06FF"
+    # Wave-153 (row 7): CJK blocks so CJK scope windows can be
+    # walked: U+4E00-U+9FFF (Han), U+3040-U+30FF
+    # (Hiragana/Katakana), U+AC00-U+D7AF (Hangul syllables),
+    # U+1100-U+11FF/U+3130-U+318F (Jamo). CJK runs are unspaced,
+    # so one token is a whole run (不要发送报告); verb-class
+    # attribution is by closed-list substring
+    # (_cjk_token_classes), not whole-token equality. The
+    # invisible-format class is token-internal here too (F183 for
+    # CJK: a zero-width char inside a CJK cue/verb form is stripped
+    # per-token by _strip_invisible_format before matching -- the
+    # same token-internal discipline as every other script). Han
+    # extension blocks (U+3400-U+4DBF, U+20000+) are NOT in the
+    # class (documented residual).
+    r"\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u1100-\u11ff"
+    r"\u3130-\u318f"
     + _INVISIBLE_FORMAT_CLASS + r"]+")
 
 # Shared invisible-format strip for the judge and scope tokenizers
@@ -452,6 +514,17 @@ _VERB_CLASSES = {
         # the wave-152 fold preserves the Arabic block, so أرسل never
         # folds to ارسل).
         "أرسل", "ارسل", "ترسل", "يرسل", "إرسال", "ارسال", "أرسلت",
+        # Wave-153: CJK SEND forms (pilot -- Mandarin/Japanese/
+        # Korean). Mandarin 发送 ("send/emit"), 寄送 ("send/ship" --
+        # the parcel/postal verb, also used for documents);
+        # Japanese 送信 ("transmit" -- the email/file verb),
+        # 送る (dictionary form); Korean 보내다 (dictionary form),
+        # 보내 (stem -- the 보내지 마 prohibition shape), 전송
+        # (hanja "transmit", 전송하다). No fold duals needed: the
+        # wave-153 fold preserves the CJK blocks verbatim. The
+        # single-char Mandarin 发 is deliberately absent (it would
+        # substring-match 发现 "discover" -- a measured FP class).
+        "发送", "寄送", "送信", "送る", "보내다", "보내", "전송",
     )),
     "ARCHIVE": frozenset((
         "archive", "archives", "archiving", "archived",
@@ -486,6 +559,10 @@ _VERB_CLASSES = {
         # "deletion" / 3rd-person past "he deleted"), حذفت
         # (1st/2nd-person past -- the ما/لم negation shape).
         "احذف", "تحذف", "يحذف", "حذف", "حذفت",
+        # Wave-153: CJK DELETE forms (pilot -- Mandarin/Japanese/
+        # Korean). Mandarin 删除; Japanese 削除; Korean 삭제
+        # (삭제하다). No fold duals needed (verbatim CJK fold).
+        "删除", "削除", "삭제",
     )),
     # Wave-148 (row 7): tier-2 verb classes. Same closed-list
     # discipline as tier 1: every form below was measured against
@@ -552,6 +629,15 @@ _VERB_CLASSES = {
         # تشارك"), يشارك (3rd-person imperfect), مشاركة (verbal noun
         # "sharing"), شاركت (1st/2nd-person past).
         "شارك", "تشارك", "يشارك", "مشاركة", "شاركت",
+        # Wave-153: CJK SHARE forms (pilot -- Mandarin/Japanese/
+        # Korean). Mandarin 分享; Japanese 共有 ("share" -- also
+        # the adjective "common", an acknowledged precision
+        # boundary), シェア (katakana loanword); Korean 공유
+        # (공유하다). No fold duals needed (verbatim CJK fold).
+        # SHARE has no share tool in _TOOL_VERBS, so these live in
+        # the similarity-countermand scope path only -- same as
+        # Latin/Cyrillic/Arabic.
+        "分享", "共有", "シェア", "공유",
     )),
     "PUBLISH": frozenset((
         "publish", "publishes", "publishing", "published",
@@ -593,6 +679,33 @@ _VERB_CLASSES = {
 _VERB_CLASS_BY_FORM = {
     form: cls for cls, forms in _VERB_CLASSES.items() for form in forms
 }
+
+
+# Wave-153 (row 7): CJK verb-form index for unspaced runs. A CJK
+# scope token is a whole unspaced run (不要发送报告), so class
+# attribution is closed-list SUBSTRING matching: the token carries
+# the class when one of the class's CJK forms occurs in it (发送 in
+# 不要发送报告 -> SEND). Longest-first ordering is cosmetic (search
+# only needs presence); the forms contain no regex metacharacters.
+_CJK_FORM_RES = {
+    cls: re.compile("|".join(sorted(
+        (f for f in forms if _CJK_CHAR_RE.search(f)),
+        key=len, reverse=True)))
+    for cls, forms in _VERB_CLASSES.items()
+    if any(_CJK_CHAR_RE.search(f) for f in forms)
+}
+
+
+def _cjk_token_classes(normed_token):
+    """Classes whose CJK verb form occurs in this scope token.
+
+    Wave-153 (row 7): the unspaced-run analogue of the
+    _VERB_CLASS_BY_FORM exact lookup. The forms are a closed list,
+    so this is exact-form containment, not stemming: 发 alone is
+    deliberately NOT a form (it would match 发现 "discover").
+    """
+    return {cls for cls, rx in _CJK_FORM_RES.items()
+            if rx.search(normed_token)}
 
 
 # Wave-148 (row 7): German separable verbs for the tier-2 classes.
@@ -659,16 +772,36 @@ def _fold_accents(text):
     Per-character NFKD for the remaining text is equivalent to the
     old whole-string NFKD for this fold's purpose (combining-mark
     order is irrelevant -- they are all dropped).
+
+    Wave-153 (row 7): the CJK blocks (U+4E00-U+9FFF Han,
+    U+3040-U+30FF Hiragana/Katakana, U+AC00-U+D7AF Hangul
+    syllables, U+1100-U+11FF/U+3130-U+318F Jamo) BYPASS NFKD
+    entirely and are preserved verbatim, for the same strong
+    reason as Arabic: Hangul syllables HAVE NFKD decompositions
+    into Jamo ("보내지" -> 13 chars from 7), which would break
+    cue-span alignment, and Hiragana with dakuten (で -> て +
+    combining mark, stripped) would rewrite cue/form text on the
+    scope path. Verbatim preservation makes the fold a strict
+    no-op on CJK: no dual-spelling class table is needed.
+    Fullwidth ASCII (U+FF00-U+FF5E) and halfwidth katakana
+    (U+FF61-U+FF9F) are deliberately NOT bypassed: they fold to
+    ASCII/fullwidth katakana (length-identical), which is what
+    keeps the shared Latin tokens the similarity gate needs.
     Deterministic, stdlib unicodedata only.
     """
     if not isinstance(text, str):
         return ""
     out = []
     for c in text:
-        if "\u0900" <= c <= "\u097f" or "\u0600" <= c <= "\u06ff":
-            # Wave-149/152: Devanagari and Arabic blocks bypass NFKD
-            # and are preserved verbatim. (Devanagari has no NFKD
-            # decompositions, so verbatim == the old
+        if ("\u0900" <= c <= "\u097f" or "\u0600" <= c <= "\u06ff"
+                or "\u4e00" <= c <= "\u9fff"
+                or "\u3040" <= c <= "\u30ff"
+                or "\uac00" <= c <= "\ud7af"
+                or "\u1100" <= c <= "\u11ff"
+                or "\u3130" <= c <= "\u318f"):
+            # Wave-149/152/153: Devanagari, Arabic and CJK blocks
+            # bypass NFKD and are preserved verbatim. (Devanagari
+            # has no NFKD decompositions, so verbatim == the old
             # decompose-then-preserve behavior there.)
             out.append(c)
             continue
@@ -721,6 +854,9 @@ def _anchor_verb_classes(anchor_text):
         cls = _VERB_CLASS_BY_FORM.get(tok)
         if cls is not None:
             classes.add(cls)
+        # Wave-153 (row 7): CJK runs are unspaced -- the class form
+        # is a substring of the token (发送 in 把Q3报告发送给vendor).
+        classes.update(_cjk_token_classes(tok))
     classes.update(_separable_verb_hits(normed).values())
     return classes
 
@@ -755,7 +891,10 @@ def negation_scopes_grant(message, anchor_text,
         sep_hits = _separable_verb_hits(normed)
         verb_idx = [i for i, n in enumerate(normed)
                     if _VERB_CLASS_BY_FORM.get(n) in anchor_classes
-                    or sep_hits.get(i) in anchor_classes]
+                    or sep_hits.get(i) in anchor_classes
+                    # Wave-153 (row 7): CJK class forms match as
+                    # substrings of unspaced runs.
+                    or _cjk_token_classes(n) & anchor_classes]
         if verb_idx:
             verb_seen = True
         cue_idx = set()
@@ -988,10 +1127,15 @@ def _verb_stems(tool):
 # range as _SCOPE_WORD_RE).
 # Wave-152 (row 7): Arabic block (U+0600-U+06FF) added for the
 # Arabic pilot (same range as _SCOPE_WORD_RE).
+# Wave-153 (row 7): CJK blocks added for the CJK pilot (same ranges
+# as _SCOPE_WORD_RE: Han, Hiragana/Katakana, Hangul syllables,
+# Jamo). CJK runs are unspaced, so one token is a whole run; the
+# cue/verb match inside it is substring-based
+# (_cjk_token_negates), not whole-token.
 # F183-follow-up (row 7): the invisible-format class (_INVISIBLE_FORMAT_CLASS)
 # is token-internal here too (same treatment as _SCOPE_WORD_RE -- see the note there), and is
 # stripped per-token in _negated_verb before matching.
-_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u097F\u0600-\u06FF" + _INVISIBLE_FORMAT_CLASS + r"]+")
+_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u097F\u0600-\u06FF\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u1100-\u11ff\u3130-\u318f" + _INVISIBLE_FORMAT_CLASS + r"]+")
 
 # Wave-150 (row 7): tool -> tier-1/tier-2 verb classes whose
 # Devanagari forms the judge matches natively. The Latin prefix-stem
@@ -1012,6 +1156,71 @@ _TOOL_VERB_CLASSES = {
 }
 
 
+# Wave-153 (row 7): CJK in-token negation for _negated_verb.
+# CJK runs are unspaced, so the cue and the verb form are
+# substrings of one token (Chinese/Japanese) or adjacent tokens
+# (Korean V-지 마, which is spaced). A prohibitive cue that scopes
+# the verb from the FRONT (不要/别/停止/... + verb, 止めて/
+# キャンセル + verb) must END within _CJK_CUE_GAP chars before the
+# verb form -- the unspaced analogue of the pre-verb token window;
+# the lookback spans at most one token boundary (Korean eojeol).
+# Postposed/suffixal negation is handled per language: Japanese
+# verb + しない(で) (送信しないで) or 送信を止めて (cue after the
+# verb with a case particle); Korean verb + (하)지 마 (삭제하지
+# 마 -- the 하 of -하다 conjugations); Korean 전송을 취소해
+# (object particle + cue after the verb). The cue guards
+# (不要紧, 别人/别的/..., dropped bare ない) are the same
+# alternatives as _CJK_NEG_SRC, so the search-form and judge
+# disciplines agree.
+_CJK_CUE_GAP = 4
+_CJK_PRE_CUE_SRC = (
+    r"(?:不行|不要(?!紧)|别(?!人|的|处|样|名)|"
+    r"停止|取消|止めて|キャンセル|취소|중지|말고)"
+)
+_CJK_PRE_CUE_TAIL_RE = re.compile(
+    r"(?:" + _CJK_PRE_CUE_SRC + r").{0," + str(_CJK_CUE_GAP) + r"}$")
+_CJK_POST_CUE_RE = re.compile(
+    r"^(?:しない(で)?"                    # 送信しない(で)
+    r"|(?:の|を|は|が)?\s*(?:止めて|キャンセル)"  # 送信を止めて
+    r"|하?지\s*마"                        # 삭제하지 마
+    r"|(?:을|를)?\s*(?:취소|중지|말고))")  # 전송을 취소해
+# NOTE: the \s* after the optional particle covers the
+# tail/next-token join ("을" + " " + "취소해"); in-token cases
+# (を止めて) have no space.
+
+
+def _cjk_token_negates(tok, cjk_forms, tokens, i):
+    """True when this CJK run token negates one of the tool's native
+    CJK verb forms: a listed cue scopes the form from the front
+    (within _CJK_CUE_GAP chars, spanning at most one token
+    boundary), or the form carries postposed/suffixal negation
+    (Japanese しない(で)/を止めて, Korean (하)지 마/을 취소해).
+
+    ``tok`` is already invisible-format-stripped (F183: a zero-width
+    char inside the cue/form cannot split the match -- stripping
+    restores the visible text, and only the visible text is
+    matched). ``tokens``/``i`` locate the token for the adjacent-
+    token checks (Korean eojeol).
+    """
+    prev = tokens[i - 1] if i > 0 else ""
+    nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+    for form in cjk_forms:
+        fi = tok.find(form)
+        if fi < 0:
+            continue
+        head, tail = tok[:fi], tok[fi + len(form):]
+        # Cue-before-form: 不要/别/停止/取消/止めて/... scopes the
+        # verb from the front (不要发送, 别删除).
+        if _CJK_PRE_CUE_TAIL_RE.search(
+                prev[-_CJK_CUE_GAP * 2:] + head):
+            return True
+        # Cue-after-form: 送信しない(で), 送信を止めて,
+        # 삭제하지 마, 전송을 취소해.
+        if _CJK_POST_CUE_RE.match(tail + " " + nxt):
+            return True
+    return False
+
+
 def _negated_verb(latest_text, tool):
     """True when the latest message negates the action's verb within a
     token window ("don't delete", "never send anything"). Direct
@@ -1029,6 +1238,13 @@ def _negated_verb(latest_text, tool):
     U+200D/U+FEFF, bidi controls, direction marks and other Cf chars)
     countermand that renders identically to a human cannot split the
     verb/cue token and slip the exact match.
+
+    Wave-153 (row 7): CJK-native. CJK runs are unspaced, so the cue
+    and the verb form are substrings of one token (Chinese/
+    Japanese) or adjacent tokens (Korean V-지 마) -- see
+    _cjk_token_negates. The branch runs independently of the Latin
+    pre-verb window (a mixed token like "email不要发送" carries its
+    cue in-token).
     """
     tokens = [_strip_invisible_format(t) for t in
               _NEGATED_VERB_TOKEN_RE.findall(
@@ -1051,6 +1267,9 @@ def _negated_verb(latest_text, tool):
     for cls in _TOOL_VERB_CLASSES.get(tool, ()):
         native_forms.update(f for f in _VERB_CLASSES[cls]
                             if not f.isascii())
+    # Wave-153 (row 7): the tool's native CJK verb forms (a subset
+    # of native_forms) for the unspaced-run branch below.
+    cjk_forms = [f for f in native_forms if _CJK_CHAR_RE.search(f)]
     for i, tok in enumerate(tokens):
         if any(tok.startswith(s) for s in stems) or tok in native_forms:
             window = tokens[max(0, i - _NEGATION_WINDOW):i]
@@ -1061,6 +1280,15 @@ def _negated_verb(latest_text, tool):
             # is searched over the window text (wave-143).
             if _FRENCH_NE_PAIR_RE.search(" ".join(window)):
                 return True
+        # Wave-153 (row 7): CJK runs are unspaced -- the cue and the
+        # verb form are substrings of one token (Chinese/Japanese)
+        # or adjacent tokens (Korean V-지 마). Checked INDEPENDENTLY
+        # of the Latin window above: a mixed token like
+        # "email不要发送" matches the Latin stem branch but carries
+        # its cue in-token, so the CJK branch must still run.
+        if cjk_forms and _CJK_CHAR_RE.search(tok) and \
+                _cjk_token_negates(tok, cjk_forms, tokens, i):
+            return True
     return False
 
 

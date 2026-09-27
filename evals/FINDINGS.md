@@ -5853,3 +5853,59 @@ byte-identical. Post-fix audit: 9 HELD / 0 BREAK. Regressions:
 27 OK, adjacent `test_log_integrity` + `test_log_merkle` +
 `test_w70_hmac_chokepoint_audit` 39 OK, `f149chain_break` 0/2,
 `f150chainexit_break` 0/3 — all exact.
+
+---
+
+## F188: Latin negation cue glued to a non-Latin verb form (zero-whitespace script boundary) misses both the native judge and the scope path (LOW)
+
+**Status: OPEN (filed 2026-09-27, wave-156 integration red-first audit of the CJK negation merge).**
+
+A Latin negation cue directly abutting a non-Latin verb form with no
+whitespace — e.g. `do not发送Q3报告` (Latin "do not" + CJK SEND form
+发送) — is missed by BOTH countermand layers: `_negated_verb` returns
+False AND `negation_scopes_grant` returns False, so
+`similarity_countermand` never revokes. A human reads an unambiguous
+"do not send". Verified empirically on the merged tree (all three
+non-Latin scripts: `do not发送`, `do notотправляйте`,
+`do notأرسل` — judge=False, scope=False on every one).
+
+Mechanism (two independent misses): (1) the tokenizer
+`_NEGATED_VERB_TOKEN_RE` fuses the glued run into one token
+("not发送"); the Latin judge branch needs an exact verb-form token
+match (fails) and the CJK branch `_cjk_token_negates` only recognizes
+CJK cues in `_CJK_PRE_CUE_SRC` (fails: "not" is Latin). (2) On the
+scope path, `_NEGATION_RE`'s Latin alternatives require `\b` — but
+CJK/Cyrillic/Arabic characters are `\w` in Unicode regex, so the
+trailing `\b` in `\bdo not\b` fails at the Latin→non-Latin boundary
+and the cue is never found (`_NEGATION_RE.search("do not发送Q3报告")`
+→ None; spaced `"do not 发送Q3报告"` → "do not").
+
+This is NOT CJK-specific and NOT a CJK-lane regression: it affects
+Cyrillic and Arabic identically, predates the CJK merge (the lane's
+battery never claimed glued mixed-script coverage), and pre-merge the
+same input also failed to revoke (similarity scores 0.000 — the
+conservative verb-invisible path still needs similarity ≥ 0.5). The
+reverse glue (`email不要发送` — CJK cue in a Latin-context token)
+fires correctly; only Latin-cue→non-Latin-verb gluing is silent. The
+spaced forms all fire on at least one layer.
+
+**Severity is LOW because:** (1) it requires a zero-whitespace
+Latin→non-Latin script-boundary glue, an unusual construction —
+natural mixed-script text is spaced and fires; (2) pure-script
+countermands (the realistic shapes, 100+ probes across six batteries)
+all hold; (3) the garbled cross-script message scores ~0.000
+similarity, so this is a missed-revocation on odd input, not a bypass
+of a working control.
+
+**Fix direction:** treat a non-Latin word character as a word boundary
+for the TRAILING `\b` of Latin cue alternatives in the scope-path cue
+search (e.g. allow Latin cues followed by a lookahead for the
+CJK/Cyrillic/Arabic blocks), and/or extend the per-script pre-cue
+sources (`_CJK_PRE_CUE_SRC` and analogues) with Latin cue alternatives
+for the glued token case. Re-run `evals/cjk_negation_probes.py`
+(15/0/0/0), all adjacent negation batteries, and the benign-precision
+probes — FP risk: Latin words ending in cue-like shapes immediately
+before non-Latin text.
+
+**Found by:** wave-156 integration coordinator's independent
+adversarial audit, 2026-09-27, against the merged tree.
