@@ -28,6 +28,10 @@ How it works:
      low-impact and never flagged, to avoid FP on read-only agents),
      check coverage against the agent's active goals:
        - exact (verb, normalized target) match -> covered, silent;
+       - similar-enough target (wave-136 token-overlap tier,
+         gov/target_match.py) -> covered, but the cover is recorded
+         in summary["similarity_covers"] with match_score and
+         match_method so the fuzz is auditable;
        - match only via a ("verb", "*") wildcard goal ->
          ``goal_wildcard_cover`` (INFO, not a violation);
        - no match at all -> ``goal_coverage_gap`` (the unregistered-
@@ -51,8 +55,11 @@ Honest ceiling (documented, not hidden):
   goal's wildcard cover fires LOUD (severity high), not
   informational. The remaining gap is semantic: a specific-looking
   goal that is semantically broad still passes the structural check.
-- Exact normalized-target matching, like gov/goals.py: paraphrased
-  targets dodge the matcher by construction.
+- Exact normalized-target matching, like gov/goals.py, remains the
+  first tier; the wave-136 similarity tier covers paraphrases above
+  the 0.5 threshold (auditable, destination-vetoed). The remaining
+  gap is full synonym replacement with no shared tokens, which no
+  token-overlap measure can see (see gov/target_match.py).
 - Post-hoc only: the finding arrives after the action executed. The
   adjacent inline controls (approvals, volume guards) still bound the
   blast radius; this auditor names the *motive* gap they cannot see.
@@ -66,6 +73,7 @@ from urllib.parse import urlparse
 
 from .goals import normalize_target
 from .goals import _OPPOSES
+from .target_match import (DEFAULT_THRESHOLD, MATCH_METHOD, match_target)
 
 __all__ = [
     "audit_run_goals",
@@ -242,12 +250,20 @@ def _goals_from_registry(registry, run_id):
 def _check_coverage(verb, target, agent_goals):
     """Check one (verb, target) against an agent's active goals.
 
-    Returns ("covered", goal_id), ("wildcard", goal_id),
-    ("contradiction", goal_id, explanation), or ("gap", None).
-    Contradiction is checked FIRST: doing the opposite of a declared
-    goal is a stronger signal than merely lacking cover.
+    Returns ("covered", goal_id), ("similar", goal_id, match_info),
+    ("wildcard", goal_id), ("contradiction", goal_id, explanation), or
+    ("gap", None). Contradiction is checked FIRST: doing the opposite
+    of a declared goal is a stronger signal than merely lacking cover.
+
+    Coverage tiers, strongest first: exact normalized match, then the
+    wave-136 similarity tier (paraphrase-tolerant; a cover here is
+    auditable via match_score/match_method in match_info), then
+    wildcard. Contradiction stays exact-only: similarity must never
+    CONDEMN, only excuse -- a fuzzy "opposes" would manufacture
+    violations out of prose.
     """
     wildcard_hit = None
+    sim_candidates = []  # (goal_id, effect_target) for the similarity tier
     for gid, goal in agent_goals.items():
         for eff in goal.get("effects") or []:
             if not isinstance(eff, (list, tuple)) or len(eff) != 2:
@@ -269,6 +285,21 @@ def _check_coverage(verb, target, agent_goals):
                 # beats wildcard cover.
                 if wildcard_hit is None:
                     wildcard_hit = gid
+                continue
+            # Similarity tier: paraphrased targets count as covered.
+            # Best-cover selection lives in target_match.match_target
+            # (single implementation); the audit record keeps it
+            # auditable via match_score + match_method.
+            sim_candidates.append((gid, normalize_target(str(etarget))))
+    best_gid, best_score = match_target(
+        target, sim_candidates, threshold=DEFAULT_THRESHOLD)
+    if best_gid is not None:
+        matched = {gid: et for gid, et in sim_candidates}[best_gid]
+        return ("similar", best_gid, {
+            "match_score": best_score,
+            "match_method": MATCH_METHOD,
+            "matched_target": matched,
+        })
     if wildcard_hit is not None:
         return ("wildcard", wildcard_hit, None)
     return ("gap", None, None)
@@ -293,6 +324,7 @@ def audit_entries(run_id, entries, registry=None):
         "high_impact_actions": 0,
         "findings": 0,
         "unauditable_entries": 0,
+        "similarity_covers": [],
     }
 
     if registry is not None:
@@ -333,6 +365,21 @@ def audit_entries(run_id, entries, registry=None):
 
         status, gid, extra = _check_coverage(verb, target, goals)
         if status == "covered":
+            continue
+        if status == "similar":
+            # Paraphrase-tolerant cover: no finding, but the cover is
+            # recorded in the summary with its score and method so a
+            # reviewer can see exactly what was fuzzed.
+            summary["similarity_covers"].append({
+                "agent_id": agent,
+                "run_id": run_id,
+                "tool": tool,
+                "effect": [verb, target],
+                "covering_goal_id": gid,
+                "match_score": extra["match_score"],
+                "match_method": extra["match_method"],
+                "matched_target": extra["matched_target"],
+            })
             continue
         if status == "contradiction":
             findings.append({

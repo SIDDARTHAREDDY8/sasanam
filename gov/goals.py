@@ -19,14 +19,16 @@ three conflict classes against active goals:
 
 What this is NOT (honest ceiling):
 - Not semantic. The detector reasons over STRUCTURED effect atoms
-  ``(verb, target)`` with exact normalized-target matching. A goal
-  that paraphrases its target ("temporary storage" vs "temp files")
-  dodges the matcher by construction -- deterministic contradiction
-  != semantic contradiction. The natural-language ``description`` is
-  for humans and the audit trail; it is never used for matching
-  (matching on prose would be heuristic, unexplainable, and FP-prone).
-  An operator who wants the paraphrase class must supply target
-  aliases or a semantic layer OUTSIDE the trust boundary.
+  ``(verb, target)`` with exact normalized-target matching, plus a
+  wave-136 paraphrase-tolerant similarity tier for the cross-run
+  laundering cover leg (gov/target_match.py: token-overlap,
+  destination-vetoed, threshold 0.5, always auditable via
+  match_score/match_method). Full synonym replacement with no shared
+  tokens still dodges the matcher by construction -- deterministic
+  contradiction != semantic contradiction. The natural-language
+  ``description`` is for humans and the audit trail; it is never used
+  for matching (matching on prose would be heuristic,
+  unexplainable, and FP-prone).
 - Cross-run is persistence + history, not intent. ``save``/``load``
   make the registry durable across runs (tamper-evident), and
   ``detect_cross_run_laundering`` flags when a new registration
@@ -80,6 +82,8 @@ import hashlib
 import json
 import uuid
 from datetime import datetime, timezone
+
+from .target_match import (DEFAULT_THRESHOLD, MATCH_METHOD, match_target)
 
 __all__ = [
     "EFFECT_VERBS",
@@ -888,6 +892,49 @@ def _covers(effects, verb, target):
     return False
 
 
+def _similar_covers(effects, verb, target, threshold=DEFAULT_THRESHOLD):
+    """Paraphrase-tolerant cover tier (wave-136).
+
+    Returns (matched_effect_target, score) for the best declared
+    effect whose verb matches and whose target scores >= threshold
+    under gov/target_match.py, or (None, 0.0). Wildcards are excluded
+    here -- they are handled by _covers. Verb opposition is NOT
+    fuzzed: similarity may excuse, never condemn.
+
+    Best-cover selection is delegated to target_match.match_target
+    (the single implementation shared with gov/goal_audit.py); this
+    helper only applies the seam's verb/wildcard filtering.
+    """
+    candidates = []
+    for e in effects or []:
+        if not isinstance(e, (list, tuple)) or len(e) != 2:
+            continue
+        everb, etarget = e[0], normalize_target(str(e[1]))
+        if everb != verb or etarget == "*":
+            continue
+        candidates.append((etarget, etarget))
+    return match_target(target, candidates, threshold=threshold)
+
+
+def _prior_violation(prior, verb, target):
+    """Did executing (verb, target) violate any prior-run goal?
+
+    Returns ("forbid", goal) or ("opposes", goal), else None. Both
+    legs are exact normalized matching: what the agent actually did
+    is concrete, so the violation check needs no fuzzing.
+    """
+    for g in prior:
+        for _k, cverb, ctarget in (g.get("constraints") or []):
+            if cverb == verb and \
+                    normalize_target(str(ctarget)) == target:
+                return ("forbid", g)
+        for everb, etarget in (g.get("effects") or []):
+            if normalize_target(str(etarget)) == target and \
+                    everb in _OPPOSES.get(verb, ()):
+                return ("opposes", g)
+    return None
+
+
 def detect_cross_run_laundering(registry, new_goal, executed_history=None,
                                 prior_goals=None):
     """Flag cross-run goal laundering for a newly registered goal.
@@ -1035,38 +1082,43 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
         #     declared the opposite), and the new goal's effects now
         #     cover that same atom. The past violation is being
         #     laundered through a fresh registration.
+        #
+        #     The cover leg is paraphrase-tolerant (wave-136): a new
+        #     goal covering a paraphrase of the executed atom still
+        #     launders the violation. The violation leg stays exact --
+        #     what the agent actually did is concrete, so it needs no
+        #     fuzzing. A similarity cover is flagged with its
+        #     match_score and match_method in the detail.
         for verb, target in exec_atoms:
+            covered_target, cover_method, cover_score = target, "exact", 1.0
             if not _covers(new_effects, verb, target):
-                continue
-            violated = None
-            for g in prior:
-                for _k, cverb, ctarget in (g.get("constraints") or []):
-                    if cverb == verb and \
-                            normalize_target(str(ctarget)) == target:
-                        violated = ("forbid", g)
-                        break
-                if violated:
-                    break
-                for everb, etarget in (g.get("effects") or []):
-                    if normalize_target(str(etarget)) == target and \
-                            everb in _OPPOSES.get(verb, ()):
-                        violated = ("opposes", g)
-                        break
-                if violated:
-                    break
+                sim_target, sim_score = _similar_covers(
+                    new_effects, verb, target)
+                if sim_target is None:
+                    continue
+                covered_target, cover_method = sim_target, MATCH_METHOD
+                cover_score = sim_score
+            violated = _prior_violation(prior, verb, target)
             if violated:
                 kind, pg = violated
+                detail = {"executed": [verb, target],
+                          "executed_run_id": run_id,
+                          "prior_goal_id": pg.get("goal_id"),
+                          "new_effect": [verb, covered_target]}
+                explanation = (
+                    "agent executed (%s %s) in run %r in violation "
+                    "of its own prior goal (%s), and this run's "
+                    "registration now covers the same atom -- the "
+                    "past violation is being legitimized by a "
+                    "fresh registration" % (verb, target, run_id, kind))
+                if cover_method != "exact":
+                    detail["match_score"] = cover_score
+                    detail["match_method"] = cover_method
+                    explanation += (
+                        " (paraphrase-tolerant cover: %s %.3f)"
+                        % (cover_method, cover_score))
                 _flag("registration_launders_violation", "high",
-                      {"executed": [verb, target],
-                       "executed_run_id": run_id,
-                       "prior_goal_id": pg.get("goal_id"),
-                       "new_effect": [verb, target]},
-                      "agent executed (%s %s) in run %r in violation "
-                      "of its own prior goal (%s), and this run's "
-                      "registration now covers the same atom -- the "
-                      "past violation is being legitimized by a "
-                      "fresh registration"
-                      % (verb, target, run_id, kind))
+                      detail, explanation)
 
         # 2b. The new registration's own constraints are contradicted
         #     by the agent's executed history: the agent already did

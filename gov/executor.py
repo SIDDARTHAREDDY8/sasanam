@@ -661,6 +661,12 @@ class ToolExecutor:
                  # wave-133): appended LAST for the same
                  # positional-misalignment reason. Opt-in: None
                  # (default) = zero behavior change.
+                 # Shape (wave-136): True = sweep the run sandbox
+                 # after execute_approved(); or a dict
+                 # {"watch_roots": [(root, baseline_inventory), ...]}
+                 # to also sweep operator-configured watch roots
+                 # (baselines from artifact_sweep.register_watch_root).
+                 # None/False = no sweep at all.
                  artifact_sweep=None,
                  # Cross-run argument-distribution (framing) drift
                  # (row 9, wave-134): appended LAST for the same
@@ -678,7 +684,13 @@ class ToolExecutor:
                  # positional-misalignment reason. Opt-in: None
                  # (default) = zero behavior change (validate_baseline
                  # returns None; check_run_drift never caps).
-                 population_store=None):
+                 population_store=None,
+                 # Rare-token carryover detection (row 13, wave-136):
+                 # appended LAST for the same positional-misalignment
+                 # reason. Opt-in: None (default) = zero behavior
+                 # change (check_rare_token_carryover returns a silent
+                 # allow without touching anything).
+                 rare_token_tracker=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -925,9 +937,10 @@ class ToolExecutor:
         # anything).
         self.content_monitor = content_monitor
         # Wave-133 (row 12 second half): post-run artifact sweep,
-        # operator opt-in. Opt-in: None = zero behavior change
+        # operator opt-in. Opt-in: None/False = zero behavior change
         # (execute_approved does not sweep; run_artifact_sweep still
-        # works when called directly).
+        # works when called directly). Wave-136: True sweeps the run
+        # sandbox; {"watch_roots": [...]} also sweeps watch roots.
         self.artifact_sweep = artifact_sweep
         # Wave-134 (row 9): cross-run framing-drift store,
         # operator-supplied. Opt-in: None = zero behavior change
@@ -944,6 +957,11 @@ class ToolExecutor:
         # (validate_baseline returns None; check_run_drift never
         # applies the provisional WARN cap).
         self.population_store = population_store
+        # Wave-136 (row 13): rare-token carryover tracker,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (check_rare_token_carryover returns a silent allow without
+        # touching anything; note_read_output is a no-op).
+        self.rare_token_tracker = rare_token_tracker
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2862,6 +2880,130 @@ class ToolExecutor:
             })
         return res
 
+    def note_read_output(self, agent_id, source_id, text):
+        """Wave-136 (row 13): record one read source's rare tokens.
+
+        Explicit, minimal read-path wiring for the rare-token
+        carryover tracker: the operator/harness calls this when a
+        READ-type tool completes (read_file results, etc.). The hot
+        tool path is untouched and nothing is double-counted. With
+        no tracker installed this is a no-op returning
+        ``{"observed": False}`` (zero behavior change). Reads the
+        operator never reports are invisible to the tracker — the
+        documented coverage ceiling.
+        """
+        if self.rare_token_tracker is None:
+            return {"observed": False, "agent_id": str(agent_id),
+                    "source_id": str(source_id)}
+        return self.rare_token_tracker.observe_read(agent_id, source_id,
+                                                    text)
+
+    def check_rare_token_carryover(self, agent_id, tool, args,
+                                   payload_text=None, identity=None):
+        """Wave-136 (row 13): rare-token carryover check.
+
+        When a ``rare_token_tracker`` was installed at construction
+        (opt-in), scores one outbound payload for rare-token
+        carryover from anything this agent READ this run. Graduated
+        response:
+
+        - allow: silent.
+        - flag: a LOUD ``rare_token_flag`` audit event; execution
+          proceeds (1-2 carryover tokens, or >=K tokens to a
+          KNOWN destination — destination novelty amplifies).
+        - require_approval: a LOUD ``rare_token_hold`` audit event
+          AND a synthetic ``rare_token_review`` approval is queued
+          for human resolution (flag "rare_token_carryover",
+          separation-of-duties: the agent can never approve its own
+          hold away). ``identity`` is REQUIRED here (F42).
+
+        Every audit event carries counts and doc ids ONLY — token
+        strings are never logged (privacy). With no tracker
+        installed this returns a silent ``allow`` and does nothing
+        (zero behavior change).
+
+        Honest ceiling: a full rewrite that drops every rare token
+        is invisible to this primitive by design (see
+        gov/rare_token.py).
+        """
+        silent = {"verdict": "allow", "overlap": 0, "source_id": None,
+                  "reason": "no_rare_token_tracker",
+                  "agent_id": str(agent_id)}
+        if self.rare_token_tracker is None:
+            return silent
+        res = self.rare_token_tracker.check_egress(agent_id, tool, args,
+                                                  payload_text=payload_text)
+        verdict = res.get("verdict", "allow")
+        if verdict == "allow":
+            return res
+        detail = ("overlap=%d source=%s destination=%s novel=%s" % (
+            res.get("overlap", 0), res.get("source_id"),
+            res.get("destination"), res.get("destination_novel")))
+        if verdict == "flag":
+            self.log.append({
+                "event": "rare_token_flag",
+                "flag": "rare_token_carryover",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "tool": tool,
+                "destination": res.get("destination"),
+                "detail": detail,
+                "reason": ("rare-token carryover flag (execution "
+                           "proceeds; operator review): %s" % detail),
+            })
+            return res
+        # require_approval.
+        self.log.append({
+            "event": "rare_token_hold",
+            "flag": "rare_token_carryover",
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "tool": tool,
+            "destination": res.get("destination"),
+            "detail": detail,
+            "reason": ("rare-token carryover HOLD: %s" % detail),
+        })
+        if identity is None:
+            raise TypeError(
+                "check_rare_token_carryover() requires identity when a "
+                "carryover hold queues a rare_token_review approval "
+                "(F42); the approval queue never trusts caller-supplied "
+                "identity fields")
+        try:
+            self.approvals.queue(
+                {"tool": "rare_token_review",
+                 "args": {"agent_id": str(agent_id),
+                          "tool": tool,
+                          "destination": res.get("destination"),
+                          "overlap": res.get("overlap", 0),
+                          "source_id": res.get("source_id"),
+                          "destination_novel": res.get("destination_novel")},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Rare-token carryover HOLD for agent %r: %s"
+                    % (agent_id, detail),
+                    policy_id="rare-token",
+                    flag="rare_token_carryover"),
+                "agent_direct",
+                "review rare-token carryover HOLD for agent %r"
+                % (agent_id,),
+                caller_identity=identity)
+        except Exception:
+            self.log.append({
+                "event": "rare_token_hold_queue_failed",
+                "flag": "rare_token_carryover",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "reason": ("rare_token_review approval could not be "
+                           "queued; the rare_token_hold audit event "
+                           "remains the record -- operator must review "
+                           "manually"),
+            })
+        return res
+
     def check_run_framing(self, agent_id, fingerprint=None, record=True,
                           identity=None, window=8):
         """Wave-134 (row 9): cross-run framing-drift check for an agent.
@@ -2969,19 +3111,28 @@ class ToolExecutor:
 
         Row-12 second half (wave-133): walks the run sandbox and
         compares every regular file against the Wave-130 artifact
-        inventory (``gov/artifact_sweep.py``). Each finding is audited
-        as a chained ``artifact_sweep_finding`` event; one
+        inventory (``gov/artifact_sweep.py``). Wave-136: when the
+        ``artifact_sweep`` opt-in is a dict with a ``"watch_roots"``
+        key, operator-configured watch roots are swept too (same
+        never_registered / integrity_violation logic; findings carry
+        the resolved ``root``). Each finding is audited as a chained
+        ``artifact_sweep_finding`` event; one
         ``artifact_sweep_complete`` event carries the sweep stats as
         evidence the sweep ran. Returns the findings list.
 
         Works whether or not the ``artifact_sweep`` opt-in is
         installed (the opt-in only controls the AUTOMATIC run at the
         end of ``execute_approved()``). Never raises: a sweep failure
-        is audited, never fatal to the caller.
+        (including a misconfigured watch root, which fails closed
+        before anything is walked) is audited, never fatal to the
+        caller.
         """
+        watch_roots = ()
+        if isinstance(self.artifact_sweep, dict):
+            watch_roots = self.artifact_sweep.get("watch_roots", ()) or ()
         try:
             findings, stats = _artifact_sweep.sweep_run_dir(
-                self.run_dir, self.artifacts)
+                self.run_dir, self.artifacts, watch_roots=watch_roots)
         except Exception as e:  # noqa: BLE001 - sweep must not break runs
             self.log.append({
                 "event": "artifact_sweep_failed",
@@ -2997,11 +3148,15 @@ class ToolExecutor:
                 "flag": "unregistered_artifact",
                 "run_id": self.run_id,
                 "kind": f["kind"],
+                "root": f.get("root"),
                 "path": f["path"],
                 "size": f["size"],
                 "sha256": f["sha256"],
                 "mtime": f["mtime"],
                 "detail": f["detail"],
+                # Only present on integrity_violation: the evidence of
+                # what the bytes changed FROM.
+                "registered_sha256": f.get("registered_sha256"),
             })
         self.log.append({
             "event": _artifact_sweep.SWEEP_COMPLETE_EVENT,
@@ -3010,6 +3165,7 @@ class ToolExecutor:
             "files_compared": stats["files_compared"],
             "findings": stats["findings"],
             "skipped_unreadable": stats["skipped_unreadable"],
+            "watch_roots": [w["root"] for w in stats["watch_roots"]],
         })
         return findings
 
@@ -3017,10 +3173,10 @@ class ToolExecutor:
         """Automatic post-run sweep hook for ``execute_approved()``.
 
         Runs only when the ``artifact_sweep`` opt-in was installed at
-        construction (None = zero behavior change). The sweep needs no
+        construction (None/False = zero behavior change). The sweep needs no
         queue state, so it runs after the queue lock is released.
         """
-        if self.artifact_sweep is None:
+        if not self.artifact_sweep:
             return
         self.run_artifact_sweep()
 

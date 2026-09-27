@@ -408,9 +408,10 @@ def main():
           % (n_break, n_held, n_err, det))
     for name, verdict, detail in first:
         print("  %-36s %-6s %s" % (name, verdict, detail))
-    print("  NOTE: exact normalized-target matching is the documented "
-          "ceiling -- semantic laundering and per-run agent_id "
-          "rotation remain invisible by design.")
+    print("  NOTE: the laundering cover leg is now paraphrase-tolerant "
+          "(wave-136 token-overlap tier, destination-vetoed); full "
+          "synonym replacement with no shared tokens and per-run "
+          "agent_id rotation remain invisible by design.")
     if not det:
         print("NON-DETERMINISTIC across runs -- do not trust")
         return 2
