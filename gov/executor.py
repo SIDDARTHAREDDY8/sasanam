@@ -81,6 +81,7 @@ from . import intent_slice as _intent_slice
 from . import revoke as _revoke
 from . import delegation_tokens as _delegation_tokens
 from . import drift as _drift
+from . import egress_content as _egress_content
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
@@ -648,7 +649,11 @@ class ToolExecutor:
                  # Cross-run drift detection (row 9, wave-131): appended
                  # LAST for the same positional-misalignment reason.
                  # Opt-in: None (default) = zero behavior change.
-                 drift_store=None):
+                 drift_store=None,
+                 # Unlabeled-egress content analysis (row 13, wave-132):
+                 # appended LAST for the same positional-misalignment
+                 # reason. Opt-in: None (default) = zero behavior change.
+                 content_monitor=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -889,6 +894,11 @@ class ToolExecutor:
         # Opt-in: None = zero behavior change (check_run_drift returns
         # a silent result without touching anything).
         self.drift_store = drift_store
+        # Wave-132 (row 13): unlabeled-egress content monitor,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (check_egress_content returns a silent allow without touching
+        # anything).
+        self.content_monitor = content_monitor
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2322,6 +2332,110 @@ class ToolExecutor:
                 "reason": ("drift_review approval could not be queued; "
                            "the drift_hold audit event remains the "
                            "record -- operator must review manually"),
+            })
+        return res
+
+    def check_egress_content(self, agent_id, tool, args, payload_text=None,
+                             identity=None):
+        """Wave-132 (row 13): unlabeled-egress content check.
+
+        When a ``content_monitor`` was installed at construction
+        (opt-in), scores the outbound payload with
+        ``gov.egress_content``. Graduated response:
+
+        - allow: silent; the payload is recorded into the monitor's
+          baseline and nothing else happens.
+        - flag: a LOUD ``egress_content_flag`` audit event; execution
+          proceeds (the flag is for operator review, not a block).
+        - require_approval: a LOUD ``egress_content_hold`` audit event
+          AND a synthetic ``content_egress_review`` approval is queued
+          for human resolution (flag "egress_content_risk",
+          separation-of-duties: the agent can never approve its own
+          hold away). ``identity`` is REQUIRED here (F42).
+
+        With no content_monitor installed this returns a silent
+        ``allow`` result and does nothing (zero behavior change).
+
+        Honest ceiling: prose-form exfiltration carries no
+        structured/dump/entropy signal and scores ``allow`` by design
+        (see gov/egress_content.py).
+        """
+        silent = {"verdict": "allow", "score": 0.0, "reason":
+                  "no_content_monitor", "agent_id": str(agent_id)}
+        if self.content_monitor is None:
+            return silent
+        res = self.content_monitor.check(agent_id, tool, args,
+                                         payload_text=payload_text)
+        verdict = res.get("verdict", "allow")
+        if verdict == "allow":
+            return res
+        signals = res.get("signals", {})
+        detail = ("score=%.2f signals=%s"
+                  % (res.get("score", 0.0),
+                     ",".join("%s=%.2f" % (k, v)
+                              for k, v in sorted(signals.items())
+                              if isinstance(v, (int, float)))))
+        if verdict == "flag":
+            self.log.append({
+                "event": "egress_content_flag",
+                "flag": "egress_content_risk",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "tool": tool,
+                "destination": res.get("destination"),
+                "detail": detail,
+                "reason": ("unlabeled-egress content flag (execution "
+                           "proceeds; operator review): %s" % detail),
+            })
+            return res
+        # require_approval.
+        self.log.append({
+            "event": "egress_content_hold",
+            "flag": "egress_content_risk",
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "tool": tool,
+            "destination": res.get("destination"),
+            "detail": detail,
+            "reason": ("unlabeled-egress content HOLD: %s" % detail),
+        })
+        if identity is None:
+            raise TypeError(
+                "check_egress_content() requires identity when a content "
+                "hold queues a content_egress_review approval (F42); the "
+                "approval queue never trusts caller-supplied identity "
+                "fields")
+        try:
+            self.approvals.queue(
+                {"tool": "content_egress_review",
+                 "args": {"agent_id": str(agent_id),
+                          "tool": tool,
+                          "destination": res.get("destination"),
+                          "score": res.get("score", 0.0),
+                          "signals": signals},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Unlabeled-egress content HOLD for agent %r: %s"
+                    % (agent_id, detail),
+                    policy_id="egress-content",
+                    flag="egress_content_risk"),
+                "agent_direct",
+                "review unlabeled-egress content HOLD for agent %r"
+                % (agent_id,),
+                caller_identity=identity)
+        except Exception:
+            self.log.append({
+                "event": "egress_content_hold_queue_failed",
+                "flag": "egress_content_risk",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "reason": ("content_egress_review approval could not be "
+                           "queued; the egress_content_hold audit event "
+                           "remains the record -- operator must review "
+                           "manually"),
             })
         return res
 
