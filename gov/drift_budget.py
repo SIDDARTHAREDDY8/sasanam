@@ -73,6 +73,44 @@ never prompts, tool outputs, or log contents.
 
 The existing single-run WARN path (``gov.drift.detect_drift``) is
 unchanged -- this module is additive and standalone.
+
+Adaptive pacing-aware extension (wave-139): ``AdaptiveBudgetPolicy``
+opts one agent's budget into pacing-aware adaptation. Two triggers,
+both consistency-gated and both audited with a LOUD
+``drift_budget_adapted`` evidence event:
+
+  1. contribution streak: ``adapt_strikes`` consecutive contributing
+     runs each at/above ``adapt_contrib_floor`` x warn_distance, with
+     direction consistency >= min_consistency;
+  2. near-trip cycles: a defuse cycle (contributing runs between two
+     resets) whose cumulative reached ``adapt_near_floor`` x the
+     effective trip limit with consistency >= min_consistency counts
+     as a near-trip; ``adapt_cycles`` consecutive near-trip cycles in
+     a sustained direction (direction-aware streak: a cycle whose
+     direction cancels the streak's net direction restarts the streak
+     at 1 instead of extending it) adapts.
+
+On adaptation the agent's effective trip limit is multiplied by
+``adapt_factor`` and the window shrinks by one run (floor 2), up to
+``adapt_max_level`` tightenings; the trip then also accepts a single
+contributing run (the adaptation level itself encodes the prior
+multi-cycle evidence). A benign (non-near-trip) cycle relaxes one
+level, audited as ``drift_budget_relaxed``. Clean runs still defuse
+the accumulator; expiry still applies to the (possibly shrunk)
+window; a plain ``BudgetPolicy`` disables all of this (zero behavior
+change). All adaptation decisions are ``adapt``-kind hash-chained
+records, written audit-before-mutation like everything else here.
+
+Honest ceilings (updated): the adaptation parameters
+(adapt_near_floor / adapt_cycles / adapt_factor / adapt_contrib_floor
+/ adapt_strikes) are new operator calibration targets -- the
+threshold-gaming residual MUTATES, it does not die: an attacker who
+learns the adapted limit paces under that instead, flips direction
+between cycles to break the streak, or spaces cycles so each stays
+sub-near-trip. Repeated same-direction near-threshold bursts with
+defuses are indistinguishable from a paced boil by construction --
+the adaptation fires on both (pinned EXPECTED b2 in
+``evals/adaptive_drift_probes.py``).
 """
 
 from collections import Counter
@@ -83,6 +121,7 @@ from gov.drift import RunFingerprint, fingerprint_tool_distance
 
 __all__ = [
     "BudgetPolicy",
+    "AdaptiveBudgetPolicy",
     "BudgetStore",
     "BudgetCheck",
     "BudgetContribution",
@@ -154,6 +193,70 @@ class BudgetPolicy:
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__slots__}
+
+
+class AdaptiveBudgetPolicy(BudgetPolicy):
+    """Pacing-aware extension of BudgetPolicy (wave-139).
+
+    All ``BudgetPolicy`` fields keep their meaning; a plain
+    ``BudgetPolicy`` disables adaptation entirely. New fields:
+
+    ``adapt_near_floor``: fraction of the effective trip limit; a
+    defuse cycle whose cumulative reached this fraction (with
+    direction consistency >= min_consistency) counts as a near-trip.
+    ``adapt_cycles``: consecutive sustained-direction near-trip
+    cycles that trigger a tightening. ``adapt_factor``: trip-limit
+    multiplier applied per tightening (in (0, 1)). ``adapt_strikes``:
+    consecutive contributing runs each at/above
+    ``adapt_contrib_floor`` x warn_distance (consistency-gated) that
+    trigger a tightening mid-cycle. ``adapt_max_level``: cap on
+    tightenings. Each tightening also shrinks the window by one run
+    (floor 2) and, while level >= 1, lets a single contributing run
+    trip (the level encodes the prior multi-cycle evidence).
+    """
+
+    __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
+                 "adapt_contrib_floor", "adapt_strikes",
+                 "adapt_max_level")
+
+    def __init__(self, warn_distance, adapt_near_floor=0.75,
+                 adapt_cycles=2, adapt_factor=0.6,
+                 adapt_contrib_floor=0.75, adapt_strikes=3,
+                 adapt_max_level=3, **kw):
+        super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
+        if not isinstance(adapt_near_floor, (int, float)) or \
+                not 0 < adapt_near_floor <= 1:
+            raise ValueError("adapt_near_floor must be in (0, 1], got %r"
+                             % (adapt_near_floor,))
+        if not isinstance(adapt_cycles, int) or adapt_cycles < 1:
+            raise ValueError("adapt_cycles must be an int >= 1, got %r"
+                             % (adapt_cycles,))
+        if not isinstance(adapt_factor, (int, float)) or \
+                not 0 < adapt_factor < 1:
+            raise ValueError("adapt_factor must be in (0, 1), got %r"
+                             % (adapt_factor,))
+        if not isinstance(adapt_contrib_floor, (int, float)) or \
+                not 0 < adapt_contrib_floor < 1:
+            raise ValueError("adapt_contrib_floor must be in (0, 1), "
+                             "got %r" % (adapt_contrib_floor,))
+        if not isinstance(adapt_strikes, int) or adapt_strikes < 2:
+            raise ValueError("adapt_strikes must be an int >= 2, got %r"
+                             % (adapt_strikes,))
+        if not isinstance(adapt_max_level, int) or adapt_max_level < 1:
+            raise ValueError("adapt_max_level must be an int >= 1, got %r"
+                             % (adapt_max_level,))
+        self.adapt_near_floor = float(adapt_near_floor)
+        self.adapt_cycles = adapt_cycles
+        self.adapt_factor = float(adapt_factor)
+        self.adapt_contrib_floor = float(adapt_contrib_floor)
+        self.adapt_strikes = adapt_strikes
+        self.adapt_max_level = adapt_max_level
+
+    def to_dict(self):
+        d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
+        d.update({k: getattr(self, k)
+                  for k in AdaptiveBudgetPolicy.__slots__})
+        return d
 
 
 def signed_tool_deltas(run_fp, baseline_fp):
@@ -274,6 +377,116 @@ class BudgetStore(ChainedStore):
             raise ValueError("run_seq must be a non-negative int, got %r"
                              % (run_seq,))
 
+    # ------------------------------------------- pacing-aware adaptation
+
+    @staticmethod
+    def _is_adaptive(policy):
+        return isinstance(policy, AdaptiveBudgetPolicy)
+
+    def _adapt_fold(self, records):
+        """Fold adapt/reset records to current adaptation state.
+
+        Returns ``(level, streak, streak_net, streak_gross,
+        last_adapt_seq)``. Each reset record carries the post-reset
+        streak; a cycle-triggered tightening (``reset_streak``) zeroes
+        it. Records from ``reset()`` predate the adaptive fields and
+        are treated as streak 0 (level is operator policy state and
+        survives a manual reset -- it decays via benign cycles).
+        Deterministic: pure fold over the chained log.
+        """
+        level = 0
+        streak = 0
+        streak_net = {}
+        streak_gross = 0.0
+        last_adapt_seq = -1
+        for r in records:
+            kind = r.get("kind")
+            if kind == "adapt":
+                level = int(r.get("adapt_level", level))
+                last_adapt_seq = max(last_adapt_seq,
+                                     int(r.get("run_seq", -1)))
+                if r.get("reset_streak"):
+                    streak = 0
+                    streak_net = {}
+                    streak_gross = 0.0
+            elif kind == "reset":
+                streak = int(r.get("streak", 0))
+                streak_net = {k: float(v) for k, v in
+                              r.get("streak_net", {}).items()}
+                streak_gross = float(r.get("streak_gross", 0.0))
+        return level, streak, streak_net, streak_gross, last_adapt_seq
+
+    @staticmethod
+    def _effective(policy, level):
+        """Effective (trip limit, window) at an adaptation level."""
+        limit = policy.budget_limit * (policy.adapt_factor ** level)
+        window = max(2, policy.window_runs - level)
+        return round(limit, 9), window
+
+    def _cycle_contributions(self, records, window):
+        """Contributing records after the last reset, within the window.
+
+        Returns ``(contributing, last_reset_seq, window_n)`` where
+        ``window_n`` counts every contribution-kind record in the
+        window (contributing or not), matching the historical
+        ``BudgetCheck.window_n`` semantics.
+        """
+        last_reset_seq = -1
+        for r in records:
+            if r.get("kind") == "reset":
+                last_reset_seq = max(last_reset_seq,
+                                     int(r.get("run_seq", -1)))
+        windowed = [r for r in records
+                    if r.get("kind") == "contribution"
+                    and int(r.get("run_seq", -1)) > last_reset_seq]
+        windowed = windowed[-window:]
+        contributing = [r for r in windowed if r.get("contributes")]
+        return contributing, last_reset_seq, len(windowed)
+
+    @staticmethod
+    def _window_stats(contributing):
+        """(cumulative, consistency, net dict, gross) over contributions."""
+        cumulative = round(sum(r.get("threshold_equivalents", 0.0)
+                               for r in contributing), 9)
+        net = Counter()
+        gross = 0.0
+        for r in contributing:
+            for tool, delta in r.get("signed_deltas", {}).items():
+                net[tool] += delta
+                gross += abs(delta)
+        consistency = (sum(abs(v) for v in net.values()) / gross
+                       if gross > 0 else 0.0)
+        return cumulative, consistency, dict(net), gross
+
+    def _write_adapt(self, agent_id, run_seq, level, direction, trigger,
+                     eff_limit, eff_window, evidence, audit,
+                     reset_streak=False):
+        """Write an ``adapt`` record + audit event (audit-before-write).
+
+        Tightenings emit the LOUD ``drift_budget_adapted`` evidence
+        event; relaxations emit the audited (non-LOUD)
+        ``drift_budget_relaxed`` event.
+        """
+        record = {"kind": "adapt", "agent_id": agent_id,
+                  "run_seq": run_seq,
+                  "drift_budget_version": _BUDGET_VERSION,
+                  "adapt_level": level, "direction": direction,
+                  "trigger": trigger, "effective_limit": eff_limit,
+                  "effective_window": eff_window,
+                  "reset_streak": bool(reset_streak),
+                  "evidence": dict(evidence)}
+        event = {"event": "drift_budget_adapted"
+                           if direction == "tighten"
+                           else "drift_budget_relaxed",
+                 "agent_id": agent_id, "run_seq": run_seq,
+                 "adapt_level": level, "direction": direction,
+                 "trigger": trigger, "effective_limit": eff_limit,
+                 "effective_window": eff_window,
+                 "evidence": dict(evidence)}
+        if direction == "tighten":
+            event["severity"] = "LOUD"
+        return self._write(agent_id, record, event, audit)
+
     def record_run(self, agent_id, run_seq, run_id, fingerprint,
                    baseline, policy, principal="", audit=None):
         """Assess one run against the agent's budget; store the result.
@@ -342,11 +555,14 @@ class BudgetStore(ChainedStore):
                       "principal": str(principal),
                       "drift_budget_version": _BUDGET_VERSION,
                       "trigger": "clean_run", "distance": distance}
-            self._write(agent_id, record,
-                        {"event": "drift_budget_reset",
-                         "agent_id": agent_id, "run_seq": run_seq,
-                         "trigger": "clean_run", "distance": distance},
-                        audit)
+            audit_event = {"event": "drift_budget_reset",
+                           "agent_id": agent_id, "run_seq": run_seq,
+                           "trigger": "clean_run", "distance": distance}
+            if self._is_adaptive(policy):
+                self._adaptive_defuse(agent_id, run_seq, record,
+                                      audit_event, policy, audit)
+            else:
+                self._write(agent_id, record, audit_event, audit)
             return BudgetContribution(False, distance, 0.0, "clean",
                                       True, run_seq, agent_id)
 
@@ -364,9 +580,114 @@ class BudgetStore(ChainedStore):
                      "run_seq": run_seq, "contributes": True,
                      "threshold_equivalents": round(fraction, 9),
                      "distance": distance}, audit)
+        if self._is_adaptive(policy):
+            self._adaptive_streak_check(agent_id, run_seq, policy, audit)
         return BudgetContribution(True, distance, fraction,
                                   "sub_threshold", False,
                                   run_seq, agent_id)
+
+    def _adaptive_defuse(self, agent_id, run_seq, record, audit_event,
+                         policy, audit):
+        """Evaluate the defused cycle for pacing; adapt or relax.
+
+        Computes the just-ended cycle's cumulative/consistency from
+        the chained log (pre-reset state), decides near-trip with a
+        direction-aware streak, writes the reset record carrying the
+        post-reset streak, then tightens (LOUD ``drift_budget_adapted``)
+        or relaxes (``drift_budget_relaxed``) as decided. Audit runs
+        before every mutation; a failure aborts and the store is
+        unchanged.
+        """
+        records = self._read_all(agent_id)
+        level, streak, s_net, s_gross, _ = self._adapt_fold(records)
+        eff_limit, eff_window = self._effective(policy, level)
+        cycle, _, _ = self._cycle_contributions(records, eff_window)
+        cum, cons, net, gross = self._window_stats(cycle)
+        near_trip = (len(cycle) >= 1
+                     and cum >= policy.adapt_near_floor * eff_limit
+                     and cons >= policy.min_consistency)
+        if near_trip:
+            # Direction-aware streak: a cycle whose direction cancels
+            # the streak's net direction restarts the streak at 1
+            # instead of extending it (alternating benign bursts never
+            # accumulate).
+            cand_net = dict(s_net)
+            for tool, delta in net.items():
+                cand_net[tool] = cand_net.get(tool, 0.0) + delta
+            cand_gross = s_gross + gross
+            cand_cons = (sum(abs(v) for v in cand_net.values())
+                         / cand_gross if cand_gross > 0 else 0.0)
+            if cand_cons >= policy.min_consistency:
+                new_streak, new_net = streak + 1, cand_net
+            else:
+                new_streak, new_net = 1, dict(net)
+            new_gross = cand_gross if new_streak > 1 else gross
+        else:
+            new_streak, new_net, new_gross = 0, {}, 0.0
+        record.update({
+            "near_trip": near_trip, "streak": new_streak,
+            "cycle_cumulative": cum,
+            "cycle_consistency": round(cons, 6),
+            "streak_net": {k: round(v, 6) for k, v in new_net.items()},
+            "streak_gross": round(new_gross, 6)})
+        audit_event["near_trip"] = near_trip
+        audit_event["near_streak"] = new_streak
+        self._write(agent_id, record, audit_event, audit)
+        if (near_trip and new_streak >= policy.adapt_cycles
+                and level < policy.adapt_max_level):
+            new_level = level + 1
+            nl, nw = self._effective(policy, new_level)
+            self._write_adapt(
+                agent_id, run_seq, new_level, "tighten",
+                "near_trip_cycle", nl, nw,
+                {"near_streak": new_streak, "cycle_cumulative": cum,
+                 "cycle_consistency": round(cons, 6)}, audit,
+                reset_streak=True)
+        elif not near_trip and level > 0:
+            new_level = level - 1
+            nl, nw = self._effective(policy, new_level)
+            self._write_adapt(agent_id, run_seq, new_level, "relax",
+                              "benign_cycle", nl, nw,
+                              {"cycle_cumulative": cum}, audit)
+
+
+    def _adaptive_streak_check(self, agent_id, run_seq, policy, audit):
+        """Mid-cycle trigger: N consecutive near-threshold contributions.
+
+        ``adapt_strikes`` consecutive contributing runs (after the last
+        reset, inside the window, all newer than the last adaptation),
+        each at/above ``adapt_contrib_floor`` threshold-equivalents
+        with direction consistency >= min_consistency, tighten the
+        budget LOUD. Under the default policy the static trip usually
+        fires first; this trigger is load-bearing under operator
+        policies with a higher budget_limit.
+        """
+        records = self._read_all(agent_id)
+        level, _, _, _, last_adapt_seq = self._adapt_fold(records)
+        if level >= policy.adapt_max_level:
+            return
+        _, eff_window = self._effective(policy, level)
+        cycle, _, _ = self._cycle_contributions(records, eff_window)
+        tail = cycle[-policy.adapt_strikes:]
+        if len(tail) != policy.adapt_strikes:
+            return
+        if not all(int(r.get("run_seq", -1)) > last_adapt_seq
+                   for r in tail):
+            return
+        fracs = [r.get("threshold_equivalents", 0.0) for r in tail]
+        if min(fracs) < policy.adapt_contrib_floor:
+            return
+        _, cons, _, _ = self._window_stats(tail)
+        if cons < policy.min_consistency:
+            return
+        new_level = level + 1
+        nl, nw = self._effective(policy, new_level)
+        self._write_adapt(
+            agent_id, run_seq, new_level, "tighten",
+            "contribution_streak", nl, nw,
+            {"streak": policy.adapt_strikes,
+             "min_fraction": round(min(fracs), 6),
+             "consistency": round(cons, 6)}, audit)
 
     def reset(self, agent_id, reason="manual", audit=None):
         """Clear the agent's budget on operator demand (audited)."""
@@ -407,32 +728,26 @@ class BudgetStore(ChainedStore):
         agent_id = str(agent_id)
         records = self._read_all(agent_id)
 
-        last_reset_seq = -1
-        for r in records:
-            if r.get("kind") == "reset":
-                last_reset_seq = max(last_reset_seq,
-                                     int(r.get("run_seq", -1)))
-        windowed = [r for r in records
-                    if r.get("kind") == "contribution"
-                    and int(r.get("run_seq", -1)) > last_reset_seq]
-        windowed = windowed[-policy.window_runs:]
-        contributing = [r for r in windowed if r.get("contributes")]
+        adaptive = self._is_adaptive(policy)
+        adapt_level = 0
+        eff_limit, eff_window = policy.budget_limit, policy.window_runs
+        if adaptive:
+            adapt_level, _, _, _, _ = self._adapt_fold(records)
+            eff_limit, eff_window = self._effective(policy, adapt_level)
 
-        cumulative = round(sum(r.get("threshold_equivalents", 0.0)
-                               for r in contributing), 9)
-        net = Counter()
-        gross = 0.0
-        for r in contributing:
-            for tool, delta in r.get("signed_deltas", {}).items():
-                net[tool] += delta
-                gross += abs(delta)
-        consistency = (sum(abs(v) for v in net.values()) / gross
-                       if gross > 0 else 0.0)
+        contributing, last_reset_seq, window_n = self._cycle_contributions(
+            records, eff_window)
+        cumulative, consistency, _, _ = self._window_stats(contributing)
 
         n = len(contributing)
-        tripped = (cumulative >= policy.budget_limit
+        # While adapted (level >= 1) the level itself encodes the prior
+        # multi-cycle pacing evidence, so a single fresh contributing
+        # run at/above the lowered limit trips.
+        enough_runs = (n >= policy.min_contributing_runs
+                       or (adaptive and adapt_level >= 1 and n >= 1))
+        tripped = (cumulative >= eff_limit
                    and consistency >= policy.min_consistency
-                   and n >= policy.min_contributing_runs)
+                   and enough_runs)
 
         trip_seqs = [int(r.get("run_seq", -1)) for r in records
                      if r.get("kind") == "trip"
@@ -463,17 +778,21 @@ class BudgetStore(ChainedStore):
                              "cumulative": cumulative,
                              "consistency": round(consistency, 6),
                              "contributing_runs": n,
-                             "window_runs": policy.window_runs,
-                             "budget_limit": policy.budget_limit},
+                             "window_runs": eff_window,
+                             "budget_limit": eff_limit,
+                             "adapt_level": adapt_level},
                             audit)
 
         status = "tripped" if tripped else "ok"
         return BudgetCheck(
             status, agent_id=agent_id, cumulative=cumulative,
             consistency=round(consistency, 6),
-            contributing_runs=n, window_n=len(windowed),
+            contributing_runs=n, window_n=window_n,
             tripped_run_seq=tripped_seq if status == "tripped" else None,
             detail={"budget_limit": policy.budget_limit,
                     "window_runs": policy.window_runs,
                     "min_consistency": policy.min_consistency,
-                    "warn_distance": policy.warn_distance})
+                    "warn_distance": policy.warn_distance,
+                    "adapt_level": adapt_level,
+                    "effective_limit": eff_limit,
+                    "effective_window": eff_window})

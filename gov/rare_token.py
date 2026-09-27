@@ -67,9 +67,17 @@ evals/rare_token_probes.py and evals/read_then_egress_probes.py):
   operator never reports are invisible. This keeps the hot tool path
   untouched and avoids double-counting, at the cost of coverage
   depending on the integration.
-- Cross-run memory: the tracker is per-run. A read in run N
-  followed by an egress in run N+1 is invisible to both tiers
-  (the standing row-13 ceiling).
+- Cross-run memory: the tracker is per-run, but when constructed
+  with a ``taint_ledger`` (gov/taint_ledger.py) the read-side taint
+  persists across runs keyed by stable agent identity: a later run's
+  ``check_egress`` scores blinded-commitment overlap against prior
+  runs' taint (same verdict ladder) and the behavioral tier fires on
+  prior-run reads too. Without a ledger attached, a read in run N
+  followed by an egress in run N+1 stays invisible to both tiers
+  (the opt-in ceiling). The ledger's own ceilings apply: operator
+  TTL (an attacker who knows it can wait it out), stable identity
+  required, key rotation blinds prior taint, destination history
+  stays per-run.
 
 The reference wordlist choice: a bundled static list of common
 English words (function words + frequent content words), embedded so
@@ -221,6 +229,11 @@ class RareTokenTracker:
 
     ``observe_read(agent_id, source_id, text)`` records the rare-token
     set of a read source (doc id -> token set, process memory only).
+    When constructed with a ``taint_ledger`` (gov/taint_ledger.py),
+    the read is ALSO recorded durably (counts, doc ids, and opaque
+    per-token commitments — never token strings), keyed by stable
+    agent identity, so a LATER run's ``check_egress`` can score
+    overlap against prior runs' taint.
     ``check_egress(agent_id, tool, args, payload_text=None)`` scores
     one outbound payload: the max per-source overlap drives a
     graduated verdict (allow / flag / require_approval), amplified by
@@ -228,6 +241,8 @@ class RareTokenTracker:
     behavioral tier fires instead when the agent read >=1
     token-bearing document and egresses to a concrete novel
     destination ("behavioral_flag" — triage-only, never a hold).
+    With a ``taint_ledger`` attached, prior runs' reads count for
+    the behavioral tier too (see gov/taint_ledger.py).
     Result dicts and audit payloads carry counts and doc ids only —
     never token strings.
     """
@@ -235,7 +250,8 @@ class RareTokenTracker:
     def __init__(self, reference=None,
                  carryover_threshold=DEFAULT_CARRYOVER_THRESHOLD,
                  max_docs_per_agent=MAX_DOCS_PER_AGENT,
-                 max_tokens_per_doc=MAX_TOKENS_PER_DOC):
+                 max_tokens_per_doc=MAX_TOKENS_PER_DOC,
+                 taint_ledger=None):
         if (not isinstance(carryover_threshold, int)
                 or carryover_threshold < 1):
             raise ValueError("carryover_threshold must be a positive int")
@@ -246,21 +262,37 @@ class RareTokenTracker:
         self._max_tokens = max_tokens_per_doc
         self._docs = {}          # agent_id -> {source_id: frozenset}
         self._destinations = {}  # agent_id -> set of seen destinations
+        # Wave-139: optional durable cross-run taint (opt-in; None =
+        # zero behavior change vs the per-run tracker).
+        self._taint_ledger = taint_ledger
 
     # -- reads ------------------------------------------------------
     def observe_read(self, agent_id, source_id, text):
-        """Record the rare-token set of one read source."""
+        """Record the rare-token set of one read source.
+
+        With a ``taint_ledger`` attached the read is also recorded
+        durably for later runs (``ledger_recorded`` in the return
+        dict); a ledger write failure propagates fail-closed rather
+        than silently dropping taint.
+        """
         agent_id = str(agent_id)
         source_id = str(source_id)
         tokens = extract_rare_tokens(text, self._reference)
         if len(tokens) > self._max_tokens:
             tokens = tokens[:self._max_tokens]
+        # F167 ordering: the durable write goes first, so a ledger
+        # failure leaves the in-run tracker unchanged too.
+        ledger_recorded = False
+        if self._taint_ledger is not None:
+            res = self._taint_ledger.observe(agent_id, source_id, tokens)
+            ledger_recorded = bool(res.get("ledger_recorded"))
         docs = self._docs.setdefault(agent_id, {})
         docs[source_id] = frozenset(tokens)
         while len(docs) > self._max_docs:
             docs.pop(next(iter(docs)))
         return {"observed": True, "agent_id": agent_id,
-                "source_id": source_id, "rare_token_count": len(tokens)}
+                "source_id": source_id, "rare_token_count": len(tokens),
+                "ledger_recorded": ledger_recorded}
 
     # -- egress -----------------------------------------------------
     def _token_bearing_sources(self, agent_id):
@@ -306,10 +338,38 @@ class RareTokenTracker:
                 best_overlap = overlap
                 best_source = source_id
 
+        # Wave-139: cross-run taint. Sources already covered in-run
+        # take precedence (full token sets); ledger-only sources are
+        # scored by blinded-commitment overlap — the same verdict
+        # ladder below runs unchanged over the union.
+        ledger_records = []
+        if self._taint_ledger is not None:
+            in_run_sources = set(self._docs.get(agent_id, {}))
+            ledger_records = self._taint_ledger.taint_for(agent_id)
+            for rec in ledger_records:
+                sid = rec["source_id"]
+                if sid in in_run_sources:
+                    continue
+                committed = set(rec["commitments"])
+                blind = self._taint_ledger.blinded_token
+                overlap = sum(
+                    1 for tok in payload_rare
+                    if blind(agent_id, sid, tok) in committed)
+                if overlap > best_overlap:
+                    best_overlap = overlap
+                    best_source = sid
+
         if destination:
             seen.add(destination)
 
         bearing = self._token_bearing_sources(agent_id)
+        if ledger_records:
+            # Ledger records exist only for token-bearing reads, so
+            # every live ledger source counts as bearing (same >=1
+            # rule as the in-run tier): the behavioral tier fires on
+            # prior-run reads too.
+            bearing = sorted(
+                set(bearing) | {r["source_id"] for r in ledger_records})
         if best_overlap >= self._k and novel:
             verdict = "require_approval"
         elif best_overlap >= 1:

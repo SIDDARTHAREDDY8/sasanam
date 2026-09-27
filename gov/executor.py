@@ -2891,7 +2891,10 @@ class ToolExecutor:
         no tracker installed this is a no-op returning
         ``{"observed": False}`` (zero behavior change). Reads the
         operator never reports are invisible to the tracker — the
-        documented coverage ceiling.
+        documented coverage ceiling. Wave-139: when the tracker has
+        a ``taint_ledger`` attached, the read is also recorded
+        durably (counts, doc ids, opaque commitments — never token
+        strings) so a later run's egress check can consult it.
         """
         if self.rare_token_tracker is None:
             return {"observed": False, "agent_id": str(agent_id),
@@ -2923,7 +2926,9 @@ class ToolExecutor:
           approval is queued and ``identity`` is not needed — this
           is triage-only by design, never a block. Fires only when
           the content tier found zero overlap AND the agent read
-          >=1 token-bearing document AND the destination is a
+          >=1 token-bearing document (this run, or a prior run when
+          the tracker has a ``taint_ledger`` attached — see
+          gov/taint_ledger.py) AND the destination is a
           concrete novel one.
 
         Every audit event carries counts and doc ids ONLY — token
@@ -2935,9 +2940,12 @@ class ToolExecutor:
         is invisible to the CONTENT tier by design; the behavioral
         tier flags the read->novel-egress sequence instead (and WILL
         fire on legitimate read-then-send workflows — the operator
-        triages on docs_read + destination). Cross-run read->egress
-        is invisible (the tracker is per-run). See
-        gov/rare_token.py.
+        triages on docs_read + destination). Without a taint ledger
+        attached, cross-run read->egress stays invisible (the tracker
+        is per-run; opt-in ceiling). With a ledger attached, the
+        ledger's ceilings apply (operator TTL, stable identity,
+        key-rotation blinding, per-run destination history). See
+        gov/rare_token.py and gov/taint_ledger.py.
         """
         silent = {"verdict": "allow", "overlap": 0, "source_id": None,
                   "reason": "no_rare_token_tracker",

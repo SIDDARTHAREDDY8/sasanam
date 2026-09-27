@@ -142,6 +142,20 @@ ALLOWED_HMAC_SITES = {
     # credential: it is recorded on the ledger record for auditability.
     ("gov/intent_ledger.py", "derive_countermand_threshold", 0):
         "countermand-threshold derivation; key from resolve_active_key() chokepoint, domain-separated",
+    # gov/taint_ledger.py (wave-139, row-13): per-token taint
+    # commitments. The key is gov.keyprovider.resolve_active_key()
+    # output (or an explicit constructor override) — the wave-69/81
+    # guarded chokepoint (explicit provisioning, fail-closed, no dev
+    # fallback) — never hard-coded, never committed; domain-separated
+    # via _COMMIT_DOMAIN ("taint-commit-v1") and bound to
+    # (agent_id, source_id, token) so commitments cannot collide
+    # across agents, sources, or other MAC domains. The digest is a
+    # blinding commitment, not a credential: token strings never
+    # appear in the ledger file (pinned by
+    # tests/test_taint_ledger.py::PrivacyInvariantTest and the x6
+    # battery probe).
+    ("gov/taint_ledger.py", "TaintLedger.blinded_token", 0):
+        "taint-commitment blinding; key from resolve_active_key() chokepoint, domain-separated",
 }
 
 

@@ -299,5 +299,183 @@ class TestChain(_Harness):
         self.assertTrue(str(d).endswith("drift_budget"))
 
 
+# ------------------------------------------------- wave-139 adaptation
+
+def _frac(tools):
+    return fingerprint_tool_distance(_fp(tools), BASE_FP) / WARN
+
+
+def _scan_below(ceiling=1.0, want_at_least=0.85, hi=80):
+    best = None
+    for x in range(1, hi + 1):
+        f = _frac(_shifted(x))
+        if f < ceiling:
+            best = (x, f)
+    assert best is not None and best[1] >= want_at_least
+    return best
+
+
+_X09, _F09 = _scan_below()  # ~0.9 threshold-equivalents, deterministic
+
+
+def _rev_shifted(x):
+    t = dict(BASE_TOOLS)
+    t["email"] -= x
+    t["search"] += x
+    return t
+
+
+def _adaptive_policy(**kw):
+    from gov.drift_budget import AdaptiveBudgetPolicy
+    args = dict(warn_distance=WARN, budget_limit=1.0, window_runs=8,
+                noise_floor=0.1, min_consistency=0.5,
+                min_contributing_runs=2)
+    args.update(kw)
+    return AdaptiveBudgetPolicy(**args)
+
+
+class _AdaptiveHarness(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test_adaptdrift_"))
+        self.events = []
+        self.store = BudgetStore(self.tmp / "budget",
+                                 audit=self.events.append)
+        self.policy = _adaptive_policy()
+
+    def record(self, agent, tools, seq):
+        return self.store.record_run(agent, seq, "run-%d" % seq,
+                                     _fp(tools, run_seq=seq), BASE_FP,
+                                     self.policy)
+
+    def event_names(self):
+        return [e.get("event") for e in self.events]
+
+
+class TestAdaptivePolicyValidation(unittest.TestCase):
+    def test_defaults(self):
+        from gov.drift_budget import AdaptiveBudgetPolicy
+        p = AdaptiveBudgetPolicy(100.0)
+        self.assertEqual(p.adapt_near_floor, 0.75)
+        self.assertEqual(p.adapt_cycles, 2)
+        self.assertEqual(p.adapt_factor, 0.6)
+        self.assertEqual(p.adapt_contrib_floor, 0.75)
+        self.assertEqual(p.adapt_strikes, 3)
+        self.assertEqual(p.adapt_max_level, 3)
+        self.assertEqual(p.budget_limit, 1.0)  # base fields inherited
+
+    def test_bad_params_raise(self):
+        from gov.drift_budget import AdaptiveBudgetPolicy
+        for kw in (dict(adapt_near_floor=0), dict(adapt_near_floor=1.5),
+                   dict(adapt_cycles=0), dict(adapt_factor=1.0),
+                   dict(adapt_factor=0), dict(adapt_contrib_floor=1.0),
+                   dict(adapt_strikes=1), dict(adapt_max_level=0)):
+            with self.assertRaises(ValueError, msg=kw):
+                AdaptiveBudgetPolicy(100.0, **kw)
+
+    def test_to_dict_covers_both_slot_sets(self):
+        from gov.drift_budget import AdaptiveBudgetPolicy
+        d = AdaptiveBudgetPolicy(100.0).to_dict()
+        for k in ("warn_distance", "budget_limit", "adapt_near_floor",
+                  "adapt_cycles", "adapt_factor", "adapt_max_level"):
+            self.assertIn(k, d)
+
+    def test_static_policy_has_no_adaptive_fields(self):
+        # Zero-behavior-change contract: a plain BudgetPolicy never
+        # writes adaptive record fields.
+        h = _Harness()
+        h.setUp()
+        h.record("a", _shifted(_X09), 1)
+        h.record("a", dict(BASE_TOOLS), 2)
+        for r in h.store.contributions("a"):
+            self.assertNotIn("near_trip", r)
+            self.assertNotIn("adapt_level", r)
+
+
+class TestAdaptiveTighten(_AdaptiveHarness):
+    def test_two_near_trip_cycles_tighten_loud(self):
+        for i in range(2):
+            self.record("a", _shifted(_X09), 2 * i + 1)
+            self.record("a", dict(BASE_TOOLS), 2 * i + 2)
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0].get("severity"), "LOUD")
+        self.assertEqual(adapted[0]["adapt_level"], 1)
+        self.assertAlmostEqual(adapted[0]["effective_limit"], 0.6)
+        self.assertEqual(adapted[0]["trigger"], "near_trip_cycle")
+        chk = self.store.check("a", self.policy)
+        self.assertEqual(chk.detail["adapt_level"], 1)
+        self.assertAlmostEqual(chk.detail["effective_limit"], 0.6)
+        self.assertEqual(chk.detail["effective_window"], 7)
+
+    def test_pacer_trips_after_adaptation(self):
+        tripped_at = None
+        for i in range(3):
+            self.record("a", _shifted(_X09), 2 * i + 1)
+            if self.store.check("a", self.policy).status == "tripped":
+                tripped_at = 2 * i + 1
+                break
+            self.record("a", dict(BASE_TOOLS), 2 * i + 2)
+            if self.store.check("a", self.policy).status == "tripped":
+                tripped_at = 2 * i + 2
+                break
+        self.assertEqual(tripped_at, 5)
+        self.assertIn("drift_budget_tripped", self.event_names())
+        self.assertTrue(self.store.verify_chain("a"))
+
+    def test_alternating_direction_bursts_do_not_adapt(self):
+        seq = 0
+        for i, (fn, x) in enumerate(
+                [(_shifted, _X09), (_rev_shifted, 20), (_shifted, _X09),
+                 (_rev_shifted, 20)]):
+            seq += 1
+            self.record("a", fn(x), seq)
+            seq += 1
+            self.record("a", dict(BASE_TOOLS), seq)
+        chk = self.store.check("a", self.policy)
+        self.assertEqual(chk.status, "ok")
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+
+    def test_benign_cycle_relaxes(self):
+        for i in range(2):  # adapt to level 1
+            self.record("a", _shifted(_X09), 2 * i + 1)
+            self.record("a", dict(BASE_TOOLS), 2 * i + 2)
+        self.assertEqual(self.store.check("a", self.policy)
+                         .detail["adapt_level"], 1)
+        # Benign cycle: one 0.4 contribution, then defuse.
+        self.record("a", _shifted(10), 5)
+        self.record("a", dict(BASE_TOOLS), 6)
+        relaxed = [e for e in self.events
+                   if e.get("event") == "drift_budget_relaxed"]
+        self.assertEqual(len(relaxed), 1)
+        self.assertNotEqual(relaxed[0].get("severity"), "LOUD")
+        self.assertEqual(self.store.check("a", self.policy)
+                         .detail["adapt_level"], 0)
+
+    def test_single_run_does_not_adapt(self):
+        self.record("a", _shifted(_X09), 1)
+        chk = self.store.check("a", self.policy)
+        self.assertEqual(chk.status, "ok")
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+
+    def test_contribution_streak_trigger_under_high_limit(self):
+        # budget_limit=3.0: three same-direction ~0.9 runs (2.7) never
+        # trip statically, but the streak trigger tightens LOUD.
+        self.policy = _adaptive_policy(budget_limit=3.0)
+        for i in range(3):
+            self.record("a", _shifted(_X09), i + 1)
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0]["trigger"], "contribution_streak")
+        self.assertEqual(adapted[0].get("severity"), "LOUD")
+        chk = self.store.check("a", self.policy)
+        self.assertAlmostEqual(chk.detail["effective_limit"], 1.8)
+        # 2.7 cumulative vs the adapted 1.8 limit -> trips (the point of
+        # the streak trigger: earlier escalation, still LOUD).
+        self.assertEqual(chk.status, "tripped")
+        self.assertIn("drift_budget_tripped", self.event_names())
+
+
 if __name__ == "__main__":
     unittest.main()

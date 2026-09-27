@@ -34,8 +34,21 @@ What this is NOT (honest ceiling):
   ``detect_cross_run_laundering`` flags when a new registration
   legitimizes behavior that violated the agent's own prior
   registration, contradicts its executed history, composes into a
-  conflict with a previous run's still-active goal, or re-registers
-  an identical-but-never-exercised goal across runs (dormant cover).
+  conflict with a previous run's still-active goal, re-registers
+  an identical-but-never-exercised goal across runs (dormant cover),
+  or re-mints a denied goal with a fresh ID (wave-139): a new
+  registration whose every effect atom matches a same-agent
+  superseded (denied/withdrawn, never exercised) prior-run goal's
+  atom -- same verb, token-tversky target similarity >=
+  FRESH_ID_SIMILARITY_THRESHOLD (gov/target_match.py
+  DEFAULT_THRESHOLD, no new similarity) -- is flagged LOUD as
+  ``fresh_id_laundering``, regardless of the fresh goal ID. The
+  fresh-ID leg is FP-averse by design: silent without observed
+  executed history, silent when the prior's run is unobserved,
+  silent when the prior was exercised before supersede (the
+  legitimate register -> exercise -> resolve flow), and conjunctive
+  per-atom (a verb-differing or extra unmatched new atom breaks the
+  match, so target similarity alone never condemns).
   Deliberate, FP-averse narrowings (not oversights): the dormant
   signal fires only for goals declaring high-impact effects
   (send/write/delete/exclusive_write) -- a never-exercised
@@ -43,10 +56,14 @@ What this is NOT (honest ceiling):
   executed history is supplied (without history, "dormant" is
   indistinguishable from "unobserved", so the signal stays silent
   rather than fire blind).
-  What it cannot see: semantic laundering ("archive" in run 1 vs
-  "compress" in run 2 meaning the same data), and any agent that
-  rotates its agent_id every run (cross-run attribution keys on
-  stable agent identity -- a fresh identity per run defeats it).
+  What it cannot see: full synonym replacement with no shared
+  tokens (token overlap is not semantics -- the wave-136 residual,
+  unchanged by the fresh-ID leg), semantic laundering ("archive" in
+  run 1 vs "compress" in run 2 meaning the same data), a denied goal
+  aged out of the persisted store (recency is bounded by the
+  detector's prior-goals scope), and any agent that rotates its
+  agent_id every run (cross-run attribution keys on stable agent
+  identity -- a fresh identity per run defeats it).
 - Not an enforcer. Registration never denies: conflicts are flagged
   LOUD (``goal_conflict`` audit event) and routed to the approval
   queue for human resolution. The executor's ``register_goal`` is the
@@ -83,11 +100,13 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from .target_match import (DEFAULT_THRESHOLD, MATCH_METHOD, match_target)
+from .target_match import (DEFAULT_THRESHOLD, MATCH_METHOD, match_target,
+                          target_similarity)
 
 __all__ = [
     "EFFECT_VERBS",
     "DORMANT_RUN_THRESHOLD",
+    "FRESH_ID_SIMILARITY_THRESHOLD",
     "GoalPersistenceError",
     "GoalRegistry",
     "check_specificity",
@@ -124,6 +143,19 @@ _GOAL_VERSION = 1
 #: current one) of a materially identical goal that the agent never
 #: exercised trigger the dormant-goal signal.
 DORMANT_RUN_THRESHOLD = 3
+
+#: Fresh-ID laundering threshold (wave-139, row-11). This is NOT a
+#: new similarity: it is gov/target_match.py's DEFAULT_THRESHOLD
+#: (0.5), stated here as a named constant so the seam is auditable.
+#: A new goal is treated as a fresh-ID re-mint of a same-principal
+#: superseded prior-run goal when EVERY declared effect atom of the
+#: new goal matches an atom of the prior goal with the same verb and
+#: token-tversky target similarity >= this threshold. The 0.5 value
+#: carries target_match.py's measured FP/FN tradeoff (battery
+#: paraphrase pairs >= 0.571, unrelated pairs <= 0.0, margin on both
+#: sides); the fresh-ID battery pins the boundary end-to-end
+#: (0.800 and 0.500 caught, 0.400 and 0.000 missed by design).
+FRESH_ID_SIMILARITY_THRESHOLD = DEFAULT_THRESHOLD
 
 #: Fields excluded from the goal digest: mutable live state that is
 #: itself audited (goal_status_changed events) and must not read as
@@ -935,6 +967,73 @@ def _prior_violation(prior, verb, target):
     return None
 
 
+def _any_atom_covered(effects, atoms):
+    """True when any (verb, target) atom in ``atoms`` is covered
+    (exact or wildcard) by the declared ``effects``. Shared by the
+    dormant exercised-check and the fresh-ID prior-exercised check
+    so the two "was this goal lived" definitions cannot drift."""
+    for verb, target in atoms:
+        if _covers(effects, verb, target):
+            return True
+    return False
+
+
+def _prior_exercised(prior, history):
+    """Was the prior-run goal lived before it was superseded?
+
+    ``history`` maps run_id -> [(verb, target), ...] of executed
+    effects (validated, normalized). True when the prior's own run
+    is observed AND at least one executed atom is covered (exact or
+    wildcard) by the prior's declared effects -- the legitimate
+    register -> exercise -> resolve flow. A superseded goal with no
+    covered execution in observed history was denied/withdrawn, not
+    lived: the shape the fresh-ID path hunts.
+    """
+    atoms = history.get(prior.get("run_id"))
+    if not atoms:
+        return False
+    return _any_atom_covered(prior.get("effects") or [], atoms)
+
+
+def _fresh_id_match(new_goal, prior):
+    """Is ``new_goal`` a fresh-ID re-mint of the superseded ``prior``?
+
+    Additive identity path (wave-139): goal IDs are minted fresh on
+    every registration, so ID comparison can never see a re-mint --
+    this anchors on target/effects similarity instead, reusing
+    gov/target_match.py's token-tversky ``target_similarity`` and
+    ``FRESH_ID_SIMILARITY_THRESHOLD`` (== DEFAULT_THRESHOLD; no new
+    similarity invented). Returns (matched, atom_scores).
+
+    The match rule is deliberately conjunctive (overreach guard):
+    EVERY effect atom of the new goal must find a prior-run atom
+    with the SAME verb and target_similarity >= the threshold.
+    Target similarity alone never condemns -- a verb-differing atom
+    or an extra unmatched new atom breaks the match, so the path
+    cannot be used to launder a genuinely broader objective into a
+    denied one. Wildcard prior targets never match (they tokenize
+    empty -> 0.0), so a narrowed re-registration of a wildcard goal
+    is not confused with a re-mint by this leg.
+    """
+    new_effects = [list(e) for e in (new_goal.get("effects") or [])]
+    prior_effects = [list(e) for e in (prior.get("effects") or [])]
+    if not new_effects or not prior_effects:
+        return False, []
+    scores = []
+    for verb, target in new_effects:
+        best = 0.0
+        for pverb, ptarget in prior_effects:
+            if pverb != verb:
+                continue
+            score = target_similarity(str(ptarget), str(target))
+            if score > best:
+                best = score
+        if best < FRESH_ID_SIMILARITY_THRESHOLD:
+            return False, []
+        scores.append(best)
+    return True, scores
+
+
 def detect_cross_run_laundering(registry, new_goal, executed_history=None,
                                 prior_goals=None):
     """Flag cross-run goal laundering for a newly registered goal.
@@ -1157,14 +1256,9 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
         if new_run:
             matching_runs.add(new_run)
         if len(matching_runs) >= DORMANT_RUN_THRESHOLD:
-            exercised = False
-            for run_id, exec_atoms in history.items():
-                for verb, target in exec_atoms:
-                    if _covers(new_effects, verb, target):
-                        exercised = True
-                        break
-                if exercised:
-                    break
+            exercised = _any_atom_covered(
+                new_effects,
+                [a for atoms in history.values() for a in atoms])
             if not exercised:
                 _flag("dormant_goal", "info",
                       {"matching_runs": sorted(matching_runs),
@@ -1174,6 +1268,68 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
                       "observed history -- a standing unexercised "
                       "goal is cheap cover"
                       % len(matching_runs))
+
+    # 4. Fresh-ID laundering (wave-139): the new goal re-mints a
+    #    prior-run goal of the same agent that was superseded
+    #    (denied via goal_conflict_review / goal_specificity_review,
+    #    i.e. never lived) -- same objective, fresh goal ID,
+    #    possibly paraphrased description. The ID-based path is
+    #    intact (fresh uuids evade identity matching by
+    #    construction); this additive path anchors on
+    #    target/effects similarity via gov/target_match.py
+    #    token-tversky (FRESH_ID_SIMILARITY_THRESHOLD, no new
+    #    similarity) and treats the re-mint as the same goal for
+    #    laundering purposes: flagged LOUD so the operator denies
+    #    its coverage. Detection, not prevention -- registration
+    #    itself never denies (module invariant).
+    #
+    #    "Principal" is the goal schema's agent_id: the schema
+    #    carries no principal field, and this matches the
+    #    detector's existing attribution key (with its documented
+    #    rotation ceiling). "Recently" is the detector's
+    #    prior-goals scope (loaded persistence + explicit
+    #    prior_goals + executed_history): a denied goal aged out
+    #    of the persisted store is invisible (honest ceiling).
+    #
+    #    Deliberate FP-averse narrowings (not oversights): silent
+    #    without executed history (unobserved != denied); silent
+    #    when the prior's run is unobserved; silent when the prior
+    #    was exercised before supersede (the legitimate
+    #    register -> exercise -> resolve flow stays silent); and
+    #    the conjunctive _fresh_id_match rule (verb must be equal,
+    #    every new atom must match) keeps target similarity from
+    #    condemning on its own.
+    if history:
+        for prior in prior_goals:
+            if prior.get("status") != "superseded":
+                continue
+            if prior.get("run_id") not in history:
+                continue
+            if _prior_exercised(prior, history):
+                continue
+            matched, atom_scores = _fresh_id_match(new_goal, prior)
+            if matched:
+                _flag("fresh_id_laundering", "high",
+                      {"prior_goal_id": prior.get("goal_id"),
+                       "prior_run_id": prior.get("run_id"),
+                       "match_method": MATCH_METHOD,
+                       "threshold": FRESH_ID_SIMILARITY_THRESHOLD,
+                       "atom_scores": [round(s, 3) for s in atom_scores],
+                       "prior_effects": [list(e) for e in
+                                         (prior.get("effects") or [])],
+                       "new_effects": new_effects},
+                      "goal %r is a fresh-ID re-mint of the same "
+                      "agent's prior-run goal %r (run %r), which was "
+                      "superseded without being exercised: every "
+                      "declared effect atom matches a prior atom "
+                      "(same verb, token-tversky target similarity "
+                      ">= %.2f, scores %s) -- the denial is being "
+                      "laundered through a new registration"
+                      % (new_goal.get("goal_id", "")[:8],
+                         (prior.get("goal_id") or "")[:8],
+                         prior.get("run_id"),
+                         FRESH_ID_SIMILARITY_THRESHOLD,
+                         [round(s, 3) for s in atom_scores]))
 
     return findings
 
