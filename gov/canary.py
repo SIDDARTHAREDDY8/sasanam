@@ -72,6 +72,7 @@ import base64
 import binascii
 import hashlib
 import random
+import re
 import string
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -87,10 +88,12 @@ __all__ = [
     "make_canary_plant",
     "CANARY_LABEL_ARTIFACTS",
     "scan_egress_attempt",
+    "scan_egress_fragments",
     "check_and_trip",
     "normalize_canary_text",
     "EGRESS_TOOLS",
     "MIN_MATCHABLE_LEN",
+    "FRAGMENT_LEN",
     "MAX_DECODE_LAYERS",
 ]
 
@@ -134,6 +137,55 @@ EGRESS_TOOLS = ("http_post", "send_email", "api_call")
 # produces is longer than this.
 MIN_MATCHABLE_LEN = 20
 
+# Wave-146 (row 13): cumulative canary-fragment detection. The registry
+# derives overlapping fragments per planted canary and tracks DISTINCT
+# fragments of the same canary cumulatively across egress attempts.
+#
+# Minimum fragment length rationale: fragments must be long enough that
+# a benign substring is unlikely to match, but short enough to catch
+# piecemeal exfiltration. 16 was chosen because:
+# - shorter fragments (<= 10) collide with structural prefixes the mint
+#   itself emits ("AKIA", "ghp_", "sk_live_", "postgres://", "xoxb-")
+#   and with ordinary English words; the battery pins an 8-char benign
+#   substring staying silent;
+# - 16 chars from the 62-symbol token alphabet is 62**16 ~= 4.7e28
+#   possibilities -- random collision is negligible, so a 16-char
+#   verbatim window of a canary in egress proves ingestion;
+# - every minted canary is >= 20 chars, so every canary yields >= 5
+#   overlapping windows; an attacker splitting a 40-char token into
+#   three 16-char chunks trips at the second chunk.
+# Fragments are ALL length-16 windows (step 1, maximal overlap), so
+# unaligned piecemeal exfiltration is caught, not just grid-aligned
+# chunks. Fragment matching is exact (no normalization): the
+# whole-value path already covers normalized forms, and normalizing
+# short windows would multiply false positives.
+#
+# Predictable-word filter: a fragment must be UNPREDICTABLE. Canary
+# values embed predictable structure ("postgres://",
+# ".internal:5432/opsdb", "metrics-04.prod."), and benign ops chatter
+# legitimately contains such structure -- without filtering, two benign
+# payloads mentioning the fake DB's structure accumulate two "distinct
+# fragments" and trip (measured 35/40 FP before the filter). The value
+# is SPLIT on predictable words and only the unpredictable remainders
+# are fragmented: exfiltrating predictable structure is not
+# exfiltrating the secret, and the whole-value path still catches whole
+# structured values. Splitting (not substring-rejecting windows) is
+# what makes this robust: a 16-char window slicing through "internal"
+# ("ternal:5432/opsd") dodges a naive substring filter, but the split
+# removes the whole structural run. The list is CLOSED and documented
+# (same discipline as the wave-146 negation polarity list): random
+# token windows do not contain these words, so attacker fragments are
+# unaffected. Short prefixes ("akia", "ghp_") are deliberately NOT
+# split: a 16-char window containing them still holds 12 random chars
+# and stays unpredictable.
+FRAGMENT_LEN = 16
+# Base predictable words (infra/structural vocabulary). The mint's
+# service and zone names are added below (after _SERVICES/_ZONES) so
+# the filter stays in sync with the mint.
+_PREDICTABLE_WORDS_BASE = frozenset(
+    "internal postgres svc acct prod core primary replica "
+    "collector vault gateway opsdb https http example".split())
+
 _MINT_DOMAIN = "gov-canary-v1"
 
 _AWS_ALPHABET = string.ascii_uppercase + string.digits
@@ -147,6 +199,19 @@ _SERVICES = (
     "telemetry-relay", "config-sync", "vault-replica",
 )
 _ZONES = ("prod", "staging", "core")
+
+# Wave-146 row 13: the predictable-word set for fragment derivation.
+# The mint's service names (split on hyphens) and zones are structural
+# -- a hostname canary like "telemetry-relay-15.prod.internal" is
+# entirely predictable, so it yields zero fragments (the whole-value
+# match_host path still protects it). Derived from _SERVICES/_ZONES so
+# the filter cannot drift out of sync with the mint.
+_PREDICTABLE_WORDS = _PREDICTABLE_WORDS_BASE | frozenset(
+    w for svc in _SERVICES for w in svc.replace("-", " ").split()
+) | frozenset(_ZONES)
+_PREDICTABLE_SPLIT_RE = re.compile(
+    "|".join(sorted(_PREDICTABLE_WORDS, key=len, reverse=True)),
+    re.IGNORECASE)
 
 
 # A minted value must never be trivially recognizable as a canary: these
@@ -284,6 +349,58 @@ class CanaryMint:
         return [dict(c) for c in self._canaries if c["channel"] == channel]
 
 
+def _derive_fragments(value):
+    """Overlapping length-FRAGMENT_LEN fragments of a canary value.
+
+    The value is split on predictable words (``_PREDICTABLE_SPLIT_RE``)
+    and only the unpredictable remainders are fragmented (step 1,
+    maximal overlap within each remainder): an attacker exfiltrating an
+    unaligned 16-char slice of the secret still matches a derived
+    fragment, while predictable structure never becomes a fragment.
+    Remainders shorter than FRAGMENT_LEN yield nothing. Values shorter
+    than FRAGMENT_LEN yield no fragments (the mint guarantees >=
+    MIN_MATCHABLE_LEN > FRAGMENT_LEN, so this is defense-in-depth).
+    Deterministic, stdlib-only.
+    """
+    if not isinstance(value, str) or len(value) < FRAGMENT_LEN:
+        return []
+    frags = []
+    for part in _PREDICTABLE_SPLIT_RE.split(value):
+        if len(part) < FRAGMENT_LEN:
+            continue
+        for i in range(len(part) - FRAGMENT_LEN + 1):
+            frags.append(part[i:i + FRAGMENT_LEN])
+    return frags
+
+
+def _has_half_span(s, value):
+    """True when s contains a contiguous substring of value of length
+    >= ceil(len(value) / 2) -- "one fragment at least half the canary".
+
+    Checked directly (not via derived fragments) because for short
+    canaries half the value is shorter than FRAGMENT_LEN (a 10-char
+    slice of a 20-char canary contains no 16-char window but must
+    still trip). O(len(s)) substring probes; both sides are short.
+
+    Predictable-aware (wave-146 fix): the value is split on predictable
+    words first (same as _derive_fragments), and the span must lie
+    within an unpredictable remainder long enough to hold it. Without
+    this, a 16-char infrastructure suffix like ".staging.internal"
+    shared across rotated hostnames trips the half-span rule -- a
+    false positive (canary.p1.rotation_previous_run_no_trip).
+    """
+    need = (len(value) + 1) // 2
+    if not isinstance(s, str) or len(s) < need or need < 1:
+        return False
+    for part in _PREDICTABLE_SPLIT_RE.split(value):
+        if len(part) < need:
+            continue
+        for i in range(len(s) - need + 1):
+            if s[i:i + need] in part:
+                return True
+    return False
+
+
 class CanaryRegistry:
     """Server-side record of planted canary values.
 
@@ -304,15 +421,28 @@ class CanaryRegistry:
         self._by_host = {}
         self._by_value_norm = {}
         self.run_id = None
+        # Wave-146 row 13: cumulative fragment state. _fragments maps
+        # canary value -> list of derived overlapping fragments;
+        # _fragment_seen maps canary value -> set of fragments already
+        # observed in egress this run. Per-run: register() resets both.
+        # PRIVACY CONTRACT (same as above): fragments are derived from
+        # planted FAKE values only -- never real secrets.
+        self._fragments = {}
+        self._fragment_seen = {}
 
     def register(self, mint):
         """Record every value from a :class:`CanaryMint`."""
         self.run_id = mint.run_id
+        # Per-run reset: last run's fragment observations must not
+        # trip this run (the mint rotates values per run anyway).
+        self._fragments = {}
+        self._fragment_seen = {}
         for c in mint.values():
             self._by_value[c["value"]] = c
             self._by_value_norm[normalize_canary_text(c["value"])] = c
             if c["kind"] == "hostname":
                 self._by_host[c["value"].lower()] = c
+            self._fragments[c["value"]] = _derive_fragments(c["value"])
 
     def match_value(self, s):
         """Exact credential/token match, then normalized match.
@@ -372,6 +502,50 @@ class CanaryRegistry:
         norm = host.strip().lower().rstrip(".")
         hit = self._by_host.get(norm)
         return dict(hit) if hit is not None else None
+
+    def match_fragments(self, s):
+        """Cumulative fragment match. STATEFUL: records distinct
+        fragments observed in egress, per canary, for this run.
+
+        For each planted canary, adds every derived fragment present
+        in ``s`` to that canary's seen-set, then trips when EITHER:
+          - 2 distinct fragments of the SAME canary have been seen
+            (cumulatively across egress attempts -- the piecemeal
+            exfiltration signal), or
+          - ``s`` contains one contiguous fragment of at least half
+            the canary (``_has_half_span``).
+        Never accumulates across different canaries. Returns a trip
+        dict ``{kind, label, value, fragments_seen, trigger}`` on a
+        trip, else None. A repeat scan of already-seen fragments does
+        not re-trip (only newly revealed fragments or a new half-span
+        can trip). Deterministic.
+        """
+        if not isinstance(s, str) or len(s) < FRAGMENT_LEN:
+            return None
+        for value, frags in self._fragments.items():
+            seen = self._fragment_seen.get(value)
+            if seen is None:
+                seen = self._fragment_seen[value] = set()
+            before = len(seen)
+            for frag in frags:
+                if frag in s:
+                    seen.add(frag)
+            revealed = len(seen) - before
+            half = _has_half_span(s, value)
+            if revealed or half:
+                if len(seen) >= 2:
+                    meta = self._by_value[value]
+                    found = dict(meta)
+                    found["fragments_seen"] = len(seen)
+                    found["trigger"] = "two_distinct_fragments"
+                    return found
+                if half:
+                    meta = self._by_value[value]
+                    found = dict(meta)
+                    found["fragments_seen"] = len(seen)
+                    found["trigger"] = "half_canary_fragment"
+                    return found
+        return None
 
     def __len__(self):
         return len(self._by_value)
@@ -736,6 +910,129 @@ def scan_egress_attempt(tool, args, registry):
     return None
 
 
+def scan_egress_fragments(tool, args, registry):
+    """Cumulative fragment scan for one egress attempt. STATEFUL
+    (records observed fragments on the registry -- see
+    :meth:`CanaryRegistry.match_fragments`); not pure, unlike
+    :func:`scan_egress_attempt`.
+
+    Runs the same encoding-aware string-leaf enumeration as the
+    whole-value scan (direct + validated decoded variants, <= 2
+    layers): a fragment smuggled inside base64 is still a fragment.
+    Returns a hit dict ``{kind, label, matched_value, field,
+    fragments_seen, trigger}`` on a trip, else None. Callers must run
+    the whole-value :func:`scan_egress_attempt` FIRST so a whole
+    canary stays on the existing path without a duplicate fragment
+    event.
+    """
+    if registry is None or tool not in EGRESS_TOOLS:
+        return None
+    if not isinstance(args, dict):
+        return None
+    for s in _iter_strings(args):
+        for variant in _decode_variants(s):
+            hit = registry.match_fragments(variant)
+            if hit is not None:
+                return {"kind": hit["kind"], "label": hit["label"],
+                        "matched_value": "<fragment:%s>" % hit["trigger"],
+                        "field": "args",
+                        "fragments_seen": hit["fragments_seen"],
+                        "trigger": hit["trigger"]}
+    return None
+
+
+def _trip_fragment(executor, identity, tool, args, hit):
+    """Trip on a cumulative canary-fragment hit. Mirrors the
+    whole-value trip: (1) LOUD ``canary_fragment_egress`` audit event
+    with the fragment evidence; (2) approval-queue escalation (flag
+    ``canary_fragment_egress``); (3) fail-closed :class:`CanaryTripHalt`.
+    Steps 1-2 are best-effort; the halt always happens.
+
+    The event carries counts and the canary label ONLY -- fragment
+    strings are never logged (privacy: same discipline as the
+    rare-token tier). The egress destination hostname is included
+    when the tool carries one (destination evidence "where
+    available").
+    """
+    run_id = getattr(executor, "run_id", "?")
+    agent_id = getattr(identity, "agent_id", "?")
+    principal = getattr(identity, "principal", "?")
+    dest = None
+    try:
+        if tool in ("http_post", "api_call"):
+            raw = args.get("url") if tool == "http_post" else args.get(
+                "endpoint")
+            if isinstance(raw, str) and raw:
+                dest = urlparse(raw).hostname
+        elif tool == "send_email":
+            to = args.get("to")
+            if isinstance(to, str) and "@" in to:
+                dest = to.rsplit("@", 1)[-1]
+    except Exception:
+        dest = None
+    reason = (
+        "Canary fragment tripwire: agent %s (principal %s) attempted "
+        "egress via %s revealing fragments of canary %s (%s): %d "
+        "distinct %d-char fragment(s) observed cumulatively this run "
+        "(trigger: %s)%s. Canary fragments are never valid content, "
+        "so this is piecemeal exfiltration intent by construction. "
+        "Run halted fail-closed; escalated for human review."
+        % (agent_id, principal, tool, hit["kind"], hit["label"],
+           hit["fragments_seen"], FRAGMENT_LEN, hit["trigger"],
+           " to %s" % dest if dest else ""))
+
+    # (1) LOUD audit event -- distinct type, fragment evidence attached.
+    try:
+        executor.log.append({
+            "event": "canary_fragment_egress",
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "role": getattr(identity, "role", "?"),
+            "principal": principal,
+            "tool": tool,
+            "decision": "halted",
+            "policy_id": "canary-tripwire",
+            "flag": "canary_fragment_egress",
+            "canary_kind": hit["kind"],
+            "canary_label": hit["label"],
+            "matched_field": hit["field"],
+            "fragments_seen": hit["fragments_seen"],
+            "fragment_trigger": hit["trigger"],
+            "destination": dest,
+            "reason": reason,
+        })
+    except Exception:
+        pass  # the halt below is the control; audit is best-effort
+
+    # (2) approval-queue escalation with the trip evidence.
+    try:
+        decision = PolicyDecision(
+            "require_approval", reason,
+            policy_id="canary-tripwire", flag="canary_fragment_egress")
+        action = {"tool": tool, "args": args,
+                  "identity": identity.as_dict(),
+                  "agent_justification": None, "redactions": []}
+        preview = executor._preview(tool, args)
+        egress_bytes = 0
+        _ebf = getattr(executor, "_egress_bytes_for", None)
+        if callable(_ebf):
+            try:
+                egress_bytes = _ebf(tool, args)
+            except Exception:
+                egress_bytes = 0
+        executor.approvals.queue(
+            action, decision, "agent_direct", preview,
+            policy_hash=executor.policy.policy_hash,
+            policy_flag="canary_fragment_egress",
+            egress_bytes=egress_bytes,
+            caller_identity=identity)
+    except Exception:
+        pass  # fail-closed: queue failure must not un-halt
+
+    # (3) halt -- never executes the call.
+    raise CanaryTripHalt(reason)
+
+
 def check_and_trip(executor, identity, tool, args):
     """Run the tripwire for one tool call; halt fail-closed on a hit.
 
@@ -754,10 +1051,26 @@ def check_and_trip(executor, identity, tool, args):
     Without a tracker the read/unread distinction cannot be drawn, so
     the ``canary_trip`` path below handles every hit (zero behavior
     change vs wave-51).
+
+    Wave-146 row 13: when the whole-value scan misses, the cumulative
+    fragment scan runs (``scan_egress_fragments``). A fragment trip
+    emits its own LOUD event (``canary_fragment_egress``) with the
+    fragment evidence and raises the same fail-closed
+    :class:`CanaryTripHalt`. Whole-canary hits stay on the existing
+    path -- the fragment scan never runs after a whole-value hit, so
+    there is no duplicate fragment event. The fragment path does not
+    route through the unobserved-canary distinction: it is its own
+    signal with its own event type by design.
     """
     hit = scan_egress_attempt(
         tool, args, getattr(executor, "canary_registry", None))
     if hit is None:
+        # Wave-146 row 13: whole value missed -- try cumulative
+        # fragments. _trip_fragment raises CanaryTripHalt on a trip.
+        fragment_hit = scan_egress_fragments(
+            tool, args, getattr(executor, "canary_registry", None))
+        if fragment_hit is not None:
+            _trip_fragment(executor, identity, tool, args, fragment_hit)
         return None
 
     # Local import: gov.unobserved_canary imports this module at top

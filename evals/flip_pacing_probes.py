@@ -33,7 +33,11 @@ Probes:
      the 0.75 flip floor) -> 0 adaptations, 0 trips.
   f3_benign_inconsistent_directions_quiet: 8 near-threshold cycles in
      a non-repeating A/B/C/D direction sequence -> 0 adaptations,
-     0 trips (no 2-period oscillation ever closes).
+     0 trips (no 2-period oscillation ever closes). The sub-floor
+     breaker cycles alternate exact-opposite directions (net zero):
+     a same-direction breaker train is the slow-burn accumulator's
+     attack shape, so the fixture keeps the scaffolding
+     direction-inert to preserve this probe's contract.
   f4_benign_interspersed_cleans_quiet: 6 near-threshold bursts with
      extra clean runs interspersed ([burst, clean, clean] x6,
      alternating directions) -> 0 adaptations, 0 trips
@@ -390,10 +394,20 @@ def f3_benign_inconsistent_directions_quiet():
            "E": _dir_e, "F": _dir_f}
     ctx = _Ctx("f3", _policy(warn))
     seq_tools = []
+    # Breaker direction alternates FWD/REV (exact opposites, net
+    # zero): the breakers are scaffolding -- sub-floor, never paced --
+    # and this probe's contract is direction-inconsistency. A
+    # same-direction breaker train is the wave-146 slow-burn
+    # accumulator's attack shape ([sub-floor, clean] x N, one
+    # direction); that seam legitimately fires on it, so the fixture
+    # keeps the breakers net-zero rather than weakening the probe.
+    bi = 0
     for ka, _fa, kb, _fb in pairs:
         for key in (ka, kb):
+            brk = _flip_fwd(bxx) if bi % 2 == 0 else _flip_rev(bxx)
+            bi += 1
             seq_tools += [fns[key](xs[key]), dict(_BASE_TOOLS),
-                          _flip_fwd(bxx), dict(_BASE_TOOLS)]
+                          brk, dict(_BASE_TOOLS)]
     tripped_at, chk = _drive(ctx, "agent-incons", seq_tools)
     n_adapt = len(ctx.any_adapt())
     if tripped_at is not None or n_adapt:

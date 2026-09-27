@@ -368,9 +368,27 @@ class TestAdaptivePolicyValidation(unittest.TestCase):
         for kw in (dict(adapt_near_floor=0), dict(adapt_near_floor=1.5),
                    dict(adapt_cycles=0), dict(adapt_factor=1.0),
                    dict(adapt_factor=0), dict(adapt_contrib_floor=1.0),
-                   dict(adapt_strikes=1), dict(adapt_max_level=0)):
+                   dict(adapt_strikes=1), dict(adapt_max_level=0),
+                   dict(slow_weight=0), dict(slow_weight=1.5),
+                   dict(slow_clean_decay=0), dict(slow_clean_decay=1.0),
+                   dict(slow_trip=0), dict(slow_trip=-0.1),
+                   dict(slow_window_factor=1), dict(slow_min_runs=1),
+                   dict(slow_window_factor=2.5)):
             with self.assertRaises(ValueError, msg=kw):
                 AdaptiveBudgetPolicy(100.0, **kw)
+
+    def test_slow_burn_defaults_and_serialization(self):
+        from gov.drift_budget import AdaptiveBudgetPolicy
+        p = AdaptiveBudgetPolicy(100.0)
+        self.assertEqual(p.slow_weight, 0.5)
+        self.assertEqual(p.slow_clean_decay, 0.5)
+        self.assertEqual(p.slow_trip, 0.3)
+        self.assertEqual(p.slow_window_factor, 3)
+        self.assertEqual(p.slow_min_runs, 3)
+        d = p.to_dict()
+        for k in ("slow_weight", "slow_clean_decay", "slow_trip",
+                  "slow_window_factor", "slow_min_runs"):
+            self.assertIn(k, d)
 
     def test_to_dict_covers_both_slot_sets(self):
         from gov.drift_budget import AdaptiveBudgetPolicy
@@ -475,6 +493,139 @@ class TestAdaptiveTighten(_AdaptiveHarness):
         # the streak trigger: earlier escalation, still LOUD).
         self.assertEqual(chk.status, "tripped")
         self.assertIn("drift_budget_tripped", self.event_names())
+
+
+def _shifted_rev(x):
+    # Exact opposite of _shifted: alternating the two nets to zero
+    # direction, which is what the slow-burn consistency gate needs
+    # to see through. (Unused where tool headroom is one-sided; see
+    # _alt_shift/_alt_shift_rev.)
+    t = dict(BASE_TOOLS)
+    t["search"] += x
+    t["http_post"] -= x
+    return t
+
+
+def _alt_shift(x):
+    # Two-sided-headroom shift for the alternating-direction test:
+    # search/summarize both have room for +/- x at the magnitudes
+    # the sub-floor scan finds.
+    t = dict(BASE_TOOLS)
+    t["search"] -= x
+    t["summarize"] += x
+    return t
+
+
+def _alt_shift_rev(x):
+    # Exact opposite of _alt_shift.
+    t = dict(BASE_TOOLS)
+    t["search"] += x
+    t["summarize"] -= x
+    return t
+
+
+def _scan_subfloor(ceiling, want_at_least, fn=None):
+    fn = _shifted if fn is None else fn
+    best = None
+    for x in range(1, 81):
+        f = _frac(fn(x))
+        if f < ceiling:
+            best = (x, f)
+    assert best is not None and best[1] >= want_at_least
+    return best
+
+
+class TestSlowBurn(_AdaptiveHarness):
+    """Wave-146 row 9: the slow-burn accumulator seam.
+
+    Public seam: BudgetStore.check detail slow_burn_* fields, the
+    LOUD drift_budget_slow_burn audit event, and the adapt
+    tightening it drives.
+    """
+
+    def _drive_pacer(self, agent, shift_fn, x, cycles):
+        seq = 0
+        for _ in range(cycles):
+            for tools in (shift_fn(x), dict(BASE_TOOLS)):
+                seq += 1
+                self.record(agent, tools, seq)
+                chk = self.store.check(agent, self.policy)
+        return chk
+
+    def test_subfloor_pacer_trips_loud_and_tightens(self):
+        x, fr = _scan_subfloor(ceiling=0.6, want_at_least=0.4)
+        self.assertLess(fr, 0.75)  # sub-floor by construction
+        # 3 cycles: the trip lands on run 5 (3rd contributing run);
+        # stop before a second slow-burn epoch can tighten again.
+        self._drive_pacer("pacer", _shifted, x, 3)
+        names = self.event_names()
+        self.assertIn("drift_budget_slow_burn", names)
+        slow = [e for e in self.events
+                if e.get("event") == "drift_budget_slow_burn"][0]
+        self.assertEqual(slow.get("severity"), "LOUD")
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"
+                   and e.get("trigger") == "slow_burn"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0]["adapt_level"], 1)
+        chk = self.store.check("pacer", self.policy)
+        self.assertAlmostEqual(chk.detail["effective_limit"], 0.6)
+
+    def test_slower_pacer_never_trips_documents_residual(self):
+        # Below slow_trip the within-cycle peak converges under the
+        # bar: the documented slower-boil residual (battery s2 pins
+        # this at the eval level).
+        x, fr = _scan_subfloor(ceiling=0.3, want_at_least=0.2)
+        self.assertLess(fr, 0.3)
+        self._drive_pacer("slow", _shifted, x, 15)
+        self.assertNotIn("drift_budget_slow_burn", self.event_names())
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+
+    def test_alternating_directions_stay_quiet(self):
+        # Direction-inert scaffolding: alternating exact-opposite
+        # sub-floor bursts net to zero, so the consistency gate
+        # blocks even though the accumulator would otherwise fill.
+        x, fr = _scan_subfloor(ceiling=0.6, want_at_least=0.4,
+                               fn=_alt_shift)
+        seq = 0
+        for i in range(8):
+            fn = _alt_shift if i % 2 == 0 else _alt_shift_rev
+            for tools in (fn(x), dict(BASE_TOOLS)):
+                seq += 1
+                self.record("alt", tools, seq)
+                self.store.check("alt", self.policy)
+        self.assertNotIn("drift_budget_slow_burn", self.event_names())
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+
+    def test_single_large_drift_takes_original_path(self):
+        x, fr = _scan_below(ceiling=1.5, want_at_least=1.2)
+        c = self.record("spike", _shifted(x), 1)
+        self.assertEqual(c.reason, "single_run_path")
+        chk = self.store.check("spike", self.policy)
+        self.assertNotIn("drift_budget_slow_burn", self.event_names())
+        self.assertEqual(chk.detail.get("slow_burn_accum"), 0)
+
+    def test_static_policy_has_no_slow_burn_seam(self):
+        # Zero-behavior-change contract: a plain BudgetPolicy never
+        # emits the slow-burn event, tightens, or reports an active
+        # slow-burn seam (detail fields present but inert, matching
+        # the adapt_level: 0 precedent).
+        h = _Harness()
+        h.setUp()
+        x, fr = _scan_subfloor(ceiling=0.6, want_at_least=0.4)
+        seq = 0
+        for _ in range(5):
+            for tools in (_shifted(x), dict(BASE_TOOLS)):
+                seq += 1
+                h.record("a", tools, seq)
+                chk = h.store.check("a", h.policy)
+        self.assertNotIn("drift_budget_slow_burn",
+                         [e.get("event") for e in h.events])
+        self.assertNotIn("drift_budget_adapted",
+                         [e.get("event") for e in h.events])
+        self.assertFalse(chk.detail["slow_burn_tripped"])
+        self.assertEqual(chk.detail["slow_burn_accum"], 0)
+        self.assertIsNone(chk.detail["slow_burn_threshold"])
 
 
 if __name__ == "__main__":

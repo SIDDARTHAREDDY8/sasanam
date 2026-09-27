@@ -451,7 +451,12 @@ class TestFlipConfirmation(_Harness):
 
     def test_inconsistent_directions_never_confirm(self):
         # A/B/C rotation with sub-floor breakers: six distinct paced
-        # signatures, never closing a 2-period.
+        # signatures, never closing a 2-period. The breakers alternate
+        # exact-opposite directions (net zero): they are sub-floor
+        # scaffolding and must stay direction-inert -- a
+        # same-direction breaker train is the wave-146 slow-burn
+        # accumulator's attack shape ([sub-floor, clean] x N, one
+        # direction) and that seam legitimately fires on it.
         xf, _f = _scan_below(ceiling=0.6, want_at_least=0.4)
 
         def _c(x):
@@ -466,7 +471,7 @@ class TestFlipConfirmation(_Harness):
         for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
                       _flip_fwd(xf), dict(BASE_TOOLS),
                       _c(xc), dict(BASE_TOOLS),
-                      _flip_fwd(xf), dict(BASE_TOOLS),
+                      _flip_rev(xf), dict(BASE_TOOLS),
                       _flip_rev(_X09), dict(BASE_TOOLS),
                       _flip_fwd(xf), dict(BASE_TOOLS)):
             seq += 1

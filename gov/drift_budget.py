@@ -339,18 +339,45 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     (``p`` in 3..K, >= 2 distinct directions) tightens LOUD with
     trigger ``rotation_pacing_confirmed``, exactly like a confirmed
     flip.
+
+    Wave-146 adds the slow-burn accumulator (new policy fields
+    ``slow_weight`` / ``slow_clean_decay`` / ``slow_trip`` /
+    ``slow_window_factor`` / ``slow_min_runs``, all operator
+    calibration): sub-floor (below ``adapt_flip_floor`` x the
+    effective limit) but nonzero contributions accrue at REDUCED
+    weight (``slow_weight``) into a LONG-window accumulator
+    (``slow_window_factor`` x the effective adaptive window). When
+    the weighted accumulation crosses ``slow_trip`` with direction
+    consistency >= ``min_consistency`` over at least
+    ``slow_min_runs`` sub-floor runs, the budget emits a LOUD
+    ``drift_budget_slow_burn`` event and tightens exactly like the
+    other pacing triggers (trigger ``slow_burn``). Clean runs defuse
+    the accumulator multiplicatively (x ``slow_clean_decay``) --
+    faster than the long window's passive expiry, and strong enough
+    that isolated noise never sticks; unlike the main budget's full
+    clear, the decay is partial so a paced [sub-floor, clean]
+    campaign still accumulates (that campaign is the shape this
+    hunts -- a full clear would re-open the exact residual). The
+    accumulator epoch restarts on every tightening, every manual
+    reset, and every slow-burn trip marker, so old evidence never
+    double-counts. A plain ``BudgetPolicy`` has no slow-burn fields
+    and zero behavior change.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
                  "adapt_contrib_floor", "adapt_strikes",
                  "adapt_max_level", "adapt_dir_decay",
-                 "adapt_dir_threshold", "adapt_flip_floor")
+                 "adapt_dir_threshold", "adapt_flip_floor",
+                 "slow_weight", "slow_clean_decay", "slow_trip",
+                 "slow_window_factor", "slow_min_runs")
 
     def __init__(self, warn_distance, adapt_near_floor=0.75,
                  adapt_cycles=2, adapt_factor=0.6,
                  adapt_contrib_floor=0.75, adapt_strikes=3,
                  adapt_max_level=3, adapt_dir_decay=0.9,
-                 adapt_dir_threshold=2.4, adapt_flip_floor=0.75, **kw):
+                 adapt_dir_threshold=2.4, adapt_flip_floor=0.75,
+                 slow_weight=0.5, slow_clean_decay=0.5, slow_trip=0.3,
+                 slow_window_factor=3, slow_min_runs=3, **kw):
         super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
         if not isinstance(adapt_near_floor, (int, float)) or \
                 not 0 < adapt_near_floor <= 1:
@@ -394,6 +421,30 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
         self.adapt_dir_decay = float(adapt_dir_decay)
         self.adapt_dir_threshold = float(adapt_dir_threshold)
         self.adapt_flip_floor = float(adapt_flip_floor)
+        if not isinstance(slow_weight, (int, float)) or \
+                not 0 < slow_weight <= 1:
+            raise ValueError("slow_weight must be in (0, 1], got %r"
+                             % (slow_weight,))
+        if not isinstance(slow_clean_decay, (int, float)) or \
+                not 0 < slow_clean_decay < 1:
+            raise ValueError("slow_clean_decay must be in (0, 1), got %r"
+                             % (slow_clean_decay,))
+        if not isinstance(slow_trip, (int, float)) or \
+                not slow_trip > 0:
+            raise ValueError("slow_trip must be positive, got %r"
+                             % (slow_trip,))
+        if not isinstance(slow_window_factor, int) or \
+                slow_window_factor < 2:
+            raise ValueError("slow_window_factor must be an int >= 2, "
+                             "got %r" % (slow_window_factor,))
+        if not isinstance(slow_min_runs, int) or slow_min_runs < 2:
+            raise ValueError("slow_min_runs must be an int >= 2, got %r"
+                             % (slow_min_runs,))
+        self.slow_weight = float(slow_weight)
+        self.slow_clean_decay = float(slow_clean_decay)
+        self.slow_trip = float(slow_trip)
+        self.slow_window_factor = slow_window_factor
+        self.slow_min_runs = slow_min_runs
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
@@ -644,6 +695,80 @@ class BudgetStore(ChainedStore):
         limit = policy.budget_limit * (policy.adapt_factor ** level)
         window = max(2, policy.window_runs - level)
         return round(limit, 9), window
+
+    @staticmethod
+    def _slow_burn_state(records, policy, level):
+        """Fold the chained log to the slow-burn accumulator state.
+
+        Returns ``(accum, consistency, subfloor_runs, long_window)``.
+        Only meaningful for ``AdaptiveBudgetPolicy`` (the sub-floor
+        is ``adapt_flip_floor`` x the effective limit, both in
+        threshold-equivalents). Sub-floor but nonzero contributions
+        accrue at ``slow_weight``; clean-run defuses decay the
+        accumulator multiplicatively by ``slow_clean_decay`` -- the
+        accumulator alone forgives, so a boil must sustain to trip.
+        The net direction and gross magnitude do NOT decay:
+        decaying them lets the most recent contribution dominate, so
+        alternating exact-opposite directions (which net to zero)
+        still show high consistency -- the wave-146 f3/r7 break-first
+        runs proved this fires on direction-inert scaffolding.
+        Consistency is direction agreement of the accruing
+        contributions in the window, undecayed. Contributions
+        at/above the flip floor are the adapted machinery's job and
+        do not accrue here. The epoch restarts (accumulator zeroed)
+        on every ``slow_burn_trip`` marker, every manual reset, and
+        every adapt tightening -- old evidence never double-counts.
+        Only the last ``slow_window_factor`` x effective-window
+        relevant records in the current epoch are folded.
+        Deterministic: pure fold over the chained log, exact
+        arithmetic with the same rounding discipline as the other
+        folds.
+        """
+        eff_limit, eff_window = BudgetStore._effective(policy, level)
+        floor_te = policy.adapt_flip_floor * eff_limit
+        long_window = eff_window * policy.slow_window_factor
+        epoch = []
+        for r in records:
+            kind = r.get("kind")
+            if kind == "slow_burn_trip":
+                epoch = []
+            elif kind == "reset" and r.get("trigger") == "manual":
+                epoch = []
+            elif kind == "adapt" and (r.get("reset_streak")
+                                     or r.get("reset_directions")):
+                epoch = []
+            elif kind in ("contribution", "reset"):
+                epoch.append(r)
+        accum = 0.0
+        net = {}
+        gross = 0.0
+        runs = 0
+        weight = policy.slow_weight
+        decay = policy.slow_clean_decay
+        for r in epoch[-long_window:]:
+            kind = r.get("kind")
+            if kind == "contribution" and r.get("contributes"):
+                te = float(r.get("threshold_equivalents", 0.0))
+                if 0.0 < te < floor_te:
+                    accum = round(accum + weight * te, 9)
+                    for tool, delta in \
+                            r.get("signed_deltas", {}).items():
+                        net[tool] = net.get(tool, 0.0) + delta
+                    gross += sum(abs(v) for v in
+                                 r.get("signed_deltas", {}).values())
+                    runs += 1
+            elif kind == "reset":
+                # Clean-run defuse: decay the accumulator only, not
+                # the direction ledger. Decaying net/gross together
+                # lets the most recent contribution dominate, so
+                # alternating exact-opposite directions (net zero)
+                # still read as consistent -- a false positive the
+                # wave-146 f3/r7 break-first runs caught. Manual
+                # resets restart the epoch above instead.
+                accum = round(accum * decay, 9)
+        consistency = (sum(abs(v) for v in net.values()) / gross
+                       if gross > 0 else 0.0)
+        return accum, consistency, runs, long_window
 
     def _cycle_contributions(self, records, window):
         """Contributing records after the last reset, within the window.
@@ -1158,6 +1283,69 @@ class BudgetStore(ChainedStore):
                             audit)
 
         status = "tripped" if tripped else "ok"
+
+        # Wave-146 (row 9): the slow-burn accumulator. Sub-floor paced
+        # bursts with clean defuses evade every other tripwire; the
+        # long-window accumulator catches them. On a trip: a LOUD
+        # ``drift_budget_slow_burn`` event plus a tightening exactly
+        # like the other pacing triggers (trigger "slow_burn"). The
+        # trip marker restarts the accumulator epoch, so one epoch
+        # trips at most once; the status still reflects the main
+        # budget -- the LOUD event is the escalation signal, and the
+        # tightened level makes the next contributing run trip under
+        # the lowered limit per the existing level>=1 semantics.
+        slow_detail = {"slow_burn_tripped": False,
+                       "slow_burn_accum": 0.0,
+                       "slow_burn_consistency": 0.0,
+                       "slow_burn_runs": 0,
+                       "slow_burn_threshold": None,
+                       "slow_burn_window_runs": None}
+        if adaptive:
+            accum, scons, sruns, slong = self._slow_burn_state(
+                records, policy, adapt_level)
+            slow_detail.update(
+                slow_burn_accum=accum,
+                slow_burn_consistency=round(scons, 6),
+                slow_burn_runs=sruns,
+                slow_burn_threshold=policy.slow_trip,
+                slow_burn_window_runs=slong)
+            if (accum >= policy.slow_trip
+                    and scons >= policy.min_consistency
+                    and sruns >= policy.slow_min_runs):
+                slow_detail["slow_burn_tripped"] = True
+                seqs = [int(r.get("run_seq", -1)) for r in records
+                        if r.get("kind") == "contribution"
+                        and r.get("contributes")]
+                slow_seq = max(seqs) if seqs else last_reset_seq
+                marker = {"kind": "slow_burn_trip", "agent_id": agent_id,
+                          "run_seq": slow_seq,
+                          "drift_budget_version": _BUDGET_VERSION,
+                          "slow_accum": accum,
+                          "slow_consistency": round(scons, 6),
+                          "slow_runs": sruns}
+                self._write(agent_id, marker,
+                            {"event": "drift_budget_slow_burn",
+                             "severity": "LOUD",
+                             "agent_id": agent_id,
+                             "slow_accum": accum,
+                             "slow_consistency": round(scons, 6),
+                             "slow_runs": sruns,
+                             "slow_window_runs": slong,
+                             "slow_trip": policy.slow_trip,
+                             "adapt_level_before": adapt_level},
+                            audit)
+                if adapt_level < policy.adapt_max_level:
+                    new_level = adapt_level + 1
+                    nl, nw = self._effective(policy, new_level)
+                    self._write_adapt(
+                        agent_id, slow_seq, new_level, "tighten",
+                        "slow_burn", nl, nw,
+                        {"slow_accum": accum,
+                         "slow_consistency": round(scons, 6),
+                         "slow_runs": sruns,
+                         "slow_window_runs": slong}, audit,
+                        reset_streak=True, reset_directions=True)
+
         return BudgetCheck(
             status, agent_id=agent_id, cumulative=cumulative,
             consistency=round(consistency, 6),
@@ -1169,4 +1357,5 @@ class BudgetStore(ChainedStore):
                     "warn_distance": policy.warn_distance,
                     "adapt_level": adapt_level,
                     "effective_limit": eff_limit,
-                    "effective_window": eff_window})
+                    "effective_window": eff_window,
+                    **slow_detail})

@@ -37,11 +37,12 @@ revocations on the clean corpus (similarity ranges EN
 0.706-0.889, DE 0.545-0.706, FR 0.571-0.750 -- all at/above the
 0.5 gate).
 
-Pinned EXPECTED (4): genuine FPs the seeded approach cannot fix
-without scope/double-negation resolution -- documented with the
-exact sentence, measured, not claimed away:
-  - "There is no reason not to send the Q3 report to the vendor."
-    (double negation resolves affirmative; cue 'no', sim 0.800);
+Pinned EXPECTED (3): genuine FPs the seeded approach cannot fix
+without scope resolution -- documented with the exact sentence,
+measured, not claimed away. (Wave-146 resolved the fourth pin,
+the English double negation "There is no reason not to send the Q3
+report to the vendor." -- it no longer fires, so it was removed
+here; its coverage moved to evals/double_negation_probes.py.)
   - "Le Q3 report n'est pas en retard; envoyez-le au vendor."
     ('pas' scopes over "en retard", not the grant verb; sim 0.571);
   - "Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an
@@ -229,13 +230,12 @@ GUARD_CONTROLS = [
 
 # Pinned EXPECTED false positives: the cue fires AND raw similarity
 # is >= gate (the gate WOULD revoke), but the sentence is benign --
-# double negation or negation scoping over the wrong predicate. The
-# seeded word-list approach cannot fix these without scope
-# resolution; pinned with the exact sentence, measured, not hidden.
+# negation scoping over the wrong predicate. The seeded word-list
+# approach cannot fix these without scope resolution; pinned with the
+# exact sentence, measured, not hidden. (Wave-146 removed the fourth
+# pin, the English double negation, now resolved -- see
+# evals/double_negation_probes.py.)
 PINNED_FPS = [
-    ("There is no reason not to send the Q3 report to the vendor.",
-     "double negation resolves affirmative ('no' + 'not'); the "
-     "seeded cue set has no double-negation resolution"),
     ("Le Q3 report n'est pas en retard; envoyez-le au vendor.",
      "'pas' scopes over 'en retard' (the report is not late), not "
      "the grant verb -- scope imprecision"),
@@ -336,8 +336,8 @@ def pinned_fps_documented():
             return
         notes.append("cue %r + sim %.3f: %s" % (cue, sim, reason))
     _record(name, "EXPECTED",
-            "4 pinned FPs (double-negation / scope imprecision), "
-            "exact sentences: %s" % " || ".join(notes))
+            "%d pinned FPs (scope imprecision), exact sentences: %s"
+            % (len(PINNED_FPS), " || ".join(notes)))
 
 
 def _run_all():

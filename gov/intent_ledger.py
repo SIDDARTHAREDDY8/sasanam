@@ -98,6 +98,7 @@ from datetime import datetime, timezone
 
 from . import keyprovider as _keyprovider
 from .intent_slice import _detect_countermand, _NEGATION_RE
+from .intent_slice import _english_double_negation_cancels
 from .target_match import (
     target_similarity,
     DEFAULT_THRESHOLD,
@@ -260,6 +261,12 @@ def similarity_countermand(message, prior_messages,
       - high similarity WITHOUT a negation cue -> NEVER fires.
         Fail-safe: a paraphrased confirmation ("yes, definitely send
         it!") must not read as a countermand.
+      - wave-146 row 7: a positively-resolved English double
+        negation (``_english_double_negation_cancels`` -- "no reason
+        not to send", "don't disagree") suppresses the cue even when
+        similarity is high: it is an affirmation, not a countermand.
+        The measured score is still returned. Ambiguous stacking
+        and stacked emphasis do not resolve (conservative: revoke).
 
     Non-string messages never fire; non-string priors are skipped
     (never coerced); an empty prior list cannot fire. These fail-safe
@@ -327,6 +334,15 @@ def similarity_countermand(message, prior_messages,
         if score > best_score:
             best_idx, best_score = i, score
     if best_idx is not None and best_score >= threshold:
+        if _english_double_negation_cancels(message):
+            # Wave-146 row 7: a positively-resolved English double
+            # negation ("no reason not to send") is an affirmation,
+            # not a countermand -- suppress the cue, do not revoke.
+            # The measured score is still returned (observability:
+            # high similarity, suppressed cue). Conservative:
+            # ambiguous stacking and stacked emphasis do not resolve
+            # and revoke below.
+            return (False, None, best_score)
         return (True, best_idx, best_score)
     return (False, None, best_score)
 

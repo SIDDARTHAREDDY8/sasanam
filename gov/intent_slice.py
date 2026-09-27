@@ -190,7 +190,78 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Action verbs per tool family (stems, matched as substrings of tokens).
+# Wave-146 (row 7): English double-negation resolution. Two negation
+# cues in a bounded same-sentence construction that cancel into
+# affirmation ("There is no reason not to send the Q3 report") must
+# not read as a countermand. The resolver is deliberately narrow and
+# English-only; anything ambiguous keeps the cue (conservative:
+# revoke). Two positive-resolution patterns:
+#
+# 1. NO_X_NOT_TO_V: "no <noun> not to <verb>" (and the split
+#    infinitive "no <noun> to not <verb>") -- "there is no reason not
+#    to send", "we see no need to not comply". Bounded: 1-2 words
+#    between "no" and the second cue, same sentence (the word gaps
+#    cannot cross sentence punctuation). The "no" keeps its
+#    wave-145 "no problem" guard; "not" keeps its "not only" guard.
+# 2. NOT_NEGWORD: a negation cue ("not"/"n't"/"never") directly
+#    followed (0-1 light adverbs) by a closed-list negative-polarity
+#    word -- "don't disagree", "not uncommon", "cannot deny". The
+#    list is CLOSED, not productive prefix matching: "Don't
+#    distribute" must still revoke (dis- trap), so distribute/
+#    discuss/disclose and friends are absent by design.
+#
+# Explicitly NOT resolved (conservative revoke):
+# - stacked emphasis on one predicate: "Never, under no
+#   circumstances, send it" (two cues, no cancellation structure);
+# - ambiguous stacking: "I don't think we should not send it";
+# - single negation: "Do not send the Q3 report";
+# - non-English double negation (German "nicht unmoeglich" etc.):
+#   the word lists are English, so behavior there is unchanged.
+# - "no reason not to <verb>" where the verb contradicts the grant
+#   ("no reason not to cancel" vs a send grant): linguistically an
+#   affirmation of <verb>, not a negation -- the negation-gated
+#   signal stays silent; contradiction-without-negation is the
+#   documented paraphrase ceiling, not this seam.
+_DOUBLE_NEG_NO_X_NOT_TO_RE = re.compile(
+    r"\bno(?!\s+problems?\b)(?:\s+[a-z0-9']+){1,2}\s+"
+    r"(?:not(?!\s+only\b)\s+to|to\s+not(?!\s+only\b))\b",
+    re.IGNORECASE)
+# Closed negative-polarity list for NOT_NEGWORD (see above: no
+# productive un-/in-/dis- prefixes -- "distribute" must not match).
+_NEGATIVE_POLARITY_WORDS = frozenset(
+    "uncommon unlikely impossible improbable unaware unwise unfair "
+    "untrue unjust unreasonable unhelpful insignificant inappropriate "
+    "inadequate incomplete incorrect disagree deny doubt refuse reject "
+    "fail lack miss oppose object dislike distrust disapprove "
+    "without".split())
+_DOUBLE_NEG_NOT_NEGWORD_RE = re.compile(
+    r"(?:\bnot(?!\s+only\b)|\bnever|n['\u2019]?t)"
+    r"(?:\s+(?:quite|very|entirely|really|simply))?\s+("
+    + "|".join(sorted(_NEGATIVE_POLARITY_WORDS)) + r")\b",
+    re.IGNORECASE)
+# Sentence splitter for the same-sentence bound.
+_DOUBLE_NEG_SENTENCE_RE = re.compile(r"[^.!?;]+")
+
+
+def _english_double_negation_cancels(message):
+    """Wave-146 row 7: positively-resolved English double negation?
+
+    True when ``message`` contains two English negation cues in a
+    bounded same-sentence construction that cancel into affirmation
+    (the NO_X_NOT_TO_V or NOT_NEGWORD patterns above). Callers
+    suppress the negation cue (do not revoke). English only;
+    ambiguous stacking and stacked emphasis return False
+    (conservative: keep the cue, revoke). Deterministic, stdlib
+    ``re`` only.
+    """
+    if not isinstance(message, str) or not message.strip():
+        return False
+    for sent in _DOUBLE_NEG_SENTENCE_RE.findall(message):
+        if _DOUBLE_NEG_NO_X_NOT_TO_RE.search(sent):
+            return True
+        if _DOUBLE_NEG_NOT_NEGWORD_RE.search(sent):
+            return True
+    return False
 _TOOL_VERBS = {
     "delete_file": ("delet", "remov", "eras", "wipe", "clean", "clear",
                     "trash"),

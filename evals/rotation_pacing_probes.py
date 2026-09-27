@@ -70,8 +70,11 @@ Probes:
      0.75 pacing floor) x8 paced cycles -> 0 adaptations, 0 trips;
      the rotation history never accumulates. HELD pre/post.
   r7_breaker_cycles_clear: paced wobble cycles separated by
-     sub-floor breaker defuse cycles -> 0 adaptations (non-paced
-     cycles clear the history). HELD pre/post.
+     sub-floor breaker defuse cycles (alternating exact-opposite
+     directions, net zero -- a same-direction breaker train is the
+     slow-burn accumulator's attack shape, so the scaffolding stays
+     direction-inert) -> 0 adaptations (non-paced cycles clear the
+     history). HELD pre/post.
   r8_deterministic_x2: r1+r2+r3 verdicts byte-identical across two
      runs.
 
@@ -196,6 +199,19 @@ def _wob_e(x):
     t = dict(_BASE_TOOLS)
     t["email"] -= x
     t["summarize"] += x
+    return t
+
+
+def _wob_e_rev(x):
+    # Exact opposite of _wob_e (r7): summarize -> email. Alternating
+    # the two keeps a breaker train net-zero in direction so the
+    # wave-146 slow-burn accumulator (which hunts sustained
+    # single-direction sub-floor campaigns) stays quiet on the
+    # scaffolding; a same-direction breaker train is that seam's
+    # attack shape and it legitimately fires on it.
+    t = dict(_BASE_TOOLS)
+    t["email"] += x
+    t["summarize"] -= x
     return t
 
 
@@ -618,9 +634,18 @@ def r7_breaker_cycles_clear():
     xe, fe = be
     ctx = _Ctx("r7", _policy(warn))
     seq_tools = []
+    # Breaker direction alternates E / reverse-E (net zero): the
+    # breakers are non-paced scaffolding whose job is clearing the
+    # rotation history, and this probe's contract needs them
+    # direction-inert. (A same-direction breaker train is the
+    # slow-burn accumulator's attack shape; that seam legitimately
+    # fires on it, so the fixture does not hand it one.)
+    bi = 0
     for fn in _WOBBLE_FNS:
+        brk = _wob_e(xe) if bi % 2 == 0 else _wob_e_rev(xe)
+        bi += 1
         seq_tools += [_wobble_tools(fn, x, w), dict(_BASE_TOOLS),
-                      _wob_e(xe), dict(_BASE_TOOLS)]
+                      brk, dict(_BASE_TOOLS)]
     tripped_at, chk = _drive(ctx, "agent-breaker", seq_tools)
     n_adapt = len(ctx.any_adapt())
     if tripped_at is not None or n_adapt:

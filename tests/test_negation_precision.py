@@ -116,13 +116,16 @@ class PrecisionGuardTest(unittest.TestCase):
     def test_pinned_fps_still_fire_at_gate(self):
         # Honest EXPECTED pins (see
         # evals/negation_precision_probes.py::PINNED_FPS): these
-        # benign sentences trip the gate -- double negation and
-        # negation scoping over the wrong predicate, which the
-        # seeded word-list approach cannot resolve. Pinned here too
-        # so the pin cannot silently rot at the unit level.
+        # benign sentences trip the gate -- negation scoping over the
+        # wrong predicate, which the seeded word-list approach cannot
+        # resolve. Pinned here too so the pin cannot silently rot at
+        # the unit level. (Wave-146 removed the fourth pin, the
+        # English double negation "There is no reason not to send
+        # the Q3 report to the vendor." -- now resolved by
+        # _english_double_negation_cancels; its coverage moved to
+        # evals/double_negation_probes.py and the resolver unit
+        # tests.)
         for sent in (
-                "There is no reason not to send the Q3 report to "
-                "the vendor.",
                 "Le Q3 report n'est pas en retard; envoyez-le au "
                 "vendor.",
                 "Der Q3 report ist keineswegs fertig; bitte senden "
@@ -133,6 +136,23 @@ class PrecisionGuardTest(unittest.TestCase):
                 sent, [GRANT], threshold=0.5)
             self.assertTrue(fired, sent)
             self.assertGreaterEqual(score, 0.5, sent)
+
+    def test_double_negation_no_longer_revokes(self):
+        # Wave-146 row 7: the resolved English double negation must
+        # NOT revoke (the removed fourth pin, asserted at the unit
+        # level so it cannot regress silently).
+        fired, _, score = similarity_countermand(
+            "There is no reason not to send the Q3 report to the "
+            "vendor.", [GRANT], threshold=0.5)
+        self.assertFalse(fired)
+        self.assertGreaterEqual(score, 0.5)
+        # ...while single negation and stacked emphasis still do.
+        for sent in ("Do not send the Q3 report to the vendor.",
+                     "Never, under no circumstances, send the Q3 "
+                     "report to the vendor."):
+            fired, _, _ = similarity_countermand(
+                sent, [GRANT], threshold=0.5)
+            self.assertTrue(fired, sent)
 
 
 if __name__ == "__main__":

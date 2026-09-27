@@ -93,6 +93,18 @@ def _wob_e(x):
     return t
 
 
+def _wob_e_rev(x):
+    # Exact opposite of _wob_e: alternating the two keeps a
+    # breaker train net-zero in direction (wave-146: a
+    # same-direction sub-floor breaker train is the slow-burn
+    # accumulator's attack shape, and that seam legitimately
+    # fires on it -- the scaffolding must stay direction-inert).
+    t = dict(BASE_TOOLS)
+    t["email"] += x
+    t["summarize"] -= x
+    return t
+
+
 def _abc_a(x):
     t = dict(BASE_TOOLS)
     t["search"] -= x
@@ -386,9 +398,15 @@ class GatingTests(_Harness):
         xe, _fe = _scan_below(_wob_e, ceiling=0.6, want_at_least=0.4)
         agent = "breaker"
         seq_tools = []
+        # Breaker direction alternates E / reverse-E (net zero):
+        # the breakers are non-paced scaffolding and must stay
+        # direction-inert (see _wob_e_rev).
+        bi = 0
         for fn in _WOBBLE_FNS:
+            brk = _wob_e(xe) if bi % 2 == 0 else _wob_e_rev(xe)
+            bi += 1
             seq_tools += [_wob_tools(fn, _XW), dict(BASE_TOOLS),
-                          _wob_e(xe), dict(BASE_TOOLS)]
+                          brk, dict(BASE_TOOLS)]
         tripped = self.drive(agent, seq_tools)
         self.assertIsNone(tripped)
         self.assertEqual(self.any_adapts(), [])

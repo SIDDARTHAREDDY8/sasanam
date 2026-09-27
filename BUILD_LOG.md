@@ -1,3 +1,49 @@
+## 2026-09-27 — Wave-146 lane 1: row-9 slow-burn drift accumulator (not pushed)
+
+**Scope:** the slow-burn residual — an attacker pacing sub-floor same-direction drift (below the adaptive flip floor) across many runs, never tripping the per-run budget. Break-first battery `evals/slow_burn_probes.py` (module-level `GOV_DEPLOYMENT_MODE=staging`; verified standalone under `env -u GOV_DEPLOYMENT_MODE`; deterministic ×2): pre-seam **0 HELD / 5 BREAK / 0 ERROR** — all five probes correctly identified the missing seam.
+
+**Built (`gov/drift_budget.py`):** `AdaptiveBudgetPolicy` gains `slow_weight=0.5`, `slow_clean_decay=0.5`, `slow_trip=0.3`, `slow_window_factor=3`, `slow_min_runs=3` (validated + serialized). `_slow_burn_state(records, policy, level)` folds a long window (`effective_window × slow_window_factor`), accumulating only positive contributions below the adaptive flip floor; clean runs decay the accumulator; direction net/gross do NOT decay (break-first testing showed decaying them falsely let the latest direction dominate and fired on net-zero alternating scaffolding); manual resets, adaptive tightenings, and `slow_burn_trip` markers restart the epoch. `BudgetStore.check()` exposes `slow_burn_*` detail fields. Threshold crossing emits LOUD `drift_budget_slow_burn`, writes a `slow_burn_trip` marker, and tightens via the existing `_write_adapt` (trigger `"slow_burn"`). The main `BudgetCheck.status` stays the static/adaptive result — the LOUD event + adaptation is the escalation signal. Re-checks do not duplicate the epoch's event (the marker resets the fold).
+
+**Measured tradeoff:** a ~0.478-threshold `[drift, clean]` pacer trips at run 5 and tightens to level 1; a ~0.263-threshold pacer is the documented residual (does not trip); 0/200 deterministic zero-mean benign sequences tripped; single ≥1.2-threshold runs stay on the single-run path. Post-seam battery: **4 HELD / 0 BREAK / 1 EXPECTED / 0 ERROR** (both envs). The new seam exposed two old battery fixtures whose "breaker" scaffolding itself formed a sustained sub-floor attack — fixtures corrected (not the product): `flip_pacing_probes` breakers now alternate exact-opposite directions; `rotation_pacing_probes` gains a reverse-E breaker. **Units:** focused run 83/83 OK. Adjacent batteries: `drift_budget_probes` 5/1, `adaptive_drift_probes` 7/2, `flip_pacing_probes` 7/0, `rotation_pacing_probes` 8/0.
+
+**Findings:** none filed. Next free: F183. Row 9 stays PARTIAL.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-146 lane 2: row-7 English double-negation resolution (not pushed)
+
+**Scope:** the pinned FP — "There is no reason not to send the Q3 report to the vendor." (sim 0.800) revoking via the negation cue, though the double negation resolves affirmative. Break-first battery `evals/double_negation_probes.py` (module-level staging; standalone under `env -u`; explicit `similarity_countermand(..., threshold=0.5)` per the wave-145 pin lesson; deterministic ×2): pre-seam **0 HELD / 9 BREAK / 0 ERROR** — the resolver seam absent; baseline confirmed all 8 sentences fire pre-seam (the battery discriminates).
+
+**Built:** `gov/intent_slice.py::_english_double_negation_cancels(message)` — two positively-resolved English patterns: NO_X_NOT_TO_V ("no <noun> not to <verb>", incl. split infinitive "no <noun> to not <verb>", 1-2 word gap, same-sentence bound) and NOT_NEGWORD (negation cue + 0-1 light adverbs + closed negative-polarity list: "don't disagree", "not uncommon" — NOT productive un-/dis- prefixes, so "Don't distribute" still revokes). `_NEGATION_RE` itself untouched (other consumers unchanged). `gov/intent_ledger.py::similarity_countermand` consults it after the similarity gate: on resolve, returns `(False, None, best_score)` — cue suppressed, measured score kept for observability. Conservative: stacked emphasis ("Never, under no circumstances, send"), ambiguous stacking ("don't think we should not send"), single negation, and non-English double negation all still revoke. English-only by construction (word lists are English).
+
+**Post-seam:** **9 HELD / 0 BREAK / 0 ERROR** (both envs). The 4th precision pin removed from `evals/negation_precision_probes.py` (now 3/0/1: three scope-imprecision pins) and `tests/test_negation_precision.py` (11/11, incl. new no-revoke + still-revoke pins). Adjacent: multilingual 9/0, inflection 22/1, paraphrase unchanged, intent suites 109/109.
+
+**Findings:** none filed. Next free: F183. Row 7 stays PARTIAL (double negation resolved for English; scope imprecision + non-English remain).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-146 lane 3: row-13 cumulative canary-fragment detection (not pushed)
+
+**Scope:** piecemeal exfiltration — an attacker exfiltrating a canary one fragment per egress defeats whole-value matching. Break-first battery `evals/canary_fragment_probes.py` (module-level staging; standalone under `env -u`; deterministic ×2): pre-seam **6 HELD / 3 BREAK / 0 ERROR** — c1/c2/c9 BREAK (seam absent); the six "stays silent" probes HELD as controls.
+
+**Built (`gov/canary.py`):** `FRAGMENT_LEN=16` (rationale documented: ≤10 collides with structural prefixes; 62^16 collision-negligible; every canary ≥20 chars yields ≥5 windows). The registry derives overlapping fragments per canary — the value is SPLIT on predictable words (`_PREDICTABLE_SPLIT_RE`, closed list + mint's service/zone names derived programmatically) and only unpredictable remainders are fragmented (step 1 maximal overlap). Splitting (not window-rejecting) is what makes it robust: a 16-char window slicing through "internal" dodges a naive filter, but the split removes the whole structural run. Break-first measured 35/40 FP before the filter (benign infra chatter accumulating structural fragments), 0/40 after. `CanaryRegistry.match_fragments(s)` (stateful, per-run seen-sets reset on `register()`, never across canaries) trips on 2 distinct fragments of one canary or one fragment ≥ half the canary (`_has_half_span`). `scan_egress_fragments` (encoding-aware, same leaf enumeration) runs only when the whole-value scan misses — whole canaries stay on `canary_trip` with zero duplicate fragment events. Fragment trip: LOUD `canary_fragment_egress` (counts + label + destination where available; fragment strings never logged) + approval escalation + fail-closed `CanaryTripHalt`. Hostname canaries yield zero fragments (entirely predictable; `match_host` still protects them); the db password (24 random chars) yields 14 fragments and piecemeal exfiltration trips on chunk 2.
+
+**Post-seam:** **9 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (both envs). `tests/test_canary_fragments.py` 11/11. Neighboring canary suites 203/203. Documented residual: chunks < FRAGMENT_LEN, and fully paraphrased-away canaries, still miss (row 13 stays PARTIAL).
+
+**Findings:** none filed. Next free: F183. Row 13 stays PARTIAL.
+
+**Post-gate fix (2026-09-27):** the registry gate caught a false
+positive in `_has_half_span` — a shared predictable infrastructure
+suffix (".staging.internal") across rotated hostnames tripped the
+half-span rule (`canary.p1.rotation_previous_run_no_trip` broke).
+Fixed by making `_has_half_span` predictable-aware (splits on
+predictable words, requires the span to lie within an unpredictable
+remainder). Regression test added
+(`test_half_span_ignores_predictable_infrastructure`). All gates
+re-run green after the fix.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-27 — Wave-145 lane 1: row-9 N-period rotation pacing (not pushed)
 
 **Scope:** Wave-144's pinned residual — "3+-period rotations" were said to evade the flip-confirmation tripwire. Break-first measurement REFINED the premise before building: ODD-period paced rotations are already covered by the wave-139 direction-aware near-trip streak, via a parity argument — for the streak to stay blind every consecutive paced pair must cancel (large components satisfy L_{i+1} ≈ -L_i) while periodicity demands L_{i+p} = L_i; for odd p this forces L_i ≈ 0, contradicting "paced". A bounded randomized search over ~125k paced burst shapes found ZERO 3-period streak+flip-evading constructions, and the naive A/B/C 3-period pacer trips at run 7 via `near_trip_cycle` (pinned by r2). The TRUE residual is EVEN-period: a 4-period "wobble" rotation (pairwise-canceling ~0.9x bursts whose small wobble moves morph the direction signature each cycle: X,Y,Z,W distinct sigs, every consecutive pair canceling >=50% in L1) evades the streak (pairs cancel), the flip tripwire (signatures never close a 2-period), and the static budget — only the wave-141 per-direction buckets catch it, at ~run 42.
