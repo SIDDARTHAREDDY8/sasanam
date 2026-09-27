@@ -67,7 +67,9 @@ Honest ceilings (documented, not hidden):
   are not safe (last-writer-wins on os.replace). One writer per
   ledger file; the operator owns the path.
 - Reads the operator never reports are invisible (same coverage
-  ceiling as the in-run tracker: ``note_read_output`` is explicit).
+  ceiling as the in-run tracker: only reads through the governed
+  tool boundary auto-observe (wave-141); direct filesystem access
+  outside the governed API stays invisible by construction).
 
 $0 spend, stdlib only, deterministic (commitments are deterministic
 given the key; TTL tests inject ``observed_at``/``now``).

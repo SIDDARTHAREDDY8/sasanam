@@ -2889,9 +2889,15 @@ class ToolExecutor:
         READ-type tool completes (read_file results, etc.). The hot
         tool path is untouched and nothing is double-counted. With
         no tracker installed this is a no-op returning
-        ``{"observed": False}`` (zero behavior change). Reads the
-        operator never reports are invisible to the tracker — the
-        documented coverage ceiling. Wave-139: when the tracker has
+        ``{"observed": False}`` (zero behavior change). Wave-141:
+        a successful governed ``read_file`` ALSO observes itself
+        automatically (real sandbox bytes only — see
+        ``_rare_token_observe_on_read``); the explicit call stays
+        for harness-side reads and replaces the auto observation
+        when the source IDs match. Reads that never cross the
+        governed tool boundary (direct filesystem access) remain
+        invisible to the tracker — the documented coverage ceiling.
+        Wave-139: when the tracker has
         a ``taint_ledger`` attached, the read is also recorded
         durably (counts, doc ids, opaque commitments — never token
         strings) so a later run's egress check can consult it.
@@ -3331,6 +3337,63 @@ class ToolExecutor:
                 "level": level,
                 "max_level": self._read_classification,
             })
+        except Exception:
+            pass
+
+    def _rare_token_observe_on_read(self, tool, args, result, agent_id):
+        """Row-13 (wave-141): automatically observe a real governed
+        read's output in the rare-token tracker.
+
+        Called at the single public execution seam after a tool call
+        completes (and at the approved-sweep use-time re-execution),
+        next to the classification-taint hook. Only fires on a
+        successful ``read_file`` whose result is REAL sandbox bytes
+        (``result["source"] == "sandbox"``, mirroring the lineage
+        guard): synthetic content is never observed — the tracker
+        must not learn tokens the agent never actually saw. Reads
+        returning no content (denied, queued, refused, escaping)
+        observe nothing.
+
+        The auto source ID is ``read:auto:<sandbox-relative-path>``
+        (resolved like every other path-keyed hook). An explicit
+        ``note_read_output`` for the same document with the same ID
+        REPLACES the auto observation — the tracker keys by
+        (agent_id, source_id), so explicit + automatic is one
+        observation, never a double count (the harness owns the ID
+        contract; different IDs are different sources). The auto
+        path emits NO audit event (log-spam control, privacy by
+        construction): token strings never enter the chain from
+        this seam; the tracker's in-memory token sets and the taint
+        ledger's opaque commitments are the only stores, as before.
+
+        Never raises and never breaks the read: on any trouble the
+        observation is skipped (fail-open on observation — the read
+        already succeeded and its bytes were returned; blocking a
+        completed read is not a coherent control). The harness's
+        explicit ``note_read_output`` keeps its fail-closed ledger
+        semantics; the auto path is a best-effort tripwire, not a
+        replacement for it. Direct filesystem access outside the
+        governed API stays invisible by construction — the executor
+        only sees what crosses its boundary.
+        """
+        if tool != "read_file":
+            return
+        tracker = getattr(self, "rare_token_tracker", None)
+        if tracker is None:
+            return
+        if not (isinstance(result, dict) and result.get("content")):
+            return
+        # Real bytes only — never synthetic (mirrors the lineage
+        # guard at the file-channel hook).
+        if result.get("source") != "sandbox":
+            return
+        try:
+            path = args.get("path") if isinstance(args, dict) else None
+            if not path:
+                return
+            rel = self._resolved_path_for_policy(path) or str(path)
+            tracker.observe_read(agent_id, "read:auto:%s" % rel,
+                                 str(result["content"]))
         except Exception:
             pass
 
@@ -7873,6 +7936,12 @@ class ToolExecutor:
             # Row-13 closure: classification label taint on successful
             # read_file (provenance-based; paraphrase cannot shed it).
             self._classification_taint_on_read(tool, kwargs, result)
+            # Wave-141 (row 13): automatic read observation — a real
+            # governed read_file observes itself into the rare-token
+            # tracker (no explicit note_read_output needed). Real
+            # sandbox bytes only; never raises, never breaks the read.
+            self._rare_token_observe_on_read(tool, kwargs, result,
+                                             identity.agent_id)
             # Row-12: register successful governed writes in the
             # artifact inventory (path, sha256, size, agent, label).
             self._artifact_register_on_write(tool, kwargs, result,
@@ -9251,6 +9320,11 @@ class ToolExecutor:
             # read_file, mirroring the direct-call path above.
             self._classification_taint_on_read(rec["tool"], rec["args"],
                                                result)
+            # Wave-141 (row 13): automatic read observation on the
+            # approved path too — an approved read_file observes
+            # itself exactly like a direct one.
+            self._rare_token_observe_on_read(rec["tool"], rec["args"],
+                                             result, rec.get("agent_id"))
             # Row-12: register successful governed writes, mirroring the
             # direct-call path (an approved write_file enters the
             # inventory exactly like a direct one).

@@ -111,6 +111,24 @@ sub-near-trip. Repeated same-direction near-threshold bursts with
 defuses are indistinguishable from a paced boil by construction --
 the adaptation fires on both (pinned EXPECTED b2 in
 ``evals/adaptive_drift_probes.py``).
+
+Flip-direction pacing (wave-141): ``AdaptiveBudgetPolicy`` also
+carries per-direction pacing buckets (``adapt_dir_decay`` /
+``adapt_dir_threshold``). Each defuse cycle with a near-trip
+accrues its threshold-equivalents into the bucket keyed by the
+cycle's deterministic direction signature (``_direction_key``: the
+sign pattern of the net signed tool deltas); every bucket decays by
+``adapt_dir_decay`` each defuse instead of resetting on a direction
+flip. A bucket reaching ``adapt_dir_threshold`` on a near-trip cycle
+tightens LOUD (trigger ``direction_pacing``) exactly like the
+streak trigger, and the buckets zero on the tightening. This catches
+the alternating-direction pacer the aggregate consistency gate and
+the direction-aware streak both miss -- but it is a COUNT of
+persistent directional near-trips, not a proof of malice: an
+attacker who learns the parameters paces at most ~3 near-trip cycles
+per direction (or keeps every cycle sub-near-trip), and the
+threshold/decay are new operator calibration targets. The direction
+key is sign-pattern only; magnitude accrues but does not key.
 """
 
 from collections import Counter
@@ -213,16 +231,25 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     tightenings. Each tightening also shrinks the window by one run
     (floor 2) and, while level >= 1, lets a single contributing run
     trip (the level encodes the prior multi-cycle evidence).
+    ``adapt_dir_decay`` (wave-141): per-defuse-cycle multiplicative
+    decay applied to every per-direction pacing bucket, in (0, 1).
+    ``adapt_dir_threshold`` (wave-141): a per-direction bucket at or
+    above this (in threshold-equivalents) on a near-trip cycle
+    triggers a tightening -- the flip-direction pacing tripwire.
+    Both are operator calibration, like every other adaptation
+    parameter.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
                  "adapt_contrib_floor", "adapt_strikes",
-                 "adapt_max_level")
+                 "adapt_max_level", "adapt_dir_decay",
+                 "adapt_dir_threshold")
 
     def __init__(self, warn_distance, adapt_near_floor=0.75,
                  adapt_cycles=2, adapt_factor=0.6,
                  adapt_contrib_floor=0.75, adapt_strikes=3,
-                 adapt_max_level=3, **kw):
+                 adapt_max_level=3, adapt_dir_decay=0.9,
+                 adapt_dir_threshold=2.4, **kw):
         super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
         if not isinstance(adapt_near_floor, (int, float)) or \
                 not 0 < adapt_near_floor <= 1:
@@ -245,12 +272,22 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
         if not isinstance(adapt_max_level, int) or adapt_max_level < 1:
             raise ValueError("adapt_max_level must be an int >= 1, got %r"
                              % (adapt_max_level,))
+        if not isinstance(adapt_dir_decay, (int, float)) or \
+                not 0 < adapt_dir_decay < 1:
+            raise ValueError("adapt_dir_decay must be in (0, 1), got %r"
+                             % (adapt_dir_decay,))
+        if not isinstance(adapt_dir_threshold, (int, float)) or \
+                not adapt_dir_threshold > 0:
+            raise ValueError("adapt_dir_threshold must be positive, got %r"
+                             % (adapt_dir_threshold,))
         self.adapt_near_floor = float(adapt_near_floor)
         self.adapt_cycles = adapt_cycles
         self.adapt_factor = float(adapt_factor)
         self.adapt_contrib_floor = float(adapt_contrib_floor)
         self.adapt_strikes = adapt_strikes
         self.adapt_max_level = adapt_max_level
+        self.adapt_dir_decay = float(adapt_dir_decay)
+        self.adapt_dir_threshold = float(adapt_dir_threshold)
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
@@ -277,6 +314,21 @@ def signed_tool_deltas(run_fp, baseline_fp):
                     if base_total > 0 else 0.0)
         deltas[tool] = round(obs.get(tool, 0) - expected, 6)
     return deltas
+
+
+def _direction_key(net):
+    """Deterministic direction signature from net signed deltas.
+
+    The sign pattern of the nonzero net tool deltas, sorted by tool
+    name: e.g. ``"email:+1|search:-1"``. Two cycles whose net drift
+    points the same way (same tools up/down) share a key; a
+    direction flip changes the key. Magnitude is NOT part of the
+    key -- only of the accumulated threshold-equivalents. Empty
+    net (no drift) yields ``""``. Deterministic and JSON-safe.
+    """
+    parts = ["%s:%+d" % (tool, 1 if v > 0 else -1)
+             for tool, v in sorted(net.items()) if v != 0]
+    return "|".join(parts)
 
 
 class BudgetContribution:
@@ -387,11 +439,13 @@ class BudgetStore(ChainedStore):
         """Fold adapt/reset records to current adaptation state.
 
         Returns ``(level, streak, streak_net, streak_gross,
-        last_adapt_seq)``. Each reset record carries the post-reset
-        streak; a cycle-triggered tightening (``reset_streak``) zeroes
-        it. Records from ``reset()`` predate the adaptive fields and
-        are treated as streak 0 (level is operator policy state and
-        survives a manual reset -- it decays via benign cycles).
+        last_adapt_seq, direction_scores)``. Each reset record carries
+        the post-reset streak and the post-reset per-direction scores;
+        a cycle-triggered tightening (``reset_streak`` /
+        ``reset_directions``) zeroes them. Records from ``reset()``
+        predate the adaptive fields and are treated as streak 0 /
+        empty scores (level is operator policy state and survives a
+        manual reset -- it decays via benign cycles).
         Deterministic: pure fold over the chained log.
         """
         level = 0
@@ -399,6 +453,7 @@ class BudgetStore(ChainedStore):
         streak_net = {}
         streak_gross = 0.0
         last_adapt_seq = -1
+        direction_scores = {}
         for r in records:
             kind = r.get("kind")
             if kind == "adapt":
@@ -409,12 +464,18 @@ class BudgetStore(ChainedStore):
                     streak = 0
                     streak_net = {}
                     streak_gross = 0.0
+                if r.get("reset_directions"):
+                    direction_scores = {}
             elif kind == "reset":
                 streak = int(r.get("streak", 0))
                 streak_net = {k: float(v) for k, v in
                               r.get("streak_net", {}).items()}
                 streak_gross = float(r.get("streak_gross", 0.0))
-        return level, streak, streak_net, streak_gross, last_adapt_seq
+                direction_scores = {
+                    str(k): float(v) for k, v in
+                    r.get("direction_scores", {}).items()}
+        return (level, streak, streak_net, streak_gross, last_adapt_seq,
+                direction_scores)
 
     @staticmethod
     def _effective(policy, level):
@@ -460,7 +521,7 @@ class BudgetStore(ChainedStore):
 
     def _write_adapt(self, agent_id, run_seq, level, direction, trigger,
                      eff_limit, eff_window, evidence, audit,
-                     reset_streak=False):
+                     reset_streak=False, reset_directions=False):
         """Write an ``adapt`` record + audit event (audit-before-write).
 
         Tightenings emit the LOUD ``drift_budget_adapted`` evidence
@@ -474,6 +535,7 @@ class BudgetStore(ChainedStore):
                   "trigger": trigger, "effective_limit": eff_limit,
                   "effective_window": eff_window,
                   "reset_streak": bool(reset_streak),
+                  "reset_directions": bool(reset_directions),
                   "evidence": dict(evidence)}
         event = {"event": "drift_budget_adapted"
                            if direction == "tighten"
@@ -599,7 +661,8 @@ class BudgetStore(ChainedStore):
         unchanged.
         """
         records = self._read_all(agent_id)
-        level, streak, s_net, s_gross, _ = self._adapt_fold(records)
+        level, streak, s_net, s_gross, _, dir_scores = \
+            self._adapt_fold(records)
         eff_limit, eff_window = self._effective(policy, level)
         cycle, _, _ = self._cycle_contributions(records, eff_window)
         cum, cons, net, gross = self._window_stats(cycle)
@@ -624,14 +687,47 @@ class BudgetStore(ChainedStore):
             new_gross = cand_gross if new_streak > 1 else gross
         else:
             new_streak, new_net, new_gross = 0, {}, 0.0
+        # Wave-141 (row 9): per-direction pacing buckets. A near-trip
+        # cycle accrues its threshold-equivalents into the bucket keyed
+        # by the cycle's deterministic direction signature; EVERY
+        # bucket decays slowly each defuse cycle instead of resetting
+        # merely because the direction flipped. Persistent flip pacing
+        # (repeated near-trip cycles in alternating directions) trips
+        # a bucket while the aggregate consistency gate and the
+        # direction-aware streak above both stay blind. Buckets are
+        # carried on the chained reset records (audited evidence) and
+        # zeroed by a direction-triggered tightening.
+        sig = _direction_key(net) if near_trip else ""
+        decay = policy.adapt_dir_decay
+        new_scores = {}
+        for skey, sval in dir_scores.items():
+            dval = round(sval * decay, 9)
+            if dval > 0:
+                new_scores[skey] = dval
+        if near_trip and sig:
+            new_scores[sig] = round(new_scores.get(sig, 0.0) + cum, 9)
+        # The tripping bucket is the max one at/above threshold (it is
+        # usually the current cycle's, but a decayed bucket from a
+        # recently blocked tightening can still be the evidence).
+        trip_sig, trip_score = "", 0.0
+        for skey, sval in new_scores.items():
+            if (sval >= policy.adapt_dir_threshold
+                    and sval > trip_score):
+                trip_sig, trip_score = skey, sval
+        dir_trip = near_trip and bool(trip_sig)
         record.update({
             "near_trip": near_trip, "streak": new_streak,
             "cycle_cumulative": cum,
             "cycle_consistency": round(cons, 6),
             "streak_net": {k: round(v, 6) for k, v in new_net.items()},
-            "streak_gross": round(new_gross, 6)})
+            "streak_gross": round(new_gross, 6),
+            "direction_sig": sig,
+            "direction_scores": {k: round(v, 6)
+                                 for k, v in new_scores.items()},
+            "direction_trip": bool(dir_trip)})
         audit_event["near_trip"] = near_trip
         audit_event["near_streak"] = new_streak
+        audit_event["direction_trip"] = bool(dir_trip)
         self._write(agent_id, record, audit_event, audit)
         if (near_trip and new_streak >= policy.adapt_cycles
                 and level < policy.adapt_max_level):
@@ -643,6 +739,18 @@ class BudgetStore(ChainedStore):
                 {"near_streak": new_streak, "cycle_cumulative": cum,
                  "cycle_consistency": round(cons, 6)}, audit,
                 reset_streak=True)
+        elif dir_trip and level < policy.adapt_max_level:
+            new_level = level + 1
+            nl, nw = self._effective(policy, new_level)
+            self._write_adapt(
+                agent_id, run_seq, new_level, "tighten",
+                "direction_pacing", nl, nw,
+                {"direction_sig": trip_sig,
+                 "direction_score": round(trip_score, 6),
+                 "direction_threshold": policy.adapt_dir_threshold,
+                 "cycle_cumulative": cum,
+                 "cycle_consistency": round(cons, 6)}, audit,
+                reset_streak=True, reset_directions=True)
         elif not near_trip and level > 0:
             new_level = level - 1
             nl, nw = self._effective(policy, new_level)
@@ -663,7 +771,7 @@ class BudgetStore(ChainedStore):
         policies with a higher budget_limit.
         """
         records = self._read_all(agent_id)
-        level, _, _, _, last_adapt_seq = self._adapt_fold(records)
+        level, _, _, _, last_adapt_seq, _ = self._adapt_fold(records)
         if level >= policy.adapt_max_level:
             return
         _, eff_window = self._effective(policy, level)
@@ -732,7 +840,7 @@ class BudgetStore(ChainedStore):
         adapt_level = 0
         eff_limit, eff_window = policy.budget_limit, policy.window_runs
         if adaptive:
-            adapt_level, _, _, _, _ = self._adapt_fold(records)
+            adapt_level, _, _, _, _, _ = self._adapt_fold(records)
             eff_limit, eff_window = self._effective(policy, adapt_level)
 
         contributing, last_reset_seq, window_n = self._cycle_contributions(

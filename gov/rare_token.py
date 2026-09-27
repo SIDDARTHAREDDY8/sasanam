@@ -63,10 +63,15 @@ evals/rare_token_probes.py and evals/read_then_egress_probes.py):
   words). Jargon-heavy legitimate domains WILL produce rare tokens;
   the destination-novelty amplifier and the K>=3 bar are the FP
   controls, not the wordlist.
-- Read observation is explicit (``note_read_output``): reads the
-  operator never reports are invisible. This keeps the hot tool path
-  untouched and avoids double-counting, at the cost of coverage
-  depending on the integration.
+- Read observation is explicit (``note_read_output``) PLUS
+  automatic for real governed reads (wave-141: a successful
+  ``read_file`` through the executor observes itself — synthetic
+  content never, no audit event, best-effort). Reads that never
+  cross the governed tool boundary (direct filesystem access) are
+  invisible by construction. This keeps the hot tool path's
+  contract (the auto hook never raises, never breaks the read)
+  and avoids double-counting (explicit + automatic with the same
+  source ID is one observation).
 - Cross-run memory: the tracker is per-run, but when constructed
   with a ``taint_ledger`` (gov/taint_ledger.py) the read-side taint
   persists across runs keyed by stable agent identity: a later run's

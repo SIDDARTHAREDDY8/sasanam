@@ -156,6 +156,17 @@ ALLOWED_HMAC_SITES = {
     # battery probe).
     ("gov/taint_ledger.py", "TaintLedger.blinded_token", 0):
         "taint-commitment blinding; key from resolve_active_key() chokepoint, domain-separated",
+    # gov/artifact_sweep.py (wave-141, row-12): the declared-inventory
+    # pin. The key is gov.keyprovider.resolve_active_key() output (or
+    # an explicit caller override) -- the wave-69/81 guarded
+    # chokepoint (explicit provisioning, fail-closed, no dev
+    # fallback) -- never hard-coded, never committed;
+    # domain-separated via _PIN_DOMAIN ("artifact-inventory-pin-v1")
+    # and bound to (envelope version, resolved inventory, pinned_at)
+    # so a pin cannot collide with any other MAC domain. The pin is
+    # an inventory-integrity binding, not a credential.
+    ("gov/artifact_sweep.py", "_inventory_pin_mac", 0):
+        "inventory-pin MAC; key from resolve_active_key() chokepoint, domain-separated",
 }
 
 

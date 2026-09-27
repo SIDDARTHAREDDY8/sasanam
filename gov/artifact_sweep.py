@@ -88,27 +88,60 @@ in the same process can skip the report or forge its events —
 this catches the careless operator configuration, not the
 adversarial one.
 
+Pinned declared inventory (wave-141): the wave-140 report compared
+whatever inventory it was handed — a compromised executor could
+silently SHRINK the declared list so a blind spot never appears as
+a gap. ``pin_inventory(declared_roots)`` is the operator pinning
+ceremony: the resolved inventory is bound with an HMAC-SHA256 pin
+keyed by the deployment key (``gov.keyprovider.resolve_active_key()``,
+domain-separated, never hard-coded; an unprovisioned deployment
+fails closed at ceremony time). The executor takes the PINNED dict
+as ``artifact_sweep={"declared_inventory": pinned}``; the gap
+report verifies the pin and recomputes the report from (pinned
+inventory, configured roots). A shrunk/tampered/forged inventory
+fails verification LOUD (``artifact_sweep_inventory_unverifiable``)
+and the report goes fail-closed FULL-GAP (every declared directory
+treated as uncovered). No pin configured → the report carries an
+explicit ``unpinned`` verdict (documented downgrade, never silently
+treated as pinned). Any dict-form inventory claims the pinned
+envelope: a dict without a verifiable pin (including a pin-stripped
+envelope, F182) fails verification LOUD rather than being
+reinterpreted as an unpinned inventory of its keys. Honest ceilings: the pin moves trust to key
+custody and the pinning ceremony — a compromised executor WITH
+deployment-key access can still pin a malicious inventory; the
+ceremony (who pins, when, audited) is the control, not the MAC.
+The pin binds the DECLARED inventory; undeclared directories stay
+invisible (the row-12 undeclared ceiling persists).
+
 $0, stdlib only. Deterministic.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import os
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from .artifacts import normalize_path, ArtifactInventory
+from . import keyprovider as _keyprovider
+from .chained_store import canonical
 
 __all__ = [
     "sweep_run_dir",
     "register_watch_root",
     "compare_coverage",
     "report_coverage_gaps",
+    "pin_inventory",
+    "verify_inventory_pin",
     "WatchRootError",
     "SWEEP_FINDING_EVENT",
     "SWEEP_COMPLETE_EVENT",
     "COVERAGE_GAP_EVENT",
     "COVERAGE_COMPLETE_EVENT",
+    "INVENTORY_UNVERIFIABLE_EVENT",
+    "PINNED_INVENTORY_VERSION",
     "NEVER_REGISTERED",
     "INTEGRITY_VIOLATION",
 ]
@@ -123,6 +156,20 @@ COVERAGE_GAP_EVENT = "artifact_sweep_coverage_gap"
 #: Wave-140: summary evidence event proving the coverage report ran
 #: (declared / covered / gap counts).
 COVERAGE_COMPLETE_EVENT = "artifact_sweep_coverage_complete"
+
+#: Wave-141: LOUD evidence event when a pinned declared inventory
+#: fails verification. Fail-closed: the report treats every declared
+#: directory as uncovered (full-gap) -- a forged inventory must
+#: never read as "covered".
+INVENTORY_UNVERIFIABLE_EVENT = "artifact_sweep_inventory_unverifiable"
+
+#: Wave-141: pinned-inventory envelope version.
+PINNED_INVENTORY_VERSION = "artifact-inventory-pin/1.0"
+
+#: Wave-141: HMAC domain separation for inventory pins. A pin is only
+#: ever valid as an inventory pin -- it cannot collide with any other
+#: MAC domain in the repo.
+_PIN_DOMAIN = b"artifact-inventory-pin-v1"
 
 NEVER_REGISTERED = "never_registered"
 INTEGRITY_VIOLATION = "integrity_violation"
@@ -417,6 +464,188 @@ def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
 
 
 # ---------------------------------------------------------------------------
+# Pinned declared inventory (wave-141): the wave-140 coverage report
+# compared whatever inventory it was handed -- a compromised
+# same-process executor could silently SHRINK the declared inventory
+# so a blind spot never appears as a gap. The declared inventory must
+# now be operator-pinned with an HMAC at configuration time; the gap
+# report binds to the pinned inventory, and a verifier recomputes the
+# report from (pinned inventory, configured roots). A shrunk/forged
+# inventory fails verification LOUD (``artifact_sweep_inventory_unverifiable``,
+# fail-closed full-gap). No pin configured -> the report carries an
+# explicit ``unpinned`` verdict (documented downgrade, never silently
+# treated as pinned).
+#
+# Honest ceilings (documented, not hidden): the pin moves trust to
+# key custody and the pinning ceremony. A compromised executor WITH
+# deployment-key access can still pin a malicious inventory -- the
+# ceremony (who pins, when, audited) is the control, not the MAC.
+# The pin binds the inventory the operator DECLARED; a directory the
+# operator doesn't know about stays undeclared (the row-12
+# undeclared-directory ceiling persists, pinned not closed).
+# ---------------------------------------------------------------------------
+
+def _inventory_pin_mac(key, body):
+    """HMAC-SHA256 over the canonical pinned-inventory body.
+
+    Single key-material site in this module (see the w70 HMAC
+    chokepoint allowlist): the key is
+    ``gov.keyprovider.resolve_active_key()`` output -- the wave-69/81
+    guarded chokepoint (explicit provisioning, fail-closed, no dev
+    fallback) -- or an explicit caller override; never hard-coded,
+    never committed. Domain-separated via ``_PIN_DOMAIN``.
+    """
+    return hmac.new(key, _PIN_DOMAIN + b"\x00" + body,
+                    sha256).hexdigest()
+
+
+def _pinned_body(version, inventory, pinned_at):
+    """Canonical bytes covered by the inventory pin."""
+    return canonical({"pinned_inventory": version,
+                      "inventory": list(inventory),
+                      "pinned_at": pinned_at}).encode("utf-8")
+
+
+def _resolve_declared(entry):
+    """Resolve one declared-inventory entry (path only, never walked)."""
+    return os.path.realpath(os.path.abspath(str(entry)))
+
+
+def pin_inventory(declared_roots, *, hmac_key=None):
+    """Operator pinning ceremony: bind the declared inventory with an HMAC.
+
+    ``declared_roots``: the operator's explicit inventory of
+    egress-capable directories (str/PathLike entries). Entries are
+    RESOLVED (realpath) for the pin -- they are NEVER walked or
+    crawled. A non-path entry raises ValueError fail-closed at
+    ceremony time (a malformed inventory must be LOUD at setup, not
+    a silent gap at report time).
+
+    ``hmac_key``: explicit key override (bytes); when None, the
+    deployment key comes from
+    ``gov.keyprovider.resolve_active_key()`` and an unprovisioned
+    deployment raises ``NoKeyConfiguredError`` fail-closed -- the
+    ceremony requires a key, there is no unsigned pin.
+
+    Returns the pinned inventory dict::
+
+        {"pinned_inventory": "artifact-inventory-pin/1.0",
+         "inventory": [<resolved paths>],
+         "pinned_at": <ISO-8601>,
+         "pin": <hex HMAC-SHA256>}
+
+    The operator hands this dict (not the bare list) to the executor
+    as ``artifact_sweep={"declared_inventory": pinned}``.
+    """
+    if hmac_key is None:
+        key_bytes, _epoch = _keyprovider.resolve_active_key()
+    else:
+        key_bytes = bytes(hmac_key)
+        if not key_bytes:
+            raise ValueError("hmac_key must be non-empty bytes")
+    resolved = []
+    for entry in declared_roots or ():
+        if not isinstance(entry, (str, os.PathLike)):
+            raise ValueError(
+                "declared inventory entries must be paths, got %r"
+                % (entry,))
+        resolved.append(_resolve_declared(entry))
+    pinned_at = _utcnow_iso()
+    pin = _inventory_pin_mac(
+        key_bytes,
+        _pinned_body(PINNED_INVENTORY_VERSION, resolved, pinned_at))
+    return {"pinned_inventory": PINNED_INVENTORY_VERSION,
+            "inventory": resolved,
+            "pinned_at": pinned_at,
+            "pin": pin}
+
+
+def verify_inventory_pin(pinned, *, hmac_key=None):
+    """Verify a pinned declared inventory.
+
+    Returns ``(True, "")`` when the pin recomputes over the presented
+    (inventory, pinned_at), else ``(False, reason)``. NEVER raises on
+    malformed input -- a forged or damaged pin is a verification
+    FAILURE (fail-closed, LOUD at the report layer), not an
+    exception. A key that cannot be resolved (unprovisioned
+    deployment, empty override) also fails closed: without the key
+    the pin is unverifiable, never trusted.
+    """
+    if not isinstance(pinned, dict):
+        return (False, "pinned inventory must be a dict, got %s"
+                % type(pinned).__name__)
+    version = pinned.get("pinned_inventory")
+    if version != PINNED_INVENTORY_VERSION:
+        return (False, "unknown pinned-inventory version %r"
+                % (version,))
+    inventory = pinned.get("inventory")
+    if (not isinstance(inventory, list)
+            or not all(isinstance(e, str) for e in inventory)):
+        return (False, "pinned inventory list is malformed")
+    pinned_at = pinned.get("pinned_at")
+    if not isinstance(pinned_at, str) or not pinned_at:
+        return (False, "pinned_at is missing")
+    pin = pinned.get("pin")
+    if not isinstance(pin, str) or not pin:
+        return (False, "pin is missing")
+    try:
+        if hmac_key is None:
+            key_bytes, _epoch = _keyprovider.resolve_active_key()
+        else:
+            key_bytes = bytes(hmac_key)
+            if not key_bytes:
+                raise ValueError("hmac_key must be non-empty bytes")
+    except Exception as e:  # noqa: BLE001 - fail closed, never raise
+        return (False, "key unavailable for verification: %s: %s"
+                % (type(e).__name__, e))
+    resolved = [_resolve_declared(e) for e in inventory]
+    expected = _inventory_pin_mac(
+        key_bytes, _pinned_body(version, resolved, pinned_at))
+    if not hmac.compare_digest(expected, pin):
+        return (False, "pin mismatch: the declared inventory does not "
+                "match its pin (shrunk, extended, reordered, or forged)")
+    return (True, "")
+
+
+def _is_pinned_form(declared_roots):
+    """True when the declared inventory claims the pinned envelope.
+
+    ANY dict claims the pinned form. The documented unpinned form is
+    a plain list; a dict without a ``pin`` key is a malformed/forged
+    envelope, not an unpinned inventory. (F182: the old
+    ``"pin" in declared_roots`` test let a pin-stripped envelope be
+    silently reinterpreted as an unpinned inventory of its dict keys
+    -- real declared directories dropped from the report with no
+    LOUD event. Now every dict goes through ``verify_inventory_pin``
+    and a pin-stripped envelope fails LOUD, fail-closed.)
+    """
+    return isinstance(declared_roots, dict)
+
+
+def _untrusted_declared_roots(pinned):
+    """Best-effort resolved roots from an UNVERIFIED pinned dict.
+
+    Used only to shape the fail-closed full-gap report: entries that
+    are not strings are dropped (they cannot be trusted or even
+    resolved). Never raises.
+    """
+    out = []
+    try:
+        inventory = pinned.get("inventory")
+    except AttributeError:
+        return out
+    if not isinstance(inventory, list):
+        return out
+    for entry in inventory:
+        if isinstance(entry, str) and entry:
+            try:
+                out.append(_resolve_declared(entry))
+            except Exception:  # noqa: BLE001 - drop, never raise
+                continue
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Coverage report (wave-140): operator-declared inventory vs configured
 # watch roots. Pure path comparison — no filesystem crawling beyond
 # resolving the declared paths (no scandir, no discovery).
@@ -515,9 +744,62 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
 
     The report is visibility, not prevention; the inventory is
     operator-declared (undeclared directories stay invisible).
+
+    Wave-141: ``declared_roots`` may be a pinned inventory dict from
+    ``pin_inventory`` instead of a plain list. A pinned inventory is
+    VERIFIED before use: a shrunk/tampered/forged pin fails LOUD
+    with one ``artifact_sweep_inventory_unverifiable`` event and a
+    fail-closed FULL-GAP report (every declared directory treated
+    as uncovered -- a forged inventory never reads as "covered").
+    A plain (unpinned) list is accepted with an explicit
+    ``"unpinned"`` verdict -- the documented downgrade, never
+    silently treated as pinned. The returned report carries
+    ``"verdict"`` (``"pinned"`` | ``"unpinned"`` |
+    ``"unverifiable"``), and the summary event carries
+    ``"inventory_verdict"``.
     """
-    rows = compare_coverage(declared_roots, watch_roots)
-    report = {"declared": [r["declared_root"] for r in rows],
+    pinned_form = _is_pinned_form(declared_roots)
+    inventory_verdict = "unpinned"
+    declared_list = declared_roots
+    if pinned_form:
+        ok, reason = verify_inventory_pin(declared_roots)
+        if not ok:
+            # Fail-closed: the inventory is untrusted. One LOUD
+            # event; every declared directory is reported as a gap
+            # (full-gap). No coverage_complete summary -- the
+            # unverifiable event IS the terminal evidence.
+            declared = _untrusted_declared_roots(declared_roots)
+            ev = {"event": INVENTORY_UNVERIFIABLE_EVENT,
+                  "severity": "LOUD",
+                  "flag": "coverage_gap",
+                  "run_id": run_id,
+                  "declared_roots": declared,
+                  "inventory_verdict": "unverifiable",
+                  "reason": ("INVENTORY UNVERIFIABLE: the declared "
+                             "artifact inventory failed pin "
+                             "verification (%s) -- the coverage-gap "
+                             "report cannot trust it. Treating every "
+                             "declared directory as UNCOVERED "
+                             "(fail-closed full-gap). Re-pin the "
+                             "inventory at configuration time with "
+                             "the deployment key." % reason),
+                  "ts": _utcnow_iso()}
+            events = [ev]
+            if audit is not None:
+                audit(ev)
+            return {"verdict": "unverifiable",
+                    "declared": declared,
+                    "covered": [],
+                    "gaps": list(declared),
+                    "gap_roots": list(declared),
+                    "covered_roots": [],
+                    "reason": reason,
+                    "events": events}
+        inventory_verdict = "pinned"
+        declared_list = declared_roots["inventory"]
+    rows = compare_coverage(declared_list, watch_roots)
+    report = {"verdict": inventory_verdict,
+              "declared": [r["declared_root"] for r in rows],
               "covered": [r["declared_root"] for r in rows
                           if r["covering_root"]],
               "gaps": [r["declared_root"] for r in rows
@@ -539,6 +821,7 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
                "run_id": run_id,
                "declared_root": row["declared_root"],
                "covering_root": None,
+               "inventory_verdict": inventory_verdict,
                "reason": ("COVERAGE GAP: operator-inventoried "
                           "egress-capable directory %r has NO "
                           "covering watch root -- writes there are "
@@ -554,6 +837,7 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
                    "covered": len(report["covered"]),
                    "gaps": len(report["gaps"]),
                    "gap_roots": report["gap_roots"],
+                   "inventory_verdict": inventory_verdict,
                    "ts": _utcnow_iso()})
     report["events"] = events
     if audit is not None:
