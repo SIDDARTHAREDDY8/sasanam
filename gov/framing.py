@@ -273,10 +273,13 @@ class FramingStore(ChainedStore):
     """Durable per-agent cross-run framing-profile store.
 
     One JSONL file per agent under ``store_dir``. Every record is
-    hash-chained (``prev_digest`` linkage, SHA-256 over the canonical
-    record): ``verify_chain`` rejects tampered payloads, dropped
-    records, and broken linkage. Audit runs BEFORE local mutation
-    (F167 lesson): a logging failure leaves the store unchanged.
+    hash-chained (``prev_digest`` linkage): new records carry
+    ``chain_keyed: true`` and a HMAC-SHA256 digest under the deployment
+    key, pre-upgrade records carry the legacy unkeyed SHA-256 digest
+    and still verify. ``verify_chain`` rejects tampered payloads,
+    dropped records, and broken linkage. Audit runs BEFORE local
+    mutation (F167 lesson): a logging failure leaves the store
+    unchanged.
 
     Storage mechanics live in ``gov.chained_store.ChainedStore``; this
     class only declares the framing record schema (``framing_version`` /

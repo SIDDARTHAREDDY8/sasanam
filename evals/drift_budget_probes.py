@@ -72,11 +72,14 @@ Also standalone:
 """
 
 import os
+import secrets
 import sys
 import tempfile
 from pathlib import Path
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
+os.environ.setdefault("GOV_LOG_KEY_EPOCH", "driftbudget-break")
 os.environ.setdefault("TMPDIR", "/tmp/gov-driftbudget-%d" % os.getpid())
 Path(os.environ["TMPDIR"]).mkdir(parents=True, exist_ok=True)
 

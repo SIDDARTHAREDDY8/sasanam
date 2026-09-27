@@ -62,6 +62,7 @@ raise ValueError rather than being silently accepted.
 
 import json
 import math
+import hmac
 import tempfile
 from collections import Counter
 from pathlib import Path
@@ -351,7 +352,15 @@ from gov.chained_store import (
     canonical as _canonical,
     sha256_hex as _sha256_hex,
     utcnow_iso as _utcnow_iso,
+    resolve_chain_key as _resolve_chain_key,
+    chain_domain as _chain_domain,
+    keyed_digest as _keyed_digest,
 )
+from gov.keys import NoKeyConfiguredError as _NoKeyConfiguredError
+
+# MAC domain for the population chain (distinct from the drift and
+# framing run-chain domains).
+_POP_CHAIN_DOMAIN = _chain_domain("population")
 
 
 def default_store_dir():
@@ -365,10 +374,13 @@ class DriftStore(ChainedStore):
     """Durable per-agent cross-run profile store.
 
     One JSONL file per agent under ``store_dir``. Every record is
-    hash-chained (``prev_digest`` linkage, SHA-256 over the canonical
-    record): ``verify_chain`` rejects tampered payloads, dropped
-    records, and broken linkage. Audit runs BEFORE local mutation
-    (F167 lesson): a logging failure leaves the store unchanged.
+    hash-chained (``prev_digest`` linkage): new records carry
+    ``chain_keyed: true`` and a HMAC-SHA256 digest under the deployment
+    key, pre-upgrade records carry the legacy unkeyed SHA-256 digest
+    and still verify. ``verify_chain`` rejects tampered payloads,
+    dropped records, and broken linkage. Audit runs BEFORE local
+    mutation (F167 lesson): a logging failure leaves the store
+    unchanged.
 
     Storage mechanics live in ``gov.chained_store.ChainedStore``; this
     class only declares the drift record schema (``drift_version`` /
@@ -844,9 +856,12 @@ class PopulationStore:
     """Durable population of agent baseline fingerprints.
 
     One JSONL file (``population.jsonl``) under ``store_dir``; every
-    record is hash-chained (prev_digest linkage, SHA-256 over the
-    canonical record) with the same audit-before-mutation discipline
-    as DriftStore. Record kinds:
+    record is hash-chained (prev_digest linkage) with the same
+    audit-before-mutation discipline as DriftStore. New records carry
+    ``chain_keyed: true`` and a HMAC-SHA256 digest under the deployment
+    key (resolved via ``gov.keyprovider``, the audit log's idiom — no
+    new key story); pre-upgrade records verify under the legacy
+    unkeyed scheme. Record kinds:
 
     - "baseline": one per agent (latest wins); carries the
       fingerprint and its trust state ("trusted" | "provisional").
@@ -894,7 +909,14 @@ class PopulationStore:
         return self._head_cache
 
     def verify_chain(self):
-        """True iff the chain is intact (digests + linkage)."""
+        """True iff the chain is intact (digests + linkage).
+
+        The digest scheme is selected per record: records carrying
+        ``chain_keyed: true`` verify under the HMAC scheme (the key is
+        resolved; if no key is configured a keyed record cannot verify
+        and the chain fails closed), older records verify under the
+        legacy unkeyed scheme. Mixed chains verify per-record.
+        """
         try:
             records = self._read_all()
         except PopulationCorruptedError:
@@ -904,8 +926,19 @@ class PopulationStore:
             if rec.get("prev_digest") != prev:
                 return False
             digest = rec.get("digest")
-            if digest != _sha256_hex(_canonical(
-                    {k: v for k, v in rec.items() if k != "digest"})):
+            if rec.get("chain_keyed"):
+                try:
+                    key, _epoch = _resolve_chain_key()
+                except _NoKeyConfiguredError:
+                    # A keyed record with no key configured cannot be
+                    # verified: fail closed, never treat as intact.
+                    return False
+                expect = _keyed_digest(rec, key, _POP_CHAIN_DOMAIN)
+            else:
+                expect = _sha256_hex(_canonical(
+                    {k: v for k, v in rec.items() if k != "digest"}))
+            if not isinstance(digest, str) or \
+                    not hmac.compare_digest(digest, expect):
                 return False
             prev = digest
         return True
@@ -920,13 +953,19 @@ class PopulationStore:
     def _append(self, record, audit, event):
         self._require_intact()
         auditor = self._audit if audit is None else audit
+        # Keyed chain: the deployment key is resolved here and
+        # NoKeyConfiguredError propagates (fail-closed — an append
+        # without a configured key refuses loudly, never silently
+        # falls back to the unkeyed scheme).
+        key, epoch = _resolve_chain_key()
         prev = self._head()
         record = dict(record)
         record["pop_version"] = _POP_VERSION
         record["recorded_at"] = _utcnow_iso()
         record["prev_digest"] = prev
-        record["digest"] = _sha256_hex(_canonical(
-            {k: v for k, v in record.items() if k != "digest"}))
+        record["chain_keyed"] = True
+        record["key_epoch"] = epoch
+        record["digest"] = _keyed_digest(record, key, _POP_CHAIN_DOMAIN)
         if auditor is not None:
             evt = {"event": event, "prev_digest": prev,
                    "digest": record["digest"]}
@@ -973,22 +1012,37 @@ class PopulationStore:
             audit, "baseline_recorded")
 
     def all_baselines(self):
-        """Latest baseline per agent: [(agent_id, RunFingerprint)].
+        """Latest baseline per agent, trusted agents only.
+
+        Returns [(agent_id, RunFingerprint)] for agents whose CURRENT
+        trust is "trusted" (the baseline record's trust as overridden
+        by any later "trust" record — human confirm / auto-converge).
+        Provisional agents are EXCLUDED: a provisional (unvalidated,
+        possibly poisoned) fingerprint must never vote on whether a NEW
+        agent's baseline is trusted. With too few trusted peers,
+        ``validate_baseline_against_population`` fails closed to
+        ``unvalidated_no_population`` — never silent inclusion.
 
         Fail-closed: raises PopulationCorruptedError when the chain
         does not verify.
         """
         self._require_intact()
-        latest = {}
+        latest = {}  # agent_id -> [RunFingerprint, effective trust]
         order = []
         for rec in self._read_all():
-            if rec.get("kind") != "baseline":
-                continue
             aid = rec.get("agent_id")
-            if aid not in latest:
-                order.append(aid)
-            latest[aid] = RunFingerprint.from_dict(rec["fingerprint"])
-        return [(aid, latest[aid]) for aid in order]
+            kind = rec.get("kind")
+            if kind == "baseline":
+                if aid not in latest:
+                    order.append(aid)
+                latest[aid] = [RunFingerprint.from_dict(
+                    rec["fingerprint"]),
+                    rec.get("baseline_trust", "trusted")]
+            elif kind == "trust" and aid in latest:
+                latest[aid][1] = rec.get("new_trust",
+                                         latest[aid][1])
+        return [(aid, latest[aid][0]) for aid in order
+                if latest[aid][1] == "trusted"]
 
     def trust_of(self, agent_id):
         """(trust, detail) for an agent: latest baseline trust as
@@ -1031,12 +1085,16 @@ class PopulationStore:
         """Track one subsequent run toward auto-confirmation.
 
         ``peers``: [(agent_id, RunFingerprint)] excluding this agent.
-        When the run validates as population-conforming, the
-        consecutive counter increments; at ``auto_confirm_runs``
-        (default 3) consecutive conforming runs a provisional
-        baseline auto-confirms to trusted (``baseline_auto_confirmed``
-        audit event). A non-conforming run resets the counter.
-        Already-trusted agents are a no-op. Returns (trust, detail).
+        The supplied peers are DEFENSIVELY intersected with the store's
+        current trusted fold: a direct caller cannot reintroduce
+        provisional (unvalidated) agents as validators, even if it
+        passes their fingerprints. When the run validates as
+        population-conforming, the consecutive counter increments; at
+        ``auto_confirm_runs`` (default 3) consecutive conforming runs a
+        provisional baseline auto-confirms to trusted
+        (``baseline_auto_confirmed`` audit event). A non-conforming
+        run resets the counter. Already-trusted agents are a no-op.
+        Returns (trust, detail).
         """
         if not isinstance(fingerprint, RunFingerprint):
             raise TypeError("fingerprint must be a RunFingerprint, got %r"
@@ -1046,8 +1104,14 @@ class PopulationStore:
         trust, _ = self.trust_of(agent_id)
         if trust == "trusted":
             return "trusted", {"already_trusted": True}
+        # Defensive: only currently-trusted agents may validate a run.
+        # Caller-supplied tuples carry no trust state, so the store's
+        # own trusted fold is authoritative here.
+        trusted_ids = {aid for aid, _ in self.all_baselines()}
+        trusted_peers = [(aid, fp) for aid, fp in peers
+                         if aid in trusted_ids and aid != str(agent_id)]
         res = validate_baseline_against_population(agent_id, fingerprint,
-                                                  peers)
+                                                  trusted_peers)
         count = 0
         for rec in self._read_all():
             if rec.get("kind") == "convergence" and \

@@ -193,6 +193,19 @@ ALLOWED_HMAC_SITES = {
     # digest carries drift-state counters, not credentials.
     ("gov/drift_budget.py", "_continuity_mac", 0):
         "drift-continuity digest MAC; key from resolve_active_key() chokepoint, domain-separated",
+    # gov/chained_store.py (wave-157+, row-9 keyed chains): the
+    # per-record chain MAC for DriftStore, FramingStore, and
+    # PopulationStore (which calls keyed_digest directly). The key is
+    # gov.keyprovider.resolve_active_key() output — the wave-69/81
+    # guarded chokepoint (explicit provisioning, fail-closed, no dev
+    # fallback) — never hard-coded, never committed; domain-separated
+    # via chain_domain() ("gov-chained-store/v1" + the record schema's
+    # version key) so drift, framing, budget, and population chains can
+    # never collide with each other or with any other MAC domain. The
+    # chain_keyed marker and key_epoch are part of the MAC input, so
+    # the scheme marker cannot be stripped off-band.
+    ("gov/chained_store.py", "keyed_digest", 0):
+        "row-9 chain-record MAC; key from resolve_active_key() chokepoint, domain-separated per record schema",
 }
 
 

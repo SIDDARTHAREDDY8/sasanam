@@ -16,6 +16,13 @@ import unittest
 from pathlib import Path
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+# Keyed Row-9 chains: the budget store's HMAC chain needs a
+# configured key (keyprovider idiom -- the keyfixture test hook
+# only fires when GOV_LOG_KEY is absent, i.e. test contexts).
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from keyfixture import provision_test_key  # noqa: E402
+provision_test_key()
 
 from gov.drift import RunFingerprint, fingerprint_tool_distance
 from gov.drift_budget import (

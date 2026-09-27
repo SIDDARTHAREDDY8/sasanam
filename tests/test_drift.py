@@ -11,6 +11,12 @@ from pathlib import Path
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Keyed Row-9 chains: the drift store's HMAC chain needs a configured
+# key (keyprovider idiom — the keyfixture test hook only fires when
+# GOV_LOG_KEY is absent, i.e. test contexts).
+sys.path.insert(0, os.path.dirname(__file__))
+from keyfixture import provision_test_key  # noqa: E402
+provision_test_key()
 
 from gov import drift  # noqa: E402
 
@@ -165,6 +171,123 @@ class StoreChainTest(unittest.TestCase):
         s = _store()
         with self.assertRaises(TypeError):
             s.record_run("a1", "p", {"not": "a fingerprint"})
+
+
+class KeyedChainTest(unittest.TestCase):
+    """Row-9 keyed chains: HMAC-SHA256 appends, legacy compatibility.
+
+    New records carry ``chain_keyed: true`` and a MAC under the
+    deployment key (resolved through gov.keyprovider, the audit log's
+    idiom). Pre-upgrade records carry the legacy unkeyed digest and
+    verify without migration.
+    """
+
+    def _legacy_records(self, n=2):
+        # Hand-built pre-upgrade chain: unkeyed SHA-256 digests, no
+        # chain_keyed marker — what the pre-keyed store wrote.
+        from gov.chained_store import canonical, sha256_hex
+        recs, prev = [], ""
+        for i in range(n):
+            rec = {
+                "agent_id": "a1",
+                "principal": "p",
+                "fingerprint": _fp({"x": i}).to_dict(),
+                "drift_version": 1,
+                "recorded_at": "2026-01-01T00:00:0%d+00:00" % i,
+                "run_seq": i,
+                "prev_digest": prev,
+            }
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+            recs.append(rec)
+        return recs
+
+    @staticmethod
+    def _write(store, recs):
+        store._path("a1").write_text(
+            "".join(json.dumps(r, sort_keys=True,
+                               separators=(",", ":")) + "\n"
+                    for r in recs),
+            encoding="utf-8")
+
+    def test_new_records_are_keyed(self):
+        s = _store()
+        rec = s.record_run("a1", "p", _fp({"x": 1}))
+        self.assertTrue(rec.get("chain_keyed"))
+        self.assertIn("key_epoch", rec)
+        self.assertTrue(s.verify_chain("a1"))
+
+    def test_legacy_chain_verifies(self):
+        s = _store()
+        self._write(s, self._legacy_records(3))
+        self.assertTrue(s.verify_chain("a1"))
+
+    def test_keyed_append_onto_legacy_chain(self):
+        s = _store()
+        self._write(s, self._legacy_records(2))
+        s.record_run("a1", "p", _fp({"x": 9}))
+        self.assertTrue(s.verify_chain("a1"))
+
+    def test_history_rewrite_recompute_fails(self):
+        # The off-band attacker rewrites history and recomputes every
+        # digest with the PUBLIC unkeyed scheme: without the key the
+        # forged chain must not verify.
+        from gov.chained_store import canonical, sha256_hex
+        s = _store()
+        s.record_run("a1", "p", _fp({"x": 1}))
+        s.record_run("a1", "p", _fp({"x": 2}))
+        recs = [json.loads(line)
+                for line in s._path("a1").read_text(
+                    encoding="utf-8").splitlines()]
+        recs[0]["fingerprint"]["tool_counts"]["x"] = 999
+        prev = ""
+        for rec in recs:
+            rec.pop("digest", None)
+            rec["prev_digest"] = prev
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+        self._write(s, recs)
+        self.assertFalse(s.verify_chain("a1"))
+
+    def test_wrong_key_rejected(self):
+        s = _store()
+        s.record_run("a1", "p", _fp({"x": 1}))
+        old = os.environ.get("GOV_LOG_KEY")
+        os.environ["GOV_LOG_KEY"] = "ff" * 32
+        try:
+            self.assertFalse(s.verify_chain("a1"))
+        finally:
+            os.environ["GOV_LOG_KEY"] = old
+        self.assertTrue(s.verify_chain("a1"))
+
+    def test_no_key_refuses_append_and_verify(self):
+        from gov.keys import NoKeyConfiguredError
+        old_key = os.environ.pop("GOV_LOG_KEY", None)
+        old_ring = os.environ.pop("GOV_KEYRING_PATH", None)
+        try:
+            s = _store()
+            with self.assertRaises(NoKeyConfiguredError):
+                s.record_run("a1", "p", _fp({"x": 1}))
+            self.assertEqual(s.runs("a1"), [])  # fail-closed: unwritten
+        finally:
+            if old_key is not None:
+                os.environ["GOV_LOG_KEY"] = old_key
+            if old_ring is not None:
+                os.environ["GOV_KEYRING_PATH"] = old_ring
+        # Keyed history with no key configured: cannot verify, not
+        # silently treated as intact.
+        s = _store()
+        s.record_run("a1", "p", _fp({"x": 1}))
+        old_key = os.environ.pop("GOV_LOG_KEY", None)
+        old_ring = os.environ.pop("GOV_KEYRING_PATH", None)
+        try:
+            self.assertFalse(s.verify_chain("a1"))
+        finally:
+            if old_key is not None:
+                os.environ["GOV_LOG_KEY"] = old_key
+            if old_ring is not None:
+                os.environ["GOV_KEYRING_PATH"] = old_ring
+        self.assertTrue(s.verify_chain("a1"))
 
 
 class DetectDriftTest(unittest.TestCase):

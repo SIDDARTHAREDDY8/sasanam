@@ -11,6 +11,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+# Keyed Row-9 chains: the framing store's HMAC chain needs a configured
+# key (keyprovider idiom — the keyfixture test hook only fires when
+# GOV_LOG_KEY is absent, i.e. test contexts).
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from keyfixture import provision_test_key  # noqa: E402
+provision_test_key()
+
 from gov import framing as F
 from gov.framing import (
     FramingFingerprint, FramingStore, FramingSignal, FramingResult,
@@ -262,6 +270,89 @@ class StoreChain(unittest.TestCase):
     def test_wrong_type_rejected(self):
         with self.assertRaises(TypeError):
             self.store.record_run("a1", "p1", {"not": "a fingerprint"})
+
+
+class KeyedChain(unittest.TestCase):
+    """Row-9 keyed chains for the framing store: HMAC-SHA256 appends,
+    legacy compatibility (same contract as the drift store)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="framingkey_ut_"))
+        self.store = FramingStore(self.tmp / "profiles")
+
+    def _fp(self, i):
+        return FramingFingerprint({"http_post": {"a.example": 5 + i}})
+
+    def _legacy_records(self, n=2):
+        from gov.chained_store import canonical, sha256_hex
+        recs, prev = [], ""
+        for i in range(n):
+            rec = {
+                "agent_id": "a1",
+                "principal": "p1",
+                "fingerprint": self._fp(i).to_dict(),
+                "framing_version": 1,
+                "recorded_at": "2026-01-01T00:00:0%d+00:00" % i,
+                "run_seq": i,
+                "prev_digest": prev,
+            }
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+            recs.append(rec)
+        return recs
+
+    def _write(self, recs):
+        import json
+        (self.tmp / "profiles" / "a1.jsonl").write_text(
+            "".join(json.dumps(r, sort_keys=True,
+                               separators=(",", ":")) + "\n"
+                    for r in recs),
+            encoding="utf-8")
+
+    def test_new_records_are_keyed(self):
+        rec = self.store.record_run("a1", "p1", self._fp(0))
+        self.assertTrue(rec.get("chain_keyed"))
+        self.assertIn("key_epoch", rec)
+        self.assertTrue(self.store.verify_chain("a1"))
+
+    def test_legacy_chain_verifies(self):
+        self._write(self._legacy_records(3))
+        self.assertTrue(self.store.verify_chain("a1"))
+
+    def test_keyed_append_onto_legacy_chain(self):
+        self._write(self._legacy_records(2))
+        self.store.record_run("a1", "p1", self._fp(9))
+        self.assertTrue(self.store.verify_chain("a1"))
+
+    def test_history_rewrite_recompute_fails(self):
+        import json
+        from gov.chained_store import canonical, sha256_hex
+        self.store.record_run("a1", "p1", self._fp(0))
+        self.store.record_run("a1", "p1", self._fp(1))
+        p = self.tmp / "profiles" / "a1.jsonl"
+        recs = [json.loads(line)
+                for line in p.read_text(encoding="utf-8").splitlines()]
+        recs[0]["fingerprint"]["arg_counts"]["http_post"] = {
+            "evil.example": 99}
+        prev = ""
+        for rec in recs:
+            rec.pop("digest", None)
+            rec["prev_digest"] = prev
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+        self._write(recs)
+        self.assertFalse(self.store.verify_chain("a1"))
+
+    def test_wrong_key_rejected(self):
+        import os
+        self.store.record_run("a1", "p1", self._fp(0))
+        old = os.environ.get("GOV_LOG_KEY")
+        os.environ["GOV_LOG_KEY"] = "ff" * 32
+        try:
+            self.assertFalse(self.store.verify_chain("a1"))
+        finally:
+            os.environ["GOV_LOG_KEY"] = old
+        self.assertTrue(self.store.verify_chain("a1"))
 
 
 class DetectLevels(unittest.TestCase):

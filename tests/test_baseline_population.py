@@ -15,6 +15,12 @@ from pathlib import Path
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+# Keyed Row-9 chains: the population store's HMAC chain needs a
+# configured key (keyprovider idiom — the keyfixture test hook only
+# fires when GOV_LOG_KEY is absent, i.e. test contexts).
+sys.path.insert(0, os.path.dirname(__file__))
+from keyfixture import provision_test_key  # noqa: E402
+provision_test_key()
 
 from gov import drift as _drift  # noqa: E402
 
@@ -325,6 +331,210 @@ class TestQuantileMedian(unittest.TestCase):
     def test_median(self):
         self.assertEqual(_drift._median([1, 2, 3]), 2)
         self.assertEqual(_drift._median([1, 2, 3, 4]), 2.5)
+
+
+class TestTrustedFold(unittest.TestCase):
+    """all_baselines() folds effective trust: only currently-trusted
+    agents are returned. Provisional (unvalidated) fingerprints must
+    never vote on a new agent's baseline."""
+
+    def test_provisional_excluded(self):
+        pop = _pop_store()
+        for a, f in _peers(3):
+            pop.record_baseline(a, "user-1", f)
+        res = _drift.validate_baseline_against_population(
+            "evil", _fp(_ATTACK), pop.all_baselines())
+        pop.record_baseline("evil", "user-1", _fp(_ATTACK),
+                            validation=res)
+        members = [a for a, _ in pop.all_baselines()]
+        self.assertEqual(members, ["peer-0", "peer-1", "peer-2"])
+
+    def test_confirm_restores_membership(self):
+        pop = _pop_store()
+        for a, f in _peers(3):
+            pop.record_baseline(a, "user-1", f)
+        res = _drift.validate_baseline_against_population(
+            "w", _fp({"translate": 80, "search": 20}),
+            pop.all_baselines())
+        pop.record_baseline("w", "user-1",
+                            _fp({"translate": 80, "search": 20}),
+                            validation=res)
+        self.assertNotIn("w", [a for a, _ in pop.all_baselines()])
+        pop.confirm_baseline("w")
+        self.assertIn("w", [a for a, _ in pop.all_baselines()])
+
+    def test_auto_converge_restores_membership(self):
+        pop = _pop_store()
+        for a, f in _peers(5):
+            pop.record_baseline(a, "user-1", f)
+        res = _drift.BaselineValidationResult(
+            "provisional_untrusted", agent_id="w")
+        pop.record_baseline("w", "user-1", _fp(_NORMAL),
+                            validation=res)
+        self.assertNotIn("w", [a for a, _ in pop.all_baselines()])
+        for _ in range(3):
+            peers = [(a, f) for a, f in pop.all_baselines() if a != "w"]
+            trust, _ = pop.note_run("w", _fp(_NORMAL), peers,
+                                    auto_confirm_runs=3)
+        self.assertEqual(trust, "trusted")
+        self.assertIn("w", [a for a, _ in pop.all_baselines()])
+
+    def test_provisional_only_population_fail_closed(self):
+        pop = _pop_store()
+        for i in range(3):
+            res = _drift.BaselineValidationResult(
+                "provisional_untrusted", agent_id="evil-%d" % i)
+            pop.record_baseline("evil-%d" % i, "user-1", _fp(_ATTACK),
+                                validation=res)
+        self.assertEqual(pop.all_baselines(), [])
+        res = _drift.validate_baseline_against_population(
+            "new", _fp(_ATTACK), pop.all_baselines())
+        self.assertEqual(res.status, "unvalidated_no_population")
+
+    def test_latest_baseline_with_trust_override(self):
+        # A later trust record overrides the baseline record's trust;
+        # the latest fingerprint is what is returned.
+        pop = _pop_store()
+        pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+        pop.record_baseline("a1", "user-1", _fp(_ATTACK))
+        members = dict(pop.all_baselines())
+        self.assertEqual(members["a1"].tool_counts["http_post"], 90)
+        pop.confirm_baseline("a1")
+        members = dict(pop.all_baselines())
+        self.assertIn("a1", members)
+        self.assertEqual(members["a1"].tool_counts["http_post"], 90)
+
+    def test_note_run_defensively_filters_peers(self):
+        # A direct caller cannot smuggle a provisional agent in as a
+        # validator: note_run intersects supplied peers with the
+        # store's trusted fold.
+        pop = _pop_store()
+        for a, f in _peers(5):
+            pop.record_baseline(a, "user-1", f)
+        for aid in ("evil", "evil2"):
+            pop.record_baseline(
+                aid, "user-1", _fp(_ATTACK),
+                validation=_drift.BaselineValidationResult(
+                    "provisional_untrusted", agent_id=aid))
+        smuggled = ([(a, f) for a, f in pop.all_baselines()]
+                    + [("evil", _fp(_ATTACK))])
+        trust, detail = pop.note_run("evil2", _fp(_ATTACK), smuggled,
+                                     auto_confirm_runs=3)
+        self.assertEqual(trust, "provisional")
+        self.assertEqual(detail["consecutive_trusted"], 0)
+        self.assertEqual(detail["validation_status"],
+                         "provisional_untrusted")
+
+    def test_corrupt_chain_raises(self):
+        pop = _pop_store()
+        pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+        p = pop._path()
+        lines = p.read_text(encoding="utf-8").splitlines()
+        import json
+        rec = json.loads(lines[0])
+        rec["fingerprint"]["tool_counts"]["search"] = 1
+        p.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+        with self.assertRaises(_drift.PopulationCorruptedError):
+            pop.all_baselines()
+
+
+class TestPopulationKeyedChain(unittest.TestCase):
+    """Row-9 keyed chains for the population store: HMAC-SHA256
+    appends, legacy compatibility."""
+
+    def _legacy_records(self, n=2):
+        from gov.chained_store import canonical, sha256_hex
+        recs, prev = [], ""
+        for i in range(n):
+            rec = {
+                "kind": "baseline",
+                "agent_id": "a%d" % i,
+                "principal": "p",
+                "fingerprint": _fp(_NORMAL).to_dict(),
+                "baseline_trust": "trusted",
+                "pop_version": 1,
+                "recorded_at": "2026-01-01T00:00:0%d+00:00" % i,
+                "prev_digest": prev,
+            }
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+            recs.append(rec)
+        return recs
+
+    def _write(self, pop, recs):
+        import json
+        pop._path().write_text(
+            "".join(json.dumps(r, sort_keys=True,
+                               separators=(",", ":")) + "\n"
+                    for r in recs),
+            encoding="utf-8")
+
+    def test_new_records_are_keyed(self):
+        pop = _pop_store()
+        rec = pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+        self.assertTrue(rec.get("chain_keyed"))
+        self.assertIn("key_epoch", rec)
+        self.assertTrue(pop.verify_chain())
+
+    def test_legacy_chain_verifies(self):
+        pop = _pop_store()
+        self._write(pop, self._legacy_records(3))
+        self.assertTrue(pop.verify_chain())
+        # Legacy records carry no trust marker: default trust is
+        # trusted, and the fold still works.
+        self.assertEqual(len(pop.all_baselines()), 3)
+
+    def test_keyed_append_onto_legacy_chain(self):
+        pop = _pop_store()
+        self._write(pop, self._legacy_records(2))
+        pop.record_baseline("fresh", "user-1", _fp(_NORMAL))
+        self.assertTrue(pop.verify_chain())
+        self.assertIn("fresh", [a for a, _ in pop.all_baselines()])
+
+    def test_history_rewrite_recompute_fails(self):
+        import json
+        from gov.chained_store import canonical, sha256_hex
+        pop = _pop_store()
+        pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+        pop.record_baseline("a2", "user-1", _fp(_NORMAL))
+        recs = [json.loads(line)
+                for line in pop._path().read_text(
+                    encoding="utf-8").splitlines()]
+        recs[0]["fingerprint"]["tool_counts"]["search"] = 999
+        prev = ""
+        for rec in recs:
+            rec.pop("digest", None)
+            rec["prev_digest"] = prev
+            rec["digest"] = sha256_hex(canonical(rec))
+            prev = rec["digest"]
+        self._write(pop, recs)
+        self.assertFalse(pop.verify_chain())
+
+    def test_wrong_key_rejected(self):
+        pop = _pop_store()
+        pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+        old = os.environ.get("GOV_LOG_KEY")
+        os.environ["GOV_LOG_KEY"] = "ff" * 32
+        try:
+            self.assertFalse(pop.verify_chain())
+        finally:
+            os.environ["GOV_LOG_KEY"] = old
+        self.assertTrue(pop.verify_chain())
+
+    def test_no_key_refuses_append(self):
+        from gov.keys import NoKeyConfiguredError
+        old_key = os.environ.pop("GOV_LOG_KEY", None)
+        old_ring = os.environ.pop("GOV_KEYRING_PATH", None)
+        try:
+            pop = _pop_store()
+            with self.assertRaises(NoKeyConfiguredError):
+                pop.record_baseline("a1", "user-1", _fp(_NORMAL))
+            self.assertFalse(pop._path().exists())  # unwritten
+        finally:
+            if old_key is not None:
+                os.environ["GOV_LOG_KEY"] = old_key
+            if old_ring is not None:
+                os.environ["GOV_KEYRING_PATH"] = old_ring
 
 
 if __name__ == "__main__":
