@@ -1647,6 +1647,43 @@ class ToolExecutor:
                 "executor (deployment did not opt in via message_bus=)")
         return self._message_bus.receive(self, identity, msg_id)
 
+    def _session_delegation_receipt(self):
+        """The verified identity-delegation receipt for this session.
+
+        Wave-154 (rows 11/18): mints
+        ``gov.delegation_tokens.delegation_receipt`` from the session's
+        three-token DelegationContext — the cross-app attribution
+        (sub/act/delegator_chain/scope/session_id + token refs) that
+        rides on every verdict-path audit entry and approval record.
+        Returns None when no delegation context is installed (direct
+        execution — stamped as explicit None, never omitted) or when
+        the installed context cannot mint (unbound: the delegation
+        gate refuses the call fail-closed separately; the receipt is
+        observability, not authority). The mint itself is the
+        verification: ``delegation_receipt()`` raises fail-closed on
+        unbound contexts and malformed principals, so a stamped dict
+        always derives from a fully chain-verified context (bind() =
+        signatures, links, attenuation, bindings, windows, session).
+        Cached per context object (the receipt is session-fixed).
+        """
+        ctx = getattr(self, "_delegation_context", None)
+        if ctx is None:
+            return None
+        cache = getattr(self, "_delegation_receipt_cache", None)
+        if cache is not None and cache[0] is ctx:
+            return cache[1]
+        receipt = None
+        try:
+            receipt = _delegation_tokens.delegation_receipt(ctx)
+        except _delegation_tokens.DelegationError:
+            # Unbound context or malformed principal: the delegation
+            # gate refuses the call fail-closed with its own audited
+            # reason; stamping stays silent-None rather than masking a
+            # gate error with a forged-looking receipt.
+            receipt = None
+        self._delegation_receipt_cache = (ctx, receipt)
+        return receipt
+
     def mint_identity(self, agent_id, role, principal):
         """Issue the only kind of identity this executor will honor.
 
@@ -2398,7 +2435,8 @@ class ToolExecutor:
                     flag="goal_specificity"),
                 "agent_direct",
                 "review vague goal for agent %r" % (agent_id,),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             self.log.append({
                 "event": "goal_specificity_queue_failed",
@@ -2444,7 +2482,8 @@ class ToolExecutor:
                 "agent_direct",
                 "review goal conflict for agent %r (%d conflict(s))"
                 % (agent_id, len(conflicts)),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             # The LOUD goal_conflict audit events above are the audit
             # trail; the conflict stands flagged even if queueing the
@@ -2868,7 +2907,8 @@ class ToolExecutor:
                     flag="drift_hold"),
                 "agent_direct",
                 "review cross-run drift HOLD for agent %r" % (agent_id,),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             # The LOUD drift_hold audit event above is the record; the
             # hold stands flagged even if queueing the review item
@@ -2975,7 +3015,8 @@ class ToolExecutor:
                 "agent_direct",
                 "review unlabeled-egress content HOLD for agent %r"
                 % (agent_id,),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             self.log.append({
                 "event": "egress_content_hold_queue_failed",
@@ -3221,7 +3262,8 @@ class ToolExecutor:
                 "agent_direct",
                 "review rare-token carryover HOLD for agent %r"
                 % (agent_id,),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             self.log.append({
                 "event": "rare_token_hold_queue_failed",
@@ -3320,7 +3362,8 @@ class ToolExecutor:
                 "agent_direct",
                 "review cross-run framing drift HOLD for agent %r"
                 % (agent_id,),
-                caller_identity=identity)
+                caller_identity=identity,
+                delegation_receipt=self._session_delegation_receipt())
         except Exception:
             # The LOUD framing_hold audit event above is the record; the
             # hold stands flagged even if queueing the review item
@@ -4888,7 +4931,8 @@ class ToolExecutor:
                     "agent_direct",
                     "resume run %r after velocity tempo trip (%s class)"
                     % (self.run_id, cls),
-                    caller_identity=identity)
+                    caller_identity=identity,
+                    delegation_receipt=self._session_delegation_receipt())
             except Exception:
                 # The pause stands even if queueing the resume request
                 # fails: fail closed, never warn-and-continue. The trip
@@ -6703,7 +6747,8 @@ class ToolExecutor:
                     preview=("Close request for critical window %r "
                              "(human_approval)." % target),
                     policy_hash=self.policy.policy_hash,
-                    caller_identity=identity)
+                    caller_identity=identity,
+                    delegation_receipt=self._session_delegation_receipt())
                 self.log.append({
                     "event": "window_close_queued",
                     "run_id": self.run_id,
@@ -7499,6 +7544,13 @@ class ToolExecutor:
                 # delegation context is installed (the monitor falls
                 # back to the agent-side identity key).
                 "identity_token_refs": self._identity_token_refs,
+                # Wave-154 (rows 11/18): the verified identity-delegation
+                # receipt for this session (sub/act/delegator_chain/
+                # scope/session_id + token refs). Present on EVERY
+                # tool_call entry: a dict for delegated executions,
+                # explicit None for direct (non-delegated) executions —
+                # never ambiguous, never omitted.
+                "delegation_receipt": self._session_delegation_receipt(),
                 # Wave-79 (totality): every verdict-path entry carries
                 # the governing policy version and the list of rules
                 # that fired. The default is the honest structural
@@ -8650,6 +8702,13 @@ class ToolExecutor:
             delegation_delegator_chain=(
                 delegation_verified["delegator_chain"]
                 if delegation_verified else None),
+            # Wave-154 (rows 11/18): the session's verified
+            # identity-delegation receipt (sub/act/delegator_chain/
+            # scope/session_id + token refs) rides on the approval
+            # record MAC-bound, so the human's decision record names
+            # the delegation path the action runs under. Explicit None
+            # for direct (non-delegated) executions — never ambiguous.
+            delegation_receipt=self._session_delegation_receipt(),
             policy_context=policy_ctx_snapshot,
             # F21: the queue reason travels with the record so batch
             # approval can refuse security items individually.
@@ -9234,6 +9293,7 @@ class ToolExecutor:
                     "approval_id": _rev["id"],
                     "decision": "refused",
                     "policy_id": "revocation-terminal",
+                    "delegation_receipt": _rev.get("delegation_receipt"),
                     "revoked_by": _rev.get("revoked_by"),
                     "reason": ("Approval %s not executed: revoked by %r "
                                "(%s); revocation is terminal and the "
@@ -9268,6 +9328,7 @@ class ToolExecutor:
                     "approval_id": aid,
                     "decision": "refused",
                     "policy_id": policy_id,
+                    "delegation_receipt": rec.get("delegation_receipt"),
                     "flag": flag,
                     "reason": reason,
                 }
@@ -9895,6 +9956,11 @@ class ToolExecutor:
                 "decision": "execution_authorized",
                 "policy_id": rec.get("policy_id"),
                 "approval_id": aid,
+                # Wave-154 (rows 11/18): the receipt rides from the
+                # MAC-bound approval record onto the execution entry —
+                # the sweep stamps what the human approved, never a
+                # re-minted value (explicit None for direct records).
+                "delegation_receipt": rec.get("delegation_receipt"),
                 "policy_context": _exec_ctx_snapshot,
                 "reason": "Human approval %s authorized execution." % aid,
             })

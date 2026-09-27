@@ -58,6 +58,7 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
+from . import delegation_tokens as _delegation_tokens
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
                            structural_scope_match,
                            TTC_MATCH_METHOD, TTC_STRUCT_METHOD)
@@ -335,6 +336,20 @@ _SECURITY_PAYLOAD_FIELDS = (
     # digests fail verification automatically after the upgrade —
     # queued items must be decided or drained before upgrading.
     "skill_id", "skill_attested_digest",
+    # Wave-154 (rows 11/18): the identity-delegation receipt
+    # (sub/act/delegator_chain/scope/session_id + token refs, schema
+    # delegation-receipt/v1) is integrity-bound from birth alongside
+    # the other authority fields. Post-queue receipt tampering
+    # (scope widening, chain truncation, sub/act swap) breaks the MAC
+    # and decide()/cast_vote() refuse loudly, never silently re-MAC.
+    # The receipt is re-verifiable offline via
+    # delegation_tokens.verify_delegation_receipt against the three
+    # bound tokens. FAIL-CLOSED UPGRADE (same precedent as F34/F38/
+    # R11/D1/wave-24/F101/F103/H3): records queued BEFORE this change
+    # do not carry this field, so their digests fail verification
+    # automatically after the upgrade - queued items must be decided
+    # or drained before upgrading.
+    "delegation_receipt",
 )
 
 
@@ -3178,7 +3193,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               caller_identity=None, policy_version=None,
               matched_rules=None, tool_digest=None, deferred_effect=None,
               capability_verdict=None, intent_slice_verdict=None,
-              skill_id=None, skill_attested_digest=None):
+              skill_id=None, skill_attested_digest=None,
+              delegation_receipt=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3216,6 +3232,24 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         the chain, closing the depth->=2 single-hop gap in the F101
         guard. At depth 1 the lineage is just ``[immediate]``. Absent
         (None) for non-delegated calls.
+
+        ``delegation_receipt`` (wave-154, rows 11/18): the session's
+        verified identity-delegation receipt — the ``delegation_receipt``
+        dict minted by
+        ``gov.delegation_tokens.delegation_receipt`` from the session's
+        bound three-token DelegationContext
+        (sub/act/delegator_chain/scope/session_id + token refs, schema
+        ``delegation-receipt/v1``). Stamped on the record and
+        MAC-bound (see ``_SECURITY_PAYLOAD_FIELDS``) so the human's
+        decision record names the delegation path the action runs
+        under, and post-queue receipt tampering breaks the MAC.
+        Explicit None for non-delegated (direct) calls — never
+        ambiguous. The receipt is OBSERVABILITY, not authority: the
+        queue never derives verdict semantics from it, and the
+        executor only ever passes receipts minted from its bound
+        context. Malformed receipts (wrong type, wrong schema, wrong
+        version) are refused fail-closed — a forged-looking receipt is
+        never stamped.
 
         F42 (R11): ``caller_identity`` is REQUIRED — an
         ``AgentIdentity`` minted by the executor for the calling
@@ -3265,6 +3299,42 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             from . import tool_continuity as _tool_continuity
             tool_digest = _tool_continuity.ToolInventory().digest_for(
                 action.get("tool"))
+        # Wave-154 (rows 11/18): the delegation receipt is
+        # OBSERVABILITY, not authority — but a malformed or
+        # forged-looking receipt must never be stamped. Shape-check
+        # fail-closed (wrong type, unknown schema, unknown version are
+        # refused) and deep-copy so caller-side mutation after queue()
+        # cannot reach the MAC-bound record. The executor only ever
+        # passes receipts minted by delegation_tokens
+        # .delegation_receipt from its bound three-token context; a
+        # direct queue() caller that passes a structurally-valid-but-
+        # unverifiable receipt is the known forgery exposure — the
+        # receipt is re-verifiable offline against the three tokens
+        # (delegation_tokens.verify_delegation_receipt), and the
+        # queue's callers today are the executor and the queue's own
+        # synthetic paths.
+        if delegation_receipt is not None:
+            if not isinstance(delegation_receipt, dict):
+                raise ValueError(
+                    "queue() refused: delegation_receipt must be a "
+                    "delegation-receipt/v1 dict or None, got %s"
+                    % type(delegation_receipt).__name__)
+            if delegation_receipt.get("receipt_schema") != (
+                    _delegation_tokens.RECEIPT_SCHEMA):
+                raise ValueError(
+                    "queue() refused: delegation_receipt has unknown "
+                    "receipt_schema %r (expected %r)"
+                    % (delegation_receipt.get("receipt_schema"),
+                       _delegation_tokens.RECEIPT_SCHEMA))
+            if delegation_receipt.get("receipt_version") != (
+                    _delegation_tokens.RECEIPT_VERSION):
+                raise ValueError(
+                    "queue() refused: delegation_receipt has unknown "
+                    "receipt_version %r (expected %r)"
+                    % (delegation_receipt.get("receipt_version"),
+                       _delegation_tokens.RECEIPT_VERSION))
+            delegation_receipt = json.loads(json.dumps(
+                delegation_receipt, sort_keys=True, default=str))
         # F42: every authority field below comes from the authenticated
         # caller object or the queue itself — never from action[].
         record = {
@@ -3346,6 +3416,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # queued by paths that never attested a skill.
             "skill_id": skill_id,
             "skill_attested_digest": skill_attested_digest,
+            # Wave-154 (rows 11/18): the verified identity-delegation
+            # receipt (sub/act/delegator_chain/scope/session_id + token
+            # refs), MAC-bound via _SECURITY_PAYLOAD_FIELDS. Explicit
+            # None for direct (non-delegated) calls — never ambiguous,
+            # never omitted.
+            "delegation_receipt": delegation_receipt,
             "deferred_effect": (json.loads(json.dumps(
                 deferred_effect, sort_keys=True, default=str))
                 if deferred_effect is not None else None),
@@ -5137,6 +5213,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "external_request_id": external_request_id,
                 "bridge_request_digest": bridge_request_digest,
                 "bridge_versions": bridge_versions,
+                # Wave-154 (rows 11/18): foreign-runtime requests carry
+                # no local identity delegation — explicit None, never
+                # ambiguous (a local receipt is only ever minted from a
+                # bound local three-token context, never from a
+                # bridge-supplied claim).
+                "delegation_receipt": None,
             }
             # S3 shield (wave-89): the same approval-integrity stamping
             # as queue() — foreign/bridge ingress is the highest-value
