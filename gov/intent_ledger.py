@@ -34,9 +34,17 @@ semantic drift, cf. gov/goal_audit.py's reuse of gov.goals._OPPOSES).
 A record is a countermand when the stored verdict says so, the
 detector finds a redirect signal overlapping a prior turn of the same
 principal, OR the negation-gated similarity signal
-(``similarity_countermand``, wave-136) fires: a negation cue from the
-existing ``gov.intent_slice._NEGATION_RE`` word list plus
-``gov.target_match.target_similarity >= 0.5`` against a prior turn.
+(``similarity_countermand``, wave-136, hardened wave-138) fires: a
+negation cue from the existing ``gov.intent_slice._NEGATION_RE`` word
+list plus ``gov.target_match.target_similarity`` at or above the
+per-message threshold against a prior turn. The threshold is derived
+per message as ``HMAC-SHA256(deployment_key, domain || message)``
+mapped into [0.4, 0.6) -- mean 0.5, the nominal operating point
+(``gov.target_match.DEFAULT_THRESHOLD`` stays the nominal reference);
+the key comes from the existing key-provider seam
+(``gov.keyprovider.resolve_active_key``), never hardcoded. There is
+no fixed attacker-visible flip point to calibrate against: sweeping
+similarity in fine steps finds a boundary that moves per message.
 The asymmetry is deliberate: similarity may REVOKE (fail-closed on a
 paraphrased "don't") but similarity without a negation cue never
 revokes (fail-safe on paraphrased confirmations). The execution
@@ -58,6 +66,18 @@ Honest ceilings (documented, not hidden):
 - Cross-run identity depends on a stable principal: a fresh
   principal per run defeats the ledger (same boundary as the drift
   lane's per-agent profiles).
+- The wave-138 threshold hardening is keyed: the deployment key must
+  be managed like other secrets. If the attacker learns it, the
+  threshold becomes calibratable again and the wave-137 residual
+  returns. The key-provider seam's own custody story applies
+  (wave-81: explicit provisioning, fail-closed, no dev fallback --
+  an unprovisioned deployment raises NoKeyConfiguredError at the
+  seam rather than deciding on a weaker threshold).
+- Calibration resistance costs a band edge: paraphrase pairs scoring
+  in (0.5, 0.6) may miss where the old fixed 0.5 caught them. On
+  every measured countermand corpus the minimum firing paraphrase
+  scores 0.706, so recall is preserved there -- documented tradeoff,
+  not hidden.
 - The ledger stores raw user message text locally. Like drift
   profiles, it is sensitive operational data: whoever holds the
   ledger file can read what the operator said. It never leaves the
@@ -70,9 +90,11 @@ $0 spend, stdlib only, deterministic.
 """
 
 import hashlib
+import hmac
 import json
 from datetime import datetime, timezone
 
+from . import keyprovider as _keyprovider
 from .intent_slice import _detect_countermand, _NEGATION_RE
 from .target_match import (
     target_similarity,
@@ -85,6 +107,7 @@ __all__ = [
     "IntentPersistenceError",
     "INTENT_LEDGER_VERSION",
     "similarity_countermand",
+    "derive_countermand_threshold",
 ]
 
 INTENT_LEDGER_VERSION = "intent-ledger/1.0"
@@ -135,9 +158,68 @@ def _verdict_says_countermand(verdict):
     return verdict.get("flag") in _COUNTERMAND_FLAGS
 
 
+#: Wave-138 (row-7): per-message countermand threshold band. The
+#: HMAC-derived threshold is uniform in [_THRESHOLD_LO, _THRESHOLD_HI);
+#: the mean 0.5 is the nominal operating point -- the same value as
+#: ``gov.target_match.DEFAULT_THRESHOLD``, which stays the nominal
+#: reference. Band rationale (documented, not hidden):
+#:   - max threshold 0.6 < 0.8: high-similarity countermands always fire;
+#:   - min threshold 0.4 > 0.3: low-similarity messages never fire;
+#:   - half-width 0.1: an attacker sweeping similarity in fine steps
+#:     cannot localize one fixed flip point -- the boundary moves
+#:     per message.
+_THRESHOLD_LO = 0.4
+_THRESHOLD_HI = 0.6
+
+#: Domain separator for the threshold HMAC (binds the derivation to
+#: this seam; a key reused elsewhere cannot collide into it).
+_THRESHOLD_DOMAIN = b"intent-ledger/countermand-threshold/v1"
+
+
+def derive_countermand_threshold(message):
+    """Derive the per-message countermand threshold (wave-138, row-7).
+
+    ``HMAC-SHA256(deployment_key, domain || message)``: the first 8
+    digest bytes are read as a big-endian uint64, scaled to uniform
+    [0, 1), and mapped to [_THRESHOLD_LO, _THRESHOLD_HI) = [0.4, 0.6).
+    The deployment key comes from the EXISTING key-provider seam
+    (``gov.keyprovider.resolve_active_key``) -- never hardcoded, never
+    committed; the key-provider seam's own custody story (wave-81:
+    explicit provisioning, fail-closed, no dev fallback) applies
+    unchanged. Deterministic per deployment, unpredictable without the
+    key: two deployments with the same key agree on every verdict;
+    different keys disagree on edge cases by design.
+
+    ``message`` must be a non-empty string (ValueError otherwise).
+    Fail-closed: with no key configured, ``resolve_active_key`` raises
+    ``NoKeyConfiguredError`` -- the seam refuses to decide on a
+    weaker threshold rather than silently falling back to a fixed one.
+
+    $0, stdlib only (hmac/hashlib), deterministic.
+    """
+    if not isinstance(message, str) or not message.strip():
+        raise ValueError("message must be a non-empty string")
+    key, _epoch = _keyprovider.resolve_active_key()
+    mac = hmac.new(key,
+                   _THRESHOLD_DOMAIN + b"\x00"
+                   + message.encode("utf-8"),
+                   hashlib.sha256).digest()
+    unit = int.from_bytes(mac[:8], "big") / 18446744073709551616.0
+    return _THRESHOLD_LO + (_THRESHOLD_HI - _THRESHOLD_LO) * unit
+
+
+#: Sentinel default for ``similarity_countermand``: derive the
+#: per-message threshold via ``derive_countermand_threshold`` instead
+#: of using a fixed value. An explicit float keeps fixed-threshold
+#: semantics (tests, adversarial probes); explicit ``None`` is still
+#: rejected by validation.
+_DERIVE_THRESHOLD = object()
+
+
 def similarity_countermand(message, prior_messages,
-                           threshold=DEFAULT_THRESHOLD):
-    """Negation-gated similarity countermand signal (wave-136, row-7).
+                           threshold=_DERIVE_THRESHOLD):
+    """Negation-gated similarity countermand signal (wave-136, row-7;
+    wave-138 threshold hardening).
 
     Second countermand signal alongside the verdict flag and the
     redirect-signal detector: a new user message carrying a negation
@@ -155,6 +237,18 @@ def similarity_countermand(message, prior_messages,
     ``score`` is the best Tversky similarity found (0.0 when nothing
     was comparable).
 
+    ``threshold`` (wave-138): the default is the sentinel
+    ``_DERIVE_THRESHOLD`` -- the decision threshold is derived per
+    message via ``derive_countermand_threshold`` (HMAC-SHA256 over the
+    message, keyed by the deployment key from the key-provider seam,
+    uniform in [0.4, 0.6), mean 0.5). The fixed 0.5 is gone from the
+    decision path: an attacker sweeping similarity can no longer find
+    one calibratable flip point. ``gov.target_match.DEFAULT_THRESHOLD``
+    stays the nominal reference (the derived distribution's mean).
+    Pass an explicit float for fixed-threshold semantics (tests,
+    adversarial probes); it must satisfy 0 < t <= 1 (ValueError
+    otherwise, including explicit None).
+
     The gate is a conjunction and the asymmetry is deliberate:
       - negation cue (``gov.intent_slice._NEGATION_RE`` -- the
         existing negation-word list, reused not reinvented) AND
@@ -165,10 +259,9 @@ def similarity_countermand(message, prior_messages,
         it!") must not read as a countermand.
 
     Non-string messages never fire; non-string priors are skipped
-    (never coerced); an empty prior list cannot fire. ``threshold``
-    must satisfy 0 < t <= 1 (ValueError otherwise); the default is
-    ``gov.target_match.DEFAULT_THRESHOLD`` (0.5 -- the measured
-    paraphrase/unrelated separator, see gov/target_match.py).
+    (never coerced); an empty prior list cannot fire. These fail-safe
+    paths return before the key seam is touched, so they never raise
+    on an unprovisioned deployment.
 
     Honest ceilings (documented, not hidden):
     - A paraphrase with no negation cue is invisible to this signal
@@ -177,15 +270,29 @@ def similarity_countermand(message, prior_messages,
       remaining paraphrase ceiling.
     - Negation detection is English-keyword-based; "ne ... pas" and
       other languages are not covered.
-    - An attacker who knows the threshold (0.5) can paraphrase just
-      past it while keeping the negation cue -- the prose remains
-      fuzzable, exactly as in gov/target_match.py.
+    - Full synonym replacement with no shared tokens still scores
+      0.0 and misses -- token overlap is not semantics.
+    - The deployment key must be managed like other secrets: if the
+      attacker learns it, the threshold becomes calibratable again
+      and the wave-137 residual returns. The key-provider seam's own
+      custody story (wave-81) applies.
+    - Paraphrase pairs scoring in (0.5, 0.6) -- above the old fixed
+      threshold but below a message's derived threshold -- may now
+      miss where the fixed 0.5 caught them. On every measured
+      countermand corpus (wave-136/137 batteries, unit tests) the
+      minimum firing paraphrase scores 0.706, so recall is preserved
+      there; the band edge is a real, accepted tradeoff of
+      calibration resistance.
     """
-    if isinstance(threshold, bool) or \
-            not isinstance(threshold, (int, float)) or \
-            not 0 < threshold <= 1:
-        raise ValueError(
-            "threshold must satisfy 0 < t <= 1, got %r" % (threshold,))
+    if threshold is _DERIVE_THRESHOLD:
+        derive = True
+    else:
+        derive = False
+        if isinstance(threshold, bool) or \
+                not isinstance(threshold, (int, float)) or \
+                not 0 < threshold <= 1:
+            raise ValueError(
+                "threshold must satisfy 0 < t <= 1, got %r" % (threshold,))
     if not isinstance(message, str) or not message.strip():
         return (False, None, 0.0)
     if not isinstance(prior_messages, (list, tuple)) \
@@ -194,6 +301,12 @@ def similarity_countermand(message, prior_messages,
     if _NEGATION_RE.search(message) is None:
         # Negation gate: similarity alone never countermands.
         return (False, None, 0.0)
+    if derive:
+        # Derived AFTER the fail-safe early-outs: garbage inputs never
+        # touch the key seam (fail-safe), and the HMAC input is always
+        # a real message. Fail-closed when no key is configured
+        # (NoKeyConfiguredError) -- never a silent fixed fallback.
+        threshold = derive_countermand_threshold(message)
     best_idx, best_score = None, 0.0
     for i, prior in enumerate(prior_messages):
         # Non-string priors are skipped, never coerced; the returned
@@ -246,11 +359,17 @@ class IntentLedger(object):
         similarity signal fires, the record carries
         ``similarity_anchor`` (the matched prior message),
         ``similarity_anchor_ts`` (its timestamp, for the
-        grant-attribution check at the execution boundary), and
-        ``similarity_score``.
+        grant-attribution check at the execution boundary),
+        ``similarity_score``, and ``similarity_threshold`` (the
+        per-message HMAC-derived threshold the seam applied,
+        wave-138).
 
         Fail-closed: empty principal/message raise ValueError; the
-        record is hash-chained before it is returned.
+        record is hash-chained before it is returned. Recording
+        requires a provisioned deployment key (wave-138): the
+        per-message similarity threshold is derived for every turn,
+        so an unprovisioned deployment raises NoKeyConfiguredError
+        rather than recording with a silently weaker signal.
         """
         if not isinstance(principal, str) or not principal.strip():
             raise ValueError("principal must be a non-empty string")
@@ -268,6 +387,11 @@ class IntentLedger(object):
         detected, _superseded = _detect_countermand(message, prior)
         sim_fired, sim_idx, sim_score = similarity_countermand(
             message, prior)
+        # The threshold the seam applied (derived per message,
+        # wave-138): recorded for auditability -- a later reviewer can
+        # see exactly which boundary decided. Deterministic: recompute
+        # via derive_countermand_threshold with the deployment key.
+        sim_threshold = derive_countermand_threshold(message)
         sim_anchor = prior[sim_idx] if sim_fired else None
         sim_anchor_ts = (principal_turns[sim_idx].get("ts")
                          if sim_fired else None)
@@ -286,6 +410,7 @@ class IntentLedger(object):
             "similarity_anchor": sim_anchor,
             "similarity_anchor_ts": sim_anchor_ts,
             "similarity_score": sim_score,
+            "similarity_threshold": sim_threshold,
             "ts": ts,
             "prev_record_digest": self._prev_digest,
         }

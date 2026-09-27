@@ -5677,9 +5677,9 @@ Next free finding: **F176**. **Open findings: none.**
 
 **Close-when.** (1) Minting never raises on RNG-drawn values: `_add`/`_pick` resample (bounded attempts) until the value is free of banned substrings, and the bound-exhaustion path raises a descriptive non-`AssertionError` (or is proven unreachable); (2) the banned-substring invariant is still enforced on every minted value (existing `test_no_recognizable_marker_words` plus a regression test minting the known-hitting run_ids `prod-run-2948`, `prod-run-4238`, `prod-run-4660` stays green); (3) full canonical suite stays green.
 
-**Status: OPEN.**
+**Status: CLOSED 2026-09-27 (wave-138).** Red-first: `CanaryMint("prod-run-2948")` reproduced the `AssertionError` pre-fix (gov/canary.py:146). Fix: `_pick` resamples with a 64-attempt bound until the drawn value is free of banned substrings; bound-exhaustion raises descriptive `CanaryMintError` (non-`AssertionError`; P(exhaustion) ~1e-384, documented practically unreachable); `_add`'s bare asserts replaced with `CanaryMintError` raises; zero bare asserts remain in the module. Evidence: 60,000-mint sweep over `prod-run-0..59999` → **0 AssertionErrors** (14 pre-fix); regression test `test_f178_banned_substring_run_ids_mint_cleanly` mints the three known-hitting run_ids cleanly (shown RED on reverted code); `test_no_recognizable_marker_words` green; determinism preserved (previously-clean run_ids mint byte-identical sets); full canonical suite **4333 OK** (skipped=9, expected failures=5). Two-axis review: Standards PASS, Spec PASS (all three close-when criteria met verbatim).
 
-Next free finding: **F179**. **Open findings: F178.**
+Next free finding: **F182**. **Open findings: none.**
 
 ## F179 — MEDIUM — Forged `goal_conflict_review` args are trusted as conflict ground truth: an allow supersedes an uninvolved goal (filed 2026-09-27, wave-134 red-first audit)
 
@@ -5705,4 +5705,4 @@ Next free finding: **F179**. **Open findings: F178.**
 
 **Status: CLOSED 2026-09-27 (wave-134 fix lane, same wave).** Red-first: `lane2_break.py::c1` pinned the defect as BREAK (grant executed despite verbatim countermand after one chatter turn); post-fix HELD. Fix: `IntentLedger.messages_with_context` now accepts `prior=None` = all messages at-or-before the anchor (default stays `prior=1`); the cross-run sweep calls it with `prior=None`, giving the judge the same full-history context shape as the wave-131 in-run path. `messages_since` (strictly-after anchor) untouched. New tests `test_messages_with_context_prior_none_keeps_all_before` and `test_cross_run_chatter_does_not_evict_grant` demonstrated red pre-fix (grant executed; `int(None)` error at the seam) and green post-fix. `evals/cross_run_intent_probes.py` stays 0 BREAK / 5 HELD (p6 pinned ceiling BREAK unchanged). **Residual (honest):** judge context now grows linearly in per-principal history — correctness chosen over the missed-countermand fail-open; ledgers are operator-managed.
 
-Next free finding: **F182**. **Open findings: F178.**
+Next free finding: **F182**. **Open findings: none.**

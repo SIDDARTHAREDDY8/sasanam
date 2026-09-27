@@ -8920,7 +8920,9 @@ class ToolExecutor:
                 # Row-7 (wave-136, paraphrase-resistant countermand):
                 # the ledger's negation-gated similarity signal. A
                 # post-grant turn carrying a negation cue and scoring
-                # >= 0.5 Tversky similarity against the GRANT-context
+                # at/above the per-message HMAC-derived threshold (wave-138;
+                # band [0.4, 0.6), mean 0.5) Tversky similarity against the
+                # GRANT-context
                 # intent countermands the grant even when the redirect
                 # judge above could not see the paraphrase ("Please
                 # refrain from sending..." -- "refrain" is a negation

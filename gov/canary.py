@@ -72,6 +72,7 @@ from .policy import PolicyDecision
 
 __all__ = [
     "CanaryMint",
+    "CanaryMintError",
     "CanaryRegistry",
     "CanaryTripHalt",
     "plant_canaries",
@@ -107,6 +108,30 @@ _SERVICES = (
 _ZONES = ("prod", "staging", "core")
 
 
+# A minted value must never be trivially recognizable as a canary: these
+# substrings (case-insensitive) are resampled away, not merely asserted
+# absent. F178 (wave-138): a bare assert on RNG-drawn values crashed ~2.3e-4
+# of mints with AssertionError, spuriously refusing runs fail-closed.
+_BANNED_SUBSTRINGS = ("canary", "honeypot", "decoy", "fake")
+
+# Bounded resample attempts per _pick draw. A banned substring needs a
+# 4-7-char literal inside a >=24-char draw from a >=10-symbol alphabet, so
+# P(hit per draw) is on the order of 1e-6; _MAX_RESAMPLE_ATTEMPTS=64 makes
+# exhaustion practically unreachable (P ~ 1e-384), but it is still an
+# explicit, descriptive failure rather than a bare assert.
+_MAX_RESAMPLE_ATTEMPTS = 64
+
+
+class CanaryMintError(Exception):
+    """Minting failed safely: resampling exhausted its bound on a draw.
+
+    Raised instead of AssertionError when no clean value could be drawn
+    within _MAX_RESAMPLE_ATTEMPTS (practically unreachable), or when a
+    caller-supplied value violates the length/format invariant. Never
+    raised by ordinary RNG output — those are resampled, not rejected.
+    """
+
+
 class CanaryTripHalt(Exception):
     """Fail-closed halt: a canary was used on the egress path.
 
@@ -135,15 +160,43 @@ class CanaryMint:
         self._canaries = []
         self._mint()
 
+    @staticmethod
+    def _has_banned(value):
+        lowered = value.lower()
+        return any(banned in lowered for banned in _BANNED_SUBSTRINGS)
+
     def _pick(self, alphabet, n):
-        return "".join(self._rng.choice(alphabet) for _ in range(n))
+        """Draw an n-char value, resampling (bounded) until it is clean.
+
+        F178: the old code asserted banned-substrings away AFTER the draw,
+        so ~2.3e-4 of mints died with AssertionError. Every draw now
+        retries internally; bound-exhaustion raises CanaryMintError
+        (descriptive, non-AssertionError) — practically unreachable.
+        """
+        for attempt in range(_MAX_RESAMPLE_ATTEMPTS):
+            value = "".join(self._rng.choice(alphabet) for _ in range(n))
+            if not self._has_banned(value):
+                return value
+        raise CanaryMintError(
+            "canary mint for run_id %r exhausted %d resample attempts "
+            "drawing %d chars from a %d-symbol alphabet without a "
+            "banned-substring-free value; refusing the mint rather than "
+            "crashing with AssertionError" %
+            (self.run_id, _MAX_RESAMPLE_ATTEMPTS, n, len(alphabet)))
 
     def _add(self, kind, label, value, channel):
-        assert isinstance(value, str) and len(value) >= MIN_MATCHABLE_LEN, \
-            "canary values must be long enough to match safely"
-        for banned in ("canary", "honeypot", "decoy", "fake"):
-            assert banned not in value.lower(), \
-                "canary value must not be recognizable"
+        # F178: explicit, descriptive errors — never bare asserts — on the
+        # mint path. _pick guarantees RNG-drawn values arrive clean, so
+        # this check is defense-in-depth against future hand-built values.
+        if not (isinstance(value, str) and len(value) >= MIN_MATCHABLE_LEN):
+            raise CanaryMintError(
+                "canary values must be strings of at least %d chars "
+                "(got %r for %s/%s)" %
+                (MIN_MATCHABLE_LEN, value, kind, label))
+        if self._has_banned(value):
+            raise CanaryMintError(
+                "canary value for %s/%s must not be recognizable "
+                "(banned substring present)" % (kind, label))
         self._canaries.append({
             "kind": kind, "label": label, "value": value,
             "channel": channel,

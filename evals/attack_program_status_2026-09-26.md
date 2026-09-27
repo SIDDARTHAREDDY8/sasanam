@@ -322,6 +322,34 @@ unlabeled). `tests/test_intent_slice.py` 19/19, `tests/test_target_match.py` 22/
 Status stays PARTIAL: the paraphrase ceiling is narrowed, not closed; negation is
 English-keyword-based; the 0.5 threshold is attacker-visible; stable principal identity
 still required; raw user messages remain sensitive local ledger data.
+
+**Wave-138 (2026-09-27) — threshold calibration closed as an attack shape; row stays
+PARTIAL.** The fixed 0.5 is gone from the decision path:
+`gov/intent_ledger.py::derive_countermand_threshold` derives the per-message threshold
+as `HMAC-SHA256(deployment_key, domain || message)` mapped into [0.4, 0.6), mean 0.5
+(`gov/target_match.py::DEFAULT_THRESHOLD` untouched, stays the nominal reference); the
+key comes from the existing key-provider seam (`gov.keyprovider.resolve_active_key`),
+never hardcoded or committed. `similarity_countermand` uses the derived threshold by
+default (explicit floats keep fixed-threshold semantics for tests/probes);
+`record_intent` stores the applied `similarity_threshold` on the chained record.
+Band contract: >= 0.8 similarity always fires (max threshold 0.6), <= 0.3 never fires
+(min threshold 0.4). Break-first battery
+`evals/countermand_threshold_calibration_probes.py` (written RED: pre-seam 3 BREAK —
+flip-mid spread 0.0047 over 30 families, zero near-identical-similarity verdict pairs,
+key-independent threshold) = **0 BREAK / 5 HELD / 1 EXPECTED-DIVERGENCE / 0 ERROR**,
+deterministic x2: post-seam flip-mid spread 0.1196 (no single calibratable flip point),
+813 near-identical-similarity pairs with different verdicts, >= 0.8 always revoke,
+<= 0.3 never revoke, same-key verdicts identical, different keys diverge on edge cases
+by design (labeled, not a miss). `tests/test_intent_ledger.py` = 50/50 (11 new:
+`DerivedThresholdSeamTest`); `evals/countermand_paraphrase_probes.py` stays
+0 BREAK / 5 HELD (p6 pinned ceiling unchanged); `evals/cross_run_intent_probes.py`
+0 BREAK / 5 HELD (p6 unchanged). Stated honestly: row 7 stays PARTIAL — the
+paraphrase ceiling is still narrowed, not closed (no-negation paraphrases, full
+synonym replacement with zero shared tokens, non-English negation remain invisible);
+the deployment key must be managed like other secrets — if the attacker learns it,
+calibration returns; paraphrase pairs scoring in (0.5, 0.6) may now miss where the
+fixed 0.5 caught them (measured corpora: minimum firing paraphrase 0.706, recall
+preserved there — accepted tradeoff, documented in the module docstring).
 **Findings:** none filed. Next free: **F182**. Open findings: F178.
 
 ### Row 8 — Monitor / governance-layer attacks (memo: PARTIAL → now: PARTIAL, stronger)
@@ -421,8 +449,39 @@ poisoning defeats the comparison by construction, an attacker can
 shape a baseline just inside the envelope (exact-copy profile
 validates trusted — the exfil would have to hide in payload content,
 which a tool-distribution comparison cannot see), and ≥3 peers are
-needed for a meaningful percentile. Row 9 remains PARTIAL. This row
-is NOT on the D4 deliberately-not-proposed list.
+needed for a meaningful percentile. Row 9 remains PARTIAL. Wave-138
+(2026-09-27) narrowed the slow-boil residual: `gov/drift_budget.py`
+(a per-agent cumulative drift budget reusing `gov.drift`'s
+fingerprinting — symmetric chi-square tool distance — and the
+hash-chained store pattern, nothing duplicated). Each run contributes
+its drift distance in threshold-equivalents to the budget; only
+sub-threshold-but-nonzero runs accrue (at/above WARN is the unchanged
+single-run path's job; at/below the noise floor is clean). N
+consecutive sustained-direction deviations inside the run window trip
+the budget to a LOUD `drift_budget_tripped` evidence event; a
+direction-consistency gate (net vs gross signed per-tool deltas) keeps
+alternating ± noise from tripping. Accumulation is never silent:
+every contributing run emits a chained `drift_budget_accrue` event.
+Resets (documented design choice): a clean run defuses the budget
+immediately, and contributions older than `window_runs` recorded runs
+expire out of the sliding window. `evals/drift_budget_probes.py`:
+**5 HELD / 0 BREAK / 1 EXPECTED / 0 ERROR** (deterministic ×2, both
+envs) — 5× 0.4-threshold same-direction drifts trip (first trip at run
+3, cumulative 2.0), a single 0.9-threshold run leaves the budget quiet
+while `detect_drift` still fires WARN (no regression), 10 alternating
+±8-call runs accrue 3.65 unsigned but trip nothing (consistency 0.0),
+sub-noise-floor jitter contributes 0, clean runs defuse, stale
+contributions expire. `tests/test_drift_budget.py` 26/26. Honest
+ceilings: window/N/budget/noise-floor are operator policy — a
+threshold-aware attacker who paces below the trip and defuses with
+clean runs evades by construction (pinned EXPECTED b5); noise
+tolerance vs detection latency is an irreducible tuning trade-off;
+`warn_distance` is volume-dependent and must be operator-calibrated.
+Row 9 stays PARTIAL: the residual is narrowed and instrumented, not
+closed — the close criteria (no sub-threshold boil path evades
+detection) are NOT met, and the gaming ceiling is structural to any
+fixed threshold. This row is NOT on the D4 deliberately-not-proposed
+list.
 
 ### Row 10 — Reward hacking / spec gaming (memo: PARTIAL → now: PARTIAL, stronger)
 Anthropic Sept-2026 threat-report wave: F162 CLOSED (velocity/economic controls —

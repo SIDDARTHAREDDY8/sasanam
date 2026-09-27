@@ -91,6 +91,28 @@ class TestMint(unittest.TestCase):
             for banned in ("canary", "honeypot", "decoy", "fake"):
                 self.assertNotIn(banned, c["value"].lower())
 
+    def test_f178_banned_substring_run_ids_mint_cleanly(self):
+        # F178 (wave-138): these run_ids drew RNG values containing a
+        # banned substring ("fake") and the old bare assert crashed the
+        # mint with AssertionError, spuriously refusing the run
+        # fail-closed. The mint must resample instead and still enforce
+        # the banned-substring invariant on every value.
+        from gov.canary import CanaryMintError
+        for run_id in ("prod-run-2948", "prod-run-4238", "prod-run-4660"):
+            try:
+                m = CanaryMint(run_id)
+            except AssertionError as e:
+                self.fail("F178: mint raised AssertionError on %s: %s"
+                          % (run_id, e))
+            for c in m.values():
+                for banned in ("canary", "honeypot", "decoy", "fake"):
+                    self.assertNotIn(banned, c["value"].lower(),
+                                     "F178: banned substring in %s value of %s"
+                                     % (c["label"], run_id))
+        # bound-exhaustion raises a descriptive error, never AssertionError
+        self.assertTrue(issubclass(CanaryMintError, Exception))
+        self.assertFalse(issubclass(CanaryMintError, AssertionError))
+
     def test_all_values_long_enough_to_match(self):
         for c in CanaryMint("run-len").values():
             self.assertGreaterEqual(len(c["value"]), cy.MIN_MATCHABLE_LEN)

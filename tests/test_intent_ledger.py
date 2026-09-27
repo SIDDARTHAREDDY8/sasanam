@@ -7,8 +7,9 @@ verify_chain / save / load) and the executor wiring
 cross-run countermand check).
 
 Note: tests/__init__.py already provisions GOV_LOG_KEY and sets
-GOV_DEPLOYMENT_MODE=staging. No env scrubbing here (tearDown never
-touches key env vars).
+GOV_DEPLOYMENT_MODE=staging. The wave-138 DerivedThresholdSeamTest
+scrubs/provisions key env vars and always restores them in a finally
+(keyfixture scrub/provision are exception-safe).
 """
 import os
 import sys
@@ -22,7 +23,11 @@ from harness import make_run  # noqa: E402
 from gov import revoke as revoke_mod  # noqa: E402
 from gov.policy import PolicyDecision  # noqa: E402
 from gov.intent_ledger import (  # noqa: E402
-    IntentLedger, IntentPersistenceError, INTENT_LEDGER_VERSION)
+    IntentLedger, IntentPersistenceError, INTENT_LEDGER_VERSION,
+    derive_countermand_threshold, similarity_countermand)
+from gov.keys import NoKeyConfiguredError  # noqa: E402
+from gov.target_match import target_similarity  # noqa: E402
+from keyfixture import provision_test_key, scrub_key_env  # noqa: E402
 
 
 def _tmp():
@@ -713,6 +718,122 @@ class SimilarityExecutorWiringTest(unittest.TestCase):
         self.assertEqual(refused[0]["flag"], "approval_intent_changed")
         self.assertNotIn("match_method", refused[0])
         self.assertNotIn("match_score", refused[0])
+
+
+class DerivedThresholdSeamTest(unittest.TestCase):
+    """Wave-138, row-7: the per-message HMAC-derived countermand
+    threshold at the similarity_countermand seam."""
+
+    _MSGS = [
+        "Do not send the Q3 report to the vendor",
+        "Please do not ever transmit that quarterly report anywhere",
+        "Never forward the vendor report",
+        "Do not email the Q3 numbers out",
+        "Please refrain from sharing the quarterly figures",
+    ]
+    _PRIORS = ["Send the Q3 report to the vendor."]
+
+    def test_derive_is_deterministic_per_key(self):
+        for m in self._MSGS:
+            self.assertEqual(derive_countermand_threshold(m),
+                             derive_countermand_threshold(m))
+
+    def test_derive_stays_in_band(self):
+        for m in self._MSGS:
+            t = derive_countermand_threshold(m)
+            self.assertGreaterEqual(t, 0.4)
+            self.assertLess(t, 0.6)
+
+    def test_derive_varies_per_message(self):
+        # The whole point: no single fixed threshold. Distinct
+        # messages must not all derive the same boundary.
+        seen = {derive_countermand_threshold(m) for m in self._MSGS}
+        self.assertGreater(len(seen), 1)
+
+    def test_derive_differs_across_keys(self):
+        # Deterministic part of the cross-deployment story: the same
+        # message derives a different threshold under a different
+        # deployment key (continuous values; equality has
+        # probability 0).
+        m = self._MSGS[0]
+        provision_test_key(epoch="w138-a")
+        ta = derive_countermand_threshold(m)
+        provision_test_key(epoch="w138-b")
+        tb = derive_countermand_threshold(m)
+        self.assertNotEqual(ta, tb)
+
+    def test_derive_rejects_bad_input(self):
+        for bad in (None, "", "   ", 42, b"bytes"):
+            with self.assertRaises(ValueError):
+                derive_countermand_threshold(bad)
+
+    def test_default_uses_derived_threshold(self):
+        # Wiring pin: the default decision path fires exactly when the
+        # best similarity meets the message's derived threshold --
+        # not a fixed 0.5.
+        for m in self._MSGS:
+            t = derive_countermand_threshold(m)
+            score = max(target_similarity(m, p) for p in self._PRIORS)
+            fired, _, got_score = similarity_countermand(m, self._PRIORS)
+            self.assertEqual(fired, score >= t)
+            self.assertAlmostEqual(got_score, score)
+
+    def test_explicit_threshold_keeps_fixed_semantics(self):
+        # Explicit floats keep fixed-threshold behavior (tests,
+        # adversarial probes); the refrain pair scores 0.75.
+        m = "Please refrain from sending that Q3 report anywhere."
+        fired, _, _ = similarity_countermand(m, self._PRIORS,
+                                             threshold=0.9)
+        self.assertFalse(fired)
+        fired, _, _ = similarity_countermand(m, self._PRIORS,
+                                             threshold=0.4)
+        self.assertTrue(fired)
+
+    def test_no_key_fail_closed_at_seam(self):
+        restore = scrub_key_env()
+        try:
+            with self.assertRaises(NoKeyConfiguredError):
+                derive_countermand_threshold(self._MSGS[0])
+            # The decision seam refuses to decide rather than
+            # silently falling back to a fixed threshold.
+            with self.assertRaises(NoKeyConfiguredError):
+                similarity_countermand(self._MSGS[0], self._PRIORS)
+        finally:
+            restore()
+
+    def test_fail_safe_paths_do_not_touch_key_seam(self):
+        # Garbage inputs and the negation gate return before key
+        # resolution: no key needed, no raise, even unprovisioned.
+        restore = scrub_key_env()
+        try:
+            self.assertEqual(similarity_countermand(None, ["do x"]),
+                             (False, None, 0.0))
+            self.assertEqual(
+                similarity_countermand(
+                    "Yes please do send the Q3 report to the vendor.",
+                    self._PRIORS),
+                (False, None, 0.0))
+        finally:
+            restore()
+
+    def test_record_stores_similarity_threshold(self):
+        led = IntentLedger()
+        led.record_intent("op", "Send the Q3 report to the vendor.")
+        r = led.record_intent(
+            "op", "Please refrain from sending that Q3 report anywhere.")
+        t = r["similarity_threshold"]
+        self.assertGreaterEqual(t, 0.4)
+        self.assertLess(t, 0.6)
+        self.assertEqual(
+            t, derive_countermand_threshold(
+                "Please refrain from sending that Q3 report anywhere."))
+
+    def test_same_key_same_verdicts(self):
+        first = [similarity_countermand(m, self._PRIORS)[0]
+                 for m in self._MSGS]
+        second = [similarity_countermand(m, self._PRIORS)[0]
+                  for m in self._MSGS]
+        self.assertEqual(first, second)
 
 
 if __name__ == "__main__":

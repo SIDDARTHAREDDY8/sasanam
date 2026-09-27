@@ -131,6 +131,17 @@ ALLOWED_HMAC_SITES = {
     # scope per the module docstring.
     ("gov/lineage.py", "_cross_run_mac", 0):
         "cross-run lineage chain MAC; key from _active_key() chokepoint, domain-separated",
+    # gov/intent_ledger.py (wave-138, row-7): the per-message
+    # countermand-threshold derivation. The key is
+    # gov.keyprovider.resolve_active_key() output — the wave-69/81
+    # guarded chokepoint (explicit provisioning, fail-closed, no dev
+    # fallback) — never hard-coded, never committed; domain-separated
+    # via _THRESHOLD_DOMAIN ("intent-ledger/countermand-threshold/v1")
+    # so the threshold derivation cannot collide with any other MAC
+    # domain. The derived value is a decision threshold, not a
+    # credential: it is recorded on the ledger record for auditability.
+    ("gov/intent_ledger.py", "derive_countermand_threshold", 0):
+        "countermand-threshold derivation; key from resolve_active_key() chokepoint, domain-separated",
 }
 
 
