@@ -295,7 +295,15 @@ def similarity_countermand(message, prior_messages,
       without "pas", and non-romanized scripts miss. "non"/"mat"
       were measured and DROPPED (false positives on "non-profit" /
       "yoga mat"); "ne" is kept on 0 realistic-corpus FP (sole hit:
-      the contrived "ne'er-do-wells").
+      the contrived "ne'er-do-wells"). Wave-149 adds a Devanagari
+      pilot: नहीं/न/मत cues plus Devanagari SEND/ARCHIVE/DELETE verb
+      forms, with explicit word-boundary discipline (Python \b does
+      not fire around Devanagari words ending in combining marks, so
+      the guards are hand-rolled; danda U+0964/0965 is excluded from
+      the guard so "नहीं।" still cues). Other non-romanized scripts
+      (Arabic/CJK/Cyrillic) still miss. The tag question "है न?"
+      ("...haven't you?") is a measured precision cost of the "न"
+      cue: it can read as a countermand.
     - Full synonym replacement with no shared tokens still scores
       0.0 and misses -- token overlap is not semantics.
     - The deployment key must be managed like other secrets: if the

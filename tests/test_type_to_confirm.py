@@ -93,7 +93,7 @@ class ThresholdReuseTest(unittest.TestCase):
     def test_paraphrase_pair_above_threshold_passes(self):
         self.assertAlmostEqual(tm.target_similarity(PARA_A, PARA_B),
                                0.5714285714285714)
-        ok, score, _detail = _type_to_confirm_ok([PARA_A], PARA_B)
+        ok, score, _detail, _method = _type_to_confirm_ok([PARA_A], PARA_B)
         self.assertTrue(ok)
         self.assertAlmostEqual(score, 0.5714285714285714)
 
@@ -101,26 +101,26 @@ class ThresholdReuseTest(unittest.TestCase):
         # 0.4 < 0.5: nonzero overlap is not enough -- the threshold
         # actually gates.
         self.assertAlmostEqual(tm.target_similarity(BELOW_B, BELOW_A), 0.4)
-        ok, score, detail = _type_to_confirm_ok([BELOW_B], BELOW_A)
+        ok, score, detail, _method = _type_to_confirm_ok([BELOW_B], BELOW_A)
         self.assertFalse(ok)
         self.assertAlmostEqual(score, 0.4)
         self.assertIn("0.400 < 0.50", detail)
 
     def test_unrelated_pair_scores_zero_and_fails(self):
         self.assertEqual(tm.target_similarity(BELOW_B, UNRELATED), 0.0)
-        ok, score, _detail = _type_to_confirm_ok([BELOW_B], UNRELATED)
+        ok, score, _detail, _method = _type_to_confirm_ok([BELOW_B], UNRELATED)
         self.assertFalse(ok)
         self.assertEqual(score, 0.0)
 
     def test_blank_typed_scope_never_matches(self):
         for blank in ("", "   ", "\t\n"):
-            ok, score, _detail = _type_to_confirm_ok([PARA_A], blank)
+            ok, score, _detail, _method = _type_to_confirm_ok([PARA_A], blank)
             self.assertFalse(ok)
             self.assertEqual(score, 0.0)
 
     def test_missing_and_non_string_typed_scope_never_match(self):
         for bad in (None, 123, ["x"], {"t": "x"}):
-            ok, score, _detail = _type_to_confirm_ok([PARA_A], bad)
+            ok, score, _detail, _method = _type_to_confirm_ok([PARA_A], bad)
             self.assertFalse(ok)
             self.assertEqual(score, 0.0)
 

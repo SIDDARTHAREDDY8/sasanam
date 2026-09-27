@@ -75,9 +75,11 @@ __all__ = [
     "match_target",
     "tokenize",
     "typed_scope_similarity",
+    "structural_scope_match",
     "DEFAULT_THRESHOLD",
     "MATCH_METHOD",
     "TTC_MATCH_METHOD",
+    "TTC_STRUCT_METHOD",
 ]
 
 #: Default cover threshold. Measured FP/FN tradeoff (see module
@@ -384,3 +386,162 @@ def typed_scope_similarity(typed, reference):
     if va is not None and vb is not None and va != vb:
         return 0.0  # verb-agreement veto: different actions
     return max(raw, expanded)
+
+
+# ---------------------------------------------------------------------------
+# Wave-149 (row-11): structural typed-scope match (third signal).
+#
+# Residual from wave-147: threshold-aware paraphrasing of the typed
+# scope can dodge BOTH the token-tversky check and the synonym
+# canonicalization -- typed text that means the same thing but shares
+# no tokens AND no curated synonyms with the reference scores 0.0 on
+# both numeric tiers. "obliterate the quarterly filing" vs "delete
+# the Q3 report": "obliterate" is not in the curated verb classes,
+# "filing" is not in the noun map, "quarterly" shares nothing with
+# "q3" -- both tiers read 0.0 and the ceremony refuses a genuinely
+# matching scope (fail-closed in the wrong direction: the human typed
+# the right thing and the ceremony blocks them).
+#
+# The third signal is STRUCTURAL, not lexical: same verb class (the
+# synonym map's verb sets, plus the measured wave-149 extension
+# below) AND an identical object-noun stem set on BOTH texts ->
+# match, even at zero token overlap. It is used ONLY by the
+# type-to-confirm ceremony (gov/approvals._type_to_confirm_ok), OR-ed
+# with the numeric tiers -- the row-11 paraphrase tier
+# (gov/goal_audit.py, gov/goals.py detect_cross_run_laundering) keeps
+# raw token-tversky, and the GRANT path is NOT widened.
+#
+# Design notes (all measured, see evals/type_structure_probes.py):
+# - Verb classes: the synonym map's verb sets (_TTC_VERB_CLASSES)
+#   plus the single measured extension "obliterate" -> DELETE (the
+#   battery's threshold-aware paraphrase verb). The crude _stem
+#   leaves "obliterate" intact but strips "obliterated" to
+#   "obliterat", so both keys are carried (documented stemmer
+#   quirk, same family as the "addresses" -> "addresse" ceiling).
+#   First-verb-wins, same as _verb_class.
+# - Object nouns: the synonym map's REPORT noun set (report,
+#   document, file) plus "filing" (a report by another name; the
+#   battery's paraphrase noun), applied to the STEMMED token -- the
+#   map is closed and explicit. "quarterly" is an adjective, not a
+#   noun-class member, so it drops out of the set; the comparison
+#   is on the noun sets, not the raw token sets. Empty noun set on
+#   either side -> no match (conservative: "obliterate everything"
+#   never structurally matches).
+# - The sets must be EQUAL, not merely overlapping: "delete the
+#   Q3 report" vs "delete the Q4 report" both reduce to {report} --
+#   the signal cannot see the time discriminator. That pair is a
+#   DOCUMENTED ceiling (measured in the battery, not counted in
+#   the labeled false-match rate): the raw token-tversky tier has
+#   the identical property (it scores that pair 0.8 >= 0.5), so
+#   the structural signal introduces no NEW fuzzing of what the
+#   scope is.
+# - The destination veto (wave-136 idiom) applies unchanged: both
+#   texts naming differing explicit destinations -> no match. It
+#   can only suppress matches, never create them.
+# - Naive stemmer: the module's _stem (strips -ing/-ed/-s),
+#   documented as crude in the module docstring. Stemming errors
+#   only ever ADD noun-class membership, so they fail toward more
+#   matching, never less; the labeled set measures the rate at 0.
+# ---------------------------------------------------------------------------
+
+#: Auditable method tag for the structural ceremony path (recorded on
+#: approval_scope_mismatch / goal_specificity_scope_typed events and
+#: on the narrowed record when the structural signal -- not the
+#: numeric tiers -- accepts the typed scope).
+TTC_STRUCT_METHOD = "structural"
+
+#: Structural verb classes: the synonym map's verb sets plus the
+#: measured wave-149 extension. Keys are post-stemming (same
+#: pipeline as _verb_class).
+_STRUCT_VERB_CLASSES = dict(_TTC_VERB_CLASSES)
+_STRUCT_VERB_CLASSES.update({
+    # "obliterate" -> DELETE: the threshold-aware paraphrase verb
+    # pinned by the battery. "obliterated" stems to "obliterat"
+    # under the crude _stem (len>5 "ed" strip), hence the second
+    # key -- a documented stemmer quirk, not a second synonym.
+    "obliterate": "delete",
+    "obliterat": "delete",
+})
+
+#: Structural noun classes: stemmed token -> canonical noun. The
+#: closed REPORT set (report/document/file from the synonym map,
+#: plus the measured "filing"). Adjectives ("quarterly"), unlisted
+#: nouns ("database", "list"), and pronouns drop out -- an empty
+#: set never matches.
+_STRUCT_NOUN_CLASSES = {
+    "report": "report",
+    "document": "report",
+    "file": "report",
+    "filing": "report",
+}
+
+
+def _struct_verb_class(text):
+    """Canonical verb class of the FIRST structural verb token.
+
+    Same first-verb-wins discipline as _verb_class, over the
+    extended _STRUCT_VERB_CLASSES.
+    """
+    for t in _TOKEN_RE.findall(text.lower()):
+        cls = _STRUCT_VERB_CLASSES.get(_stem(t))
+        if cls is not None:
+            return cls
+    return None
+
+
+def _struct_noun_set(text):
+    """Canonical object-noun set of ``text``.
+
+    Stopwords dropped, tokens stemmed, then mapped through the
+    closed _STRUCT_NOUN_CLASSES. Returns a (possibly empty) set of
+    canonical nouns.
+    """
+    out = set()
+    for t in _TOKEN_RE.findall(text.lower()):
+        if t in _STOPWORDS:
+            continue
+        cls = _STRUCT_NOUN_CLASSES.get(_stem(t))
+        if cls is not None:
+            out.add(cls)
+    return out
+
+
+def structural_scope_match(typed, reference):
+    """Structural scope match for the type-to-confirm ceremony.
+
+    True iff BOTH texts name a verb from the structural verb
+    classes AND the canonical verbs are the SAME AND the
+    object-noun stem sets are IDENTICAL and non-empty. The
+    wave-136 destination veto applies (differing explicit
+    destinations on both sides -> False).
+
+    "obliterate the quarterly filing" vs "delete the Q3 report"
+    -> True (DELETE == DELETE, {report} == {report}); the same
+    typed text vs "archive the Q3 report" -> False (verb-class
+    veto: DELETE != ARCHIVE); garbage vs anything -> False (no
+    verb class and/or no nouns).
+
+    Same type discipline as the other tiers: None/blank -> False;
+    non-string inputs raise ValueError. Deterministic, stdlib-only.
+    Used ONLY by gov/approvals._type_to_confirm_ok, OR-ed with the
+    numeric tiers. The row-11 paraphrase tier keeps raw
+    token-tversky.
+    """
+    if typed is None or reference is None:
+        return False
+    if not isinstance(typed, str) or not isinstance(reference, str):
+        raise ValueError(
+            "structural_scope_match requires strings, got %s and %s"
+            % (type(typed).__name__, type(reference).__name__))
+    if not typed.strip() or not reference.strip():
+        return False
+    da, db = _destinations(typed), _destinations(reference)
+    if da and db and da != db:
+        return False  # destination veto (on originals): never fuzz
+    va, vb = _struct_verb_class(typed), _struct_verb_class(reference)
+    if va is None or vb is None or va != vb:
+        return False  # verb-class veto: different (or absent) actions
+    na, nb = _struct_noun_set(typed), _struct_noun_set(reference)
+    if not na or not nb or na != nb:
+        return False  # object nouns must agree exactly
+    return True

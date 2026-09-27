@@ -161,3 +161,58 @@ class CoverageWiringTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StructuralScopeMatchTest(unittest.TestCase):
+    """Wave-149 (row-11): structural typed-scope match pins."""
+
+    def test_paraphrase_pair_matches(self):
+        self.assertTrue(target_match.structural_scope_match(
+            "obliterate the quarterly filing", "delete the Q3 report"))
+
+    def test_wrong_verb_class_vetoes(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate the quarterly filing", "archive the Q3 report"))
+        self.assertFalse(target_match.structural_scope_match(
+            "send the report", "delete the report"))
+
+    def test_noun_sets_must_agree(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "delete the customer list", "delete the vendor list"))
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate everything", "delete the Q3 report"))
+
+    def test_empty_noun_set_never_matches(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate", "delete the Q3 report"))
+        self.assertFalse(target_match.structural_scope_match(
+            "the quarterly filing", "delete the Q3 report"))
+
+    def test_destination_veto(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate the report to evil.com",
+            "delete the report to good.com"))
+
+    def test_empty_and_none_never_match(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "", "delete the Q3 report"))
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate the filing", ""))
+        self.assertFalse(target_match.structural_scope_match(
+            None, "delete the Q3 report"))
+        self.assertFalse(target_match.structural_scope_match(
+            "obliterate the filing", None))
+
+    def test_non_string_raises(self):
+        for bad in (123, ["x"], {"t": "x"}):
+            with self.assertRaises(ValueError):
+                target_match.structural_scope_match(bad, "delete the x")
+            with self.assertRaises(ValueError):
+                target_match.structural_scope_match("delete the x", bad)
+
+    def test_deterministic(self):
+        a = target_match.structural_scope_match(
+            "obliterate the quarterly filing", "delete the Q3 report")
+        b = target_match.structural_scope_match(
+            "obliterate the quarterly filing", "delete the Q3 report")
+        self.assertEqual(a, b)

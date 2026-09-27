@@ -161,14 +161,14 @@ def s5_destination_veto_preserved():
 
 
 def s6_ceremony_synonym_ok():
-    ok, score, _detail = _type_to_confirm_ok([S1_REF], S1_TYPED)
+    ok, score, _detail, _method = _type_to_confirm_ok([S1_REF], S1_TYPED)
     if ok:
         return ("HELD", "ceremony accepted synonym pair (%.4f)" % score)
     return ("BREAK", "ceremony refused synonym pair (%.4f)" % score)
 
 
 def s7_ceremony_wrong_verb_refused():
-    ok, score, _detail = _type_to_confirm_ok([S2_REF], S2_TYPED)
+    ok, score, _detail, _method = _type_to_confirm_ok([S2_REF], S2_TYPED)
     if not ok:
         return ("HELD", "ceremony refused wrong-verb pair (%.4f)" % score)
     return ("BREAK", "ceremony ACCEPTED wrong-verb pair (%.4f)" % score)

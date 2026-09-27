@@ -552,5 +552,77 @@ class NegationVerbTier2Test(unittest.TestCase):
             "Summarize the Q3 report for the vendor."))
 
 
+class DevanagariNegationTest(unittest.TestCase):
+    """Wave-149, row 7: Devanagari negation cues (नहीं/न/मत) with
+    explicit word-boundary discipline, Devanagari SEND/ARCHIVE/DELETE
+    verb forms, and the _fold_accents length-preservation fix."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0) if hit else None
+
+    def test_cues_match_standalone(self):
+        self.assertEqual(self._cue("रिपोर्ट नहीं भेजें"), "नहीं")
+        self.assertEqual(self._cue("रिपोर्ट मत भेजें"), "मत")
+        self.assertEqual(self._cue("रिपोर्ट न भेजें"), "न")
+
+    def test_danda_terminator_does_not_block_cue(self):
+        # U+0964 is excluded from the boundary guard on purpose.
+        self.assertEqual(self._cue("रिपोर्ट नहीं।"), "नहीं")
+        self.assertEqual(self._cue("मत भेजें।"), "मत")
+
+    def test_embedded_cue_does_not_match(self):
+        self.assertIsNone(self._cue("रिपोर्टनहींभेजें"))
+        # "मतलब" ("meaning") contains "मत" -- the guard blocks it.
+        self.assertIsNone(self._cue("इसका मतलब रिपोर्ट भेजें"))
+
+    def test_fold_preserves_devanagari_length(self):
+        # The cue regex runs on raw text while scope tokens run on
+        # folded text: any length change misaligns cue spans. Virama
+        # (U+094D) must survive the fold.
+        for s in ("रिपोर्ट", "नहीं", "भेजें", "Q3 रिपोर्ट मत भेजें।"):
+            self.assertEqual(m._fold_accents(s), s)
+
+    def test_scope_mat_revokes(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 रिपोर्ट मत भेजें",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_nahin_revokes(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 रिपोर्ट नहीं भेजें",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_wrong_predicate_other_clause_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Q3 रिपोर्ट तैयार नहीं है; कृपया इसे विक्रेता को भेजें",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_danda_clause_split_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Q3 रिपोर्ट तैयार नहीं है। कृपया इसे विक्रेता को भेजें।",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_devanagari_delete_form(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 रिपोर्ट को हटाना नहीं है",
+            "Delete the Q3 report."))
+
+    def test_scope_devanagari_archive_form(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 रिपोर्ट संग्रहित नहीं करें",
+            "Archive the Q3 report."))
+
+    def test_tag_question_fires_documented_cost(self):
+        # "है न?" ("...haven't you?") is a confirmation, but the
+        # mandated standalone-न cue reads it as a countermand. This
+        # is a MEASURED precision cost (wave-142 "ne" precedent),
+        # pinned so any future tag-question guard updates this test
+        # and the battery together.
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 रिपोर्ट vendor को भेज दी है न?",
+            "Send the Q3 report to the vendor."))
+
+
 if __name__ == "__main__":
     unittest.main()

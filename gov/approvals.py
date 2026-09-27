@@ -59,7 +59,8 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
-                           TTC_MATCH_METHOD)
+                           structural_scope_match,
+                           TTC_MATCH_METHOD, TTC_STRUCT_METHOD)
 
 
 def _utcnow():
@@ -630,23 +631,34 @@ def _type_to_confirm_reference(target):
 
 def _type_to_confirm_ok(reference_texts, typed_scope):
     """Wave-145 (row-11): check the human's typed scope against the
-    reference scope. Returns ``(ok, score, detail)``.
+    reference scope. Returns ``(ok, score, detail, method)``.
 
     ``typed_scope`` must be a non-blank string scoring >=
     ``DEFAULT_THRESHOLD`` (``gov.target_match.typed_scope_similarity``
     -- the synonym-aware token-tversky variant, wave-147: max of raw
     and synonym-canonicalized token-tversky with the destination veto
     and a verb-agreement veto, at the same threshold) against at
-    least one reference text. A missing, blank, or non-string typed
-    scope is NEVER a match (fail-closed): a bare click cannot
-    satisfy the ceremony. The best sub-threshold score is reported
-    (not zeroed) so the LOUD refusal event names the actual
-    measured mismatch.
+    least one reference text, OR structurally matching a reference
+    text (``gov.target_match.structural_scope_match``, wave-149:
+    same verb class + identical object-noun stem set, OR-ed with the
+    numeric tiers -- the row-11 paraphrase tier and the GRANT path
+    are untouched). A missing, blank, or non-string typed scope is
+    NEVER a match (fail-closed): a bare click cannot satisfy the
+    ceremony. The best sub-threshold score is reported (not zeroed)
+    so the LOUD refusal event names the actual measured mismatch.
+
+    ``method`` is the auditable signal that accepted (or would have
+    accepted): ``TTC_MATCH_METHOD`` ("token-tversky+synonym") for the
+    numeric tiers, ``TTC_STRUCT_METHOD`` ("structural") when only the
+    structural signal matched. A structural accept reports score 1.0
+    (the signal is boolean) with the numeric best named in the
+    detail for forensics.
     """
     if not isinstance(typed_scope, str) or not typed_scope.strip():
         return (False, 0.0,
                 "no typed scope provided: approving a vague/wildcard "
-                "goal requires typing the narrowed scope")
+                "goal requires typing the narrowed scope",
+                TTC_MATCH_METHOD)
     best = 0.0
     for text in reference_texts:
         if not isinstance(text, str) or not text.strip():
@@ -658,11 +670,27 @@ def _type_to_confirm_ok(reference_texts, typed_scope):
         return (True, best,
                 "typed scope matches the declared scope (token-tversky "
                 "+synonym %.3f >= %.2f) %s" % (best, DEFAULT_THRESHOLD,
-                                               TTC_MATCH_METHOD))
+                                               TTC_MATCH_METHOD),
+                TTC_MATCH_METHOD)
+    # Wave-149 (row-11): structural third signal -- a paraphrase that
+    # shares no tokens/synonyms with the reference (numeric tiers read
+    # 0.0) still matches when both texts name the same verb class
+    # and the same object-noun stem set.
+    for text in reference_texts:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        if structural_scope_match(typed_scope, text):
+            return (True, 1.0,
+                    "typed scope structurally matches the declared "
+                    "scope (same verb class + same object-noun stem "
+                    "set; numeric tiers %.3f < %.2f) %s"
+                    % (best, DEFAULT_THRESHOLD, TTC_STRUCT_METHOD),
+                    TTC_STRUCT_METHOD)
     return (False, best,
             "typed scope does not match the goal's declared scope "
             "(token-tversky+synonym %.3f < %.2f)"
-            % (best, DEFAULT_THRESHOLD))
+            % (best, DEFAULT_THRESHOLD),
+            TTC_MATCH_METHOD)
 
 
 # -- F49 (R11): human-provisioned break-glass tickets ----------------------
@@ -3931,7 +3959,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # exactly as before (zero behavior change).
             _ttc_reference = _type_to_confirm_reference(target)
             if _ttc_reference is not None:
-                _ttc_ok, _ttc_score, _ttc_detail = _type_to_confirm_ok(
+                (_ttc_ok, _ttc_score, _ttc_detail,
+                 _ttc_method) = _type_to_confirm_ok(
                     _ttc_reference, typed_scope)
                 if not _ttc_ok:
                     try:
@@ -3953,7 +3982,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                                             else None),
                             "match_score": _ttc_score,
                             "match_threshold": DEFAULT_THRESHOLD,
-                            "match_method": TTC_MATCH_METHOD,
+                            "match_method": _ttc_method,
                             "goal_id": (target.get("args") or {}).get(
                                 "goal_id"),
                             "reason": ("type_to_confirm: %s" % _ttc_detail),
@@ -3974,7 +4003,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 # the audit trail shows what the human claimed to approve.
                 target["typed_scope"] = typed_scope
                 target["typed_scope_score"] = _ttc_score
-                target["typed_scope_method"] = TTC_MATCH_METHOD
+                target["typed_scope_method"] = _ttc_method
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()

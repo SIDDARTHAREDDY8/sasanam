@@ -180,6 +180,22 @@ _FRENCH_NE_PAIR_RE = re.compile(_FRENCH_NE_PAIR_SRC, re.IGNORECASE)
 # window tokens, where the lookaheads/lookbehinds are vacuous --
 # unchanged, and unreachable for these idioms (that path requires an
 # explicit redirect signal, which the idiom sentences lack).
+# Wave-149 (row 7): Devanagari negation cues (pilot -- Hindi only;
+# other non-romanized scripts remain untouched). Python's \b does NOT
+# fire around Devanagari words ending in combining marks: "नहीं" ends
+# in ं (U+0902, category Mn -- not a \w char), so \bनहीं\b matches
+# NOTHING, not even "रिपोर्ट नहीं भेजें" (measured). The boundary
+# discipline is therefore explicit: a cue must not be immediately
+# preceded or followed by a word character. U+0964/U+0965
+# (danda/double danda, the Hindi sentence terminators) are
+# DELIBERATELY excluded from the guard so "नहीं।" still cues; every
+# other Devanagari letter, vowel sign, nukta, halant,
+# anusvara/visarga, and digit blocks gluing -- "रिपोर्टनहींभेजें"
+# and "मतलब" ("meaning", contains "मत") do NOT cue.
+_DEVA_WORD_CHAR = r"[\w\u0900-\u0963\u0966-\u097F]"
+_DEVA_NEG_SRC = (r"(?<!" + _DEVA_WORD_CHAR + r")"
+                 r"(?:नहीं|न|मत)"
+                 r"(?!" + _DEVA_WORD_CHAR + r")")
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
     r"no(?!\s+problems?\b)|stop|halt|"
@@ -187,7 +203,8 @@ _NEGATION_RE = re.compile(
     r"(?<!n['\u2019]est-ce\s)(?<!\bun\s)pas|"
     r"nicht|kein(?!\s+probleme?\b)|keine(?!\s+probleme?\b)|keinen|"
     r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)\b"
-    r"|" + _FRENCH_NE_PAIR_SRC,
+    r"|" + _FRENCH_NE_PAIR_SRC
+    + r"|" + _DEVA_NEG_SRC,
     re.IGNORECASE,
 )
 
@@ -224,8 +241,18 @@ _NEGATION_RE = re.compile(
 # verb, so the re-affirmed-verb clause wins and the gate stays
 # silent.
 _NEGATION_SCOPE_WINDOW = 8
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?;]+")
-_SCOPE_WORD_RE = re.compile(r"[a-z0-9']+")
+# Wave-149 (row 7): U+0964/U+0965 (danda/double danda, the Hindi
+# sentence terminators) added so Hindi multi-sentence messages get
+# clause discipline. Latin texts never contain dandas, so existing
+# behaviour is unchanged.
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965]+")
+# Wave-149 (row 7): Devanagari block added so Hindi scope windows can
+# be walked. U+0964/U+0965 are deliberately excluded so "भेजें।"
+# tokenises as "भेजें" (the verb form must match exactly for
+# anchor-class detection) and the danda acts as a token boundary like
+# other punctuation. Accents folded under NFKD (Devanagari is
+# unaffected); case lowered.
+_SCOPE_WORD_RE = re.compile(r"[a-z0-9'\u0900-\u0963\u0966-\u097F]+")
 _SCOPE_ELISION_RE = re.compile(r"^(?:n|d|l|s|c|j|t|qu)['’]")
 
 _VERB_CLASSES = {
@@ -236,16 +263,26 @@ _VERB_CLASSES = {
         "enverrai", "enverrais", "enverra", "enverront",
         "enviar", "envia", "enviado",
         "bhejo", "bhejna", "bhej", "bheje",
+        # Wave-149: Devanagari SEND forms (pilot).
+        "भेजें", "भेजना", "भेजो", "भेजे", "भेजा", "भेज",
     )),
     "ARCHIVE": frozenset((
         "archive", "archives", "archiving", "archived",
         "archivieren", "archiviert", "archiviere",
         "archiver", "archivez",
+        # Wave-149: Devanagari ARCHIVE forms (pilot): संग्रहित/
+        # संग्रहीत are the native equivalents; आर्काइव is the
+        # common tech loanword.
+        "संग्रहित", "संग्रहीत", "आर्काइव",
     )),
     "DELETE": frozenset((
         "delete", "deletes", "deleting", "deleted",
         "loeschen", "loschen", "loescht", "loesche", "geloescht",
         "supprimer", "supprime",
+        # Wave-149: Devanagari DELETE forms (pilot): हटाना
+        # (remove/take away) and मिटाना (erase) families.
+        "हटाएँ", "हटाना", "हटाओ", "हटाए", "हटा",
+        "मिटाएँ", "मिटाना", "मिटाओ", "मिटाए", "मिटा",
     )),
     # Wave-148 (row 7): tier-2 verb classes. Same closed-list
     # discipline as tier 1: every form below was measured against
@@ -353,13 +390,22 @@ def _fold_accents(text):
     tokenization folds. German ß has no NFKD decomposition, so
     ß-forms are carried as ss-transcriptions in the class table
     (same as the tier-1 "loeschen" convention).
+
+    Wave-149 (row 7): Devanagari combining marks (virama U+094D,
+    nukta U+093C, ...) are PRESERVED, not stripped. Dropping them
+    changes string length ("रिपोर्ट" -> "रिपोरट"), which breaks the
+    raw-text cue-span alignment in negation_scopes_grant (the cue
+    regex runs on raw text, the tokens on this folded text -- any
+    length change before a cue misattributes it). Devanagari has no
+    NFKD decompositions, so preserving the block keeps the fold
+    length-identical there. Latin diacritic stripping is unchanged.
     Deterministic, stdlib unicodedata only.
     """
     if not isinstance(text, str):
         return ""
     return "".join(
         c for c in unicodedata.normalize("NFKD", text)
-        if not unicodedata.combining(c))
+        if not unicodedata.combining(c) or "\u0900" <= c <= "\u097f")
 
 
 def _separable_verb_hits(normed):

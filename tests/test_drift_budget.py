@@ -837,3 +837,120 @@ class TestContinuity(_AdaptiveHarness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFramingLedger(unittest.TestCase):
+    """Wave-149 (row 9): framing ledger + framing-consistency tripwire."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="test_framing_"))
+        self.events = []
+        self.store = BudgetStore(self.tmp / "budget",
+                                 audit=self.events.append)
+
+    def _policy(self, **kw):
+        args = dict(slow_trip=1e9, framing_min_runs=4)
+        args.update(kw)
+        return _adaptive_policy(**args)
+
+    def _record(self, agent, tools, seq, policy, framing=""):
+        return self.store.record_run(agent, seq, "run-%d" % seq,
+                                     _fp(tools, run_seq=seq), BASE_FP,
+                                     policy, framing=framing)
+
+    def _suspects(self):
+        return [e for e in self.events
+                if e.get("event") == "framing_drift_suspect"]
+
+    def test_framing_chained_on_contribution_records(self):
+        policy = self._policy()
+        self._record("a", _shifted(10), 1, policy,
+                     framing="routine cleanup")
+        recs = [r for r in self.store._read_all("a")
+                if r.get("kind") == "contribution"]
+        self.assertTrue(recs)
+        self.assertEqual(recs[-1]["framing"], "routine cleanup")
+
+    def test_framing_defaults_empty(self):
+        policy = self._policy()
+        self._record("a", _shifted(10), 1, policy)
+        recs = [r for r in self.store._read_all("a")
+                if r.get("kind") == "contribution"]
+        self.assertEqual(recs[-1]["framing"], "")
+
+    def test_non_string_framing_raises(self):
+        policy = self._policy()
+        with self.assertRaises(ValueError):
+            self._record("a", _shifted(10), 1, policy, framing=123)
+
+    def test_policy_defaults_and_validation(self):
+        from gov.drift_budget import AdaptiveBudgetPolicy
+        p = AdaptiveBudgetPolicy(100.0)
+        self.assertEqual(p.framing_min_runs, 10)
+        self.assertEqual(p.framing_max_phrases, 3)
+        with self.assertRaises(ValueError):
+            AdaptiveBudgetPolicy(100.0, framing_min_runs=1)
+        with self.assertRaises(ValueError):
+            AdaptiveBudgetPolicy(100.0, framing_max_phrases=0)
+
+    def test_boilerplate_campaign_fires_loud_and_tightens(self):
+        policy = self._policy()
+        for i in range(4):
+            self._record("a", _shifted(10), i + 1, policy,
+                         framing="routine cleanup")
+            if i < 3:
+                self.assertEqual(self._suspects(), [])
+        suspects = self._suspects()
+        self.assertEqual(len(suspects), 1)
+        self.assertEqual(suspects[0].get("severity"), "LOUD")
+        self.assertEqual(suspects[0].get("distinct_phrases"), 1)
+        adapts = [e for e in self.events
+                  if e.get("event") == "drift_budget_adapted"
+                  and e.get("trigger") == "framing_drift"]
+        self.assertEqual(len(adapts), 1)
+        records = self.store._read_all("a")
+        level, _, _, _, _, _, _, _ = self.store._adapt_fold(records)
+        self.assertEqual(level, 1)
+
+    def test_varied_framings_stay_silent(self):
+        policy = self._policy()
+        framings = ["nightly backup", "index rebuild", "log rotation",
+                    "cache warmup"]
+        for i in range(4):
+            self._record("a", _shifted(10), i + 1, policy,
+                         framing=framings[i])
+        self.assertEqual(self._suspects(), [])
+
+    def test_absent_framing_never_fires(self):
+        policy = self._policy()
+        for i in range(4):
+            self._record("a", _shifted(10), i + 1, policy)
+        self.assertEqual(self._suspects(), [])
+
+    def test_plain_policy_ignores_tripwire(self):
+        policy = _policy()
+        for i in range(10):
+            self.store.record_run("a", i + 1, "run-%d" % (i + 1),
+                                  _fp(_shifted(10), run_seq=i + 1),
+                                  BASE_FP, policy,
+                                  framing="routine cleanup")
+        self.assertEqual(self._suspects(), [])
+
+    def test_mixed_window_suppresses_tripwire(self):
+        # Regression pin (wave-149 review): a window containing one
+        # at/above-floor run is NOT all-sub-floor, so the framing
+        # tripwire stays silent -- that run is streak territory.
+        policy = self._policy()
+        for i in range(3):
+            self._record("a", _shifted(10), i + 1, policy,
+                         framing="routine cleanup")
+        self._record("a", _shifted(20), 4, policy,
+                     framing="routine cleanup")  # 0.8 >= floor
+        self.assertEqual(self._suspects(), [])
+
+    def test_norm_framing(self):
+        from gov.drift_budget import _norm_framing
+        self.assertEqual(_norm_framing("  ROUTINE   cleanup. "),
+                         "routine cleanup")
+        self.assertEqual(_norm_framing(None), "")
+        self.assertEqual(_norm_framing(123), "")

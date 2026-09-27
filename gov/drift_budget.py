@@ -267,11 +267,14 @@ wave-141 per-direction buckets (which catch them later).
 #   state) restart at zero -- a restart breaks the attacker's streak
 #   exactly as it breaks the defender's, but it cannot shed the level.
 #
-# Known residuals (row 9 stays PARTIAL): many-shot/framing drift and
-# from-birth baseline poisoning are untouched by this seam; a stale
-# but MAC-valid digest replayed across a FULL store loss is refused
-# only if an older import already exists in this store -- otherwise
-# the operator must treat the digest path as latest-wins
+# Known residuals (row 9 stays PARTIAL): from-birth baseline poisoning
+# is untouched by this seam; wave-149 narrows (not closes) the
+# many-shot/framing residual with the framing-consistency tripwire
+# (boilerplate-framed sub-floor campaigns) -- a [sub-floor, clean]
+# paced campaign and varied-framing campaigns still defeat it, and
+# a stale but MAC-valid digest replayed across a FULL store loss is
+# refused only if an older import already exists in this store --
+# otherwise the operator must treat the digest path as latest-wins
 # (export overwrites); see import_continuity.
 _CONTINUITY_VERSION = 1
 _CONTINUITY_MAC_DOMAIN = "drift-continuity-v1"
@@ -448,6 +451,25 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     reset, and every slow-burn trip marker, so old evidence never
     double-counts. A plain ``BudgetPolicy`` has no slow-burn fields
     and zero behavior change.
+
+    Wave-149 adds the framing-consistency tripwire (new policy fields
+    ``framing_min_runs`` / ``framing_max_phrases``, operator
+    calibration): ``BudgetStore.record_run`` accepts the run's
+    declared purpose text (``framing``) and chains it on every
+    contribution-kind record -- a per-agent framing ledger. When the
+    trailing ``framing_min_runs`` contributing runs are ALL below
+    ``adapt_contrib_floor`` (the sub-floor campaign the streak
+    tripwire cannot see) AND their normalized framings collapse to
+    at most ``framing_max_phrases`` distinct boilerplate phrases,
+    the budget emits a LOUD ``framing_drift_suspect`` event and
+    tightens exactly like the other pacing triggers (trigger
+    ``framing_drift``). Framing alone never fires (boilerplate with
+    zero drift stays silent -- the conservative direction); absent
+    framing data (all framings empty) never fires; a clean run
+    breaks the window (the same threshold-gaming ceiling as the
+    b5 residual -- a [sub-floor, clean] paced campaign still
+    defeats this tripwire). A plain ``BudgetPolicy`` has no framing
+    fields and zero behavior change.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
@@ -455,7 +477,8 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
                  "adapt_max_level", "adapt_dir_decay",
                  "adapt_dir_threshold", "adapt_flip_floor",
                  "slow_weight", "slow_clean_decay", "slow_trip",
-                 "slow_window_factor", "slow_min_runs")
+                 "slow_window_factor", "slow_min_runs",
+                 "framing_min_runs", "framing_max_phrases")
 
     def __init__(self, warn_distance, adapt_near_floor=0.75,
                  adapt_cycles=2, adapt_factor=0.6,
@@ -463,7 +486,8 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
                  adapt_max_level=3, adapt_dir_decay=0.9,
                  adapt_dir_threshold=2.4, adapt_flip_floor=0.75,
                  slow_weight=0.5, slow_clean_decay=0.5, slow_trip=0.3,
-                 slow_window_factor=3, slow_min_runs=3, **kw):
+                 slow_window_factor=3, slow_min_runs=3,
+                 framing_min_runs=10, framing_max_phrases=3, **kw):
         super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
         if not isinstance(adapt_near_floor, (int, float)) or \
                 not 0 < adapt_near_floor <= 1:
@@ -526,11 +550,20 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
         if not isinstance(slow_min_runs, int) or slow_min_runs < 2:
             raise ValueError("slow_min_runs must be an int >= 2, got %r"
                              % (slow_min_runs,))
+        if not isinstance(framing_min_runs, int) or framing_min_runs < 2:
+            raise ValueError("framing_min_runs must be an int >= 2, got %r"
+                             % (framing_min_runs,))
+        if not isinstance(framing_max_phrases, int) or \
+                framing_max_phrases < 1:
+            raise ValueError("framing_max_phrases must be an int >= 1, "
+                             "got %r" % (framing_max_phrases,))
         self.slow_weight = float(slow_weight)
         self.slow_clean_decay = float(slow_clean_decay)
         self.slow_trip = float(slow_trip)
         self.slow_window_factor = slow_window_factor
         self.slow_min_runs = slow_min_runs
+        self.framing_min_runs = framing_min_runs
+        self.framing_max_phrases = framing_max_phrases
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
@@ -591,6 +624,20 @@ def _rotation_period_score(history, period):
     agree = sum(1 for i in range(period)
                 if tail[i] == tail[i + period])
     return agree / period
+
+
+def _norm_framing(text):
+    """Normalize a run's declared-purpose framing for comparison.
+
+    Lowercase, collapse internal whitespace, strip edge punctuation:
+    "Routine cleanup.", "  ROUTINE   CLEANUP " and "routine cleanup"
+    all normalize to "routine cleanup". Non-string input normalizes
+    to "" (never raises -- the check treats absent framing data as
+    no evidence, never as boilerplate). Deterministic, stdlib-only.
+    """
+    if not isinstance(text, str):
+        return ""
+    return " ".join(text.lower().split()).strip(" .!?,;:-")
 
 
 class BudgetContribution:
@@ -962,7 +1009,8 @@ class BudgetStore(ChainedStore):
         return self._write(agent_id, record, event, audit)
 
     def record_run(self, agent_id, run_seq, run_id, fingerprint,
-                   baseline, policy, principal="", audit=None):
+                   baseline, policy, principal="", audit=None,
+                   framing=""):
         """Assess one run against the agent's budget; store the result.
 
         Returns a ``BudgetContribution``. Sub-threshold-but-nonzero
@@ -973,6 +1021,13 @@ class BudgetStore(ChainedStore):
         ``warn_distance`` are recorded as non-contributing
         (``single_run_path``) -- that territory belongs to
         ``detect_drift``, unchanged.
+
+        ``framing`` (wave-149, row 9): the run's declared purpose
+        text, chained on every contribution-kind record as the
+        per-agent framing ledger. The framing-consistency tripwire
+        (``_framing_check``, adaptive policies only) reads it; a
+        plain ``BudgetPolicy`` ignores it. Non-string framing raises
+        ValueError (never coerced).
         """
         self._check_fingerprint(fingerprint, "fingerprint")
         self._check_fingerprint(baseline, "baseline")
@@ -980,6 +1035,11 @@ class BudgetStore(ChainedStore):
             raise TypeError("policy must be a BudgetPolicy, got %r"
                             % type(policy).__name__)
         self._check_seq(run_seq)
+        if framing is None:
+            framing = ""
+        if not isinstance(framing, str):
+            raise ValueError("framing must be a string, got %r"
+                             % (type(framing).__name__,))
         agent_id = str(agent_id)
 
         distance = fingerprint_tool_distance(fingerprint, baseline)
@@ -991,7 +1051,7 @@ class BudgetStore(ChainedStore):
                       "contributes": False,
                       "reason": "insufficient_data",
                       "distance": None, "threshold_equivalents": 0.0,
-                      "signed_deltas": {}}
+                      "signed_deltas": {}, "framing": framing}
             self._write(agent_id, record,
                         {"event": self._record_event, "agent_id": agent_id,
                          "run_seq": run_seq, "contributes": False,
@@ -1011,7 +1071,8 @@ class BudgetStore(ChainedStore):
                       "distance": distance,
                       "threshold_equivalents": round(fraction, 9),
                       "signed_deltas": signed_tool_deltas(fingerprint,
-                                                          baseline)}
+                                                          baseline),
+                      "framing": framing}
             self._write(agent_id, record,
                         {"event": self._record_event, "agent_id": agent_id,
                          "run_seq": run_seq, "contributes": False,
@@ -1048,7 +1109,7 @@ class BudgetStore(ChainedStore):
                   "contributes": True, "reason": "sub_threshold",
                   "distance": distance,
                   "threshold_equivalents": round(fraction, 9),
-                  "signed_deltas": deltas}
+                  "signed_deltas": deltas, "framing": framing}
         self._write(agent_id, record,
                     {"event": self._record_event, "agent_id": agent_id,
                      "run_seq": run_seq, "contributes": True,
@@ -1056,6 +1117,7 @@ class BudgetStore(ChainedStore):
                      "distance": distance}, audit)
         if self._is_adaptive(policy):
             self._adaptive_streak_check(agent_id, run_seq, policy, audit)
+            self._framing_check(agent_id, run_seq, policy, audit)
         return BudgetContribution(True, distance, fraction,
                                   "sub_threshold", False,
                                   run_seq, agent_id)
@@ -1313,6 +1375,98 @@ class BudgetStore(ChainedStore):
             {"streak": policy.adapt_strikes,
              "min_fraction": round(min(fracs), 6),
              "consistency": round(cons, 6)}, audit)
+
+    def _framing_check(self, agent_id, run_seq, policy, audit):
+        """Wave-149 (row 9): framing-consistency tripwire.
+
+        Many-shot framing drift: an attacker spreads drift across
+        many small shots, each framed as benign ("routine cleanup",
+        "formatting"), so no single run trips anything. When the
+        trailing ``framing_min_runs`` contributing runs are ALL
+        below ``adapt_contrib_floor`` (the sub-floor campaign the
+        streak tripwire cannot see -- it needs consecutive runs at
+        or above the floor) AND their normalized framings collapse
+        to at most ``framing_max_phrases`` distinct boilerplate
+        phrases, the budget emits a LOUD ``framing_drift_suspect``
+        event and tightens one level (trigger ``framing_drift``).
+
+        Conservative by construction:
+        - framing alone never fires: with zero drift there are no
+          contributing runs, so identical boilerplate across clean
+          runs stays silent;
+        - absent framing data (every framing in the window empty)
+          never fires -- the check requires declared purposes, it
+          does not punish missing ones;
+        - a clean run (``reset`` record) breaks the window: a
+          [sub-floor, clean] paced campaign still defeats this
+          tripwire (the b5 threshold-gaming ceiling, documented not
+          hidden);
+        - near-threshold runs (any run at/above
+          ``adapt_contrib_floor``) belong to the streak tripwire,
+          not this one;
+        - the epoch restarts at every ``framing_drift`` tightening,
+          so a continuing campaign re-fires only on fresh evidence
+          (capped by ``adapt_max_level`` like every other trigger).
+        """
+        records = self._read_all(agent_id)
+        level, _, _, _, _, _, _, _ = self._adapt_fold(records)
+        if level >= policy.adapt_max_level:
+            return
+        last_reset_seq = -1
+        last_framing_seq = -1
+        for r in records:
+            if r.get("kind") == "reset":
+                last_reset_seq = max(last_reset_seq,
+                                     int(r.get("run_seq", -1)))
+            elif (r.get("kind") == "adapt"
+                    and r.get("trigger") == "framing_drift"):
+                last_framing_seq = max(last_framing_seq,
+                                       int(r.get("run_seq", -1)))
+        floor = max(last_reset_seq, last_framing_seq)
+        trailing = [r for r in records
+                    if r.get("kind") == "contribution"
+                    and r.get("contributes")
+                    and int(r.get("run_seq", -1)) > floor]
+        window = trailing[-policy.framing_min_runs:]
+        if len(window) < policy.framing_min_runs:
+            return
+        fracs = [r.get("threshold_equivalents", 0.0) for r in window]
+        if max(fracs) >= policy.adapt_contrib_floor:
+            # Near-threshold territory belongs to the streak
+            # tripwire; the framing check hunts the all-sub-floor
+            # campaign the streak cannot see. A single
+            # at-or-above-floor run in the window suppresses this
+            # tripwire (documented ceiling: sprinkling one
+            # near-threshold run per window defeats it -- the streak
+            # tripwire is the backstop for those runs).
+            return
+        phrases = [_norm_framing(r.get("framing", "")) for r in window]
+        if not any(phrases):
+            # No framing data at all: never fire on absent purposes.
+            return
+        distinct = sorted(set(phrases))
+        if len(distinct) > policy.framing_max_phrases:
+            return
+        new_level = level + 1
+        nl, nw = self._effective(policy, new_level)
+        auditor = self._audit if audit is None else audit
+        if auditor is not None:
+            auditor({"event": "framing_drift_suspect",
+                     "severity": "LOUD",
+                     "agent_id": agent_id,
+                     "run_seq": run_seq,
+                     "trigger": "framing_drift",
+                     "runs": policy.framing_min_runs,
+                     "distinct_phrases": len(distinct),
+                     "phrases": distinct,
+                     "min_fraction": round(min(fracs), 6),
+                     "max_fraction": round(max(fracs), 6)})
+        self._write_adapt(
+            agent_id, run_seq, new_level, "tighten",
+            "framing_drift", nl, nw,
+            {"runs": policy.framing_min_runs,
+             "distinct_phrases": distinct,
+             "min_fraction": round(min(fracs), 6)}, audit)
 
     def reset(self, agent_id, reason="manual", audit=None):
         """Clear the agent's budget on operator demand (audited)."""
