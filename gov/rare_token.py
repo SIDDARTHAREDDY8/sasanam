@@ -100,6 +100,14 @@ unreviewable).
 
 import re
 
+# Row-13 tiered verdicts (wave-152 follow-up): the T1->T2->T3
+# composition's footprint test is the single source of truth for the
+# paraphrase-footprint rule — the tracker consults it, never
+# reimplements it. detection_verdicts imports only gov.egress_content
+# (stdlib-only), so there is no import cycle.
+from gov.detection_verdicts import (
+    FOOTPRINT_SIGNAL_FLOOR, FOOTPRINT_THRESHOLDS, footprint_of)
+
 # ---------------------------------------------------------------------------
 # Bundled common-word frequency floor (~450 words).
 # Crude by design: the FP controls are the K>=3 bar and the
@@ -254,6 +262,18 @@ class RareTokenTracker:
     destination ("behavioral_flag" — triage-only, never a hold).
     With a ``taint_ledger`` attached, prior runs' reads count for
     the behavioral tier too (see gov/taint_ledger.py).
+    Wave-152 follow-up: with a ``content_monitor`` attached (an
+    ``EgressContentMonitor``, or any object with ``check(agent_id,
+    tool, args, payload_text=None)`` returning a ``signals`` dict),
+    the tiered-verdict T3 composition runs INSIDE check_egress: a
+    T2 behavioral flag on an egress that ALSO carries a T1
+    paraphrase footprint (a material structure/dump/entropy
+    sub-signal with zero rare-token overlap — the footprint test is
+    ``gov.detection_verdicts.footprint_of``) escalates to
+    "require_approval", with per-hit field-level provenance in the
+    returned ``provenance`` list. Additive only: without a monitor
+    the ladder is byte-identical to the wave-141 behavior, and the
+    composition never weakens a verdict (monotonicity).
     Result dicts and audit payloads carry counts and doc ids only —
     never token strings.
     """
@@ -263,7 +283,8 @@ class RareTokenTracker:
                  max_docs_per_agent=MAX_DOCS_PER_AGENT,
                  max_tokens_per_doc=MAX_TOKENS_PER_DOC,
                  taint_ledger=None,
-                 destination_ledger=None):
+                 destination_ledger=None,
+                 content_monitor=None):
         if (not isinstance(carryover_threshold, int)
                 or carryover_threshold < 1):
             raise ValueError("carryover_threshold must be a positive int")
@@ -282,6 +303,12 @@ class RareTokenTracker:
         # tracker). See gov/destination_ledger.py for the privacy
         # contract (destinations are already audit-logged).
         self._destination_ledger = destination_ledger
+        # Wave-152 follow-up: optional content monitor for the
+        # tiered-verdict T3 composition (opt-in; None = zero behavior
+        # change vs the wave-141 ladder). Any object with
+        # check(agent_id, tool, args, payload_text=None) returning a
+        # dict with a "signals" mapping (EgressContentMonitor).
+        self._content_monitor = content_monitor
 
     # -- reads ------------------------------------------------------
     def observe_read(self, agent_id, source_id, text):
@@ -369,7 +396,16 @@ class RareTokenTracker:
         in an earlier run is known in this run, so a legit
         read-then-send to a known destination stays silent cross-run
         (fewer false positives); the attempted destination is
-        recorded durably at check time."""
+        recorded durably at check time.
+        Wave-152 follow-up: with a ``content_monitor`` attached, a
+        "behavioral_flag" verdict is re-examined under the
+        tiered-verdict T3 rule — a material paraphrase footprint on
+        the same egress (T1 primitive sub-signal, zero rare-token
+        overlap, which the behavioral tier guarantees) escalates to
+        "require_approval" with field-level provenance in
+        ``provenance`` (always present; empty when no composition
+        fired). The rule is escalation-only: it never weakens a
+        verdict, and without a monitor the ladder is unchanged."""
         agent_id = str(agent_id)
         payload = (payload_text if isinstance(payload_text, str)
                    else _extract_payload(tool, args or {}))
@@ -449,6 +485,43 @@ class RareTokenTracker:
                 verdict = "behavioral_flag"
             else:
                 verdict = "allow"
+        # Wave-152 follow-up, T3 composition (additive only): the
+        # tracker's T2 behavioral flag is content-blind by design.
+        # With a content monitor attached, consult the T1 primitive
+        # sub-signals on the SAME payload bytes: a material
+        # paraphrase footprint (zero rare-token overlap is guaranteed
+        # here — the behavioral tier only fires at zero overlap)
+        # escalates to require_approval. This is the only rule that
+        # strengthens a verdict; every other verdict passes through
+        # untouched (monotonicity), and without a monitor this block
+        # never runs. Provenance mirrors gov.detection_verdicts'
+        # T3 records exactly (labels/counts/scores/doc ids —
+        # never token strings).
+        provenance = []
+        if verdict == "behavioral_flag" and self._content_monitor is not None:
+            content = self._content_monitor.check(
+                agent_id, tool, args or {}, payload_text=payload)
+            # footprint_of takes the full content record (it reads
+            # ["signals"] itself) — pass it whole, not the inner dict.
+            is_fp, fp_signal, fp_val = footprint_of(content or {})
+            if is_fp:
+                verdict = "require_approval"
+                provenance = [
+                    {"tier": "T1", "detector": "egress_content",
+                     "signal": fp_signal, "measured": round(fp_val, 3),
+                     "threshold": FOOTPRINT_THRESHOLDS.get(
+                         fp_signal, FOOTPRINT_SIGNAL_FLOOR),
+                     "contribution": ("paraphrase footprint: material "
+                                      "structure with zero rare-token "
+                                      "overlap after a token-bearing read")},
+                    {"tier": "T2", "detector": "rare_token_tracker",
+                     "signal": "read_then_egress_novel",
+                     "measured": {"docs_read": len(bearing),
+                                  "destination_novel": bool(novel),
+                                  "source_ids": list(bearing)},
+                     "threshold": "concrete novel destination",
+                     "contribution": "independent behavioral sequence"},
+                ]
         return {"verdict": verdict,
                 "overlap": best_overlap,
                 "source_id": best_source,
@@ -457,7 +530,8 @@ class RareTokenTracker:
                 "threshold": self._k,
                 "agent_id": agent_id,
                 "docs_read": len(bearing),
-                "source_ids": bearing}
+                "source_ids": bearing,
+                "provenance": provenance}
 
 
 # ---------------------------------------------------------------------------

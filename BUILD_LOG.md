@@ -1,3 +1,19 @@
+## 2026-09-27 — Wave-152/153 integration: six team trees merged, F183/F184/F185 filed (push pending)
+
+**Scope:** integration coordinator merged six team trees into the shared tree atop Wave-152's three uncommitted lanes (row-19 propagation follow-ups: auto-observation on governed read_file + substring matching; row-7 Arabic negation pilot; row-9 churn seam). Row-12 reported in time and was integrated as the sixth team.
+
+**Merged:**
+- **F183** (`gov/intent_slice.py`): invisible-format class token-internal + per-token `_strip_invisible_format`; merged with Wave-152 Arabic pilot (Arabic block preserved; stripping verified on Arabic forms). Batteries: `zw_negation_probes.py` 10/0/0/0, `bidi_negation_probes.py` 7/0/2/0, `arabic_negation_probes.py` 30/0/1/0 (all both envs). Tests: 100/100 OK.
+- **Rows 11/18** (`gov/delegation_tokens.py`, `gov/target_match.py`): delegation receipts (12/0), ceremony discriminator (10/0), evasion (25/0/3). Tests: 71/71 OK. Ceiling: receipts not yet stamped into executor audit/approval records.
+- **Row 13** (`gov/detection_verdicts.py`, `gov/rare_token.py`): tiered verdicts 15/0/1, evasion 5/0/5. Tests: 55/55 OK. **PARTIAL:** `content_monitor` is opt-in and unwired — no live path instantiates it; library-only.
+- **Row 9** (`gov/drift_budget.py`): founding-evidence gate merged with Wave-152 churn seam (patch applied cleanly). Batteries: founding 9/0/1, evasion 8/2/4 (2 pinned residuals), churn 4/0/0. Tests: 18/18 OK. Row 9 stays PARTIAL.
+- **Row 12** (`gov/artifact_inventory_manifest.py` NEW, `gov/artifacts.py`): deployment pin ceremony — `pin_manifest` (key-epoch-bound HMAC reusing wave-141 `artifact_sweep._inventory_pin_mac`, no new hmac site), `verify_manifest_pin` fail-closed, `check_manifest`; `ArtifactInventory.attach_deployment_manifest()` verifies LOUD at attach; `check_egress` consults manifest (mismatch → `tampered` + `artifact_tampered`; no-manifest → byte-identical). Red-first: pre-seam 2 HELD / 4 BREAK reproduced on base; post-seam 6 HELD / 0 BREAK / 0 ERROR both envs. Tests: 46/46 OK. Adjacent: inventory_pin 8/0, egress 5/5. **Row 12 stays PARTIAL** (honest ceilings: hex-payload content-shape exfil red by design; same-process compromised executor out of scope; undeclared paths uncovered; compromised deployment key outside seam; opt-in = zero behavior change without manifest).
+- **Rows 6/14** (`gov/skill_watch.py`, `gov/tool_continuity.py`, `gov/approvals.py`, `gov/executor.py` F184/F185 hunks): all 6 batteries green (fastpath 6/0, mcp_drift 7/0, supplychain_evasion 10/0, handoff_wiring 9/0, approval_staleness 8/0, record_attack 7/0). Tests: 128/128 OK.
+
+**Findings filed:** F183 (CLOSED), F184 (CLOSED with audit note — original queue-time claim overstated, record-level credit goes to F185), F185 (CLOSED). Next free: F186. Row-12 integrated (stays PARTIAL per honest ceilings).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-27 — Wave-146 lane 1: row-9 slow-burn drift accumulator (not pushed)
 
 **Scope:** the slow-burn residual — an attacker pacing sub-floor same-direction drift (below the adaptive flip floor) across many runs, never tripping the per-run budget. Break-first battery `evals/slow_burn_probes.py` (module-level `GOV_DEPLOYMENT_MODE=staging`; verified standalone under `env -u GOV_DEPLOYMENT_MODE`; deterministic ×2): pre-seam **0 HELD / 5 BREAK / 0 ERROR** — all five probes correctly identified the missing seam.
@@ -9492,5 +9508,47 @@ Honest ceilings: benign write→read on one host is indistinguishable from the a
 ## Wave-151 integration note (coordinator): flaky-test fix, not a product change
 
 During integration, `tests/test_intent_ledger.py::NegationInflectionSeamTest.test_wave144_cues_fire_at_ledger` flaked 2/6 with no code change (clean-env cyrillic battery: 29 HELD / 1 BREAK). Root cause: the test ran the French sentences (raw similarity 0.571, inside the wave-138 derived [0.4,0.6) band) through `record_intent`, whose per-message threshold moves with the suite's fresh random test key per run — the exact wave-145 documented lesson (the lane flagged it; its inputs were proven unaffected by the wave-151 diff). Fixed per the wave-147 keineswegs precedent: pin with explicit `similarity_countermand(msg, [GRANT], threshold=0.5)` + score >= 0.5. Now 6/6 stable; `tests.test_intent_ledger` 59/59 OK. No product seam touched; the flaky behavior was test-only, never a shipped-behavior overstatement.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-152 lane 2 — Row 9: state-continuity auditing on the drift-budget defuse path
+
+Seam: `gov/drift_budget.py` — every adaptive defuse records `churn_break` (armed pacing hunt cleared by a non-paced cycle) on the chained reset record; the trailing `churn_window` (default 10) defuses' break count strictly above `churn_max_breaks` (default 2) emits LOUD `drift_state_churn_suspect` (triage tier only — never blocking, never tightening). Edge-triggered (one emission per crossing; re-arms after the count drops below the bound). Plain (non-adaptive) `BudgetPolicy` has no churn fields and zero behavior change; the fold skips non-adaptive records via `get` defaults (backward compatible with pre-wave-152 records). Window semantics are runs, not reset records: the count is over defuses within `run_seq >= current - churn_window + 1`.
+
+Red-first: `evals/drift_state_churn_probes.py` was written first and run against pristine c71025b (3 HELD / 1 BREAK — the chain-break pacer unflagged pre-seam), then the seam landed. Post-seam: **4 HELD / 0 BREAK / 0 ERROR** (both envs, deterministic ×2): `[~0.9x burst, clean, clean] xN` (the wave-144 f4 evasion maneuver) → LOUD suspect at run 9 (3 breaks in trailing 10, bound 2), chain intact; 10 benign agents (40 runs, 2–3 isolated bursts at fixed positions) → 0 churn events, measured max trailing-10 break count 2 (benign margin is exactly one break — operators with noisier benign workloads should raise `churn_max_breaks`); plain flip pacer (no chain-breaking) still trips at run 7 via LOUD `direction_pacing_confirmed` with 0 churn events (purely additive seam); c1+c2 byte-identical across runs.
+
+Unit: `tests/test_state_churn.py` 12/12 (policy validation/defaults, break recording, edge-trigger no-repeat, refire after drop-and-recross, triage-only never-tightens, plain policy zero-change). No regressions: `tests.test_drift_budget` 64/64, `tests.test_flip_pacing`, `tests.test_rotation_pacing` (105+12 green); drift batteries reproduce wave-151 numbers (drift_budget 5/0/1, flip 7/0/0, rotation 8/0/0, slow_burn 4/0/1, framing 10/0/0, adaptive 7/0/2, continuity 4/0/0).
+
+Honest ceilings: the churn bound is a RATE bound — a patient agent breaking the hunt at most `churn_max_breaks` times per `churn_window` defuses stays silent by construction (detects the evasion maneuver, not the underlying drift). DELIBERATE tradeoff (f6 precedent): the wave-144 f4 benign shape — sustained alternating near-threshold bursts with hunt-breaking cleans — now emits churn-suspect; sustained hunt-breaking is pacing-indistinguishable from chain-break evasion by construction, and the pacing detectors themselves still treat f4 as quiet, so the cost is one triage event, never a tightening or a block.
+
+**Findings:** none filed. Next free: F183. Open findings: none. Row 9 remains PARTIAL.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-152 lane 3 — Row 7: Arabic (MSA) negation seed pilot
+
+Seam: `gov/intent_slice.py` — `_ARABIC_NEG_SRC` cues لا/لم/لن/ما/ليس with attached و/ب/ل prefixes before لا (و before لم/لن/ما/ليس), plain-\b boundary discipline; Arabic SEND/DELETE/SHARE verb forms in `_VERB_CLASSES` (hamza'd canonicals + bare-alef colloquial spellings); Arabic block (U+0600-U+06FF) in `_SCOPE_WORD_RE`/`_NEGATED_VERB_TOKEN_RE`; ؟ (U+061F) and ؛ (U+061B) as clause boundaries; `_fold_accents` bypasses NFKD for the Arabic block and preserves it verbatim (REQUIRED: hamza letters أ/إ/ؤ/ئ have NFKD decompositions — without this "أرسل" decomposes and breaks cue-span alignment + class-form matching; measured red). The judge's `_negated_verb` picks up Arabic SEND/DELETE automatically; SHARE Arabic forms are scope-path only (no share tool — same as Latin/Cyrillic/Devanagari).
+
+Red-first: `evals/arabic_negation_probes.py` written first, run against pristine c71025b (6 HELD / 25 BREAK — all fire/judge/scope/ما/fold probes BREAK pre-seam), then the seam landed. Post-seam: **30 HELD / 0 BREAK / 1 EXPECTED / 0 ERROR** (staging + clean env ×2, deterministic ×2, explicit threshold=0.5 pins throughout — `record_intent` never used for the in-band assertions): 5 cues × 3 classes revoke, ولا/ولم/بلا prefixes revoke, 7 native judge countermands fire, wrong-predicate/affirmations silent, ؛/؟/period clause splits silent, 0 hits on 6 word-internal lookalikes (بلاد/سلام/كلام/مال/ألم/لندن), 8 benign Arabic sentences silent at 0 FPs (each verified ≥ 0.5 raw similarity). The EXPECTED is the documented ما precision boundary: interrogative/relative ما fires the cue (0.571) — the pilot carries no tense guard; benign corpus stays ما-free so the 0-FP pin is honest.
+
+Unit: `tests/test_intent_slice.py` +8 `ArabicNegationTest` pins (85/85 green). No regressions: 7 existing negation batteries + `tests/test_intent_ledger.py` green; Latin/Cyrillic/Devanagari provably byte-identical (pre/post `_NEGATION_RE`/`_fold_accents`/scope verdicts identical on a 24-message corpus, pristine c71025b vs this tree).
+
+Honest ceilings: CJK untouched; closed cue/form lists (ليس uninflected — "ليست" does not cue); dialectal forms untouched; Arabic verb coverage SEND/DELETE/SHARE only; quantifier blindness; the ما interrogative/relative FP. Seeded pilot only, as planned.
+
+**Findings:** none filed. Next free: F183. Open findings: none. Row 7 remains PARTIAL.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-152 lane 1 — Row 19: injection-propagation follow-ups (governed-read auto-observation + substring matching)
+
+Seam: `gov/executor.py::_propagation_observe_on_read` — after every successful direct and approved `read_file` (adjacent to the wave-141 rare-token hook), observes real sandbox content only (`source == "sandbox"`, non-empty) with auto source id `read:auto:<sandbox-relative-path>`; best-effort (never breaks a completed read, no observation audit event); explicit `note_propagation_input` replaces on matching `(agent_id, source_id)`, never double-counts. `gov/injection_propagation.py` — embedded instruction substring matching: normalized-clause scanning, word-boundary substring matching alongside unchanged exact matching; `span_detail[*]["match"]` labeled `exact`/`substring`; `MIN_SUBSTRING_CHARS = 10` (short-phrase and mid-word matches rejected); user-request exclusion applies to substring matches; deterministic source/span ordering.
+
+Red-first: `evals/injection_propagation_probes.py` updated and run RED pre-seam (**7 HELD / 2 BREAK / 2 EXPECTED** — p8 governed read did not auto-feed the tracker; p9 embedded mid-message instruction not matched), post-seam **9 HELD / 0 BREAK / 2 EXPECTED / 0 ERROR** (staging + clean env, deterministic ×2): governed read → reproduced instruction flagged with `read:auto:payload.md`; embedded `restore original no-card` substring flag; topic-only mention silent; out-of-band read EXPECTED silent (invisible by construction).
+
+Unit: `tests/test_injection_propagation.py` 34/34. No regressions: `evals/read_then_egress_probes.py` 6/6 HELD; `tests.test_read_observation` + `tests.test_read_then_egress` + `tests.test_unobserved_canary` 46/46 OK.
+
+Honest residuals: paraphrases miss 6/6 by design; out-of-band reads invisible; tracker per-run/in-process (no durable cross-run observed-input store); curated English imperative list incomplete; substring spans < 10 chars ignored by design.
+
+**Findings:** none filed. Next free: F183. Open findings: none. Row 19 remains OPEN/PARTIAL.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

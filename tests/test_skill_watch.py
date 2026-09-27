@@ -181,9 +181,12 @@ class TestSweep(unittest.TestCase):
                if e["event_type"] == "skill_unverifiable"]
         self.assertEqual(len(evs), 1)
 
-    def test_sweep_catches_forged_stat(self):
-        """Layered defense: forged mtime/size defeats the prefilter but
-        the sweep always re-hashes."""
+    def test_check_and_sweep_catch_forged_stat(self):
+        """F177 parity: forged mtime/size no longer defeats the use-time
+        check. Content is re-hashed against the pin on every use, so a
+        forged stat under rewritten bytes quarantines fail-closed at
+        first use; the sweep remains a second layer, not the sole
+        backstop."""
         tmpdir = tempfile.mkdtemp(prefix="t-")
         path = os.path.join(tmpdir, "s.skill")
         with open(path, "wb") as f:
@@ -198,11 +201,20 @@ class TestSweep(unittest.TestCase):
         with open(path, "r+b") as f:
             f.seek(0)
             f.write(b"X")
+        mutated = b"X" + V1[1:]
         ok, detail = w.check_at_use("s")
-        self.assertTrue(ok, detail)  # prefilter fooled: honest residual
-        report = w.verify_all()
-        self.assertEqual(report["mutated"], ["s"])
+        self.assertEqual((ok, detail), (False, "mutated-quarantined"))
         self.assertTrue(w.is_quarantined("s"))
+        evs = [e for e in w.events
+               if e["event_type"] == "skill_mutated"]
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["previous_digest"], sha(V1))
+        self.assertEqual(evs[0]["observed_digest"], sha(mutated))
+        # No content in the event, only digests.
+        self.assertNotIn(mutated, str(evs[0]).encode())
+        report = w.verify_all()
+        self.assertTrue(w.is_quarantined("s"))
+        self.assertNotIn("s", report["clean"])
 
 
 class TestCheckAtUse(unittest.TestCase):
@@ -264,6 +276,98 @@ class TestCheckAtUse(unittest.TestCase):
         os.unlink(self.path)
         ok, detail = self.watch.check_at_use("w")
         self.assertEqual((ok, detail), (False, "unverifiable-quarantined"))
+
+
+# ---------------------------------------------------------------------------
+# Part 3: content-bound use-time checks (F177 parity)
+
+# Same-length pair for the stat-restore attack shape: an attacker who
+# rewrites the bytes AND restores (mtime_ns, size) needs identical
+# length, otherwise the size change alone exposes them.
+SV1 = b"skill v1 benign content"   # 23 bytes
+SV2 = b"skill v1 EVIL!! content"   # 23 bytes
+
+
+class TestContentBoundAtUse(unittest.TestCase):
+    """F177 parity: the use-time check binds to content, not stat.
+
+    An attacker with write access to the skill file (but not the
+    operator key MACing the pin file, H22) rewrites the bytes and
+    restores (mtime_ns, size) via utime. Pre-fix, check_at_use
+    attested clean on the restored stat; now every use re-reads and
+    re-hashes against the pin.
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="t-")
+        self.path = os.path.join(self.tmpdir, "c.skill")
+        with open(self.path, "wb") as f:
+            f.write(SV1)
+        self.watch = SkillWatch()
+        self.watch.register_skill("c", FileContentSource(self.path),
+                                  origin=ORIGIN)
+
+    def _rewrite_same_size_restore_stat(self):
+        st0 = os.stat(self.path)
+        with open(self.path, "wb") as f:
+            f.write(SV2)
+        # Same length => size already matches; restore the timestamps.
+        os.utime(self.path, ns=(st0.st_atime_ns, st0.st_mtime_ns))
+        st1 = os.stat(self.path)
+        self.assertEqual((st1.st_mtime_ns, st1.st_size),
+                         (st0.st_mtime_ns, st0.st_size))
+
+    def test_filesystem_stat_restore_rewrite_quarantines(self):
+        self._rewrite_same_size_restore_stat()
+        ok, detail = self.watch.check_at_use("c")
+        self.assertEqual((ok, detail), (False, "mutated-quarantined"))
+        self.assertTrue(self.watch.is_quarantined("c"))
+
+    def test_lying_source_stat_still_quarantines(self):
+        # Stronger adversary: the source itself reports a stale stat
+        # hint while the bytes changed (not just a restored mtime).
+        st0 = os.stat(self.path)
+        src = ForgedStatFileSource(
+            self.path, (st0.st_mtime_ns, st0.st_size))
+        w = SkillWatch()
+        w.register_skill("c2", src, origin=ORIGIN)
+        with open(self.path, "wb") as f:
+            f.write(SV2)
+        ok, detail = w.check_at_use("c2")
+        self.assertEqual((ok, detail), (False, "mutated-quarantined"))
+        self.assertTrue(w.is_quarantined("c2"))
+
+    def test_fetch_verified_at_use_hands_exact_hashed_bytes(self):
+        src = CountingSource(SV1)
+        w = SkillWatch()
+        w.register_skill("h", src, origin=ORIGIN)
+        reads_before = src.reads
+        ok, data, detail = w.fetch_verified_at_use("h")
+        self.assertEqual((ok, detail), (True, "clean"))
+        self.assertEqual(bytes(data), SV1)
+        self.assertEqual(sha(bytes(data)), sha(SV1))
+        # Fetch-once: exactly one observation; no second read for a
+        # source to equivocate on between check and use.
+        self.assertEqual(src.reads, reads_before + 1)
+
+    def test_fetch_verified_at_use_under_attack_hands_nothing(self):
+        self._rewrite_same_size_restore_stat()
+        ok, data, detail = self.watch.fetch_verified_at_use("c")
+        self.assertEqual((ok, data, detail),
+                         (False, None, "mutated-quarantined"))
+        self.assertTrue(self.watch.is_quarantined("c"))
+
+    def test_fetch_verified_at_use_unregistered(self):
+        ok, data, detail = self.watch.fetch_verified_at_use("ghost")
+        self.assertEqual((ok, data, detail),
+                         (False, None, "unregistered-no-pin"))
+        self.assertFalse(self.watch.is_quarantined("ghost"))
+
+    def test_check_at_use_keeps_two_tuple_contract(self):
+        # The executor unpacks exactly (ok, detail).
+        res = self.watch.check_at_use("c")
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res, (True, "clean"))
 
 
 class TestRepin(unittest.TestCase):
@@ -384,15 +488,16 @@ class TestStatFailureNeverEscapes(unittest.TestCase):
 
             def stat_hint(self):
                 self.calls += 1
-                if self.calls > 2:
+                if self.calls > 1:
                     raise OSError("stat gone")
-                # changing hint forces the re-hash path every check
+                # the second stat observation fails: read succeeds, stat
+                # fails inside the content read. Must quarantine, not raise.
                 return (self.calls, len(self.content))
 
         w = SkillWatch()
         w.register_skill("w", FlakyStat(V1), origin=ORIGIN)
-        # First check: hint changes -> re-hash -> stat fails INSIDE
-        # _current_digest. Must quarantine, not raise.
+        # First check: read succeeds, stat fails INSIDE the content
+        # read. Must quarantine, not raise.
         ok, detail = w.check_at_use("w")
         self.assertEqual((ok, detail), (False, "unverifiable-quarantined"))
         self.assertTrue(w.is_quarantined("w"))
@@ -775,7 +880,10 @@ class TestExecutorSkillWiring(unittest.TestCase):
 
         def boom(skill_id):
             raise RuntimeError("watcher exploded")
-        w.check_at_use = boom
+        # F184: the executor consumes fetch_verified_at_use (the
+        # handoff seam), so the fail-closed monkeypatch targets it —
+        # the intent (any watcher-seam error denies loud) is unchanged.
+        w.fetch_verified_at_use = boom
         r = ex.call(ident, "read_file", path="notes.txt")
         self.assertEqual(r["status"], "denied")
         self.assertEqual(r["policy_id"], "skill-watch")
@@ -1084,12 +1192,15 @@ class TestReferenceBinding(unittest.TestCase):
         kinds = [e["event_type"] for e in w.events]
         self.assertIn("skill_reference_drift", kinds)
 
-    def test_stat_prefilter_fast_path_still_rechecks_references(self):
-        # Regression: the stat prefilter short-circuited check_at_use
-        # before _verify_references, so a drifted reference behind a
-        # byte-identical manifest passed as "clean" — the exact rug-pull
-        # shape. A real file-backed source engages the prefilter (unlike
-        # CallableContentSource above, which has no stat hint).
+    def test_content_bound_check_still_rechecks_references(self):
+        # Regression: the old stat prefilter short-circuited
+        # check_at_use before _verify_references, so a drifted
+        # reference behind a byte-identical manifest passed as "clean"
+        # — the exact rug-pull shape. A real file-backed source was
+        # the case that engaged the prefilter (unlike
+        # CallableContentSource above, which has no stat hint); now
+        # every use re-hashes content, and references are still
+        # rechecked after the manifest digest check.
         resolver = FakeResolver({REF_URL: REF_V1})
         w = SkillWatch(reference_resolver=resolver)
         tmp = Path(tempfile.mkdtemp(prefix="gov-skillwatch-"))
@@ -1099,7 +1210,7 @@ class TestReferenceBinding(unittest.TestCase):
                          origin=dict(ORIGIN))
         ok, detail = w.check_at_use("link-skill")
         self.assertTrue(ok)
-        self.assertEqual(detail, "clean")  # prefilter fast path
+        self.assertEqual(detail, "clean")  # content-bound check
         resolver.mapping[REF_URL] = REF_V2  # manifest untouched
         ok, detail = w.check_at_use("link-skill")
         self.assertFalse(ok)
@@ -1353,10 +1464,10 @@ class TestGap5CheckAtUse(unittest.TestCase):
         ok, detail = w.check_at_use("mcp/svc")
         self.assertEqual((ok, detail), (True, "clean"))
 
-    def test_fast_path_rechecks_bindings(self):
-        # The stat prefilter covers only the manifest file: a wire
+    def test_every_use_rechecks_bindings(self):
+        # The stat hint covers only the manifest file: a wire
         # identity swap that never touches the manifest must still
-        # quarantine on the fast path (Leg B reasoning for references).
+        # quarantine at use time (Leg B reasoning for references).
         class Stable(_WireSource):
             def stat_hint(self):
                 return (123, 456)
@@ -1366,12 +1477,12 @@ class TestGap5CheckAtUse(unittest.TestCase):
         w.register_skill("mcp/svc", Stable(b"approved artifact", wire),
                          origin=_gap5_origin("1.0"))
         ok, _ = w.check_at_use("mcp/svc")
-        self.assertTrue(ok)  # fast path, everything clean
+        self.assertTrue(ok)  # content-bound check, everything clean
         wire["identity"] = b"wire-identity-Y"
         ok, detail = w.check_at_use("mcp/svc")
         self.assertEqual((ok, detail), (False, "identity-drift-quarantined"))
         self.assertTrue(w.is_quarantined("mcp/svc"))
-        # And the version binding on the fast path too.
+        # And the version binding at use time too.
         w2 = SkillWatch()
         wire2 = {"identity": b"wire-identity-X", "version": "1.0"}
         w2.register_skill("mcp/svc", Stable(b"approved artifact", wire2),

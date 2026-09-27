@@ -63,6 +63,7 @@ import sys
 import time
 import threading
 import hashlib
+import hmac
 import inspect
 import collections.abc
 import itertools
@@ -1325,6 +1326,14 @@ class ToolExecutor:
         self._skill_pin_path = (Path(skill_pin_path)
                                 if skill_pin_path is not None else None)
         self._last_skill_sweep_at = None
+        # F184 (row-6/14 wiring lane): the skill handoff slot. The
+        # verdict-path gate stores (skill_id, attested_digest,
+        # verified_bytes) here — exactly the bytes the watcher's
+        # fetch_verified_at_use hashed — so the deployment's consumer
+        # can execute the attested bytes instead of re-reading the
+        # source. Reset on every call(); valid only for the call that
+        # just returned (see verified_skill_bytes).
+        self._sw_handoff = None
         if self._skill_watch is not None:
             _sw_log = self.log
 
@@ -3014,9 +3023,15 @@ class ToolExecutor:
         deployment feeds it) so a later ``check_output_propagation``
         can spot the agent reproducing them into a new output
         channel. With no tracker installed this is a no-op returning
-        ``{"observed": False}`` (zero behavior change). Explicit-only:
-        no automatic read observation (the wave-141 rare-token
-        discipline is a named follow-up, not this pilot).
+        ``{"observed": False}`` (zero behavior change). Wave-152:
+        explicit-only is gone -- a successful governed ``read_file``
+        ALSO observes itself automatically (real sandbox bytes only --
+        see ``_propagation_observe_on_read``); the explicit call
+        stays for harness-side reads and replaces the auto
+        observation when the source IDs match (same
+        (agent_id, source_id) key -- no double count). Reads that
+        never cross the governed tool boundary (direct filesystem
+        access) remain invisible -- the documented coverage ceiling.
         """
         if self.propagation_tracker is None:
             return {"observed": False, "agent_id": str(agent_id),
@@ -3610,6 +3625,55 @@ class ToolExecutor:
             rel = self._resolved_path_for_policy(path) or str(path)
             tracker.observe_read(agent_id, "read:auto:%s" % rel,
                                  str(result["content"]))
+        except Exception:
+            pass
+
+    def _propagation_observe_on_read(self, tool, args, result, agent_id):
+        """Wave-152 (Row 19): automatically observe a real governed
+        read's output in the injection-propagation tracker.
+
+        Mirrors ``_rare_token_observe_on_read`` (wave-141) at the same
+        call sites: a successful governed ``read_file`` whose result is
+        REAL sandbox bytes (``result["source"] == "sandbox"``)
+        observes itself into the installed ``PropagationTracker`` --
+        the agent verifiably received the bytes through the governed
+        tool boundary, so the tracker's propagation check must know
+        about them. Synthetic content is never observed. Reads
+        returning no content (denied, queued, refused, escaping)
+        observe nothing.
+
+        The auto source ID is ``read:auto:<sandbox-relative-path>``,
+        exactly like the rare-token hook. The tracker keys by
+        (agent_id, source_id), so an explicit
+        ``note_propagation_input`` with the same ID replaces the auto
+        observation (no double count); different IDs are different
+        sources. The auto path emits NO audit event (log-spam
+        control): the observed span only enters the chain if the agent
+        later reproduces it and the LOUD triage event fires. Never
+        raises and never breaks the read (fail-open on observation --
+        the read already succeeded). Direct filesystem access outside
+        the governed API stays invisible by construction -- the
+        executor only sees what crosses its boundary (pinned
+        EXPECTED, battery p11).
+        """
+        if tool != "read_file":
+            return
+        tracker = getattr(self, "propagation_tracker", None)
+        if tracker is None:
+            return
+        if not (isinstance(result, dict) and result.get("content")):
+            return
+        # Real bytes only -- never synthetic (mirrors the lineage
+        # guard at the file-channel hook).
+        if result.get("source") != "sandbox":
+            return
+        try:
+            path = args.get("path") if isinstance(args, dict) else None
+            if not path:
+                return
+            rel = self._resolved_path_for_policy(path) or str(path)
+            tracker.observe_input(agent_id, "read:auto:%s" % rel,
+                                  str(result["content"]))
         except Exception:
             pass
 
@@ -7828,6 +7892,20 @@ class ToolExecutor:
         # deployment's explicit None opt-out) are NOT refused here:
         # the policy's unknown-skill handling decides those (same
         # precedent as the tool-inventory gate above).
+        # F184 (row-6/14 wiring lane): the gate consumes
+        # fetch_verified_at_use, not check_at_use. The SAME single
+        # read that the pin is checked against is handed back as
+        # bytes; the consumer must execute exactly those bytes (see
+        # verified_skill_bytes) instead of re-reading the source — a
+        # re-read after the check could return different bytes (the
+        # V2 window the break round demonstrated at the seam level).
+        # F184: handoff locals. Initialized outside the watcher
+        # branch because the allow/queue paths below reference them;
+        # they stay None unless a skill was attributed AND verified.
+        _skill_id = None
+        _sw_verified_bytes = None
+        _sw_attested_digest = None
+        self._sw_handoff = None
         if self._skill_watch is not None:
             try:
                 _skill_id = _skill_watch.skill_id_for_tool(
@@ -7838,12 +7916,26 @@ class ToolExecutor:
                     _sw_ok, _sw_detail = True, "unattributed"
                     _sw_err = None
                 else:
-                    _sw_ok, _sw_detail = self._skill_watch.check_at_use(
-                        _skill_id)
+                    (_sw_ok, _sw_verified_bytes,
+                     _sw_detail) = self._skill_watch.fetch_verified_at_use(
+                         _skill_id)
                     _sw_err = None
+                    if _sw_ok and _sw_verified_bytes is not None:
+                        _sw_attested_digest = hashlib.sha256(
+                            _sw_verified_bytes).hexdigest()
+                        # The handoff: exactly the bytes the watcher
+                        # hashed. Never hand bytes from a failed check
+                        # (fail-closed: the except branch below clears
+                        # the slot).
+                        self._sw_handoff = (
+                            _skill_id, _sw_attested_digest,
+                            _sw_verified_bytes)
             except Exception as e:  # noqa: BLE001 - fail closed, loud
                 _skill_id = None
                 _sw_ok, _sw_detail, _sw_err = False, "watcher-error", e
+                _sw_verified_bytes = None
+                _sw_attested_digest = None
+                self._sw_handoff = None
             if not _sw_ok:
                 if _sw_detail == "unregistered-no-pin":
                     _sw_reason = (
@@ -8305,6 +8397,13 @@ class ToolExecutor:
             # sandbox bytes only; never raises, never breaks the read.
             self._rare_token_observe_on_read(tool, kwargs, result,
                                              identity.agent_id)
+            # Wave-152 (row 19): automatic propagation observation -- a
+            # real governed read_file observes itself into the
+            # injection-propagation tracker (no explicit
+            # note_propagation_input needed). Real sandbox bytes only;
+            # never raises, never breaks the read.
+            self._propagation_observe_on_read(tool, kwargs, result,
+                                              identity.agent_id)
             # Row-12: register successful governed writes in the
             # artifact inventory (path, sha256, size, agent, label).
             self._artifact_register_on_write(tool, kwargs, result,
@@ -8355,7 +8454,7 @@ class ToolExecutor:
                                 identity.agent_id,
                                 response_urls=response_urls,
                                 content_hashes=content_hashes)
-            entry = self.log.append(_base({
+            _exec_entry = {
                 "decision": "allowed_executed",
                 "policy_id": decision.policy_id,
                 "matched_rules": decision.matched_rules,
@@ -8371,7 +8470,18 @@ class ToolExecutor:
                 # the per-run accrued meter.
                 "usage": dict((result.get("_usage") or {})),
                 "budget_meter": self._budget_meter(),
-            }))
+            }
+            if _sw_verified_bytes is not None:
+                # F184: the skill handoff, audit-chained. Hash only
+                # (F12-safe: one-way); the bytes themselves ride the
+                # returned result below, retrievable via
+                # verified_skill_bytes(). The consumer MUST execute
+                # those bytes — a re-read voids this attestation, and
+                # the digest lets an auditor verify the consumer used
+                # the attested bytes.
+                _exec_entry["skill_id"] = _skill_id
+                _exec_entry["skill_attested_digest"] = _sw_attested_digest
+            entry = self.log.append(_base(_exec_entry))
             # Row-20 (wave-151 lane 2): read/write rendezvous check at
             # the execution boundary -- triage tier, never blocking.
             # Runs AFTER the audit append so the IO record carries the
@@ -8381,7 +8491,18 @@ class ToolExecutor:
                                        identity.principal,
                                        identity.agent_id,
                                        identity.run_id, entry["seq"])
-            return {"status": "executed", "result": result, "seq": entry["seq"]}
+            _exec_result = {"status": "executed", "result": result,
+                            "seq": entry["seq"]}
+            if _sw_verified_bytes is not None:
+                # F184 handoff: JSON-safe fields only — the raw bytes
+                # stay out of the result dict (run_tool_loop serializes
+                # results into the model transcript; bytes would leak
+                # as a repr). The consumer retrieves the attested bytes
+                # via verified_skill_bytes(skill_id) and MUST execute
+                # them instead of re-reading the source.
+                _exec_result["skill_id"] = _skill_id
+                _exec_result["skill_attested_digest"] = _sw_attested_digest
+            return _exec_result
 
         if decision.effect == "deny":
             entry = self.log.append(_base({
@@ -8428,6 +8549,12 @@ class ToolExecutor:
                            "agent_justification": justification,
                            "redactions": redactions,
                            "content_sha256_set": queued_content_hashes}
+        # F184 (queue-time skill attestation) is now carried as
+        # explicit queue() parameters below (MAC-bound on the record
+        # from birth via _SECURITY_PAYLOAD_FIELDS) rather than in the
+        # action dict, which queue() does not preserve. See the
+        # skill_id= / skill_attested_digest= kwargs on the queue()
+        # call.
         # Wave-129 (row-7 intent slice): run the advisory judge when
         # the operator provided user-turn context. The verdict is
         # stamped MAC-bound on the record for human review; the judge
@@ -8497,7 +8624,15 @@ class ToolExecutor:
             matched_rules=decision.matched_rules,
             # Wave-129 (row-7 intent slice): the advisory judge's
             # verdict, MAC-bound from birth for the human reviewer.
-            intent_slice_verdict=intent_slice_verdict)
+            intent_slice_verdict=intent_slice_verdict,
+            # F185 (row-6/14 approval-time re-verification lane): the
+            # queue-time skill attestation rides the record MAC-bound
+            # from birth so the approved sweep can re-verify it
+            # against CURRENT skill bytes (see _execute_approved_locked).
+            # The bytes themselves are NOT attached: they would be
+            # stale by approval time.
+            skill_id=_skill_id,
+            skill_attested_digest=_sw_attested_digest)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
@@ -8559,6 +8694,35 @@ class ToolExecutor:
         return _skill_watch.PinStore.save(self._skill_watch,
                                           self._skill_pin_path,
                                           mac_key=_pin_key)
+
+    def verified_skill_bytes(self, skill_id):
+        """F184 (row-6/14 wiring lane): the skill handoff accessor.
+
+        Returns the EXACT bytes the watcher's use-time check attested
+        for the most recent :meth:`call` that attributed to
+        ``skill_id`` — the same bytes object the pin was checked
+        against (fetch_verified_at_use: single read, hash, handoff).
+        The deployment's consumer MUST execute these bytes instead of
+        re-reading the skill source; a re-read after the check can
+        return different bytes (the V2 window), voiding the
+        attestation. Compare ``hashlib.sha256(returned).hexdigest()``
+        against the ``skill_attested_digest`` on the call's result
+        and audit record.
+
+        Returns None when no handoff is available: no watcher
+        installed, the last call was unattributed, the last call was
+        denied/queued, the skill id does not match the last verified
+        call, or any later call() has since run (the slot holds only
+        the LATEST verification — a consumer must retrieve the bytes
+        before its next call). Never raises.
+        """
+        try:
+            h = self._sw_handoff
+        except AttributeError:
+            return None
+        if h is None or h[0] != skill_id:
+            return None
+        return h[2]
 
     def run_skill_sweep(self):
         """Run the scheduled skill-content sweep (the periodic trigger).
@@ -9164,6 +9328,64 @@ class ToolExecutor:
                            (_current_digest or "?")[:12]),
                         "tool_digest_mismatch")
                 continue
+            # F185 (row-6/14 approval-time re-verification lane):
+            # re-verify the skill gate at the actual execution boundary
+            # (TOCTOU guard). The verdict-path gate attested the skill
+            # bytes at queue time and MAC-bound ``skill_attested_digest``
+            # on the approval record for the human reviewer; a mutation
+            # of the skill's bytes between approval and this sweep would
+            # otherwise execute under an attestation for different
+            # bytes. Re-run the watcher's use-time gate against CURRENT
+            # bytes: the fetch must succeed AND the digest must still
+            # equal the queue-time attestation. Any mismatch — a
+            # mutation with no re-pin (quarantined), a reviewed re-pin
+            # the approver never saw (digest moved), an unregistered id,
+            # or any watcher error — refuses fail-closed, audited. A
+            # refused record stays approved-but-unexecuted (fail-safe,
+            # retriable): a NEW approval under the current attestation
+            # executes. Executors with no skill watcher bound have no
+            # gate to re-run and keep today's behavior; records without
+            # skill fields (unattributed tools, pre-F184 records) skip.
+            _sw_rec_skill = rec.get("skill_id")
+            _sw_rec_digest = rec.get("skill_attested_digest")
+            if (_sw_rec_skill is not None and _sw_rec_digest is not None
+                    and self._skill_watch is not None):
+                try:
+                    (_sw_exe_ok, _sw_exe_bytes,
+                     _sw_exe_detail) = self._skill_watch.\
+                        fetch_verified_at_use(_sw_rec_skill)
+                    if _sw_exe_ok and _sw_exe_bytes is not None:
+                        _sw_exe_digest = hashlib.sha256(
+                            _sw_exe_bytes).hexdigest()
+                    else:
+                        _sw_exe_digest = None
+                    _sw_exe_err = None
+                except Exception as e:  # noqa: BLE001 - fail closed, loud
+                    _sw_exe_ok = False
+                    _sw_exe_digest = None
+                    _sw_exe_detail = "watcher-error"
+                    _sw_exe_err = e
+                _sw_exe_match = (
+                    _sw_exe_ok and _sw_exe_digest is not None
+                    and hmac.compare_digest(
+                        str(_sw_exe_digest), str(_sw_rec_digest)))
+                if not _sw_exe_match:
+                    _refuse(
+                        "Approval %s refused: skill %r bytes no longer "
+                        "match the queue-time attestation (digest %s -> "
+                        "%s; %s%s) — the human approved different bytes "
+                        "than would now execute; re-approval required "
+                        "under the current attestation (F185 skill "
+                        "continuity)."
+                        % (aid, _sw_rec_skill,
+                           (_sw_rec_digest or "?")[:12],
+                           ((_sw_exe_digest or "?"))[:12],
+                           _sw_exe_detail,
+                           (": %s" % _sw_exe_err)
+                           if _sw_exe_err is not None else ""),
+                        "skill_attestation_stale",
+                        policy_id="skill-continuity-execution-refused")
+                    continue
             # F38 (R10): cross-run replay — the record's run_id must
             # match the executing run. The keyed digest binds run_id
             # (so a planted record cannot be re-labeled without the log
@@ -9697,6 +9919,11 @@ class ToolExecutor:
             # itself exactly like a direct one.
             self._rare_token_observe_on_read(rec["tool"], rec["args"],
                                              result, rec.get("agent_id"))
+            # Wave-152 (row 19): automatic propagation observation on
+            # the approved path too -- an approved read_file observes
+            # itself exactly like a direct one.
+            self._propagation_observe_on_read(rec["tool"], rec["args"],
+                                              result, rec.get("agent_id"))
             # Row-12: register successful governed writes, mirroring the
             # direct-call path (an approved write_file enters the
             # inventory exactly like a direct one).

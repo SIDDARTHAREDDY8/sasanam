@@ -728,6 +728,14 @@ class DelegationContext:
                 "unbound DelegationContext cannot authorize (bind first)")
         return list(self._leaf_claims["scope"])
 
+    def receipt(self):
+        """Mint this bound context's cross-app delegation receipt.
+
+        See :func:`delegation_receipt`. Fail-closed on unbound
+        contexts — an unverified chain mints no attribution.
+        """
+        return delegation_receipt(self)
+
     def authorize(self, action, resource=None, *, now=None,
                   revocation_checker=None):
         """The permission intersection, enforced.
@@ -788,7 +796,9 @@ def authorize_action(ctx, action, resource=None, *, now=None,
        :class:`DelegationScopeError`.
 
     Returns ``{"action", "allowed_by", "delegation_token_ref",
-    "session_id"}`` for the audit record.
+    "session_id", "receipt"}`` for the audit record — ``receipt`` is the
+    cross-app delegation receipt (Row 18: distinct ``sub``/``act``
+    attribution), minted from the bound context at authorization time.
     """
     _ = resource  # v1 scope language is tool-granular (design §8)
     ref = _now_dt(now)
@@ -854,6 +864,12 @@ def authorize_action(ctx, action, resource=None, *, now=None,
         "allowed_by": allowed_by,
         "delegation_token_ref": token_ref(ctx.delegation_token),
         "session_id": ctx.session_id,
+        # Row 18 (borrowed-credential log-attribution gap): every
+        # authorization verdict now carries the cross-app delegation
+        # receipt — distinct sub (on whose behalf) / act (who acts) —
+        # minted from the bound context. Additive key; consumers that
+        # read specific fields are unaffected.
+        "receipt": delegation_receipt(ctx),
     }
 
 
@@ -1022,3 +1038,164 @@ def generate_test_keypair():
     seed = secrets.token_bytes(32)
     signer = _signing.Ed25519Signer(seed)
     return signer, _ed.publickey(seed)
+
+
+# ---------------------------------------------------------------------------
+# Cross-app delegation receipts (Row 18 residual: borrowed-credential
+# log-attribution gap)
+#
+# The three-token stack authenticates (F132/F133/F135) but the
+# authorization verdict carried only token REFS — an auditor could not
+# read "agent X acted on behalf of user Y" without resolving hashes,
+# and nothing could refuse a FORGED attribution claim. This is the
+# Okta Cross-App-Access protocol shape (the two-hop ID-JAG exchange
+# with an ``act`` claim naming the agent separately from the human):
+# protocol IDEA only — no copied code, no encumbrance, no new crypto.
+#
+# The receipt is a DERIVED view, not a fourth token: it is minted from
+# a BOUND context (everything already signature-verified at bind) and
+# verified by re-derivation — :func:`verify_delegation_receipt`
+# re-binds the presented tokens and re-mints, comparing canonical
+# forms. Any tampering (swapped sub, widened scope, dropped/reordered
+# hops, foreign session) fails closed. No new signatures: the tokens'
+# Ed25519 signatures are the trust root; the receipt adds zero key
+# material and embeds no token bodies or signatures (refs + ids only),
+# so it is safe to stamp onto audit events.
+# ---------------------------------------------------------------------------
+
+RECEIPT_VERSION = 1
+RECEIPT_SCHEMA = "delegation-receipt/v1"
+
+
+def _receipt_hops(ctx):
+    """Per-hop attribution for a bound context's chain, root-first.
+
+    Each hop names its delegator (the HUMAN at depth 0, the parent
+    agent below), its subject (who the hop authorizes), its scope, and
+    its token ref — the full intending lineage an auditor needs.
+    """
+    hops = []
+    chain = list(ctx.parent_chain) + [ctx.delegation_token]
+    for tok in chain:
+        claims = tok["claims"]
+        hops.append({
+            "depth": claims["delegation_depth"],
+            "delegator": claims["delegator"],
+            "subject": tok["subject"],
+            "scope": list(claims["scope"]),
+            "token_ref": token_ref(tok),
+            "issued_at": tok["issued_at"],
+        })
+    return hops
+
+
+def delegation_receipt(ctx):
+    """Mint the cross-app delegation receipt for a BOUND context.
+
+    Returns a plain dict (JSON-serializable):
+
+    * ``sub`` — the user principal ON WHOSE BEHALF the action runs
+      (the verified user token's ``user_id``; stable across spawns —
+      a sub-agent still acts for the originating human).
+    * ``act`` — the ACTING agent (the leaf delegation's subject).
+    * ``delegator_chain`` — per-hop ``{depth, delegator, subject,
+      scope, token_ref, issued_at}``, root-first.
+    * ``scope`` — the leaf's effective delegation scope.
+    * ``session_id``, ``audience`` (when the deployment binds one),
+      and the three token refs (hashes only — no bodies, no
+      signatures, no key material).
+
+    Fail-closed: ``None``/non-context, unbound context, or a context
+    with no delegation token raises :class:`DelegationRequiredError`;
+    a verified-but-malformed user principal raises
+    :class:`DelegationSignatureError`. An unverified chain mints no
+    attribution, ever.
+    """
+    if ctx is None or not isinstance(ctx, DelegationContext):
+        raise DelegationRequiredError(
+            "no delegation context: a receipt requires a bound "
+            "three-token delegation (fail closed by construction)")
+    if not ctx.bound:
+        raise DelegationRequiredError(
+            "unbound DelegationContext cannot mint a receipt "
+            "(bind (verify) first)")
+    if ctx.delegation_token is None:
+        raise DelegationRequiredError(
+            "agent presented no delegation token: no receipt without "
+            "delegation")
+    user_claims = ctx.user_token.get("claims") \
+        if isinstance(ctx.user_token, dict) else None
+    sub = (user_claims or {}).get("user_id")
+    if not isinstance(sub, str) or not sub:
+        # Unreachable after a successful bind() (the user token is
+        # verified there), but a receipt must never mint attribution
+        # from a malformed principal — fail closed, not silent.
+        raise DelegationSignatureError(
+            "verified user token carries no user_id: cannot attribute "
+            "a receipt without a principal")
+    leaf = ctx.delegation_token
+    act = leaf.get("subject")
+    if not isinstance(act, str) or not act:
+        raise DelegationSignatureError(
+            "leaf delegation token carries no subject: cannot attribute "
+            "a receipt without an acting agent")
+    return {
+        "receipt_version": RECEIPT_VERSION,
+        "receipt_schema": RECEIPT_SCHEMA,
+        "sub": sub,
+        "act": act,
+        "delegator_chain": _receipt_hops(ctx),
+        "scope": list(ctx._leaf_claims["scope"]),
+        "session_id": ctx.session_id,
+        "audience": leaf.get("aud"),
+        "user_token_ref": token_ref(ctx.user_token),
+        "agent_token_ref": token_ref(ctx.agent_token),
+        "delegation_token_ref": token_ref(leaf),
+    }
+
+
+def verify_delegation_receipt(receipt, *, user_token, agent_token,
+                              delegation_token, parent_chain, trust,
+                              session_id, now=None):
+    """Verify a delegation receipt by re-derivation.
+
+    Binds a fresh :class:`DelegationContext` from the presented tokens
+    — the FULL chain verification (signatures against the right
+    roster per hop, parent-hash links, monotonic attenuation,
+    South-et-al. token bindings, windows, session binding, audience)
+    — mints the canonical receipt, and compares canonical forms.
+
+    Forgery shapes refused: swapped ``sub`` (borrowed-credential
+    attribution lie), swapped ``act``, widened ``scope``, dropped or
+    reordered ``delegator_chain`` hops, foreign ``session_id``, wrong
+    trust roster, expired/revoked chain. Returns the verified receipt
+    dict (the re-derived canonical form). Raises a
+    :class:`DelegationError` subclass fail-closed.
+
+    ``receipt`` itself is never trusted: it is only the CLAIM being
+    checked against the tokens. An auditor holding the three tokens
+    (or their refs plus the chained log) can re-verify offline.
+    """
+    if not isinstance(receipt, dict):
+        raise DelegationSignatureError("receipt is not an object")
+    if receipt.get("receipt_version") != RECEIPT_VERSION:
+        raise DelegationSignatureError(
+            "unsupported receipt_version %r" % (
+                receipt.get("receipt_version"),))
+    if receipt.get("receipt_schema") != RECEIPT_SCHEMA:
+        raise DelegationSignatureError(
+            "receipt_schema mismatch: expected %r, got %r "
+            "(no fourth receipt shape)" % (RECEIPT_SCHEMA,
+                                           receipt.get("receipt_schema"),))
+    ctx = DelegationContext(
+        user_token=user_token, agent_token=agent_token,
+        delegation_token=delegation_token,
+        parent_chain=parent_chain, trust=trust,
+        session_id=session_id).bind(now=now)
+    expected = delegation_receipt(ctx)
+    if _canonical(receipt) != _canonical(expected):
+        raise DelegationSignatureError(
+            "receipt does not match the verified delegation chain "
+            "(forged or tampered attribution: sub/act/scope/chain/"
+            "session/audience differs from what the tokens say)")
+    return expected

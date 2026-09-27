@@ -197,7 +197,8 @@ _DEVA_NEG_SRC = (r"(?<!" + _DEVA_WORD_CHAR + r")"
                  r"(?:नहीं|न|मत)"
                  r"(?!" + _DEVA_WORD_CHAR + r")")
 # Wave-151 (row 7): Russian Cyrillic negation cues (pilot -- Russian
-# only; Arabic/CJK and other non-romanized scripts remain untouched).
+# only; CJK and other non-romanized scripts remain untouched --
+# Arabic landed in wave-152).
 # Unlike Devanagari combining marks, Cyrillic letters ARE \w, so plain
 # \b fires correctly around Cyrillic words: \bне\b matches "отчёт не
 # отправляйте" and does NOT match "менеджер", "ниже", "некоторые",
@@ -244,6 +245,39 @@ _CYRILLIC_NEG_SRC = (
     r"(?:\bне(?!\s+так\s+ли\b)\b|\bнет\b|\bни\b|"
     r"\bнельзя(?!\s+ли\b)\b)"
 )
+# Wave-152 (row 7): Arabic negation cues (pilot -- Modern Standard
+# Arabic only; CJK and other non-romanized scripts remain untouched).
+# Like Cyrillic, Arabic letters ARE \w, so plain \b fires correctly
+# around Arabic words: \bلا\b matches "لا ترسل" and does NOT match
+# "بلاد" (country), "سلام" (peace), or "كلام" (speech) -- measured,
+# pinned in evals/arabic_negation_probes.py::c_lookalike_boundaries
+# (0 cue hits on 6 word-internal lookalikes).
+#
+# Attached prefixes: Arabic conjunctions/prepositions glue onto the
+# following word, so a bare \bلا\b misses the realistic countermand
+# forms "ولا ترسل" (wa-laa, "and do not send"), "بلا إرسال"
+# (bi-laa, "without sending"), and "ولم يتم" (wa-lam, "and it was
+# not"). The prefixes are part of the cue alternative itself:
+# لا carries an optional و/ب/ل prefix; لم/لن/ما/ليس carry an
+# optional و prefix (ب/ل do not attach to these particles). The
+# trailing \b still guards the word end, so "بلاد" (bi-laa-d...,
+# "country") does NOT cue: after the optional ب and لا, the \b
+# fails before د. "للا" alone is not a word; carrying ل is harmless
+# (it only matches the literal token للا, which does not occur).
+#
+# Cues: لا ("not"/"do not"/"no"), لم ("did not" + jussive), لن
+# ("will not" + subjunctive), ما (negation "did not" -- ALSO the
+# interrogative "what" and the relative pronoun, an acknowledged
+# precision boundary: negation-ما is always followed by a
+# past-tense verb, but the pilot carries no tense guard, so the
+# interrogative/relative uses fire too -- pinned EXPECTED in the
+# battery, follow-up work), ليس ("is not"; no inflection coverage
+# -- "ليست" does not cue, same closed-list discipline as Cyrillic).
+# Dialectal forms (Egyptian ما...ش, Levantine ما عم, ...) are
+# deliberately untouched.
+_ARABIC_NEG_SRC = (
+    r"(?:\b[وبل]?لا\b|\bو?(?:لم|لن|ما|ليس)\b)"
+)
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
     r"no(?!\s+problems?\b)|stop|halt|"
@@ -254,7 +288,8 @@ _NEGATION_RE = re.compile(
     r"|" + _FRENCH_NE_PAIR_SRC
     + r"|" + _DEVA_NEG_SRC
     + r"|" + _CYRILLIC_NI_PAIR_SRC
-    + r"|" + _CYRILLIC_NEG_SRC,
+    + r"|" + _CYRILLIC_NEG_SRC
+    + r"|" + _ARABIC_NEG_SRC,
     re.IGNORECASE,
 )
 
@@ -295,7 +330,13 @@ _NEGATION_SCOPE_WINDOW = 8
 # sentence terminators) added so Hindi multi-sentence messages get
 # clause discipline. Latin texts never contain dandas, so existing
 # behaviour is unchanged.
-_CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965]+")
+# Wave-152 (row 7): U+061F (Arabic question mark ؟) and U+061B
+# (Arabic semicolon ؛) added as clause boundaries, parallel to the
+# Devanagari danda and the Latin ?/;. Latin/Cyrillic/Devanagari
+# texts never contain U+061F/U+061B, so existing behaviour is
+# unchanged. The Arabic comma U+060C is deliberately NOT a boundary
+# (parallel to the Latin comma).
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965\u061F\u061B]+")
 # Wave-149 (row 7): Devanagari block added so Hindi scope windows can
 # be walked. U+0964/U+0965 are deliberately excluded so "भेजें।"
 # tokenises as "भेजें" (the verb form must match exactly for
@@ -307,7 +348,74 @@ _CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965]+")
 # outside .!?; (already covered), and _fold_accents is
 # length-identical on Cyrillic (ё->е, й->и), so cue-span alignment
 # holds. Latin tokenization unchanged.
-_SCOPE_WORD_RE = re.compile(r"[a-z0-9'\u0400-\u04FF\u0900-\u0963\u0966-\u097F]+")
+# Wave-152 (row 7): Arabic block (U+0600-U+06FF) added so Arabic
+# scope windows can be walked. The whole block is included (the
+# ؟ U+061F clause boundary above splits before tokenization, so it
+# never reaches the tokenizer; the ، U+060C comma tokenises as a
+# word char, harmless -- it never equals a class form or cue).
+# F183 (row 7): invisible zero-width format characters are
+# token-INTERNAL here, not boundaries. U+200B (ZWSP), U+200C (ZWNJ),
+# U+200D (ZWJ) and U+FEFF (ZWNBSP/BOM) are Unicode category Cf:
+# NFKC/NFKD normalization does NOT remove them (measured: all four
+# survive unicodedata.normalize('NFKC', ...)), and they render as
+# zero width, so "भे\u200bजें" looks identical to "भेजें". Pre-F183
+# they split tokens, so one invisible char inside a verb form or
+# cue broke the exact class-form/cue match and the judge went
+# silently neutral (134 judge-level misses, F183). They are carried
+# in the class and stripped per-token by _strip_invisible_format
+# before matching -- string lengths never change, so the raw-text
+# cue-span alignment in negation_scopes_grant is untouched. Stripping
+# the whole text first was deliberately NOT done: it would GLUE words
+# an attacker separated with ZWSP ("रिपोर्ट\u200bनहीं" ->
+# "रिपोर्टनहीं"), silently changing the documented embedded-cue
+# discipline (glued cues stay silent, pinned by d_embedded_cue_silent).
+# The token-internal treatment keeps rendering and tokenization
+# consistent: what renders glued, tokenizes glued.
+# F183-follow-up (row 7): the invisible-format class is wider than
+# the four zero-width chars. Bidi embeddings/overrides
+# (U+202A-U+202E), bidi isolates (U+2066-U+2069), the direction marks
+# U+200E/U+200F and U+061C, U+180E, U+00AD, the invisible operators
+# U+2060-U+2064, and the deprecated tag block U+E0000-U+E007F are all
+# Unicode category Cf: NFKC does NOT remove them (measured), and
+# intra-token they are visually inert in LTR (Devanagari/Cyrillic/
+# Latin) text. The whole class is therefore token-internal here
+# (carried in the class below) and stripped per-token by
+# _strip_invisible_format before matching -- the same token-internal
+# discipline as F183. U+FFFC (object replacement, category So) is
+# deliberately NOT in this class: it renders as a visible placeholder
+# box (pinned EXPECTED in the battery, not fixed). U+034F/U+FE0F are
+# Mn, not Cf, with script-dependent visibility; measured and
+# documented in the battery, not fixed.
+# Wave-152: the Arabic block (U+0600-U+06FF) stays in the class; the
+# invisible-format stripping applies to Arabic tokens identically
+# (a zero-width char inside an Arabic cue/verb form is stripped
+# per-token before matching, same as Devanagari/Cyrillic).
+_INVISIBLE_FORMAT_CLASS = (
+    r"\u200b\u200c\u200d\ufeff"      # zero-width (F183)
+    r"\u200e\u200f"                    # LRM / RLM
+    r"\u061c"                           # ALM (arabic letter mark)
+    r"\u180e"                           # MVS (mongolian vowel separator)
+    r"\u202a-\u202e"                   # bidi embeddings / overrides
+    r"\u2066-\u2069"                   # bidi isolates
+    r"\u00ad"                           # soft hyphen (invisible mid-word)
+    r"\u2060-\u2064"                   # word joiner + invisible operators
+    r"\U000E0000-\U000E007F"           # deprecated tag block
+)
+_SCOPE_WORD_RE = re.compile(
+    r"[a-z0-9'\u0400-\u04FF\u0900-\u0963\u0966-\u097F\u0600-\u06FF"
+    + _INVISIBLE_FORMAT_CLASS + r"]+")
+
+# Shared invisible-format strip for the judge and scope tokenizers
+# (F183, extended by the F183 follow-up -- see _INVISIBLE_FORMAT_CLASS).
+# Applied per-token: <redacted> aligned.
+_INVISIBLE_FORMAT_RE = re.compile("[" + _INVISIBLE_FORMAT_CLASS + "]")
+
+
+def _strip_invisible_format(token):
+    """Remove invisible format chars (see _INVISIBLE_FORMAT_CLASS)
+    from one token. NFKC alone is insufficient -- these are Cf
+    characters and survive normalization (measured)."""
+    return _INVISIBLE_FORMAT_RE.sub("", token)
 _SCOPE_ELISION_RE = re.compile(r"^(?:n|d|l|s|c|j|t|qu)['’]")
 
 _VERB_CLASSES = {
@@ -334,6 +442,16 @@ _VERB_CLASSES = {
         "отправляет", "отправляют",
         "отправил", "отправила", "отправили", "отправлен",
         "отправлён", "послать", "посылать", "пошлите",
+        # Wave-152: Arabic SEND forms (pilot -- MSA). أرسل (imperative
+        # "send!"), ترسل (2nd-person imperfect -- the prohibition
+        # "لا ترسل"), يرسل (3rd-person imperfect), إرسال (verbal noun
+        # "sending"), أرسلت (1st/2nd-person past -- the ما/لم
+        # "ما أرسلت" negation shape). The bare-alef spellings
+        # (ارسل/ارسال) are the common un-hamza'd colloquial
+        # orthography, carried deliberately (not fold artifacts:
+        # the wave-152 fold preserves the Arabic block, so أرسل never
+        # folds to ارسل).
+        "أرسل", "ارسل", "ترسل", "يرسل", "إرسال", "ارسال", "أرسلت",
     )),
     "ARCHIVE": frozenset((
         "archive", "archives", "archiving", "archived",
@@ -362,6 +480,12 @@ _VERB_CLASSES = {
         "удаляи", "удаляйте", "удаляите", "удалил",
         "удалила", "удалили", "удалён", "удален", "стереть",
         "сотрите", "сотри",
+        # Wave-152: Arabic DELETE forms (pilot -- MSA). احذف
+        # (imperative "delete!"), تحذف (2nd-person imperfect -- "لا
+        # تحذف"), يحذف (3rd-person imperfect), حذف (verbal noun
+        # "deletion" / 3rd-person past "he deleted"), حذفت
+        # (1st/2nd-person past -- the ما/لم negation shape).
+        "احذف", "تحذف", "يحذف", "حذف", "حذفت",
     )),
     # Wave-148 (row 7): tier-2 verb classes. Same closed-list
     # discipline as tier 1: every form below was measured against
@@ -423,6 +547,11 @@ _VERB_CLASSES = {
         # duplicates needed (no й/ё in these forms -- verified).
         "поделиться", "поделитесь", "поделись", "делись",
         "делиться", "делитесь", "поделился", "поделились",
+        # Wave-152: Arabic SHARE forms (pilot -- MSA). شارك
+        # (imperative "share!"), تشارك (2nd-person imperfect -- "لا
+        # تشارك"), يشارك (3rd-person imperfect), مشاركة (verbal noun
+        # "sharing"), شاركت (1st/2nd-person past).
+        "شارك", "تشارك", "يشارك", "مشاركة", "شاركت",
     )),
     "PUBLISH": frozenset((
         "publish", "publishes", "publishing", "published",
@@ -514,13 +643,39 @@ def _fold_accents(text):
     length change before a cue misattributes it). Devanagari has no
     NFKD decompositions, so preserving the block keeps the fold
     length-identical there. Latin diacritic stripping is unchanged.
+
+    Wave-152 (row 7): the Arabic block (U+0600-U+06FF) BYPASSES NFKD
+    entirely and is preserved verbatim, for a stronger reason: the
+    Arabic hamza letters ALEF WITH HAMZA ABOVE (U+0623 أ), ALEF WITH
+    HAMZA BELOW (U+0625 إ), WAW WITH HAMZA (U+0624 ؤ), and YEH WITH
+    HAMZA (U+0626 ئ) all HAVE NFKD decompositions into base letter +
+    combining hamza, so "أرسل" would decompose to 5 chars ("ا" +
+    U+0654 + "رسل") -- breaking both length-identity (cue-span
+    alignment) and class-form matching on the scope path (the table
+    carries the precomposed U+0623 form). Verbatim preservation
+    keeps "أرسل" == "أرسل" and the fold a strict no-op on Arabic:
+    no dual-spelling class table is needed (unlike Cyrillic ё/й).
+    Tashkeel (U+064B-U+065F, combining) is preserved verbatim too.
+    Per-character NFKD for the remaining text is equivalent to the
+    old whole-string NFKD for this fold's purpose (combining-mark
+    order is irrelevant -- they are all dropped).
     Deterministic, stdlib unicodedata only.
     """
     if not isinstance(text, str):
         return ""
-    return "".join(
-        c for c in unicodedata.normalize("NFKD", text)
-        if not unicodedata.combining(c) or "\u0900" <= c <= "\u097f")
+    out = []
+    for c in text:
+        if "\u0900" <= c <= "\u097f" or "\u0600" <= c <= "\u06ff":
+            # Wave-149/152: Devanagari and Arabic blocks bypass NFKD
+            # and are preserved verbatim. (Devanagari has no NFKD
+            # decompositions, so verbatim == the old
+            # decompose-then-preserve behavior there.)
+            out.append(c)
+            continue
+        for d in unicodedata.normalize("NFKD", c):
+            if not unicodedata.combining(d):
+                out.append(d)
+    return "".join(out)
 
 
 def _separable_verb_hits(normed):
@@ -545,8 +700,10 @@ def _separable_verb_hits(normed):
 
 def _scope_norm_token(token):
     """Lowercase + strip French-style elision prefixes (n'/d'/l'/...)
-    so "n'envoyez" matches the SEND class as "envoyez"."""
-    tok = token.lower().replace("’", "'")
+    so "n'envoyez" matches the SEND class as "envoyez". F183: also
+    strips invisible format chars so a bidi-split verb
+    form still resolves to its class."""
+    tok = _strip_invisible_format(token.lower().replace("’", "'"))
     return _SCOPE_ELISION_RE.sub("", tok)
 
 
@@ -829,7 +986,12 @@ def _verb_stems(tool):
 # tokenises as "भेजें" and the danda stays a token boundary).
 # Wave-151 (row 7): Cyrillic block added for the Russian pilot (same
 # range as _SCOPE_WORD_RE).
-_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u097F]+")
+# Wave-152 (row 7): Arabic block (U+0600-U+06FF) added for the
+# Arabic pilot (same range as _SCOPE_WORD_RE).
+# F183-follow-up (row 7): the invisible-format class (_INVISIBLE_FORMAT_CLASS)
+# is token-internal here too (same treatment as _SCOPE_WORD_RE -- see the note there), and is
+# stripped per-token in _negated_verb before matching.
+_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u097F\u0600-\u06FF" + _INVISIBLE_FORMAT_CLASS + r"]+")
 
 # Wave-150 (row 7): tool -> tier-1/tier-2 verb classes whose
 # Devanagari forms the judge matches natively. The Latin prefix-stem
@@ -862,9 +1024,16 @@ def _negated_verb(latest_text, tool):
     so a post-verbal tag cue ("भेज दी है न?") is natively silent: the
     scope-window discipline applies in the judge, not just in the
     similarity-countermand path.
+
+    F183 (row 7): invisible zero-width format chars (U+200B/U+200C/
+    U+200D/U+FEFF, bidi controls, direction marks and other Cf chars)
+    countermand that renders identically to a human cannot split the
+    verb/cue token and slip the exact match.
     """
-    tokens = _NEGATED_VERB_TOKEN_RE.findall(
-        str(latest_text or "").lower())
+    tokens = [_strip_invisible_format(t) for t in
+              _NEGATED_VERB_TOKEN_RE.findall(
+                  str(latest_text or "").lower())]
+    tokens = [t for t in tokens if t]
     stems = _verb_stems(tool)
     # Wave-151 (row 7): renamed from deva_forms -- the exact
     # non-ASCII class-form match now also carries the Cyrillic
@@ -872,6 +1041,12 @@ def _negated_verb(latest_text, tool):
     # set only gains Cyrillic entries, which no Latin token can
     # equal (and SHARE has no share tool, so its Cyrillic forms are
     # scope-path only).
+    # Wave-152 (row 7): the same native match now also carries the
+    # Arabic (MSA) SEND/DELETE forms -- automatic, since the Arabic
+    # forms are non-ASCII members of the tool's verb classes. Latin/
+    # Cyrillic/Devanagari behavior is unchanged: the set only gains
+    # Arabic entries, which no Latin/Cyrillic/Devanagari token can
+    # equal.
     native_forms = set()
     for cls in _TOOL_VERB_CLASSES.get(tool, ()):
         native_forms.update(f for f in _VERB_CLASSES[cls]

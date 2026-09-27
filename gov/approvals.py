@@ -323,6 +323,18 @@ _SECURITY_PAYLOAD_FIELDS = (
     # fail verification automatically after the upgrade — queued items
     # must be decided or drained before upgrading.
     "intent_slice",
+    # F185 (row-6/14 approval-time re-verification lane): the
+    # queue-time skill attestation (the skill id plus the sha256 of
+    # the exact bytes the watcher attested at the verdict-path gate)
+    # is integrity-bound from birth. Rewriting skill_attested_digest
+    # after queueing would let a tampered record launder a human's
+    # approval onto different skill bytes; stripping either field
+    # would dodge the approved sweep's re-verification. FAIL-CLOSED
+    # UPGRADE (same precedent as F34/F38/R11/D1/F101/F103/H3): records
+    # queued BEFORE this change do not carry these fields, so their
+    # digests fail verification automatically after the upgrade —
+    # queued items must be decided or drained before upgrading.
+    "skill_id", "skill_attested_digest",
 )
 
 
@@ -3165,7 +3177,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               policy_context=None, policy_flag=None, egress_bytes=None,
               caller_identity=None, policy_version=None,
               matched_rules=None, tool_digest=None, deferred_effect=None,
-              capability_verdict=None, intent_slice_verdict=None):
+              capability_verdict=None, intent_slice_verdict=None,
+              skill_id=None, skill_attested_digest=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3322,6 +3335,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # re-MACed. Deep-copied so caller-side mutation after
             # queue() cannot reach the bound record.
             "tool_digest": tool_digest,
+            # F185 (row-6/14 approval-time re-verification lane): the
+            # queue-time skill attestation — the skill id and the
+            # sha256 of the exact bytes the watcher attested at the
+            # verdict-path gate (MAC-bound via _SECURITY_PAYLOAD_FIELDS,
+            # so post-queue laundering breaks the digest). The approved
+            # sweep re-verifies against CURRENT bytes and refuses
+            # fail-closed on mismatch. None for unattributed tools
+            # (the deployment's explicit None opt-out) and for records
+            # queued by paths that never attested a skill.
+            "skill_id": skill_id,
+            "skill_attested_digest": skill_attested_digest,
             "deferred_effect": (json.loads(json.dumps(
                 deferred_effect, sort_keys=True, default=str))
                 if deferred_effect is not None else None),

@@ -316,7 +316,21 @@ def similarity_countermand(message, prior_messages,
       still miss; Cyrillic verb coverage is SEND/DELETE/SHARE
       only (ARCHIVE/REDACT/PUBLISH/FORWARD/UPLOAD have no Cyrillic
       forms -- e.g. архивировать/опубликовать/загрузить/переслать
-      are real Russian verbs this pilot does not cover).
+      are real Russian verbs this pilot does not cover). Wave-152
+      adds an Arabic (MSA) pilot: لا/لم/لن/ما/ليس cues with the
+      attached و/ب/ل prefixes before لا (و before the rest) and
+      plain-\b boundary discipline (Arabic letters are \w; the
+      word-internal lookalikes بلاد/سلام/كلام/مال/ألم/لندن are
+      pinned silent), Arabic SEND/DELETE/SHARE verb forms (the
+      fold preserves the Arabic block -- hamza letters have NFKD
+      decompositions, so without preservation أرسل would fold to
+      ارسل -- making the fold a no-op on Arabic and cue-span
+      alignment exact), and the Arabic question mark ؟ (U+061F) as
+      a clause boundary. Known precision cost: ما as interrogative
+      ("what") or relative pronoun fires the cue (the pilot
+      carries no tense guard). CJK still misses; Arabic verb
+      coverage is SEND/DELETE/SHARE only; dialectal forms
+      untouched.
     - Full synonym replacement with no shared tokens still scores
       0.0 and misses -- token overlap is not semantics.
     - The deployment key must be managed like other secrets: if the

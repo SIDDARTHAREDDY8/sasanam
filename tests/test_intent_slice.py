@@ -703,6 +703,198 @@ class CyrillicNegationTest(unittest.TestCase):
             "Q3 отчётом делиться нельзя",
             "Share the Q3 report with the vendor."))
 
+class ZeroWidthNegationTest(unittest.TestCase):
+    """F183: invisible zero-width format chars (U+200B/U+200C/U+200D/
+    U+FEFF) must not split judge tokens. NFKC does not remove them
+    (Cf category -- measured), so the strip is explicit."""
+
+    def test_strip_invisible_format(self):
+        self.assertEqual(m._strip_invisible_format("भे\u200bजें"), "भेजें")
+        self.assertEqual(m._strip_invisible_format("म\u200cत"), "मत")
+        self.assertEqual(m._strip_invisible_format("plain"), "plain")
+
+    def test_judge_fires_with_zwsp_in_verb(self):
+        self.assertTrue(m._negated_verb("रिपोर्ट नहीं भे\u200bजें",
+                                        "send_email"))
+
+    def test_judge_fires_with_zwnj_in_cue(self):
+        self.assertTrue(m._negated_verb("रिपोर्ट म\u200cत भेजें",
+                                        "send_email"))
+
+    def test_judge_fires_with_zwj_and_bom(self):
+        self.assertTrue(m._negated_verb("रिपोर्ट न\u200dहीं भेजें",
+                                        "send_email"))
+        self.assertTrue(m._negated_verb("रिपोर्ट न\ufeffहीं भेजें",
+                                        "send_email"))
+
+    def test_judge_fires_cyrillic_zwsp(self):
+        self.assertTrue(m._negated_verb("Отчёт н\u200bе отправляйте",
+                                        "send_email"))
+        self.assertTrue(m._negated_verb("Отчёт не от\u200bправляйте",
+                                        "send_email"))
+
+    def test_glued_rendering_stays_silent(self):
+        # "रिपोर्ट<ZWSP>नहीं" renders glued, like "रिपोर्टनहीं" --
+        # the embedded-cue discipline keeps both silent.
+        self.assertFalse(m._negated_verb("रिपोर्ट\u200bनहीं भेजें",
+                                         "send_email"))
+        self.assertFalse(m._negated_verb("रिपोर्टनहीं भेजें",
+                                         "send_email"))
+
+    def test_scope_norm_token_strips(self):
+        self.assertEqual(m._scope_norm_token("भे\u200bजें"), "भेजें")
+
+
+
+class BidiInvisibleFormatTest(unittest.TestCase):
+    """F183 follow-up: bidi controls, direction marks, soft hyphen,
+    invisible operators and tag chars are token-internal and stripped
+    per-token, exactly like the F183 zero-width set. U+FFFC (visible
+    placeholder) is the documented ceiling: it stays silent."""
+
+    MARKS = [
+        "\u202a",  # U+202A
+        "\u202b",  # U+202B
+        "\u202c",  # U+202C
+        "\u202d",  # U+202D
+        "\u202e",  # U+202E
+        "\u2066",  # U+2066
+        "\u2067",  # U+2067
+        "\u2068",  # U+2068
+        "\u2069",  # U+2069
+        "\u200e",  # U+200E
+        "\u200f",  # U+200F
+        "\u061c",  # U+061C
+        "\u180e",  # U+180E
+        "\u00ad",  # U+00AD
+        "\u2060",  # U+2060
+        "\u2064",  # U+2064
+        "\U000E0001",  # U+E0001
+    ]
+
+    def test_strip_removes_each_mark(self):
+        clean = "\u092d\u0947\u091c\u0947\u0902"
+        for esc in self.MARKS:
+            tok = "\u092d\u0947" + esc + "\u091c\u0947\u0902"
+            self.assertEqual(m._strip_invisible_format(tok), clean, esc)
+        self.assertEqual(m._strip_invisible_format("plain"), "plain")
+
+    def test_judge_fires_with_rlo_in_verb(self):
+        self.assertTrue(m._negated_verb(
+            "\u0930\u093f\u092a\u094b\u0930\u094d\u091f" + " " + "\u0928\u0939\u0940\u0902" + " " + "\u092d\u0947\u202e\u091c\u0947\u0902",
+            "send_email"))
+
+    def test_judge_fires_with_lrm_in_cue(self):
+        self.assertTrue(m._negated_verb(
+            "\u0930\u093f\u092a\u094b\u0930\u094d\u091f" + " " + "\u0928\u200e\u0939\u0940\u0902" + " " + "\u092d\u0947\u091c\u0947\u0902",
+            "send_email"))
+
+    def test_judge_fires_cyrillic_rli_and_embeds(self):
+        self.assertTrue(m._negated_verb(
+            "\u041e\u0442\u0447\u0451\u0442" + " " + "\u043d\u0435" + " " + "\u043e\u0442\u2067\u043f\u0440\u0430\u0432\u043b\u044f\u0439\u0442\u0435",
+            "send_email"))
+        self.assertTrue(m._negated_verb(
+            "\u041e\u0442\u0447\u0451\u0442" + " " + "\u202a\u043d\u0435\u202c" + " " + "\u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u0439\u0442\u0435",
+            "send_email"))
+
+    def test_judge_fires_with_tag_and_soft_hyphen(self):
+        self.assertTrue(m._negated_verb(
+            "\u092e\u0924" + " " + "\u0905\U000E0001\u092a\u0932\u094b\u0921",
+            "http_post"))
+        self.assertTrue(m._negated_verb(
+            "\u0930\u093f\u092a\u094b\u0930\u094d\u091f" + " " + "\u0928\u0939\u0940\u0902" + " " + "\u092d\u0947\u00ad\u091c\u0947\u0902",
+            "send_email"))
+
+    def test_scope_norm_token_strips_bidi(self):
+        self.assertEqual(
+            m._scope_norm_token("\u0928\u202e\u0939\u0940\u0902"),
+            "\u0928\u0939\u0940\u0902")
+
+    def test_tokenizer_keeps_bidi_internal(self):
+        toks = m._NEGATED_VERB_TOKEN_RE.findall(
+            "\u092d\u0947\u202b\u091c\u0947\u0902")
+        self.assertEqual(len(toks), 1)
+
+    def test_fffc_stays_silent_documented_ceiling(self):
+        # U+FFFC renders as a visible placeholder box: the judge miss
+        # agrees with the rendering (pinned EXPECTED in
+        # evals/bidi_negation_probes.py), not fixed.
+        self.assertFalse(m._negated_verb(
+            "\u0930\u093f\u092a\u094b\u0930\u094d\u091f" + " " + "\u0928\u0939\u0940\u0902" + " " + "\u092d\u0947\ufffc\u091c\u0947\u0902",
+            "send_email"))
+class ArabicNegationTest(unittest.TestCase):
+    """Wave-152, row 7: Arabic (MSA) negation cues (لا/لم/لن/ما/ليس
+    with the attached و/ب/ل prefixes before لا, و before the rest)
+    with plain-\\b boundary discipline, Arabic SEND/DELETE/SHARE
+    verb forms, the Arabic-block fold preservation (hamza letters
+    have NFKD decompositions), and the ؟/؛ clause boundaries."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0) if hit else None
+
+    def test_cues_match_standalone(self):
+        self.assertEqual(self._cue("لا ترسل تقرير Q3"), "لا")
+        self.assertEqual(self._cue("لم يتم إرسال تقرير Q3"), "لم")
+        self.assertEqual(self._cue("لن ترسل تقرير Q3"), "لن")
+        self.assertEqual(self._cue("ما تم إرسال تقرير Q3"), "ما")
+        self.assertEqual(self._cue("ليس هناك إرسال لتقرير Q3"), "ليس")
+
+    def test_attached_prefixes_cue(self):
+        # و/ب/ل glue onto لا; و glues onto لم/لن/ما/ليس.
+        self.assertEqual(self._cue("ولا ترسل تقرير Q3"), "ولا")
+        self.assertEqual(self._cue("ولم يتم إرسال تقرير Q3"), "ولم")
+        self.assertEqual(self._cue("بلا إرسال لتقرير Q3"), "بلا")
+
+    def test_embedded_cue_does_not_match(self):
+        # Cue substrings inside larger words: \\b fires correctly
+        # around Arabic (letters are \\w); the prefix in بلاد does
+        # not leak past the word end.
+        for w in ("بلاد", "سلام", "كلام", "مال", "ألم", "لندن"):
+            self.assertIsNone(self._cue(w), w)
+
+    def test_fold_preserves_arabic_verbatim(self):
+        # The cue regex runs on raw text while scope tokens run on
+        # folded text: any length change misaligns cue spans. The
+        # hamza letters (أ/إ/ؤ/ئ) HAVE NFKD decompositions, so the
+        # Arabic block bypasses NFKD entirely -- the fold is a
+        # strict no-op here (unlike Cyrillic ё->е / й->и, which is
+        # length-preserving but not identity).
+        for s in ("أرسل", "إرسال", "لا ترسل", "مشاركة",
+                  "لا ترسل تقرير Q3", "مُرسَل"):
+            self.assertEqual(m._fold_accents(s), s, s)
+            self.assertEqual(len(m._fold_accents(s)), len(s), s)
+
+    def test_judge_native_arabic_countermand(self):
+        self.assertTrue(m._negated_verb("لا ترسل تقرير Q3",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("لا تحذف تقرير Q3",
+                                       "delete_file"))
+        self.assertTrue(m._negated_verb("ولا تحذف تقرير Q3",
+                                       "delete_file"))
+
+    def test_judge_wrong_predicate_silent(self):
+        self.assertFalse(m._negated_verb("لا ترسل تقرير Q3",
+                                        "delete_file"))
+        self.assertFalse(m._negated_verb("تم إرسال تقرير Q3",
+                                        "send_email"))
+
+    def test_scope_split_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "لم يصدر تقرير Q3؛ أرسل التقرير",
+            "Send the Q3 report to the vendor."))
+        self.assertFalse(m.negation_scopes_grant(
+            "لم يصدر تقرير Q3؟ أرسل التقرير",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_delete_share_forms(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "لا تحذف تقرير Q3",
+            "Delete the Q3 report."))
+        self.assertTrue(m.negation_scopes_grant(
+            "لا تشارك تقرير Q3",
+            "Share the Q3 report with the vendor."))
+
 
 if __name__ == "__main__":
     unittest.main()

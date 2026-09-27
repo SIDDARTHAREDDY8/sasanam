@@ -149,12 +149,28 @@ class ToolInventory:
     so a provider-side redefinition is observable as digest drift
     (the MCP rug-pull shape). The default provider serves the static
     built-in table: built-in digests are stable, so no false drift.
+
+    ``strict`` (default False) switches the trust anchor from
+    trust-on-first-use to deployment-declared. In default mode the
+    first provider bytes seen become the baseline (``_last_seen``): a
+    hostile provider that serves poisoned bytes from the very first
+    observation gets its poison pinned as "unchanged", and honest bytes
+    served later read as drift (baseline inversion -- pinned red by
+    ``evals/mcp_description_drift_probes.py`` p2). In strict mode the
+    ``definitions`` table is the anchor: provider bytes are compared
+    against the deployment digest on every call, a poisoned first
+    sighting is refused at once, and tools the deployment never
+    declared are denied without pinning (default-deny). Quarantine in
+    strict mode clears only via explicit ``pin()`` -- the deployment's
+    reviewed re-declaration workflow. Strict mode is purely opt-in:
+    ``strict=False`` preserves the historical behavior byte-for-byte.
     """
 
-    def __init__(self, definitions=None, provider=None):
+    def __init__(self, definitions=None, provider=None, strict=False):
         self._definitions = dict(definitions if definitions is not None
                                  else BUILTIN_TOOL_DEFINITIONS)
         self._provider = provider
+        self._strict = bool(strict)
         self._last_seen = {}  # tool -> digest, for use-time drift detection
         self._quarantined = set()
 
@@ -169,6 +185,21 @@ class ToolInventory:
     def digest_for(self, tool):
         """Current pinned digest for a tool, or None when unregistered."""
         definition = self.definition_for(tool)
+        if not isinstance(definition, dict):
+            return None
+        return tool_definition_digest(
+            tool, definition.get("description"),
+            definition.get("schema"))
+
+    def anchor_digest_for(self, tool):
+        """Deployment-declared digest for a tool.
+
+        Reads ONLY the deployment's ``definitions`` table -- never the
+        provider -- so it is a trust anchor even when the provider is
+        hostile from first contact. Returns None when the deployment
+        table declares nothing for the tool.
+        """
+        definition = self._definitions.get(tool)
         if not isinstance(definition, dict):
             return None
         return tool_definition_digest(
@@ -196,10 +227,16 @@ class ToolInventory:
         outage. Tools never pinned return ok=True — the policy's own
         unknown-tool handling decides those; the inventory refuses to
         invent a refusal for a tool it never pinned.
+
+        In strict mode the comparison is against the deployment anchor
+        (``anchor_digest_for``), never against first-observed bytes;
+        see ``_verify_strict``.
         """
         if tool in self._quarantined:
             return False, self._last_seen.get(tool), self.digest_for(tool)
         current = self.digest_for(tool)
+        if self._strict:
+            return self._verify_strict(tool, current)
         previous = self._last_seen.get(tool)
         if current is None:
             if previous is not None:
@@ -213,6 +250,35 @@ class ToolInventory:
             self._quarantined.add(tool)
             return False, previous, current
         return True, previous, current
+
+    def _verify_strict(self, tool, current):
+        """Strict-mode use-time check: deployment anchor, never TOFU.
+
+        ``current`` is the provider's present digest (already computed
+        by the caller). The provider's bytes are compared against the
+        deployment table's digest: a hostile first sighting cannot
+        become the baseline because first sighting is never trusted.
+        A tool the deployment table never declared is denied WITHOUT
+        pinning (default-deny -- no trust-on-first-use). A declared
+        tool the provider cannot currently serve is quarantined
+        fail-closed (a definition swap must not hide behind a provider
+        outage -- same idiom as the default mode). Quarantine clears
+        only via explicit ``pin()``, the deployment's reviewed
+        re-declaration workflow (which also moves the anchor).
+        """
+        anchor = self.anchor_digest_for(tool)
+        if anchor is None:
+            # Undeclared in strict mode: refuse to TOFU-pin. Not added
+            # to _quarantined (nothing drifted); the denial itself is
+            # the control, and pin() is the declaration path.
+            return False, None, current
+        if current is None:
+            self._quarantined.add(tool)
+            return False, anchor, None
+        if current != anchor:
+            self._quarantined.add(tool)
+            return False, anchor, current
+        return True, anchor, current
 
 
 # ---------------------------------------------------------------------------

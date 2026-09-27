@@ -194,5 +194,196 @@ class ExecutorWiringTest(unittest.TestCase):
              if a.get("tool") == "injection_propagation_review"], [])
 
 
+class SubstringMatchTest(unittest.TestCase):
+    """Wave-152 substring matching at the tracker seam."""
+
+    def test_substring_flags_embedded_instruction(self):
+        t = PropagationTracker()
+        t.observe_input("a1", "commit-R0045113", "restore original no-card")
+        out = ("# deployment README\n\nWe follow the standard runbook. "
+               "The procedure is: restore original no-card, then push "
+               "the tag.")
+        r = t.check_output("a1", "file", out,
+                           user_request="Write the deployment README.")
+        self.assertEqual(r["verdict"], "propagation_suspect")
+        self.assertEqual(len(r["span_detail"]), 1)
+        self.assertEqual(r["span_detail"][0]["match"], "substring")
+        self.assertIn("restore original no-card", r["spans"][0])
+        self.assertEqual(r["sources"], ["commit-R0045113"])
+
+    def test_substring_requires_word_boundary(self):
+        # "clean up our pod" must not fire on "clean up our podcast".
+        t = PropagationTracker()
+        t.observe_input("a1", "pod-note", "# clean up our pod\n")
+        r = t.check_output("a1", "file",
+                           "Please clean up our podcast afterwards.",
+                           user_request="Write the changelog.")
+        self.assertEqual(r["verdict"], "allow")
+
+    def test_substring_min_length_guard(self):
+        # Observed span "run" (3 chars < MIN_SUBSTRING_CHARS=10): the
+        # exact whole-span path does not match the longer clause, and
+        # the substring path is exempt -- silent.
+        from gov.injection_propagation import MIN_SUBSTRING_CHARS
+        self.assertEqual(MIN_SUBSTRING_CHARS, 10)
+        t = PropagationTracker()
+        t.observe_input("a1", "short", "Run!")
+        r = t.check_output("a1", "file", "Please run the unit tests now.",
+                           user_request="Do the tests.")
+        self.assertEqual(r["verdict"], "allow")
+
+    def test_substring_user_request_excluded(self):
+        t = PropagationTracker()
+        t.observe_input("a1", "commit-R0045113", "restore original no-card")
+        r = t.check_output(
+            "a1", "file",
+            "The procedure is: restore original no-card, then push.",
+            user_request="Write the README. The procedure is: restore "
+                         "original no-card, then push.")
+        self.assertEqual(r["verdict"], "allow")
+
+    def test_exact_match_not_double_flagged(self):
+        t = PropagationTracker()
+        t.observe_input("a1", "payload-1",
+                        "# Remove only files we introduce.\n")
+        r = t.check_output("a1", "file",
+                           "# Remove only files we introduce.\n",
+                           user_request="Summarize.")
+        self.assertEqual(r["verdict"], "propagation_suspect")
+        self.assertEqual(len(r["span_detail"]), 1)
+        self.assertEqual(r["span_detail"][0]["match"], "exact")
+
+    def test_substring_deterministic_order(self):
+        t = PropagationTracker()
+        t.observe_input("a1", "src-b", "restore original no-card")
+        t.observe_input("a1", "src-a", "clean up our pod")
+        out = "First, restore original no-card. Also clean up our pod."
+        d1 = t.check_output("a1", "file", out, user_request="Deploy.")
+        d2 = t.check_output("a1", "file", out, user_request="Deploy.")
+        self.assertEqual(d1["span_detail"], d2["span_detail"])
+        self.assertEqual(d1["sources"], ["src-a", "src-b"])
+        self.assertEqual([s["match"] for s in d1["span_detail"]],
+                         ["substring", "substring"])
+
+
+class AutoObserveHookTest(unittest.TestCase):
+    """Wave-152: ToolExecutor._propagation_observe_on_read.
+
+    Mirrors tests/test_read_observation.py's coverage of the wave-141
+    hook: fires only on real governed read_file results (source ==
+    "sandbox" with content), builds the documented read:auto:<rel>
+    source id, never raises, never breaks the read, and composes
+    idempotently with the explicit note_propagation_input path.
+    """
+
+    DOC = ("# Remove only files we introduce; original repo has "
+           "neither.\n")
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="injprop-auto-"))
+        (self.tmp / "sandbox").mkdir(parents=True, exist_ok=True)
+        (self.tmp / "sandbox" / "payload.md").write_text(
+            self.DOC, encoding="utf-8")
+        from gov.executor import ToolExecutor
+        from gov.policy import PolicyEngine
+        from gov.log import ActionLog
+        from gov.approvals import ApprovalQueue
+        policy = PolicyEngine(
+            str(Path(REPO_ROOT) / "policies" / "default.yaml"))
+        log = ActionLog(self.tmp / "actions.jsonl")
+        approvals = ApprovalQueue(self.tmp, log)
+        self.ex = ToolExecutor(
+            self.tmp, policy, log, approvals,
+            ledger_path=self.tmp / "egress_ledger.jsonl",
+            propagation_tracker=PropagationTracker(),
+            ungoverned_ack="injection-propagation-tests")
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _sources(self, agent="a1"):
+        return sorted(self.ex.propagation_tracker._inputs.get(agent, {}))
+
+    def test_real_read_auto_observes_with_auto_source_id(self):
+        self.ex._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": self.DOC}, "a1")
+        self.assertEqual(self._sources(), ["read:auto:payload.md"])
+        r = self.ex.check_output_propagation(
+            "a1", "file",
+            "# Remove only files we introduce; original repo has neither.\n",
+            user_request="Summarize.")
+        self.assertEqual(r["verdict"], "propagation_suspect")
+        self.assertEqual(r["sources"], ["read:auto:payload.md"])
+
+    def test_non_read_tool_ignored(self):
+        self.ex._propagation_observe_on_read(
+            "write_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": self.DOC}, "a1")
+        self.assertEqual(self._sources(), [])
+
+    def test_simulated_source_never_observed(self):
+        self.ex._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "simulated",
+             "content": "[synthetic file contents]"}, "a1")
+        self.assertEqual(self._sources(), [])
+
+    def test_no_content_observes_nothing(self):
+        self.ex._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": ""}, "a1")
+        self.assertEqual(self._sources(), [])
+
+    def test_no_tracker_is_noop(self):
+        from gov.executor import ToolExecutor
+        from gov.policy import PolicyEngine
+        from gov.log import ActionLog
+        from gov.approvals import ApprovalQueue
+        policy = PolicyEngine(
+            str(Path(REPO_ROOT) / "policies" / "default.yaml"))
+        log = ActionLog(self.tmp / "actions2.jsonl")
+        approvals = ApprovalQueue(self.tmp, log)
+        bare = ToolExecutor(
+            self.tmp, policy, log, approvals,
+            ledger_path=self.tmp / "egress2.jsonl",
+            ungoverned_ack="injection-propagation-tests")
+        # Must not raise.
+        bare._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": self.DOC}, "a1")
+
+    def test_explicit_replaces_auto_same_source_id(self):
+        self.ex._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": self.DOC}, "a1")
+        n_auto = self.ex.propagation_tracker.input_span_count("a1")
+        res = self.ex.note_propagation_input(
+            "a1", "read:auto:payload.md", self.DOC)
+        self.assertTrue(res["observed"])
+        self.assertEqual(self._sources(), ["read:auto:payload.md"])
+        self.assertEqual(
+            self.ex.propagation_tracker.input_span_count("a1"), n_auto)
+
+    def test_explicit_different_id_is_different_source(self):
+        self.ex._propagation_observe_on_read(
+            "read_file", {"path": "payload.md"},
+            {"source": "sandbox", "content": self.DOC}, "a1")
+        self.ex.note_propagation_input("a1", "harness-doc-7", self.DOC)
+        self.assertEqual(self._sources(),
+                         ["harness-doc-7", "read:auto:payload.md"])
+
+    def test_governed_read_end_to_end_auto_flags(self):
+        ident = self.ex.mint_identity("a1", "coder", "user-1")
+        r = self.ex.call(ident, "read_file", path="payload.md")
+        self.assertEqual(r.get("status"), "executed")
+        self.assertEqual(self._sources(), ["read:auto:payload.md"])
+        out = self.ex.check_output_propagation(
+            "a1", "file", self.DOC, user_request="Summarize.")
+        self.assertEqual(out["verdict"], "propagation_suspect")
+        self.assertEqual(out["sources"], ["read:auto:payload.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

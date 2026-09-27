@@ -69,6 +69,7 @@ cardinality).
 """
 
 import re
+import unicodedata
 
 __all__ = [
     "target_similarity",
@@ -107,6 +108,196 @@ _DEST_RE = re.compile(
     r"[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?"
     r"(?:\.[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?)+"
 )
+
+#: Scope-discriminator patterns (row-11 follow-up leg, ceremony-only).
+#: Specific quarter references: q1..q4 as standalone tokens
+#: ("quarterly" is NOT a quarter -- it names no specific one).
+_QUARTER_RE = re.compile(r"\bq[1-4]\b")
+#: Four-digit years 1900..2099 as standalone tokens.
+_YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
+
+#: Widening quantifiers: stemmed token -> canonical form. "all",
+#: "every" and "each" all widen to the universal set; "entire" and
+#: "whole" widen to the whole object ("the whole archive" is the
+#: entire archive -- break-round v2, measured). Deliberately closed:
+#: "any"/"some"/"a few" are left out (documented ceiling -- they
+#: read as indefinite rather than widening in the ceremony's short
+#: imperative phrasing, and pinning them risks false refusals);
+#: "full" is left out (ambiguous: "a full report" reads as
+#: comprehensive as often as entire -- pinned residual e17);
+#: multiword "complete set of" is left out (needs phrase-level
+#: parsing, outside the token tier -- pinned residual e18).
+_QUANT_CANON = {
+    "all": "all",
+    "every": "all",
+    "each": "all",
+    "entire": "entire",
+    "whole": "entire",
+}
+
+#: Break-round v2 (evasion probes, evals/
+#: ceremony_receipt_evasion_probes.py): the shipped quarter/year
+#: token forms are calibration lists. Attackers rephrase the same
+#: discriminator ("3rd quarter", "FY26Q3", "Sept quarter", "QIII",
+#: fullwidth "Q4", zero-width-split "Q<ZWSP>4") and exact token
+#: regexes go blind. The closes below stay deterministic, closed,
+#: and stdlib-only -- no fuzzy matching, no ML, ceremony-only (the
+#: grant-path tokenizer is untouched).
+#:
+#: The four zero-width format chars F183 stripped in
+#: gov/intent_slice._strip_zero_width (NFKC does not remove them --
+#: all four are Cf). Duplicated here (not imported) because
+#: gov/intent_slice is outside this team's owned files.
+_ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\ufeff"
+
+
+def _disc_norm(text):
+    """NFKC + zero-width-strip + lowercase for discriminator rules.
+
+    NFKC folds fullwidth/compatibility forms ("Q4" -> "Q4",
+    "２０２５" -> "2025"); the four zero-width chars are stripped
+    explicitly (F183's class). On plain ASCII this is just
+    lowercasing, so every existing pin is unaffected by
+    construction. Ceremony-only.
+    """
+    t = unicodedata.normalize("NFKC", text)
+    for _zw in _ZERO_WIDTH_CHARS:
+        t = t.replace(_zw, "")
+    return t.lower()
+
+
+#: Quarter-identity patterns beyond the shipped q1..q4 tokens. All
+#: feed _quarter_set(); every form is explicit and closed.
+_Q_ROMAN_RE = re.compile(r"\bq(i{1,3}|iv)\b")  # qiii, qiv
+#: Hyphenated compounds are the norm in typed scopes
+#: ("third-quarter", "3rd-quarter"), so the separator class is
+#: [-\s], not \s alone.
+_ORDINAL_QUARTER_RE = re.compile(
+    r"\b([1-4])(?:st|nd|rd|th)[-\s]+quarters?\b")  # 3rd quarter
+_WORD_ORDINAL_QUARTER_RE = re.compile(
+    r"\b(first|second|third|fourth)[-\s]+quarters?\b")  # third quarter
+_QUARTER_NUM_RE = re.compile(
+    r"\bquarters?\s*-?\s*([1-4])\b")  # quarter 3, quarter-3
+_FY_QUARTER_RE = re.compile(r"\bfy\d{2}\s*q([1-4])\b")  # FY26Q3
+_ROMAN_QUARTER = {"i": 1, "ii": 2, "iii": 3, "iv": 4}
+_WORD_ORDINAL = {"first": 1, "second": 2, "third": 3, "fourth": 4}
+#: Gregorian month -> quarter. Closed 12+12 map (full names and
+#: abbreviations). "may"/"march" are ambiguous in principle
+#: (modal/verb), but in the ceremony's terse imperative phrasing a
+#: bare month word is overwhelmingly temporal; the veto is
+#: suppress-only and the ceremony is human-in-the-loop, so the
+#: fail-closed direction is to treat them as time discriminators.
+#: "H2"/half-years are deliberately OUT (a half is not a quarter --
+#: interval semantics, pinned residual e16).
+_MONTH_QUARTER = {
+    "january": 1, "february": 1, "march": 1,
+    "april": 2, "may": 2, "june": 2,
+    "july": 3, "august": 3, "september": 3,
+    "october": 4, "november": 4, "december": 4,
+    "jan": 1, "feb": 1, "mar": 1, "apr": 2, "jun": 2,
+    "jul": 3, "aug": 3, "sep": 3, "sept": 3, "oct": 4,
+    "nov": 4, "dec": 4,
+}
+_MONTH_RE = re.compile(
+    r"\b(january|february|march|april|may|june|july|august|"
+    r"september|october|november|december|jan|feb|mar|apr|jun|"
+    r"jul|aug|sep|sept|oct|nov|dec)\b")
+
+
+def _quarter_set(text):
+    """Canonical quarter ids named in ``text``: subset of
+    {"q1", "q2", "q3", "q4"}.
+
+    Covers the shipped q1..q4 token form plus the measured
+    break-round variants: ordinal digits/words ("3rd quarter",
+    "third quarter", "quarter 3"), fiscal shorthands ("FY26Q3"),
+    q-prefixed roman numerals ("qiii"), and month names /
+    abbreviations (Gregorian calendar quarters). "quarterly"
+    still names no quarter. Deterministic, stdlib-only,
+    ceremony-only.
+    """
+    t = _disc_norm(text)
+    out = set()
+    for m in _QUARTER_RE.findall(t):
+        out.add(m)
+    for m in _Q_ROMAN_RE.findall(t):
+        out.add("q%d" % _ROMAN_QUARTER[m])
+    for m in _ORDINAL_QUARTER_RE.findall(t):
+        out.add("q%s" % m)
+    for m in _WORD_ORDINAL_QUARTER_RE.findall(t):
+        out.add("q%d" % _WORD_ORDINAL[m])
+    for m in _QUARTER_NUM_RE.findall(t):
+        out.add("q%s" % m)
+    for m in _FY_QUARTER_RE.findall(t):
+        out.add("q%s" % m)
+    for m in _MONTH_RE.findall(t):
+        out.add("q%d" % _MONTH_QUARTER[m])
+    return out
+
+
+def _quantifier_set(text):
+    """Canonical widening-quantifier set named in ``text``.
+
+    Tokens are normalized (_disc_norm: NFKC + zero-width-strip +
+    lowercase -- fullwidth "ＡＬＬ" and split "a<ZWSP>ll" cannot
+    dodge), stemmed (same pipeline as tokenize) and mapped
+    through the closed _QUANT_CANON. Returns a (possibly empty)
+    set of canonical quantifiers. Ceremony-only.
+    """
+    return set(
+        _QUANT_CANON[t] for t in
+        (_stem(tok) for tok in _TOKEN_RE.findall(_disc_norm(text)))
+        if t in _QUANT_CANON)
+
+
+def _discriminator_conflict(typed, reference):
+    """True iff ``typed`` contradicts ``reference`` on a scope
+    discriminator (row-11 follow-up leg, ceremony-only).
+
+    Three contradiction rules, all conservative (they can only
+    suppress a ceremony match, never create one):
+
+    * quarter contradiction: both texts name a specific quarter
+      and the sets differ ("delete the Q4 report" vs "delete the
+      Q3 report"). Quarter identity is read by _quarter_set --
+      the shipped q1..q4 tokens plus ordinal forms ("3rd
+      quarter"), fiscal shorthands ("FY26Q3"), q-prefixed roman
+      numerals ("qiii"), and month names/abbreviations
+      (Gregorian quarters) -- all NFKC/zero-width normalized, so
+      fullwidth ("Q4") and zero-width-split ("Q<ZWSP>4") forms
+      cannot dodge. One-sided or absent quarters are NOT a
+      conflict -- "erase the report" vs "delete the Q3 report"
+      (wave-147 mandated accept) and "obliterate the quarterly
+      filing" vs "delete the Q3 report" (wave-149 mandated
+      accept; "quarterly" names no specific quarter) both stay
+      accepted.
+    * year contradiction: both texts name a 4-digit year and the
+      sets differ ("delete the 2025 report" vs "delete the 2024
+      report"), read on the same normalization (fullwidth years
+      fold to ASCII).
+    * quantifier widening: the typed text names a widening
+      quantifier the reference does not name identically
+      ("erase all filings" vs "delete the Q3 report";
+      "remove the whole archive" vs "delete the Q3 report").
+      The veto is typed-widening-only: a reference that widens
+      beyond the typed text is narrowing by the human, which the
+      ceremony accepts ("delete the report" vs "delete all
+      reports").
+
+    Deterministic, stdlib-only. Used ONLY by the ceremony tiers
+    below; the row-11 paraphrase tier keeps raw token-tversky.
+    """
+    tq, rq = _quarter_set(typed), _quarter_set(reference)
+    if tq and rq and tq != rq:
+        return True
+    ty = set(_YEAR_RE.findall(_disc_norm(typed)))
+    ry = set(_YEAR_RE.findall(_disc_norm(reference)))
+    if ty and ry and ty != ry:
+        return True
+    tqq, rqq = _quantifier_set(typed), _quantifier_set(reference)
+    if tqq and tqq != rqq:
+        return True
+    return False
 
 
 def _stem(tok):
@@ -321,9 +512,14 @@ def _canonical_tokens(text):
     Same pipeline as tokenize() (lowercase, _TOKEN_RE, stem,
     stopwords dropped), then each stem maps through
     _TTC_SYNONYM_MAP (identity when absent).
+
+    Break-round v2: read on _disc_norm (NFKC + zero-width-strip +
+    lowercase) so invisible-char-split tokens canonicalize like
+    their visible forms. Ceremony-only; ASCII behavior identical
+    to before.
     """
     out = set()
-    for t in _TOKEN_RE.findall(text.lower()):
+    for t in _TOKEN_RE.findall(_disc_norm(text)):
         if t in _STOPWORDS:
             continue
         stemmed = _stem(t)
@@ -339,8 +535,12 @@ def _verb_class(text):
     verb-class token appears. First-verb-wins matches the ceremony's
     reference shape ("verb target" effect atoms) and ordinary
     imperative phrasing ("erase the report").
+
+    Break-round v2: read on _disc_norm (NFKC + zero-width-strip +
+    lowercase) so invisible-char-split verbs still read as their
+    class. Ceremony-only; ASCII behavior identical to before.
     """
-    for t in _TOKEN_RE.findall(text.lower()):
+    for t in _TOKEN_RE.findall(_disc_norm(text)):
         cls = _TTC_VERB_CLASSES.get(_stem(t))
         if cls is not None:
             return cls
@@ -351,7 +551,7 @@ def typed_scope_similarity(typed, reference):
     """Synonym-aware similarity for the type-to-confirm ceremony.
 
     ``max(raw token-tversky, canonicalized token-tversky)`` at the
-    same DEFAULT_THRESHOLD, with two conservative vetoes (either
+    same DEFAULT_THRESHOLD, with three conservative vetoes (any
     forces 0.0):
       - destination veto (wave-136, unchanged): both texts name
         explicit differing destinations -> 0.0. Computed on the
@@ -360,6 +560,14 @@ def typed_scope_similarity(typed, reference):
         verb-class action verb and the canonical verbs differ ->
         0.0. "send the report" vs "archive the Q3 report" is 0.0;
         "erase the report" vs "delete the Q3 report" is 0.8889.
+      - discriminator veto (row-11 follow-up leg): the typed
+        text contradicts the reference on a scope discriminator
+        (differing specific quarters Q1..Q4, differing 4-digit
+        years, or a typed-side widening quantifier the reference
+        does not name) -> 0.0. "delete the Q4 report" vs "delete
+        the Q3 report" is 0.0; "erase all filings" vs "delete the
+        Q3 report" is 0.0. Contradiction-only: one-sided or
+        absent discriminators never veto.
 
     Empty/None inputs score 0.0 and never match; non-string inputs
     raise ValueError (same type discipline as target_similarity).
@@ -376,6 +584,22 @@ def typed_scope_similarity(typed, reference):
             % (type(typed).__name__, type(reference).__name__))
     if not typed.strip() or not reference.strip():
         return 0.0
+    if _discriminator_conflict(typed, reference):
+        return 0.0  # discriminator veto: never fuzz scope identity
+    # Break-round v2 (evasion probes e10-e13): a typed scope that
+    # names NO object noun cannot match a reference whose scope
+    # identity includes a specific object -- "delete the thing" vs
+    # "delete the Q3 report" scored 0.571 on verb luck alone, and
+    # "remove it" 0.667. The wave-147/149 pinned accepts all name
+    # a noun-class object on the typed side, so the rule is
+    # suppress-only with no movement on the labeled corpus.
+    # Ceiling: the noun classes are the closed report family
+    # (_STRUCT_NOUN_CLASSES) -- an unlisted object class on the
+    # reference side ("delete the Q3 customer list") is outside
+    # the check, by the same closed-list discipline as the
+    # discriminator itself.
+    if _struct_noun_set(reference) and not _struct_noun_set(typed):
+        return 0.0  # nounless typed scope: never fuzz the object
     raw = target_similarity(typed, reference)
     da, db = _destinations(typed), _destinations(reference)
     if da and db and da != db:
@@ -481,8 +705,12 @@ def _struct_verb_class(text):
 
     Same first-verb-wins discipline as _verb_class, over the
     extended _STRUCT_VERB_CLASSES.
+
+    Break-round v2: read on _disc_norm (NFKC + zero-width-strip +
+    lowercase) so invisible-char-split verbs still read as their
+    class. Ceremony-only; ASCII behavior identical to before.
     """
-    for t in _TOKEN_RE.findall(text.lower()):
+    for t in _TOKEN_RE.findall(_disc_norm(text)):
         cls = _STRUCT_VERB_CLASSES.get(_stem(t))
         if cls is not None:
             return cls
@@ -495,9 +723,14 @@ def _struct_noun_set(text):
     Stopwords dropped, tokens stemmed, then mapped through the
     closed _STRUCT_NOUN_CLASSES. Returns a (possibly empty) set of
     canonical nouns.
+
+    Break-round v2: read on _disc_norm (NFKC + zero-width-strip +
+    lowercase) so an invisible-char-split noun ("repor<ZWSP>t")
+    still counts as the noun it names rather than as a nounless
+    evasion. Ceremony-only.
     """
     out = set()
-    for t in _TOKEN_RE.findall(text.lower()):
+    for t in _TOKEN_RE.findall(_disc_norm(text)):
         if t in _STOPWORDS:
             continue
         cls = _STRUCT_NOUN_CLASSES.get(_stem(t))
@@ -513,7 +746,9 @@ def structural_scope_match(typed, reference):
     classes AND the canonical verbs are the SAME AND the
     object-noun stem sets are IDENTICAL and non-empty. The
     wave-136 destination veto applies (differing explicit
-    destinations on both sides -> False).
+    destinations on both sides -> False), as does the
+    discriminator veto (contradictory quarters/years or
+    typed-side widening quantifiers -> False).
 
     "obliterate the quarterly filing" vs "delete the Q3 report"
     -> True (DELETE == DELETE, {report} == {report}); the same
@@ -538,6 +773,8 @@ def structural_scope_match(typed, reference):
     da, db = _destinations(typed), _destinations(reference)
     if da and db and da != db:
         return False  # destination veto (on originals): never fuzz
+    if _discriminator_conflict(typed, reference):
+        return False  # discriminator veto: never fuzz scope identity
     va, vb = _struct_verb_class(typed), _struct_verb_class(reference)
     if va is None or vb is None or va != vb:
         return False  # verb-class veto: different (or absent) actions

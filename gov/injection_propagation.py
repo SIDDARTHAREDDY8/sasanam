@@ -37,33 +37,56 @@ How it works (deterministic, $0, stdlib-only):
   trust domain, like SentinelVault). ``observe_input(agent_id,
   source_id, text)`` records the normalized instruction spans of each
   input-context segment (tool results, retrieved docs, emails, commit
-  summaries -- whatever the deployment feeds it). ``check_output`` 
-  extracts the output's instruction spans and flags any span that is
-  present in the observed input spans AND absent from the user's
-  original request spans. The channel label ("file"/"chat"/"code"/...)
-  is recorded for triage, never verdict-relevant.
+  summaries -- whatever the deployment feeds it); wave-152 adds the
+  automatic path: a successful governed ``read_file`` returning real
+  sandbox bytes observes itself into the installed tracker with the
+  auto source id ``read:auto:<sandbox-relative-path>``, mirroring the
+  wave-141 rare-token discipline. The auto observation is
+  best-effort (never raises, never breaks the read, no audit event)
+  and idempotent with the explicit path (the tracker keys by
+  (agent_id, source_id), so an explicit ``note_propagation_input``
+  with the same id replaces the auto observation). Reads that never
+  cross the governed tool boundary (direct filesystem access) stay
+  invisible by construction -- the documented coverage ceiling.
+  ``check_output`` extracts the output's instruction spans and flags
+  any span that is present in the observed input spans AND absent
+  from the user's original request spans; wave-152 adds substring
+  matching (an observed span embedded as a word-boundary-delimited
+  substring of a longer, non-instruction-shaped output clause --
+  the worm-in-README shape -- also flags). The channel label
+  ("file"/"chat"/"code"/...) is recorded for triage, never
+  verdict-relevant.
 - The executor renders a suspect as LOUD ``injection_propagation_suspect``
   (flag "injection_propagation"); with no tracker installed the check is
   a silent allow (zero behavior change).
 
 Honest ceilings (documented, measured in
 evals/injection_propagation_probes.py):
-- Matching is EXACT on normalized spans. A paraphrased reproduction
-  ("Only delete the files we added" for "Remove only files we
-  introduce") is invisible by design -- fuzzy/semantic matching is out
-  of scope for this pilot (pinned EXPECTED, measured miss rate 6/6).
-  This is the same class boundary as the row-7/row-11 paraphrase
-  ceilings: token overlap is not semantics, and embeddings are outside
-  the $0 deterministic envelope.
+- Matching is EXACT on normalized spans, plus word-boundary-delimited
+  SUBSTRING matching (wave-152): an observed instruction span embedded
+  inside a longer output clause flags even when the clause is not
+  itself instruction-shaped (the worm-in-README shape). Substring
+  matching applies only to spans >= ``MIN_SUBSTRING_CHARS`` (10) to
+  hold the word-boundary FP rate down; mid-word matches never fire.
+  A paraphrased reproduction ("Only delete the files we added" for
+  "Remove only files we introduce") is still invisible by design --
+  fuzzy/semantic matching is out of scope for this pilot (pinned
+  EXPECTED, measured miss rate 6/6). This is the same class boundary
+  as the row-7/row-11 paraphrase ceilings: token overlap is not
+  semantics, and embeddings are outside the $0 deterministic envelope.
 - The imperative-verb set is a curated English pilot list. Non-English
   injections, and English imperatives outside the list ("bring",
   "tidy"), are invisible. Extending the list is calibration, not a
   fix: a wider list raises the FP rate on benign instructional prose.
 - Input observation is EXPLICIT (``observe_input`` /
-  ``note_propagation_input``). Reads that never cross the observation
-  call are invisible by construction -- auto-observing every governed
-  read (the wave-141 rare-token discipline) is a named follow-up, not
-  this pilot.
+  ``note_propagation_input``) PLUS AUTOMATIC for governed reads
+  (wave-152: a successful governed ``read_file`` returning real
+  sandbox bytes observes itself with id ``read:auto:<path>``,
+  mirroring the wave-141 rare-token discipline -- the follow-up is
+  now landed). Reads that never cross the governed tool boundary
+  (direct filesystem access, out-of-band) remain invisible by design
+  -- pinned EXPECTED in the battery (p11), the documented coverage
+  ceiling.
 - The reproduced span IS logged in the audit event (truncated to 400
   chars). Unlike rare_token.py (which never logs token strings), the
   span here is the evidence the operator triages on, and it comes from
@@ -83,6 +106,7 @@ __all__ = [
     "PropagationTracker",
     "IMPERATIVE_VERBS",
     "MAX_SPAN_CHARS",
+    "MIN_SUBSTRING_CHARS",
 ]
 
 # Curated English imperative pilot set: verbs characteristic of the
@@ -107,6 +131,12 @@ _WS_RE = re.compile(r"\s+")
 
 MAX_SPAN_CHARS = 400
 
+# Wave-152: observed spans shorter than this are exempt from SUBSTRING
+# matching (below ~10 chars the word-boundary FP rate dominates: short
+# verb phrases like "share" or "run" appear in benign prose). Exact
+# whole-span matching still applies at any length.
+MIN_SUBSTRING_CHARS = 10
+
 
 def normalize_span(span):
     """Deterministic normalization for span comparison.
@@ -121,6 +151,37 @@ def normalize_span(span):
     s = _WS_RE.sub(" ", s)
     s = s.strip(" \t.,!?;:\"'()[]{}<>-")
     return s
+
+
+def _all_normalized_clauses(text):
+    """Every clause of ``text`` normalized (wave-152).
+
+    Unlike ``extract_instruction_spans`` this keeps non-instruction
+    clauses too -- the substring matcher scans them for embedded
+    observed spans (a worm instruction embedded mid-message inside a
+    longer, non-instruction-shaped clause).
+    """
+    clauses = []
+    if not isinstance(text, str):
+        return clauses
+    for clause in _CLAUSE_SPLIT_RE.split(text):
+        norm = normalize_span(clause)
+        if norm:
+            clauses.append(norm)
+    return clauses
+
+
+def _word_boundary_substring(haystack, needle):
+    """True when ``needle`` occurs in ``haystack`` at word boundaries.
+
+    Guards against mid-word matches ("clean up our pod" must not fire
+    on "clean up our podcast"). Unicode-aware like the rest of the
+    module (``\\w`` covers Arabic/CJK word chars for future lists).
+    """
+    if not haystack or not needle:
+        return False
+    return re.search(r"(?<!\w)%s(?!\w)" % re.escape(needle),
+                     haystack) is not None
 
 
 def _first_words(normalized):
@@ -168,7 +229,12 @@ class PropagationTracker:
     ``observe_input`` records instruction spans seen in the agent's
     input context; ``check_output`` flags output spans that reproduce
     observed input spans without being in the user's original request.
-    In-process only (operator trust domain); no persistence.
+    Wave-152: the executor also calls ``observe_input`` automatically
+    for successful governed ``read_file`` results (source id
+    ``read:auto:<path>``); the tracker keys by (agent_id, source_id),
+    so explicit and automatic observations of the same document are
+    one observation, never a double count. In-process only (operator
+    trust domain); no persistence.
     """
 
     def __init__(self):
@@ -210,27 +276,69 @@ class PropagationTracker:
 
         Verdicts: "allow" (silent); "propagation_suspect" (the output
         reproduces >=1 observed input instruction span that was NOT in
-        the user's original request). The result dict carries the
-        reproduced raw spans, the source ids they were observed in,
-        and the channel. Never blocks -- the executor renders the
-        suspect as a LOUD triage event and proceeds.
+        the user's original request). Two match modes:
+        - "exact": the output contains the whole observed span as an
+          instruction-shaped clause (wave-151).
+        - "substring" (wave-152): the observed span appears as a
+          word-boundary-delimited SUBSTRING of a longer output clause
+          that is not itself instruction-shaped (the worm-in-README
+          shape). Spans shorter than ``MIN_SUBSTRING_CHARS`` are
+          exempt from substring matching (word-boundary FP control);
+          exact matching still applies at any length. An output that
+          merely quotes the observed instruction as a warning still
+          reproduces it -- it flags; the FP control is the
+          user-request exclusion (whole-clause or substring), which
+          suppresses user-given instructions in both modes.
+        The result dict carries the reproduced raw spans, the source
+        ids they were observed in, and the channel. Never blocks --
+        the executor renders the suspect as a LOUD triage event and
+        proceeds.
         """
         agent_id = str(agent_id)
         channel = str(channel)
         out_spans = extract_instruction_spans(output_text)
         user_spans = {norm for _, norm in
                       extract_instruction_spans(user_request or "")}
+        user_full_norm = normalize_span(user_request or "")
         observed = self._inputs.get(agent_id, {})
         suspects = []
+        flagged = set()
         for raw, norm in out_spans:
             if norm in user_spans:
                 continue  # user-given instruction: the FP control
             hit_sources = sorted(
                 sid for sid, spans in observed.items() if norm in spans)
             if hit_sources:
+                flagged.add(norm)
                 suspects.append({"span": raw[:MAX_SPAN_CHARS],
                                  "normalized": norm,
-                                 "sources": hit_sources})
+                                 "sources": hit_sources,
+                                 "match": "exact"})
+        # Wave-152 substring matching (deterministic order: sorted
+        # source ids, sorted spans -- set iteration is hash-order).
+        clause_norms = _all_normalized_clauses(output_text)
+        for sid in sorted(observed):
+            for s in sorted(observed[sid]):
+                if s in flagged or s in user_spans:
+                    continue
+                if len(s) < MIN_SUBSTRING_CHARS:
+                    continue
+                if _word_boundary_substring(user_full_norm, s):
+                    continue  # user-given: the FP control
+                hit_clause = None
+                for cn in clause_norms:
+                    if _word_boundary_substring(cn, s):
+                        hit_clause = cn
+                        break
+                if hit_clause is not None:
+                    flagged.add(s)
+                    srcs = sorted(x for x, ss in observed.items()
+                                  if s in ss)
+                    suspects.append({"span": s[:MAX_SPAN_CHARS],
+                                     "normalized": s,
+                                     "sources": srcs,
+                                     "match": "substring",
+                                     "context": hit_clause[:MAX_SPAN_CHARS]})
         if not suspects:
             return {"verdict": "allow",
                     "spans": [],

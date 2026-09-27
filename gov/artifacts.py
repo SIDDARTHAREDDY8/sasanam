@@ -148,9 +148,26 @@ class ArtifactInventory(object):
     write hook registers every successful ``write_file``; the egress
     check consults the registry. Empty by default: no writes, no
     behavior change.
+
+    Row-12 deployment manifest (opt-in, cross-run leg): the
+    operator's HMAC-pinned record of what deployment-critical files
+    are SUPPOSED to be (path -> sha256 at deployment), attached via
+    ``attach_deployment_manifest``. The run inventory is launderable
+    -- a governed ``write_file`` of hostile bytes REGISTERS those
+    bytes, so a later egress reads "clean". The deployment pin is
+    the only record that knows the truth, so ``check_egress``
+    consults it in addition to the run registry: a mismatch against
+    the deployment pin is a stale registration against the
+    cross-run pin and maps onto the existing ``tampered`` status and
+    ``artifact_tampered`` flag (no new policy surface; the existing
+    tampered rule and its use-time refusal apply unchanged). The
+    specific manifest signal rides on the verdict as
+    ``manifest_status``/``manifest_detail`` for reviewers and test
+    seams. The manifest never clears a run-inventory signal -- it
+    only adds. ``None`` (default) = byte-identical behavior.
     """
 
-    def __init__(self):
+    def __init__(self, deployment_manifest=None):
         self._records = {}  # normalized path -> latest ArtifactRecord
         # Append-only registration EVENT log (the hash-chained trail).
         # Re-registration appends a new event; _records keeps only the
@@ -158,6 +175,79 @@ class ArtifactInventory(object):
         # second write to the same path cannot break the linkage.
         self._chain = []
         self._head_digest = ""
+        # Row-12 deployment manifest (None = not attached).
+        self._deployment_manifest = None
+        self._manifest_hmac_key = None
+        self._manifest_ttl_seconds = None
+        if deployment_manifest is not None:
+            self.attach_deployment_manifest(deployment_manifest)
+
+    def attach_deployment_manifest(self, pinned, *, hmac_key=None,
+                                   ttl_seconds=None):
+        """Attach the operator's deployment-pinned manifest.
+
+        ``pinned`` is the envelope from
+        ``gov.artifact_inventory_manifest.pin_manifest``.
+        ``hmac_key`` is the explicit key override (when None, the
+        deployment key resolves via the guarded keyprovider
+        chokepoint at every consult). ``ttl_seconds`` optionally
+        bounds the pin's age.
+
+        The envelope is verified NOW, fail-loud (ValueError on a
+        malformed/forged/stale envelope): a bad pin must be LOUD at
+        setup, not a silent gap at consult. Every ``check_egress``
+        re-verifies (fail-closed to ``tampered``), so a rotated key
+        epoch or a mutated envelope cannot silently widen the gate
+        -- the fail-closed direction is require_approval until the
+        operator re-pins.
+        """
+        from . import artifact_inventory_manifest as _manifest
+        ok, reason = _manifest.verify_manifest_pin(
+            pinned, hmac_key=hmac_key, ttl_seconds=ttl_seconds)
+        if not ok:
+            raise ValueError(
+                "refusing to attach deployment manifest: %s" % (reason,))
+        self._deployment_manifest = pinned
+        self._manifest_hmac_key = hmac_key
+        self._manifest_ttl_seconds = ttl_seconds
+
+    def detach_deployment_manifest(self):
+        """Remove the deployment manifest (back to run-scoped only)."""
+        self._deployment_manifest = None
+        self._manifest_hmac_key = None
+        self._manifest_ttl_seconds = None
+
+    @property
+    def has_deployment_manifest(self):
+        """True when a deployment manifest is attached."""
+        return self._deployment_manifest is not None
+
+    def _consult_manifest(self, key, sha256_now):
+        """Consult the deployment manifest for one normalized path.
+
+        Returns the manifest verdict dict when the manifest speaks
+        (mismatch / unverifiable), else None. Never raises: consult
+        is defense-in-depth and must not break egress on its own
+        errors (fail-open on consult error, exactly like the run
+        inventory's unreadable discipline -- but note a
+        *verifiably bad* envelope is manifest_unverifiable, LOUD
+        and fail-closed, not a consult error).
+        """
+        pinned = self._deployment_manifest
+        if pinned is None:
+            return None
+        try:
+            from . import artifact_inventory_manifest as _manifest
+            mverdict = _manifest.check_manifest(
+                key, sha256_now, pinned,
+                hmac_key=self._manifest_hmac_key,
+                ttl_seconds=self._manifest_ttl_seconds)
+        except Exception:
+            return None
+        if mverdict["status"] in ("manifest_mismatch",
+                                  "manifest_unverifiable"):
+            return mverdict
+        return None
 
     def register(self, path, *, sha256, size, agent_id, run_id,
                  classification=None):
@@ -220,11 +310,22 @@ class ArtifactInventory(object):
         deployment's *current* label for the path; the verdict uses
         the more restrictive of the registration-time and current
         labels (a label added after the write still gates).
+
+        Row-12: when a deployment manifest is attached, the verdict
+        also carries ``manifest_status``/``manifest_detail`` (None
+        when the manifest is silent for this path). A
+        manifest_mismatch / manifest_unverifiable maps onto the
+        existing ``tampered`` status and ``artifact_tampered`` flag
+        -- the deployment pin is a cross-run registration, so
+        deviation IS a stale registration -- except it never
+        weakens a ``restricted`` verdict (deny beats
+        require_approval). With no manifest attached the verdict is
+        byte-identical to the pre-manifest form.
         """
         key = normalize_path(path)
         rec = self._records.get(key)
         if rec is None:
-            return {
+            verdict = {
                 "status": "unknown",
                 "flag": UNKNOWN_FLAG,
                 "path": key,
@@ -233,9 +334,9 @@ class ArtifactInventory(object):
                            "the governed write path this run."
                            % (key,)),
             }
-        if (sha256_now is not None
+        elif (sha256_now is not None
                 and sha256_now != rec.sha256):
-            return {
+            verdict = {
                 "status": "tampered",
                 "flag": TAMPERED_FLAG,
                 "path": key,
@@ -245,24 +346,58 @@ class ArtifactInventory(object):
                            "stale."
                            % (key, sha256_now[:12], rec.sha256[:12])),
             }
-        label = _more_restrictive(rec.classification, current_label)
-        if label == "restricted":
-            return {
-                "status": "restricted",
-                "flag": RESTRICTED_FLAG,
-                "path": key,
-                "label": label,
-                "detail": ("Egress references registered artifact %r "
-                           "classified %r." % (key, label)),
-            }
-        return {
-            "status": "clean",
-            "flag": None,
-            "path": key,
-            "label": label,
-            "detail": ("Egress references registered artifact %r "
-                       "(label %r): no artifact signal." % (key, label)),
-        }
+        else:
+            label = _more_restrictive(rec.classification, current_label)
+            if label == "restricted":
+                verdict = {
+                    "status": "restricted",
+                    "flag": RESTRICTED_FLAG,
+                    "path": key,
+                    "label": label,
+                    "detail": ("Egress references registered artifact %r "
+                               "classified %r." % (key, label)),
+                }
+            else:
+                verdict = {
+                    "status": "clean",
+                    "flag": None,
+                    "path": key,
+                    "label": label,
+                    "detail": ("Egress references registered artifact %r "
+                               "(label %r): no artifact signal."
+                               % (key, label)),
+                }
+        # Row-12 deployment-manifest consult (opt-in). The manifest
+        # never clears a run-inventory signal -- it only adds. With
+        # no manifest attached the verdict above is returned
+        # untouched (byte-identical to the pre-manifest form).
+        if self._deployment_manifest is None:
+            return verdict
+        mverdict = self._consult_manifest(key, sha256_now)
+        verdict = dict(verdict)
+        if mverdict is None:
+            verdict["manifest_status"] = None
+            verdict["manifest_detail"] = None
+            return verdict
+        run_status = verdict["status"]
+        verdict["manifest_status"] = mverdict["status"]
+        verdict["manifest_detail"] = mverdict["detail"]
+        if run_status != "restricted":
+            # Fail-closed onto the existing tampered status/flag:
+            # the deployment pin is the cross-run registration, so
+            # a mismatch (or an unverifiable pin) IS a stale
+            # registration. The existing tampered rule and its
+            # use-time refusal apply unchanged.
+            verdict["status"] = "tampered"
+            verdict["flag"] = TAMPERED_FLAG
+            verdict["detail"] = (
+                "Deployment-manifest %s for %r: %s "
+                "(Run-inventory status was %r; the deployment pin is "
+                "the cross-run registration, so this is a stale "
+                "registration.)"
+                % (mverdict["status"], key, mverdict["detail"],
+                   run_status))
+        return verdict
 
     def __len__(self):
         return len(self._records)

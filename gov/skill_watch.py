@@ -11,10 +11,16 @@ module provides:
    (registry URL, installer identity, install time).
 2. **Continuous verification** — :meth:`SkillWatch.verify_all` is the
    scheduled sweep (always re-hashes); :meth:`SkillWatch.check_at_use`
-   is the cheap use-time check for the governed call path (stat
-   prefilter, full re-hash on any change). The executor's verdict path
-   calls ``check_at_use`` and DENIES the tool call fail-closed on
-   ``ok=False``.
+   is the use-time check for the governed call path. Every use-time
+   check re-reads and re-hashes the content against the pin (F177
+   parity: the stat hint is a scheduling hint only, never trusted as
+   proof of sameness — a restored (mtime_ns, size) under rewritten
+   bytes previously attested clean until the next sweep). The
+   executor's verdict path calls ``check_at_use`` and DENIES the tool
+   call fail-closed on ``ok=False``. :meth:`SkillWatch.fetch_verified_at_use`
+   additionally hands over the exact bytes that were hashed
+   (fetch-once: no second observation for a source to equivocate on
+   between check and use).
 3. **Fail-closed mutation response** — on digest mismatch the skill is
    quarantined (its tool calls are denied), a ``skill_mutated`` audit
    event is emitted carrying before/after *digests* (never content)
@@ -80,10 +86,13 @@ Integration contract (executor wiring):
 $0 spend, synthetic/local only. No network. Stdlib only.
 
 Honest residuals:
-- The use-time stat prefilter trusts mtime/size; an attacker able to
-  forge both defeats the *cheap* path — the scheduled sweep always
-  re-hashes and still catches it, and any stat change triggers a
-  re-hash at use time.
+- CLOSED (row 6/14 seam, 2026-09-27): the use-time stat prefilter
+  trusted mtime/size, so an attacker able to forge both defeated the
+  cheap path until the next sweep. The use-time check now re-hashes
+  content against the pin on EVERY use (F177 parity) — a forged
+  (mtime_ns, size) under rewritten bytes quarantines fail-closed at
+  first use. The scheduled sweep (always re-hashes) remains a second
+  layer.
 - Single-process in-memory state plus a JSON pin file: no cross-
   process registry locking (same as the rest of the prototype
   surface).
@@ -213,9 +222,12 @@ class ContentSource(abc.ABC):
     def stat_hint(self):
         """Optional cheap change hint: (mtime_ns, size) or None.
 
-        The use-time check uses this to skip re-hashing unchanged files.
-        A changed hint always triggers a full re-hash; the hint is never
-        trusted as proof of sameness beyond skipping work.
+        Scheduling hint only. The use-time check always re-reads and
+        re-hashes the content against the pin (F177 parity): a hint is
+        never trusted as proof of sameness, because (mtime_ns, size)
+        are restorable by anyone with write access (utime + padding).
+        Registration records the hint for bookkeeping; the sweep uses
+        it only to report, never to skip verification.
         """
         return None
 
@@ -297,8 +309,10 @@ _EVENT_VERSION_DRIFT = "skill_version_drift"
 #: scheduler/heartbeat calls ``executor.run_skill_sweep()`` this often.
 #: On mismatch the sweep quarantines the skill — tool calls deny at use
 #: time until an explicit re-pin approval — and chains ``skill_mutated``
-#: into the audit log. The use-time check is the fast path; the sweep is
-#: the backstop that defeats forged stat metadata.
+#: into the audit log. The sweep is defense-in-depth behind the
+#: content-bound use-time check (which re-hashes on every use and needs
+#: no backstop for forged stat metadata); the sweep additionally
+#: catches mutations on skills whose use-time path is rarely exercised.
 SWEEP_INTERVAL_SECONDS = 300
 
 
@@ -521,9 +535,11 @@ class SkillWatch:
         try:
             last_stat = source.stat_hint()
         except Exception:
-            # A source that yields bytes but cannot be stat'ed gets no
-            # prefilter: every check re-hashes. Never fail registration
-            # on the optimization path.
+            # A source that yields bytes but cannot be stat'ed gets
+            # last_stat=None. The hint is bookkeeping only: the
+            # use-time check re-hashes content against the pin on
+            # every use regardless (F177 parity). Never fail
+            # registration on the hint path.
             last_stat = None
         # GAP-5: pin the version label (from origin) and the live wire
         # identity (from the source). Both are opt-in; both are
@@ -686,8 +702,14 @@ class SkillWatch:
 
     # -- verification ----------------------------------------------------------
 
-    def _current_digest(self, skill_id):
-        """Read and hash current content. Returns (digest, stat_hint).
+    def _current_content(self, skill_id):
+        """Read current content bytes, hash, and stat hint.
+
+        Returns (content_bytes, digest, stat_hint). The bytes returned
+        are EXACTLY the bytes that were hashed — callers that hand
+        bytes onward (fetch_verified_at_use) must use these, never a
+        second read, so there is a single observation for a source to
+        answer (fetch-once: no check/use split to equivocate on).
 
         Raises SkillWatchError on any read/stat/hash failure — the
         caller quarantines fail-closed. A stat failure here must NOT
@@ -704,12 +726,24 @@ class SkillWatch:
                                   % (type(e).__name__, e))
         if not isinstance(content, (bytes, bytearray)):
             raise SkillWatchError("content source returned non-bytes")
+        content = bytes(content)
         try:
             stat = rec["source"].stat_hint()
         except Exception as e:  # noqa: BLE001 — fail closed, never escape
             raise SkillWatchError("stat failed: %s: %s"
                                   % (type(e).__name__, e))
-        return _digest(bytes(content)), stat
+        return content, _digest(content), stat
+
+    def _current_digest(self, skill_id):
+        """Read and hash current content. Returns (digest, stat_hint).
+
+        Raises SkillWatchError on any read/stat/hash failure — the
+        caller quarantines fail-closed. A stat failure here must NOT
+        escape as an unexpected exception: the watcher promises that a
+        failed check reads as quarantined, never as a crash or a pass.
+        """
+        _, digest, stat = self._current_content(skill_id)
+        return digest, stat
 
     def _quarantine(self, skill_id, event_type, **fields):
         self._quarantined.add(skill_id)
@@ -848,10 +882,10 @@ class SkillWatch:
     def _verify_bindings(self, skill_id):
         """GAP-5: re-verify identity + version bindings. (ok, detail).
 
-        Runs on BOTH the stat-prefilter fast path and the re-hash slow
-        path: the stat hint covers only the manifest file, while the
-        wire identity and version are independent observations (the
-        Leg B reasoning for references). Any drift, withdrawal, or
+        Runs on every use-time check after the manifest digest check:
+        the stat hint covers only the manifest file, while the wire
+        identity and version are independent observations (the Leg B
+        reasoning for references). Any drift, withdrawal, or
         observation failure quarantines fail-closed.
         """
         ok, detail = self._verify_identity(skill_id)
@@ -990,11 +1024,8 @@ class SkillWatch:
                                      self._pin_path, reason))
 
     def check_at_use(self, skill_id):
-        """Cheap use-time check for the governed call path.
+        """Use-time check for the governed call path.
 
-        Stat prefilter: unchanged (mtime_ns, size) since the last
-        verification skips the re-hash. Any stat change — or any skill
-        without a stat hint — triggers a full re-hash against the pin.
         Returns (ok, detail) where ok=False means the caller MUST deny
         the tool call. Unregistered skills return (False,
         "unregistered-no-pin"): an id the inventory never pinned is a
@@ -1005,6 +1036,22 @@ class SkillWatch:
         explicit opt-out, which never reaches this seam:
         skill_id_for_tool maps an explicit ``None`` entry to ``None``
         ("unattributed"), and the executor declines to check those.
+
+        Content-bound: EVERY call re-reads and re-hashes the content
+        against the pin (F177 parity — the stat hint is a scheduling
+        hint only, never trusted as proof of sameness). A restored
+        (mtime_ns, size) under rewritten bytes previously attested
+        clean until the next sweep; now it quarantines fail-closed at
+        the first use-time check. Cost: one content read + SHA-256 per
+        attributed tool call (us-scale for KB-sized skills).
+
+        Wiring note (row-6/14 break round v2): this seam returns a
+        verdict ONLY. If the caller (or anything downstream) re-reads
+        the skill bytes after this check, the re-read bytes were never
+        attested — the check/use split persists at the consumer layer.
+        Consumers that execute skill bytes must use
+        ``fetch_verified_at_use`` and execute the handed bytes, never a
+        second read.
 
         Never raises for a registered skill: every source failure
         quarantines fail-closed and returns (False, ...). No
@@ -1018,69 +1065,81 @@ class SkillWatch:
         audited but unenforced.
 
         GAP-5: after the manifest check, the bound wire identity and
-        the pinned version label are re-verified on BOTH the
-        stat-prefilter fast path and the re-hash slow path (the stat
-        hint covers only the manifest file; identity and version are
-        independent observations). Drift, withdrawal, or observation
-        failure quarantines fail-closed.
+        the pinned version label are re-verified (the stat hint covers
+        only the manifest file; identity and version are independent
+        observations). Drift, withdrawal, or observation failure
+        quarantines fail-closed.
+        """
+        ok, _verified_bytes, detail = self._check_at_use_full(skill_id)
+        return ok, detail
+
+    def fetch_verified_at_use(self, skill_id):
+        """Use-time check that also hands over the verified bytes.
+
+        Fetch-once seam (gov/load_gate.SkillLoader precedent): the
+        returned bytes are EXACTLY the bytes that were hashed against
+        the pin — there is no second observation for a
+        network/callable source to equivocate on between check and
+        use. Returns (ok, verified_bytes, detail): ok=True means
+        verified_bytes is bytes whose sha256 equals the pinned digest;
+        ok=False means verified_bytes is None and the skill is
+        quarantined exactly as check_at_use would quarantine it
+        (same events, same fail-closed contract). Intended consumer:
+        the executor's skill-watch call site, so execution consumes
+        the bytes the check attested instead of re-fetching.
+
+        Never raises for a registered skill. Unregistered ids return
+        (False, None, "unregistered-no-pin") without inventing
+        quarantine state.
+        """
+        return self._check_at_use_full(skill_id)
+
+    def _check_at_use_full(self, skill_id):
+        """Full use-time check. Returns (ok, verified_bytes|None, detail).
+
+        The single implementation behind check_at_use (verdict only)
+        and fetch_verified_at_use (verdict + attested bytes).
         """
         # H22: revalidate the attached pin file (if any) before
         # trusting the in-memory pins — a post-load rewrite on disk
         # quarantines fail-closed.
         if not self._revalidate_pin_file():
-            return False, "pin-file-tamper-quarantined"
+            return False, None, "pin-file-tamper-quarantined"
         if skill_id in self._quarantined:
-            return False, "quarantined"
+            return False, None, "quarantined"
         rec = self._skills.get(skill_id)
         if rec is None:
-            return False, "unregistered-no-pin"
+            return False, None, "unregistered-no-pin"
+        # Content binding: ALWAYS re-read and re-hash against the pin.
+        # F177 parity — the stat hint is never trusted as proof of
+        # sameness (restorable via utime + padding by anyone with
+        # write access), so there is no stat-match early return: a
+        # rewritten-bytes/restored-stat skill quarantines here, at
+        # first use, instead of attesting clean until the next sweep.
         try:
-            current_stat = rec["source"].stat_hint()
-        except Exception as e:  # noqa: BLE001 — fail-closed on any stat fault
-            self._quarantine(skill_id, _EVENT_UNVERIFIABLE,
-                             reason="stat failed: %s" % str(e)[:200])
-            return False, "unverifiable-quarantined"
-        if (current_stat is not None and rec["last_stat"] is not None
-                and current_stat == rec["last_stat"]):
-            # F142 Leg B: the stat prefilter only covers the manifest.
-            # The manifest being byte-identical is exactly the rug-pull
-            # shape (referenced URL content swapped, manifest
-            # untouched), so bound references are rechecked even on the
-            # fast path. Unverified references stay audited-but-
-            # unenforced inside _verify_references.
-            rok, rdetail = self._verify_references(skill_id)
-            if not rok:
-                return False, rdetail
-            # GAP-5: same reasoning for the wire identity and version --
-            # a swapped server (MCPoison) or a moved version label
-            # (postmark-mcp) never touches the manifest file.
-            bok, bdetail = self._verify_bindings(skill_id)
-            if not bok:
-                return False, bdetail
-            return True, "clean"
-        # Stat changed (or no hint available): re-hash against the pin.
-        try:
-            observed, stat = self._current_digest(skill_id)
+            content, observed, stat = self._current_content(skill_id)
         except SkillWatchError as e:
             self._quarantine(skill_id, _EVENT_UNVERIFIABLE,
                              reason=str(e)[:200])
-            return False, "unverifiable-quarantined"
+            return False, None, "unverifiable-quarantined"
         rec["last_stat"] = stat
         rec["last_verified_at"] = _utcnow()
         if observed != rec["pinned_digest"]:
             self._handle_mismatch(skill_id, observed)
-            return False, "mutated-quarantined"
+            return False, None, "mutated-quarantined"
         # F142 Leg B: the manifest digest binds the manifest, not what
         # it references -- re-resolve bound URLs and quarantine on
         # drift or resolution failure.
         rok, rdetail = self._verify_references(skill_id)
         if not rok:
-            return False, rdetail
-        # GAP-5: re-verify the wire-identity and version bindings.
+            return False, None, rdetail
+        # GAP-5: re-verify the wire-identity and version bindings --
+        # a swapped server (MCPoison) or a moved version label
+        # (postmark-mcp) never touches the manifest file.
         bok, bdetail = self._verify_bindings(skill_id)
         if not bok:
-            return False, bdetail
-        return True, "clean"
+            return False, None, bdetail
+        return True, content, "clean"
 
     # -- governed re-pinning ----------------------------------------------------
 

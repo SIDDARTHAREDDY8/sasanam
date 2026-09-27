@@ -41,6 +41,17 @@ Design (per agent):
     tripped do not re-emit). Audit runs BEFORE local mutation (the
     F167 lesson, inherited from ``ChainedStore``): an audit failure
     aborts the record and the store is unchanged.
+  - Founding-evidence gate (row 9, this wave): the baseline-trust
+    ceiling above. ``note_founding_signal`` records triage signals
+    reported during the first ``policy.founding_window_runs`` runs; an
+    in-window signal marks the baseline founding-suspect (LOUD
+    ``founding_evidence_suspect``), and while marked ``check`` budgets
+    the agent at adaptive floor level 1. The mark clears by explicit
+    human ``confirm_founding`` or automatically after
+    ``policy.founding_confirm_runs`` signal-free recorded runs. The
+    gate composes with -- never duplicates or consults --
+    ``gov.drift``'s population baseline check: it reacts to
+    founding-window triage signals, not tool distributions.
 
 What this is NOT (honest ceilings):
   - window_runs / budget_limit / noise_floor / min_consistency /
@@ -60,7 +71,14 @@ What this is NOT (honest ceilings):
     jobs (``gov.drift`` signals B/C, ``gov.framing``).
   - The budget trusts its baseline the same way ``detect_drift``
     does: a from-birth malicious agent has nothing to drift from
-    (row-9 p4 ceiling, unchanged).
+    (row-9 p4 ceiling). The founding-evidence gate NARROWS this --
+    a from-birth attacker that emits a reported triage signal inside
+    the founding window is marked and budgeted tighter -- but a
+    from-birth attacker that produces no reported triage signal
+    during the founding window still passes; the gate cannot invent
+    signals, and whole-population (Sybil) poisoning is unaddressed.
+  - Founding-window and confirmation counts are OPERATOR POLICY
+    (same standing caveat as the budget thresholds).
   - ``warn_distance`` must be calibrated to the agent's call volume
     (distances are chi-square-statistic units, volume-dependent).
     The default is a starting point; operators should calibrate from
@@ -200,8 +218,29 @@ persistently rotates near-threshold bursts WILL adapt early
 rotating near-threshold bursts are pacing-indistinguishable from
 the attack by construction. 5+-period rotations still evade the
 confirmation (buckets remain the backstop); sub-floor pacing,
-state-breaking cycles, many-shot framing drift, and from-birth
-baseline poisoning are unchanged residuals.
+many-shot framing drift, and from-birth baseline poisoning are
+unchanged residuals.
+
+State-continuity auditing (wave-152): the "state-breaking cycles"
+residual above is now instrumented, not just listed. An agent can
+break the chained flip/rotation pacing state (flip_prev/flip_prev2,
+rotation history) by interleaving noise or sub-floor cycles --
+the wave-144 f4 benign shape ("extra cleans break consecutiveness")
+is exactly this maneuver, which is why the pacing detectors stay
+blind to it by construction. Every adaptive defuse now records
+``churn_break`` (the hunt was armed AND the just-ended cycle was
+non-paced, clearing it) on the chained reset record; the trailing
+``churn_window`` (default 10) defuses' break count strictly above
+``churn_max_breaks`` (default 2) emits LOUD
+``drift_state_churn_suspect`` -- triage tier only, never blocking,
+never tightening: the evasion attempt itself becomes the signal.
+Edge-triggered (one emission per crossing). The price is measured,
+not hidden: a benign workload that persistently arms and breaks
+the pacing hunt (e.g. sustained near-threshold bursts with
+hunt-breaking cleans -- the f4 shape) WILL emit churn-suspect;
+occasional natural breaks stay silent. A patient agent can stay
+under the churn bound (documented ceiling); this detects the
+evasion maneuver, not the underlying drift.
 """
 
 from collections import Counter
@@ -343,15 +382,24 @@ class BudgetPolicy:
     ``min_contributing_runs``: trips need at least this many
     contributing runs -- a single run, however large below WARN, is
     ``detect_drift``'s territory, never the budget's.
+    ``founding_window_runs``: the founding window -- the first this
+    many runs of an agent's baseline. A triage signal noted for a run
+    inside the window marks the baseline founding-suspect (the
+    founding-evidence gate); signals for later runs are recorded but
+    do not mark. ``founding_confirm_runs``: consecutive signal-free
+    recorded runs after the latest in-window signal that auto-clear
+    the mark. Both are operator policy.
     """
 
     __slots__ = ("warn_distance", "budget_limit", "window_runs",
                  "noise_floor", "min_consistency",
-                 "min_contributing_runs")
+                 "min_contributing_runs", "founding_window_runs",
+                 "founding_confirm_runs")
 
     def __init__(self, warn_distance, budget_limit=1.0, window_runs=8,
                  noise_floor=0.1, min_consistency=0.5,
-                 min_contributing_runs=2):
+                 min_contributing_runs=2, founding_window_runs=5,
+                 founding_confirm_runs=3):
         if not isinstance(warn_distance, (int, float)) or \
                 not warn_distance > 0:
             raise ValueError("warn_distance must be a positive number, "
@@ -375,12 +423,22 @@ class BudgetPolicy:
                 min_contributing_runs < 1:
             raise ValueError("min_contributing_runs must be an int >= 1, "
                              "got %r" % (min_contributing_runs,))
+        if not isinstance(founding_window_runs, int) or \
+                founding_window_runs < 1:
+            raise ValueError("founding_window_runs must be an int >= 1, "
+                             "got %r" % (founding_window_runs,))
+        if not isinstance(founding_confirm_runs, int) or \
+                founding_confirm_runs < 1:
+            raise ValueError("founding_confirm_runs must be an int >= 1, "
+                             "got %r" % (founding_confirm_runs,))
         self.warn_distance = float(warn_distance)
         self.budget_limit = float(budget_limit)
         self.window_runs = window_runs
         self.noise_floor = float(noise_floor)
         self.min_consistency = float(min_consistency)
         self.min_contributing_runs = min_contributing_runs
+        self.founding_window_runs = founding_window_runs
+        self.founding_confirm_runs = founding_confirm_runs
 
     def to_dict(self):
         return {k: getattr(self, k) for k in self.__slots__}
@@ -470,6 +528,23 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     b5 residual -- a [sub-floor, clean] paced campaign still
     defeats this tripwire). A plain ``BudgetPolicy`` has no framing
     fields and zero behavior change.
+
+    Wave-152 adds state-continuity auditing (new policy fields
+    ``churn_window`` / ``churn_max_breaks``, operator calibration):
+    an agent can break the chained flip/rotation pacing state
+    (flip_prev/flip_prev2, rotation history) by interleaving noise
+    or sub-floor cycles, evading the pacing detectors -- the wave-144
+    f4 shape ("extra cleans break consecutiveness") is exactly this
+    maneuver. Every defuse now records whether it BROKE an armed
+    pacing hunt (``churn_break``: the flip/rotation state was armed
+    and the just-ended cycle was non-paced, clearing it). The
+    trailing ``churn_window`` defuse records' break count above
+    ``churn_max_breaks`` emits a LOUD ``drift_state_churn_suspect``
+    event -- triage tier only, never blocking, never tightening the
+    budget: the evasion attempt itself becomes the signal. Edge-
+    triggered (fires once per crossing; re-fires only after the
+    count drops back below the bound). A plain ``BudgetPolicy`` has
+    no churn fields and zero behavior change.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
@@ -478,7 +553,8 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
                  "adapt_dir_threshold", "adapt_flip_floor",
                  "slow_weight", "slow_clean_decay", "slow_trip",
                  "slow_window_factor", "slow_min_runs",
-                 "framing_min_runs", "framing_max_phrases")
+                 "framing_min_runs", "framing_max_phrases",
+                 "churn_window", "churn_max_breaks")
 
     def __init__(self, warn_distance, adapt_near_floor=0.75,
                  adapt_cycles=2, adapt_factor=0.6,
@@ -487,7 +563,8 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
                  adapt_dir_threshold=2.4, adapt_flip_floor=0.75,
                  slow_weight=0.5, slow_clean_decay=0.5, slow_trip=0.3,
                  slow_window_factor=3, slow_min_runs=3,
-                 framing_min_runs=10, framing_max_phrases=3, **kw):
+                 framing_min_runs=10, framing_max_phrases=3,
+                 churn_window=10, churn_max_breaks=2, **kw):
         super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
         if not isinstance(adapt_near_floor, (int, float)) or \
                 not 0 < adapt_near_floor <= 1:
@@ -564,6 +641,14 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
         self.slow_min_runs = slow_min_runs
         self.framing_min_runs = framing_min_runs
         self.framing_max_phrases = framing_max_phrases
+        if not isinstance(churn_window, int) or churn_window < 2:
+            raise ValueError("churn_window must be an int >= 2, got %r"
+                             % (churn_window,))
+        if not isinstance(churn_max_breaks, int) or churn_max_breaks < 1:
+            raise ValueError("churn_max_breaks must be an int >= 1, "
+                             "got %r" % (churn_max_breaks,))
+        self.churn_window = churn_window
+        self.churn_max_breaks = churn_max_breaks
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
@@ -703,6 +788,34 @@ class BudgetCheck:
                 "detail": dict(self.detail)}
 
 
+class FoundingSignalNote:
+    """Outcome of ``BudgetStore.note_founding_signal``.
+
+    ``in_window``: the signal's run fell inside the founding window.
+    ``mark_set``: this call set the founding-suspect mark (first
+    in-window signal while unmarked). ``marked``: the agent is
+    founding-suspect after this call (just set, or already was).
+    """
+
+    __slots__ = ("agent_id", "run_seq", "signal_kind", "in_window",
+                 "mark_set", "marked")
+
+    def __init__(self, agent_id, run_seq, signal_kind, in_window,
+                 mark_set, marked):
+        self.agent_id = str(agent_id)
+        self.run_seq = int(run_seq)
+        self.signal_kind = str(signal_kind)
+        self.in_window = bool(in_window)
+        self.mark_set = bool(mark_set)
+        self.marked = bool(marked)
+
+    def to_dict(self):
+        return {"agent_id": self.agent_id, "run_seq": self.run_seq,
+                "signal_kind": self.signal_kind,
+                "in_window": self.in_window,
+                "mark_set": self.mark_set, "marked": self.marked}
+
+
 class BudgetStore(ChainedStore):
     """Durable per-agent cumulative drift budget store.
 
@@ -710,9 +823,12 @@ class BudgetStore(ChainedStore):
     Record kinds: ``contribution`` (one run's budget assessment),
     ``reset`` (budget cleared -- clean run or manual), ``trip``
     (marker; the LOUD evidence is the ``drift_budget_tripped`` audit
-    event emitted when the marker is first written). Audit runs
-    BEFORE local mutation: an audit failure aborts the append and the
-    store is unchanged (fail-closed).
+    event emitted when the marker is first written),
+    ``founding_signal`` (one triage signal noted against the founding
+    window), ``founding_suspect`` (the founding-suspect mark),
+    ``founding_confirmed`` (the mark cleared, human or auto). Audit
+    runs BEFORE local mutation: an audit failure aborts the append
+    and the store is unchanged (fail-closed).
     """
 
     _record_version_key = "drift_budget_version"
@@ -846,8 +962,14 @@ class BudgetStore(ChainedStore):
 
     @staticmethod
     def _effective(policy, level):
-        """Effective (trip limit, window) at an adaptation level."""
-        limit = policy.budget_limit * (policy.adapt_factor ** level)
+        """Effective (trip limit, window) at an adaptation level.
+
+        ``adapt_factor`` is adaptive-policy-only; a plain
+        ``BudgetPolicy`` forced to a floor level by the
+        founding-evidence gate tightens with the default 0.6 factor.
+        """
+        factor = getattr(policy, "adapt_factor", 0.6)
+        limit = policy.budget_limit * (factor ** level)
         window = max(2, policy.window_runs - level)
         return round(limit, 9), window
 
@@ -1079,6 +1201,7 @@ class BudgetStore(ChainedStore):
                         {"event": self._record_event, "agent_id": agent_id,
                          "run_seq": run_seq, "contributes": False,
                          "reason": "insufficient_data"}, audit)
+            self._maybe_auto_confirm_founding(agent_id, policy, audit)
             return BudgetContribution(False, None, 0.0,
                                       "insufficient_data", False,
                                       run_seq, agent_id)
@@ -1102,6 +1225,7 @@ class BudgetStore(ChainedStore):
                          "reason": "single_run_path",
                          "threshold_equivalents": round(fraction, 9)},
                         audit)
+            self._maybe_auto_confirm_founding(agent_id, policy, audit)
             return BudgetContribution(False, distance, fraction,
                                       "single_run_path", False,
                                       run_seq, agent_id)
@@ -1121,6 +1245,7 @@ class BudgetStore(ChainedStore):
                                       audit_event, policy, audit)
             else:
                 self._write(agent_id, record, audit_event, audit)
+            self._maybe_auto_confirm_founding(agent_id, policy, audit)
             return BudgetContribution(False, distance, 0.0, "clean",
                                       True, run_seq, agent_id)
 
@@ -1141,6 +1266,7 @@ class BudgetStore(ChainedStore):
         if self._is_adaptive(policy):
             self._adaptive_streak_check(agent_id, run_seq, policy, audit)
             self._framing_check(agent_id, run_seq, policy, audit)
+        self._maybe_auto_confirm_founding(agent_id, policy, audit)
         return BudgetContribution(True, distance, fraction,
                                   "sub_threshold", False,
                                   run_seq, agent_id)
@@ -1282,6 +1408,31 @@ class BudgetStore(ChainedStore):
                     new_flip_prev, new_flip_prev2 = None, None
         else:
             new_rot_history = []
+        # Wave-152 (row 9): state-continuity auditing. The pacing
+        # hunts (flip_prev/flip_prev2, rotation history) are cleared
+        # by ANY non-paced defuse cycle -- an agent that interleaves
+        # noise or sub-floor cycles to dodge the pacing detectors
+        # leaves a chain-break trail. A defuse is a chain break when
+        # the hunt was armed (flip state present or rotation history
+        # non-empty) and the just-ended cycle is non-paced. Breaks
+        # are counted over the trailing ``churn_window`` defuse
+        # records; strictly more than ``churn_max_breaks`` emits a
+        # LOUD ``drift_state_churn_suspect`` event -- triage tier
+        # only, never blocking, never tightening the budget: the
+        # evasion attempt itself becomes the signal. Edge-triggered:
+        # fires once per crossing, re-fires only after the count
+        # drops back below the bound. Deterministic: pure fold over
+        # the chained log.
+        hunt_armed = (flip_prev is not None or flip_prev2 is not None
+                      or len(rot_history) > 0)
+        churn_break = bool((not paced) and hunt_armed)
+        trail = [r for r in records
+                 if r.get("kind") == "reset"][-policy.churn_window:]
+        window_breaks = (sum(1 for r in trail if r.get("churn_break"))
+                         + (1 if churn_break else 0))
+        prev_suspect = bool(trail and trail[-1].get("churn_suspect"))
+        churn_suspect = window_breaks > policy.churn_max_breaks
+        churn_edge = churn_suspect and not prev_suspect
         record.update({
             "near_trip": near_trip, "streak": new_streak,
             "cycle_cumulative": cum,
@@ -1298,13 +1449,44 @@ class BudgetStore(ChainedStore):
             "flip_confirmed": bool(flip_confirmed),
             "rot_history": list(new_rot_history),
             "rotation_confirmed": bool(rotation_confirmed),
-            "rotation_period": rotation_period})
+            "rotation_period": rotation_period,
+            "churn_break": bool(churn_break),
+            "churn_breaks": window_breaks,
+            "churn_suspect": bool(churn_suspect)})
         audit_event["near_trip"] = near_trip
         audit_event["near_streak"] = new_streak
         audit_event["direction_trip"] = bool(dir_trip)
         audit_event["flip_confirmed"] = bool(flip_confirmed)
         audit_event["rotation_confirmed"] = bool(rotation_confirmed)
-        self._write(agent_id, record, audit_event, audit)
+        audit_event["churn_break"] = bool(churn_break)
+        audit_event["churn_breaks"] = window_breaks
+        audit_event["churn_suspect"] = bool(churn_suspect)
+        stored = self._write(agent_id, record, audit_event, audit)
+        if churn_edge:
+            # Wave-152: the LOUD triage event goes out AFTER the
+            # chained reset record lands (wave-150 framing pattern):
+            # no phantom suspect on a failed write; the chain is the
+            # source of truth. Triage tier only -- never blocks,
+            # never tightens.
+            auditor = self._audit if audit is None else audit
+            if auditor is not None:
+                emitted = {"event": "drift_state_churn_suspect",
+                           "severity": "LOUD",
+                           "flag": "drift_state_churn",
+                           "agent_id": agent_id, "run_seq": run_seq,
+                           "churn_breaks": window_breaks,
+                           "churn_window": policy.churn_window,
+                           "churn_max_breaks": policy.churn_max_breaks,
+                           "digest": stored.get("digest"),
+                           "prev_digest": stored.get("prev_digest"),
+                           "reason": ("pacing-state chain breaks above "
+                                      "bound (triage-only, never "
+                                      "blocking): %d breaks in the "
+                                      "trailing %d defuses (bound %d)"
+                                      % (window_breaks,
+                                         policy.churn_window,
+                                         policy.churn_max_breaks))}
+                auditor(emitted)
         if flip_confirmed and level < policy.adapt_max_level:
             new_level = level + 1
             nl, nw = self._effective(policy, new_level)
@@ -1556,6 +1738,182 @@ class BudgetStore(ChainedStore):
                             "agent_id": agent_id, "trigger": "manual",
                             "reason": str(reason)}, audit)
 
+    # --------------------------------- founding-evidence gate (row 9)
+
+    @staticmethod
+    def _founding_fold(records):
+        """Fold the chained log to founding-evidence state.
+
+        Returns ``(marked, latest_signal_idx, in_window_count)``:
+        ``marked`` is True iff the latest ``founding_suspect`` record
+        has no later ``founding_confirmed`` record (a suspect written
+        after a confirmation re-marks); ``latest_signal_idx`` is the
+        record index of the most recent in-window ``founding_signal``
+        (-1 if none); ``in_window_count`` counts in-window signals.
+        Deterministic: pure fold over the chained log.
+        """
+        marked = False
+        latest_signal_idx = -1
+        in_window_count = 0
+        for idx, r in enumerate(records):
+            kind = r.get("kind")
+            if kind == "founding_signal":
+                if r.get("in_window"):
+                    latest_signal_idx = idx
+                    in_window_count += 1
+            elif kind == "founding_suspect":
+                marked = True
+            elif kind == "founding_confirmed":
+                marked = False
+        return marked, latest_signal_idx, in_window_count
+
+    def note_founding_signal(self, agent_id, run_seq, signal_kind,
+                             detail=None, principal="", policy=None,
+                             audit=None):
+        """Record a triage signal against the agent's founding window.
+
+        ``signal_kind``: short non-empty string naming the triage seam
+        that fired. Open vocabulary -- e.g. "dlp_entropy_flag",
+        "dlp_keyword_hit", "canary_trip", "erosion_signal",
+        "approval_denied", "egress_novel_destination" -- validated for
+        shape only (1-128 chars); the gate cannot invent signals, it
+        only records what the harness reports. ``detail``: optional
+        dict of JSON-shaped evidence (string keys, at most 64).
+        ``run_seq``: the 1-based run the signal belongs to.
+
+        The founding window is the first
+        ``policy.founding_window_runs`` runs (5 when no policy is
+        given; the window applied is stored on the record). The first
+        in-window signal noted while the agent is unmarked also
+        writes a ``founding_suspect`` record and emits the LOUD
+        ``founding_evidence_suspect`` event -- the baseline stays
+        provisional. Every signal is chained and audited (later ones
+        as non-LOUD ``founding_signal_noted``); accumulation is never
+        silent.
+
+        Audit runs before each mutation (fail-closed). Returns a
+        ``FoundingSignalNote``.
+        """
+        agent_id = str(agent_id)
+        if not isinstance(run_seq, int) or run_seq < 1:
+            raise ValueError("run_seq must be a positive int, got %r"
+                             % (run_seq,))
+        if not isinstance(signal_kind, str) or \
+                not 1 <= len(signal_kind) <= 128:
+            raise ValueError("signal_kind must be a 1-128 char string, "
+                             "got %r" % (signal_kind,))
+        if detail is None:
+            detail = {}
+        if not isinstance(detail, dict):
+            raise TypeError("detail must be a dict or None, got %r"
+                            % type(detail).__name__)
+        if any(not isinstance(k, str) for k in detail):
+            raise ValueError("detail keys must be strings")
+        if len(detail) > 64:
+            raise ValueError("detail has too many keys (%d > 64)"
+                             % len(detail))
+        if policy is None:
+            window = 5
+        else:
+            if not isinstance(policy, BudgetPolicy):
+                raise TypeError("policy must be a BudgetPolicy, got %r"
+                                % type(policy).__name__)
+            window = policy.founding_window_runs
+        in_window = run_seq <= window
+        records = self._read_all(agent_id)
+        marked, _, _ = self._founding_fold(records)
+
+        signal_record = {"kind": "founding_signal",
+                         "agent_id": agent_id, "run_seq": run_seq,
+                         "run_id": "", "principal": str(principal),
+                         "drift_budget_version": _BUDGET_VERSION,
+                         "signal_kind": signal_kind,
+                         "detail": dict(detail), "in_window": in_window,
+                         "window_runs": window}
+        self._write(agent_id, signal_record,
+                    {"event": "founding_signal_noted",
+                     "agent_id": agent_id, "run_seq": run_seq,
+                     "signal_kind": signal_kind,
+                     "in_window": in_window}, audit)
+        mark_set = False
+        if in_window and not marked:
+            suspect_record = {"kind": "founding_suspect",
+                              "agent_id": agent_id,
+                              "run_seq": run_seq, "run_id": "",
+                              "principal": str(principal),
+                              "drift_budget_version": _BUDGET_VERSION,
+                              "signal_kind": signal_kind,
+                              "window_runs": window}
+            self._write(agent_id, suspect_record,
+                        {"event": "founding_evidence_suspect",
+                         "severity": "LOUD", "agent_id": agent_id,
+                         "run_seq": run_seq,
+                         "signal_kind": signal_kind,
+                         "window_runs": window}, audit)
+            mark_set = True
+        return FoundingSignalNote(agent_id, run_seq, signal_kind,
+                                  in_window, mark_set,
+                                  mark_set or marked)
+
+    def confirm_founding(self, agent_id, audit=None):
+        """Human confirmation: clear a founding-suspect mark (audited).
+
+        Writes a chained ``founding_confirmed`` record (reason
+        "human") and emits the non-LOUD ``founding_evidence_confirmed``
+        event. A confirmation covers the evidence seen so far: a NEW
+        in-window signal noted afterwards re-marks (new LOUD event).
+        Noop -- returns False and writes nothing -- when the agent is
+        not marked. Returns True when the mark was cleared.
+        """
+        agent_id = str(agent_id)
+        records = self._read_all(agent_id)
+        marked, _, _ = self._founding_fold(records)
+        if not marked:
+            return False
+        last_seq = max([int(r.get("run_seq", -1)) for r in records]
+                       + [-1])
+        record = {"kind": "founding_confirmed", "agent_id": agent_id,
+                  "run_seq": last_seq, "run_id": "",
+                  "drift_budget_version": _BUDGET_VERSION,
+                  "reason": "human"}
+        self._write(agent_id, record,
+                    {"event": "founding_evidence_confirmed",
+                     "agent_id": agent_id, "reason": "human"}, audit)
+        return True
+
+    def _maybe_auto_confirm_founding(self, agent_id, policy, audit):
+        """Auto-clear the founding mark after K signal-free runs.
+
+        Evaluated after every recorded run: if the agent is marked and
+        at least ``policy.founding_confirm_runs`` contribution/reset
+        records were recorded after the latest in-window signal, the
+        mark auto-clears with a chained ``founding_confirmed`` record
+        (reason "auto") and a non-LOUD ``founding_evidence_confirmed``
+        event. The anchor is the latest in-window signal, not the
+        mark: a later in-window signal restarts the count.
+        Audit-before-write (fail-closed) like every other mutation.
+        """
+        records = self._read_all(agent_id)
+        marked, latest_signal_idx, _ = self._founding_fold(records)
+        if not marked:
+            return False
+        runs_after = sum(
+            1 for r in records[latest_signal_idx + 1:]
+            if r.get("kind") in ("contribution", "reset"))
+        if runs_after < policy.founding_confirm_runs:
+            return False
+        last_seq = max([int(r.get("run_seq", -1)) for r in records]
+                       + [-1])
+        record = {"kind": "founding_confirmed", "agent_id": agent_id,
+                  "run_seq": last_seq, "run_id": "",
+                  "drift_budget_version": _BUDGET_VERSION,
+                  "reason": "auto", "signal_free_runs": runs_after}
+        self._write(agent_id, record,
+                    {"event": "founding_evidence_confirmed",
+                     "agent_id": agent_id, "reason": "auto",
+                     "signal_free_runs": runs_after}, audit)
+        return True
+
     # -------------------------------------- cross-run continuity (w148)
 
     def export_continuity(self, agent_id, policy, hmac_key=None):
@@ -1639,6 +1997,14 @@ class BudgetStore(ChainedStore):
         ``run_seq`` is the new executor's first run seq for the
         restore record. Returns True on restore, False on refusal.
         Deterministic.
+
+        Note (F183): refusing a digest exported from an empty store
+        (``run_seq=-1``) with a LOUD ``drift_digest_forgery_attempt``
+        event is fail-closed but noisy for a legitimate empty-state
+        restore -- the refusal is the safe default (an empty-store
+        digest is indistinguishable from a forged one at this seam),
+        so operators performing a genuine empty-state restore should
+        expect the LOUD event. No behavior change.
         """
         agent_id = str(agent_id)
         self._check_seq(run_seq)
@@ -1735,6 +2101,20 @@ class BudgetStore(ChainedStore):
             adapt_level, _, _, _, _, _, _, _ = self._adapt_fold(records)
             eff_limit, eff_window = self._effective(policy, adapt_level)
 
+        # Founding-evidence gate (row 9): while the baseline is
+        # founding-suspect, the agent budgets as if one adaptive
+        # tightening had occurred -- the mark is itself prior
+        # evidence, the same rationale as the level>=1 single-run
+        # trip rule. The budget's provisional stance only: it
+        # composes with (never duplicates or consults) gov.drift's
+        # population check, which measures tool distributions while
+        # this gate measures founding-window triage signals.
+        founding_marked, _, _ = self._founding_fold(records)
+        eff_level = adapt_level
+        if founding_marked:
+            eff_level = max(eff_level, 1)
+            eff_limit, eff_window = self._effective(policy, eff_level)
+
         contributing, last_reset_seq, window_n = self._cycle_contributions(
             records, eff_window)
         cumulative, consistency, _, _ = self._window_stats(contributing)
@@ -1744,7 +2124,7 @@ class BudgetStore(ChainedStore):
         # multi-cycle pacing evidence, so a single fresh contributing
         # run at/above the lowered limit trips.
         enough_runs = (n >= policy.min_contributing_runs
-                       or (adaptive and adapt_level >= 1 and n >= 1))
+                       or (eff_level >= 1 and n >= 1))
         tripped = (cumulative >= eff_limit
                    and consistency >= policy.min_consistency
                    and enough_runs)
@@ -1770,7 +2150,8 @@ class BudgetStore(ChainedStore):
                           "drift_budget_version": _BUDGET_VERSION,
                           "cumulative": cumulative,
                           "consistency": round(consistency, 6),
-                          "contributing_runs": n}
+                          "contributing_runs": n,
+                          "founding_suspect": founding_marked}
                 self._write(agent_id, marker,
                             {"event": "drift_budget_tripped",
                              "severity": "LOUD",
@@ -1780,7 +2161,8 @@ class BudgetStore(ChainedStore):
                              "contributing_runs": n,
                              "window_runs": eff_window,
                              "budget_limit": eff_limit,
-                             "adapt_level": adapt_level},
+                             "adapt_level": adapt_level,
+                             "founding_suspect": founding_marked},
                             audit)
 
         status = "tripped" if tripped else "ok"

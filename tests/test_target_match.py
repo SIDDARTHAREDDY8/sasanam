@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from gov import target_match  # noqa: E402
 from gov import goals  # noqa: E402
 from gov.goal_audit import _check_coverage  # noqa: E402
+from gov import approvals  # noqa: E402
 
 
 class TargetSimilarityTest(unittest.TestCase):
@@ -216,3 +217,215 @@ class StructuralScopeMatchTest(unittest.TestCase):
         b = target_match.structural_scope_match(
             "obliterate the quarterly filing", "delete the Q3 report")
         self.assertEqual(a, b)
+
+
+class DiscriminatorVetoTest(unittest.TestCase):
+    """Row-11 follow-up leg: scope-discriminator contradiction veto.
+
+    The ceremony tiers (typed_scope_similarity, structural_scope_match)
+    suppress matches when the typed text contradicts the reference on
+    a scope discriminator -- specific quarters, 4-digit years, or
+    typed-side widening quantifiers. Ceremony-only: the grant path
+    (target_similarity) is untouched, pinned below.
+    """
+
+    def test_quarter_contradiction_suppresses_numeric(self):
+        # Pre-seam this scored 0.800 >= 0.5 (the ceremony accepted a
+        # different-quarter scope).
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "delete the Q4 report", "delete the Q3 report"), 0.0)
+
+    def test_quarter_contradiction_suppresses_structural(self):
+        self.assertFalse(target_match.structural_scope_match(
+            "delete the Q4 report", "delete the Q3 report"))
+        self.assertFalse(target_match.structural_scope_match(
+            "delete the Q2 report", "delete the Q1 report"))
+
+    def test_same_quarter_no_veto(self):
+        self.assertTrue(target_match.structural_scope_match(
+            "delete the Q3 report", "delete the Q3 report"))
+        self.assertGreaterEqual(
+            target_match.typed_scope_similarity(
+                "delete the Q3 report", "delete the Q3 report"),
+            target_match.DEFAULT_THRESHOLD)
+
+    def test_quarterly_is_not_a_specific_quarter(self):
+        # "quarterly" names no specific quarter: the wave-149
+        # mandated accept must survive the veto.
+        self.assertTrue(target_match.structural_scope_match(
+            "obliterate the quarterly filing", "delete the Q3 report"))
+
+    def test_one_sided_quarter_no_veto(self):
+        # Contradiction-only: the wave-147 s1 accept (typed side
+        # names no quarter) is pinned at 0.8889.
+        self.assertAlmostEqual(
+            target_match.typed_scope_similarity(
+                "erase the report", "delete the Q3 report"),
+            0.8889, places=3)
+
+    def test_year_contradiction_vetoes(self):
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "delete the 2025 report", "delete the 2024 report"), 0.0)
+        self.assertFalse(target_match.structural_scope_match(
+            "delete the 2025 report", "delete the 2024 report"))
+
+    def test_same_year_no_veto(self):
+        self.assertGreaterEqual(
+            target_match.typed_scope_similarity(
+                "delete the 2024 report", "delete the 2024 report"),
+            target_match.DEFAULT_THRESHOLD)
+
+    def test_quantifier_widening_vetoes(self):
+        # Pre-seam the synonym tier scored 0.500 and the structural
+        # tier matched: the ceremony accepted "erase all filings".
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "erase all filings", "delete the Q3 report"), 0.0)
+        self.assertFalse(target_match.structural_scope_match(
+            "erase all filings", "delete the Q3 report"))
+
+    def test_every_each_canonicalize_to_all(self):
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "delete every document", "delete the Q3 report"), 0.0)
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "remove each filing", "delete the Q3 report"), 0.0)
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "delete the entire report", "delete the Q3 report"), 0.0)
+
+    def test_matching_quantifier_no_veto(self):
+        # Both sides widen identically: no contradiction.
+        self.assertGreaterEqual(
+            target_match.typed_scope_similarity(
+                "delete all reports", "erase all filings"),
+            target_match.DEFAULT_THRESHOLD)
+
+    def test_narrowing_no_veto(self):
+        # Reference-side widening is the human narrowing: accepted.
+        self.assertGreaterEqual(
+            target_match.typed_scope_similarity(
+                "delete the report", "delete all reports"),
+            target_match.DEFAULT_THRESHOLD)
+
+    def test_grant_path_untouched(self):
+        # The row-11 paraphrase tier keeps raw token-tversky: no
+        # discriminator veto on the grant path.
+        self.assertAlmostEqual(
+            target_match.target_similarity(
+                "delete the Q4 report", "delete the Q3 report"),
+            0.8, places=3)
+        self.assertAlmostEqual(
+            target_match.target_similarity(
+                "erase all filings", "delete the Q3 report"),
+            0.0, places=3)
+
+    def test_discriminator_veto_composes_with_destination_veto(self):
+        # Both vetoes are suppress-only and independent.
+        self.assertEqual(
+            target_match.typed_scope_similarity(
+                "delete the Q4 report to evil.com",
+                "delete the Q3 report to good.com"), 0.0)
+        self.assertFalse(target_match.structural_scope_match(
+            "delete the Q4 report to evil.com",
+            "delete the Q3 report to good.com"))
+
+    def test_deterministic(self):
+        a = target_match.typed_scope_similarity(
+            "delete the Q4 report", "delete the Q3 report")
+        b = target_match.typed_scope_similarity(
+            "delete the Q4 report", "delete the Q3 report")
+        self.assertEqual(a, b)
+
+
+class DiscriminatorEvasionTest(unittest.TestCase):
+    """Break-round v2 closes: quarter-form expansion, Unicode
+    normalization, whole->entire, and the nounless-typed rule
+    (evals/ceremony_receipt_evasion_probes.py, e1-e15).
+
+    Veto cases pin at the target_match seam (refused on every
+    tier) AND at the ceremony seam; accept cases pin at the
+    ceremony seam (approvals._type_to_confirm_ok), where the
+    structural tier composes.
+    """
+
+    def _refused(self, typed, ref):
+        self.assertEqual(
+            target_match.typed_scope_similarity(typed, ref), 0.0)
+        self.assertFalse(target_match.structural_scope_match(typed, ref))
+        ok, _s, _d, _m = approvals._type_to_confirm_ok([ref], typed)
+        self.assertFalse(ok)
+
+    def _accepted(self, typed, ref):
+        ok, _s, _d, _m = approvals._type_to_confirm_ok([ref], typed)
+        self.assertTrue(ok)
+
+    def test_whole_widening_vetoes(self):
+        # "the whole archive" is the entire archive: widening.
+        self._refused("remove the whole archive", "delete the Q3 report")
+
+    def test_quarter_form_variants_veto(self):
+        for typed in ("delete the 3rd quarter report",
+                      "delete the third-quarter filing",
+                      "erase the FY26Q3 document",
+                      "obliterate the Sept quarter filing",
+                      "delete the quarter ending September report",
+                      "delete the QIII report"):
+            with self.subTest(typed=typed):
+                self._refused(typed, "delete the Q4 report")
+
+    def test_fullwidth_quarter_vetoes(self):
+        # U+FF31 U+FF14 fold to "q4" under NFKC.
+        self._refused("delete the Ｑ４ report",
+                      "delete the Q3 report")
+
+    def test_zero_width_split_quarter_vetoes(self):
+        # F183's class, new seam: the split token still names q4.
+        self._refused("delete the Q" + chr(0x200b) + "4 report",
+                      "delete the Q3 report")
+
+    def test_nounless_typed_scope_vetoes(self):
+        for typed in ("delete the thing", "remove it", "erase stuff",
+                      "delete everything"):
+            with self.subTest(typed=typed):
+                self._refused(typed, "delete the Q3 report")
+
+    def test_quarter_set_parser(self):
+        self.assertEqual(
+            target_match._quarter_set("delete the 3rd quarter report"),
+            {"q3"})
+        self.assertEqual(
+            target_match._quarter_set("erase the FY26Q3 document"),
+            {"q3"})
+        self.assertEqual(
+            target_match._quarter_set("obliterate the quarterly filing"),
+            set())
+
+    def test_same_quarter_variants_accepted(self):
+        # No false refusals: same quarter, rephrased.
+        for typed in ("delete the 3rd quarter report",
+                      "erase the FY26Q3 document",
+                      "delete the September report",
+                      "delete the QIII filing"):
+            with self.subTest(typed=typed):
+                self._accepted(typed, "delete the Q3 report")
+
+    def test_wave149_quarterly_accept_preserved(self):
+        self._accepted("obliterate the quarterly filing",
+                       "delete the Q3 report")
+
+    def test_wave147_erase_the_report_accept_preserved(self):
+        self._accepted("erase the report", "delete the Q3 report")
+
+    def test_zero_width_same_quarter_accepted(self):
+        self._accepted("delete the Q" + chr(0x200b) + "3 report",
+                       "delete the Q3 report")
+
+    def test_h2_residual_pinned_accepted(self):
+        # A half is not a quarter: interval semantics outside the
+        # quarter discriminator. Pinned EXPECTED in the evasion
+        # battery until a wider time-interval rule exists.
+        self._accepted("delete the H2 report", "delete the Q4 report")
