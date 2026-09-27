@@ -95,7 +95,8 @@ from .approvals import (DelegationError, DelegationStore,
                         APPROVAL_DIGEST_SCHEME, record_digest,
                         sanitize_preview_text, QueueLockError,
                         QueueLockInvalidatedError, QueueLockPathError,
-                        SessionIdentityAlreadySetError)
+                        SessionIdentityAlreadySetError,
+                        DecisionHookAlreadySetError)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -665,7 +666,13 @@ class ToolExecutor:
                  # (row 9, wave-134): appended LAST for the same
                  # positional-misalignment reason. Opt-in: None
                  # (default) = zero behavior change.
-                 framing_store=None):
+                 framing_store=None,
+                 # Cross-run intent ledger (row 7, wave-134): appended
+                 # LAST for the same positional-misalignment reason.
+                 # Opt-in: None (default) = zero behavior change (the
+                 # cross-run countermand check in execute_approved is
+                 # inert without one).
+                 intent_ledger=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -921,6 +928,11 @@ class ToolExecutor:
         # (check_run_framing returns a silent result without touching
         # anything).
         self.framing_store = framing_store
+        # Wave-134 (row 7): cross-run intent ledger,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (the execution-boundary countermand check is inert without
+        # one; record_intent_turn is a no-op returning None).
+        self.intent_ledger = intent_ledger
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -1152,6 +1164,18 @@ class ToolExecutor:
                 approvals.set_identity_verifier(
                     self._verify_approval_identity)
             except IdentityVerifierAlreadySetError:
+                pass
+        # Wave-134 (row-11): approval-decision -> goal-resolution
+        # wiring. When a goal_conflict_review item is decided, the
+        # decision resolves the underlying conflict (see
+        # _on_approval_decision). F31 write-once: a second executor
+        # sharing this queue keeps the first hook instead of replacing
+        # it — replacement is refused, so a hostile re-install cannot
+        # swap the binding. Guarded by hasattr like the verifier.
+        if hasattr(approvals, "set_decision_hook"):
+            try:
+                approvals.set_decision_hook(self._on_approval_decision)
+            except DecisionHookAlreadySetError:
                 pass
         # F49 (R11): seal the human-provisioned break-glass ticket set
         # at run start (write-once). A second executor sharing this
@@ -2162,6 +2186,26 @@ class ToolExecutor:
         else:
             self._intent_user_turns = [str(t) for t in user_turns]
 
+    def record_intent_turn(self, principal, message, verdict=None):
+        """Wave-134 (row-7 cross-run intent): record one user turn in
+        the cross-run intent ledger.
+
+        ``principal`` is the operator principal whose intent this turn
+        expresses; ``message`` the raw user message text; ``verdict``
+        an optional judge verdict dict (stored opaquely -- the ledger
+        computes countermand-ness itself via the canonical detector).
+
+        Returns the ledger record, or None when no intent_ledger was
+        installed at construction (opt-in: zero behavior change).
+        The operator harness calls this once per user turn; the
+        execution boundary consults the ledger for countermands that
+        arrived after an approval was granted.
+        """
+        if self.intent_ledger is None:
+            return None
+        return self.intent_ledger.record_intent(
+            principal, message, verdict=verdict)
+
     def register_goal(self, agent_id, description, effects=(),
                       constraints=(), identity=None):
         """Wave-130 (row-11): register an agent's declared goal.
@@ -2264,6 +2308,84 @@ class ToolExecutor:
                           (": " + note) if note else "")),
         })
         return g
+
+    def _on_approval_decision(self, record, approved, reason, decided_by,
+                              decision_entry):
+        """Wave-134 (row-11): post-decision hook installed on the queue.
+
+        When a ``goal_conflict_review`` approval item is DECIDED, the
+        human's decision resolves the underlying goal conflict --
+        approving the review no longer leaves both goals active:
+
+        * allow: the new (conflicting) goal stands; the conflicting
+          existing goal(s) are marked ``superseded``;
+        * deny: the new goal is marked ``superseded``.
+
+        Resolution runs through ``gov.goals.apply_approval_resolution``
+        (the ``set_status`` path, chained ``goal_status_changed``
+        events carrying the approval id). A referenced goal that is
+        unknown or already resolved produces a LOUD
+        ``goal_resolution_noop`` instead of a silent skip.
+
+        Non-goal records are ignored (this is a filter, not a veto).
+        Contract: inner failures PROPAGATE to the queue's LOUD
+        ``decision_hook_failed`` handler in ``ApprovalQueue.decide``
+        (F180 -- the single LOUD choke point); the human decision
+        still stands and ``decide()`` still returns. There is no
+        belt-and-braces catch here: a failure that is swallowed
+        inside the hook can never be audited LOUD.
+
+        Ceiling (documented, not hidden): this automates the
+        mechanics, not the judgment -- a human who allows without
+        reading still allows. And the hook is bound to the FIRST
+        executor's registry (the hook slot is write-once, F31): a goal
+        registered on a different executor sharing this queue
+        resolves as ``goal_resolution_noop`` (unknown to this
+        registry) rather than silently applying to the wrong record
+        set.
+        """
+        if not isinstance(record, dict):
+            return
+        if record.get("tool") != "goal_conflict_review":
+            return
+        args = record.get("args") or {}
+        if not isinstance(args, dict):
+            return
+        # Shared extractor (gov.goals): the ordered [new, *existing]
+        # goal ids, so this view of the conflict cannot drift from
+        # the queue's decision-event view.
+        ordered = _goals.conflict_review_goal_ids(args)
+        new_goal_id = args.get("goal_id")
+        existing_ids = [gid for gid in ordered
+                        if gid != new_goal_id]
+        # F179: re-run the conflict detector at decision time against
+        # current registry state and pass the attested existing-goal
+        # set through. The F38 MAC on the pending record proves the
+        # args were not tampered with AFTER queueing -- it does not
+        # prove the conflict was ever detector-attested, so an
+        # arg-named but unattested existing goal must never be
+        # superseded (it gets a LOUD attestation noop inside
+        # apply_approval_resolution). detect_conflict is deterministic
+        # and pure (read-only over the goal records), so it is safe
+        # to run at decision time. Unknown new goal: pass None,
+        # preserving the current unknown-new behavior (out of scope).
+        new_goal = (self._goal_registry.get_goal(new_goal_id)
+                    if new_goal_id else None)
+        if new_goal is not None:
+            others = [g for g in self._goal_registry.active_goals()
+                      if g.get("goal_id") != new_goal_id]
+            attested = {c.get("existing_goal_id")
+                        for c in _goals.detect_conflict(new_goal, others)}
+        else:
+            attested = None
+        _goals.apply_approval_resolution(
+            self._goal_registry,
+            new_goal_id=new_goal_id,
+            existing_goal_ids=existing_ids,
+            approved=bool(approved),
+            approval_id=record.get("id"),
+            audit=self.log.append,
+            attested_existing_ids=attested)
 
     def check_run_drift(self, agent_id, fingerprint=None, record=True,
                         identity=None, window=8):
@@ -8219,6 +8341,103 @@ class ToolExecutor:
                         "approval_intent_changed",
                         policy_id="intent-revocation")
                 continue
+            # Row-7 (wave-134, cross-run intent): consult the durable
+            # intent ledger for countermands recorded AFTER this
+            # approval was granted -- e.g. the user countermanded in
+            # run 2 and the run-1 grant is consumed in run 3. The
+            # ledger's messages since decided_at become the current
+            # intent context; the same advisory judge, the same
+            # queue-time-override guard, and the same auto-revoke /
+            # refuse path apply as the in-run check above. Inert
+            # without an intent_ledger (opt-in, zero behavior change).
+            # A missing/unparseable decided_at or no later messages for
+            # this principal means no attribution is possible: the
+            # check skips fail-safe (it never invents a countermand).
+            # The ledger hands back ALL turns at-or-before the grant
+            # PLUS the later turns (F181: prior=None, not prior=1): the
+            # judge's countermand detector anchors the latest message
+            # against a prior instruction, so the granting turn must
+            # travel with the countermand even when chatter intervenes
+            # -- prior=1 kept only the immediately preceding turn, so a
+            # verbatim post-chatter countermand found nothing to anchor
+            # and the grant executed. This is the same context shape as
+            # the wave-131 in-run path, which passes the full turn
+            # list. Honest tradeoff: judge context grows linearly in
+            # per-principal history at this boundary (messages_since,
+            # the strictly-after anchor, is unchanged), chosen
+            # deliberately -- correctness over the missed-countermand
+            # fail-open.
+            #
+            # Guard, refined from the wave-131 in-run version: the
+            # cross-run check fires only on NEW post-grant intent (at
+            # least one turn strictly after decided_at). A human who
+            # approved DESPITE a queue-time stale flag keeps the
+            # override when nothing new was said (no post-grant turns
+            # -> skip: re-litigating the seen signal would break the
+            # wave-131 contract). But a genuinely new post-grant
+            # countermand is information the grantor never saw, so the
+            # queue-time flag does NOT suppress it -- the latest
+            # instruction wins. (Ordering fidelity assumption: the
+            # harness records each turn when the user speaks, so a turn
+            # timestamped after decided_at really is new.)
+            if self.intent_ledger is not None:
+                _xr_principal = rec.get("principal")
+                _xr_decided = rec.get("decided_at")
+                _xr_after = (self.intent_ledger.messages_since(
+                    _xr_principal, _xr_decided)
+                    if _xr_principal and _xr_decided else [])
+                _xr_turns = (self.intent_ledger.messages_with_context(
+                    _xr_principal, _xr_decided, prior=None)
+                    if _xr_after else [])
+                if _xr_turns:
+                    # The queue-time justification is NOT passed: it was
+                    # written under the superseded intent, so it cannot
+                    # constitute "fresh support" for the post-grant
+                    # intent (judge_candidate's escape hatch). A stale
+                    # justification sharing vocabulary with the
+                    # countermand ("temp files") must not veto the flag.
+                    # The action's tool/args slots still participate in
+                    # the verdict.
+                    _xr_verdict = _intent_slice.judge_queued_action(
+                        rec["tool"], rec["args"], None,
+                        user_turns=_xr_turns)
+                    if (_xr_verdict is not None
+                            and _xr_verdict.get("flagged")
+                            and _xr_verdict.get("flag") == "stale_intent"):
+                        _xr_evidence = "; ".join(
+                            str(e) for e in
+                            (_xr_verdict.get("evidence") or [])[:2])
+                        try:
+                            _revoke.revoke_approval(
+                                self.approvals, aid,
+                                "cross-run intent change: a user "
+                                "countermand recorded in the intent "
+                                "ledger after this approval was granted "
+                                "countermands this action (%s); "
+                                "re-approval required under the current "
+                                "intent"
+                                % (_xr_evidence or "no detail"),
+                                _revoke.INTENT_SYSTEM)
+                        except ValueError as _xr_revoke_err:
+                            _refuse("Approval %s refused: cross-run "
+                                    "intent changed after approval "
+                                    "(countermand in the intent ledger) "
+                                    "and auto-revocation failed (%s); "
+                                    "re-approval required under the "
+                                    "current intent."
+                                    % (aid, _xr_revoke_err),
+                                    "approval_intent_changed",
+                                    policy_id="intent-revocation-xr")
+                            continue
+                        _refuse("Approval %s refused: cross-run intent "
+                                "changed after approval — auto-revoked "
+                                "(a later user message in the intent "
+                                "ledger countermands this action); "
+                                "re-approval required under the current "
+                                "intent." % (aid,),
+                                "approval_intent_changed",
+                                policy_id="intent-revocation-xr")
+                        continue
 
             # F33 (HARDENING-R8): re-check the volume budgets at the actual
             # execution boundary (TOCTOU guard) — the budget may have been

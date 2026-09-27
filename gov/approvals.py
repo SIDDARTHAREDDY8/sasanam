@@ -575,6 +575,27 @@ def _pending_record_content_ok(rec):
     return False
 
 
+def _goal_review_goal_ids(record):
+    """Wave-134 (row-11): goal ids adjudicated by a decision record.
+
+    For a ``goal_conflict_review`` record this is the new (conflicting)
+    goal id followed by the existing goal ids it collided with,
+    deduplicated, order-stable. For every other record type this is
+    None (the ``approval_decision`` event carries the field only for
+    goal reviews; the resolution events carry the approval id back, so
+    the trail cross-references both ways). The extraction itself is
+    ``gov.goals.conflict_review_goal_ids`` (shared with the
+    executor hook and the resolution function).
+    """
+    if not isinstance(record, dict):
+        return None
+    if record.get("tool") != "goal_conflict_review":
+        return None
+    from . import goals as _goals
+    ids = _goals.conflict_review_goal_ids(record.get("args") or {})
+    return ids or None
+
+
 # -- F49 (R11): human-provisioned break-glass tickets ----------------------
 #
 # Break-glass is the emergency path around human approval. Before R11,
@@ -2361,6 +2382,15 @@ class ApprovalQueueRiskMixin:
         }
 
 
+class DecisionHookAlreadySetError(Exception):
+    """Wave-134 (row-11): the post-decision hook is write-once
+    (deployer-only), same F31 rationale as the identity verifier.
+
+    ``ToolExecutor`` installs its goal-resolution hook at
+    construction; any later ``set_decision_hook`` call raises instead
+    of swapping the control out from under the deployment."""
+
+
 class IdentityVerifierAlreadySetError(Exception):
     """F31: the identity verifier is write-once (deployer-only).
 
@@ -2496,6 +2526,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # never be swapped (see _identity_verifier_sealed).
         self._identity_verifier = None
         self._identity_verifier_sealed = False
+        # Wave-134 (row-11): executor-installed post-decision hook
+        # (see set_decision_hook). None = no hook: decide() behavior
+        # unchanged. Write-once, F31 pattern.
+        self._decision_hook = None
+        self._decision_hook_sealed = False
         # F55 (R13) / F59 (R14): the deployment-provisioned session
         # identity for entitlement-sensitive paths (break_glass).
         # Installed write-once by ToolExecutor at construction (see
@@ -2557,6 +2592,34 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 % type(verifier).__name__)
         self._identity_verifier = verifier
         self._identity_verifier_sealed = True
+
+    def set_decision_hook(self, hook):
+        """Wave-134 (row-11): install the executor's post-decision hook.
+
+        ``hook(record, approved, reason, decided_by, decision_entry)``
+        is called at the end of ``decide()`` for every successfully
+        decided record, after the decision is recorded and audited.
+        The hook itself filters by record type (the goal-resolution
+        wiring only acts on ``goal_conflict_review`` records).
+
+        F31 WRITE-ONCE: the first call installs the hook and seals the
+        slot; every later call raises ``DecisionHookAlreadySetError``.
+        A hook swap — e.g. an agent replacing the executor's
+        goal-resolution wiring with a no-op — is refused. ``decide()``
+        never lets a raising hook break the decision: it is audited
+        LOUD and swallowed (the decision stands; the hook is
+        automation, never a veto).
+        """
+        if getattr(self, "_decision_hook_sealed", False):
+            raise DecisionHookAlreadySetError(
+                "decision hook is write-once: a hook is already "
+                "installed; refusing to swap it out")
+        if not callable(hook):
+            raise TypeError(
+                "decision hook must be callable, got %r"
+                % type(hook).__name__)
+        self._decision_hook = hook
+        self._decision_hook_sealed = True
 
     @property
     def _session_identity(self):
@@ -3837,6 +3900,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # with the independent signals.
             "shield_tier": target.get("shield_tier"),
             "shield_handshake": _shield_detail,
+            # Wave-134 (row-11): a goal_conflict_review decision names
+            # the goals it adjudicates (None for every other record
+            # type). The goal-resolution events carry the approval id
+            # back, so the audit trail cross-references both ways.
+            "goal_ids": _goal_review_goal_ids(target),
         })
         # D1-core T11: the late decision is a second, distinct audit
         # entry — the decision above is recorded, but this entry marks
@@ -3860,6 +3928,35 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                            "recorded and audited but NEVER executable — "
                            "the bridge wait timed out first (T11/T12)"),
             })
+        # Wave-134 (row-11): executor-installed post-decision hook
+        # (e.g. goal_conflict_review -> goal resolution). Fires after
+        # the decision is recorded and audited. A raising hook is
+        # audited LOUD and swallowed — the decision stands; the hook
+        # is automation on top of the decision, never a veto on it.
+        _hook = self._decision_hook
+        if _hook is not None:
+            try:
+                _hook(target, approved, reason, decided_by, entry)
+            except Exception as _hook_err:  # noqa: BLE001 - hook must not break decide()
+                try:
+                    self._log({
+                        "event": "decision_hook_failed",
+                        "flag": "decision_hook_failed",
+                        "run_id": target.get("run_id"),
+                        "agent_id": "human-operator",
+                        "role": "approver",
+                        "principal": "human-operator",
+                        "tool": target.get("tool"),
+                        "approval_id": target.get("id"),
+                        "decided_by": decided_by,
+                        "reason": ("post-decision hook raised %s: %s -- "
+                                   "the decision stands; the hook's "
+                                   "automation did not run"
+                                   % (type(_hook_err).__name__,
+                                      _hook_err)),
+                    })
+                except Exception:
+                    pass
         return target, entry
 
     def revoke(self, approval_id, reason, revoker):

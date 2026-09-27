@@ -443,7 +443,19 @@ class GoalRegistry(object):
             prev = rec["goal_digest"]
         return True, "%d records, chain intact" % len(self._goals)
 
-    def set_status(self, goal_id, status):
+    def get_goal(self, goal_id):
+        """Return the goal record for ``goal_id``, or None if unknown.
+
+        Unlike ``set_status`` this never raises: resolution callers
+        need to distinguish "unknown" from "known" to emit the
+        fail-closed ``goal_resolution_noop`` instead of crashing.
+        """
+        for g in self._goals:
+            if g.get("goal_id") == goal_id:
+                return g
+        return None
+
+    def set_status(self, goal_id, status, approval_id=None):
         """Update a goal's status ('active' | 'superseded').
 
         Returns the goal dict. Unknown goal_id or status ->
@@ -451,6 +463,12 @@ class GoalRegistry(object):
         NOT rewrite the chained record (the chain is append-only
         history); the live status lives on the in-memory record and
         in the audit trail.
+
+        ``approval_id`` (wave-134): when the status change is the
+        execution of a human's ``goal_conflict_review`` decision, the
+        approval id rides the chained ``goal_status_changed`` event so
+        the goal trail cross-references the approval trail (the
+        ``approval_decision`` event carries the goal ids back).
         """
         if status not in ("active", "superseded"):
             raise ValueError(
@@ -465,6 +483,7 @@ class GoalRegistry(object):
                     "agent_id": g.get("agent_id"),
                     "run_id": g.get("run_id"),
                     "status": status,
+                    "approval_id": approval_id,
                     "ts": _utcnow_iso(),
                 })
                 return g
@@ -855,3 +874,212 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
                       % len(matching_runs))
 
     return findings
+
+
+def conflict_review_goal_ids(args):
+    """Goal ids adjudicated by a ``goal_conflict_review`` args dict.
+
+    Returns the new (conflicting) goal id followed by the existing
+    goal ids it collided with, deduplicated, order-stable. Shared by
+    the approval-queue decision event (``_goal_review_goal_ids``), the
+    executor's post-decision hook, and ``apply_approval_resolution``
+    so the extraction shape cannot drift between the three (wave-134
+    review: duplicated-code consolidation).
+    """
+    ids = []
+    if not isinstance(args, dict):
+        return ids
+    candidates = [args.get("goal_id")]
+    conflicts = args.get("conflicts") or []
+    if isinstance(conflicts, list):
+        for c in conflicts:
+            if isinstance(c, dict):
+                candidates.append(c.get("existing_goal_id"))
+    for gid in candidates:
+        if gid and gid not in ids:
+            ids.append(gid)
+    return ids
+
+
+def apply_approval_resolution(registry, *, new_goal_id, existing_goal_ids,
+                              approved, approval_id, audit=None,
+                              attested_existing_ids=None):
+    """Wave-134 (row-11): apply a human's ``goal_conflict_review`` decision.
+
+    A ``goal_conflict_review`` approval item adjudicates one conflict:
+    ``new_goal_id`` (the just-registered goal that triggered the
+    conflict) against ``existing_goal_ids`` (the active goals it
+    collided with). When the human DECIDES the item, the decision
+    resolves the conflict — approving the review no longer leaves the
+    goals untouched:
+
+    * approved (allow): the new goal stands; every conflicting
+      existing goal is marked ``superseded`` via the ``set_status``
+      path (chained ``goal_status_changed`` events).
+    * rejected (deny): the new goal is marked ``superseded``; the
+      existing goals stand untouched.
+
+    ``attested_existing_ids`` (F179): when given (not None), an
+    arg-named existing goal id that is NOT in the attested set is
+    never superseded -- it produces a LOUD ``goal_resolution_noop``
+    with an attestation-failure reason instead. The set is the
+    conflict detector's verdict re-run at decision time against
+    current registry state; it proves the conflict was
+    detector-attested, not merely caller-claimed in the approval
+    args (the F38 MAC on the pending record proves the args were not
+    tampered with *after* queueing, not that the conflict was real).
+    When None (default), behavior is exactly as before (backward
+    compat for direct callers that already trust the args). Order of
+    checks: unknown-id and already-superseded keep their existing
+    reasons; attestation gates only known active goals.
+
+    Auditability: every status change chains a ``goal_status_changed``
+    event carrying ``approval_id``; the ``approval_decision`` event
+    carries the ``goal_ids`` it adjudicated (see
+    ``ApprovalQueue.decide``), so the trail cross-references both
+    ways. A ``goal_resolution`` summary event records the outcome.
+
+    Fail-closed: a referenced goal that is unknown, or already in the
+    target status (the conflict was resolved separately before the
+    human decided), is NOT silently skipped — a LOUD
+    ``goal_resolution_noop`` event is chained for it. The approval
+    decision itself is always recorded; resolution never vetoes it.
+
+    Honest ceiling: this automates the mechanics, not the judgment.
+    A human who allows without reading still allows — the wiring does
+    not second-guess the human.
+
+    Returns a summary dict: ``{"decision", "new_goal_id",
+    "superseded_goal_ids", "standing_goal_ids", "noop": [(goal_id,
+    reason), ...]}``.
+    """
+    if not isinstance(registry, GoalRegistry):
+        raise ValueError("registry must be a GoalRegistry, got %r"
+                         % type(registry))
+    _audit = audit if audit is not None else getattr(registry, "audit",
+                                                     None)
+
+    def _emit(event):
+        if _audit is not None:
+            _audit(event)
+
+    def _noop(goal_id, reason):
+        _emit({
+            "event": "goal_resolution_noop",
+            "flag": "goal_resolution_noop",
+            "run_id": _run_id,
+            "agent_id": ((registry.get_goal(goal_id) or {})
+                         .get("agent_id")),
+            "approval_id": approval_id,
+            "goal_id": goal_id,
+            "reason": reason,
+            "ts": _utcnow_iso(),
+        })
+
+    new_goal = registry.get_goal(new_goal_id) if new_goal_id else None
+    ordered = conflict_review_goal_ids(
+        {"goal_id": new_goal_id, "conflicts":
+         [{"existing_goal_id": gid} for gid in (existing_goal_ids or [])]})
+    existing = [gid for gid in ordered if gid != new_goal_id]
+
+    # run_id for the resolution audit trail: the new goal's run, else
+    # the first known existing goal's run, else None (never guessed).
+    _run_id = (new_goal or {}).get("run_id")
+    if not _run_id:
+        for gid in existing:
+            _g = registry.get_goal(gid)
+            if _g is not None and _g.get("run_id"):
+                _run_id = _g.get("run_id")
+                break
+
+    superseded = []
+    standing = []
+    noops = []
+    decision = "approved" if approved else "rejected"
+
+    if new_goal is None:
+        reason = ("goal %r referenced by approval %r is unknown to "
+                  "this registry -- the conflict cannot be resolved "
+                  "against it" % (new_goal_id, approval_id))
+        _noop(new_goal_id, reason)
+        noops.append((new_goal_id, reason))
+    elif approved:
+        if new_goal.get("status") != "active":
+            reason = ("goal %r is already %r -- a separate resolution "
+                      "already settled it; the approval is recorded "
+                      "but no status is re-applied"
+                      % (new_goal_id, new_goal.get("status")))
+            _noop(new_goal_id, reason)
+            noops.append((new_goal_id, reason))
+        else:
+            standing.append(new_goal_id)
+    else:
+        if new_goal.get("status") == "superseded":
+            reason = ("goal %r is already superseded -- the denial "
+                      "changes nothing" % (new_goal_id,))
+            _noop(new_goal_id, reason)
+            noops.append((new_goal_id, reason))
+        else:
+            registry.set_status(new_goal_id, "superseded",
+                                approval_id=approval_id)
+            superseded.append(new_goal_id)
+
+    if approved:
+        for gid in existing:
+            g = registry.get_goal(gid)
+            if g is None:
+                reason = ("goal %r referenced by approval %r is "
+                          "unknown to this registry"
+                          % (gid, approval_id))
+                _noop(gid, reason)
+                noops.append((gid, reason))
+            elif g.get("status") == "superseded":
+                reason = ("goal %r is already superseded -- the "
+                          "approval's allow changes nothing for it"
+                          % (gid,))
+                _noop(gid, reason)
+                noops.append((gid, reason))
+            elif (attested_existing_ids is not None
+                    and gid not in attested_existing_ids):
+                reason = ("goal %r was named in the approval args but "
+                          "not attested by the conflict detector at "
+                          "decision time -- the review is treated as "
+                          "forged and the goal is NEVER superseded"
+                          % (gid,))
+                _noop(gid, reason)
+                noops.append((gid, reason))
+            else:
+                registry.set_status(gid, "superseded",
+                                    approval_id=approval_id)
+                superseded.append(gid)
+    else:
+        # Denied: the existing goals stand; they are unaffected, not
+        # noops (there was nothing to do for them).
+        for gid in existing:
+            g = registry.get_goal(gid)
+            if g is not None and g.get("status") == "active":
+                standing.append(gid)
+
+    _emit({
+        "event": "goal_resolution",
+        "run_id": _run_id,
+        "agent_id": (new_goal or {}).get("agent_id"),
+        "approval_id": approval_id,
+        "decision": decision,
+        "new_goal_id": new_goal_id,
+        "superseded_goal_ids": superseded,
+        "standing_goal_ids": standing,
+        "noop_goal_ids": [gid for gid, _r in noops],
+        "reason": ("human %s goal_conflict_review %r: %d goal(s) "
+                   "superseded, %d standing, %d noop"
+                   % (decision, approval_id, len(superseded),
+                      len(standing), len(noops))),
+        "ts": _utcnow_iso(),
+    })
+    return {
+        "decision": decision,
+        "new_goal_id": new_goal_id,
+        "superseded_goal_ids": superseded,
+        "standing_goal_ids": standing,
+        "noop": noops,
+    }

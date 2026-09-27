@@ -5,10 +5,10 @@ revoke-after-approve. ``evals/row7_delayed_break.py`` pins the gap red
 (plant-then-harm with zero correlating signal; no revocation path).
 
 Pattern adapted from openai/openai-guardrails-python (MIT License,
-(c) OpenAI; https://github.com/openai/openai-guardrails-python, v0.3.2,
-last commit 2026-09-24 per repo research; MIT license confirmed from
-the upstream README on 2026-09-27; exact merge hash not surfaced in
-fetched pages, so provenance is recorded at version/date level):
+(c) 2025 OpenAI; https://github.com/openai/openai-guardrails-python,
+v0.3.2 = commit 60401f4ca6c832e8be1a82f6fc3783d6e51c59a9, resolved via
+the GitHub tag-refs API on 2026-09-27; MIT license confirmed from the
+upstream LICENSE at that tag):
 
 - ``UserIntentDict``: ``{"most_recent_message": str,
   "previous_context": list[str]}`` -- the latest user turn plus prior
