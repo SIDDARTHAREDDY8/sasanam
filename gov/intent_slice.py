@@ -317,14 +317,41 @@ _CJK_NEG_SRC = (
     r"|말고|취소|중지"         # "instead-of" / "cancel" / "stop"
     r")"
 )
+# F188 (row 7): a Latin negation cue glued to a non-Latin word char
+# with zero whitespace ("do not发送"). \b fails at the Latin->non-Latin
+# boundary because non-Latin letters are \w in Unicode regex, so the
+# trailing \b of the Latin cue alternatives below also accepts a
+# Latin->non-Latin script transition. The leading \b is unchanged: a
+# cue glued AFTER non-Latin text is not the F188 shape (English puts
+# the cue before the verb). The wave-145 guards ("not only",
+# "no problem", "kein(e) problem(e)") carry the same boundary --
+# their inner \b had the identical blindness, so "not only发送"
+# leaked a "not" cue pre-fix (pinned in
+# evals/f188_glued_cue_probes.py).
+_NONLATIN_WORD_SRC = (
+    r"\u0400-\u04ff"      # Cyrillic
+    r"\u0900-\u097f"      # Devanagari
+    r"\u0600-\u06ff"      # Arabic
+    r"\u4e00-\u9fff"      # Han
+    r"\u3040-\u30ff"      # Hiragana/Katakana
+    r"\uac00-\ud7af"      # Hangul syllables
+    r"\u1100-\u11ff"      # Hangul Jamo
+    r"\u3130-\u318f"      # Hangul compatibility Jamo
+)
+# Bit-identical to \b wherever the next char is not a non-Latin
+# word char (the class is a subset of \w, so plain-\b cases are
+# untouched); it only ADDS the script-transition case.
+_LATIN_CUE_END_SRC = r"(?:\b|(?=[" + _NONLATIN_WORD_SRC + r"]))"
 _NEGATION_RE = re.compile(
-    r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
-    r"no(?!\s+problems?\b)|stop|halt|"
+    r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|"
+    r"not(?!\s+only" + _LATIN_CUE_END_SRC + r")|"
+    r"no(?!\s+problems?" + _LATIN_CUE_END_SRC + r")|stop|halt|"
     r"cease|avoid|refrain|cancel|ne|"
     r"(?<!n['\u2019]est-ce\s)(?<!\bun\s)pas|"
-    r"nicht|kein(?!\s+probleme?\b)|keine(?!\s+probleme?\b)|keinen|"
-    r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)\b"
-    r"|" + _FRENCH_NE_PAIR_SRC
+    r"nicht|kein(?!\s+probleme?" + _LATIN_CUE_END_SRC + r")|"
+    r"keine(?!\s+probleme?" + _LATIN_CUE_END_SRC + r")|keinen|"
+    r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)"
+    + _LATIN_CUE_END_SRC + r"|" + _FRENCH_NE_PAIR_SRC
     + r"|" + _DEVA_NEG_SRC
     + r"|" + _CYRILLIC_NI_PAIR_SRC
     + r"|" + _CYRILLIC_NEG_SRC
@@ -1221,6 +1248,49 @@ def _cjk_token_negates(tok, cjk_forms, tokens, i):
     return False
 
 
+# F188 (row 7): Latin negation cues for the glued-cue judge branch
+# below. A Latin cue glued to a non-Latin verb form with zero
+# whitespace ("do not发送") fuses into one tokenizer run, so the
+# cue is matched as a SUFFIX of the text before the form -- with a
+# leading \b so "cannot" (not a cue, consistent with "cannot send"
+# staying silent) cannot match via its "not" tail. Two-word cues
+# ("do not") are covered by the one-token lookback in
+# _latin_glued_cue_negates. The wave-145 guards are vacuous here:
+# the cue must END where the form begins, so nothing can follow it.
+_LATIN_GLUED_CUE_RE = re.compile(
+    r"\b(?:don'?t|dont|do not|doesn'?t|doesnt|never|not|no|"
+    r"stop|halt|cease|avoid|refrain|cancel|"
+    r"nicht|kein|keine|keinen|keinem|keiner|keines|"
+    r"keinerlei|keinesfalls|keineswegs|nahi)$"
+)
+
+
+def _latin_glued_cue_negates(tok, native_forms, tokens, i):
+    """F188: True when a non-ASCII native verb form is glued inside
+    this token and a Latin negation cue abuts the form's left edge
+    ("do not发送", "do notотправляйте", "do notأرسل").
+
+    The tokenizer fuses the glued run, so the exact native-form
+    match in _negated_verb misses and _CJK_PRE_CUE_SRC only knows
+    CJK cues. The cue may span the token boundary for two-word
+    cues, so the check runs over (previous token + head); the cue
+    must END exactly where the form begins, so a cue elsewhere in
+    the run cannot fire this branch. ``tok`` is already
+    invisible-format-stripped (F183: a zero-width char inside the
+    glued cue cannot split the match)."""
+    for form in native_forms:
+        if form.isascii():
+            continue
+        fi = tok.find(form)
+        if fi < 0:
+            continue
+        head = tok[:fi]
+        context = (tokens[i - 1] + " " if i > 0 else "") + head
+        if _LATIN_GLUED_CUE_RE.search(context):
+            return True
+    return False
+
+
 def _negated_verb(latest_text, tool):
     """True when the latest message negates the action's verb within a
     token window ("don't delete", "never send anything"). Direct
@@ -1288,6 +1358,13 @@ def _negated_verb(latest_text, tool):
         # its cue in-token, so the CJK branch must still run.
         if cjk_forms and _CJK_CHAR_RE.search(tok) and \
                 _cjk_token_negates(tok, cjk_forms, tokens, i):
+            return True
+        # F188 (row 7): Latin cue glued to a non-Latin verb form with
+        # zero whitespace ("do not发送"). Runs independently of the
+        # branches above, like the CJK branch: the fused token
+        # carries the cue before the form, not in the pre-verb
+        # window.
+        if _latin_glued_cue_negates(tok, native_forms, tokens, i):
             return True
     return False
 

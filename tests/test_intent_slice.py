@@ -1019,5 +1019,68 @@ class CJKNegationTest(unittest.TestCase):
             "Send the Q3 report to the vendor."))
 
 
+class GluedLatinCueTest(unittest.TestCase):
+    """F188 (row 7): a Latin negation cue glued to a non-Latin verb
+    with zero whitespace ("do not发送"). Pre-fix, the trailing \\b of
+    the Latin cue alternatives missed the Latin->non-Latin script
+    transition (non-Latin letters are \\w) and the judge fused the
+    glued run into one token, so both paths stayed silent."""
+
+    def _cue(self, text):
+        mtch = m._NEGATION_RE.search(text)
+        return mtch.group(0) if mtch else None
+
+    def test_cue_glued_cjk(self):
+        self.assertEqual(self._cue("do not发送Q3报告"), "do not")
+        self.assertEqual(self._cue("don't发送Q3报告"), "don't")
+        self.assertEqual(self._cue("never删除Q3报告"), "never")
+        self.assertEqual(self._cue("stop发送Q3报告"), "stop")
+
+    def test_cue_glued_cyrillic_arabic(self):
+        self.assertEqual(
+            self._cue("do notотправляйте Q3 отчёт"), "do not")
+        self.assertEqual(
+            self._cue("do notأرسل Q3 التقرير"), "do not")
+
+    def test_judge_glued_fires(self):
+        self.assertTrue(m._negated_verb("do not发送Q3报告", "send_email"))
+        self.assertTrue(m._negated_verb("don't发送Q3报告", "send_email"))
+        self.assertTrue(m._negated_verb("never删除Q3报告", "delete_file"))
+        self.assertTrue(
+            m._negated_verb("do notотправляйте Q3 отчёт", "send_email"))
+        self.assertTrue(
+            m._negated_verb("do notأرسل Q3 التقرير", "send_email"))
+
+    def test_scope_glued_fires(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "do not发送Q3报告", "Send the Q3 report to the vendor."))
+        self.assertTrue(m.negation_scopes_grant(
+            "never删除Q3报告", "Delete the Q3 report."))
+
+    def test_guards_hold_when_glued(self):
+        # The wave-145 guards had the same \\b blindness at the
+        # script transition; "not only发送" leaked a "not" cue
+        # pre-fix.
+        self.assertIsNone(self._cue("not only发送Q3报告"))
+        self.assertIsNone(self._cue("no problem发送Q3报告"))
+        self.assertFalse(m._negated_verb("not only发送Q3报告", "send_email"))
+
+    def test_benign_glued_stays_silent(self):
+        # "cannot" is not a cue (consistent with "cannot send"
+        # staying silent); "donot" is not a word.
+        self.assertIsNone(self._cue("cannot发送Q3报告"))
+        self.assertIsNone(self._cue("donot发送Q3报告"))
+        self.assertFalse(m._negated_verb("cannot发送Q3报告", "send_email"))
+        self.assertFalse(
+            m._negated_verb("do not担心", "send_email"))  # not a verb form
+
+    def test_judge_glued_wrong_predicate_silent(self):
+        self.assertFalse(m._negated_verb("do not发送Q3报告", "delete_file"))
+
+    def test_reverse_glue_unaffected(self):
+        # CJK cue after the verb is the pre-existing green path.
+        self.assertTrue(m._negated_verb("email不要发送", "send_email"))
+
+
 if __name__ == "__main__":
     unittest.main()
