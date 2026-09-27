@@ -980,12 +980,22 @@ class BudgetStore(ChainedStore):
 
     def _write_adapt(self, agent_id, run_seq, level, direction, trigger,
                      eff_limit, eff_window, evidence, audit,
-                     reset_streak=False, reset_directions=False):
-        """Write an ``adapt`` record + audit event (audit-before-write).
+                     reset_streak=False, reset_directions=False,
+                     audit_after_write=False):
+        """Write an ``adapt`` record + audit event.
 
-        Tightenings emit the LOUD ``drift_budget_adapted`` evidence
-        event; relaxations emit the audited (non-LOUD)
+        Default is the store's class-wide audit-before-write
+        convention: tightenings emit the LOUD ``drift_budget_adapted``
+        evidence event; relaxations emit the audited (non-LOUD)
         ``drift_budget_relaxed`` event.
+
+        ``audit_after_write=True`` (framing path only, wave-150 row 9):
+        the chained record lands FIRST and the audit event is emitted
+        only on a successful write, carrying the same digest linkage
+        the pre-write audit would have carried. A failed write then
+        leaves no audit trace of an adaptation that never happened --
+        no phantom ``drift_budget_adapted``. Every other caller keeps
+        audit-before-write; this flag changes nothing for them.
         """
         record = {"kind": "adapt", "agent_id": agent_id,
                   "run_seq": run_seq,
@@ -1006,7 +1016,20 @@ class BudgetStore(ChainedStore):
                  "evidence": dict(evidence)}
         if direction == "tighten":
             event["severity"] = "LOUD"
-        return self._write(agent_id, record, event, audit)
+        if not audit_after_write:
+            return self._write(agent_id, record, event, audit)
+        auditor = self._audit if audit is None else audit
+        # Post-write-audit: the chained record lands (or raises)
+        # with the auditor suppressed, so a failed write emits
+        # NOTHING -- no phantom adapted event. Only then does the
+        # audit event go out.
+        stored = self._append_chained(agent_id, record, event, None)
+        if auditor is not None:
+            emitted = dict(event)
+            emitted["digest"] = stored["digest"]
+            emitted["prev_digest"] = stored["prev_digest"]
+            auditor(emitted)
+        return stored
 
     def record_run(self, agent_id, run_seq, run_id, fingerprint,
                    baseline, policy, principal="", audit=None,
@@ -1407,6 +1430,14 @@ class BudgetStore(ChainedStore):
         - the epoch restarts at every ``framing_drift`` tightening,
           so a continuing campaign re-fires only on fresh evidence
           (capped by ``adapt_max_level`` like every other trigger).
+        - ordering (wave-150 consistency fix): the suspect verdict is
+          computed first, the chained adapt write is attempted with
+          post-write audit, and the LOUD suspect event is emitted
+          only when the write lands -- after the drift_budget_adapted
+          event. A failed write emits LOUD
+          ``framing_adapt_write_failed`` (verdict details attached)
+          and leaves the budget at its prior level -- fail-closed,
+          never a phantom suspect and never a phantom adapted event.
         """
         records = self._read_all(agent_id)
         level, _, _, _, _, _, _, _ = self._adapt_fold(records)
@@ -1450,23 +1481,66 @@ class BudgetStore(ChainedStore):
         new_level = level + 1
         nl, nw = self._effective(policy, new_level)
         auditor = self._audit if audit is None else audit
+        # Wave-150 (row 9): verdict computed, chained adapt write
+        # attempted FIRST with post-write audit (audit_after_write):
+        # the chained record lands, THEN the drift_budget_adapted
+        # event is emitted, THEN the LOUD suspect event. On write
+        # failure a LOUD framing_adapt_write_failed carries the
+        # verdict details and the budget stays at its prior level --
+        # fail-closed, never a phantom suspect AND never a phantom
+        # adapted event. (Other _write_adapt callers keep the
+        # store's class-wide audit-before-write convention; the
+        # post-write mode is narrow to this path. This is a
+        # consistency fix, not a new detector.)
+        verdict = {"event": "framing_drift_suspect",
+                   "severity": "LOUD",
+                   "agent_id": agent_id,
+                   "run_seq": run_seq,
+                   "trigger": "framing_drift",
+                   "runs": policy.framing_min_runs,
+                   "distinct_phrases": len(distinct),
+                   "phrases": distinct,
+                   "min_fraction": round(min(fracs), 6),
+                   "max_fraction": round(max(fracs), 6)}
+        try:
+            self._write_adapt(
+                agent_id, run_seq, new_level, "tighten",
+                "framing_drift", nl, nw,
+                {"runs": policy.framing_min_runs,
+                 "distinct_phrases": distinct,
+                 "min_fraction": round(min(fracs), 6)}, audit,
+                audit_after_write=True)
+        except OSError as exc:
+            # Cold-path disambiguation: with post-write audit, an
+            # OSError here can ALSO come from the audit callable
+            # itself after the chained record has landed (audit
+            # pipeline failure, distinct from a store write
+            # failure). Misreporting that as a write failure would
+            # be a phantom-failure claim, so check the chain: if
+            # the adapt record landed, the adaptation is real --
+            # propagate fail-loud as an audit failure (like every
+            # other audit failure) instead of emitting
+            # framing_adapt_write_failed. The chain stays the
+            # source of truth; _adapt_fold reads the landed level.
+            landed = any(
+                r.get("kind") == "adapt"
+                and r.get("trigger") == "framing_drift"
+                and int(r.get("run_seq", -1)) == run_seq
+                for r in self._read_all(agent_id))
+            if landed:
+                raise
+            if auditor is not None:
+                auditor({"event": "framing_adapt_write_failed",
+                         "severity": "LOUD",
+                         "agent_id": agent_id,
+                         "run_seq": run_seq,
+                         "trigger": "framing_drift",
+                         "adapt_level": new_level,
+                         "verdict": dict(verdict),
+                         "error": "%s: %s" % (type(exc).__name__, exc)})
+            return
         if auditor is not None:
-            auditor({"event": "framing_drift_suspect",
-                     "severity": "LOUD",
-                     "agent_id": agent_id,
-                     "run_seq": run_seq,
-                     "trigger": "framing_drift",
-                     "runs": policy.framing_min_runs,
-                     "distinct_phrases": len(distinct),
-                     "phrases": distinct,
-                     "min_fraction": round(min(fracs), 6),
-                     "max_fraction": round(max(fracs), 6)})
-        self._write_adapt(
-            agent_id, run_seq, new_level, "tighten",
-            "framing_drift", nl, nw,
-            {"runs": policy.framing_min_runs,
-             "distinct_phrases": distinct,
-             "min_fraction": round(min(fracs), 6)}, audit)
+            auditor(verdict)
 
     def reset(self, agent_id, reason="manual", audit=None):
         """Clear the agent's budget on operator demand (audited)."""

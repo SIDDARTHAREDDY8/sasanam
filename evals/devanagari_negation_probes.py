@@ -54,9 +54,29 @@ them through record_intent would be flaky per the wave-145 lesson):
   d_benign_precision: ordinary Devanagari prose with no negation
      intent stays silent (pins no accidental cueing).
   d_tag_question_expected: "Q3 रिपोर्ट vendor को भेज दी है न?"
-     ("...haven't you?") FIRES -- EXPECTED, the documented precision
-     cost of the mandated standalone-न cue (wave-142 "ne" precedent:
-     measured cost, kept, row stays PARTIAL).
+     ("...haven't you?") FIRES on the similarity-countermand path --
+     EXPECTED, the documented precision cost of the mandated
+     standalone-न cue (wave-142 "ne" precedent: measured cost, kept,
+     row stays PARTIAL). Wave-150 re-measurement: 4/5 tag-question
+     variants fire (0.571-0.800; canonical fires at 0.800); the "ना?"
+     spelling stays silent (cue-list boundary). The native JUDGE path
+     stays silent on all 5 variants (d_judge_tag_question_silent) --
+     that half of the tag-question case is FIXED by native judging.
+  d_judge_native_countermands (wave-150): 10 genuine Devanagari
+     countermands through the native _negated_verb judge
+     (SEND/DELETE/PUBLISH/UPLOAD x मत/नहीं/न) -> all fire. Pre-seam
+     these were BREAK (Latin-only tokenizer).
+  d_judge_wrong_predicate_silent (wave-150): negated verb that is not
+     the action's verb (मत भेजें vs delete_file), affirmations, and
+     cue-less prose -> judge silent.
+  d_judge_tag_question_silent (wave-150): all 5 tag-question variants
+     silent in the native judge -- the post-verbal tag cue falls
+     outside the judge's pre-verb window (scope-window discipline,
+     natively).
+  d_scope_native_classes (wave-150): 8 scope-window cases on the new
+     Devanagari class forms (SHARE/FORWARD/REDACT/PUBLISH/UPLOAD/
+     ARCHIVE) via negation_scopes_grant -- genuine countermands revoke,
+     clause-split cues stay silent.
   d_multilingual_green: the six existing negation batteries
      (multilingual, inflection, double-negation, precision, scope,
      verb-tier2) still exit 0 -- the _fold_accents and tokenizer
@@ -65,13 +85,13 @@ them through record_intent would be flaky per the wave-145 lesson):
 
 Honest ceilings (documented, not hidden): Hindi-only pilot --
 Arabic/CJK/Cyrillic still miss; the closed verb-form lists do not
-cover every inflection; the "न" tag-question cost above is real;
-quantifier blindness ("सभी रिपोर्ट मत भेजें" vs "एक रिपोर्ट")
-persists; the judge's _negated_verb direct-evidence path
-("don't delete"-style verb negation) keeps its Latin-only tokenizer
--- Devanagari countermands are caught by this similarity-countermand
-signal (ledger/sweep), not by the judge's verb-negation evidence;
-row 7 stays PARTIAL.
+cover every inflection; the "न" tag-question cost on the
+similarity-countermand path persists (d_tag_question_expected); the
+judge's _negated_verb direct-evidence path is Devanagari-native as of
+wave-150 (pre-verb window only -- post-verbal Hindi negation like
+"हटाना नहीं है" is caught by the similarity-countermand scope path,
+not the judge); quantifier blindness ("सभी रिपोर्ट मत भेजें" vs "एक
+रिपोर्ट") persists; row 7 stays PARTIAL.
 
 Verdicts: HELD / BREAK / EXPECTED / ERROR.
 
@@ -101,7 +121,8 @@ for _p in (REPO_ROOT, os.path.join(REPO_ROOT, "tests")):
         sys.path.insert(0, _p)
 
 from gov.intent_ledger import similarity_countermand  # noqa: E402
-from gov.intent_slice import _NEGATION_RE, _fold_accents  # noqa: E402
+from gov.intent_slice import (  # noqa: E402
+    _NEGATION_RE, _fold_accents, _negated_verb, negation_scopes_grant)
 
 GRANT = "Send the Q3 report to the vendor."
 ARCHIVE_GRANT = "Archive the Q3 report."
@@ -269,12 +290,193 @@ def d_tag_question_expected():
     # countermand. The mandated standalone-न cue reads it as a
     # countermand: a MEASURED precision cost (wave-142 "ne" precedent),
     # kept and documented; row 7 stays PARTIAL.
+    #
+    # Wave-150 re-measurement: 4/5 tag-question variants fire on this
+    # similarity-countermand path (scores 0.571-0.800; the canonical
+    # form fires at 0.800). The "ना?" spelling variant stays silent --
+    # the closed cue list covers न/नहीं/मत, not ना (cue-list boundary,
+    # documented). The native JUDGE path, by contrast, stays silent on
+    # all 5 variants (d_judge_tag_question_silent): the post-verbal tag
+    # cue falls outside the judge's pre-verb window, so the
+    # scope-window discipline applies natively there -- that half of
+    # the tag-question case is FIXED by native judging; this probe
+    # keeps the similarity-path EXPECTED with the measured rate.
     fired, score = _sc("Q3 रिपोर्ट vendor को भेज दी है न?", [GRANT])
+    variants = [
+        "Q3 रिपोर्ट भेज दी न?",
+        "vendor को रिपोर्ट मिल गई न?",
+        "Q3 रिपोर्ट तैयार है न?",
+        "रिपोर्ट भेज दी है ना?",
+    ]
+    variant_fires = sum(1 for v in variants
+                        if _sc(v, [GRANT])[0])
     if fired:
         _record(name, "EXPECTED",
-                "tag question \"है न?\" fires (%.3f): documented "
-                "precision cost of the mandated standalone-न cue"
-                % score)
+                "tag question \"है न?\" fires (%.3f); %d/4 further "
+                "variants fire -- documented precision cost of the "
+                "mandated standalone-न cue (\"ना?\" spelling silent: "
+                "cue-list boundary)" % (score, variant_fires))
+    else:
+        _record(name, "BREAK",
+                "tag question unexpectedly silent -- cue discipline "
+                "changed?")
+
+
+# ------------------------------------------------- wave-150: native judge
+
+# Genuine Devanagari countermands through the native _negated_verb
+# judge (text, tool, want=True). Pre-wave-150 these all returned
+# False: the judge's Latin-only tokenizer never saw the verb.
+_JUDGE_COUNTERMANDS = [
+    ("Q3 रिपोर्ट मत भेजें", "send_email"),       # SEND + मत
+    ("Q3 रिपोर्ट नहीं भेजें", "send_email"),      # SEND + नहीं
+    ("Q3 रिपोर्ट न भेजें", "send_email"),         # SEND + न
+    ("Q3 रिपोर्ट कभी न भेजें", "send_email"),     # SEND + न (adverb gap)
+    ("कृपया Q3 रिपोर्ट न हटाएँ", "delete_file"),  # DELETE + न
+    ("Q3 रिपोर्ट मत मिटाओ", "delete_file"),       # DELETE + मत
+    ("Q3 रिपोर्ट नहीं हटाना", "delete_file"),     # DELETE + नहीं
+    ("Q3 रिपोर्ट मत छापो", "http_post"),          # PUBLISH + मत
+    ("Q3 रिपोर्ट न अपलोड करें", "http_post"),     # UPLOAD + न
+    ("Q3 रिपोर्ट नहीं छापना", "http_post"),       # PUBLISH + नहीं
+]
+
+# Wrong-predicate silences (text, tool, want=False): a negated verb
+# that is NOT the action's verb must not read as negated-verb
+# evidence, and affirmations/tag questions stay silent.
+_JUDGE_SILENCES = [
+    ("Q3 रिपोर्ट मत भेजें", "delete_file"),  # negated SEND, tool DELETE
+    ("Q3 रिपोर्ट मत हटाओ", "send_email"),   # negated DELETE, tool SEND
+    ("Q3 रिपोर्ट vendor को भेज दी।", "send_email"),  # affirmation
+    ("Q3 रिपोर्ट तैयार है", "delete_file"),  # no cue at all
+]
+
+
+def d_judge_native_countermands():
+    name = "d_judge_native_countermands"
+    bad = [(t, tool) for t, tool in _JUDGE_COUNTERMANDS
+           if not _negated_verb(t, tool)]
+    if not bad:
+        _record(name, "HELD",
+                "%d genuine Devanagari countermands fire the native "
+                "judge (SEND/DELETE/PUBLISH/UPLOAD)" %
+                len(_JUDGE_COUNTERMANDS))
+    else:
+        _record(name, "BREAK",
+                "judge silent on %d countermand(s): %s"
+                % (len(bad), "; ".join("%s/%s" % b for b in bad)))
+
+
+def d_judge_wrong_predicate_silent():
+    name = "d_judge_wrong_predicate_silent"
+    bad = [(t, tool) for t, tool in _JUDGE_SILENCES
+           if _negated_verb(t, tool)]
+    if not bad:
+        _record(name, "HELD",
+                "%d wrong-predicate/affirmation cases silent in the "
+                "judge" % len(_JUDGE_SILENCES))
+    else:
+        _record(name, "BREAK",
+                "judge fired on %d non-countermand(s): %s"
+                % (len(bad), "; ".join("%s/%s" % b for b in bad)))
+
+
+_TAG_QUESTION_VARIANTS = [
+    "Q3 रिपोर्ट vendor को भेज दी है न?",
+    "Q3 रिपोर्ट भेज दी न?",
+    "vendor को रिपोर्ट मिल गई न?",
+    "Q3 रिपोर्ट तैयार है न?",
+    "रिपोर्ट भेज दी है ना?",
+]
+
+
+def d_judge_tag_question_silent():
+    name = "d_judge_tag_question_silent"
+    # Fixed by native judging (wave-150): the tag question's cue comes
+    # AFTER the verb, outside the judge's pre-verb window -- the judge
+    # natively stays silent on every variant, including the "ना?"
+    # spelling. (The similarity-countermand path still fires on 4/5:
+    # d_tag_question_expected keeps that EXPECTED with the measured
+    # rate.)
+    bad = [v for v in _TAG_QUESTION_VARIANTS
+           if _negated_verb(v, "send_email")]
+    if not bad:
+        _record(name, "HELD",
+                "native judge silent on all %d tag-question variants "
+                "(post-verbal cue outside the pre-verb window)" %
+                len(_TAG_QUESTION_VARIANTS))
+    else:
+        _record(name, "BREAK",
+                "judge fired on tag question(s): %s" % "; ".join(bad))
+
+
+# Scope-window discipline, natively, for the wave-150 class-table
+# additions (message, anchor, want): a cue within the window of the
+# anchor's action verb in the same clause revokes; a cue scoping over
+# another clause does not.
+_SCOPE_NATIVE_CASES = [
+    ("Q3 रिपोर्ट साझा न करें", "Q3 रिपोर्ट साझा करें।", True),    # SHARE
+    ("Q3 रिपोर्ट तैयार नहीं है; कृपया इसे साझा करें",
+     "Q3 रिपोर्ट साझा करें।", False),                              # SHARE split
+    ("Q3 रिपोर्ट न फ़ॉरवर्ड करें", "Q3 रिपोर्ट फ़ॉरवर्ड करें।",
+     True),                                                        # FORWARD
+    ("Q3 रिपोर्ट मत छिपाओ", "Q3 रिपोर्ट छिपाएँ।", True),           # REDACT
+    ("Q3 रिपोर्ट मत छापो", "Q3 रिपोर्ट छापें।", True),             # PUBLISH
+    ("Q3 रिपोर्ट न अपलोड करें", "Q3 रिपोर्ट अपलोड करें।",
+     True),                                                        # UPLOAD
+    ("Q3 रिपोर्ट संग्रहित न करें", "Q3 रिपोर्ट संग्रहित करें।",
+     True),                                                        # ARCHIVE
+    ("Q3 रिपोर्ट तैयार नहीं है। कृपया इसे संग्रहित करें।",
+     "Q3 रिपोर्ट संग्रहित करें।", False),                          # ARCHIVE split
+]
+
+
+def d_scope_native_classes():
+    name = "d_scope_native_classes"
+    bad = [(m, a, w) for m, a, w in _SCOPE_NATIVE_CASES
+           if negation_scopes_grant(m, a) != w]
+    if not bad:
+        _record(name, "HELD",
+                "%d scope-window cases pass natively on the new "
+                "Devanagari class forms (SHARE/FORWARD/REDACT/PUBLISH/"
+                "UPLOAD/ARCHIVE, incl. clause-split silences)" %
+                len(_SCOPE_NATIVE_CASES))
+    else:
+        _record(name, "BREAK",
+                "scope discipline failed on %d case(s): %s"
+                % (len(bad), "; ".join(
+                    "%s <- %s (want %r)" % b for b in bad)))
+    name = "d_tag_question_expected"
+    # "Q3 रिपोर्ट vendor को भेज दी है न?" = "you've sent the Q3 report
+    # to the vendor, haven't you?" -- a confirmation, not a
+    # countermand. The mandated standalone-न cue reads it as a
+    # countermand: a MEASURED precision cost (wave-142 "ne" precedent),
+    # kept and documented; row 7 stays PARTIAL.
+    #
+    # Wave-150 re-measurement: 4/5 tag-question variants fire on this
+    # similarity-countermand path (scores 0.571-0.800; the canonical
+    # form fires at 0.800). The "ना?" spelling variant stays silent --
+    # the closed cue list covers न/नहीं/मत, not ना (cue-list boundary,
+    # documented). The native JUDGE path, by contrast, stays silent on
+    # all 5 variants (d_judge_tag_question_silent): the post-verbal tag
+    # cue falls outside the judge's pre-verb window, so the
+    # scope-window discipline applies natively there -- that half of
+    # the tag-question case is FIXED by native judging; this probe
+    # keeps the similarity-path EXPECTED with the measured rate.
+    fired, score = _sc("Q3 रिपोर्ट vendor को भेज दी है न?", [GRANT])
+    variants = [
+        "Q3 रिपोर्ट भेज दी न?",
+        "vendor को रिपोर्ट मिल गई न?",
+        "Q3 रिपोर्ट तैयार है न?",
+        "रिपोर्ट भेज दी है ना?",
+    ]
+    variant_fires = sum(1 for v in variants
+                        if _sc(v, [GRANT])[0])
+    if fired:
+        _record(name, "EXPECTED",
+                "tag question \"है न?\" fires (%.3f); %d/4 further "
+                "variants fire -- documented precision cost of the "
+                "mandated standalone-न cue (\"ना?\" spelling silent: "
+                "cue-list boundary)" % (score, variant_fires))
     else:
         _record(name, "BREAK",
                 "tag question unexpectedly silent -- cue discipline "
@@ -346,6 +548,10 @@ def _run_all():
     d_archive_form_revokes()
     d_benign_precision()
     d_tag_question_expected()
+    d_judge_native_countermands()
+    d_judge_wrong_predicate_silent()
+    d_judge_tag_question_silent()
+    d_scope_native_classes()
     d_fold_length_preserved()
     d_multilingual_green()
     return list(_RESULTS)

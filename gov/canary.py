@@ -71,6 +71,7 @@ $0, stdlib only, no network calls. Deterministic per run_id.
 import base64
 import binascii
 import hashlib
+import logging
 import math
 import random
 import re
@@ -79,6 +80,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from .policy import PolicyDecision
+
+_log = logging.getLogger("gov.canary")
 
 __all__ = [
     "CanaryMint",
@@ -180,6 +183,21 @@ MIN_MATCHABLE_LEN = 20
 # split: a 16-char window containing them still holds 12 random chars
 # and stays unpredictable.
 FRAGMENT_LEN = 16
+
+# Wave-150 (row 13): fragment time-to-live, in RUNS. A fragment that
+# has not been re-observed for more than FRAGMENT_TTL_RUNS runs
+# expires from the registry's active matching set (see
+# CanaryRegistry.advance_run). Rationale, measured (see
+# evals/canary_fragment_ttl_probes.py::t4_ttl_bound_measured): on a
+# seeded 60-run benign stream with coincidental fragment embeddings,
+# TTL=infinity lets stale observations pair into false trips while
+# TTL=50 keeps the false-trip count at zero -- and a genuine
+# piecemeal campaign completes within a handful of runs, so 50 runs
+# of coverage margin is generous without letting months-old
+# observations pair with new coincidences. Re-observation refreshes
+# the TTL. Expiry is routine, so it is logged at DEBUG (never LOUD,
+# never with fragment strings -- privacy discipline).
+FRAGMENT_TTL_RUNS = 50
 # Base predictable words (infra/structural vocabulary). The mint's
 # service and zone names are added below (after _SERVICES/_ZONES) so
 # the filter stays in sync with the mint.
@@ -521,6 +539,15 @@ class CanaryRegistry:
         # planted FAKE values only -- never real secrets.
         self._fragments = {}
         self._fragment_seen = {}
+        # Wave-150 row 13: fragment TTL state for long-lived
+        # registries (register-once, shared across runs).
+        # _fragment_last_seen maps (canary value, fragment) -> the
+        # registry run-seq at which it was last observed in egress;
+        # _run_seq is the registry's run clock, advanced by
+        # advance_run(). A fragment unseen for more than
+        # FRAGMENT_TTL_RUNS runs expires from the active matching set.
+        self._fragment_last_seen = {}
+        self._run_seq = 0
 
     def register(self, mint):
         """Record every value from a :class:`CanaryMint`."""
@@ -529,6 +556,8 @@ class CanaryRegistry:
         # trip this run (the mint rotates values per run anyway).
         self._fragments = {}
         self._fragment_seen = {}
+        self._fragment_last_seen = {}
+        self._run_seq = 0
         for c in mint.values():
             self._by_value[c["value"]] = c
             self._by_value_norm[normalize_canary_text(c["value"])] = c
@@ -536,6 +565,43 @@ class CanaryRegistry:
                 self._by_host[c["value"].lower()] = c
             self._fragments[c["value"]] = _derive_fragments(
                 c["value"], kind=c.get("kind"))
+
+    def advance_run(self):
+        """Advance the registry's run clock and expire stale fragments.
+
+        Long-lived registries (register-once, shared across runs) must
+        call this once per run boundary. Any fragment not re-observed
+        for more than FRAGMENT_TTL_RUNS runs expires: it is removed
+        from the active matching set, so only fragments observed
+        within the last FRAGMENT_TTL_RUNS runs can combine into a
+        two-distinct-fragments trip. Expiry is routine -- it is logged
+        at DEBUG with the canary LABEL only, never LOUD and never with
+        fragment strings (privacy discipline). Per-run `register()`
+        resets the clock, so this is a no-op for the register-per-run
+        pattern.
+        """
+        self._run_seq += 1
+        horizon = self._run_seq - FRAGMENT_TTL_RUNS
+        expired_by_value = {}
+        for key, last in list(self._fragment_last_seen.items()):
+            # Expire when unseen for MORE than FRAGMENT_TTL_RUNS
+            # runs: last < run_seq - TTL (exactly TTL runs ago is
+            # still active).
+            if last < horizon:
+                value, frag = key
+                del self._fragment_last_seen[key]
+                seen = self._fragment_seen.get(value)
+                if seen is not None:
+                    seen.discard(frag)
+                    if not seen:
+                        del self._fragment_seen[value]
+                expired_by_value.setdefault(value, 0)
+                expired_by_value[value] += 1
+        for value, count in expired_by_value.items():
+            label = self._by_value.get(value, {}).get("label", "?")
+            _log.debug("canary fragment TTL expiry: label=%s "
+                       "fragments_expired=%d run_seq=%d",
+                       label, count, self._run_seq)
 
     def match_value(self, s):
         """Exact credential/token match, then normalized match.
@@ -624,6 +690,12 @@ class CanaryRegistry:
             before = len(seen)
             for frag in frags:
                 if frag in s:
+                    # Wave-150 row 13: refresh the fragment TTL on
+                    # EVERY observation -- re-observation keeps a
+                    # fragment alive even if it was already seen this
+                    # run.
+                    self._fragment_last_seen[
+                        (value, frag)] = self._run_seq
                     seen.add(frag)
             revealed = len(seen) - before
             half_span = _half_span_match(s, value)

@@ -265,6 +265,9 @@ _VERB_CLASSES = {
         "bhejo", "bhejna", "bhej", "bheje",
         # Wave-149: Devanagari SEND forms (pilot).
         "भेजें", "भेजना", "भेजो", "भेजे", "भेजा", "भेज",
+        # Wave-150: भेजिए (polite imperative) -- the common form in
+        # countermand requests ("कृपया न भेजिए").
+        "भेजिए",
     )),
     "ARCHIVE": frozenset((
         "archive", "archives", "archiving", "archived",
@@ -315,6 +318,12 @@ _VERB_CLASSES = {
         "caviarder", "caviardez", "caviarde", "caviardent",
         "censurar", "censura", "censure", "censurado",
         "hatao", "hataana", "hataaya", "hataate",
+        # Wave-150: Devanagari REDACT forms. छिपाना/छिपाएँ/छिपाओ/
+        # छिपाए/छिपा (hide) and ढकना/ढकें/ढको (cover) are the native
+        # verb families; सेंसर is the tech loanword ("सेंसर करें").
+        "छिपाना", "छिपाएँ", "छिपाओ", "छिपाए", "छिपा",
+        "ढकना", "ढकें", "ढको",
+        "सेंसर",
     )),
     "SHARE": frozenset((
         "share", "shares", "sharing", "shared",
@@ -322,6 +331,11 @@ _VERB_CLASSES = {
         "partager", "partagez", "partage", "partagent",
         "compartir", "comparte", "comparta", "compartido",
         "baanto", "baantna", "baante", "baanta",
+        # Wave-150: Devanagari SHARE forms. बाँटना/बाँटें/बाँटो/बाँटे/
+        # बाँटा/बाँट (distribute) is the native family; साझा is the
+        # "share" of साझा करना.
+        "बाँटना", "बाँटें", "बाँटो", "बाँटे", "बाँटा", "बाँट",
+        "साझा",
     )),
     "PUBLISH": frozenset((
         "publish", "publishes", "publishing", "published",
@@ -330,6 +344,11 @@ _VERB_CLASSES = {
         "publier", "publiez", "publie", "publient",
         "publicar", "publica", "publique", "publicado",
         "chhaapo", "chhaapna", "chhaape", "chhaapa",
+        # Wave-150: Devanagari PUBLISH forms. छापना/छापें/छापो/छापे/
+        # छापा/छाप (print/publish) is the native family; प्रकाशित is
+        # the formal "published" (प्रकाशित करें).
+        "छापना", "छापें", "छापो", "छापे", "छापा", "छाप",
+        "प्रकाशित",
     )),
     "FORWARD": frozenset((
         "forward", "forwards", "forwarding", "forwarded",
@@ -337,6 +356,11 @@ _VERB_CLASSES = {
         "weiterzuleiten",
         "transferer", "transferez", "transfere", "transferent",
         "reenviar", "reenvia", "reenvie", "reenviado",
+        # Wave-150: Devanagari FORWARD forms. फॉरवर्ड is the realistic
+        # loanword ("फॉरवर्ड करें"); अग्रेषित is the formal
+        # "forwarded" (अग्रेषित करें).
+        "फॉरवर्ड",
+        "अग्रेषित",
     )),
     "UPLOAD": frozenset((
         "upload", "uploads", "uploading", "uploaded",
@@ -344,6 +368,10 @@ _VERB_CLASSES = {
         "telecharger", "telechargez", "telecharge", "telechargent",
         "subir", "sube", "suba", "subido",
         "cargar", "carga", "cargue", "cargado",
+        # Wave-150: Devanagari UPLOAD form. अपलोड is the realistic
+        # loanword ("अपलोड करें"); native चढ़ाना is not the
+        # file-upload verb in practice, so it is deliberately absent.
+        "अपलोड",
     )),
 }
 _VERB_CLASS_BY_FORM = {
@@ -706,14 +734,50 @@ def _verb_stems(tool):
     return _TOOL_VERBS.get(tool, (tool.replace("_", " "),))
 
 
+# Wave-150 (row 7): Devanagari-aware tokenizer for the _negated_verb
+# judge. The old [a-z']+ tokenizer dropped every Devanagari token, so
+# the judge was Latin-only and Devanagari countermands reached only
+# the similarity-countermand signal. The Devanagari range mirrors
+# _SCOPE_WORD_RE (danda U+0964/U+0965 excluded, so "भेजें।"
+# tokenises as "भेजें" and the danda stays a token boundary).
+_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0900-\u0963\u0966-\u097F]+")
+
+# Wave-150 (row 7): tool -> tier-1/tier-2 verb classes whose
+# Devanagari forms the judge matches natively. The Latin prefix-stem
+# discipline is untouched; the Devanagari match is exact against the
+# closed class table (the same closed-list discipline as
+# _VERB_CLASS_BY_FORM), so Latin behavior is bit-identical and only
+# Devanagari gains judge coverage. Tools with no class mapping keep
+# the pre-wave-150 behavior.
+_TOOL_VERB_CLASSES = {
+    "send_email": ("SEND",),
+    "delete_file": ("DELETE",),
+    "http_post": ("PUBLISH", "UPLOAD"),
+}
+
+
 def _negated_verb(latest_text, tool):
     """True when the latest message negates the action's verb within a
     token window ("don't delete", "never send anything"). Direct
-    evidence in the rubric sense."""
-    tokens = re.findall(r"[a-z']+", str(latest_text or "").lower())
+    evidence in the rubric sense.
+
+    Wave-150 (row 7): Devanagari-native. The tokenizer now walks the
+    Devanagari block, and a verb token matches either the Latin
+    prefix stems (unchanged) or -- exactly -- the tool's verb-class
+    Devanagari forms. The negation window stays pre-verb (6 tokens),
+    so a post-verbal tag cue ("भेज दी है न?") is natively silent: the
+    scope-window discipline applies in the judge, not just in the
+    similarity-countermand path.
+    """
+    tokens = _NEGATED_VERB_TOKEN_RE.findall(
+        str(latest_text or "").lower())
     stems = _verb_stems(tool)
+    deva_forms = set()
+    for cls in _TOOL_VERB_CLASSES.get(tool, ()):
+        deva_forms.update(f for f in _VERB_CLASSES[cls]
+                          if not f.isascii())
     for i, tok in enumerate(tokens):
-        if any(tok.startswith(s) for s in stems):
+        if any(tok.startswith(s) for s in stems) or tok in deva_forms:
             window = tokens[max(0, i - _NEGATION_WINDOW):i]
             if any(_NEGATION_RE.fullmatch(w) for w in window):
                 return True

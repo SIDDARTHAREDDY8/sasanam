@@ -578,6 +578,33 @@ the mandated standalone-न cue: the tag question "है न?"
 untouched, judge `_negated_verb` still Latin-only, closed
 inflection lists, quantifier blindness.
 
+**Update 2026-09-27 (wave-150):** the judge is now Devanagari-native.
+`gov/intent_slice.py`: `_negated_verb` gains exact Devanagari
+class-form matching inside the same six-token pre-verb negation
+window (Latin prefix-stem behavior unchanged); Devanagari verb
+forms for all eight classes — SEND/ARCHIVE/DELETE plus tier-2
+REDACT (`छिपाना`/`छिपाएँ`/`छिपाओ`/`छिपाए`/`छिपा`/`ढकना`/`ढकें`/
+`ढको`/`सेंसर`), SHARE (`बाँटना`/`बाँटें`/`बाँटो`/`बाँटे`/`बाँटा`/
+`बाँट`/`साझा`), PUBLISH (`छापना`/`छापें`/`छापो`/`छापे`/`छापा`/
+`छाप`/`प्रकाशित`), FORWARD (`फॉरवर्ड`/`अग्रेषित`), UPLOAD
+(`अपलोड`) — and `_NEGATED_VERB_TOKEN_RE` covers Devanagari cues.
+The tag question ("...है न?") is natively silent in the judge on
+all measured variants: the post-verbal tag cue falls outside the
+pre-verb window (scope-window discipline, natively). Extended
+`evals/devanagari_negation_probes.py` **17 HELD / 0 BREAK / 1
+EXPECTED / 0 ERROR** (18 probes, both envs, deterministic ×2):
+10 genuine Devanagari countermands fire the judge
+(SEND/DELETE/PUBLISH/UPLOAD × मत/नहीं/न), wrong-predicate and
+affirmation cases silent, all 5 tag-question variants silent in
+the judge, 8 scope-window cases on the new class forms pass
+natively (incl. clause-split silences). The EXPECTED is the
+re-measured similarity-path cost: 4/5 tag-question variants fire
+there (0.571–0.800; canonical 0.800), kept with the measured rate;
+the "ना?" spelling stays silent (cue-list boundary, documented).
+`tests/test_intent_slice.py` 67/67; 6 existing negation batteries
+green. Row 7 remains PARTIAL: Arabic/CJK/Cyrillic untouched,
+closed inflection lists, quantifier blindness.
+
 ### Row 8 — Monitor / governance-layer attacks (memo: PARTIAL → now: PARTIAL, stronger)
 F129 CLOSED (detection-reset laundering via trip-kind shadowing — fixed 2026-09-22);
 `gov/detection.py` behavioral circuit breakers (EWMA/CUSUM, breaker
@@ -891,6 +918,31 @@ and sprinkle-one-near-threshold campaigns defeat it; legitimate
 boilerplate+drift fires by design (conservative). Row 9 remains
 PARTIAL: from-birth poisoning, varied-framing campaigns, clean-run
 pacing untouched.
+
+**Update 2026-09-27 (wave-150):** framing-suspect write-ordering
+consistency fix (not a new detector). `gov/drift_budget.py`:
+`_framing_check` computes the verdict, attempts the chained adapt
+write FIRST, and emits the LOUD `framing_drift_suspect` only when
+the write lands; on `OSError` a LOUD `framing_adapt_write_failed`
+carries the verdict details and the budget stays at its prior
+level (fail-closed). New narrow `audit_after_write` mode on
+`_write_adapt` (framing path only — every other caller keeps the
+store's class-wide audit-before-write): the chained record lands
+first, then `drift_budget_adapted` is emitted with the same digest
+linkage, then the suspect; a failed write emits NOTHING phantom
+(neither suspect nor adapted). Cold corner pinned: an audit-pipeline
+failure AFTER the chained write landed is disambiguated by a
+chain check and propagates fail-loud (never misreported as a write
+failure); the chain stays the source of truth. Break-first battery
+`evals/framing_order_probes.py` **4 HELD / 0 BREAK / 0 EXPECTED /
+0 ERROR** (both envs, deterministic ×2): write failure at the adapt
+seam → 1 LOUD failure event, 0 suspect, 0 phantom adapted, level 0,
+chain intact; auditor-failure-after-landed-write → propagates
+(not misreported), chain holds the real adapt (level 1); healthy
+path → adapted then suspect, level 0→1. `evals/
+framing_drift_probes.py` 10/10 still green; `tests/
+test_drift_budget.py` 64/64. Row 9 remains PARTIAL: from-birth
+poisoning, varied-framing campaigns, clean-run pacing untouched.
 
 ### Row 10 — Reward hacking / spec gaming (memo: PARTIAL → now: PARTIAL, stronger)
 Anthropic Sept-2026 threat-report wave: F162 CLOSED (velocity/economic controls —
@@ -1747,6 +1799,40 @@ repeated identical fragment silent; 0/40 benign corpus FP.
 normalization seam; paraphrase (fully paraphrased-away canaries
 still miss), unobserved exfil channels, and registry TTL/purge
 policy remain.
+
+**Update 2026-09-27 (wave-150):** fragment TTL for long-lived
+registries. `gov/canary.py`: `FRAGMENT_TTL_RUNS = 50`;
+`CanaryRegistry.advance_run()` (called once per run boundary)
+expires any fragment unobserved for more than 50 runs;
+re-observation refreshes the TTL. Design note, measured not
+assumed: the brief's "fragments persist forever" premise was
+REFUTED for the register-per-run pattern (`register()` resets
+fragment state every mint registration — no staleness there); the
+seam targets the register-once long-lived pattern, where two
+unrelated coincidences 58 runs apart previously paired into a
+false two-distinct-fragments trip. Per-run `register()` reset
+preserved; whole-value maps untouched; expiry logged at DEBUG on
+the `gov.canary` logger with the canary LABEL only — never LOUD,
+never with fragment strings. Break-first battery `evals/
+canary_fragment_ttl_probes.py` **6 probes HELD / 0 BREAK** (both
+envs, deterministic ×2; pre-seam 6 BREAK, and the behavioral
+pre-seam break demonstrated: the 58-run-apart stale pair TRIPS
+without expiry): run-1/run-60 stale pair silent, TTL boundary
+pinned (active at exactly 50 runs elapsed, expired at 51),
+run-40 refresh keeps the run-60 pair tripping, whole-canary path
+still trips as `canary_trip` after 60 advances. The bound is
+measured: a seeded 60-run benign stream with coincidental
+fragment embeddings shows TTL=50 kills the stale false positive
+that TTL=∞ lets through, keeps a genuine 45-run slow campaign
+tripping (TTL=10 loses it), and leaves the background pair signal
+unchanged — 50 balances staleness vs coverage. Neighboring
+`evals/canary_fragment_probes.py` 9/9, `evals/
+canary_fragment_floor_probes.py` 7 HELD / 1 EXPECTED,
+`tests/test_canary_fragments.py` + `test_unobserved_canary` +
+`test_w51_canary` + `test_w63_rt21_canary` 103/103. Row 13 remains
+PARTIAL: paraphrase and unobserved exfil channels remain; the
+TTL/purge-policy residual is narrowed to the measured 50-run
+bound.
 
 ### Row 14 — MCP / tool-plane poisoning at discovery (memo: PARTIAL → now: PARTIAL, stronger)
 F143 CLOSED (unregistered skill IDs fail-open → now denied with `skill-watch`
