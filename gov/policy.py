@@ -33,6 +33,7 @@ cover the test/demo roles; an explicit ``roles`` section replaces them.
 """
 
 from hashlib import sha256
+from dataclasses import replace
 from pathlib import Path
 
 from .yamlmini import parse as parse_yaml
@@ -44,6 +45,17 @@ from .approvals import (
     _normalize_authority_delegation_config,
     _normalize_delegation_config,
     _normalize_quorum_config,
+)
+# Cedar-style contract types (gov/decision_contract.py). No import
+# cycle: decision_contract imports policy only lazily inside
+# Decision.to_policy_decision().
+from .decision_contract import (
+    Decision,
+    Diagnostics,
+    Request,
+    RuleHit,
+    TraceEntry,
+    DEFAULT_DENY_ID,
 )
 
 KNOWN_TOOLS = {"read_file", "write_file", "delete_file",
@@ -750,36 +762,131 @@ class PolicyEngine:
 
     # ------------------------------------------------------------ evaluation
 
-    def evaluate(self, action, context=None):
-        """Return a PolicyDecision. Fail-closed: no matching rule -> deny."""
-        context = context or {}
-        match_ctx = dict(context)
-        match_ctx.setdefault("role", action.get("role"))
-        match_ctx.setdefault("agent", action.get("agent_id"))
+    def decide(self, request):
+        """Typed authorization: Request -> Decision with Diagnostics.
 
-        def _first_match(effect):
-            for rule in self.policies:
+        Cedar-style contract (see gov/decision_contract.py): the
+        request is well-typed, the Decision carries structured
+        diagnostics naming every rule that fired.
+
+        Verdict semantics are IDENTICAL to evaluate(): forbid (deny)
+        rules are consulted before require_approval before permits,
+        first match in declaration order within a pass decides, and
+        no match is an implicit deny. The difference is structural,
+        not behavioral — all deny rules are collected before any
+        permit is consulted, so a permit can never shadow a forbid
+        by declaration order, and the trace records every rule's
+        match/no-match for the diagnostics.
+        """
+        if not isinstance(request, Request):
+            raise TypeError(
+                "decide() requires a decision_contract.Request, got %r"
+                % type(request).__name__)
+        action = request.to_action()
+        context = request.context or {}
+        # The match context is the caller's context, unmodified.
+        # _matches reads the standard keys (tool/role/agent/args) from
+        # the rebuilt action -- which from_action keeps identical to
+        # the original on those keys -- and `when` conditions resolve
+        # against this context exactly as the pre-contract engine saw
+        # it. No role/agent injection: a value the caller did not
+        # supply must not become visible to matching.
+        match_ctx = dict(context)
+
+        forbid_hits = []
+        approval_hits = []
+        permit_hits = []
+        trace = []
+        for effect, bucket in (("deny", forbid_hits),
+                               ("require_approval", approval_hits),
+                               ("allow", permit_hits)):
+            for index, rule in enumerate(self.policies):
                 if rule.get("effect") != effect:
                     continue
-                if self._matches(rule.get("match") or {}, action, match_ctx):
-                    return rule
-            return None
+                rule_id = rule.get("id", "rule-%d" % index)
+                matched = self._matches(rule.get("match") or {}, action,
+                                        match_ctx)
+                trace.append(TraceEntry(effect=effect, rule_id=rule_id,
+                                        matched=matched))
+                if matched:
+                    bucket.append(RuleHit(
+                        rule_id=rule_id,
+                        effect=effect,
+                        reason=rule.get(
+                            "reason",
+                            "Matched policy %s." % rule.get("id")),
+                        flag=rule.get("flag"),
+                        declaration_index=index))
 
-        for effect in ("deny", "require_approval", "allow"):
-            rule = _first_match(effect)
-            if rule is not None:
-                return PolicyDecision(
-                    effect,
-                    rule.get("reason", "Matched policy %s." % rule.get("id")),
-                    policy_id=rule.get("id"),
-                    flag=rule.get("flag"),
-                )
-        return PolicyDecision(
-            "deny",
-            "No policy matched; denied by default (fail-closed).",
+        deciding = None
+        verdict_effect = "deny"
+        for bucket in (forbid_hits, approval_hits, permit_hits):
+            if bucket:
+                deciding = bucket[0]
+                verdict_effect = deciding.effect
+                break
+
+        def _mark(bucket, decider):
+            return tuple(
+                replace(h, deciding=(decider is not None
+                                     and h.declaration_index
+                                     == decider.declaration_index))
+                for h in bucket)
+
+        forbid_hits = _mark(forbid_hits, deciding)
+        approval_hits = _mark(approval_hits, deciding)
+        permit_hits = _mark(permit_hits, deciding)
+        deciding_marked = None
+        for h in forbid_hits + approval_hits + permit_hits:
+            if h.deciding:
+                deciding_marked = h
+                break
+
+        policy_ids = frozenset(
+            h.rule_id for h in
+            forbid_hits + approval_hits + permit_hits)
+        diagnostics = Diagnostics(
+            deciding_rule=deciding_marked,
+            forbid_hits=forbid_hits,
+            approval_hits=approval_hits,
+            permit_hits=permit_hits,
+            trace=tuple(trace),
+            policy_ids=policy_ids)
+
+        if deciding_marked is not None:
+            # Legacy compat: the deciding policy_id is the rule's raw
+            # "id" (possibly None for id-less rules, exactly as the
+            # pre-contract engine reported it); the "rule-N" fallback
+            # is diagnostics-display only.
+            raw_id = self.policies[
+                deciding_marked.declaration_index].get("id")
+            return Decision(
+                effect=verdict_effect,
+                allowed=(verdict_effect == "allow"),
+                reason=deciding_marked.reason,
+                policy_id=raw_id,
+                flag=deciding_marked.flag,
+                diagnostics=diagnostics,
+                request=request)
+        return Decision(
+            effect="deny",
+            allowed=False,
+            reason="No policy matched; denied by default (fail-closed).",
             policy_id=None,
-            flag="default_deny",
-        )
+            flag=DEFAULT_DENY_ID,
+            diagnostics=diagnostics,
+            request=request)
+
+    def evaluate(self, action, context=None):
+        """Return a PolicyDecision. Fail-closed: no matching rule -> deny.
+
+        Implemented on top of decide(): the verdict fields are
+        byte-identical to the pre-contract engine; the structured
+        diagnostics are available via decide() for callers that want
+        the why.
+        """
+        return self.decide(Request.from_action(action, context)
+                           ).to_policy_decision()
 
     def _matches(self, match, action, context):
         tool = action.get("tool")

@@ -154,6 +154,20 @@ correlation of action-now with harm-later does not). Named residuals: intent
 ledger, temporal blast-radius analysis, revocation timing — all correctly
 deferred past freeze.
 
+**Update 2026-09-27 (wave-129):** first intent-correlation control landed —
+the intent-slice judge (`gov/intent_slice.py`, adapted from
+openai/openai-guardrails-python's intent-slicing pattern, MIT, no code
+copied, $0): slices a trajectory against the LATEST user message and
+stamps an advisory `stale_intent` flag on approval-queue items when a
+queued action serves only a superseded instruction. Break-first battery
+`evals/intent_slice_probes.py` = 1 BREAK / 7 HELD / 0 ERROR, the BREAK
+being the pinned honest ceiling (paraphrase laundering through a vague
+latest message defeats the slicer — measured, not claimed away). This
+narrows the "intent ledger" residual (a local, run-scoped intent anchor
+now exists) but does NOT close row 7: no revoke-after-approve, no
+temporal blast-radius analysis, no cross-run intent persistence, and
+`evals/row7_delayed_break.py` remains red. Status stays PARTIAL.
+
 ### Row 8 — Monitor / governance-layer attacks (memo: PARTIAL → now: PARTIAL, stronger)
 F129 CLOSED (detection-reset laundering via trip-kind shadowing — fixed 2026-09-22);
 `gov/detection.py` behavioral circuit breakers (EWMA/CUSUM, breaker

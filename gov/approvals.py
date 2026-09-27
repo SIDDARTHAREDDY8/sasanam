@@ -308,6 +308,18 @@ _SECURITY_PAYLOAD_FIELDS = (
     # fail verification automatically after the upgrade — queued items
     # must be decided or drained before upgrading.
     "content_sha256_set",
+    # Wave-129 (row-7 intent slice): the intent-slice judge's verdict
+    # annotation is integrity-bound from birth. It is ADVISORY (the
+    # judge never denies; a stale_intent flag routes to human review),
+    # but stripping or forging it after queueing would let a tampered
+    # record lie to the approver about the intent anchoring the human
+    # saw at queue time — post-queue verdict laundering breaks the MAC
+    # and is refused, never silently re-MACed. FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/F101/F103/H3): records queued
+    # BEFORE this change do not carry this field, so their digests
+    # fail verification automatically after the upgrade — queued items
+    # must be decided or drained before upgrading.
+    "intent_slice",
 )
 
 
@@ -322,6 +334,36 @@ def _security_record_payload(rec):
     payload = {f: rec.get(f) for f in _SECURITY_PAYLOAD_FIELDS}
     payload["delegation_attempted"] = bool(rec.get("delegation_attempted"))
     return _canonical_dumps(payload)
+
+
+def _serialize_intent_slice_verdict(verdict):
+    """Wave-129 (row-7 intent slice): defensively serialize the judge's
+    verdict for MAC-bound stamping on the approval record.
+
+    Returns a JSON-safe dict {flagged, flag, confidence, evidence,
+    n_in_slice, n_stale, countermand} or None when the judge did not
+    run / the value is not verdict-shaped. Never raises: the judge is
+    advisory and must never break queueing.
+    """
+    try:
+        if not isinstance(verdict, dict):
+            return None
+        if "flagged" not in verdict:
+            return None
+        summary = verdict.get("slice_summary") or {}
+        evidence = verdict.get("evidence") or []
+        return {
+            "flagged": bool(verdict.get("flagged")),
+            "flag": (str(verdict.get("flag"))
+                     if verdict.get("flag") is not None else None),
+            "confidence": float(verdict.get("confidence") or 0.0),
+            "evidence": [str(e)[:500] for e in list(evidence)[:4]],
+            "n_in_slice": int(summary.get("n_in_slice") or 0),
+            "n_stale": int(summary.get("n_stale") or 0),
+            "countermand": bool(summary.get("countermand")),
+        }
+    except Exception:  # noqa: BLE001 - judge serialization never breaks
+        return None
 
 
 def _delegator_lineage_ids(target):
@@ -2663,7 +2705,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             self._cooling_off_seconds = max(0, int(seconds))
 
     def _stamp_approval_integrity(self, record, preview, justification,
-                                  args, capability_verdict=None):
+                                  args, capability_verdict=None,
+                                  intent_slice_verdict=None):
         """S3 shield (wave-89): stamp the approval-integrity fields on a
         freshly-built record, BEFORE its args_digest is computed (they
         are MAC-bound from birth). Called from every queueing path —
@@ -2678,6 +2721,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         ``capability_verdict`` (the executor-supplied capability signal,
         or None). Both are MAC-bound from birth like every other shield
         field.
+
+        Wave-129 (row-7 intent slice): ``intent_slice_verdict`` is the
+        intent-slice judge's verdict dict (or None when the judge did
+        not run). Stamped MAC-bound from birth as ``record["intent_slice"]``
+        (a JSON-safe dict or None). The judge is ADVISORY ONLY -- it
+        never denies; a ``stale_intent`` flag is evidence for the human
+        reviewer. Serialization is defensive: an unverdict-shaped value
+        stamps None rather than breaking queueing.
         """
         _p_score, _p_markers = score_persuasion(
             "%s\n%s" % (preview, justification or ""))
@@ -2698,6 +2749,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         record["capability_verdict"] = (
             str(capability_verdict) if capability_verdict is not None
             else None)
+        # Wave-129 (row-7 intent slice): the judge's verdict annotation,
+        # MAC-bound from birth. Defensive serialization: only a dict
+        # with the expected verdict shape is stamped; anything else
+        # stamps None (the judge must never break queueing).
+        record["intent_slice"] = _serialize_intent_slice_verdict(
+            intent_slice_verdict)
         record["shield_tier"] = _approver_shield.shield_tier(
             record,
             persuasion_risk_score=PERSUASION_RISK_SCORE,
@@ -2948,7 +3005,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               policy_context=None, policy_flag=None, egress_bytes=None,
               caller_identity=None, policy_version=None,
               matched_rules=None, tool_digest=None, deferred_effect=None,
-              capability_verdict=None):
+              capability_verdict=None, intent_slice_verdict=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3167,7 +3224,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # explicit "unknown".
         self._stamp_approval_integrity(
             record, preview, action.get("agent_justification"), args,
-            capability_verdict=capability_verdict)
+            capability_verdict=capability_verdict,
+            intent_slice_verdict=intent_slice_verdict)
         # F43: the digest covers the record's security fields, computed
         # here from the stamped record itself.
         record["args_digest"] = approval_record_digest(record)
@@ -4539,7 +4597,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
     def queue_external(self, tool, args, policy_id, agent_identity,
                        preview, bridge_id, external_request_id=None,
                        bridge_request_digest=None, bridge_versions=None,
-                       agent_justification=None, egress_bytes=None):
+                       agent_justification=None, egress_bytes=None,
+                       intent_slice_verdict=None):
         """Wave-24 (A12): queue an approval requested by a FOREIGN runtime.
 
         This is the bridge ingress: a thin adapter (gov/bridges/) calls
@@ -4768,7 +4827,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # UNVERIFIED foreign prose), so it must not produce
             # unstamped records that decide() would refuse.
             self._stamp_approval_integrity(
-                record, preview, agent_justification, args)
+                record, preview, agent_justification, args,
+                intent_slice_verdict=intent_slice_verdict)
             record["args_digest"] = approval_record_digest(record)
             self.run_dir.mkdir(parents=True, exist_ok=True)
             # F83: heal a torn tail before appending (same discipline

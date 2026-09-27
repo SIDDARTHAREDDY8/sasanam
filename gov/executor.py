@@ -61,6 +61,7 @@ import os
 import fcntl
 import sys
 import time
+import threading
 import hashlib
 import inspect
 import collections.abc
@@ -70,9 +71,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from . import dlp
+from . import advisory as _advisory
 from . import canary as _canary
 from . import sentinel_substitution as _sentinel
 from . import classification as _classification
+from . import intent_slice as _intent_slice
 from . import delegation_tokens as _delegation_tokens
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
@@ -632,7 +635,12 @@ class ToolExecutor:
                  # Sentinel credential substitution (adapted from
                  # anthropics/sandbox-runtime): appended LAST so no
                  # existing positional caller can misalign.
-                 sentinel_registry=None):
+                 sentinel_registry=None,
+                 # Monotonic advisory layer (adapted from
+                 # microsoft/agent-governance-toolkit): appended LAST
+                 # for the same positional-misalignment reason.
+                 # Opt-in: None (default) = zero behavior change.
+                 advisors=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -862,6 +870,21 @@ class ToolExecutor:
         # sweep), into an ephemeral copy — the secret never enters the
         # audit path.
         self.sentinel_registry = sentinel_registry
+        # Monotonic advisory layer (opt-in). The composer enforces the
+        # allow < require_approval < deny lattice: advisors can only
+        # tighten the deterministic verdict, never loosen it.
+        # _advisory_bom_chain is a shared mutable cell holding the
+        # previous BOM digest, so parent and spawned children extend
+        # ONE decision-BOM sub-chain in the shared audit log.
+        self._advisors = list(advisors) if advisors else None
+        self._advisory_bom_chain = [""]
+        # Guards the BOM sub-chain head read-update plus the advisory
+        # audit appends, so concurrent call()s on this executor cannot
+        # fork the prev_bom_digest linkage. Scope is the BOM sub-chain
+        # only -- it does not make call() as a whole thread-safe.
+        # Lazy: only created when advisors are configured, preserving
+        # the S5 invariant that an advisor-less executor owns no locks.
+        self._advisory_lock = threading.Lock() if advisors else None
         # Wave-51 P1: persistent run-halt flag. Once a canary trips, the
         # run stays halted server-side: every later call() raises
         # CanaryTripHalt immediately, so catching the exception and
@@ -1339,6 +1362,13 @@ class ToolExecutor:
         self.classification = _classification.ClassificationRegistry()
         self._read_classification = None  # max level string, or None
         self._read_classification_sources = []  # [(path, level)]
+        # Wave-129 (row-7 intent slice): opt-in user-turn context for
+        # the intent-slice judge. The executor is a tool executor -- it
+        # never sees user messages on its own; the harness/operator
+        # provides them via set_intent_context(). When set, queued
+        # approvals carry the judge's MAC-bound annotation; when unset
+        # the judge is inert (verdict None, queueing unchanged).
+        self._intent_user_turns = None
 
     def _eviction_index(self):
         """H26: index into ``_read_contents`` of the oldest
@@ -1734,7 +1764,16 @@ class ToolExecutor:
             # chains once per child construction (loud, by design).
             capability_gate_binding=self._capability_gate_binding,
             capability_assessment=self._capability_assessment,
-            capability_ungoverned_ack=self._capability_ungoverned_ack)
+            capability_ungoverned_ack=self._capability_ungoverned_ack,
+            # Advisory layer: the child inherits the parent's advisors
+            # (spawn must not bypass advisory tightening) and shares
+            # the BOM chain cell, so parent and child extend ONE
+            # decision-BOM sub-chain in the shared audit log.
+            advisors=self._advisors)
+        child._advisory_bom_chain = self._advisory_bom_chain
+        # One sub-chain, one lock: the child shares the parent's BOM
+        # head cell, so it must share the guard too.
+        child._advisory_lock = self._advisory_lock
         # Wave-90 (S6, F137): the child carries its birth certificate.
         # One lineage, one tracker: shared by reference like the bus.
         child._lineage_cert = lineage_cert
@@ -2045,6 +2084,63 @@ class ToolExecutor:
         # _usage-less dict, so this line accrues 0 (no-op) and the
         # foreign path's loud accrual is the single metering event.
         self._accrue_result_usage(result)
+
+    def set_intent_context(self, user_turns):
+        """Wave-129 (row-7 intent slice): opt-in user-turn context.
+
+        ``user_turns``: list of user message strings, oldest first, or
+        None to clear. The intent-slice judge anchors to the LATEST
+        turn; when context is set, queued approvals carry the judge's
+        MAC-bound ``intent_slice`` annotation for human review. The
+        judge is advisory only -- it never denies and never breaks
+        queueing. Clearing (None) makes the judge inert.
+        """
+        if user_turns is None:
+            self._intent_user_turns = None
+        else:
+            self._intent_user_turns = [str(t) for t in user_turns]
+
+    def _intent_slice_verdict(self, tool, args, justification, identity):
+        """Wave-129: run the intent-slice judge for a candidate queued
+        action. Returns the verdict dict, or None when no intent
+        context is set. Never raises: the judge must never break
+        queueing (failures degrade to None, i.e. unstamped)."""
+        try:
+            if not self._intent_user_turns:
+                return None
+            prior = self._recent_action_steps(limit=20)
+            return _intent_slice.judge_queued_action(
+                tool=tool,
+                args=args,
+                justification=justification,
+                user_turns=self._intent_user_turns,
+                prior_actions=prior)
+        except Exception:  # noqa: BLE001 - judge never breaks queueing
+            return None
+
+    def _recent_action_steps(self, limit=20):
+        """Wave-129: the run's recent tool calls as intent-slice steps,
+        newest last, from the audit log (source of truth). Malformed or
+        unreadable log -> empty list (the judge degrades gracefully)."""
+        steps = []
+        try:
+            entries = read_entries(self.log.path)
+        except Exception:  # noqa: BLE001 - degrade to no prior actions
+            return steps
+        for e in entries:
+            if not isinstance(e, dict):
+                continue
+            if e.get("event") != "tool_call":
+                continue
+            if e.get("run_id") != self.run_id:
+                continue
+            steps.append({
+                "kind": "agent_action",
+                "tool": e.get("tool"),
+                "args": e.get("args") or {},
+                "agent_id": e.get("agent_id"),
+            })
+        return steps[-int(limit):]
 
     def _classification_taint_on_read(self, tool, args, result):
         """Row-13 closure: label-based provenance taint on read_file.
@@ -5064,6 +5160,117 @@ class ToolExecutor:
         return (self._policy_store is not None
                 and self._delegation_context is not None)
 
+    def _apply_advisory(self, decision, action, ctx, policy, identity,
+                        tool, kwargs, audit_entry):
+        """Run the opt-in advisory layer over a deterministic verdict.
+
+        Builds the advisor input snapshot (args digest, never raw args),
+        composes advisors monotonically, appends the Decision BOM audit
+        entry, and returns the (possibly tightened) PolicyDecision.
+        Any infrastructure failure here -- not advisor errors, which the
+        composer handles -- fails closed and loud: an unaudited advisory
+        state must never decide a call.
+        """
+        try:
+            advisors = self._advisors or []
+            if not advisors:
+                return decision
+            verified = getattr(policy, "verified_digest", None)
+            if verified:
+                policy_digest = "verified:" + str(verified)
+            else:
+                # Honest: without the digest-gate load this is a
+                # version label, not a content binding.
+                policy_digest = "version-label:" + hashlib.sha256(
+                    str(getattr(policy, "policy_version",
+                                "unversioned")).encode("utf-8")).hexdigest()
+            args_digest = hashlib.sha256(
+                json.dumps(kwargs, sort_keys=True, separators=(",", ":"),
+                           default=repr).encode("utf-8")).hexdigest()
+            content_signals = {
+                k: bool(ctx.get(k)) for k in (
+                    "carries_read_content", "read_sensitive",
+                    "read_classified", "source_untrusted",
+                    "domain_allowlisted")
+            }
+            adv_ctx = _advisory.AdvisoryContext(
+                tool=tool, args_digest=args_digest,
+                agent_id=identity.agent_id, role=identity.role,
+                principal=identity.principal, run_id=identity.run_id,
+                deterministic_effect=decision.effect,
+                policy_version=str(getattr(policy, "policy_version",
+                                           "unversioned")),
+                policy_digest=policy_digest,
+                content_signals=content_signals)
+            events = []
+            composer = _advisory.AdvisoryComposer(
+                advisors, audit=events.append)
+            composed = composer.compose(adv_ctx)
+            # BOM sub-chain atomicity: the head read-update and the
+            # advisory audit appends run under one lock so concurrent
+            # call()s cannot fork prev_bom_digest linkage or interleave
+            # another decision's BOM between a violation event and its
+            # decision_bom record.
+            with self._advisory_lock:
+                for ev in events:
+                    audit_entry(dict(ev, decision="advisory_signal",
+                                     policy_id="advisory-layer"))
+                bom = _advisory.DecisionBOM.build(
+                    tool=tool, agent_id=identity.agent_id, role=identity.role,
+                    principal=identity.principal, run_id=identity.run_id,
+                    policy_version=adv_ctx.policy_version,
+                    policy_digest=policy_digest,
+                    deterministic_effect=decision.effect,
+                    deterministic_policy_id=decision.policy_id,
+                    composed=composed,
+                    prev_bom_digest=self._advisory_bom_chain[0])
+                self._advisory_bom_chain[0] = bom["bom_digest"]
+                audit_entry({
+                    "event": "decision_bom",
+                    "decision": "advisory_record",
+                    "policy_id": "advisory-layer",
+                    "matched_rules": [],
+                    "bom": bom,
+                    "reason": ("Decision BOM: policy %r decided %s; advisory "
+                               "composed to %s (%d advisor(s), %d "
+                               "violation(s), %d error(s))."
+                               % (adv_ctx.policy_version, decision.effect,
+                                  composed.final_effect,
+                                  len(composed.records),
+                                  len(composed.violations),
+                                  len(composed.errors))),
+                })
+            if composed.tightened():
+                tightened_by = ", ".join(
+                    r.name for r in composed.records
+                    if r.note == "tightened")
+                return PolicyDecision(
+                    composed.final_effect,
+                    "%s [advisory: tightened %s->%s by %s]" % (
+                        decision.reason, decision.effect,
+                        composed.final_effect, tightened_by),
+                    policy_id=decision.policy_id,
+                    flag=decision.flag,
+                    matched_rules=list(decision.matched_rules))
+            return decision
+        except Exception as e:  # noqa: BLE001 - fail closed, loud
+            audit_entry({
+                "event": "advisory_failed_closed",
+                "decision": "denied",
+                "policy_id": "advisory-layer",
+                "flag": "advisory_failed_closed",
+                "matched_rules": [],
+                "reason": ("Advisory layer failed (%s: %s); refusing "
+                           "fail-closed rather than proceeding with an "
+                           "unaudited advisory state."
+                           % (type(e).__name__, e)),
+            })
+            return PolicyDecision(
+                "deny",
+                "Advisory layer failure: refusing fail-closed.",
+                policy_id="advisory-layer",
+                flag="advisory_failed_closed")
+
     def call(self, identity, tool, **kwargs):
         """Run one tool call through the governance pipeline."""
         if not isinstance(identity, AgentIdentity):
@@ -5789,6 +5996,18 @@ class ToolExecutor:
         }
         decision = policy.evaluate(action, ctx)
 
+        # Monotonic advisory layer (opt-in, adapted from
+        # microsoft/agent-governance-toolkit). Runs AFTER the
+        # deterministic verdict: advisors can only move the effect UP
+        # the allow < require_approval < deny lattice, never down;
+        # monotonicity violations are refused LOUD and every decision
+        # records a chained Decision BOM entry. advisors=None (the
+        # default) is zero behavior change.
+        if getattr(self, "_advisors", None):
+            decision = self._apply_advisory(
+                decision, action, ctx, policy, identity, tool, kwargs,
+                lambda extra: self.log.append(_base(extra)))
+
         # Wave-89 (stream s5-tool): use-time tool-definition
         # verification. The inventory's CURRENT definition digest is
         # compared against the last-seen digest; drift quarantines the
@@ -6407,6 +6626,12 @@ class ToolExecutor:
                            "agent_justification": justification,
                            "redactions": redactions,
                            "content_sha256_set": queued_content_hashes}
+        # Wave-129 (row-7 intent slice): run the advisory judge when
+        # the operator provided user-turn context. The verdict is
+        # stamped MAC-bound on the record for human review; the judge
+        # never denies and never breaks queueing (None when inert).
+        intent_slice_verdict = self._intent_slice_verdict(
+            tool, redacted_args, justification, identity)
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
@@ -6467,7 +6692,10 @@ class ToolExecutor:
             # rules that fired ride on the ticket, so the human's
             # decision record can name exactly what queued it.
             policy_version=getattr(policy, "policy_version", "unversioned"),
-            matched_rules=decision.matched_rules)
+            matched_rules=decision.matched_rules,
+            # Wave-129 (row-7 intent slice): the advisory judge's
+            # verdict, MAC-bound from birth for the human reviewer.
+            intent_slice_verdict=intent_slice_verdict)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,
