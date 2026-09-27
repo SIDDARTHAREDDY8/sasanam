@@ -27,8 +27,24 @@ What this is NOT (honest ceiling):
   (matching on prose would be heuristic, unexplainable, and FP-prone).
   An operator who wants the paraphrase class must supply target
   aliases or a semantic layer OUTSIDE the trust boundary.
-- Not cross-run. The registry is per-executor (per run); goals do
-  not persist across runs. Cross-run goal laundering remains open.
+- Cross-run is persistence + history, not intent. ``save``/``load``
+  make the registry durable across runs (tamper-evident), and
+  ``detect_cross_run_laundering`` flags when a new registration
+  legitimizes behavior that violated the agent's own prior
+  registration, contradicts its executed history, composes into a
+  conflict with a previous run's still-active goal, or re-registers
+  an identical-but-never-exercised goal across runs (dormant cover).
+  Deliberate, FP-averse narrowings (not oversights): the dormant
+  signal fires only for goals declaring high-impact effects
+  (send/write/delete/exclusive_write) -- a never-exercised
+  read-only goal is normal operations, not cover -- and only when
+  executed history is supplied (without history, "dormant" is
+  indistinguishable from "unobserved", so the signal stays silent
+  rather than fire blind).
+  What it cannot see: semantic laundering ("archive" in run 1 vs
+  "compress" in run 2 meaning the same data), and any agent that
+  rotates its agent_id every run (cross-run attribution keys on
+  stable agent identity -- a fresh identity per run defeats it).
 - Not an enforcer. Registration never denies: conflicts are flagged
   LOUD (``goal_conflict`` audit event) and routed to the approval
   queue for human resolution. The executor's ``register_goal`` is the
@@ -40,7 +56,11 @@ silently accepted (a silently-unreasoned-about verb would be a gap).
 
 Goal records chain via ``prev_goal_digest`` (SHA-256 over the
 canonical record), forming a goal sub-chain: tampering with a
-registered goal breaks the chain.
+registered goal breaks the chain. The digest deliberately EXCLUDES
+the mutable ``status`` field: ``set_status`` changes only live
+status (itself audited via ``goal_status_changed`` events), never
+the chained history -- a resolved goal must not read as "tampered"
+when the registry is verified or reloaded in a later run.
 """
 
 import hashlib
@@ -50,8 +70,11 @@ from datetime import datetime, timezone
 
 __all__ = [
     "EFFECT_VERBS",
+    "DORMANT_RUN_THRESHOLD",
+    "GoalPersistenceError",
     "GoalRegistry",
     "detect_conflict",
+    "detect_cross_run_laundering",
     "normalize_target",
 ]
 
@@ -79,6 +102,31 @@ _OPPOSES = {
 
 _GOAL_VERSION = 1
 
+#: Registrations across this many distinct runs (including the
+#: current one) of a materially identical goal that the agent never
+#: exercised trigger the dormant-goal signal.
+DORMANT_RUN_THRESHOLD = 3
+
+#: Fields excluded from the goal digest: mutable live state that is
+#: itself audited (goal_status_changed events) and must not read as
+#: "tampered" when the chain is verified after a status change or a
+#: cross-run reload.
+_MUTABLE_DIGEST_EXCLUSIONS = frozenset({"goal_digest", "status"})
+
+
+class GoalPersistenceError(ValueError):
+    """Fail-closed persistence error: the goal store on disk is
+    missing, malformed, or tampered with. Subclasses ValueError so
+    existing fail-closed handling keeps working."""
+
+
+def _record_digest(record, prev_digest):
+    """Digest over the canonical record minus mutable/excluded fields,
+    bound to the previous chain digest."""
+    body = {k: v for k, v in record.items()
+            if k not in _MUTABLE_DIGEST_EXCLUSIONS}
+    return _sha256_hex(_canonical(body) + prev_digest)
+
 
 def _canonical(obj):
     """Canonical JSON for hashing (stable key order, no whitespace)."""
@@ -105,16 +153,24 @@ def normalize_target(target):
     return " ".join(str(target).lower().split())
 
 
-def _check_effect(atom):
-    """Validate one effect atom (verb, target). Returns normalized."""
+def _check_verb_target(atom, what):
+    """Shared core for effect/history atom validation: a (verb,
+    target) pair whose verb is in the EFFECT_VERBS vocabulary.
+    Fail-closed: malformed atoms or unknown verbs raise ValueError."""
     if (not isinstance(atom, (tuple, list))) or len(atom) != 2:
         raise ValueError(
-            "effect must be a (verb, target) pair, got %r" % (atom,))
+            "%s must be a (verb, target) pair, got %r" % (what, atom))
     verb, target = atom
     if verb not in EFFECT_VERBS:
         raise ValueError(
-            "unknown effect verb %r: known verbs are %s"
-            % (verb, ", ".join(EFFECT_VERBS)))
+            "unknown %s verb %r: known verbs are %s"
+            % (what, verb, ", ".join(EFFECT_VERBS)))
+    return (verb, target)
+
+
+def _check_effect(atom):
+    """Validate one effect atom (verb, target). Returns normalized."""
+    verb, target = _check_verb_target(atom, "effect")
     if not isinstance(target, str) or not target.strip():
         raise ValueError("effect target must be a non-empty string, "
                          "got %r" % (target,))
@@ -283,6 +339,16 @@ class GoalRegistry(object):
         if self.audit is not None:
             self.audit(event)
 
+    def audit_event(self, event):
+        """Public hook for module-level analyses (e.g.
+        ``detect_cross_run_laundering``) to emit LOUD audit events
+        through the registry's audit callable. Same fail-closed
+        posture as registration-time events."""
+        if not isinstance(event, dict):
+            raise ValueError("audit event must be a dict, got %r"
+                             % (event,))
+        self._loud(event)
+
     def active_goals(self):
         """All goals with status 'active' (dicts, in registration order)."""
         return [g for g in self._goals if g.get("status") == "active"]
@@ -319,10 +385,7 @@ class GoalRegistry(object):
             "registered_at": _utcnow_iso(),
             "prev_goal_digest": self._prev_digest,
         }
-        record["goal_digest"] = _sha256_hex(
-            _canonical({k: v for k, v in record.items()
-                        if k != "goal_digest"})
-            + self._prev_digest)
+        record["goal_digest"] = _record_digest(record, self._prev_digest)
 
         conflicts = detect_conflict(record, self.active_goals())
 
@@ -373,10 +436,7 @@ class GoalRegistry(object):
             if rec.get("prev_goal_digest") != prev:
                 return False, ("record %d linkage broken: "
                                "prev_goal_digest mismatch" % i)
-            expect = _sha256_hex(
-                _canonical({k: v for k, v in rec.items()
-                            if k != "goal_digest"})
-                + prev)
+            expect = _record_digest(rec, prev)
             if rec.get("goal_digest") != expect:
                 return False, ("record %d digest mismatch: payload "
                                "tampered" % i)
@@ -409,3 +469,389 @@ class GoalRegistry(object):
                 })
                 return g
         raise ValueError("unknown goal_id %r" % (goal_id,))
+
+    # ------------------------------------------------------------------
+    # Cross-run persistence
+    # ------------------------------------------------------------------
+
+    def save(self, path):
+        """Persist the registry to ``path`` (JSONL, tamper-evident).
+
+        Layout: a header line, one line per goal record (in chain
+        order, with live statuses), then a footer line carrying
+        ``file_digest`` -- SHA-256 over the canonical header +
+        records. The in-memory sub-chain continues across ``load``:
+        the header's ``chain_tip`` binds the file to the chain state,
+        so a store swapped between runs (or truncated) fails closed
+        on load. Raises GoalPersistenceError on any I/O problem.
+        """
+        header = {
+            "record_type": "goal_registry_header",
+            "goal_version": _GOAL_VERSION,
+            "record_count": len(self._goals),
+            "chain_tip": self._prev_digest,
+            "saved_at": _utcnow_iso(),
+        }
+        lines = [_canonical(header)]
+        for rec in self._goals:
+            if not isinstance(rec, dict):
+                raise GoalPersistenceError(
+                    "cannot persist: record is not a dict")
+            lines.append(_canonical(rec))
+        footer = {
+            "record_type": "goal_registry_footer",
+            "file_digest": _sha256_hex("\n".join(lines) + "\n"),
+        }
+        lines.append(_canonical(footer))
+        try:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except OSError as e:
+            raise GoalPersistenceError(
+                "cannot save goal registry to %r: %s" % (path, e))
+
+    @classmethod
+    def load(cls, path, audit=None):
+        """Load a registry previously written by ``save``.
+
+        Fail-closed: missing/unreadable file, malformed JSON, a
+        wrong record_type sequence, a ``file_digest`` mismatch, a
+        ``chain_tip`` mismatch, or a broken goal sub-chain all raise
+        GoalPersistenceError -- a damaged store is never silently
+        accepted as a clean history. Returns a GoalRegistry whose
+        chain continues exactly where the saved one left off, so
+        registrations in the new run extend the same tamper-evident
+        history.
+        """
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                raw_lines = [ln for ln in
+                             (l.strip() for l in fh.read().splitlines())
+                             if ln]
+        except OSError as e:
+            raise GoalPersistenceError(
+                "cannot load goal registry from %r: %s" % (path, e))
+        if len(raw_lines) < 2:
+            raise GoalPersistenceError(
+                "goal registry file %r is truncated (%d lines)"
+                % (path, len(raw_lines)))
+        try:
+            objs = [json.loads(ln) for ln in raw_lines]
+        except ValueError as e:
+            raise GoalPersistenceError(
+                "goal registry file %r has malformed JSON: %s"
+                % (path, e))
+        header, records, footer = objs[0], objs[1:-1], objs[-1]
+        if not isinstance(header, dict) or \
+                header.get("record_type") != "goal_registry_header":
+            raise GoalPersistenceError(
+                "goal registry file %r: bad or missing header" % (path,))
+        if not isinstance(footer, dict) or \
+                footer.get("record_type") != "goal_registry_footer":
+            raise GoalPersistenceError(
+                "goal registry file %r: bad or missing footer" % (path,))
+        if header.get("goal_version") != _GOAL_VERSION:
+            raise GoalPersistenceError(
+                "goal registry file %r: unsupported goal_version %r"
+                % (path, header.get("goal_version")))
+        if header.get("record_count") != len(records):
+            raise GoalPersistenceError(
+                "goal registry file %r: header claims %r records, "
+                "found %d" % (path, header.get("record_count"),
+                              len(records)))
+        expect_digest = _sha256_hex(
+            "\n".join(_canonical(o) for o in [header] + records) + "\n")
+        if footer.get("file_digest") != expect_digest:
+            raise GoalPersistenceError(
+                "goal registry file %r: file_digest mismatch -- the "
+                "store was modified outside save()" % (path,))
+        reg = cls(audit=audit)
+        reg._goals = records
+        reg._prev_digest = (records[-1].get("goal_digest", "")
+                            if records else "")
+        ok, reason = reg.verify_chain()
+        if not ok:
+            raise GoalPersistenceError(
+                "goal registry file %r: goal sub-chain broken (%s)"
+                % (path, reason))
+        if header.get("chain_tip") != reg._prev_digest:
+            raise GoalPersistenceError(
+                "goal registry file %r: chain_tip does not match the "
+                "stored chain -- records were added, removed, or "
+                "reordered outside save()" % (path,))
+        return reg
+
+
+# ------------------------------------------------------------------
+# Cross-run laundering detection
+# ------------------------------------------------------------------
+
+def _check_history_atom(atom):
+    """Validate one executed-history atom (verb, target)."""
+    verb, target = _check_verb_target(atom, "executed-history atom")
+    return (verb, normalize_target(str(target)))
+
+
+def _goal_signature(goal):
+    """Material identity of a goal: normalized effect + constraint
+    sets. Two goals with the same signature declare the same
+    structured objective regardless of prose description.
+
+    Fail-closed like the rest of the module: malformed atoms raise
+    ValueError rather than being silently skipped (a skipped atom
+    would make two different goals compare "identical")."""
+    effects = goal.get("effects") or []
+    constraints = goal.get("constraints") or []
+    eff = frozenset(_check_effect(list(e)) for e in effects)
+    con = frozenset(_check_constraint(list(c)) for c in constraints)
+    return (eff, con)
+
+
+def _covers(effects, verb, target):
+    """True if any declared effect covers the executed (verb, target):
+    exact match, or a wildcard target."""
+    for e in effects or []:
+        if not isinstance(e, (list, tuple)) or len(e) != 2:
+            continue
+        everb, etarget = e[0], normalize_target(str(e[1]))
+        if everb == verb and (etarget == target or etarget == "*"):
+            return True
+    return False
+
+
+def detect_cross_run_laundering(registry, new_goal, executed_history=None,
+                                prior_goals=None):
+    """Flag cross-run goal laundering for a newly registered goal.
+
+    ``registry``: GoalRegistry (ideally loaded from a previous run's
+    ``save`` so earlier runs' goals are present). ``new_goal``: the
+    goal dict just returned by ``register()`` (normalized effects /
+    constraints). ``executed_history``: optional mapping
+    ``(agent_id, run_id) -> [(verb, target), ...]`` of effects the
+    agent actually executed in previous runs (e.g. reconstructed via
+    ``gov.goal_audit.derive_effect`` over audit logs); atoms must use
+    the ``EFFECT_VERBS`` vocabulary with normalized targets, else
+    ValueError. ``prior_goals``: optional explicit list of previous-
+    run goal dicts (defaults to the registry's goals from other
+    runs); lets a fresh per-run registry still be checked against a
+    supplied history.
+
+    Only the new goal's own agent is considered: cross-run
+    attribution keys on stable agent identity, and a fresh agent_id
+    per run defeats it (documented ceiling, not a silent pass --
+    findings simply do not fire without a matching agent).
+
+    Returns a list of finding dicts (``type``, ``new_goal_id``,
+    ``agent_id``, ``severity``, ``detail``, ``explanation``).
+    Findings are also emitted LOUD through the registry's audit
+    callable as ``goal_cross_run_flag`` events. Detection, not
+    prevention: the goal is already registered; the operator acts on
+    the flag.
+
+    No double-flagging: when ``new_goal`` was registered through
+    ``registry``, ``register()`` already ran ``detect_conflict``
+    over every active registry goal, so the composition check here
+    covers only priors the registry never saw (explicitly supplied
+    ``prior_goals`` absent from the registry, or a never-registered
+    candidate ``new_goal``).
+    """
+    if not isinstance(registry, GoalRegistry):
+        raise ValueError("registry must be a GoalRegistry, got %r"
+                         % type(registry))
+    if not isinstance(new_goal, dict):
+        raise ValueError("new_goal must be a goal dict, got %r"
+                         % type(new_goal))
+    agent_id = new_goal.get("agent_id")
+    if not agent_id:
+        raise ValueError("new_goal has no agent_id: cross-run "
+                         "attribution needs the registering agent")
+    new_run = new_goal.get("run_id")
+    new_effects = [list(e) for e in (new_goal.get("effects") or [])]
+    new_constraints = [list(c) for c in
+                       (new_goal.get("constraints") or [])]
+
+    if prior_goals is None:
+        prior_goals = [g for g in registry._goals
+                       if isinstance(g, dict)
+                       and g.get("agent_id") == agent_id
+                       and g.get("run_id") != new_run]
+    else:
+        prior_goals = [g for g in prior_goals
+                       if isinstance(g, dict)
+                       and g.get("agent_id") == agent_id
+                       and g.get("run_id") != new_run]
+
+    history = {}
+    for key, atoms in (executed_history or {}).items():
+        if (not isinstance(key, (tuple, list))) or len(key) != 2:
+            raise ValueError(
+                "executed_history keys must be (agent_id, run_id), "
+                "got %r" % (key,))
+        if key[0] != agent_id or key[1] == new_run:
+            continue
+        history[key[1]] = [_check_history_atom(a) for a in atoms]
+
+    findings = []
+
+    def _flag(ftype, severity, detail, explanation):
+        findings.append({
+            "type": ftype,
+            "new_goal_id": new_goal.get("goal_id"),
+            "agent_id": agent_id,
+            "severity": severity,
+            "detail": detail,
+            "explanation": explanation,
+        })
+        registry.audit_event({
+            "event": "goal_cross_run_flag",
+            "flag": "goal_cross_run",
+            "run_id": new_run,
+            "new_goal_id": new_goal.get("goal_id"),
+            "agent_id": agent_id,
+            "finding_type": ftype,
+            "severity": severity,
+            "detail": detail,
+            "reason": ("CROSS-RUN GOAL FLAG (%s, %s): %s"
+                       % (ftype, severity, explanation)),
+        })
+
+    # 1. Composition: the new goal conflicts with a still-active goal
+    #    the same agent registered in a previous run -- but ONLY
+    #    against priors register() did not already check. When the new
+    #    goal was registered through this registry, register() already
+    #    ran detect_conflict over every active registry goal (including
+    #    loaded prior-run goals) and flagged them LOUD; re-flagging
+    #    here would triple-fire one atom pair for a single conflict.
+    #    The detector's composition check exists for priors the
+    #    registry never saw: explicitly supplied prior_goals against
+    #    a fresh per-run registry, or a candidate new_goal that was
+    #    never registered.
+    new_id = new_goal.get("goal_id")
+    registry_ids = set(
+        g.get("goal_id") for g in registry._goals
+        if isinstance(g, dict))
+    registered_here = new_id is not None and new_id in registry_ids
+    if registered_here:
+        composition_priors = [
+            g for g in prior_goals
+            if g.get("goal_id") not in registry_ids]
+    else:
+        composition_priors = list(prior_goals)
+    prev_active = [g for g in composition_priors
+                   if g.get("status", "active") == "active"]
+    for c in detect_conflict(new_goal, prev_active):
+        _flag("cross_run_composition_conflict", "high",
+              {"conflict": c,
+               "prior_goal_id": c["existing_goal_id"],
+               "prior_run_id": next(
+                   (g.get("run_id") for g in prev_active
+                    if g.get("goal_id") == c["existing_goal_id"]),
+                   None)},
+              "goal %r registered in this run conflicts (%s) with "
+              "the same agent's still-active goal from a previous "
+              "run: %s" % (new_goal.get("goal_id", "")[:8],
+                            c["type"], c["explanation"]))
+
+    # Index prior goals by run for the history signals.
+    prior_by_run = {}
+    for g in prior_goals:
+        prior_by_run.setdefault(g.get("run_id"), []).append(g)
+
+    for run_id, exec_atoms in sorted(history.items()):
+        prior = prior_by_run.get(run_id, [])
+
+        # 2a. The new registration legitimizes behavior that violated
+        #     the agent's own prior registration: the agent executed
+        #     (verb, target) while a prior-run goal forbade it (or
+        #     declared the opposite), and the new goal's effects now
+        #     cover that same atom. The past violation is being
+        #     laundered through a fresh registration.
+        for verb, target in exec_atoms:
+            if not _covers(new_effects, verb, target):
+                continue
+            violated = None
+            for g in prior:
+                for _k, cverb, ctarget in (g.get("constraints") or []):
+                    if cverb == verb and \
+                            normalize_target(str(ctarget)) == target:
+                        violated = ("forbid", g)
+                        break
+                if violated:
+                    break
+                for everb, etarget in (g.get("effects") or []):
+                    if normalize_target(str(etarget)) == target and \
+                            everb in _OPPOSES.get(verb, ()):
+                        violated = ("opposes", g)
+                        break
+                if violated:
+                    break
+            if violated:
+                kind, pg = violated
+                _flag("registration_launders_violation", "high",
+                      {"executed": [verb, target],
+                       "executed_run_id": run_id,
+                       "prior_goal_id": pg.get("goal_id"),
+                       "new_effect": [verb, target]},
+                      "agent executed (%s %s) in run %r in violation "
+                      "of its own prior goal (%s), and this run's "
+                      "registration now covers the same atom -- the "
+                      "past violation is being legitimized by a "
+                      "fresh registration"
+                      % (verb, target, run_id, kind))
+
+        # 2b. The new registration's own constraints are contradicted
+        #     by the agent's executed history: the agent already did
+        #     what it now claims to forbid.
+        for _k, cverb, ctarget in new_constraints:
+            ctarget_n = normalize_target(str(ctarget))
+            for verb, target in exec_atoms:
+                if verb == cverb and target == ctarget_n:
+                    _flag("history_contradicts_registration", "high",
+                          {"executed": [verb, target],
+                           "executed_run_id": run_id,
+                           "new_constraint": ["forbid", cverb,
+                                              ctarget_n]},
+                          "agent executed (%s %s) in run %r but this "
+                          "run's registration forbids it -- the "
+                          "declaration is contradicted by the "
+                          "agent's own history"
+                          % (verb, target, run_id))
+
+    # 3. Dormant goal: materially identical goal registered across
+    #    >= DORMANT_RUN_THRESHOLD distinct runs (including this one)
+    #    with no executed effect ever covered by its effects in the
+    #    observed history. An unexercised standing goal is cheap
+    #    cover for later misuse. Without any executed history the
+    #    signal cannot distinguish "dormant" from "unobserved", so
+    #    it stays silent rather than fire without evidence (FP
+    #    aversion: a same-run exercise later in the run is not yet
+    #    visible at registration time).
+    sig = _goal_signature(new_goal)
+    if history and any(v in ("send", "write", "delete",
+                             "exclusive_write") for v, _t in sig[0]):
+        matching_runs = set()
+        for g in prior_goals:
+            if _goal_signature(g) == sig and g.get("run_id"):
+                matching_runs.add(g.get("run_id"))
+        if new_run:
+            matching_runs.add(new_run)
+        if len(matching_runs) >= DORMANT_RUN_THRESHOLD:
+            exercised = False
+            for run_id, exec_atoms in history.items():
+                for verb, target in exec_atoms:
+                    if _covers(new_effects, verb, target):
+                        exercised = True
+                        break
+                if exercised:
+                    break
+            if not exercised:
+                _flag("dormant_goal", "info",
+                      {"matching_runs": sorted(matching_runs),
+                       "signature_effects": [list(e) for e in sig[0]]},
+                      "materially identical goal registered in %d "
+                      "distinct runs with no covered execution in "
+                      "observed history -- a standing unexercised "
+                      "goal is cheap cover"
+                      % len(matching_runs))
+
+    return findings

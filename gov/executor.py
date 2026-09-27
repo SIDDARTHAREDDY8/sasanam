@@ -81,6 +81,7 @@ from . import intent_slice as _intent_slice
 from . import revoke as _revoke
 from . import delegation_tokens as _delegation_tokens
 from . import drift as _drift
+from . import framing as _framing
 from . import egress_content as _egress_content
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
@@ -88,6 +89,7 @@ from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
 from . import skill_watch as _skill_watch
 from . import supplychain_install as sc_install
+from . import artifact_sweep as _artifact_sweep
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
@@ -653,7 +655,17 @@ class ToolExecutor:
                  # Unlabeled-egress content analysis (row 13, wave-132):
                  # appended LAST for the same positional-misalignment
                  # reason. Opt-in: None (default) = zero behavior change.
-                 content_monitor=None):
+                 content_monitor=None,
+                 # Post-run artifact sweep (row 12 second half,
+                 # wave-133): appended LAST for the same
+                 # positional-misalignment reason. Opt-in: None
+                 # (default) = zero behavior change.
+                 artifact_sweep=None,
+                 # Cross-run argument-distribution (framing) drift
+                 # (row 9, wave-134): appended LAST for the same
+                 # positional-misalignment reason. Opt-in: None
+                 # (default) = zero behavior change.
+                 framing_store=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -899,6 +911,16 @@ class ToolExecutor:
         # (check_egress_content returns a silent allow without touching
         # anything).
         self.content_monitor = content_monitor
+        # Wave-133 (row 12 second half): post-run artifact sweep,
+        # operator opt-in. Opt-in: None = zero behavior change
+        # (execute_approved does not sweep; run_artifact_sweep still
+        # works when called directly).
+        self.artifact_sweep = artifact_sweep
+        # Wave-134 (row 9): cross-run framing-drift store,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (check_run_framing returns a silent result without touching
+        # anything).
+        self.framing_store = framing_store
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2438,6 +2460,168 @@ class ToolExecutor:
                            "manually"),
             })
         return res
+
+    def check_run_framing(self, agent_id, fingerprint=None, record=True,
+                          identity=None, window=8):
+        """Wave-134 (row 9): cross-run framing-drift check for an agent.
+
+        When a ``framing_store`` was installed at construction (opt-in),
+        optionally records ``fingerprint`` (a
+        ``gov.framing.FramingFingerprint``) as the agent's latest run
+        and runs ``gov.framing.detect_framing`` over the prior runs.
+        The response is graduated -- the same contract as
+        ``check_run_drift``:
+
+        - watch: a chained ``framing_watch`` audit event
+          (informational);
+        - warn: a LOUD ``framing_warn`` audit event for the operator;
+        - hold: a LOUD ``framing_hold`` audit event AND a synthetic
+          ``framing_review`` approval is queued for human resolution
+          (flag "framing_hold", separation-of-duties: the agent can
+          never approve its own hold away). The run is NOT auto-
+          denied -- a human resolves.
+
+        ``identity`` is the minted AgentIdentity for the agent under
+        check -- REQUIRED when a hold may queue an approval (F42: the
+        queue never trusts caller-supplied identity fields). With no
+        framing_store installed this returns a silent result and does
+        nothing (zero behavior change).
+
+        Honest ceiling: content-level framing (same destination,
+        different payload meaning) is invisible to this layer -- see
+        ``gov.framing``.
+        """
+        silent = _framing.FramingResult("silent", agent_id=str(agent_id),
+                                        reason="no_framing_store")
+        if self.framing_store is None:
+            return silent
+        if fingerprint is not None and record:
+            principal = (identity.principal if identity is not None
+                         else "unknown")
+            self.framing_store.record_run(
+                agent_id, principal, fingerprint, audit=self.log.append)
+        res = _framing.detect_framing(self.framing_store, agent_id,
+                                      window=window)
+        if res.level == "silent":
+            return res
+        event = {"watch": "framing_watch", "warn": "framing_warn",
+                 "hold": "framing_hold"}[res.level]
+        self.log.append({
+            "event": event,
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "level": res.level,
+            "baseline_n": res.baseline_n,
+            "window_n": res.window_n,
+            "signals": [s.to_dict() for s in res.signals],
+            "reason": ("cross-run framing drift: %s"
+                       % "; ".join(s.explanation for s in res.signals)),
+        })
+        if res.level != "hold":
+            return res
+        if identity is None:
+            raise TypeError(
+                "check_run_framing() requires identity when a framing "
+                "hold queues a framing_review approval (F42); the "
+                "approval queue never trusts caller-supplied identity "
+                "fields")
+        detail = "; ".join("%s (%s): %s"
+                           % (s.kind, s.strength, s.explanation)
+                           for s in res.signals)
+        try:
+            self.approvals.queue(
+                {"tool": "framing_review",
+                 "args": {"agent_id": str(agent_id),
+                          "level": "hold",
+                          "signals": [s.to_dict() for s in res.signals]},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Cross-run framing drift HOLD for agent %r: %s"
+                    % (agent_id, detail),
+                    policy_id="framing-monitor",
+                    flag="framing_hold"),
+                "agent_direct",
+                "review cross-run framing drift HOLD for agent %r"
+                % (agent_id,),
+                caller_identity=identity)
+        except Exception:
+            # The LOUD framing_hold audit event above is the record; the
+            # hold stands flagged even if queueing the review item
+            # fails. Fail closed on the signal, never warn-and-
+            # continue silently.
+            self.log.append({
+                "event": "framing_hold_queue_failed",
+                "flag": "framing_hold",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "reason": ("framing_review approval could not be queued; "
+                           "the framing_hold audit event remains the "
+                           "record -- operator must review manually"),
+            })
+        return res
+
+    def run_artifact_sweep(self):
+        """Run the post-run artifact sweep and audit findings LOUD.
+
+        Row-12 second half (wave-133): walks the run sandbox and
+        compares every regular file against the Wave-130 artifact
+        inventory (``gov/artifact_sweep.py``). Each finding is audited
+        as a chained ``artifact_sweep_finding`` event; one
+        ``artifact_sweep_complete`` event carries the sweep stats as
+        evidence the sweep ran. Returns the findings list.
+
+        Works whether or not the ``artifact_sweep`` opt-in is
+        installed (the opt-in only controls the AUTOMATIC run at the
+        end of ``execute_approved()``). Never raises: a sweep failure
+        is audited, never fatal to the caller.
+        """
+        try:
+            findings, stats = _artifact_sweep.sweep_run_dir(
+                self.run_dir, self.artifacts)
+        except Exception as e:  # noqa: BLE001 - sweep must not break runs
+            self.log.append({
+                "event": "artifact_sweep_failed",
+                "flag": "unregistered_artifact",
+                "run_id": self.run_id,
+                "reason": ("artifact sweep failed: %s: %s"
+                           % (type(e).__name__, e)),
+            })
+            return []
+        for f in findings:
+            self.log.append({
+                "event": _artifact_sweep.SWEEP_FINDING_EVENT,
+                "flag": "unregistered_artifact",
+                "run_id": self.run_id,
+                "kind": f["kind"],
+                "path": f["path"],
+                "size": f["size"],
+                "sha256": f["sha256"],
+                "mtime": f["mtime"],
+                "detail": f["detail"],
+            })
+        self.log.append({
+            "event": _artifact_sweep.SWEEP_COMPLETE_EVENT,
+            "run_id": self.run_id,
+            "files_seen": stats["files_seen"],
+            "files_compared": stats["files_compared"],
+            "findings": stats["findings"],
+            "skipped_unreadable": stats["skipped_unreadable"],
+        })
+        return findings
+
+    def _maybe_run_artifact_sweep(self):
+        """Automatic post-run sweep hook for ``execute_approved()``.
+
+        Runs only when the ``artifact_sweep`` opt-in was installed at
+        construction (None = zero behavior change). The sweep needs no
+        queue state, so it runs after the queue lock is released.
+        """
+        if self.artifact_sweep is None:
+            return
+        self.run_artifact_sweep()
 
     def _intent_slice_verdict(self, tool, args, justification, identity):
         """Wave-129: run the intent-slice judge for a candidate queued
@@ -7366,7 +7550,7 @@ class ToolExecutor:
         self._ledger.require_verified()
         try:
             with self.approvals._queue_locked():
-                return self._execute_approved_locked()
+                done = self._execute_approved_locked()
         except QueueLockPathError as e:
             # F51 (R12): the lock path is not a usable lock file (e.g.
             # a directory swapped in at approvals.lock). Fail closed
@@ -7391,6 +7575,12 @@ class ToolExecutor:
             self._audit_lock_refusal("queue_lock_timeout",
                                      "execute_approved() refused: %s" % e)
             raise
+        # Row-12 second half (wave-133): the post-run artifact sweep
+        # runs AFTER the queue lock is released — it needs no queue
+        # state, only the sandbox and the inventory. Opt-in: with no
+        # artifact_sweep installed this is a no-op.
+        self._maybe_run_artifact_sweep()
+        return done
 
     # F51 (R12): at most one lock-refusal audit entry per
     # _LOCK_REFUSAL_AUDIT_COALESCE_SECS seconds per run; repeats in
