@@ -178,7 +178,12 @@ closure claim. Full detail in `workstreams/architect/REALWORLD_BAR.md` B6(7)
 - **K-060 — bundle proves authenticity of included entries, not
   completeness against a misbehaving exporter** (wave-125, 2 BREAK / 2
   HELD; spec §7 honest scope). External anchor is the v2 fix; the H24
-  seam makes a v2 adapter cheap.
+  seam makes a v2 adapter cheap. Wave-137: `gov/log.py::export_bundle`
+  gained the pluggable anchor seam (`anchor_backend=None` → zero
+  behavior change; `gov/anchoring.py` binds the bundle's checkpoint
+  heads to any `gov.anchor_backend.AnchorBackend`; `LocalAnchorLog`
+  ships as the honest local-only reference). Live external anchoring
+  still unvalidated — the seam is proven, the witness is not.
 - **Repo-default posture:** the "42/44 legacy `ToolExecutor` sites
   ungoverned" line described the **pre-wave-85** state (wave-84
   text-search census). Wave-85's fail-closed constructor gate closed the

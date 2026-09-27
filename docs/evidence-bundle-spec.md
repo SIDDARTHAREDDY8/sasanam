@@ -631,7 +631,10 @@ ships without closure.
   honest scope applies (`gov/log.py::export_bundle`): the bundle proves
   authenticity of INCLUDED entries, not that the exporter omitted nothing.
   Protection against a misbehaving exporter is the transparency-anchor
-  story (K-049, v2), not this bundle's.
+  story (K-049, v2), not this bundle's. Wave-137: the pluggable anchor
+  seam exists (`export_bundle(anchor_backend=...)`, `gov/anchoring.py`) —
+  an anchored export binds the exporter to its checkpoint heads, but an
+  exporter who narrows BEFORE anchoring is still invisible.
 - **Multi-operator manifest signing / threshold operator signatures.**
   The envelope supports A5 rosters for checkpoint keys; the manifest
   signature is single-operator in v1.

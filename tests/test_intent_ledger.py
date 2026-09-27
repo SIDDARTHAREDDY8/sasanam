@@ -436,5 +436,284 @@ class ExecutorWiringTest(unittest.TestCase):
         self.assertEqual(rec["revoked_by"], revoke_mod.INTENT_SYSTEM)
 
 
+class SimilaritySignalSeamTest(unittest.TestCase):
+    """Wave-136, row-7: the negation-gated similarity countermand
+    signal at the record_intent seam."""
+
+    def test_refrain_paraphrase_fires_without_redirect_signal(self):
+        # "refrain" is in _NEGATION_RE but NOT the redirect list, so
+        # the legacy detector stays silent and this isolates the new
+        # similarity signal.
+        led = IntentLedger()
+        led.record_intent("op", "Send the Q3 report to the vendor.")
+        r = led.record_intent(
+            "op", "Please refrain from sending that Q3 report anywhere.")
+        self.assertTrue(r["similarity_countermand"])
+        self.assertFalse(r["detector_countermand"])
+        self.assertTrue(r["is_countermand"])
+        self.assertEqual(r["similarity_anchor"],
+                         "Send the Q3 report to the vendor.")
+        self.assertGreaterEqual(r["similarity_score"], 0.5)
+
+    def test_similarity_without_negation_never_fires(self):
+        # High similarity (0.76) but no negation cue: the gate holds,
+        # a paraphrased confirmation is not a countermand.
+        led = IntentLedger()
+        led.record_intent("op", "Send the Q3 report to the vendor.")
+        r = led.record_intent(
+            "op", "Yes please do send the Q3 report to the vendor.")
+        self.assertFalse(r["similarity_countermand"])
+        self.assertFalse(r["is_countermand"])
+        self.assertIsNone(r["similarity_anchor"])
+        self.assertIsNone(r["similarity_anchor_ts"])
+
+    def test_negation_without_prior_instruction_does_not_fire(self):
+        led = IntentLedger()
+        r = led.record_intent("op", "do not send anything")
+        self.assertFalse(r["similarity_countermand"])
+        self.assertFalse(r["is_countermand"])
+
+    def test_best_anchor_wins(self):
+        from gov.intent_ledger import similarity_countermand
+        priors = ["Delete the temp files in the scratch dir.",
+                  "Send the Q3 report to the vendor."]
+        fired, idx, score = similarity_countermand(
+            "Please refrain from sending that Q3 report anywhere.",
+            priors)
+        self.assertTrue(fired)
+        self.assertEqual(idx, 1)
+        self.assertGreaterEqual(score, 0.5)
+
+    def test_threshold_must_be_open_unit_interval(self):
+        from gov.intent_ledger import similarity_countermand
+        for bad in (0, -0.5, 1.5, True, "0.5", None):
+            with self.assertRaises(ValueError):
+                similarity_countermand("don't do x", ["do x"],
+                                       threshold=bad)
+
+    def test_non_string_inputs_fail_safe(self):
+        from gov.intent_ledger import similarity_countermand
+        self.assertEqual(similarity_countermand(None, ["do x"]),
+                         (False, None, 0.0))
+        self.assertEqual(similarity_countermand("   ", ["do x"]),
+                         (False, None, 0.0))
+        self.assertEqual(similarity_countermand("don't do x", None),
+                         (False, None, 0.0))
+        self.assertEqual(similarity_countermand("don't do x", "do x"),
+                         (False, None, 0.0))
+
+    def test_non_string_priors_are_skipped_not_coerced(self):
+        from gov.intent_ledger import similarity_countermand
+        fired, idx, score = similarity_countermand(
+            "do not send the Q3 report",
+            [None, 42, "Send the Q3 report."])
+        self.assertTrue(fired)
+        # The anchor index refers to the caller's list as passed.
+        self.assertEqual(idx, 2)
+        self.assertGreaterEqual(score, 0.5)
+
+    def test_similarity_fields_survive_save_load_and_verify(self):
+        d = _tmp()
+        p = os.path.join(d, "ledger.jsonl")
+        led = IntentLedger()
+        grant_ts = "2026-09-27T10:00:00+00:00"
+        led.record_intent("op", "Send the Q3 report to the vendor.",
+                          ts=grant_ts)
+        r = led.record_intent(
+            "op", "Please refrain from sending that Q3 report anywhere.",
+            ts="2026-09-27T11:00:00+00:00")
+        self.assertTrue(r["similarity_countermand"])
+        led.save(p)
+        led2 = IntentLedger.load(p)
+        self.assertTrue(led2.verify_chain())
+        recs = [t for t in led2._turns
+                if t.get("similarity_countermand")]
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["similarity_anchor"],
+                         "Send the Q3 report to the vendor.")
+        self.assertEqual(recs[0]["similarity_anchor_ts"], grant_ts)
+        self.assertGreaterEqual(recs[0]["similarity_score"], 0.5)
+
+
+class SimilarityAfterSeamTest(unittest.TestCase):
+    """Wave-136, row-7: similarity_countermands_after grant
+    attribution at the execution boundary."""
+
+    def _ledger(self):
+        led = IntentLedger()
+        led.record_intent("op", "Send the Q3 report to the vendor.",
+                          ts="2026-09-27T10:00:00+00:00")
+        led.record_intent("op", "Please refrain from sending that "
+                          "Q3 report anywhere.",
+                          ts="2026-09-27T11:00:00+00:00")
+        return led
+
+    def test_post_grant_similarity_countermand_returned(self):
+        led = self._ledger()
+        hits = led.similarity_countermands_after(
+            "op", "2026-09-27T10:30:00+00:00")
+        self.assertEqual(len(hits), 1)
+        self.assertTrue(hits[0]["similarity_countermand"])
+        self.assertEqual(hits[0]["similarity_anchor_ts"],
+                         "2026-09-27T10:00:00+00:00")
+
+    def test_nothing_new_after_grant_returns_empty(self):
+        led = self._ledger()
+        self.assertEqual(
+            led.similarity_countermands_after(
+                "op", "2026-09-27T12:00:00+00:00"), [])
+
+    def test_wrong_principal_returns_empty(self):
+        led = self._ledger()
+        self.assertEqual(
+            led.similarity_countermands_after(
+                "other", "2026-09-27T10:30:00+00:00"), [])
+
+    def test_unparseable_since_returns_empty(self):
+        led = self._ledger()
+        self.assertEqual(
+            led.similarity_countermands_after("op", "not-a-time"), [])
+
+    def test_anchor_after_grant_is_not_misattributed(self):
+        # The load-bearing guard: a negated paraphrase that anchors
+        # to POST-grant chatter (not the grant) must not revoke the
+        # grant. "do not review the Q3 report again" is most similar
+        # to the chatter turn, so the anchor postdates decided_at and
+        # the query stays empty.
+        led = IntentLedger()
+        led.record_intent("op", "Send the Q3 report to the vendor.",
+                          ts="2026-09-27T10:00:00+00:00")
+        led.record_intent("op", "I also reviewed the Q3 report this "
+                          "morning.",
+                          ts="2026-09-27T11:00:00+00:00")
+        r = led.record_intent("op", "do not review the Q3 report again",
+                              ts="2026-09-27T12:00:00+00:00")
+        self.assertTrue(r["similarity_countermand"])
+        self.assertEqual(r["similarity_anchor"],
+                         "I also reviewed the Q3 report this morning.")
+        # decided_at sits between grant and chatter: the countermand
+        # anchors to chatter (post-grant), so no grant attribution.
+        self.assertEqual(
+            led.similarity_countermands_after(
+                "op", "2026-09-27T10:30:00+00:00"), [])
+
+
+class SimilarityExecutorWiringTest(unittest.TestCase):
+    """Wave-136, row-7: execute_approved revokes a grant on a
+    paraphrased (negation-gated similarity) countermand and the
+    refusal audit event carries match_method/match_score."""
+
+    def _approved_send(self, ctx, turns):
+        q, ex = ctx["approvals"], ctx["executor"]
+        # Role "researcher": the default policy's role allowlist
+        # permits researcher -> send_email; the recipient is on the
+        # egress domain allowlist so the sweep's fresh policy
+        # evaluation passes and only the intent check can fire.
+        ident = ctx["mint_identity"]("a1", "researcher", "org")
+        args = {"to": "vendor@synthetic.local",
+                "subject": "Q3 report", "body": "see attached"}
+        ex.set_intent_context(list(turns))
+        verdict = ex._intent_slice_verdict(
+            "send_email", args,
+            "sending the Q3 report per your instruction", ident)
+        aid = q.queue(
+            {"tool": "send_email", "args": args,
+             "identity": ident.as_dict(),
+             "agent_justification":
+                 "sending the Q3 report per your instruction",
+             "redactions": []},
+            PolicyDecision("require_approval", "similarity tests",
+                           policy_id="test", flag="t"),
+            "agent_direct", "preview",
+            policy_hash=ex.policy.policy_hash, caller_identity=ident,
+            intent_slice_verdict=verdict)
+        q.decide(aid, True, "human says ok", decided_by="human-operator")
+        return aid
+
+    def test_similarity_countermand_revokes_with_match_metadata(self):
+        from gov.log import read_entries
+        from gov.target_match import MATCH_METHOD
+        d = _tmp()
+        lp = os.path.join(d, "ledger.jsonl")
+        ctx = make_run()
+        q, ex = ctx["approvals"], ctx["executor"]
+        grant = "Send the Q3 report to vendor@synthetic.local."
+        aid = self._approved_send(ctx, [grant])
+        decided_at = q.get(aid)["decided_at"]
+
+        def shift(iso, seconds):
+            from datetime import datetime, timedelta
+            dt = datetime.fromisoformat(str(iso))
+            return (dt + timedelta(seconds=seconds)).isoformat()
+
+        led = IntentLedger()
+        led.record_intent("org", grant, ts=shift(decided_at, -300))
+        rec = led.record_intent(
+            "org", "Please refrain from sending that Q3 report anywhere.",
+            ts=shift(decided_at, 300))
+        # Isolate the similarity signal: the legacy redirect detector
+        # must stay silent on "refrain".
+        self.assertTrue(rec["similarity_countermand"])
+        self.assertFalse(rec["detector_countermand"])
+        led.save(lp)
+
+        ex.intent_ledger = IntentLedger.load(lp)
+        ex.set_intent_context(None)
+        done = ex.execute_approved()
+        self.assertEqual(done, [])
+        self.assertEqual(q.get(aid)["status"], "revoked")
+        self.assertEqual(q.get(aid)["revoked_by"],
+                         revoke_mod.INTENT_SYSTEM)
+        evts = read_entries(ctx["run_dir"] / "actions.jsonl")
+        refused = [e for e in evts
+                   if e.get("event") == "approval_execution_refused"
+                   and e.get("approval_id") == aid]
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(refused[0]["flag"], "approval_intent_changed")
+        self.assertEqual(refused[0]["policy_id"],
+                         "intent-revocation-xr-sim")
+        self.assertEqual(refused[0]["match_method"], MATCH_METHOD)
+        self.assertEqual(refused[0]["match_method"], "token-tversky")
+        self.assertGreaterEqual(refused[0]["match_score"], 0.5)
+
+    def test_legacy_path_revocation_carries_no_similarity_labels(self):
+        # The exact countermand still revokes through the legacy
+        # redirect path: no match_method/match_score on the refusal.
+        from gov.log import read_entries
+        d = _tmp()
+        lp = os.path.join(d, "ledger.jsonl")
+        ctx = make_run()
+        q, ex = ctx["approvals"], ctx["executor"]
+        grant = "Send the Q3 report to vendor@synthetic.local."
+        aid = self._approved_send(ctx, [grant])
+        decided_at = q.get(aid)["decided_at"]
+
+        def shift(iso, seconds):
+            from datetime import datetime, timedelta
+            dt = datetime.fromisoformat(str(iso))
+            return (dt + timedelta(seconds=seconds)).isoformat()
+
+        led = IntentLedger()
+        led.record_intent("org", grant, ts=shift(decided_at, -300))
+        led.record_intent(
+            "org", "Don't send the Q3 report to vendor@synthetic.local.",
+            ts=shift(decided_at, 300))
+        led.save(lp)
+
+        ex.intent_ledger = IntentLedger.load(lp)
+        ex.set_intent_context(None)
+        done = ex.execute_approved()
+        self.assertEqual(done, [])
+        self.assertEqual(q.get(aid)["status"], "revoked")
+        evts = read_entries(ctx["run_dir"] / "actions.jsonl")
+        refused = [e for e in evts
+                   if e.get("event") == "approval_execution_refused"
+                   and e.get("approval_id") == aid]
+        self.assertEqual(len(refused), 1)
+        self.assertEqual(refused[0]["flag"], "approval_intent_changed")
+        self.assertNotIn("match_method", refused[0])
+        self.assertNotIn("match_score", refused[0])
+
+
 if __name__ == "__main__":
     unittest.main()

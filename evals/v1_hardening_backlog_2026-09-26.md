@@ -409,6 +409,15 @@ GREEN = battery exists, deterministic, and the residual is stated with the
 honest ceiling (external anchor is the real fix — v2 decision, H24).
 **Shape:** probe-only.
 
+*Wave-137 update:* the anchor seam this item named as "the real fix" now
+exists and is measured: `gov/log.py::export_bundle(anchor_backend=...)`
+(`gov/anchoring.py`) commits the bundle's signed checkpoint heads to any
+`gov.anchor_backend.AnchorBackend` — 0 BREAK / 7 HELD
+(`evals/anchoring_probes.py`). The default `LocalAnchorLog` is a second
+local chain, honestly NOT external trust; live anchoring stays
+unvalidated. Exporter-narrowing *before* anchoring remains invisible —
+H20's adversarial pin stands.
+
 ### H21 — ISO 42001 mapping conformance battery (regulator-shaped evidence)
 
 `gov/evidence_exports.py` carries a provisional ISO 42001 mapping

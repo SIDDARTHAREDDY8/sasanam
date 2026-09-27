@@ -90,6 +90,7 @@ from . import tool_continuity as _tool_continuity
 from . import skill_watch as _skill_watch
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
+from . import target_match as _target_match
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
@@ -2901,6 +2902,7 @@ class ToolExecutor:
     def check_rare_token_carryover(self, agent_id, tool, args,
                                    payload_text=None, identity=None):
         """Wave-136 (row 13): rare-token carryover check.
+        Wave-137 adds the behavioral tier (see gov/rare_token.py).
 
         When a ``rare_token_tracker`` was installed at construction
         (opt-in), scores one outbound payload for rare-token
@@ -2916,15 +2918,26 @@ class ToolExecutor:
           for human resolution (flag "rare_token_carryover",
           separation-of-duties: the agent can never approve its own
           hold away). ``identity`` is REQUIRED here (F42).
+        - behavioral_flag: a LOUD ``read_then_egress_novel`` audit
+          event (flag "read_then_egress"); execution proceeds, NO
+          approval is queued and ``identity`` is not needed — this
+          is triage-only by design, never a block. Fires only when
+          the content tier found zero overlap AND the agent read
+          >=1 token-bearing document AND the destination is a
+          concrete novel one.
 
         Every audit event carries counts and doc ids ONLY — token
         strings are never logged (privacy). With no tracker
         installed this returns a silent ``allow`` and does nothing
         (zero behavior change).
 
-        Honest ceiling: a full rewrite that drops every rare token
-        is invisible to this primitive by design (see
-        gov/rare_token.py).
+        Honest ceilings: a full rewrite that drops every rare token
+        is invisible to the CONTENT tier by design; the behavioral
+        tier flags the read->novel-egress sequence instead (and WILL
+        fire on legitimate read-then-send workflows — the operator
+        triages on docs_read + destination). Cross-run read->egress
+        is invisible (the tracker is per-run). See
+        gov/rare_token.py.
         """
         silent = {"verdict": "allow", "overlap": 0, "source_id": None,
                   "reason": "no_rare_token_tracker",
@@ -2935,6 +2948,25 @@ class ToolExecutor:
                                                   payload_text=payload_text)
         verdict = res.get("verdict", "allow")
         if verdict == "allow":
+            return res
+        if verdict == "behavioral_flag":
+            detail = ("docs_read=%d destination=%s novel=%s" % (
+                res.get("docs_read", 0), res.get("destination"),
+                res.get("destination_novel")))
+            self.log.append({
+                "event": "read_then_egress_novel",
+                "flag": "read_then_egress",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "tool": tool,
+                "destination": res.get("destination"),
+                "docs_read": res.get("docs_read", 0),
+                "source_ids": res.get("source_ids", []),
+                "detail": detail,
+                "reason": ("read-then-egress behavioral flag "
+                           "(triage-only, execution proceeds; never a "
+                           "block): %s" % detail),
+            })
             return res
         detail = ("overlap=%d source=%s destination=%s novel=%s" % (
             res.get("overlap", 0), res.get("source_id"),
@@ -8525,11 +8557,19 @@ class ToolExecutor:
                 continue
             aid = rec["id"]
 
-            def _refuse(reason, flag, policy_id="approval-execution-refused"):
+            def _refuse(reason, flag, policy_id="approval-execution-refused",
+                        extra=None):
                 self.approvals._rewrite(lambda records: [
                     dict(r, execution_refused_reason=reason)
                     if r["id"] == aid else r for r in records])
-                self.log.append({
+                # Row-7 (wave-136, paraphrase-resistant countermand):
+                # similarity revocations carry
+                # match_method="token-tversky" and match_score on the
+                # refusal so the audit trail distinguishes them from
+                # exact/redirect revocations. ``extra`` merges with
+                # setdefault so a future base key is never overwritten
+                # by caller metadata.
+                _event = {
                     "event": "approval_execution_refused",
                     "run_id": self.run_id,
                     "agent_id": rec.get("agent_id"),
@@ -8540,7 +8580,11 @@ class ToolExecutor:
                     "policy_id": policy_id,
                     "flag": flag,
                     "reason": reason,
-                })
+                }
+                if extra:
+                    for _k, _v in extra.items():
+                        _event.setdefault(_k, _v)
+                self.log.append(_event)
 
             # F85 (D1-core T12): a bridge_expired record can NEVER
             # execute — late human decisions after a bridge timeout are
@@ -8872,6 +8916,75 @@ class ToolExecutor:
                                 "intent." % (aid,),
                                 "approval_intent_changed",
                                 policy_id="intent-revocation-xr")
+                        continue
+                # Row-7 (wave-136, paraphrase-resistant countermand):
+                # the ledger's negation-gated similarity signal. A
+                # post-grant turn carrying a negation cue and scoring
+                # >= 0.5 Tversky similarity against the GRANT-context
+                # intent countermands the grant even when the redirect
+                # judge above could not see the paraphrase ("Please
+                # refrain from sending..." -- "refrain" is a negation
+                # word but not a redirect signal). Same auto-revoke /
+                # refuse path; the refusal carries
+                # match_method="token-tversky" and the match_score so
+                # the audit trail distinguishes similarity revocations
+                # from exact ones. The anchor-predates-grant guard is
+                # load-bearing: similarity_countermands_after returns
+                # only post-grant turns anchored to pre-grant intent,
+                # so a negated paraphrase of post-grant CHATTER cannot
+                # misattribute and revoke an unrelated grant (false
+                # revocation). Similarity alone without negation never
+                # revokes -- the gate lives in
+                # gov.intent_ledger.similarity_countermand, not here.
+                if _xr_principal and _xr_decided:
+                    _xr_sim_hits = (
+                        self.intent_ledger.similarity_countermands_after(
+                            _xr_principal, _xr_decided))
+                    if _xr_sim_hits:
+                        _xr_sim = _xr_sim_hits[0]
+                        _xr_sim_score = round(
+                            _xr_sim.get("similarity_score") or 0.0, 4)
+                        try:
+                            _revoke.revoke_approval(
+                                self.approvals, aid,
+                                "cross-run intent change: a later user "
+                                "message paraphrases a countermand of "
+                                "the granted intent (negation-gated "
+                                "similarity %.3f, method %s); "
+                                "re-approval required under the current "
+                                "intent"
+                                % (_xr_sim_score,
+                                   _target_match.MATCH_METHOD),
+                                _revoke.INTENT_SYSTEM)
+                        except ValueError as _xr_sim_revoke_err:
+                            _refuse("Approval %s refused: cross-run "
+                                    "paraphrased countermand after "
+                                    "approval and auto-revocation "
+                                    "failed (%s); re-approval required "
+                                    "under the current intent."
+                                    % (aid, _xr_sim_revoke_err),
+                                    "approval_intent_changed",
+                                    policy_id="intent-revocation-xr-sim",
+                                    extra={
+                                        "match_method":
+                                            _target_match.MATCH_METHOD,
+                                        "match_score": _xr_sim_score,
+                                    })
+                            continue
+                        _refuse("Approval %s refused: cross-run intent "
+                                "changed after approval — auto-revoked "
+                                "(a later user message paraphrases a "
+                                "countermand of the granted intent: "
+                                "negation-gated similarity %.3f); "
+                                "re-approval required under the current "
+                                "intent." % (aid, _xr_sim_score),
+                                "approval_intent_changed",
+                                policy_id="intent-revocation-xr-sim",
+                                extra={
+                                    "match_method":
+                                        _target_match.MATCH_METHOD,
+                                    "match_score": _xr_sim_score,
+                                })
                         continue
 
             # F33 (HARDENING-R8): re-check the volume budgets at the actual

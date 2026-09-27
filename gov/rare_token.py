@@ -31,12 +31,34 @@ How it works:
   K defaults to 3. Destination history is per-agent, like
   EgressContentMonitor. The result dict and every audit event carry
   COUNTS and doc ids ONLY — token strings are never logged (privacy).
+- Wave-137 behavioral tier: when the CONTENT tier finds ZERO overlap
+  but the agent READ >=1 token-bearing document this run and now
+  egresses to a CONCRETE novel destination, ``check_egress`` returns
+  ``"behavioral_flag"`` instead of "allow" — a triage flag, NEVER a
+  hold. This is the last deterministic signal against the full-rewrite
+  ceiling (paraphrase that drops every rare token). It is deliberately
+  the noisiest signal in the module: it fires on the read->egress
+  SEQUENCE regardless of content, so legit read-then-send workflows
+  WILL flag. The FP control is destination novelty (known-good
+  recipients never flag) plus a concrete-destination requirement (a
+  tool call with no extractable destination stays silent). The
+  content tier takes precedence: overlap >= 1 never degrades to a
+  behavioral flag.
 
 Honest ceilings (documented, measured in
-evals/rare_token_probes.py):
+evals/rare_token_probes.py and evals/read_then_egress_probes.py):
 - An attacker who paraphrases AND drops all rare tokens (a full
-  rewrite with no names/IDs) is invisible to this primitive by
-  design (r7 pins this as BREAK*).
+  rewrite with no names/IDs) is invisible to the CONTENT tier by
+  design (r7 pins this as BREAK*). The wave-137 behavioral tier
+  recovers a flag for the read->novel-egress SEQUENCE — triage-only,
+  never prevention, and it WILL fire on legitimate read-then-send
+  workflows (e.g. a research agent that reads a vendor contract and
+  emails a summary to a new contact; or the FIRST benign status
+  ping to a vendor endpoint after a sensitive read — a destination
+  is "known" only once the agent has egressed to it, so a channel
+  first used after the read is novel for the tier's purpose).
+  The operator triages on docs_read + destination; the flag is the
+  start of review, not its conclusion.
 - The bundled wordlist is a crude frequency floor (~450 common
   words). Jargon-heavy legitimate domains WILL produce rare tokens;
   the destination-novelty amplifier and the K>=3 bar are the FP
@@ -45,8 +67,9 @@ evals/rare_token_probes.py):
   operator never reports are invisible. This keeps the hot tool path
   untouched and avoids double-counting, at the cost of coverage
   depending on the integration.
-- Cross-run memory: the tracker is per-run. Taint does not persist
-  across runs (the standing row-13 ceiling).
+- Cross-run memory: the tracker is per-run. A read in run N
+  followed by an egress in run N+1 is invisible to both tiers
+  (the standing row-13 ceiling).
 
 The reference wordlist choice: a bundled static list of common
 English words (function words + frequent content words), embedded so
@@ -201,8 +224,12 @@ class RareTokenTracker:
     ``check_egress(agent_id, tool, args, payload_text=None)`` scores
     one outbound payload: the max per-source overlap drives a
     graduated verdict (allow / flag / require_approval), amplified by
-    destination novelty. Result dicts and audit payloads carry counts
-    and doc ids only — never token strings.
+    destination novelty; with ZERO content overlap the wave-137
+    behavioral tier fires instead when the agent read >=1
+    token-bearing document and egresses to a concrete novel
+    destination ("behavioral_flag" — triage-only, never a hold).
+    Result dicts and audit payloads carry counts and doc ids only —
+    never token strings.
     """
 
     def __init__(self, reference=None,
@@ -236,9 +263,33 @@ class RareTokenTracker:
                 "source_id": source_id, "rare_token_count": len(tokens)}
 
     # -- egress -----------------------------------------------------
+    def _token_bearing_sources(self, agent_id):
+        """Sorted source ids of docs the agent read that carried >=1
+        rare token. A doc with few rare tokens still counts: the
+        behavioral tier is sequence-based, not content-thresholded
+        (documented FP tradeoff)."""
+        return sorted(
+            sid for sid, toks
+            in self._docs.get(agent_id, {}).items()
+            if len(toks) >= 1)
+
     def check_egress(self, agent_id, tool, args, payload_text=None):
         """Score one outbound payload. Returns a verdict dict with
-        counts/doc-ids only (never token strings)."""
+        counts/doc-ids only (never token strings).
+
+        Verdicts: "allow" (silent); "flag" (1..K-1 overlap, or >=K
+        overlap to a known destination); "require_approval" (>=K
+        overlap to a novel destination); "behavioral_flag" (wave-137:
+        zero content overlap BUT the agent read >=1 token-bearing
+        document this run and egresses to a CONCRETE novel
+        destination — triage-only, never a hold). Seam contract:
+        the tracker verdict is "behavioral_flag"; the executor
+        renders it as the LOUD ``read_then_egress_novel`` audit event
+        (flag "read_then_egress"). The content tier
+        takes precedence: any overlap >= 1 never degrades to a
+        behavioral flag. A tool call with no extractable destination
+        stays silent under the behavioral tier (FP control); the
+        content tier treats an unknown destination as novel."""
         agent_id = str(agent_id)
         payload = (payload_text if isinstance(payload_text, str)
                    else _extract_payload(tool, args or {}))
@@ -258,19 +309,29 @@ class RareTokenTracker:
         if destination:
             seen.add(destination)
 
+        bearing = self._token_bearing_sources(agent_id)
         if best_overlap >= self._k and novel:
             verdict = "require_approval"
         elif best_overlap >= 1:
             verdict = "flag"
         else:
-            verdict = "allow"
+            # Behavioral tier: concrete novel destination required.
+            # An unextractable destination (None) stays silent here —
+            # this is the noisiest signal in the module and flagging
+            # destination-less tool calls would drown the operator.
+            if bearing and destination is not None and novel:
+                verdict = "behavioral_flag"
+            else:
+                verdict = "allow"
         return {"verdict": verdict,
                 "overlap": best_overlap,
                 "source_id": best_source,
                 "destination": destination,
                 "destination_novel": bool(novel),
                 "threshold": self._k,
-                "agent_id": agent_id}
+                "agent_id": agent_id,
+                "docs_read": len(bearing),
+                "source_ids": bearing}
 
 
 # ---------------------------------------------------------------------------

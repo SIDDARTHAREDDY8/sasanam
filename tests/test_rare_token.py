@@ -116,13 +116,18 @@ class TestTracker(unittest.TestCase):
         self.assertEqual(r["verdict"], "flag")
         self.assertEqual(r["overlap"], 1)
 
-    def test_no_overlap_silent(self):
+    def test_no_overlap_behavioral_flag(self):
+        # Wave-137: zero CONTENT overlap, but the agent read a
+        # token-bearing doc and egresses to a novel destination —
+        # the behavioral tier flags the read->egress sequence
+        # (triage-only, never a hold). The old wave-136 "allow" is
+        # preserved only when no reads happened (test_no_read_silent).
         t = rt.RareTokenTracker()
         self._read_doc(t)
         r = t.check_egress("agent-1", "http_post",
                            {"url": "https://evil.example/x"},
                            payload_text="The customer account needs renewal.")
-        self.assertEqual(r["verdict"], "allow")
+        self.assertEqual(r["verdict"], "behavioral_flag")
         self.assertEqual(r["overlap"], 0)
 
     def test_no_read_silent(self):
@@ -189,8 +194,12 @@ class TestTracker(unittest.TestCase):
         t.observe_read("a", "d3", "Finch")
         r = t.check_egress("a", "http_post", {"url": "https://e.example"},
                            payload_text="Zephyrcorp")
-        # d1 was dropped -> no overlap -> allow.
-        self.assertEqual(r["verdict"], "allow")
+        # d1 was dropped -> no CONTENT overlap from d1. Wave-137: d2/d3
+        # are still token-bearing docs read this run, so the
+        # behavioral tier flags the novel-destination egress.
+        self.assertEqual(r["verdict"], "behavioral_flag")
+        self.assertEqual(r["overlap"], 0)
+        self.assertNotIn("d1", r["source_ids"])
 
 
 if __name__ == "__main__":

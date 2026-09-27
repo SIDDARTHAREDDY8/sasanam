@@ -31,14 +31,30 @@ Countermand detection reuses the canonical detector
 ``gov.intent_slice._detect_countermand`` (same-package private reuse,
 documented -- duplicating the redirect-signal rubric would risk
 semantic drift, cf. gov/goal_audit.py's reuse of gov.goals._OPPOSES).
-A record is a countermand when the stored verdict says so OR the
+A record is a countermand when the stored verdict says so, the
 detector finds a redirect signal overlapping a prior turn of the same
-principal.
+principal, OR the negation-gated similarity signal
+(``similarity_countermand``, wave-136) fires: a negation cue from the
+existing ``gov.intent_slice._NEGATION_RE`` word list plus
+``gov.target_match.target_similarity >= 0.5`` against a prior turn.
+The asymmetry is deliberate: similarity may REVOKE (fail-closed on a
+paraphrased "don't") but similarity without a negation cue never
+revokes (fail-safe on paraphrased confirmations). The execution
+boundary consumes similarity countermands via
+``similarity_countermands_after``: only post-grant turns anchored to
+pre-grant intent revoke the grant, so negated paraphrases of
+post-grant chatter cannot misattribute.
 
 Honest ceilings (documented, not hidden):
-- The deterministic paraphrase-detection ceiling carries over
-  cross-run: a paraphrased countermand the wave-129 judge cannot
-  anchor executes (measured in evals/cross_run_intent_probes.py p5).
+- The paraphrase ceiling is NARROWED, not closed: a paraphrased
+  countermand carrying a negation cue and sharing tokens with the
+  granted intent is now caught (measured in
+  evals/countermand_paraphrase_probes.py). What remains invisible: a
+  paraphrase with no negation cue ("Please apply standard retention
+  handling..."), full synonym replacement with no shared tokens, and
+  non-English negation -- the deterministic judge still misses these
+  (p6 in evals/countermand_paraphrase_probes.py, carried over from
+  evals/cross_run_intent_probes.py p6).
 - Cross-run identity depends on a stable principal: a fresh
   principal per run defeats the ledger (same boundary as the drift
   lane's per-agent profiles).
@@ -57,12 +73,18 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from .intent_slice import _detect_countermand
+from .intent_slice import _detect_countermand, _NEGATION_RE
+from .target_match import (
+    target_similarity,
+    DEFAULT_THRESHOLD,
+    MATCH_METHOD,
+)
 
 __all__ = [
     "IntentLedger",
     "IntentPersistenceError",
     "INTENT_LEDGER_VERSION",
+    "similarity_countermand",
 ]
 
 INTENT_LEDGER_VERSION = "intent-ledger/1.0"
@@ -113,6 +135,79 @@ def _verdict_says_countermand(verdict):
     return verdict.get("flag") in _COUNTERMAND_FLAGS
 
 
+def similarity_countermand(message, prior_messages,
+                           threshold=DEFAULT_THRESHOLD):
+    """Negation-gated similarity countermand signal (wave-136, row-7).
+
+    Second countermand signal alongside the verdict flag and the
+    redirect-signal detector: a new user message carrying a negation
+    cue AND scoring ``target_similarity >= threshold`` against a prior
+    turn of the same principal counts as a countermand of that prior
+    intent. This catches paraphrased countermands the redirect
+    detector cannot anchor ("Please refrain from sending that Q3
+    report anywhere" -- "refrain" is a negation word but not a
+    redirect signal).
+
+    ``message``: the new user message. ``prior_messages``: earlier
+    turns of the same principal, oldest-first. Returns
+    ``(fired, anchor_index, score)``: ``anchor_index`` indexes the
+    ``prior_messages`` list as passed (None when not fired);
+    ``score`` is the best Tversky similarity found (0.0 when nothing
+    was comparable).
+
+    The gate is a conjunction and the asymmetry is deliberate:
+      - negation cue (``gov.intent_slice._NEGATION_RE`` -- the
+        existing negation-word list, reused not reinvented) AND
+        similarity >= threshold -> fires. Fail-closed: revoking an
+        approval on a paraphrased "don't" is the safe error.
+      - high similarity WITHOUT a negation cue -> NEVER fires.
+        Fail-safe: a paraphrased confirmation ("yes, definitely send
+        it!") must not read as a countermand.
+
+    Non-string messages never fire; non-string priors are skipped
+    (never coerced); an empty prior list cannot fire. ``threshold``
+    must satisfy 0 < t <= 1 (ValueError otherwise); the default is
+    ``gov.target_match.DEFAULT_THRESHOLD`` (0.5 -- the measured
+    paraphrase/unrelated separator, see gov/target_match.py).
+
+    Honest ceilings (documented, not hidden):
+    - A paraphrase with no negation cue is invisible to this signal
+      by design ("Please apply standard retention handling..." has
+      neither a negation word nor enough shared tokens) -- the
+      remaining paraphrase ceiling.
+    - Negation detection is English-keyword-based; "ne ... pas" and
+      other languages are not covered.
+    - An attacker who knows the threshold (0.5) can paraphrase just
+      past it while keeping the negation cue -- the prose remains
+      fuzzable, exactly as in gov/target_match.py.
+    """
+    if isinstance(threshold, bool) or \
+            not isinstance(threshold, (int, float)) or \
+            not 0 < threshold <= 1:
+        raise ValueError(
+            "threshold must satisfy 0 < t <= 1, got %r" % (threshold,))
+    if not isinstance(message, str) or not message.strip():
+        return (False, None, 0.0)
+    if not isinstance(prior_messages, (list, tuple)) \
+            or not prior_messages:
+        return (False, None, 0.0)
+    if _NEGATION_RE.search(message) is None:
+        # Negation gate: similarity alone never countermands.
+        return (False, None, 0.0)
+    best_idx, best_score = None, 0.0
+    for i, prior in enumerate(prior_messages):
+        # Non-string priors are skipped, never coerced; the returned
+        # anchor index always refers to the caller's list as passed.
+        if not isinstance(prior, str) or not prior.strip():
+            continue
+        score = target_similarity(message, prior)
+        if score > best_score:
+            best_idx, best_score = i, score
+    if best_idx is not None and best_score >= threshold:
+        return (True, best_idx, best_score)
+    return (False, None, best_score)
+
+
 class IntentLedger(object):
     """Durable per-principal intent ledger.
 
@@ -134,10 +229,6 @@ class IntentLedger(object):
             except Exception:
                 pass
 
-    def _principal_messages(self, principal):
-        return [t.get("message", "") for t in self._turns
-                if t.get("principal") == principal]
-
     def record_intent(self, principal, message, verdict=None, ts=None):
         """Record one user turn's intent verdict for ``principal``.
 
@@ -146,11 +237,17 @@ class IntentLedger(object):
         ``verdict`` is an optional judge verdict dict (stored
         opaquely); ``ts`` an optional ISO timestamp (defaults to now).
 
-        ``is_countermand`` is computed from BOTH the verdict and the
-        canonical redirect detector run against this principal's prior
-        turns, so a caller that forgets to judge still gets the
-        detector's signal and a caller with a richer verdict is not
-        second-guessed.
+        ``is_countermand`` is computed from THREE signals: the
+        verdict, the canonical redirect detector run against this
+        principal's prior turns, and the negation-gated similarity
+        signal (``similarity_countermand``) -- so a caller that
+        forgets to judge still gets both detector signals and a
+        caller with a richer verdict is not second-guessed. When the
+        similarity signal fires, the record carries
+        ``similarity_anchor`` (the matched prior message),
+        ``similarity_anchor_ts`` (its timestamp, for the
+        grant-attribution check at the execution boundary), and
+        ``similarity_score``.
 
         Fail-closed: empty principal/message raise ValueError; the
         record is hash-chained before it is returned.
@@ -165,10 +262,17 @@ class IntentLedger(object):
         if _parse_ts(ts) is None:
             raise ValueError("ts is not a parseable ISO timestamp: %r"
                              % (ts,))
-        prior = self._principal_messages(principal)
+        principal_turns = [t for t in self._turns
+                           if t.get("principal") == principal]
+        prior = [t.get("message", "") for t in principal_turns]
         detected, _superseded = _detect_countermand(message, prior)
+        sim_fired, sim_idx, sim_score = similarity_countermand(
+            message, prior)
+        sim_anchor = prior[sim_idx] if sim_fired else None
+        sim_anchor_ts = (principal_turns[sim_idx].get("ts")
+                         if sim_fired else None)
         is_countermand = bool(_verdict_says_countermand(verdict)
-                              or detected)
+                              or detected or sim_fired)
         record = {
             "record_type": "intent_turn",
             "ledger_version": INTENT_LEDGER_VERSION,
@@ -178,6 +282,10 @@ class IntentLedger(object):
             "is_countermand": is_countermand,
             "detector_countermand": bool(detected),
             "verdict_countermand": bool(_verdict_says_countermand(verdict)),
+            "similarity_countermand": bool(sim_fired),
+            "similarity_anchor": sim_anchor,
+            "similarity_anchor_ts": sim_anchor_ts,
+            "similarity_score": sim_score,
             "ts": ts,
             "prev_record_digest": self._prev_digest,
         }
@@ -214,6 +322,38 @@ class IntentLedger(object):
                 continue
             t_dt = _parse_ts(t.get("ts"))
             if t_dt is not None and t_dt > since_dt:
+                out.append(t)
+        return out
+
+    def similarity_countermands_after(self, principal, since):
+        """Similarity-signal countermands for ``principal`` strictly
+        after ``since`` whose anchored prior turn is at or before
+        ``since``.
+
+        ``since`` is an ISO timestamp (e.g. an approval's
+        ``decided_at``). This is the execution boundary's grant-
+        attribution query: a negated paraphrase countermands the
+        GRANT only when the intent it anchors to predates the grant.
+        Without the anchor check, a negated paraphrase of post-grant
+        CHATTER would revoke an unrelated grant (false revocation).
+        Records from ledgers written before the similarity signal
+        existed carry no ``similarity_anchor_ts`` and are skipped
+        (fail-safe). Unparseable ``since`` returns [] (fail-safe).
+        Returns records oldest-first.
+        """
+        since_dt = _parse_ts(since)
+        if since_dt is None:
+            return []
+        out = []
+        for t in self._turns:
+            if t.get("principal") != principal:
+                continue
+            if not t.get("similarity_countermand"):
+                continue
+            t_dt = _parse_ts(t.get("ts"))
+            anchor_dt = _parse_ts(t.get("similarity_anchor_ts"))
+            if t_dt is not None and anchor_dt is not None \
+                    and t_dt > since_dt >= anchor_dt:
                 out.append(t)
         return out
 

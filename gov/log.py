@@ -110,6 +110,11 @@ from .exchange_ledger import check_exchange_read
 from . import merkle as _merkle
 from . import signing as _signing
 from . import ed25519 as _ed25519
+# NOTE (wave-137): gov.anchoring is imported LAZILY inside
+# export_bundle/verify_export_bundle, never at module level. The
+# anchor client (gov.anchor_backend) is executor-side only: importing
+# gov.sandbox must not pull it into the process (deny-all egress --
+# see tests/test_w72_anchor.py::test_sandbox_has_no_anchor_client).
 
 GENESIS = "GENESIS"
 FORMAT_VERSION = 1
@@ -1554,7 +1559,7 @@ def query_log(path, principal=None, agent_id=None, event=None,
     return out
 
 
-def export_bundle(path, roster=None, **query):
+def export_bundle(path, roster=None, anchor_backend=None, **query):
     """K-060: tamper-evident export of a filtered audit trail.
 
     Returns ``{"export_version", "exported_at", "query", "entries",
@@ -1565,10 +1570,22 @@ def export_bundle(path, roster=None, **query):
     included entry is genuine (inclusion proof against a signed root)
     and correctly positioned.
 
+    ``anchor_backend`` (optional, ``None`` = zero behavior change): a
+    ``gov.anchor_backend.AnchorBackend``. When supplied, the bundle
+    gains ``"anchor_receipt"`` -- the backend's receipt over the
+    canonical head digest of the bundle's checkpoints
+    (``gov.anchoring.bundle_head_digest``). The receipt commits the
+    exporter to a specific set of signed heads at export time; with a
+    real witness it defeats post-hoc history rewrites. Pass
+    ``anchor_backend`` through to :func:`verify_export_bundle` to
+    check the receipt.
+
     Honest scope: the bundle proves authenticity of INCLUDED entries,
     not completeness of the filter. An exporter who omits entries is
     the deployment itself; completeness against exporter misbehavior
-    is K-049's transparency-anchor story, not this bundle's.
+    is K-049's transparency-anchor story, not this bundle's. An
+    anchor over a NARROWED export is still an anchor over narrowed
+    input -- the receipt binds the checkpoints, not the filter.
     Raises ValueError when the log has no signed checkpoints (export
     needs signed heads to prove against).
     """
@@ -1582,21 +1599,24 @@ def export_bundle(path, roster=None, **query):
               "proofs": {},
               "checkpoints": [],
               "roster": roster}
-    if not seqs:
-        return bundle
-    _, mat = _inclusion_material(path, seqs)
-    cps = {}
-    for seq in seqs:
-        proof_hex, cp = mat[seq]
-        bundle["proofs"][str(seq)] = {"proof": proof_hex,
-                                      "checkpoint_seq": cp["seq"]}
-        cps[cp["seq"]] = cp
-    bundle["checkpoints"] = [cps[k] for k in sorted(cps)]
+    if seqs:
+        _, mat = _inclusion_material(path, seqs)
+        cps = {}
+        for seq in seqs:
+            proof_hex, cp = mat[seq]
+            bundle["proofs"][str(seq)] = {"proof": proof_hex,
+                                          "checkpoint_seq": cp["seq"]}
+            cps[cp["seq"]] = cp
+        bundle["checkpoints"] = [cps[k] for k in sorted(cps)]
+    if anchor_backend is not None:
+        from . import anchoring as _anchoring
+        bundle["anchor_receipt"] = _anchoring.anchor_bundle(
+            bundle, anchor_backend)
     return bundle
 
 
 def verify_export_bundle(bundle, trusted_keys=None, roster=None,
-                         root_pub=None):
+                         root_pub=None, anchor_backend=None):
     """Verify a K-060 export bundle offline. Returns (ok, error).
 
     Checks: every entry's seq is sane and strictly increasing; every
@@ -1604,6 +1624,13 @@ def verify_export_bundle(bundle, trusted_keys=None, roster=None,
     inclusion proof verifies against its covering checkpoint's signed
     root. A bundle with entries removed, reordered, or forged in
     transit fails here.
+
+    ``anchor_backend``: when the bundle carries ``"anchor_receipt"``
+    (see :func:`export_bundle`), the receipt is verified against the
+    bundle's head digest via this backend. A receipted bundle
+    verified WITHOUT a backend fails closed -- the receipt is never
+    silently skipped. Bundles without a receipt verify exactly as
+    before (``anchor_backend`` is ignored).
     """
     try:
         if not isinstance(bundle, dict) or bundle.get(
@@ -1646,6 +1673,19 @@ def verify_export_bundle(bundle, trusted_keys=None, roster=None,
         if not _merkle.verify_inclusion(leaf, seq - 1, proof, root,
                                         cp["seq"]):
             return False, "inclusion proof failed for seq %d" % seq
+    receipt = bundle.get("anchor_receipt")
+    if receipt is not None:
+        # The exporter committed to these checkpoints via an anchor
+        # backend. Verify the commitment -- and never skip it silently:
+        # a receipted bundle checked without a backend fails closed.
+        if anchor_backend is None:
+            return False, ("bundle carries an anchor receipt but no "
+                           "anchor_backend was supplied to verify it")
+        from . import anchoring as _anchoring
+        ok, reason = _anchoring.verify_bundle_anchor(
+            bundle, receipt, anchor_backend)
+        if not ok:
+            return False, "anchor receipt: %s" % (reason,)
     return True, None
 
 
