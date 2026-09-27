@@ -1,4 +1,4 @@
-## 2026-09-27 — Wave-152/153 integration: six team trees merged, F183/F184/F185 filed (push pending)
+## 2026-09-27 — Wave-152/153 integration: six team trees merged, F183/F184/F185 filed (pushed as fc60c96)
 
 **Scope:** integration coordinator merged six team trees into the shared tree atop Wave-152's three uncommitted lanes (row-19 propagation follow-ups: auto-observation on governed read_file + substring matching; row-7 Arabic negation pilot; row-9 churn seam). Row-12 reported in time and was integrated as the sixth team.
 
@@ -11,6 +11,12 @@
 - **Rows 6/14** (`gov/skill_watch.py`, `gov/tool_continuity.py`, `gov/approvals.py`, `gov/executor.py` F184/F185 hunks): all 6 batteries green (fastpath 6/0, mcp_drift 7/0, supplychain_evasion 10/0, handoff_wiring 9/0, approval_staleness 8/0, record_attack 7/0). Tests: 128/128 OK.
 
 **Findings filed:** F183 (CLOSED), F184 (CLOSED with audit note — original queue-time claim overstated, record-level credit goes to F185), F185 (CLOSED). Next free: F186. Row-12 integrated (stays PARTIAL per honest ceilings).
+
+**Gates (sequential, fresh TMPDIRs):** canonical 5003 OK (9 skipped, 5 xfail); registry GREEN; matrix 3216/3216 SHIP-GATE GREEN (1608 provisional + 1608 real); realistic 7/7. Push-clone canonical initially RED (3 failures + 3 errors) — root-caused to workstream symlink location (`/tmp/workstreams` vs `/tmp/push152/workstreams`, env setup per AGENTS.md wave-145 lesson), not a product regression; fixed and verified (53/53 targeted tests OK).
+
+**Push:** committed as `fc60c96b96d2639dc2a9d6a55fb8c88e612a2d24`, pushed to `origin main` (c71025b..fc60c96, no force), remote HEAD verified.
+
+**Post-push audit (2026-09-27):** the row-13 integration verifier found a genuine defect in the pushed tree — `compose_egress_verdict` drops the monitor record's `"detail"`, so its documented padding-robustness legs (`structured_lines >= 2`, `suspicious_bytes >= 40`) hold only on the tracker-internal path, not through the documented single-call seam. Filed as **F186 (LOW, OPEN)** in `evals/FINDINGS.md`: escalation-only (nothing weakened), zero operational impact today (row-13 is library-only/PARTIAL), fix direction documented (pass `detail` through + parity regression probe). Next free: F187.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
 
@@ -9550,5 +9556,33 @@ Unit: `tests/test_injection_propagation.py` 34/34. No regressions: `evals/read_t
 Honest residuals: paraphrases miss 6/6 by design; out-of-band reads invisible; tracker per-run/in-process (no durable cross-run observed-input store); curated English imperative list incomplete; substring spans < 10 chars ignored by design.
 
 **Findings:** none filed. Next free: F183. Open findings: none. Row 19 remains OPEN/PARTIAL.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-153 — F186 closure (`compose_egress_verdict` detail pass-through)
+
+F186 (LOW, filed post-push in the wave-152/153 integration audit) closed on its own narrow wave: `compose_egress_verdict` built the T1 record as `{"verdict", "score", "signals"}`, discarding the monitor record's `"detail"` that `footprint_of` needs for the padding-robust absolute legs (`structured_lines >= 2`, `suspicious_bytes >= 40`). The documented seam returned `behavioral_flag`/T2 where the tracker-internal path returned `require_approval`.
+
+Red-first: `evals/detection_verdict_detail_probes.py` (new) pre-fix 3 HELD / 3 BREAK / 0 EXPECTED / 0 ERROR (padded structured 2-KV dilution, padded 44-char entropy blob, benign-with-read friction parity); post-fix 6 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR in both deployment environments, deterministic x2. Fix: 2 narrow hunks in `gov/detection_verdicts.py` — pass `"detail": t1.get("detail") or {}` through to `compose()`; docstring documents the t1 contract's `"detail"` section. `footprint_of` treats missing/empty detail as "no absolute legs", so detail-less records behave byte-identically. Module scanned: this was the only record-slimming site. Adjacent batteries reproduce exactly in the integrated tree: `detection_verdict_tier_probes.py` 15/0/1/0/0, `detection_verdict_evasion_probes.py` 5/0/5/0/0, `tests/test_detection_verdicts.py` + `tests/test_rare_token.py` 55 OK.
+
+Honest notes: the fix lane found a comment/fixture mismatch in the evasion battery (e3's `PADDED_2KV` fixture yields 3 structured lines at density 0.368, not the dilution its comment claims) — battery green, product correct, no F-number; flagged for a later wave. Row-13 remains PARTIAL (library-only, unwired) per existing ceilings.
+
+**Findings:** F186 CLOSED. Next free: F187. Open findings: none.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-154 — evidence-retention tiering merge + F186 push + F187 found and closed
+
+**Evidence-tiers merge.** Team tree `teams/evidence-tiers/tree` merged into the shared tree (4 owned files only; `gov/log.py` diff verified as exactly the 2 claimed thin hooks — `ActionLog.retire_evidence` and module-level `verify_tiered`, both lazy-importing `gov.evidence_tiers`; BUILD_LOG/FINDINGS diffs in the team tree were baseline-timing artifacts, not lane edits; `llm_redteam/results` additions, `runs/`, `reports/`, `battery_100_results.json` excluded per standing rules). New: `gov/evidence_tiers.py` (hot→warm→cold retention; per-event TTLs; crash-safe retire ordering summary→marker→re-verify→truncate; permanent retirement markers; Merkle inclusion proofs; tier-aware `verify_tiered`; idempotent recovery for both crash windows), `evals/evidence_tier_probes.py`, `tests/test_evidence_tiers.py` (27 tests).
+
+Red-first: battery pre-seam 10 BREAK / 0 HELD → post-seam 0 BREAK / 10 HELD / 0 ERROR in both deployment environments, deterministic ×2, reproduced independently on the merged tree. Adjacent baselines exact: `test_log_integrity` + `test_log_merkle` + `test_w70_hmac_chokepoint_audit` 39 OK; `f149chain_break` 0/2; `f150chainexit_break` 0/3. HMAC chokepoint holds (AST scan: no new keyed-MAC sites; only unkeyed SHA-256 digest chain with domain separation).
+
+**F186 pushed** (was integrated in wave-153, held for gates): `compose_egress_verdict` detail pass-through, FINDINGS.md CLOSED, included in this push.
+
+**F187 (LOW) filed and CLOSED same wave.** Independent adversarial audit (9 probes) of the merged tiering seam found the lane's "marker deletion fails loud" claim overstated: `_verify_tiered_inner` skipped `_verify_hot_sidecar` `if hot:` was empty, so deleting the retirement marker when it was the last line left an empty hot file under valid seq-7 checkpoints → `verify_tiered` returned `ok=True`. Realistic case (surviving entries) was already loud. Fix: 2 narrow hunks — always consult the sidecar; fail an empty hot log with valid checkpoints anchored beyond it ("empty log but checkpoint sidecar anchors seq 7 (tail truncation or retirement-marker deletion)"). Post-fix audit 9/9 HELD; legitimate empty logs (no sidecar) still verify; no regressions (battery 0/10/0, 66 unit tests OK).
+
+Honest ceilings (tiering): prefix-only retirement (one long-TTL entry pins the prefix); markers accumulate O(#retirements); retired content is gone from the log (inclusion proofs need an operator backup copy); tamper-evident, not tamper-proof, vs key compromise (same as base log); `verify_tiered` needs the policy to re-audit TTL compliance (cryptographic continuity verifies without it).
+
+**Findings:** F186 CLOSED (pushed), F187 filed and CLOSED. Next free: F188. Open findings: none.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

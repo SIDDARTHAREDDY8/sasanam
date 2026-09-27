@@ -232,7 +232,10 @@ def compose(t1, t2):
     """Compose one T1 content record and one T2 tracker record.
 
     ``t1``: ``{"verdict", "score", "signals": {"structured",
-    "dump", "entropy"}}`` (from ``EgressContentMonitor.check``).
+    "dump", "entropy"}}`` (from ``EgressContentMonitor.check``), plus
+    the monitor's ``"detail"`` section when present — ``footprint_of``
+    reads the padding-robust absolute presence legs
+    (``structured_lines``, ``suspicious_bytes``) from it.
     ``t2``: ``{"verdict", "overlap", "destination_novel",
     "docs_read", "threshold", "source_ids", "destination"}`` (from
     ``RareTokenTracker.check_egress``).
@@ -352,7 +355,15 @@ def compose_egress_verdict(tracker, monitor, agent_id, tool, args,
     out = compose(
         {"verdict": t1.get("verdict", "allow"),
          "score": t1.get("score", 0.0),
-         "signals": t1.get("signals") or {}},
+         "signals": t1.get("signals") or {},
+         # F186: the monitor record's "detail" section carries the
+         # padding-robust absolute presence legs (structured_lines,
+         # suspicious_bytes). Dropping it here silently disabled those
+         # legs on the documented seam while the tracker-internal path
+         # (which passes the full record) kept them. Pass it through;
+         # footprint_of treats a missing/empty detail as "no absolute
+         # legs", so detail-less records behave exactly as before.
+         "detail": t1.get("detail") or {}},
         {"verdict": t2.get("verdict", "allow"),
          "overlap": t2.get("overlap", 0),
          "destination_novel": bool(t2.get("destination_novel", False)),

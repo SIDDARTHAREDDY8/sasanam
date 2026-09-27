@@ -766,6 +766,21 @@ class ActionLog:
             os.fsync(f.fileno())
         return cp
 
+    def retire_evidence(self, policy, *, now=None):
+        """Retire TTL-expired hot entries per a retention-tier policy.
+
+        Thin hook: the whole operation lives in ``gov.evidence_tiers``
+        (lazy import so ``gov.log`` never hard-depends on it). The
+        retirement is crash-safe (covering warm summary first, then the
+        audited marker, then truncation), idempotent, and refuses to
+        retire entries whose TTL has not expired. Raises
+        ``evidence_tiers.TierError`` fail-closed on an unverifiable
+        log. ``now`` is an injectable clock (deterministic tests);
+        ``None`` means wall-clock time.
+        """
+        from gov import evidence_tiers as _et
+        return _et.retire_hot(self.path, policy, now=now)
+
     def append(self, event):
         """Append an event dict; returns the stored entry.
 
@@ -1144,6 +1159,20 @@ def verify_chain(path):
     """Replay the chain. Returns (ok, broken_seq_or_None, entry_count)."""
     v = _verify(path)
     return v["ok"], v["broken_seq"], v["entries"]
+
+
+def verify_tiered(path, policy=None):
+    """Tier-aware verification for logs retired by ``gov.evidence_tiers``.
+
+    Thin hook: all tiering logic lives in ``gov.evidence_tiers`` (lazy
+    import here so ``gov.log`` never hard-depends on it). On a log that
+    was never retired this agrees with :func:`_verify`; on a retired
+    log it additionally verifies the warm/cold tier chains and the
+    retirement cross-links. Never raises on content problems -- returns
+    a verdict dict with ``ok=False`` and a loud error.
+    """
+    from gov import evidence_tiers as _et
+    return _et.verify_tiered(path, policy)
 
 
 # ---------------------------------------------------------------------------

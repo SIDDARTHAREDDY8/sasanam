@@ -5713,7 +5713,6 @@ Next free finding: **F182**. **Open findings: none.**
 
 **Status: CLOSED 2026-09-27 (wave-141 closure audit, same wave).** Red-first: direct seam probing showed the `no_pin_key` envelope → verdict `unpinned`, real declared dir absent from the report, garbage key-path gaps + `coverage_complete` summary; `{covered_path: junk}` dict → reported COVERED, zero LOUD events — the p1 shrink-detection property defeated by deleting one key. Fix: `_is_pinned_form` is now `isinstance(declared_roots, dict)` — any dict claims the pinned envelope and goes through `verify_inventory_pin`; pin-stripped envelopes fail LOUD (`artifact_sweep_inventory_unverifiable`) with fail-closed full-gap over the presented declared dirs. Regression probe p7 (+ covered-keys variant) in `evals/artifact_inventory_pin_probes.py`: **8 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** both envs; `tests/test_artifact_inventory_pin.py` +2 tests, 38/38 OK with `test_artifact_coverage`. **Residual (honest):** the pin moves trust to key custody and the pinning ceremony — unchanged.
 
-Next free finding: **F186**. **Open findings: none.**
 
 ## F183 — MEDIUM — Invisible zero-width/bidi format characters split negation judge tokens, letting a visually-identical countermand slip to neutral (filed 2026-09-27, wave-152/153 integration)
 
@@ -5739,4 +5738,118 @@ Next free finding: **F186**. **Open findings: none.**
 
 **Status: CLOSED 2026-09-27 (wave-152/153 integration).** Red-first: `skill_approval_staleness_probes.py` pre-fix 4 HELD / 3 BREAK / 1 ERROR; post-fix 8 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR. `skill_approval_record_attack_probes.py`: 7 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR. Fix: `gov/approvals.py` MAC-binds the fields; `gov/executor.py` re-verifies at approved-execution time. **Residuals (honest):** pre-F185 queued records fail MAC verification after upgrade — drain/decide before upgrading; unattributed records without skill fields skip the check; old approvals invalid after reviewed re-pin (new approval required); executors with no watcher retain existing behavior; one additional source read per approved skill execution.
 
-Next free finding: **F186**. **Open findings: none.**
+Next free finding: **F188**. **Open findings: none**.
+
+## F186: `compose_egress_verdict` drops the padding-robustness legs of its own contract (LOW)
+
+**Status: OPEN (filed 2026-09-27, post-push audit of wave-152/153 row-13 merge).**
+
+`gov/detection_verdicts.py` documents `compose_egress_verdict()` as the
+"single-call seam / integration contract for the executor" for tiered
+detection verdicts. The module's headline padding-robustness guarantee —
+padded paraphrase footprints (padding-dilution attacks e3/e4/e8) reach
+review via the absolute legs `structured_lines >= 2` and
+`suspicious_bytes >= 40` in `footprint_of()` — holds only on the
+tracker-internal path (`RareTokenTracker` with `content_monitor`), NOT
+through `compose_egress_verdict`.
+
+Root cause: `compose_egress_verdict` builds the T1 record as
+`{"verdict", "score", "signals"}`, discarding the monitor record's
+`"detail"` that `footprint_of` needs for the absolute legs. Verified
+empirically on the merged tree: same padded 2-KV footprinted payload,
+token-bearing read, novel destination — `compose_egress_verdict` returns
+`behavioral_flag` (T2, no review) while the tracker-internal path returns
+`require_approval`. No battery covers `compose_egress_verdict` on
+padding-diluted payloads, so the divergence was unpinned.
+
+**Severity is LOW because:** (1) escalation-only — nothing is weakened,
+a review is merely missed on one of two entry paths; (2) the T3 tier is
+currently library-only (row-13 status: PARTIAL, executor deliberately
+unchanged), so no live governed boundary consumes either path today.
+
+**Fix direction:** pass `"detail": t1.get("detail") or {}` through in
+`compose_egress_verdict`, plus a regression probe pinning
+padded-payload parity between the two seams. Then re-run
+`detection_verdict_tier_probes.py` (15/0/1) and
+`detection_verdict_evasion_probes.py` (5/0/5) to confirm no regression.
+
+**Found by:** independent integration verifier, 2026-09-27, against the
+pushed wave-152/153 tree.
+
+**Status: CLOSED 2026-09-27 (F186 fix wave).** Red-first: new
+`evals/detection_verdict_detail_probes.py` pre-fix 3 HELD / 3 BREAK / 0
+EXPECTED / 0 ERROR (documented seam returned `behavioral_flag`/T2 where
+the tracker-internal path returned `require_approval`; benign-with-read
+friction parity broken). Post-fix 6 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR
+in both deployment environments, deterministic ×2. Fix: 2 narrow hunks
+in `gov/detection_verdicts.py` — `compose_egress_verdict` passes
+`"detail": t1.get("detail") or {}` through to `compose()`; docstring
+documents the `"detail"` section of the t1 contract.
+`footprint_of` treats missing/empty detail as "no absolute legs", so
+detail-less records behave byte-identically. Adjacent batteries reproduce
+exactly: `detection_verdict_tier_probes.py` 15/0/1/0/0,
+`detection_verdict_evasion_probes.py` 5/0/5/0/0,
+`tests/test_detection_verdicts.py` + `tests/test_rare_token.py` 55 OK.
+Scan confirmed this was the only record-slimming site in the module.
+**Note:** while building the red battery, the fix lane found a
+comment/fixture mismatch in the evasion battery (e3's `PADDED_2KV`
+fixture yields 3 structured lines at density 0.368, not the dilution its
+comment claims) — battery stays green and product behavior is correct,
+so no F-number; flagged for a later wave to fix the comment or fixture
+for honesty. Row-13 remains PARTIAL (library-only, unwired) per its
+existing ceilings.
+
+
+## F187: `verify_tiered` skips the checkpoint-sidecar check on an empty hot log, so deleting the retirement marker is silent when it is the last line (LOW)
+
+**Status: OPEN (filed 2026-09-27, wave-154 integration red-first audit of the evidence-tiers merge).**
+
+`gov/evidence_tiers.py::_verify_tiered_inner` only calls `_verify_hot_sidecar`
+`if hot:` — when the hot file is empty, the F27/F28 checkpoint defense is
+skipped entirely, and `_verify_hot_sidecar` itself only fails an empty log
+on a *corrupt* sidecar, never on *valid checkpoints beyond an empty log*.
+
+Attack (verified empirically on the merged tree): retire every entry so the
+hot file holds only the permanent retirement marker; delete the marker line.
+The hot file is now empty while `checkpoints.jsonl` still anchors seq 7 —
+`verify_tiered` returns `ok=True`. The audited record of the retirement
+(first_seq/last_seq/count/summary_digest cross-link) is destroyed silently;
+the warm summaries are left orphaned but verification still passes.
+
+The lane's report claimed "marker deletion fails loud" — true when surviving
+entries remain (verified: gap 1..k with no covering marker fails with
+"first entry prev_hash != GENESIS with no retirement marker"), but overstated
+for the empty-hot edge. Truncation-hash tampering, summary-digest tampering,
+both crash windows (orphan-summary reuse, marker-before-truncation recovery),
+TTL boundary, warm strict-subset, and double-retire idempotency all hold
+(8/9 adversarial audit probes HELD).
+
+**Severity is LOW because:** (1) it requires file-write access to the log,
+at which point the attacker can also wipe the sidecar (same residual as the
+base log); (2) the realistic multi-entry case is already caught — only the
+all-retired edge is silent; (3) nothing is forged, only the retirement's
+audit record is hidden.
+
+**Fix direction:** always run `_verify_hot_sidecar` (drop the `if hot:`
+guard) and fail an empty hot log that still has valid checkpoints anchored
+beyond it ("empty log but checkpoint sidecar anchors seq N"). Then re-run
+`evals/evidence_tier_probes.py` (10/0/0) and the adjacent log baselines.
+
+**Found by:** wave-154 integration coordinator's independent adversarial
+audit, 2026-09-27, against the merged tree.
+
+**Status: CLOSED 2026-09-27 (wave-154).** Red-first: independent audit
+probe `a1_marker_deletion_loud` pre-fix BREAK (`ok=True` on empty hot
+file with seq-7 checkpoints still anchored); post-fix HELD with
+"hot checkpoints: empty log but checkpoint sidecar anchors seq 7 (tail
+truncation or retirement-marker deletion)". Fix: 2 narrow hunks in
+`gov/evidence_tiers.py` — `_verify_tiered_inner` always consults
+`_verify_hot_sidecar` (dropped the `if hot:` guard), and
+`_verify_hot_sidecar` fails an empty hot log that still has valid
+checkpoints anchored beyond it. Fail-closed direction only: legitimately
+empty logs (no sidecar) still verify clean; all non-empty behavior is
+byte-identical. Post-fix audit: 9 HELD / 0 BREAK. Regressions:
+`evals/evidence_tier_probes.py` 0/10/0, `tests/test_evidence_tiers.py`
+27 OK, adjacent `test_log_integrity` + `test_log_merkle` +
+`test_w70_hmac_chokepoint_audit` 39 OK, `f149chain_break` 0/2,
+`f150chainexit_break` 0/3 — all exact.
