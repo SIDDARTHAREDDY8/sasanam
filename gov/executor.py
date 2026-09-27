@@ -78,7 +78,9 @@ from . import sentinel_substitution as _sentinel
 from . import classification as _classification
 from . import artifacts as _artifacts
 from . import intent_slice as _intent_slice
+from . import revoke as _revoke
 from . import delegation_tokens as _delegation_tokens
+from . import drift as _drift
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
@@ -642,7 +644,11 @@ class ToolExecutor:
                  # microsoft/agent-governance-toolkit): appended LAST
                  # for the same positional-misalignment reason.
                  # Opt-in: None (default) = zero behavior change.
-                 advisors=None):
+                 advisors=None,
+                 # Cross-run drift detection (row 9, wave-131): appended
+                 # LAST for the same positional-misalignment reason.
+                 # Opt-in: None (default) = zero behavior change.
+                 drift_store=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -879,6 +885,10 @@ class ToolExecutor:
         # previous BOM digest, so parent and spawned children extend
         # ONE decision-BOM sub-chain in the shared audit log.
         self._advisors = list(advisors) if advisors else None
+        # Wave-131 (row 9): cross-run drift store, operator-supplied.
+        # Opt-in: None = zero behavior change (check_run_drift returns
+        # a silent result without touching anything).
+        self.drift_store = drift_store
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2223,6 +2233,98 @@ class ToolExecutor:
         })
         return g
 
+    def check_run_drift(self, agent_id, fingerprint=None, record=True,
+                        identity=None, window=8):
+        """Wave-131 (row 9): cross-run drift check for an agent.
+
+        When a ``drift_store`` was installed at construction (opt-in),
+        optionally records ``fingerprint`` as the agent's latest run
+        and runs ``gov.drift.detect_drift`` over the prior runs. The
+        response is graduated:
+
+        - watch: a chained ``drift_watch`` audit event (informational);
+        - warn: a LOUD ``drift_warn`` audit event for the operator;
+        - hold: a LOUD ``drift_hold`` audit event AND a synthetic
+          ``drift_review`` approval is queued for human resolution
+          (flag "drift_hold", separation-of-duties: the agent can
+          never approve its own hold away). The run is NOT auto-
+          denied -- a human resolves.
+
+        ``identity`` is the minted AgentIdentity for the agent under
+        check -- REQUIRED when a hold may queue an approval (F42: the
+        queue never trusts caller-supplied identity fields). With no
+        drift_store installed this returns a silent result and does
+        nothing (zero behavior change).
+        """
+        silent = _drift.DriftResult("silent", agent_id=str(agent_id),
+                                    reason="no_drift_store")
+        if self.drift_store is None:
+            return silent
+        if fingerprint is not None and record:
+            principal = (identity.principal if identity is not None
+                         else "unknown")
+            self.drift_store.record_run(
+                agent_id, principal, fingerprint, audit=self.log.append)
+        res = _drift.detect_drift(self.drift_store, agent_id, window=window)
+        if res.level == "silent":
+            return res
+        event = {"watch": "drift_watch", "warn": "drift_warn",
+                 "hold": "drift_hold"}[res.level]
+        self.log.append({
+            "event": event,
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "level": res.level,
+            "baseline_n": res.baseline_n,
+            "window_n": res.window_n,
+            "signals": [s.to_dict() for s in res.signals],
+            "reason": ("cross-run behavioral drift: %s"
+                       % "; ".join(s.explanation for s in res.signals)),
+        })
+        if res.level != "hold":
+            return res
+        if identity is None:
+            raise TypeError(
+                "check_run_drift() requires identity when a drift hold "
+                "queues a drift_review approval (F42); the approval "
+                "queue never trusts caller-supplied identity fields")
+        detail = "; ".join("%s (%s): %s"
+                           % (s.kind, s.strength, s.explanation)
+                           for s in res.signals)
+        try:
+            self.approvals.queue(
+                {"tool": "drift_review",
+                 "args": {"agent_id": str(agent_id),
+                          "level": "hold",
+                          "signals": [s.to_dict() for s in res.signals]},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Cross-run drift HOLD for agent %r: %s"
+                    % (agent_id, detail),
+                    policy_id="drift-monitor",
+                    flag="drift_hold"),
+                "agent_direct",
+                "review cross-run drift HOLD for agent %r" % (agent_id,),
+                caller_identity=identity)
+        except Exception:
+            # The LOUD drift_hold audit event above is the record; the
+            # hold stands flagged even if queueing the review item
+            # fails. Fail closed on the signal, never warn-and-
+            # continue silently.
+            self.log.append({
+                "event": "drift_hold_queue_failed",
+                "flag": "drift_hold",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "reason": ("drift_review approval could not be queued; "
+                           "the drift_hold audit event remains the "
+                           "record -- operator must review manually"),
+            })
+        return res
+
     def _intent_slice_verdict(self, tool, args, justification, identity):
         """Wave-129: run the intent-slice judge for a candidate queued
         action. Returns the verdict dict, or None when no intent
@@ -2638,6 +2740,31 @@ class ToolExecutor:
                 raise MemoryQuarantineError(
                     "memory read quarantined: %s (%s)"
                     % (mem_key, reason))
+            # F143-hardening (wave-131, p3 factual-poison layer): allowed
+            # reads of untrusted/unknown-tier bytes are delivered WITH
+            # their provenance, never silently. The banner names the tier
+            # and states factual claims are unverified; the warning is
+            # chained so the delivery is auditable. Agent-tiered reads
+            # are untouched (the agent's own notes are its business), and
+            # operator release re-tiers to agent, lifting the banner.
+            banner = fw.provenance_banner(principal, mem_key, content)
+            if banner is not None:
+                result["content"] = banner + content
+                self.log.append({
+                    "event": "memory_provenance_warning",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "tool": tool,
+                    "mem_key": mem_key,
+                    "decision": "executed",
+                    "policy_id": "memory-provenance-firewall",
+                    "flag": "memory_provenance_warning",
+                    "reason": ("Delivered memory with provenance banner: "
+                               "%s has no trusted provenance; factual "
+                               "claims unverified." % mem_key),
+                })
             return
         # write_file: tier, classify, and chain the provenance record for
         # the bytes actually written. The tier is computed from the run's
@@ -7503,6 +7630,35 @@ class ToolExecutor:
                 % self.run_id)
         done = []
         ttl = self.policy.approval_ttl_hours
+        # Wave-131 (row-7 revoke-after-approve): explicit, auditable
+        # "revocation honoured" signal. A revoked grant is filtered out
+        # of the executable set by the status check below; log one
+        # approval_revoked_honoured entry per revoked grant so the
+        # audit trail shows the sweep SAW the revocation and OBEYED it
+        # (the vocabulary the row-7 delayed-execution battery looks
+        # for). Scoped to granted-then-revoked records (decided_by set)
+        # so withdrawing an undecided request stays quiet.
+        for _rev in self.approvals.all():
+            if (_rev.get("status") == "revoked"
+                    and _rev.get("decided_by") is not None
+                    and not _rev.get("executed")):
+                self.log.append({
+                    "event": "approval_revoked_honoured",
+                    "run_id": self.run_id,
+                    "agent_id": _rev.get("agent_id"),
+                    "role": _rev.get("role"),
+                    "tool": _rev.get("tool"),
+                    "approval_id": _rev["id"],
+                    "decision": "refused",
+                    "policy_id": "revocation-terminal",
+                    "revoked_by": _rev.get("revoked_by"),
+                    "reason": ("Approval %s not executed: revoked by %r "
+                               "(%s); revocation is terminal and the "
+                               "sweep honoured it."
+                               % (_rev["id"], _rev.get("revoked_by"),
+                                  _rev.get("revoked_reason")
+                                  or "no reason given")),
+                })
         for rec in self.approvals.all():
             if rec.get("status") != "approved" or rec.get("executed"):
                 continue
@@ -7705,6 +7861,59 @@ class ToolExecutor:
                         "since approval (stale registration)." % (aid,),
                         "artifact_tampered",
                         policy_id="approval-tampered-artifact-egress")
+                continue
+            # Row-7 (wave-131, revoke-after-approve): intent re-validation
+            # at the execution boundary (TOCTOU guard). The human granted
+            # this approval under one intent; a countermand arriving
+            # between the grant and this sweep must not execute. Re-run
+            # the advisory intent-slice judge against CURRENT intent
+            # context: if the action is now judged stale_intent and the
+            # MAC-bound queue-time annotation did NOT flag it stale, the
+            # intent materially changed after approval — auto-revoke the
+            # approval (revoker "intent-system") and refuse the sweep
+            # with approval_intent_changed. A human who approved DESPITE
+            # a queue-time stale flag keeps their override (the record
+            # stays approved). Without intent context the check is inert
+            # (opt-in, zero behavior change). The judge is advisory-only:
+            # paraphrase-level countermands the heuristic cannot see are
+            # the documented ceiling (no re-validation fires for them).
+            _intent_verdict = self._intent_slice_verdict(
+                rec["tool"], rec["args"], rec.get("agent_justification"),
+                None)
+            _queue_slice = rec.get("intent_slice") or {}
+            if (_intent_verdict is not None
+                    and _intent_verdict.get("flagged")
+                    and _intent_verdict.get("flag") == "stale_intent"
+                    and not _queue_slice.get("flagged")):
+                _intent_evidence = "; ".join(
+                    str(e) for e in
+                    (_intent_verdict.get("evidence") or [])[:2])
+                try:
+                    _revoke.revoke_approval(
+                        self.approvals, aid,
+                        "intent changed after approval: the latest user "
+                        "message countermands this action (%s); "
+                        "re-approval required under the current intent"
+                        % (_intent_evidence or "no detail"),
+                        _revoke.INTENT_SYSTEM)
+                except ValueError as _revoke_err:
+                    # Revocation is the enforcement, but the sweep still
+                    # refuses fail-closed below even if the revoke
+                    # itself could not complete (fail-safe, retriable).
+                    _refuse("Approval %s refused: intent changed after "
+                            "approval (countermand detected) and "
+                            "auto-revocation failed (%s); re-approval "
+                            "required under the current intent."
+                            % (aid, _revoke_err),
+                            "approval_intent_changed",
+                            policy_id="intent-revocation")
+                    continue
+                _refuse("Approval %s refused: intent changed after "
+                        "approval — auto-revoked (the latest user message "
+                        "countermands this action); re-approval required "
+                        "under the current intent." % (aid,),
+                        "approval_intent_changed",
+                        policy_id="intent-revocation")
                 continue
 
             # F33 (HARDENING-R8): re-check the volume budgets at the actual

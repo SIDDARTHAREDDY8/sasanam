@@ -178,12 +178,15 @@ def e1_plant_then_harmful_post():
     return ("ERROR", "executed=%s signals=%s" % (executed, signals))
 
 
-def e2_no_revocation_path():
-    """A harmful post is queued and approved. The operator then tries
-    to revoke the approval before the sweep. The product has no
-    revoke-after-approve path (decide() on a non-pending record
-    raises) -> BREAK (pinned: revocation timing unexamined --
-    revocation does not exist as an operation)."""
+def e2_revocation_honoured_at_sweep():
+    """Wave-131: revoke-after-approve now EXISTS as an operation
+    (``ApprovalQueue.revoke``; only the granter or the reserved
+    ``"intent-system"`` principal may revoke). A harmful post is queued
+    and approved; the operator revokes it before the sweep; the sweep
+    must NOT execute it and must audit the honoured revocation
+    (``approval_revoked_honoured``). HELD = revocation honoured at
+    sweep time. BREAK = the sweep executed a revoked approval (a real
+    finding, not a pinned residual)."""
     ctx = _session()
     ex = ctx["executor"]
     ident = ex.mint_identity("researcher-1", "researcher", PRINCIPAL)
@@ -194,21 +197,35 @@ def e2_no_revocation_path():
     aid = r["approval_id"]
     ctx["approvals"].decide(aid, True, reason="looks routine",
                             decided_by="human-operator")
-    # The operator learns the approval was a mistake and tries to
-    # revoke it before the sweep runs.
+    # The operator learns the approval was a mistake and revokes it
+    # before the sweep runs.
     try:
-        ctx["approvals"].decide(aid, False, reason="revoking: mistake",
-                                decided_by="human-operator")
-        revoked = True
-    except ValueError:
-        revoked = False
-    if not revoked:
+        ctx["approvals"].revoke(aid, "revoking: mistake",
+                                "human-operator")
+    except ValueError as e:
         return ("BREAK",
-                "no revoke-after-approve path exists: decide() on the "
-                "approved record raises ValueError. Revocation timing "
-                "is unexamined because revocation is not an operation. "
-                "PINNED row-7 residual.")
-    return ("ERROR", "unexpected: revocation succeeded")
+                "revoke-after-approve refused at the public seam: %s"
+                % (e,))
+    done = ex.execute_approved()
+    executed = any(isinstance(d, dict) and d.get("tool") == "http_post"
+                   for d in (done or []))
+    rec = ctx["approvals"].get(aid)
+    signals = _gap_signal_events(ctx)
+    if (not executed and rec.get("status") == "revoked"
+            and "approval_revoked_honoured" in signals):
+        return ("HELD",
+                "revoke-after-approve honoured at sweep time: the "
+                "revoked post was not executed; approval_revoked + "
+                "approval_revoked_honoured are audited. The "
+                "revocation-timing half of the row-7 residual is "
+                "closed.")
+    if executed:
+        return ("BREAK",
+                "the sweep EXECUTED a revoked approval (status=%s). "
+                "Revocation is not honoured -- real finding."
+                % (rec.get("status"),))
+    return ("ERROR", "executed=%s status=%s signals=%s"
+            % (executed, rec.get("status"), signals))
 
 
 def e3_sweep_revalidation_control():
@@ -243,7 +260,7 @@ def e3_sweep_revalidation_control():
 
 
 PROBES = [e1_plant_then_harmful_post,
-          e2_no_revocation_path,
+          e2_revocation_honoured_at_sweep,
           e3_sweep_revalidation_control]
 
 
@@ -270,9 +287,10 @@ def main():
           % (n_break, n_held, n_err, det))
     for name, verdict, detail in first:
         print("  %-32s %-6s %s" % (name, verdict, detail))
-    print("  NOTE: BREAKs are the PINNED row-7 residual class (no intent "
-          "ledger, no temporal blast-radius analysis, no revocation "
-          "timing), not new findings.")
+    print("  NOTE: e1 BREAK is the PINNED row-7 residual (no intent "
+          "ledger, no temporal blast-radius analysis). e2 (revocation "
+          "timing) is closed by wave-131 revoke-after-approve; a BREAK "
+          "there would be a real finding, not a pinned residual.")
     if not det:
         print("NON-DETERMINISTIC across runs -- do not trust")
         return 2

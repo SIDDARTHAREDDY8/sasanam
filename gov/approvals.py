@@ -3862,6 +3862,23 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             })
         return target, entry
 
+    def revoke(self, approval_id, reason, revoker):
+        """Wave-131 (row-7 revoke-after-approve): revoke an approval so
+        it can never be consumed.
+
+        Only the granting principal (``record["decided_by"]``) or the
+        reserved ``"intent-system"`` principal (the executor's automatic
+        intent re-validation) may revoke; everyone else is refused and
+        the attempt is audited LOUD. Revocation is terminal: the record
+        can never be decided, executed, or re-revoked afterwards.
+
+        Delegates to ``gov.revoke.revoke_approval`` (the shared
+        authorization rule also used by the executor's
+        execution-boundary intent re-validation).
+        """
+        from . import revoke as _revoke
+        return _revoke.revoke_approval(self, approval_id, reason, revoker)
+
     def delegate(self, approval_id, to_principal, reason, delegated_by):
         """D1-core: reassign a pending record's decision stewardship.
 
@@ -4984,6 +5001,31 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         return json.loads(json.dumps(rec, ensure_ascii=True, default=str))
 
     def mark_executed(self, approval_id):
+        # Wave-131 (row-7 revoke-after-approve): belt-and-braces — a
+        # revoked approval can never be marked executed, even via this
+        # direct durable-claim path. Revocation is terminal.
+        try:
+            _rec = self.get(approval_id)
+        except Exception:  # noqa: BLE001 - unknown ids fail closed below
+            _rec = None
+        if _rec is not None and _rec.get("status") == "revoked":
+            try:
+                self._log({
+                    "event": "approval_revoke_attempt",
+                    "run_id": _rec.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "decision": "rejected_attempt",
+                    "approval_id": approval_id,
+                    "note": ("mark_executed refused: approval is revoked; "
+                             "revocation is terminal"),
+                })
+            except Exception:  # noqa: BLE001 - refusal stands regardless
+                pass
+            raise ValueError(
+                "cannot mark approval %r executed: it is revoked"
+                % (approval_id,))
         self._rewrite(lambda records: [
             dict(r, executed=True) if r["id"] == approval_id else r
             for r in records])
