@@ -101,34 +101,45 @@ _REDIRECT_RE = re.compile(
 # "pas"/"nicht"/"kein"/"keine"/"nahi" 0 hits.
 # Wave-143: seeded inflection coverage on the same core. German
 # "kein" gains its inflected forms keinen/keinem/keiner/keines as
-# standalone words (word-boundary guarded: "keineswegs",
-# "keinerlei", "keinesfalls" do NOT cue -- measured 0 hits on the
-# wave-143 benign corpus; note "keinerlei" is genuine negation
-# semantics missed by design, a pinned residual). French gains the
-# discontinuous "ne ... jamais|plus|rien|aucun" paired pattern
-# (_FRENCH_NE_PAIR_SRC, embedded in _NEGATION_RE so every consumer of
-# the core picks it up -- no second word list): up to 8 intervening
-# words, including the elided "n'" (straight/curly apostrophe; the
-# elided form must start at whitespace so "'n'" in "rock 'n' roll"
-# cannot anchor it). Directional: "ne" must precede the particle --
-# "rien ... n'" does not cue (pinned miss). Bare "ne" still subsumes
-# the non-elided pairs. Measured precision on the wave-143 benign
-# corpus (9 sentences: de/en positive confirmations, keineswegs/
-# keinerlei lookalikes, plus/rien WITHOUT "ne", non-profit/yoga
-# mat/notable -- similarities 0.545-0.857, all at/above the gate):
-# 0 cue hits. Full multilingual coverage is NOT claimed
-# (non-romanized scripts untouched; full synonym replacement still
-# misses -- the p6 ceiling carries over).
+# standalone words (word-boundary guarded: "keineswegs" does NOT
+# cue -- measured 0 hits on the wave-143 benign corpus; it shares
+# the "keines" prefix with "keinesfalls" and stays the
+# prefix-collision guard). French gains the discontinuous
+# "ne ... jamais|plus|rien|aucun" paired pattern (_FRENCH_NE_PAIR_SRC,
+# embedded in _NEGATION_RE so every consumer of the core picks it
+# up -- no second word list): up to 8 intervening words, including
+# the elided "n'" (straight/curly apostrophe; the elided form must
+# start at whitespace so "'n'" in "rock 'n' roll" cannot anchor it).
+# Wave-144: "keinerlei"/"keinesfalls" graduate from pinned miss to
+# standalone-word cues (unambiguous negation words; "keineswegs" is
+# the sole German leftover, deliberately out of scope). The French
+# paired pattern fires in BOTH orders -- "ne ... X" and "X ... ne"
+# (e.g. "rien ne va" as well as "ne va rien") -- with the same
+# elision/whitespace guards (symmetric: the elided n' must start at
+# whitespace in either order). Measured precision on the wave-144
+# benign corpus (10 sentences: de/en positive confirmations,
+# keineswegs lookalike, plus/rien/aucun WITHOUT "ne" in both
+# orders, non-profit/yoga mat/notable -- similarities 0.545-0.857,
+# all at/above the gate): 0 cue hits. Full multilingual coverage is
+# NOT claimed (non-romanized scripts untouched; full synonym
+# replacement still misses -- the p6 ceiling carries over; the new
+# words inherit the seeded approach's scope imprecision).
 _FRENCH_NE_PAIR_SRC = (
+    r"(?:"
     r"(?:\bne\b|(?<!\S)n['\u2019]\w*)"   # "ne", or elided "n'"/"n'"
     r"(?:\s+\S+){0,8}?"                   # up to 8 intervening words
     r"\s+\b(jamais|plus|rien|aucun)\b"    # the second particle
+    r"|"
+    r"\b(jamais|plus|rien|aucun)\b"       # reverse order: X ... ne
+    r"(?:\s+\S+){0,8}?"
+    r"\s+(?:\bne\b|(?<!\S)n['\u2019]\w*)"  # ... then "ne"/elided "n'"
+    r")"
 )
 _FRENCH_NE_PAIR_RE = re.compile(_FRENCH_NE_PAIR_SRC, re.IGNORECASE)
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not|no|stop|halt|"
     r"cease|avoid|refrain|cancel|ne|pas|nicht|kein|keine|keinen|"
-    r"keinem|keiner|keines|nahi)\b"
+    r"keinem|keiner|keines|keinerlei|keinesfalls|nahi)\b"
     r"|" + _FRENCH_NE_PAIR_SRC,
     re.IGNORECASE,
 )

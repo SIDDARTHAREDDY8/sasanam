@@ -165,6 +165,104 @@ class TestRegistry(unittest.TestCase):
             self.assertNotIn(op, reg_src, op)
 
 
+class TestNormalizedMatching(unittest.TestCase):
+    """Wave-144, row-13: BOTH sides compare through
+    normalize_canary_text (casefold, whitespace/punctuation
+    stripped, leet digits mapped). Normalization is not fuzzy
+    matching: near-miss values still miss."""
+
+    def test_normalize_basics(self):
+        n = cy.normalize_canary_text
+        self.assertEqual(n("AbC"), "abc")
+        self.assertEqual(n("a b\tc\nd-e_f.g!"), "abcdefg")
+        self.assertEqual(n("011357"), "ollest")
+        self.assertEqual(n("GHp_01"), "ghpol")  # 0->o, 1->l
+        self.assertEqual(n(""), "")
+        self.assertEqual(n(None), "")
+        self.assertEqual(n(123), "")
+        # Deterministic: same input, same output, every time.
+        self.assertEqual(n("SeC 0a_B"), n("SeC 0a_B"))
+
+    def test_exact_and_substring_kinds_unchanged(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        self.assertEqual(r.match_value(token)["match"], "exact")
+        sub = r.match_value("xx" + token + "yy")
+        self.assertEqual(sub["match"], "substring")
+
+    def test_case_mangled_matches_normalized(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        hit = r.match_value(token.upper())
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["value"], token)
+        self.assertEqual(hit["match"], "normalized")
+
+    def test_padded_matches_normalized(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        padded = " - ".join(token[i:i + 3]
+                            for i in range(0, len(token), 3))
+        hit = r.match_value(padded)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["match"], "normalized")
+
+    def test_leet_matches_normalized(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        leet_out = {"o": "0", "l": "1", "e": "3", "a": "4",
+                    "s": "5", "t": "7"}
+        mangled = "".join(leet_out.get(c.lower(), c) for c in token)
+        self.assertNotEqual(mangled, token)
+        self.assertEqual(cy.normalize_canary_text(mangled),
+                         cy.normalize_canary_text(token))
+        hit = r.match_value(mangled)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["match"], "normalized")
+
+    def test_normalized_substring(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        hit = r.match_value("xx" + token.upper() + "yy")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["match"], "normalized+substring")
+
+    def test_near_misses_stay_silent(self):
+        m, r = _mint()
+        token = _canary_token(r)
+        # One-char substitution (non-leet-equivalent).
+        i = 10
+        repl = "q" if cy.normalize_canary_text(token[i]) != "q" \
+            else "z"
+        self.assertIsNone(r.match_value(token[:i] + repl +
+                                        token[i + 1:]))
+        # Truncation: the registry side stays exact-only.
+        self.assertIsNone(r.match_value(token[:-4]))
+        # Mid-value insertion.
+        self.assertIsNone(r.match_value(token[:20] + "ZZ" +
+                                        token[20:]))
+        # Adjacent transposition.
+        j = 12 if token[12] != token[13] else 14
+        self.assertIsNone(r.match_value(
+            token[:j] + token[j + 1] + token[j] + token[j + 2:]))
+
+    def test_short_normalized_never_matches(self):
+        m, r = _mint()
+        self.assertIsNone(r.match_value("A" * 19))
+        self.assertIsNone(r.match_value("0" * 19))
+
+    def test_host_not_leet_normalized(self):
+        # Scoping decision: match_host stays exact
+        # case-insensitive -- hostname lookalike matching is refused
+        # by construction, so leet-mangled hostnames do not match.
+        m, r = _mint()
+        host = _canary_host(r)
+        leet_host = host.replace("o", "0").replace("e", "3")
+        self.assertNotEqual(leet_host, host)
+        self.assertIsNone(r.match_host(leet_host))
+        self.assertIsNotNone(r.match_host(host))
+
+
 class TestPlanting(unittest.TestCase):
     def test_planting_writes_files_and_env(self):
         import tempfile

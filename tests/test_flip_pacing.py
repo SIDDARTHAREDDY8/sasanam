@@ -1,9 +1,11 @@
-"""Unit tests for the wave-141 flip-direction pacing seam (row 9).
+"""Unit tests for the wave-141/wave-144 flip-direction pacing seam (row 9).
 
 Public seams: AdaptiveBudgetPolicy validation/serialization,
 _direction_key, BudgetStore.record_run / check / verify_chain,
-the chained reset records' direction_scores, and the LOUD
-drift_budget_adapted event with trigger "direction_pacing".
+the chained reset records' direction_scores and flip state, and the
+LOUD drift_budget_adapted event with trigger "direction_pacing"
+(wave-141 bucket backstop) or "direction_pacing_confirmed"
+(wave-144 flip confirmation).
 """
 
 import os
@@ -55,11 +57,12 @@ _D10 = fingerprint_tool_distance(_fp(_flip_fwd(10)), BASE_FP)
 WARN = _D10 / 0.4
 
 
-def _scan_below(ceiling=1.0, want_at_least=0.85, hi=59):
-    """Largest x whose flip burst stays under ``ceiling`` (>= floor)."""
+def _scan_below(ceiling=1.0, want_at_least=0.85, hi=59, fn=None):
+    """Largest x whose burst stays under ``ceiling`` (>= floor)."""
+    fn = _flip_fwd if fn is None else fn
     best = None
     for x in range(1, hi + 1):
-        f = (fingerprint_tool_distance(_fp(_flip_fwd(x)), BASE_FP)
+        f = (fingerprint_tool_distance(_fp(fn(x)), BASE_FP)
              / WARN)
         if f < ceiling:
             best = (x, f)
@@ -148,6 +151,7 @@ class TestDirectionPolicyValidation(unittest.TestCase):
         p = AdaptiveBudgetPolicy(100.0)
         self.assertEqual(p.adapt_dir_decay, 0.9)
         self.assertEqual(p.adapt_dir_threshold, 2.4)
+        self.assertEqual(p.adapt_flip_floor, 0.75)
 
     def test_bad_decay_rejected(self):
         for bad in (0, 1, 1.5, -0.1, "x", None):
@@ -159,16 +163,26 @@ class TestDirectionPolicyValidation(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(bad)):
                 AdaptiveBudgetPolicy(100.0, adapt_dir_threshold=bad)
 
+    def test_bad_flip_floor_rejected(self):
+        for bad in (0, -0.1, 1.5, "x", None):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                AdaptiveBudgetPolicy(100.0, adapt_flip_floor=bad)
+
     def test_serialized(self):
         p = AdaptiveBudgetPolicy(100.0, adapt_dir_decay=0.85,
-                                 adapt_dir_threshold=2.2)
+                                 adapt_dir_threshold=2.2,
+                                 adapt_flip_floor=0.8)
         d = p.to_dict()
         self.assertEqual(d["adapt_dir_decay"], 0.85)
         self.assertEqual(d["adapt_dir_threshold"], 2.2)
+        self.assertEqual(d["adapt_flip_floor"], 0.8)
 
 
 class TestFlipPacingBuckets(_Harness):
-    def test_flip_pacer_tightens_loud_with_direction_trigger(self):
+    def test_flip_pacer_confirms_loud_with_confirmed_trigger(self):
+        # Wave-144: the A/B/A oscillation confirms pacing at the
+        # third cycle's defuse -- strictly earlier than the wave-141
+        # bucket path (which needed ~4 cycles per direction).
         seq = 0
         tripped_at = None
         for _ in range(4):
@@ -185,22 +199,46 @@ class TestFlipPacingBuckets(_Harness):
                    if e.get("event") == "drift_budget_adapted"]
         self.assertEqual(len(adapted), 1)
         self.assertEqual(adapted[0].get("severity"), "LOUD")
-        self.assertEqual(adapted[0]["trigger"], "direction_pacing")
+        self.assertEqual(adapted[0]["trigger"],
+                         "direction_pacing_confirmed")
         evidence = adapted[0]["evidence"]
-        # The tripping bucket is the forward one (it accrued the most
-        # recent burst): the evidence must name the max bucket, not
-        # just the current cycle.
         fwd_sig = _direction_key({"search": -1.0, "email": 1.0})
-        self.assertEqual(evidence["direction_sig"], fwd_sig)
-        self.assertGreaterEqual(evidence["direction_score"],
-                                self.policy.adapt_dir_threshold)
-        self.assertEqual(evidence["direction_threshold"],
-                         self.policy.adapt_dir_threshold)
+        rev_sig = _direction_key({"search": 1.0, "email": -1.0})
+        # The confirmation names the closing signature and the two
+        # prior paced signatures (A/B/A).
+        self.assertEqual(evidence["flip_sig"], fwd_sig)
+        self.assertEqual(evidence["flip_prev"], rev_sig)
+        self.assertEqual(evidence["flip_prev2"], fwd_sig)
+        self.assertEqual(evidence["flip_floor"],
+                         self.policy.adapt_flip_floor)
         adapts = self._adapt_records("a")
         self.assertEqual(len(adapts), 1)
         self.assertTrue(adapts[0]["reset_directions"])
-        self.assertIsNotNone(tripped_at)
+        self.assertTrue(adapts[0]["reset_streak"])
+        # The trip lands strictly earlier than the wave-141 run-15.
+        self.assertEqual(tripped_at, 7)
         self.assertIn("drift_budget_tripped", self.event_names())
+        self.assertTrue(self.store.verify_chain("a"))
+
+    def test_buckets_still_catch_when_flip_floor_raised(self):
+        # The wave-141 bucket path remains the backstop when the
+        # flip confirmation is calibrated out: with adapt_flip_floor
+        # above the burst magnitudes, no cycle is "paced", so the
+        # A/B/A/B oscillation tightens via direction_pacing instead
+        # of direction_pacing_confirmed -- later, but still LOUD.
+        policy = _policy(adapt_flip_floor=0.99)
+        self.policy = policy
+        seq = 0
+        for _ in range(4):
+            for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                          _flip_rev(_X09), dict(BASE_TOOLS)):
+                seq += 1
+                self.record("a", tools, seq)
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0].get("severity"), "LOUD")
+        self.assertEqual(adapted[0]["trigger"], "direction_pacing")
         self.assertTrue(self.store.verify_chain("a"))
 
     def test_buckets_decay_instead_of_resetting_on_flip(self):
@@ -230,8 +268,14 @@ class TestFlipPacingBuckets(_Harness):
         self.assertAlmostEqual(s3[fwd_sig], _F09 * 0.9 ** 2 + _F09,
                                places=5)
 
-    def test_benign_alternation_never_adapts(self):
-        xf, f = _scan_below(ceiling=0.9, want_at_least=0.8)
+    def test_benign_low_magnitude_alternation_never_adapts(self):
+        # Alternating bursts below the flip floor stay quiet: low
+        # magnitudes never count as paced. (The old 0.85x shape now
+        # adapts early by design -- the measured tradeoff pinned in
+        # evals/flip_pacing_probes.py f6 -- so the benign pin moves
+        # to genuinely low magnitudes.)
+        xf, f = _scan_below(ceiling=0.6, want_at_least=0.4)
+        self.assertLess(f, self.policy.adapt_flip_floor)
         seq = 0
         for _ in range(3):
             for tools in (_flip_fwd(xf), dict(BASE_TOOLS),
@@ -242,6 +286,30 @@ class TestFlipPacingBuckets(_Harness):
         self.assertEqual(chk.status, "ok")
         self.assertNotIn("drift_budget_adapted", self.event_names())
         self.assertEqual(chk.detail["adapt_level"], 0)
+
+    def test_near_threshold_tradeoff_adapts_early(self):
+        # Documents the wave-144 price: sustained alternating
+        # near-threshold bursts (>= flip floor) are
+        # pacing-indistinguishable from the attack, so the tighter
+        # seam adapts them early via direction_pacing_confirmed.
+        # Drive exactly three cycles (A/B/A): the confirmation fires
+        # once, at the third cycle's defuse.
+        xf, f = _scan_below(ceiling=0.9, want_at_least=0.8)
+        self.assertGreaterEqual(f, self.policy.adapt_flip_floor)
+        seq = 0
+        for tools in (_flip_fwd(xf), dict(BASE_TOOLS),
+                      _flip_rev(xf), dict(BASE_TOOLS),
+                      _flip_fwd(xf), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0]["trigger"],
+                         "direction_pacing_confirmed")
+        self.assertEqual(adapted[0].get("severity"), "LOUD")
+        self.assertEqual(self.store.check("a", self.policy)
+                         .detail["adapt_level"], 1)
 
     def test_same_direction_streak_still_fires_first(self):
         # Two same-direction ~0.9 cycles: the near_trip_cycle streak
@@ -257,12 +325,21 @@ class TestFlipPacingBuckets(_Harness):
         self.assertEqual(adapted[0]["trigger"], "near_trip_cycle")
 
     def test_relax_after_direction_tighten(self):
+        # Three flip cycles confirm pacing and tighten to level 1;
+        # benign cycles then relax the level back down. The chained
+        # adapt record's reset_directions flag must not break the
+        # fold (buckets re-accrue fresh after the tighten).
         seq = 0
-        for _ in range(4):
-            for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
-                          _flip_rev(_X09), dict(BASE_TOOLS)):
-                seq += 1
-                self.record("a", tools, seq)
+        for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                      _flip_rev(_X09), dict(BASE_TOOLS),
+                      _flip_fwd(_X09), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        adapted = [e for e in self.events
+                   if e.get("event") == "drift_budget_adapted"]
+        self.assertEqual(len(adapted), 1)
+        self.assertEqual(adapted[0]["trigger"],
+                         "direction_pacing_confirmed")
         self.assertEqual(self.store.check("a", self.policy)
                          .detail["adapt_level"], 1)
         # Benign cycles relax the level back down; the
@@ -296,6 +373,10 @@ class TestFlipPacingBuckets(_Harness):
             r.pop("direction_sig", None)
             r.pop("direction_trip", None)
             r.pop("reset_directions", None)
+            r.pop("flip_prev", None)
+            r.pop("flip_prev2", None)
+            r.pop("flip_paced", None)
+            r.pop("flip_confirmed", None)
             stripped.append(r)
         path.write_text("\n".join(json.dumps(r) for r in stripped)
                         + "\n")
@@ -313,6 +394,126 @@ class TestFlipPacingBuckets(_Harness):
                                   _fp(tools, run_seq=seq2), BASE_FP,
                                   self.policy)
         self.assertIn("drift_budget_adapted", self.event_names())
+
+
+class TestFlipConfirmation(_Harness):
+    def test_flip_state_rides_reset_records(self):
+        seq = 0
+        for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                      _flip_rev(_X09), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        resets = self._reset_records("a")
+        self.assertEqual(len(resets), 2)
+        fwd_sig = _direction_key({"search": -1.0, "email": 1.0})
+        rev_sig = _direction_key({"search": 1.0, "email": -1.0})
+        # After cycle 1 (fwd): paced, first of a potential run.
+        self.assertTrue(resets[0]["flip_paced"])
+        self.assertEqual(resets[0]["flip_prev"], fwd_sig)
+        self.assertIsNone(resets[0]["flip_prev2"])
+        self.assertFalse(resets[0]["flip_confirmed"])
+        # After cycle 2 (rev): first flip, no confirmation yet.
+        self.assertTrue(resets[1]["flip_paced"])
+        self.assertEqual(resets[1]["flip_prev"], rev_sig)
+        self.assertEqual(resets[1]["flip_prev2"], fwd_sig)
+        self.assertFalse(resets[1]["flip_confirmed"])
+
+    def test_same_direction_restarts_alternation_hunt(self):
+        seq = 0
+        for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                      _flip_fwd(_X09), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        resets = self._reset_records("a")
+        fwd_sig = _direction_key({"search": -1.0, "email": 1.0})
+        # Same direction twice: the second cycle restarts (prev2
+        # cleared), never a flip.
+        self.assertEqual(resets[1]["flip_prev"], fwd_sig)
+        self.assertIsNone(resets[1]["flip_prev2"])
+        self.assertFalse(resets[1]["flip_confirmed"])
+
+    def test_sub_floor_cycle_clears_flip_state(self):
+        xf, _f = _scan_below(ceiling=0.6, want_at_least=0.4)
+        seq = 0
+        for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                      _flip_fwd(xf), dict(BASE_TOOLS),
+                      _flip_rev(_X09), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        resets = self._reset_records("a")
+        # The sub-floor middle cycle is not paced and clears the
+        # flip state: the later rev cycle starts fresh, no confirm.
+        self.assertFalse(resets[1]["flip_paced"])
+        self.assertIsNone(resets[1]["flip_prev"])
+        self.assertIsNone(resets[2]["flip_prev2"])
+        self.assertFalse(resets[2]["flip_confirmed"])
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+
+    def test_inconsistent_directions_never_confirm(self):
+        # A/B/C rotation with sub-floor breakers: six distinct paced
+        # signatures, never closing a 2-period.
+        xf, _f = _scan_below(ceiling=0.6, want_at_least=0.4)
+
+        def _c(x):
+            t = dict(BASE_TOOLS)
+            t["search"] -= x
+            t["summarize"] += x
+            return t
+
+        xc, _fc = _scan_below(ceiling=1.0, want_at_least=0.85,
+                              hi=59, fn=_c)
+        seq = 0
+        for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                      _flip_fwd(xf), dict(BASE_TOOLS),
+                      _c(xc), dict(BASE_TOOLS),
+                      _flip_fwd(xf), dict(BASE_TOOLS),
+                      _flip_rev(_X09), dict(BASE_TOOLS),
+                      _flip_fwd(xf), dict(BASE_TOOLS)):
+            seq += 1
+            self.record("a", tools, seq)
+        self.assertNotIn("drift_budget_adapted", self.event_names())
+        self.assertEqual(self.store.check("a", self.policy).status,
+                         "ok")
+
+    def test_flip_confirmation_zeroes_state_on_tighten(self):
+        seq = 0
+        for _ in range(2):
+            for tools in (_flip_fwd(_X09), dict(BASE_TOOLS),
+                          _flip_rev(_X09), dict(BASE_TOOLS)):
+                seq += 1
+                self.record("a", tools, seq)
+        # The A/B/A at cycle 3 confirmed and tightened; the chained
+        # adapt record zeroed buckets AND flip state (fold parity).
+        # Cycle 4 (rev) then re-accrues exactly one fresh bucket --
+        # the zero-then-reaccrue is the wave-141 design, unchanged.
+        import json
+        path = self.tmp / "budget" / "a.jsonl"
+        recs = [json.loads(l) for l in path.read_text().splitlines()
+                if l.strip()]
+        adapts = [r for r in recs if r.get("kind") == "adapt"]
+        self.assertEqual(len(adapts), 1)
+        self.assertEqual(adapts[0]["trigger"],
+                         "direction_pacing_confirmed")
+        self.assertTrue(adapts[0]["reset_directions"])
+        # A fresh store folding the same log sees the post-tighten
+        # hunt state: the confirming reset record itself (run 6) was
+        # written with the flip state zeroed.
+        resets = [r for r in recs if r.get("kind") == "reset"]
+        confirming = [r for r in resets if r.get("flip_confirmed")]
+        self.assertEqual(len(confirming), 1)
+        self.assertIsNone(confirming[0]["flip_prev"])
+        self.assertIsNone(confirming[0]["flip_prev2"])
+        store2 = BudgetStore(self.tmp / "budget",
+                             audit=self.events.append)
+        (lvl, _s, _n, _g, _l, scores, fp1, fp2) = \
+            store2._adapt_fold(recs)
+        self.assertEqual(lvl, 1)
+        rev_sig = _direction_key({"search": 1.0, "email": -1.0})
+        self.assertEqual(set(scores), {rev_sig})
+        self.assertAlmostEqual(scores[rev_sig], _F09_REV, places=5)
+        # Cycle 4 (rev) started a fresh hunt after the zeroing.
+        self.assertEqual(fp1, rev_sig)
+        self.assertIsNone(fp2)
 
 
 if __name__ == "__main__":

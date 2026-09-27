@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Negation-inflection battery (row-7, wave-143 lane).
+"""Negation-inflection battery (row-7, wave-143 lane + wave-144 lane).
 
 Row-7 residual from wave-142: the countermand negation gate
 (``gov.intent_slice._NEGATION_RE``, consumed by
@@ -10,84 +10,93 @@ Row-7 residual from wave-142: the countermand negation gate
 patterns without ``pas`` (in practice: the elided ``n'`` forms, where
 no standalone ``ne`` token exists for the word-boundary match).
 
-This battery is RED-first: the de-inflection and fr-elided probes go
-BREAK while the inflected kein-forms and the ne...X paired pattern are
-missing from the negation core (no negation cue found, similarity gate
-never consulted); they flip to HELD once ``gov/intent_slice.py``
-extends the core. The French paired-with-``ne`` control already HELD
-pre-seam (bare ``ne`` subsumes it) and documents that the new seam is
-the elided form.
+Wave-143 closed the inflections and the forward (ne-before-X) paired
+pattern. Wave-144 closes the two pinned leftovers: German
+``keinerlei``/``keinesfalls`` graduate from word-boundary-guarded
+misses to standalone-word cues, and the French paired pattern fires
+in BOTH orders (``ne ... X`` and ``X ... ne``, e.g. "rien ne va" as
+well as "ne va rien") with the same elision/whitespace guards.
+
+This battery is RED-first: the wave-144 probes (de-keinerlei/
+de-keinesfalls, fr-reverse-elided) go BREAK while the new words and
+the reverse-order branch are missing from the negation core (no
+negation cue found, similarity gate never consulted); they flip to
+HELD once ``gov/intent_slice.py`` extends the core. The French
+paired-with-``ne`` control already HELD pre-seam (bare ``ne``
+subsumes it) and documents that the new seam is the elided form.
 
 Delivered set (reusing the existing ``_NEGATION_RE`` mechanism -- no
 new detection architecture, no second word list):
-  - German: ``keinen``/``keinem``/``keiner``/``keines`` as standalone
-    words (word-boundary guarded: ``keineswegs``/``keinerlei``/
-    ``keinesfalls`` must NOT cue -- measured below).
-  - French: ``ne ... jamais|plus|rien|aucun`` with up to 8 intervening
+  - German: ``keinerlei``/``keinesfalls`` as standalone words
+    (word-boundary guarded: ``keineswegs`` must NOT cue -- measured
+    below; it shares the "keines" prefix with "keinesfalls" and is
+    the prefix-collision guard for both new words).
+  - French: ``ne ... jamais|plus|rien|aucun`` AND
+    ``jamais|plus|rien|aucun ... ne`` with up to 8 intervening
     words, including the elided ``n'`` (straight and curly
-    apostrophe). Directional: ``ne`` must precede the particle --
-    ``rien ... n'`` does not cue (pinned miss, documented).
+    apostrophe; the elided form must start at whitespace so
+    "'n'" in "rock 'n' roll" cannot anchor it -- symmetric guard
+    in both orders).
   - Spanish ``no`` control already held (wave-142).
 
 Probe map (GRANT = "Send the Q3 report to the vendor.", explicit
 threshold 0.5 -- the cue is under test, not the calibration):
-  g_keinen_negated_paraphrase_revokes: "Keinen Q3 report an den vendor
-     senden." -- cue "keinen"; sim 0.750. RED -> HELD.
-  g_keinem_negated_paraphrase_revokes: "Keinem vendor den Q3 report
-     senden." -- cue "keinem"; sim 0.750. RED -> HELD.
-  g_keiner_negated_paraphrase_revokes: "Keiner der vendors erhaelt den
-     Q3 report." -- cue "keiner"; sim 0.706. RED -> HELD.
-  g_keines_negated_paraphrase_revokes: "Keines der Q3 reports an den
-     vendor senden." -- cue "keines"; sim 0.706. RED -> HELD.
-  f_jamais_elided_revokes: "Je n'enverrai jamais ce Q3 report au
-     vendor." -- paired n'...jamais; sim 0.632. RED -> HELD.
-  f_plus_elided_revokes: "N'envoyez plus ce Q3 report au vendor." --
-     paired n'...plus; sim 0.667. RED -> HELD.
-  f_rien_elided_revokes: "N'envoyez rien au vendor concernant le Q3
-     report." -- paired n'...rien; sim 0.632. RED -> HELD.
-  f_aucun_elided_revokes: "N'envoyez aucun Q3 report au vendor." --
-     paired n'...aucun; sim 0.706. RED -> HELD.
-  f_paired_with_ne_control: "Je ne vais jamais envoyer ce Q3 report
-     au vendor." -- bare "ne" already cued pre-seam (sim 0.600);
-     documents the subsumption. HELD pre- and post-seam.
-  g_e2e_keinen_sweep_revokes: the inflected German countermand through
-     the real grant -> countermand -> sweep path: the grant must be
-     REVOKED with approval_intent_changed and
-     match_method="token-tversky". RED -> HELD.
+  g_keinen/keinem/keiner/keines_negated_paraphrase_revokes (wave-143,
+     held).
+  g_keinerlei_negated_paraphrase_revokes: "Keinerlei Q3 report geht
+     an den vendor." -- cue "keinerlei"; sim 0.750. RED -> HELD.
+  g_keinesfalls_negated_paraphrase_revokes: "Keinesfalls geht der Q3
+     report an den vendor." -- cue "keinesfalls"; sim 0.706.
+     RED -> HELD.
+  f_jamais/plus/rien/aucun_negated_paraphrase_revokes (wave-143,
+     elided forward order, held).
+  f_rien_rev_negated_paraphrase_revokes: "Rien n'est encore decide
+     concernant le Q3 report pour le vendor." -- reverse-order
+     paired n'...rien; sim 0.571. RED -> HELD. (Wave-143 pinned
+     miss: the pattern was directional, ne-before-X only.)
+  f_jamais_rev_negated_paraphrase_revokes: "Jamais n'envoyez ce Q3
+     report au vendor." -- sim 0.667. RED -> HELD.
+  f_plus_rev_negated_paraphrase_revokes: "Plus n'ira au vendor
+     concernant ce Q3 report." -- sim 0.632. RED -> HELD.
+  f_aucun_rev_negated_paraphrase_revokes: "Aucun Q3 report n'ira au
+     vendor." -- sim 0.706. RED -> HELD.
+  f_paired_with_ne_control (wave-143, held pre- and post-seam).
+  g_e2e_keinen_sweep_revokes (wave-143, held).
   positive_confirmations_execute: "Ja, bitte den Q3 report an den
-     vendor senden." (0.706) and "Oui, envoyez ce Q3 report au vendor
-     s'il vous plait." (0.600) -- high similarity, no negation
-     semantics: must NEVER revoke, pre- and post-seam.
-  fp_lookalikes_silent: "keineswegs" (0.545), "keinerlei" in a benign
-     sentence (0.600), "plus" without "ne" (0.600), "rien" without
-     "ne" (0.667) -- similarities at/above the gate, so any cue hit
-     here would be a REAL false revocation. All must stay silent,
-     pre- and post-seam.
-  documented_misses_pinned (EXPECTED): "Keinerlei Q3 report geht an
-     den vendor." (0.750) is genuine negation semantics
-     ("keinerlei" = none whatsoever) missed by the word-boundary
-     rule; "Rien n'est encore decide concernant le Q3 report pour le
-     vendor." (0.571) misses because the pattern is directional
-     (ne-before-X only). Both would fire on similarity alone -- the
-     miss is purely the cue. Pinned, measured, not claimed away.
+     vendor senden." and "Oui, envoyez ce Q3 report au vendor
+     s'il vous plait." -- must NEVER revoke, pre- and post-seam.
+  fp_lookalikes_silent: "keineswegs" (prefix-collision guard),
+     "plus"/"rien"/"aucun" WITHOUT "ne" in both orders,
+     non-profit/yoga mat/notable -- similarities at/above the gate,
+     so any cue hit here would be a REAL false revocation. All
+     must stay silent, pre- and post-seam.
+  documented_misses_pinned (EXPECTED): "Keineswegs geht der Q3
+     report an den vendor." (0.706) is genuine negation ("by no
+     means") missed by the word-boundary rule by design --
+     deliberately out of wave-144 scope (task: keinerlei/
+     keinesfalls only). Would fire on similarity alone; the miss
+     is purely the cue. Pinned, measured, not claimed away.
   english_unchanged: "Don't send the Q3 report to the vendor." and
      "Please refrain from sending that Q3 report anywhere." still
      fire (byte-identical English behavior).
   deterministic_x2: byte-identical verdicts across 2 runs.
 
-Measured precision (benign corpus: the 2 positive confirmations + the
-4 lookalikes + "non-profit"/"yoga mat"/"notable" from wave-142 -- 9
-sentences, similarities 0.545-0.857): post-seam cue hits = 0.
-Precision 9/9 on the corpus; the lookalike similarities are >= the
-gate, so a hit would have been a real false revocation.
+Measured precision (benign corpus: the 2 positive confirmations +
+keineswegs + plus/rien/aucun-sans-ne + non-profit/yoga mat/notable
+-- 10 sentences, similarities 0.545-0.857): post-seam cue hits = 0.
+Precision 10/10 on the corpus; the lookalike similarities are >=
+the gate, so a hit would have been a real false revocation.
 
 Honest ceilings (documented, not hidden): seeded inflection coverage
-is NOT complete multilingual negation -- German "keinerlei"/
-"keinesfalls" (genuine negation words) miss by design of the
-word-boundary rule; the French pattern is directional (X-before-ne
-misses); elided "n'" before a consonant is not French (no loss);
-non-romanized scripts untouched; full synonym replacement still
-misses (the p6 ceiling carries over).
+is NOT complete multilingual negation -- German "keineswegs"
+(genuine negation) still misses by design of the word-boundary rule;
+keinerlei/keinesfalls inherit the seeded approach's scope
+imprecision ("Es gibt keinerlei Probleme; senden Sie den Q3 report
+an den vendor." would now revoke -- the negation scopes over
+"Probleme", not the grant; the same class a "kein Problem, bitte
+senden" sentence already carries); non-romanized scripts untouched;
+full synonym replacement still misses (the p6 ceiling carries
+over).
 
 Verdicts: HELD / BREAK / EXPECTED / ERROR.
 
@@ -142,6 +151,12 @@ CUE_CASES = [
      "keiner", False),
     ("g_keines", "Keines der Q3 reports an den vendor senden.",
      "keines", False),
+    # Wave-144: keinerlei / keinesfalls graduate from pinned miss
+    # to standalone-word cues. RED pre-seam.
+    ("g_keinerlei", "Keinerlei Q3 report geht an den vendor.",
+     "keinerlei", False),
+    ("g_keinesfalls", "Keinesfalls geht der Q3 report an den vendor.",
+     "keinesfalls", False),
     ("f_jamais", "Je n'enverrai jamais ce Q3 report au vendor.",
      "jamais", False),
     ("f_plus", "N'envoyez plus ce Q3 report au vendor.",
@@ -149,6 +164,19 @@ CUE_CASES = [
     ("f_rien", "N'envoyez rien au vendor concernant le Q3 report.",
      "rien", False),
     ("f_aucun", "N'envoyez aucun Q3 report au vendor.",
+     "aucun", False),
+    # Wave-144: the French paired pattern fires in BOTH orders. The
+    # reverse order (X ... ne / X ... n') is the new seam -- the
+    # elided n' isolates it (no standalone "ne" token exists, so
+    # only the reverse branch can cue). RED pre-seam.
+    ("f_rien_rev",
+     "Rien n'est encore decide concernant le Q3 report pour le "
+     "vendor.", "rien", False),
+    ("f_jamais_rev", "Jamais n'envoyez ce Q3 report au vendor.",
+     "jamais", False),
+    ("f_plus_rev", "Plus n'ira au vendor concernant ce Q3 report.",
+     "plus", False),
+    ("f_aucun_rev", "Aucun Q3 report n'ira au vendor.",
      "aucun", False),
     # Control: bare "ne" already cued this pre-seam; the paired
     # pattern subsumes it. Held before and after.
@@ -165,11 +193,18 @@ BENIGN_CASES = [
     "Ja, bitte den Q3 report an den vendor senden.",
     "Oui, envoyez ce Q3 report au vendor s'il vous plait.",
     # German kein-substring lookalikes (word-boundary must hold).
+    # "keineswegs" shares the "keines" prefix with "keinesfalls"
+    # and is the prefix-collision guard for both new words
+    # ("keinerlei" shares its "keiner" prefix with the existing
+    # cue "keiner" -- the boundary guard is what keeps "keinerlei"
+    # from cueing via "keiner").
     "Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an den vendor.",
-    "Es gibt keinerlei Probleme; senden Sie den Q3 report an den vendor.",
-    # French particles WITHOUT the ne anchor (pairing must hold).
+    # French particles WITHOUT the ne anchor (pairing must hold),
+    # in both orders: X-before-ne and ne-before-X.
     "Il y a de plus en plus de Q3 reports pour le vendor.",
     "Merci pour le Q3 report; rien d'autre pour le vendor.",
+    "Plus d'informations: contactez le vendor pour le Q3 report.",
+    "Aucun retard: le Q3 report partira vers le vendor.",
     # Wave-142 lookalikes (no regression on the seeded set).
     "The vendor is a non-profit partner for the Q3 report.",
     "The vendor put the yoga mat next to the Q3 report.",
@@ -178,12 +213,14 @@ BENIGN_CASES = [
 
 # Genuine misses of the seeded approach: similarity is >= gate but
 # the cue rule misses by design. Pinned EXPECTED, measured.
+# Wave-144: "keineswegs" is the SOLE German leftover -- genuine
+# negation ("by no means") deliberately out of this wave's scope
+# (the task adds keinerlei/keinesfalls only); the word-boundary rule
+# keeps it silent.
 PINNED_MISSES = [
-    ("Keinerlei Q3 report geht an den vendor.",
-     "keinerlei is genuine negation semantics missed by the "
-     "word-boundary rule"),
-    ("Rien n'est encore decide concernant le Q3 report pour le vendor.",
-     "directional miss: the pattern requires ne-before-X"),
+    ("Keineswegs geht der Q3 report an den vendor.",
+     "keineswegs is genuine negation missed by the word-boundary "
+     "rule by design (out of wave-144 scope)"),
 ]
 
 _RESULTS = []
@@ -334,7 +371,7 @@ def fp_lookalikes_silent():
     _record(name, "HELD",
             "measured precision: 0 cue hits / %d benign sentences "
             "(similarities 0.545-0.857, all at/above gate); "
-            "keineswegs/keinerlei/plus-sans-ne/rien-sans-ne silent"
+            "keineswegs/plus-sans-ne/rien-sans-ne/aucun-sans-ne silent"
             % len(BENIGN_CASES))
 
 

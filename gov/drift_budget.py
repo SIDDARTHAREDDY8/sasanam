@@ -129,6 +129,32 @@ attacker who learns the parameters paces at most ~3 near-trip cycles
 per direction (or keeps every cycle sub-near-trip), and the
 threshold/decay are new operator calibration targets. The direction
 key is sign-pattern only; magnitude accrues but does not key.
+
+Confirmed flip pacing (wave-144): the wave-141 buckets need ~4
+near-trip cycles per direction before they fill (the exact-opposite
+0.9x pacer trips at run 15). ``AdaptiveBudgetPolicy`` now also
+carries a flip-confirmation tripwire (``adapt_flip_floor``): when a
+defuse cycle is paced (near-trip at >= ``adapt_flip_floor``
+threshold-equivalents) AND its direction signature flips from the
+previous paced cycle's signature AND flips back to the one before
+that -- i.e. the second consecutive direction-flip cycle closing a
+genuine A/B/A 2-period oscillation at near-threshold magnitudes --
+the budget tightens LOUD immediately (trigger
+``direction_pacing_confirmed``), exactly like the other tightenings,
+and the next contributing run trips under the tightened limit. The
+flip state (previous two paced cycles' signatures) rides the chained
+reset records and is folded like the streak; any non-paced cycle
+(sub-floor, non-near-trip, or directionless) breaks consecutiveness
+and clears it, and a same-direction paced cycle restarts it. This is
+deliberately narrower than "any two consecutive flips": a sustained
+ALTERNATING pattern confirms pacing, while inconsistent directions
+(A/B/C/... never closing a 2-period) stay quiet. The price is
+measured, not hidden: sustained alternating near-threshold bursts
+(>= the flip floor) are pacing-indistinguishable from the attack by
+construction, so a benign workload that persistently alternates
+near-threshold bursts WILL be adapted early (pinned by
+``evals/flip_pacing_probes.py`` f6). ``adapt_flip_floor`` is operator
+calibration like every other adaptation parameter.
 """
 
 from collections import Counter
@@ -236,20 +262,26 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     ``adapt_dir_threshold`` (wave-141): a per-direction bucket at or
     above this (in threshold-equivalents) on a near-trip cycle
     triggers a tightening -- the flip-direction pacing tripwire.
-    Both are operator calibration, like every other adaptation
+    ``adapt_flip_floor`` (wave-144): per-cycle threshold-equivalents
+    floor (fraction of the effective trip limit, in (0, 1]) for a
+    near-trip cycle to count as "paced" in the flip-confirmation
+    tripwire -- the second consecutive direction-flip cycle at or
+    above this floor, closing a genuine A/B/A 2-period oscillation,
+    tightens LOUD with trigger ``direction_pacing_confirmed``.
+    All three are operator calibration, like every other adaptation
     parameter.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
                  "adapt_contrib_floor", "adapt_strikes",
                  "adapt_max_level", "adapt_dir_decay",
-                 "adapt_dir_threshold")
+                 "adapt_dir_threshold", "adapt_flip_floor")
 
     def __init__(self, warn_distance, adapt_near_floor=0.75,
                  adapt_cycles=2, adapt_factor=0.6,
                  adapt_contrib_floor=0.75, adapt_strikes=3,
                  adapt_max_level=3, adapt_dir_decay=0.9,
-                 adapt_dir_threshold=2.4, **kw):
+                 adapt_dir_threshold=2.4, adapt_flip_floor=0.75, **kw):
         super(AdaptiveBudgetPolicy, self).__init__(warn_distance, **kw)
         if not isinstance(adapt_near_floor, (int, float)) or \
                 not 0 < adapt_near_floor <= 1:
@@ -280,6 +312,10 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
                 not adapt_dir_threshold > 0:
             raise ValueError("adapt_dir_threshold must be positive, got %r"
                              % (adapt_dir_threshold,))
+        if not isinstance(adapt_flip_floor, (int, float)) or \
+                not 0 < adapt_flip_floor <= 1:
+            raise ValueError("adapt_flip_floor must be in (0, 1], got %r"
+                             % (adapt_flip_floor,))
         self.adapt_near_floor = float(adapt_near_floor)
         self.adapt_cycles = adapt_cycles
         self.adapt_factor = float(adapt_factor)
@@ -288,6 +324,7 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
         self.adapt_max_level = adapt_max_level
         self.adapt_dir_decay = float(adapt_dir_decay)
         self.adapt_dir_threshold = float(adapt_dir_threshold)
+        self.adapt_flip_floor = float(adapt_flip_floor)
 
     def to_dict(self):
         d = {k: getattr(self, k) for k in BudgetPolicy.__slots__}
@@ -439,13 +476,15 @@ class BudgetStore(ChainedStore):
         """Fold adapt/reset records to current adaptation state.
 
         Returns ``(level, streak, streak_net, streak_gross,
-        last_adapt_seq, direction_scores)``. Each reset record carries
-        the post-reset streak and the post-reset per-direction scores;
+        last_adapt_seq, direction_scores, flip_prev, flip_prev2)``.
+        Each reset record carries the post-reset streak, the
+        post-reset per-direction scores, and the post-reset flip
+        state (the previous two paced cycles' direction signatures);
         a cycle-triggered tightening (``reset_streak`` /
         ``reset_directions``) zeroes them. Records from ``reset()``
         predate the adaptive fields and are treated as streak 0 /
-        empty scores (level is operator policy state and survives a
-        manual reset -- it decays via benign cycles).
+        empty scores / no flip state (level is operator policy state
+        and survives a manual reset -- it decays via benign cycles).
         Deterministic: pure fold over the chained log.
         """
         level = 0
@@ -454,6 +493,8 @@ class BudgetStore(ChainedStore):
         streak_gross = 0.0
         last_adapt_seq = -1
         direction_scores = {}
+        flip_prev = None
+        flip_prev2 = None
         for r in records:
             kind = r.get("kind")
             if kind == "adapt":
@@ -466,6 +507,8 @@ class BudgetStore(ChainedStore):
                     streak_gross = 0.0
                 if r.get("reset_directions"):
                     direction_scores = {}
+                    flip_prev = None
+                    flip_prev2 = None
             elif kind == "reset":
                 streak = int(r.get("streak", 0))
                 streak_net = {k: float(v) for k, v in
@@ -474,8 +517,10 @@ class BudgetStore(ChainedStore):
                 direction_scores = {
                     str(k): float(v) for k, v in
                     r.get("direction_scores", {}).items()}
+                flip_prev = r.get("flip_prev")
+                flip_prev2 = r.get("flip_prev2")
         return (level, streak, streak_net, streak_gross, last_adapt_seq,
-                direction_scores)
+                direction_scores, flip_prev, flip_prev2)
 
     @staticmethod
     def _effective(policy, level):
@@ -661,8 +706,8 @@ class BudgetStore(ChainedStore):
         unchanged.
         """
         records = self._read_all(agent_id)
-        level, streak, s_net, s_gross, _, dir_scores = \
-            self._adapt_fold(records)
+        level, streak, s_net, s_gross, _, dir_scores, flip_prev, \
+            flip_prev2 = self._adapt_fold(records)
         eff_limit, eff_window = self._effective(policy, level)
         cycle, _, _ = self._cycle_contributions(records, eff_window)
         cum, cons, net, gross = self._window_stats(cycle)
@@ -715,6 +760,37 @@ class BudgetStore(ChainedStore):
                     and sval > trip_score):
                 trip_sig, trip_score = skey, sval
         dir_trip = near_trip and bool(trip_sig)
+        # Wave-144 (row 9): flip confirmation. A paced cycle is a
+        # near-trip cycle at/above the flip floor; only paced cycles
+        # feed the flip state, and any non-paced cycle (sub-floor,
+        # non-near-trip, or directionless) breaks consecutiveness and
+        # clears it. The confirmation fires when the current paced
+        # cycle's signature flips from the previous paced cycle's AND
+        # flips back to the one before that -- the second consecutive
+        # direction-flip cycle closing a genuine A/B/A 2-period
+        # oscillation at near-threshold magnitudes. Inconsistent
+        # directions (A/B/C/... never closing a 2-period) and
+        # same-direction repeats never confirm.
+        paced = (near_trip and sig
+                 and cum >= policy.adapt_flip_floor * eff_limit)
+        flip_confirmed = False
+        new_flip_prev, new_flip_prev2 = flip_prev, flip_prev2
+        if paced:
+            if flip_prev is None:
+                new_flip_prev, new_flip_prev2 = sig, None
+            elif sig == flip_prev:
+                # Same direction: restarts the alternation hunt.
+                new_flip_prev, new_flip_prev2 = sig, None
+            elif flip_prev2 is not None and sig == flip_prev2:
+                flip_confirmed = True
+                new_flip_prev, new_flip_prev2 = None, None
+            else:
+                # First flip of a potential oscillation (A->B):
+                # remember both, confirm only if the next cycle
+                # closes the 2-period.
+                new_flip_prev, new_flip_prev2 = sig, flip_prev
+        else:
+            new_flip_prev, new_flip_prev2 = None, None
         record.update({
             "near_trip": near_trip, "streak": new_streak,
             "cycle_cumulative": cum,
@@ -724,12 +800,29 @@ class BudgetStore(ChainedStore):
             "direction_sig": sig,
             "direction_scores": {k: round(v, 6)
                                  for k, v in new_scores.items()},
-            "direction_trip": bool(dir_trip)})
+            "direction_trip": bool(dir_trip),
+            "flip_paced": bool(paced),
+            "flip_prev": new_flip_prev,
+            "flip_prev2": new_flip_prev2,
+            "flip_confirmed": bool(flip_confirmed)})
         audit_event["near_trip"] = near_trip
         audit_event["near_streak"] = new_streak
         audit_event["direction_trip"] = bool(dir_trip)
+        audit_event["flip_confirmed"] = bool(flip_confirmed)
         self._write(agent_id, record, audit_event, audit)
-        if (near_trip and new_streak >= policy.adapt_cycles
+        if flip_confirmed and level < policy.adapt_max_level:
+            new_level = level + 1
+            nl, nw = self._effective(policy, new_level)
+            self._write_adapt(
+                agent_id, run_seq, new_level, "tighten",
+                "direction_pacing_confirmed", nl, nw,
+                {"flip_sig": sig,
+                 "flip_prev": flip_prev, "flip_prev2": flip_prev2,
+                 "flip_floor": policy.adapt_flip_floor,
+                 "cycle_cumulative": cum,
+                 "cycle_consistency": round(cons, 6)}, audit,
+                reset_streak=True, reset_directions=True)
+        elif (near_trip and new_streak >= policy.adapt_cycles
                 and level < policy.adapt_max_level):
             new_level = level + 1
             nl, nw = self._effective(policy, new_level)
@@ -771,7 +864,8 @@ class BudgetStore(ChainedStore):
         policies with a higher budget_limit.
         """
         records = self._read_all(agent_id)
-        level, _, _, _, last_adapt_seq, _ = self._adapt_fold(records)
+        level, _, _, _, last_adapt_seq, _, _, _ = self._adapt_fold(
+            records)
         if level >= policy.adapt_max_level:
             return
         _, eff_window = self._effective(policy, level)
@@ -840,7 +934,7 @@ class BudgetStore(ChainedStore):
         adapt_level = 0
         eff_limit, eff_window = policy.budget_limit, policy.window_runs
         if adaptive:
-            adapt_level, _, _, _, _, _ = self._adapt_fold(records)
+            adapt_level, _, _, _, _, _, _, _ = self._adapt_fold(records)
             eff_limit, eff_window = self._effective(policy, adapt_level)
 
         contributing, last_reset_seq, window_n = self._cycle_contributions(

@@ -88,10 +88,42 @@ __all__ = [
     "CANARY_LABEL_ARTIFACTS",
     "scan_egress_attempt",
     "check_and_trip",
+    "normalize_canary_text",
     "EGRESS_TOOLS",
     "MIN_MATCHABLE_LEN",
     "MAX_DECODE_LAYERS",
 ]
+
+
+# Leet-speak confusables canonicalized before canary comparison
+# (wave-144, row-13): attackers case-mangle, pad whitespace/
+# punctuation, or substitute lookalike digits to dodge exact
+# matching. Normalization is NOT fuzzy matching: it is a fixed,
+# deterministic, stdlib-only canonicalization applied to BOTH the
+# planted canary and the egress content, so "5ecr3t-token" and
+# "secret-token" compare equal while "secrex-token" still misses.
+# Hostnames are deliberately NOT leet-normalized (match_host stays
+# exact case-insensitive): hostname lookalike matching is a
+# false-positive and attacker-confusion hazard, refused by
+# construction.
+_LEET_MAP = str.maketrans({
+    "0": "o", "1": "l", "3": "e", "4": "a",
+    "5": "s", "7": "t",
+})
+
+
+def normalize_canary_text(s):
+    """Canonicalize text for canary comparison.
+
+    Casefold, map leet digits to their letters (0->o, 1->l, 3->e,
+    4->a, 5->s, 7->t), and drop every character that is not ASCII
+    alphanumeric (strips whitespace AND punctuation). Deterministic,
+    stdlib-only, $0. Non-string input normalizes to "".
+    """
+    if not isinstance(s, str):
+        return ""
+    folded = s.casefold().translate(_LEET_MAP)
+    return "".join(c for c in folded if c.isascii() and c.isalnum())
 
 # Tools whose attempts pass the trip detector — the same set the
 # deny-egress-unallowlisted rule governs (ToolExecutor._domain_allowlisted).
@@ -270,6 +302,7 @@ class CanaryRegistry:
     def __init__(self):
         self._by_value = {}
         self._by_host = {}
+        self._by_value_norm = {}
         self.run_id = None
 
     def register(self, mint):
@@ -277,27 +310,52 @@ class CanaryRegistry:
         self.run_id = mint.run_id
         for c in mint.values():
             self._by_value[c["value"]] = c
+            self._by_value_norm[normalize_canary_text(c["value"])] = c
             if c["kind"] == "hostname":
                 self._by_host[c["value"].lower()] = c
 
     def match_value(self, s):
-        """Exact credential/token match.
+        """Exact credential/token match, then normalized match.
 
         Full-value equality, or substring containment for values the
         agent demonstrably ingested (an exfiltrated credential pasted
         into a larger payload is still the canary). Exact-only on the
         registry side: the *canary value* must appear verbatim — no
         prefix, truncation, or fuzzy matching.
+
+        Wave-144 (row-13): when exact matching misses, both sides are
+        compared through :func:`normalize_canary_text` (casefold,
+        whitespace/punctuation stripped, leet digits mapped), as full
+        normalized equality or normalized substring containment. The
+        normalized form must still be at least MIN_MATCHABLE_LEN
+        chars — short strings collide too easily. Hits carry
+        ``match`` = "normalized" or "normalized+substring" (exact
+        hits carry "exact", substring hits "substring").
         """
         if not isinstance(s, str) or len(s) < MIN_MATCHABLE_LEN:
             return None
         hit = self._by_value.get(s)
         if hit is not None:
-            return dict(hit)
+            found = dict(hit)
+            found["match"] = "exact"
+            return found
         for value, meta in self._by_value.items():
             if value in s:
                 found = dict(meta)
                 found["match"] = "substring"
+                return found
+        norm = normalize_canary_text(s)
+        if len(norm) < MIN_MATCHABLE_LEN:
+            return None
+        hit = self._by_value_norm.get(norm)
+        if hit is not None:
+            found = dict(hit)
+            found["match"] = "normalized"
+            return found
+        for nvalue, meta in self._by_value_norm.items():
+            if nvalue in norm:
+                found = dict(meta)
+                found["match"] = "normalized+substring"
                 return found
         return None
 

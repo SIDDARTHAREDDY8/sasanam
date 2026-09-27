@@ -85,7 +85,9 @@ class MultilingualNegationTest(unittest.TestCase):
 class NegationInflectionTest(unittest.TestCase):
     """Wave-143: the _NEGATION_RE core gains German kein-inflections
     (keinen/keinem/keiner/keines) and the French ne...jamais/plus/
-    rien/aucun paired pattern (incl. elided n'). Word-boundary and
+    rien/aucun paired pattern (incl. elided n'). Wave-144:
+    keinerlei/keinesfalls graduate to standalone cues and the French
+    pair fires in both orders (ne...X and X...ne). Word-boundary and
     pairing discipline pin the lookalikes silent."""
 
     def _cue(self, text):
@@ -100,13 +102,24 @@ class NegationInflectionTest(unittest.TestCase):
 
     def test_german_substring_lookalikes_do_not_match(self):
         # Word-boundary guarded: words merely containing "kein" stay
-        # silent. ("keinerlei" is genuine negation semantics missed
-        # by design -- pinned residual, not a cue.)
+        # silent. "keineswegs" shares the "keines" prefix with the
+        # wave-144 cue "keinesfalls" -- it is the prefix-collision
+        # guard for both new words. ("keinerlei" shares its "keiner"
+        # prefix with the existing cue "keiner"; the boundary guard
+        # is what keeps "keinerlei" from cueing via "keiner" -- it
+        # cues only via its own alternative, pinned below.)
         self.assertIsNone(self._cue("keineswegs"))
         self.assertIsNone(self._cue("Keineswegs ist er fertig."))
-        self.assertIsNone(self._cue("keinerlei"))
-        self.assertIsNone(self._cue("Es gibt keinerlei Probleme."))
-        self.assertIsNone(self._cue("keinesfalls"))
+
+    def test_german_keinerlei_keinesfalls_match(self):
+        # Wave-144: unambiguous negation words graduate to cues.
+        self.assertEqual(self._cue("keinerlei"), "keinerlei")
+        self.assertEqual(self._cue("Keinerlei Q3 report geht an den vendor."),
+                         "keinerlei")
+        self.assertEqual(self._cue("keinesfalls"), "keinesfalls")
+        self.assertEqual(
+            self._cue("Keinesfalls geht der Q3 report an den vendor."),
+            "keinesfalls")
 
     def test_french_paired_pattern_matches(self):
         # Bare "ne" still wins where present (word branch first --
@@ -119,6 +132,15 @@ class NegationInflectionTest(unittest.TestCase):
         self.assertIn("aucun", self._cue("N'envoyez aucun rapport."))
         # Curly-apostrophe elision works too.
         self.assertIn("jamais", self._cue("Je n\u2019enverrai jamais."))
+        # Wave-144: the reverse order (X ... ne / X ... n') cues
+        # with the same guards. The elided n' isolates the new
+        # branch (no standalone "ne" token exists).
+        self.assertIn("rien", self._cue("Rien n'est encore decide."))
+        self.assertIn("jamais", self._cue("Jamais n'envoyez ce rapport."))
+        self.assertIn("plus", self._cue("Plus n'ira au vendor."))
+        self.assertIn("aucun", self._cue("Aucun rapport n'ira au vendor."))
+        # Curly-apostrophe elision in reverse order too.
+        self.assertIn("rien", self._cue("Rien n\u2019est encore decide."))
 
     def test_french_unpaired_particles_do_not_match(self):
         # Pairing discipline: the particle without "ne" stays silent.
@@ -126,10 +148,24 @@ class NegationInflectionTest(unittest.TestCase):
         self.assertIsNone(self._cue("Merci, rien d'autre."))
         self.assertIsNone(self._cue("Aucun probleme ici."))
 
-    def test_french_directional_miss(self):
-        # The pattern is directional: ne must precede the particle.
-        # Pinned miss, documented.
-        self.assertIsNone(self._cue("Rien n'est encore decide."))
+    def test_french_reverse_order_no_longer_misses(self):
+        # Wave-143 pinned this as a directional miss (ne-before-X
+        # only). Wave-144 fires both orders: the reverse pair cues.
+        hit = self._cue("Rien n'est encore decide.")
+        self.assertIsNotNone(hit)
+        self.assertIn("rien", hit)
+
+    def test_french_reverse_unpaired_particles_do_not_match(self):
+        # Pairing discipline holds in reverse too: the particle
+        # without a following ne/n' stays silent.
+        self.assertIsNone(self._cue("Merci, rien d'autre."))
+        self.assertIsNone(self._cue("Aucun retard ici."))
+        self.assertIsNone(self._cue("Plus d'informations."))
+        # An elided n' too far away (>8 intervening words) does not
+        # pair (same distance guard as the forward order).
+        self.assertIsNone(self._cue(
+            "Rien dans ce tres long rapport tres detaille sur le "
+            "troisieme trimestre vraiment tres complet n'ira."))
 
     def test_english_apostrophe_n_does_not_anchor(self):
         # "'n'" in "rock 'n' roll" must not anchor the paired

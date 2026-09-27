@@ -593,20 +593,38 @@ class NegationInflectionSeamTest(unittest.TestCase):
         # silent even at/above gate similarity. (similarity_countermand
         # short-circuits to 0.0 when the cue misses, so the raw
         # similarity is measured directly to keep the probe
-        # meaningful.)
+        # meaningful.) Wave-144: "keineswegs" is the sole German
+        # lookalike -- "keinerlei"/"keinesfalls" are cues now (their
+        # scope imprecision is a documented ceiling, not a lookalike
+        # probe).
         for msg in ("Der Q3 report ist keineswegs fertig; bitte "
                     "senden Sie ihn an den vendor.",
-                    "Es gibt keinerlei Probleme; senden Sie den Q3 "
-                    "report an den vendor.",
                     "Il y a de plus en plus de Q3 reports pour le "
                     "vendor.",
                     "Merci pour le Q3 report; rien d'autre pour le "
+                    "vendor.",
+                    "Aucun retard: le Q3 report partira vers le "
                     "vendor."):
             self.assertGreaterEqual(target_similarity(msg, self.GRANT),
                                     0.5, msg)
             fired, _, _ = similarity_countermand(
                 msg, [self.GRANT], threshold=0.5)
             self.assertFalse(fired, msg)
+
+    def test_wave144_cues_fire_at_ledger(self):
+        # The wave-144 leftovers revoke through the real ledger
+        # seam: German keinerlei/keinesfalls and the French
+        # reverse-order pair (elided n' -- no standalone "ne").
+        led = IntentLedger()
+        led.record_intent("op", self.GRANT)
+        for msg in ("Keinerlei Q3 report geht an den vendor.",
+                    "Keinesfalls geht der Q3 report an den vendor.",
+                    "Rien n'est encore decide concernant le Q3 report "
+                    "pour le vendor.",
+                    "Jamais n'envoyez ce Q3 report au vendor."):
+            r = led.record_intent("op", msg)
+            self.assertTrue(r["similarity_countermand"], msg)
+            self.assertTrue(r["is_countermand"], msg)
 
     def test_positive_confirmations_do_not_fire(self):
         for msg in ("Ja, bitte den Q3 report an den vendor senden.",
