@@ -84,6 +84,7 @@ from . import delegation_tokens as _delegation_tokens
 from . import drift as _drift
 from . import framing as _framing
 from . import egress_content as _egress_content
+from . import detection_verdicts as _detection_verdicts
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
@@ -3477,6 +3478,131 @@ class ToolExecutor:
                            "remains the record -- operator must review "
                            "manually"),
             })
+        return res
+
+    def check_egress_tiered_verdict(self, agent_id, tool, args,
+                                    payload_text=None):
+        """Wave-160 (row 13): tiered egress-verdict composition on the
+        operational egress path.
+
+        The T1->T2->T3 tiered verdicts (gov/detection_verdicts.py) were
+        library-only: neither the content monitor nor the rare-token
+        tracker ever ran on the operational egress-attempt path, so a
+        T3 paraphrase-footprint egress left no verdict and drew no
+        tiered response. This method is the operational seam: it runs
+        the installed monitors over one egress payload, composes the
+        tiered verdict, records ONE ``egress_tiered_verdict`` audit
+        event per analyzed egress (tier, verdict, provenance, triage
+        inputs), and returns the composed dict. The egress-attempt
+        path in call() applies the graduated response:
+
+        - allow: pass; the recorded event is the evidence.
+        - flag: LOUD event (flag "egress_tiered_risk"); execution
+          proceeds (the flag is for operator review, not a block).
+        - behavioral_flag: LOUD event (flag "read_then_egress", the
+          existing triage taxonomy); execution proceeds --
+          triage-only by design, never a block.
+        - require_approval: LOUD hold event (flag
+          "egress_tiered_risk"); the caller forces the standard
+          require_approval path -- the action is queued for a human
+          and never executes on a policy allow alone (fail-closed).
+          The agent can never approve its own hold away
+          (separation-of-duties rides the standard queue machinery).
+
+        Opt-in: with neither monitor installed this returns a silent
+        allow and does nothing (zero behavior change). Partial
+        installation is supported: the missing tier is treated as a
+        silent allow, and the composition is monotonic, so a present
+        tier's verdict is never weakened by the absent one.
+
+        Provenance privacy: the provenance list carries detector
+        labels, signal names, counts, doc ids, destinations, and
+        scores -- NEVER token strings or fragment strings (the
+        composition module's contract, pinned by its battery).
+
+        Honest ceilings (unchanged): footprint-free prose paraphrase
+        stays triage-only under T2; salami drips and destination
+        warming remain pinned residuals (see gov/detection_verdicts.py).
+        """
+        silent = {"tier": "T1", "verdict": "allow", "composed": False,
+                  "provenance": [], "reason": "no_egress_monitors",
+                  "inputs": {}, "agent_id": str(agent_id)}
+        monitor = self.content_monitor
+        tracker = self.rare_token_tracker
+        if monitor is None and tracker is None:
+            return silent
+        if monitor is not None:
+            t1raw = monitor.check(agent_id, tool, args or {},
+                                  payload_text=payload_text)
+            t1 = {"verdict": t1raw.get("verdict", "allow"),
+                  "score": t1raw.get("score", 0.0),
+                  "signals": t1raw.get("signals") or {},
+                  # F186: the monitor record's "detail" section
+                  # carries the padding-robust absolute presence
+                  # legs (structured_lines, suspicious_bytes).
+                  # Dropping it here would silently disable those
+                  # legs on the operational seam.
+                  "detail": t1raw.get("detail") or {}}
+        else:
+            t1 = {"verdict": "allow", "score": 0.0, "signals": {},
+                  "detail": {}}
+        if tracker is not None:
+            t2raw = tracker.check_egress(agent_id, tool, args or {},
+                                         payload_text=payload_text)
+            t2 = {"verdict": t2raw.get("verdict", "allow"),
+                  "overlap": t2raw.get("overlap", 0),
+                  "destination_novel": bool(
+                      t2raw.get("destination_novel", False)),
+                  "docs_read": t2raw.get("docs_read", 0),
+                  "threshold": t2raw.get("threshold", "n/a"),
+                  "source_ids": t2raw.get("source_ids", []) or [],
+                  "destination": t2raw.get("destination")}
+        else:
+            t2 = {"verdict": "allow", "overlap": 0,
+                  "destination_novel": False, "docs_read": 0,
+                  "threshold": "n/a", "source_ids": [],
+                  "destination": None}
+        res = _detection_verdicts.compose(t1, t2)
+        res["inputs"] = {
+            "t1_verdict": t1["verdict"],
+            "t1_score": t1["score"],
+            "t2_verdict": t2["verdict"],
+            "overlap": t2["overlap"],
+            "destination": t2["destination"],
+            "destination_novel": t2["destination_novel"],
+        }
+        res["agent_id"] = str(agent_id)
+        verdict = res.get("verdict", "allow")
+        tier = res.get("tier", "T1")
+        detail = ("tier=%s verdict=%s%s: %s"
+                  % (tier, verdict,
+                     " (composed)" if res.get("composed") else "",
+                     res.get("reason", "")))
+        event = {"event": "egress_tiered_verdict",
+                 "run_id": self.run_id,
+                 "agent_id": str(agent_id),
+                 "tool": tool,
+                 "destination": res["inputs"]["destination"],
+                 "tier": tier,
+                 "verdict": verdict,
+                 "composed": bool(res.get("composed", False)),
+                 "reason": res.get("reason", ""),
+                 "inputs": res["inputs"],
+                 "provenance": res.get("provenance", []),
+                 "detail": detail}
+        if verdict in ("flag", "require_approval"):
+            event["flag"] = "egress_tiered_risk"
+            event["reason"] = ("TIERED EGRESS %s -- %s"
+                               % ("HOLD" if verdict == "require_approval"
+                                  else "FLAG", detail))
+        elif verdict == "behavioral_flag":
+            # The existing triage taxonomy for read->novel-egress
+            # sequences (see check_rare_token_carryover): triage-only,
+            # execution proceeds, never a block.
+            event["flag"] = "read_then_egress"
+            event["reason"] = ("TIERED EGRESS FLAG (triage-only) -- %s"
+                               % detail)
+        self.log.append(event)
         return res
 
     def check_run_framing(self, agent_id, fingerprint=None, record=True,
@@ -8024,6 +8150,40 @@ class ToolExecutor:
             return {"status": "denied", "reason": entry["reason"],
                     "policy_id": "budget-exceeded", "seq": entry["seq"]}
 
+        # Wave-160 (row 13): tiered egress-verdict wiring. The
+        # T1->T2->T3 composition (gov/detection_verdicts.py) was
+        # library-only: neither the content monitor nor the rare-token
+        # tracker ever ran on the operational egress-attempt path, so a
+        # T3 paraphrase-footprint egress left no verdict and drew no
+        # tiered response. Every egress-tool call with a monitor or
+        # tracker installed is now analyzed here -- after identity,
+        # DLP, and volume guards (denied calls need no analysis and
+        # must not pollute monitor baselines), before policy
+        # evaluation. Raw kwargs: redaction must not destroy evidence
+        # pre-detection (wave-90 idiom). Graduated response: allow /
+        # flag / behavioral_flag proceed (the flag tiers are LOUD
+        # audit only); require_approval forces the standard
+        # require_approval path below (fail-closed direction only -- a
+        # deny stays denied, an existing require_approval is
+        # untouched). Opt-in: with no monitors installed this is a
+        # silent allow (zero behavior change).
+        _tiered_egress_hold = None
+        if (tool in _EGRESS_TOOLS
+                and (self.content_monitor is not None
+                     or self.rare_token_tracker is not None)):
+            _tiered = self.check_egress_tiered_verdict(
+                identity.agent_id, tool, kwargs)
+            if _tiered.get("verdict") == "require_approval":
+                _tiered_egress_hold = PolicyDecision(
+                    "require_approval",
+                    ("Tiered egress verdict %s/%s on %r: %s -- a human "
+                     "must review this egress before it executes "
+                     "(row-13 tiered verdicts, wave-160)."
+                     % (_tiered.get("tier"), _tiered.get("verdict"),
+                        tool, _tiered.get("reason", ""))),
+                    policy_id="egress-tiered-verdict",
+                    flag="egress_tiered_risk")
+
         # S3 (K-041): an unrated mutating tool is never allowed silently.
         # _MUTATING_TOOLS names the known mutating tools (api_call is
         # read-classified per F1; read_file is non-mutating). A tool the
@@ -8243,6 +8403,18 @@ class ToolExecutor:
         if (_forced_require_approval is not None
                 and decision.effect == "allow"):
             decision = _forced_require_approval
+        # Wave-160 (row 13): tiered egress-verdict hold. A
+        # require_approval from the T1->T2->T3 composition downgrades
+        # an allow to queued human review -- fail-closed direction
+        # only: a deny stays denied, an existing require_approval is
+        # untouched (its record keeps the original policy_id/flag;
+        # the LOUD egress_tiered_verdict hold event is already in the
+        # log). The queued record carries policy_id
+        # "egress-tiered-verdict" + flag "egress_tiered_risk" so the
+        # human reviewer sees the forcing.
+        if (_tiered_egress_hold is not None
+                and decision.effect == "allow"):
+            decision = _tiered_egress_hold
         # Wave-89 (stream s5-tool): deferred-effect (plant-now/harm-later)
         # scan on the raw kwargs. A hit chains a loud
         # deferred_effect_detected event and forces require_approval on
