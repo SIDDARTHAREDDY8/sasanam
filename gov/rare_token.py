@@ -311,6 +311,31 @@ class RareTokenTracker:
                 "source_id": source_id, "rare_token_count": len(tokens),
                 "ledger_recorded": ledger_recorded}
 
+    # -- read-source queries (row 13, wave-143) ---------------------
+    def observed_source_ids(self, agent_id):
+        """Sorted source ids recorded for one agent this run.
+
+        All recorded reads, including zero-rare-token reads (the
+        in-run tracker stores every observation; the taint ledger
+        persists only token-bearing ones). Pure query; the verdict
+        paths are untouched.
+        """
+        return sorted(self._docs.get(str(agent_id), {}))
+
+    def durable_source_ids(self, agent_id):
+        """Sorted live cross-run document ids for one agent.
+
+        The taint ledger's ``live_source_ids`` when a ledger is
+        attached (doc ids and counts only -- never token strings);
+        empty when no ledger is attached (zero behavior change).
+        Pure query; may raise ``TaintPersistenceError`` on a damaged
+        ledger (fail-closed by the ledger's design).
+        """
+        ledger = self._taint_ledger
+        if ledger is None:
+            return []
+        return ledger.live_source_ids(agent_id)
+
     # -- egress -----------------------------------------------------
     def _token_bearing_sources(self, agent_id):
         """Sorted source ids of docs the agent read that carried >=1

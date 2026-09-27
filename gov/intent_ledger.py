@@ -35,8 +35,10 @@ A record is a countermand when the stored verdict says so, the
 detector finds a redirect signal overlapping a prior turn of the same
 principal, OR the negation-gated similarity signal
 (``similarity_countermand``, wave-136, hardened wave-138) fires: a
-negation cue from the existing ``gov.intent_slice._NEGATION_RE`` word
-list plus ``gov.target_match.target_similarity`` at or above the
+negation cue from the existing ``gov.intent_slice._NEGATION_RE``
+(word list plus the wave-143 French ``ne ... jamais|plus|rien|aucun``
+paired pattern -- one core, reused not reinvented) plus
+``gov.target_match.target_similarity`` at or above the
 per-message threshold against a prior turn. The threshold is derived
 per message as ``HMAC-SHA256(deployment_key, domain || message)``
 mapped into [0.4, 0.6) -- mean 0.5, the nominal operating point
@@ -251,7 +253,8 @@ def similarity_countermand(message, prior_messages,
 
     The gate is a conjunction and the asymmetry is deliberate:
       - negation cue (``gov.intent_slice._NEGATION_RE`` -- the
-        existing negation-word list, reused not reinvented) AND
+        existing negation core: word list plus the French
+        ``ne ... X`` paired pattern, reused not reinvented) AND
         similarity >= threshold -> fires. Fail-closed: revoking an
         approval on a paraphrased "don't" is the safe error.
       - high similarity WITHOUT a negation cue -> NEVER fires.

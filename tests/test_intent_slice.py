@@ -82,6 +82,73 @@ class MultilingualNegationTest(unittest.TestCase):
             self.assertEqual(self._cue(text), cue)
 
 
+class NegationInflectionTest(unittest.TestCase):
+    """Wave-143: the _NEGATION_RE core gains German kein-inflections
+    (keinen/keinem/keiner/keines) and the French ne...jamais/plus/
+    rien/aucun paired pattern (incl. elided n'). Word-boundary and
+    pairing discipline pin the lookalikes silent."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0).lower() if hit else None
+
+    def test_german_inflections_match(self):
+        self.assertEqual(self._cue("Keinen Bericht senden."), "keinen")
+        self.assertEqual(self._cue("Keinem vendor senden."), "keinem")
+        self.assertEqual(self._cue("Keiner kommt hierher."), "keiner")
+        self.assertEqual(self._cue("Keines der reports."), "keines")
+
+    def test_german_substring_lookalikes_do_not_match(self):
+        # Word-boundary guarded: words merely containing "kein" stay
+        # silent. ("keinerlei" is genuine negation semantics missed
+        # by design -- pinned residual, not a cue.)
+        self.assertIsNone(self._cue("keineswegs"))
+        self.assertIsNone(self._cue("Keineswegs ist er fertig."))
+        self.assertIsNone(self._cue("keinerlei"))
+        self.assertIsNone(self._cue("Es gibt keinerlei Probleme."))
+        self.assertIsNone(self._cue("keinesfalls"))
+
+    def test_french_paired_pattern_matches(self):
+        # Bare "ne" still wins where present (word branch first --
+        # subsumption, documented); the paired pattern carries the
+        # elided forms where no standalone "ne" token exists.
+        self.assertEqual(self._cue("Je ne vais jamais envoyer."), "ne")
+        self.assertIn("jamais", self._cue("Je n'enverrai jamais."))
+        self.assertIn("plus", self._cue("N'envoyez plus ce rapport."))
+        self.assertIn("rien", self._cue("N'envoyez rien au vendor."))
+        self.assertIn("aucun", self._cue("N'envoyez aucun rapport."))
+        # Curly-apostrophe elision works too.
+        self.assertIn("jamais", self._cue("Je n\u2019enverrai jamais."))
+
+    def test_french_unpaired_particles_do_not_match(self):
+        # Pairing discipline: the particle without "ne" stays silent.
+        self.assertIsNone(self._cue("Il y a de plus en plus."))
+        self.assertIsNone(self._cue("Merci, rien d'autre."))
+        self.assertIsNone(self._cue("Aucun probleme ici."))
+
+    def test_french_directional_miss(self):
+        # The pattern is directional: ne must precede the particle.
+        # Pinned miss, documented.
+        self.assertIsNone(self._cue("Rien n'est encore decide."))
+
+    def test_english_apostrophe_n_does_not_anchor(self):
+        # "'n'" in "rock 'n' roll" must not anchor the paired
+        # pattern (the elided n' has to start at whitespace).
+        self.assertIsNone(
+            self._cue("rock 'n' roll plus eight more reports"))
+        self.assertIsNone(self._cue("none of your business"))
+
+    def test_negated_verb_picks_up_german_inflection(self):
+        # The verb-scope consumer shares the core: an inflected
+        # kein-form before the verb stem counts as negation.
+        self.assertTrue(
+            m._negated_verb("Keinen Q3 report an den vendor senden.",
+                            "send_email"))
+        self.assertFalse(
+            m._negated_verb("Ja, bitte den Q3 report senden.",
+                            "send_email"))
+
+
 class SliceTest(unittest.TestCase):
     def test_no_user_message_all_neutral(self):
         s = m.slice_intent([_act("read_file", {"path": "a"})])

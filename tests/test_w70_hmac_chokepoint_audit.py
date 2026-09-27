@@ -167,6 +167,19 @@ ALLOWED_HMAC_SITES = {
     # an inventory-integrity binding, not a credential.
     ("gov/artifact_sweep.py", "_inventory_pin_mac", 0):
         "inventory-pin MAC; key from resolve_active_key() chokepoint, domain-separated",
+    # gov/artifact_sweep.py (wave-143, row-12): the watch-root
+    # declaration MAC. The key is gov.keyprovider.resolve_active_key()
+    # output (or an explicit caller override) -- the wave-69/81
+    # guarded chokepoint (explicit provisioning, fail-closed, no dev
+    # fallback) -- never hard-coded, never committed;
+    # domain-separated via _ROOTS_DECL_DOMAIN
+    # ("artifact-roots-declaration-v1") and bound to (envelope
+    # version, resolved roots, previous_roots, previous_digest,
+    # operator_id, reason, declared_at, key_epoch) so a declaration
+    # cannot collide with any other MAC domain. The declaration is a
+    # configuration-integrity binding, not a credential.
+    ("gov/artifact_sweep.py", "_roots_decl_mac", 0):
+        "roots-declaration MAC; key from resolve_active_key() chokepoint, domain-separated",
 }
 
 

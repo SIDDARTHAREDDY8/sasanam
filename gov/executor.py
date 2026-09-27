@@ -942,6 +942,11 @@ class ToolExecutor:
         # (execute_approved does not sweep; run_artifact_sweep still
         # works when called directly). Wave-136: True sweeps the run
         # sandbox; {"watch_roots": [...]} also sweeps watch roots.
+        # Wave-140: {"declared_inventory": ...} adds the coverage-gap
+        # report. Wave-143: {"roots_declaration": <envelope from
+        # gov.artifact_sweep.declare_watch_roots>} adds watch-root
+        # declaration enforcement (LOUD on out-of-band changes,
+        # fail-closed unverified sweep).
         self.artifact_sweep = artifact_sweep
         # Wave-134 (row 9): cross-run framing-drift store,
         # operator-supplied. Opt-in: None = zero behavior change
@@ -3176,7 +3181,20 @@ class ToolExecutor:
         covering watch root is audited LOUD as a chained
         ``artifact_sweep_coverage_gap`` event plus one
         ``artifact_sweep_coverage_complete`` summary. Absent/empty
-        inventory = no report, zero behavior change.
+        inventory = no report, zero behavior change. Wave-143: when
+        the ``artifact_sweep`` opt-in dict carries a
+        ``"roots_declaration"`` envelope (from
+        ``gov.artifact_sweep.declare_watch_roots``), the effective
+        watch roots are compared against the last declared set BEFORE
+        the sweep: any out-of-band change (roots added/removed,
+        config edited directly) is audited LOUD as
+        ``artifact_sweep_roots_undeclared_change`` and the sweep is
+        treated as unpinned/unverified (fail-closed). The
+        ``artifact_sweep_complete`` event always carries
+        ``roots_verdict`` (``"declared"`` | ``"undeclared"`` |
+        ``"undeclared_change"`` | ``"unverifiable"``) and
+        ``roots_verified`` so a sweep is never silently presented as
+        a declared-roots sweep.
 
         Returns the findings list.
 
@@ -3190,6 +3208,10 @@ class ToolExecutor:
         watch_roots = ()
         if isinstance(self.artifact_sweep, dict):
             watch_roots = self.artifact_sweep.get("watch_roots", ()) or ()
+        # Wave-143: no declaration configured = the explicit
+        # downgrade (the sweep is not verified against any declared
+        # set); never silently presented as declared.
+        roots_verdict = "undeclared"
         try:
             if isinstance(self.artifact_sweep, dict):
                 declared = self.artifact_sweep.get("declared_inventory") \
@@ -3212,6 +3234,25 @@ class ToolExecutor:
                         audit=lambda ev: self.log.append(ev),
                         run_id=self.run_id,
                         pin_ttl_seconds=ttl)
+            if isinstance(self.artifact_sweep, dict):
+                roots_decl = self.artifact_sweep.get("roots_declaration")
+                if roots_decl:
+                    # Wave-143: declaration enforcement runs BEFORE
+                    # the sweep so an out-of-band change is LOUD even
+                    # when the sweep itself is clean. The effective
+                    # roots are compared against the last declared
+                    # set; any mismatch is audited LOUD as
+                    # artifact_sweep_roots_undeclared_change and the
+                    # sweep is treated as unpinned/unverified
+                    # (fail-closed). Events ride the chained audit
+                    # log (self.log). Inside the try: a bad envelope
+                    # is audited as artifact_sweep_failed like any
+                    # other sweep failure (never raises).
+                    roots_verdict = _artifact_sweep.\
+                        check_roots_declaration(
+                            watch_roots, roots_decl,
+                            audit=lambda ev: self.log.append(ev),
+                            run_id=self.run_id)["verdict"]
             findings, stats = _artifact_sweep.sweep_run_dir(
                 self.run_dir, self.artifacts, watch_roots=watch_roots)
         except Exception as e:  # noqa: BLE001 - sweep must not break runs
@@ -3247,6 +3288,15 @@ class ToolExecutor:
             "findings": stats["findings"],
             "skipped_unreadable": stats["skipped_unreadable"],
             "watch_roots": [w["root"] for w in stats["watch_roots"]],
+            # Wave-143: declaration-enforcement verdict. "declared" =
+            # the effective roots matched the last ceremony;
+            # "undeclared" = no declaration configured (explicit
+            # downgrade); "undeclared_change" / "unverifiable" = LOUD
+            # artifact_sweep_roots_undeclared_change emitted, the
+            # sweep is NOT verified against a declaration and must
+            # never be read as a declared-roots sweep.
+            "roots_verdict": roots_verdict,
+            "roots_verified": roots_verdict == "declared",
         })
         return findings
 

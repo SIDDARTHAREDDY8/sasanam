@@ -98,13 +98,38 @@ _REDIRECT_RE = re.compile(
 # "non-profit"/"Our non-profit partner..."), "mat" DROPPED (1 hit:
 # "yoga mat"); "ne" kept (0 realistic hits -- sole hit on the
 # contrived "ne'er-do-wells", a documented precision cost);
-# "pas"/"nicht"/"kein"/"keine"/"nahi" 0 hits. Four languages is a
-# start: full multilingual coverage is NOT claimed (German
-# inflection keinen/keinem/keiner misses; French ne...jamais/plus/rien
-# without "pas" misses; non-romanized scripts untouched).
+# "pas"/"nicht"/"kein"/"keine"/"nahi" 0 hits.
+# Wave-143: seeded inflection coverage on the same core. German
+# "kein" gains its inflected forms keinen/keinem/keiner/keines as
+# standalone words (word-boundary guarded: "keineswegs",
+# "keinerlei", "keinesfalls" do NOT cue -- measured 0 hits on the
+# wave-143 benign corpus; note "keinerlei" is genuine negation
+# semantics missed by design, a pinned residual). French gains the
+# discontinuous "ne ... jamais|plus|rien|aucun" paired pattern
+# (_FRENCH_NE_PAIR_SRC, embedded in _NEGATION_RE so every consumer of
+# the core picks it up -- no second word list): up to 8 intervening
+# words, including the elided "n'" (straight/curly apostrophe; the
+# elided form must start at whitespace so "'n'" in "rock 'n' roll"
+# cannot anchor it). Directional: "ne" must precede the particle --
+# "rien ... n'" does not cue (pinned miss). Bare "ne" still subsumes
+# the non-elided pairs. Measured precision on the wave-143 benign
+# corpus (9 sentences: de/en positive confirmations, keineswegs/
+# keinerlei lookalikes, plus/rien WITHOUT "ne", non-profit/yoga
+# mat/notable -- similarities 0.545-0.857, all at/above the gate):
+# 0 cue hits. Full multilingual coverage is NOT claimed
+# (non-romanized scripts untouched; full synonym replacement still
+# misses -- the p6 ceiling carries over).
+_FRENCH_NE_PAIR_SRC = (
+    r"(?:\bne\b|(?<!\S)n['\u2019]\w*)"   # "ne", or elided "n'"/"n'"
+    r"(?:\s+\S+){0,8}?"                   # up to 8 intervening words
+    r"\s+\b(jamais|plus|rien|aucun)\b"    # the second particle
+)
+_FRENCH_NE_PAIR_RE = re.compile(_FRENCH_NE_PAIR_SRC, re.IGNORECASE)
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not|no|stop|halt|"
-    r"cease|avoid|refrain|cancel|ne|pas|nicht|kein|keine|nahi)\b",
+    r"cease|avoid|refrain|cancel|ne|pas|nicht|kein|keine|keinen|"
+    r"keinem|keiner|keines|nahi)\b"
+    r"|" + _FRENCH_NE_PAIR_SRC,
     re.IGNORECASE,
 )
 
@@ -255,6 +280,11 @@ def _negated_verb(latest_text, tool):
         if any(tok.startswith(s) for s in stems):
             window = tokens[max(0, i - _NEGATION_WINDOW):i]
             if any(_NEGATION_RE.fullmatch(w) for w in window):
+                return True
+            # Same core, discontinuous form: the French "ne ... X"
+            # paired pattern cannot fullmatch a single token, so it
+            # is searched over the window text (wave-143).
+            if _FRENCH_NE_PAIR_RE.search(" ".join(window)):
                 return True
     return False
 

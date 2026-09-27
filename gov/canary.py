@@ -34,6 +34,14 @@ approval queue with the trip evidence attached, and raises
 :class:`CanaryTripHalt` — the run halts fail-closed. The audit/queue steps
 are best-effort; the halt is not.
 
+Wave-143 (row 13): hits are split by read observation — see
+``gov/unobserved_canary.py``. When the executor has a rare-token
+tracker installed, a hit with NO recorded governed read of the
+canary's source document emits a distinct LOUD
+``unobserved_canary_egress`` event (same fail-closed halt -- the read
+happened out-of-band). Without a tracker the distinction cannot be
+drawn and every hit keeps the ``canary_trip`` path above.
+
 Key invariant: near-zero false positives by design. Matching is exact
 (full-value, or substring for high-entropy values the agent demonstrably
 ingested) against per-run values; the previous run's canaries never match
@@ -77,6 +85,7 @@ __all__ = [
     "CanaryTripHalt",
     "plant_canaries",
     "make_canary_plant",
+    "CANARY_LABEL_ARTIFACTS",
     "scan_egress_attempt",
     "check_and_trip",
     "EGRESS_TOOLS",
@@ -249,6 +258,13 @@ class CanaryRegistry:
     Lives OUTSIDE the jail — the executor holds it, the agent never sees
     it. No method here takes a jail path; there is deliberately no API
     that could write registry data somewhere the agent can read.
+
+    PRIVACY CONTRACT: this registry holds ONLY planted FAKE values.
+    Never register real credentials, real hostnames, or real tokens
+    here — canaries are non-sensitive by design (honeytokens), and
+    consumers (egress scanning, audit labels) treat the contents as
+    attacker-visible. Real content belongs in blinded commitments
+    (see gov/taint_ledger.py), never in a detection registry.
     """
 
     def __init__(self):
@@ -385,6 +401,29 @@ def plant_canaries(jail_root, mint):
         "canary_count": len(mint.values()),
     }
     return env_additions, manifest
+
+
+#: Jail-relative artifacts each planted canary label is written to.
+#: Mirrors :func:`plant_canaries`' layout above -- keep the two in
+#: sync (pinned by tests/test_unobserved_canary.py::TestLabelMap).
+#: Labels with an empty tuple are REGISTERED tripwire-only: they are
+#: never written into the jail, so no governed read of them can ever
+#: exist and a hit is unobserved by construction. Consumed by
+#: gov/unobserved_canary.py (row-13 unobserved-canary egress).
+CANARY_LABEL_ARTIFACTS = {
+    "aws-key-0": (".aws/credentials", ".env"),
+    "aws-secret-0": (".aws/credentials", ".env"),
+    "aws-key-1": (),
+    "aws-secret-1": (),
+    "internal-host-0": ("etc/hosts",),
+    "internal-host-1": ("etc/hosts",),
+    "internal-host-2": ("etc/hosts",),
+    "github-token": ("config/service.conf",),
+    "slack-token": (),
+    "database-url": (".env", "config/service.conf"),
+    "internal-api-token": (".env",),
+    "stripe-secret": (".env",),
+}
 
 
 def make_canary_plant(mint):
@@ -647,11 +686,30 @@ def check_and_trip(executor, identity, tool, args):
     (3) raise :class:`CanaryTripHalt`. Steps 1-2 are best-effort — if the
     audit log or the queue raises, the halt still happens. Returns None
     when there is no hit (or no registry configured).
+
+    Row-13 unobserved-canary egress (wave-143): when the executor has a
+    rare-token tracker installed (the read-observation source of truth),
+    a hit with NO recorded governed read of the canary's source
+    document trips a DISTINCT loud event via
+    ``gov.unobserved_canary.trip_unobserved`` (``unobserved_canary_egress``)
+    instead -- the read happened out-of-band. Same fail-closed halt.
+    Without a tracker the read/unread distinction cannot be drawn, so
+    the ``canary_trip`` path below handles every hit (zero behavior
+    change vs wave-51).
     """
     hit = scan_egress_attempt(
         tool, args, getattr(executor, "canary_registry", None))
     if hit is None:
         return None
+
+    # Local import: gov.unobserved_canary imports this module at top
+    # level, so a module-level import here would cycle.
+    from . import unobserved_canary as _unobserved
+    tracker = getattr(executor, "rare_token_tracker", None)
+    if tracker is not None and not _unobserved.has_recorded_read(
+            tracker, getattr(identity, "agent_id", "?"), hit):
+        return _unobserved.trip_unobserved(executor, identity, tool,
+                                           args, hit)
 
     run_id = getattr(executor, "run_id", "?")
     agent_id = getattr(identity, "agent_id", "?")

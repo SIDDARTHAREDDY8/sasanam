@@ -376,6 +376,43 @@ four languages is a START, not full multilingual coverage (German
 inflection, French ne…jamais/plus/rien without "pas", non-romanized
 scripts all miss); the no-negation paraphrase ceiling (p6) is
 unchanged.
+**Wave-143 (2026-09-27) — German kein-inflection + French ne...sans-pas
+seeded; row stays PARTIAL.** The negation core
+(`gov.intent_slice._NEGATION_RE`, consumed unchanged by
+`gov.intent_ledger.similarity_countermand` — zero ledger logic
+changes) gains German `keinen`/`keinem`/`keiner`/`keines` as
+standalone words (word-boundary guarded: `keineswegs`/`keinerlei`/
+`keinesfalls` do NOT cue, measured) and the discontinuous French
+`ne ... jamais|plus|rien|aucun` paired pattern (up to 8 intervening
+words, incl. elided `n'` — the form where no standalone `ne` token
+exists; directional, ne-before-X only; bare `ne` still subsumes the
+non-elided pairs). The paired pattern source is embedded in
+`_NEGATION_RE` itself — one core, no second list — and
+`_negated_verb`'s pre-verb window searches it too. Break-first
+battery `evals/countermand_negation_inflection_probes.py` (written
+RED: pre-seam 4 HELD / 9 BREAK / 1 EXPECTED — the 4 inflections, the
+4 elided pairs, and the e2e German sweep broke exactly on the missing
+cue) = **13 HELD / 0 BREAK / 1 EXPECTED / 0 ERROR**, deterministic
+x2, both envs: inflected German countermands revoke at the
+similarity seam (0.706–0.750), elided French pairs revoke
+(0.632–0.706), the e2e German sweep revokes the grant via
+`approval_intent_changed` + `match_method="token-tversky"`, de/fr
+positive confirmations execute, and a 9-sentence benign corpus at or
+above gate similarity (0.545–0.857) yields 0 cue hits — measured
+precision 9/9 (`keineswegs`/`keinerlei` lookalikes, `plus`/`rien`
+without `ne`, non-profit/yoga-mat/notable all silent). The EXPECTED
+pins two genuine misses by design: `keinerlei` (real negation
+semantics, 0.750 similarity, missed by the word-boundary rule) and
+`rien ... n'` (directional miss, 0.571). `tests/test_intent_slice.py`
++8, `tests/test_intent_ledger.py` +6 (seam tests prove
+`similarity_countermand`/`record_intent` pick up the cues end-to-end
+through the shared core); adjacent batteries unchanged
+(paraphrase 0 BREAK/5 HELD, multilingual 9/9, cross-run 5/5,
+threshold all-HELD + p6 expected-divergence). Stated honestly: seeded
+inflection coverage is NOT complete multilingual negation
+(`keinerlei`/`keinesfalls` miss by design, the French pattern is
+directional, non-romanized scripts untouched); the no-negation
+paraphrase ceiling (p6) is unchanged.
 **Findings:** none filed. Next free: **F183**. Open findings: none.
 
 ### Row 8 — Monitor / governance-layer attacks (memo: PARTIAL → now: PARTIAL, stronger)
@@ -1042,6 +1079,42 @@ inventory was wise — a compromised executor WITH deployment-key
 access can still pin a malicious inventory; undeclared directories
 stay invisible. The residual MUTATES, it does not die.
 
+**Wave-143 (2026-09-27) — watch-root declaration ceremony landed;
+row stays PARTIAL.** The wave-136 sweep walked whatever watch roots
+it was *configured* with — a compromised operator path or a direct
+config edit could silently NARROW the roots and the sweep stayed
+quiet over the narrowed set. Now every watch-root configuration
+change goes through `gov/artifact_sweep.declare_watch_roots`: an
+audited, HMAC-pinned declaration envelope (operator identity, old
+root set → new root set, reason, declaration digest, key epoch; the
+declaration history is MAC-chained via `previous_digest`;
+anonymous declarations fail closed at ceremony time; no
+unsigned declarations). `check_roots_declaration` compares the
+EFFECTIVE roots against the last declared set: any out-of-band
+add/remove (or a forged/damaged/stale envelope) is audited LOUD as
+`artifact_sweep_roots_undeclared_change` and the sweep is treated as
+unpinned/unverified (fail-closed) — `ToolExecutor.run_artifact_sweep`
+(the real sweep path) runs the check BEFORE the sweep when the
+opt-in carries `"roots_declaration"` and stamps
+`artifact_sweep_complete` with `roots_verdict` / `roots_verified`,
+so a narrowed sweep is never silently presented as declared.
+`verify_declaration_chained` is the auditor path: a tampered
+ceremony event breaks the chain and fails LOUD. Break-first battery
+`evals/roots_declaration_probes.py` (RED: 1 HELD / 4 BREAK pre-seam)
+= **5 HELD / 0 BREAK**, both envs, deterministic ×2; 34 new unit
+tests at the public seams; adjacent suites unchanged (sweep 16/16,
+inventory-pin 34/34, coverage 16/16, w70 HMAC audit 11/11 with the
+lane's own new `hmac.new` site allowlisted with its custody story).
+**Honest ceilings:** this audits the watch-root *configuration*,
+not the sweeping — a compromised same-process executor can still
+lie about what it actually swept (the standing same-process
+residual); key custody underpins the ceremony chain like every
+other chained event (a key-holder can declare a
+malicious-but-authorized set); the declaration binds the CONFIGURED
+roots, it does not prove the declared set was wise, and undeclared
+directories stay invisible. **Row 12 stays PARTIAL** — the
+out-of-band-narrowing leg is now measured and LOUD, NOT closed.
+
 ### Row 13 — Zero-click exfil via trusted infrastructure (memo: PARTIAL → now: PARTIAL, stronger)
 Canaries + DLP + sterile windows + egress ledger (mechanism class covered);
 F128 CLOSED (canary/DLP non-string-arg blind spot); F139/F140 CLOSED
@@ -1213,6 +1286,49 @@ failure skips it silently); idempotence with the explicit path
 holds only when source IDs match. **Row 13 stays PARTIAL** — the
 explicit-harness path is now backstopped by the governed boundary,
 NOT closed.
+**2026-09-27 unobserved-canary egress (wave-143 lane 1, no closure):**
+the "reads that happen out-of-band are invisible to the rare-token
+tracker" residual gets a detection-without-observation answer at the
+canary seam: `gov/unobserved_canary.py` splits canary hits by read
+observation. On any egress the planted values are scanned
+(`scan_egress_attempt`, reused); a hit with NO recorded governed
+read of the canary's source document (`gov/canary.py::
+CANARY_LABEL_ARTIFACTS` label→artifact map, sync-pinned by unit
+test) now emits a LOUD `unobserved_canary_egress` audit event
+(distinct from `canary_trip`; label/kind/field only, never the
+value), escalates to the approval queue, and halts fail-closed via
+the SAME `CanaryTripHalt` (blocking matches the existing canary
+verdict — an unread canary on the egress path is exfiltration
+intent by construction; flagging would be a downgrade). A hit WITH
+a recorded read keeps the existing `canary_trip` path (no duplicate
+event); without a rare-token tracker installed every hit keeps the
+existing path (zero behavior change vs wave-51). The read query
+consults per-run recorded source ids (all reads, incl. zero-token)
+plus the taint ledger's live document ids when attached
+(cross-run; doc ids only, never token strings); registered-but-never-
+planted values (`aws-key-1`, `aws-secret-1`, `slack-token`) are
+unobserved by construction. Battery
+`evals/unobserved_canary_probes.py`: **5 HELD / 0 BREAK / 0 FP / 1
+EXPECTED / 0 ERROR** (deterministic ×2, both deployment envs;
+pre-seam red: u1/u5 broke exactly on the missing seam) — u1
+zero-read exfil → unobserved event + halt, exactly one
+canary-family event; u2 governed `read_file` of the planted source
+first → `canary_trip` only; u3 benign silent; u4 paraphrase beyond
+recognition → pinned EXPECTED miss; u5 never-planted value →
+unobserved by construction; u6 explicit read with bare artifact id
+→ `canary_trip` only. `tests/test_unobserved_canary.py`: 22/22;
+adjacent (w51/w63/w52 canary, rare_token, taint, read_then_egress,
+read_observation, egress_content, egress_proxy) all green; the
+wave-136/137/139 batteries reproduce their recorded numbers.
+**Honest ceilings:** paraphrased canaries miss (exact-only
+matching, same residual class as DLP F8); an exfil channel the
+egress proxy never sees is still invisible; registry TTL/purge is
+operator policy; without the tracker the distinction cannot be
+drawn; the ledger consult covers token-bearing reads only.
+**Row 13 stays PARTIAL** — out-of-band acquisition of a canary now
+produces a LOUD, halting, separately-typed signal (detection
+without observation), but the paraphrase class and unobserved
+exfil channels remain uncovered by design.
 
 ### Row 14 — MCP / tool-plane poisoning at discovery (memo: PARTIAL → now: PARTIAL, stronger)
 F143 CLOSED (unregistered skill IDs fail-open → now denied with `skill-watch`

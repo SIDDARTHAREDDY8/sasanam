@@ -540,6 +540,85 @@ class SimilaritySignalSeamTest(unittest.TestCase):
         self.assertGreaterEqual(recs[0]["similarity_score"], 0.5)
 
 
+class NegationInflectionSeamTest(unittest.TestCase):
+    """Wave-143, row-7: similarity_countermand picks up the extended
+    negation core (German kein-inflections, French ne...X paired
+    pattern incl. elided n') with NO ledger change -- the seam reuses
+    gov.intent_slice._NEGATION_RE. Verified end-to-end through
+    record_intent, not assumed."""
+
+    GRANT = "Send the Q3 report to the vendor."
+
+    def test_german_inflections_fire_through_shared_core(self):
+        for msg in ("Keinen Q3 report an den vendor senden.",
+                    "Keinem vendor den Q3 report senden.",
+                    "Keiner der vendors erhaelt den Q3 report.",
+                    "Keines der Q3 reports an den vendor senden."):
+            fired, idx, score = similarity_countermand(
+                msg, [self.GRANT], threshold=0.5)
+            self.assertTrue(fired, msg)
+            self.assertEqual(idx, 0)
+            self.assertGreaterEqual(score, 0.5)
+
+    def test_french_elided_pairs_fire_through_shared_core(self):
+        for msg in ("Je n'enverrai jamais ce Q3 report au vendor.",
+                    "N'envoyez plus ce Q3 report au vendor.",
+                    "N'envoyez rien au vendor concernant le Q3 report.",
+                    "N'envoyez aucun Q3 report au vendor."):
+            fired, idx, score = similarity_countermand(
+                msg, [self.GRANT], threshold=0.5)
+            self.assertTrue(fired, msg)
+            self.assertGreaterEqual(score, 0.5)
+
+    def test_record_intent_marks_inflected_countermand(self):
+        led = IntentLedger()
+        led.record_intent("op", self.GRANT)
+        r = led.record_intent(
+            "op", "Keinen Q3 report an den vendor senden.")
+        self.assertTrue(r["similarity_countermand"])
+        self.assertTrue(r["is_countermand"])
+        self.assertEqual(r["similarity_anchor"], self.GRANT)
+        self.assertGreaterEqual(r["similarity_score"], 0.5)
+
+    def test_record_intent_marks_elided_french_countermand(self):
+        led = IntentLedger()
+        led.record_intent("op", self.GRANT)
+        r = led.record_intent(
+            "op", "N'envoyez jamais ce Q3 report au vendor.")
+        self.assertTrue(r["similarity_countermand"])
+        self.assertTrue(r["is_countermand"])
+
+    def test_lookalikes_do_not_fire(self):
+        # kein-substring words and unpaired French particles stay
+        # silent even at/above gate similarity. (similarity_countermand
+        # short-circuits to 0.0 when the cue misses, so the raw
+        # similarity is measured directly to keep the probe
+        # meaningful.)
+        for msg in ("Der Q3 report ist keineswegs fertig; bitte "
+                    "senden Sie ihn an den vendor.",
+                    "Es gibt keinerlei Probleme; senden Sie den Q3 "
+                    "report an den vendor.",
+                    "Il y a de plus en plus de Q3 reports pour le "
+                    "vendor.",
+                    "Merci pour le Q3 report; rien d'autre pour le "
+                    "vendor."):
+            self.assertGreaterEqual(target_similarity(msg, self.GRANT),
+                                    0.5, msg)
+            fired, _, _ = similarity_countermand(
+                msg, [self.GRANT], threshold=0.5)
+            self.assertFalse(fired, msg)
+
+    def test_positive_confirmations_do_not_fire(self):
+        for msg in ("Ja, bitte den Q3 report an den vendor senden.",
+                    "Oui, envoyez ce Q3 report au vendor s'il vous "
+                    "plait."):
+            self.assertGreaterEqual(target_similarity(msg, self.GRANT),
+                                    0.5, msg)
+            fired, _, _ = similarity_countermand(
+                msg, [self.GRANT], threshold=0.5)
+            self.assertFalse(fired, msg)
+
+
 class SimilarityAfterSeamTest(unittest.TestCase):
     """Wave-136, row-7: similarity_countermands_after grant
     attribution at the execution boundary."""

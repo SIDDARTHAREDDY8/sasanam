@@ -113,6 +113,31 @@ ceremony (who pins, when, audited) is the control, not the MAC.
 The pin binds the DECLARED inventory; undeclared directories stay
 invisible (the row-12 undeclared ceiling persists).
 
+Watch-root declaration ceremony (wave-143): the wave-136 sweep walks
+whatever watch roots it is CONFIGURED with -- a compromised operator
+path or a direct config edit can silently NARROW the roots and the
+sweep stays quiet over the narrowed set. ``declare_watch_roots``
+binds each watch-root configuration change to an audited,
+HMAC-pinned declaration envelope (operator identity, old root set ->
+new root set, reason, declaration digest, key epoch -- the declaration
+history is MAC-chained via previous_digest); ``check_roots_declaration``
+compares the EFFECTIVE roots against the last declared set, and any
+out-of-band change (roots added/removed, config edited directly) is
+audited LOUD as ``artifact_sweep_roots_undeclared_change`` with the
+sweep treated as unpinned/unverified (fail-closed -- never silently
+swept as if declared). The executor's ``run_artifact_sweep`` runs the
+check BEFORE the sweep when the opt-in carries ``"roots_declaration"``
+and stamps the complete event with ``roots_verdict`` /
+``roots_verified``. ``verify_declaration_chained`` is the auditor
+path: a tampered ceremony event breaks the chain and fails LOUD.
+Honest ceilings: this audits the watch-root *configuration*, not the
+sweeping -- a compromised same-process executor can still lie about
+what it actually swept (the standing same-process residual); key
+custody underpins the ceremony chain like every other chained event
+(a key-holder can declare a malicious-but-authorized set); the
+declaration binds the CONFIGURED roots, it does not prove the
+declared set was wise, and undeclared directories stay invisible.
+
 $0, stdlib only. Deterministic.
 """
 
@@ -135,6 +160,11 @@ __all__ = [
     "report_coverage_gaps",
     "pin_inventory",
     "verify_inventory_pin",
+    "declare_watch_roots",
+    "verify_roots_declaration",
+    "check_roots_declaration",
+    "verify_declaration_chained",
+    "declaration_digest",
     "WatchRootError",
     "SWEEP_FINDING_EVENT",
     "SWEEP_COMPLETE_EVENT",
@@ -142,6 +172,9 @@ __all__ = [
     "COVERAGE_COMPLETE_EVENT",
     "INVENTORY_UNVERIFIABLE_EVENT",
     "INVENTORY_PINNED_EVENT",
+    "ROOTS_DECLARED_EVENT",
+    "ROOTS_UNDECLARED_CHANGE_EVENT",
+    "ROOTS_DECLARATION_VERSION",
     "EXPLICIT_KEY_EPOCH",
     "inventory_digest",
     "PINNED_INVENTORY_VERSION",
@@ -1040,3 +1073,567 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
         for ev in events:
             audit(ev)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Watch-root declaration ceremony (wave-143): operator-declared watch
+# roots vs effective watch roots. The wave-136 sweep walks whatever
+# watch roots it is CONFIGURED with -- a compromised operator path or
+# a direct config edit can silently NARROW the roots and the sweep
+# stays quiet over the narrowed set. The declaration ceremony binds
+# each watch-root configuration change to an audited, HMAC-pinned
+# declaration (``declare_watch_roots``); the sweep path compares the
+# EFFECTIVE roots against the last declared set
+# (``check_roots_declaration``), and any out-of-band change (roots
+# added/removed, config edited directly) is audited LOUD as
+# ``artifact_sweep_roots_undeclared_change`` with the sweep treated
+# as unpinned/unverified -- fail-closed, never silently sweeping a
+# narrowed set as if it were the declared one. The executor's
+# ``run_artifact_sweep`` (the real sweep path) runs the check BEFORE
+# the sweep when the ``artifact_sweep`` opt-in carries a
+# ``"roots_declaration"`` envelope, and stamps the
+# ``artifact_sweep_complete`` event with ``roots_verdict`` /
+# ``roots_verified``.
+#
+# Honest ceilings (documented, not hidden): this audits the watch-root
+# *configuration*, not the sweeping. A compromised same-process
+# executor can still lie about what it actually swept (pass different
+# roots to the sweep than to the declaration check, skip the check,
+# or forge either event) -- the standing row-12 same-process
+# residual. Key custody underpins the ceremony chain exactly like
+# every other chained event: a key-holder can declare a
+# malicious-but-authorized set and it verifies cleanly; the ceremony
+# (who declared what, when -- audited) is the control, not the MAC.
+# The declaration binds the CONFIGURED roots; it does not prove the
+# declared set was wise (a narrow set declared honestly is the
+# operator's problem), and undeclared directories stay invisible.
+# ---------------------------------------------------------------------------
+
+#: Wave-143: chained ceremony event recording one watch-root
+#: declaration: operator identity, old root set -> new root set,
+#: reason, declaration digest, key epoch, timestamp.
+ROOTS_DECLARED_EVENT = "artifact_sweep_roots_declared"
+
+#: Wave-143: LOUD enforcement event when the effective watch-root set
+#: differs from the last declared set (roots added/removed
+#: out-of-band, config edited directly), or when the declaration
+#: envelope itself is unverifiable. Fail-closed: the sweep over the
+#: effective roots is treated as unpinned/unverified.
+ROOTS_UNDECLARED_CHANGE_EVENT = "artifact_sweep_roots_undeclared_change"
+
+#: Wave-143: roots-declaration envelope version.
+ROOTS_DECLARATION_VERSION = "artifact-roots-declaration/1.0"
+
+#: Wave-143: HMAC domain separation for roots declarations. A
+#: declaration MAC is only ever valid as a roots declaration -- it
+#: cannot collide with the inventory-pin MAC domain or any other MAC
+#: domain in the repo.
+_ROOTS_DECL_DOMAIN = b"artifact-roots-declaration-v1"
+
+#: Wave-143: domain separation for the declaration digest carried in
+#: the ceremony event. The digest is a public commitment (no key),
+#: recomputable by any holder of the envelope.
+_ROOTS_DIGEST_DOMAIN = b"artifact-roots-declaration-digest-v1"
+
+
+def _roots_decl_mac(key, body):
+    """HMAC-SHA256 over the canonical roots-declaration body.
+
+    Single key-material site for declarations (see the w70 HMAC
+    chokepoint allowlist): the key is
+    ``gov.keyprovider.resolve_active_key()`` output -- the wave-69/81
+    guarded chokepoint (explicit provisioning, fail-closed, no dev
+    fallback) -- or an explicit caller override; never hard-coded,
+    never committed. Domain-separated via ``_ROOTS_DECL_DOMAIN``.
+    """
+    return hmac.new(key, _ROOTS_DECL_DOMAIN + b"\x00" + body,
+                    sha256).hexdigest()
+
+
+def _roots_decl_body(version, roots, previous_roots, previous_digest,
+                     operator_id, reason, declared_at, key_epoch):
+    """Canonical bytes covered by the roots-declaration MAC.
+
+    The old -> new transition is MAC-bound: ``previous_roots`` and
+    the ``previous_digest`` (the digest of the prior envelope, ""
+    for a first declaration) chain declarations into a
+    tamper-evident declaration history -- rewriting history breaks
+    the MAC. The key epoch is MAC-bound like the wave-142 inventory
+    pins: a declaration presented after the epoch rotated cannot be
+    freshened by rewriting its ``key_epoch`` field.
+    """
+    return canonical({"roots_declaration": version,
+                      "roots": list(roots),
+                      "previous_roots": list(previous_roots),
+                      "previous_digest": previous_digest,
+                      "operator_id": operator_id,
+                      "reason": reason,
+                      "declared_at": declared_at,
+                      "key_epoch": key_epoch}).encode("utf-8")
+
+
+def _roots_decl_body_digest(body):
+    """Domain-separated SHA-256 over the canonical declaration body.
+
+    The public declaration commitment carried in the ceremony event:
+    no key material involved, recomputable by any holder of the
+    envelope.
+    """
+    return sha256(_ROOTS_DIGEST_DOMAIN + b"\x00" + body).hexdigest()
+
+
+def declaration_digest(envelope):
+    """Recompute the ceremony declaration digest for an envelope.
+
+    Raises ValueError on a malformed envelope (fail-fast for
+    auditors; this is the recomputation path, not the fail-closed
+    verification path). The digest binds the exact (roots,
+    previous_roots, previous_digest, operator, reason, declared_at,
+    key_epoch) the ceremony committed to.
+    """
+    if not isinstance(envelope, dict):
+        raise ValueError("roots declaration must be a dict")
+    version = envelope.get("roots_declaration")
+    roots = envelope.get("roots")
+    previous_roots = envelope.get("previous_roots")
+    previous_digest = envelope.get("previous_digest")
+    operator_id = envelope.get("operator_id")
+    reason = envelope.get("reason")
+    declared_at = envelope.get("declared_at")
+    key_epoch = envelope.get("key_epoch")
+    if (version != ROOTS_DECLARATION_VERSION
+            or not isinstance(roots, list)
+            or not all(isinstance(e, str) for e in roots)
+            or not isinstance(previous_roots, list)
+            or not all(isinstance(e, str) for e in previous_roots)
+            or not isinstance(previous_digest, str)
+            or not isinstance(operator_id, str) or not operator_id
+            or not isinstance(reason, str)
+            or not isinstance(declared_at, str) or not declared_at
+            or not isinstance(key_epoch, str) or not key_epoch):
+        raise ValueError("malformed roots-declaration envelope")
+    resolved = [_resolve_declared(e) for e in roots]
+    prev_resolved = [_resolve_declared(e) for e in previous_roots]
+    return _roots_decl_body_digest(
+        _roots_decl_body(version, resolved, prev_resolved,
+                         previous_digest, operator_id, reason,
+                         declared_at, key_epoch))
+
+
+def declare_watch_roots(roots, *, previous=None, operator_id="",
+                        reason="", hmac_key=None, audit=None,
+                        run_id=None):
+    """Declaration ceremony: bind a watch-root configuration change.
+
+    ``roots``: the operator's intended watch-root set (str/PathLike
+    entries). Entries are RESOLVED (realpath) for the declaration --
+    they are NEVER walked or crawled here. A non-path entry raises
+    ValueError fail-closed at ceremony time (a malformed declaration
+    must be LOUD at setup, not a silent gap at sweep time).
+    Duplicates are dropped (first-seen order kept).
+
+    ``previous``: the prior declaration envelope (or None for a
+    first declaration). The old -> new transition (previous roots
+    and the previous envelope's digest) is MAC-bound into the new
+    declaration, chaining declarations into a tamper-evident
+    history. A malformed ``previous`` raises ValueError.
+
+    ``operator_id``: REQUIRED non-empty -- the ceremony records who
+    declared. Anonymous declarations are the attack shape this
+    ceremony exists to record, so they fail closed at ceremony time.
+
+    ``reason``: recorded verbatim in the envelope and the ceremony
+    event (may be empty).
+
+    ``hmac_key``: explicit key override (bytes); when None, the
+    deployment key comes from
+    ``gov.keyprovider.resolve_active_key()`` and an unprovisioned
+    deployment raises ``NoKeyConfiguredError`` fail-closed -- the
+    ceremony requires a key, there is no unsigned declaration.
+
+    ``audit``: optional callable taking one event dict (e.g. the
+    executor's chained ``log.append``). When given, the ceremony
+    emits one ``artifact_sweep_roots_declared`` event recording the
+    operator identity, old root set -> new root set (with
+    added/removed), reason, declaration digest, key epoch, and
+    timestamp. ``run_id`` is stamped into the event.
+
+    Returns the declaration envelope::
+
+        {"roots_declaration": "artifact-roots-declaration/1.0",
+         "roots": [<resolved paths>],
+         "previous_roots": [<resolved paths>],
+         "previous_digest": <digest of the prior envelope | "">,
+         "operator_id": <who declared>,
+         "reason": <why>,
+         "declared_at": <ISO-8601>,
+         "key_epoch": <epoch at declaration time>,
+         "declaration": <hex HMAC-SHA256>}
+
+    The operator hands this envelope (not the bare list) to the
+    executor as ``artifact_sweep={"roots_declaration": envelope,
+    "watch_roots": [...]}``.
+
+    Honest ceiling (documented, not hidden): the ceremony proves WHO
+    declared WHAT WHEN under WHICH key epoch -- not that the
+    declared set was wise. A malicious-but-authorized declaration by
+    a key-holder verifies cleanly; that is the operator's problem.
+    The control is the ceremony, stated plainly.
+    """
+    if not isinstance(operator_id, str) or not operator_id.strip():
+        raise ValueError(
+            "operator_id is required: anonymous watch-root "
+            "declarations are the attack shape this ceremony exists "
+            "to record")
+    if hmac_key is None:
+        key_bytes, key_epoch = _keyprovider.resolve_active_key()
+    else:
+        key_bytes = bytes(hmac_key)
+        if not key_bytes:
+            raise ValueError("hmac_key must be non-empty bytes")
+        key_epoch = EXPLICIT_KEY_EPOCH
+    resolved = []
+    for entry in roots or ():
+        if not isinstance(entry, (str, os.PathLike)):
+            raise ValueError(
+                "declared watch roots must be paths, got %r"
+                % (entry,))
+        rp = _resolve_declared(entry)
+        if rp not in resolved:
+            resolved.append(rp)
+    previous_roots = []
+    previous_digest = ""
+    if previous is not None:
+        if (not isinstance(previous, dict)
+                or previous.get("roots_declaration")
+                != ROOTS_DECLARATION_VERSION):
+            raise ValueError(
+                "previous must be a prior roots-declaration envelope")
+        previous_roots = [_resolve_declared(e)
+                          for e in (previous.get("roots") or ())]
+        previous_digest = declaration_digest(previous)
+    declared_at = _utcnow_iso()
+    op = operator_id.strip()
+    rsn = reason if isinstance(reason, str) else ""
+    body = _roots_decl_body(ROOTS_DECLARATION_VERSION, resolved,
+                            previous_roots, previous_digest, op, rsn,
+                            declared_at, key_epoch)
+    envelope = {"roots_declaration": ROOTS_DECLARATION_VERSION,
+                "roots": resolved,
+                "previous_roots": previous_roots,
+                "previous_digest": previous_digest,
+                "operator_id": op,
+                "reason": rsn,
+                "declared_at": declared_at,
+                "key_epoch": key_epoch,
+                "declaration": _roots_decl_mac(key_bytes, body)}
+    if audit is not None:
+        added = [r for r in resolved if r not in previous_roots]
+        removed = [r for r in previous_roots if r not in resolved]
+        audit({"event": ROOTS_DECLARED_EVENT,
+               "run_id": run_id,
+               "operator_id": op,
+               "old_roots": list(previous_roots),
+               "new_roots": list(resolved),
+               "added": added,
+               "removed": removed,
+               "reason": rsn,
+               "declared_at": declared_at,
+               "key_epoch": key_epoch,
+               "declaration_digest": _roots_decl_body_digest(body),
+               "declaration_version": ROOTS_DECLARATION_VERSION,
+               "ts": _utcnow_iso()})
+    return envelope
+
+
+def verify_roots_declaration(envelope, *, hmac_key=None,
+                             current_epoch=None):
+    """Verify a roots-declaration envelope.
+
+    Returns ``(True, "")`` when the declaration MAC recomputes over
+    the presented (roots, previous_roots, previous_digest,
+    operator_id, reason, declared_at, key_epoch) and the
+    declaration's key epoch is the CURRENT key epoch, else
+    ``(False, reason)``. NEVER raises on malformed input -- a forged
+    or damaged declaration is a verification FAILURE (fail-closed,
+    LOUD at the check layer), not an exception. A key that cannot be
+    resolved (unprovisioned deployment, empty override) also fails
+    closed: without the key the declaration is unverifiable, never
+    trusted.
+
+    Staleness is fail-closed: a declaration whose ``key_epoch``
+    differs from the current epoch verifies as
+    ``stale_declaration_epoch`` -- LOUD at the check layer, treated
+    as unverifiable. The epoch check runs AFTER the MAC check: the
+    presented epoch is only trustworthy once the MAC proves the
+    declaration is genuine. ``current_epoch`` overrides the resolved
+    current epoch (tests/probes); when None it is resolved from the
+    key provider (or ``"explicit-override"`` for an ``hmac_key``
+    override).
+    """
+    if not isinstance(envelope, dict):
+        return (False, "roots declaration must be a dict, got %s"
+                % type(envelope).__name__)
+    version = envelope.get("roots_declaration")
+    if version != ROOTS_DECLARATION_VERSION:
+        return (False, "unknown roots-declaration version %r"
+                % (version,))
+    roots = envelope.get("roots")
+    if (not isinstance(roots, list)
+            or not all(isinstance(e, str) for e in roots)):
+        return (False, "declared roots list is malformed")
+    declared_at = envelope.get("declared_at")
+    if not isinstance(declared_at, str) or not declared_at:
+        return (False, "declared_at is missing")
+    key_epoch = envelope.get("key_epoch")
+    if not isinstance(key_epoch, str) or not key_epoch:
+        return (False, "key_epoch is missing: the declaration predates "
+                "the wave-143 ceremony (or was tampered with) -- "
+                "re-declare the watch roots")
+    mac = envelope.get("declaration")
+    if not isinstance(mac, str) or not mac:
+        return (False, "declaration MAC is missing")
+    try:
+        if hmac_key is None:
+            key_bytes, resolved_epoch = _keyprovider.resolve_active_key()
+        else:
+            key_bytes = bytes(hmac_key)
+            if not key_bytes:
+                raise ValueError("hmac_key must be non-empty bytes")
+            resolved_epoch = EXPLICIT_KEY_EPOCH
+    except Exception as e:  # noqa: BLE001 - fail closed, never raise
+        return (False, "key unavailable for verification: %s: %s"
+                % (type(e).__name__, e))
+    try:
+        prev_roots = envelope.get("previous_roots") or []
+        body = _roots_decl_body(
+            version,
+            [_resolve_declared(e) for e in roots],
+            [_resolve_declared(e) for e in prev_roots
+             if isinstance(e, str)],
+            envelope.get("previous_digest") or "",
+            envelope.get("operator_id") or "",
+            envelope.get("reason") or "",
+            declared_at, key_epoch)
+    except Exception as e:  # noqa: BLE001 - fail closed, never raise
+        return (False, "declaration body malformed: %s: %s"
+                % (type(e).__name__, e))
+    expected = _roots_decl_mac(key_bytes, body)
+    if not hmac.compare_digest(expected, mac):
+        return (False, "declaration mismatch: the declared watch roots "
+                "do not match their declaration MAC (roots, operator, "
+                "reason, or declaration history rewritten -- or "
+                "forged)")
+    # The MAC verified: the presented key_epoch is now authenticated.
+    now_epoch = (resolved_epoch if current_epoch is None
+                 else current_epoch)
+    if key_epoch != now_epoch:
+        return (False, "stale_declaration_epoch: the declaration was "
+                "made under key epoch %r but the current key epoch is "
+                "%r -- the deployment key rotated (or the declaration "
+                "was moved across deployments). Re-declare the watch "
+                "roots under the current key epoch."
+                % (key_epoch, now_epoch))
+    return (True, "")
+
+
+def _untrusted_declared_watch_roots(envelope):
+    """Best-effort resolved roots from an UNVERIFIED declaration.
+
+    Used only to shape the fail-closed report: entries that are not
+    strings are dropped (they cannot be trusted or even resolved).
+    Never raises.
+    """
+    out = []
+    try:
+        roots = envelope.get("roots")
+    except AttributeError:
+        return out
+    if not isinstance(roots, list):
+        return out
+    for entry in roots:
+        if isinstance(entry, str) and entry:
+            try:
+                out.append(_resolve_declared(entry))
+            except Exception:  # noqa: BLE001 - drop, never raise
+                continue
+    return out
+
+
+def check_roots_declaration(configured_roots, declaration, *,
+                            audit=None, run_id=None, hmac_key=None,
+                            current_epoch=None):
+    """Enforcement: compare the effective watch-root set against the
+    last declared set.
+
+    ``configured_roots``: the watch roots the sweep will actually
+    walk -- the same ``(root, baseline)`` tuples ``sweep_run_dir``
+    takes (or plain root paths). A non-path entry raises ValueError
+    fail-closed (a mis-shaped configured root must never silently
+    shrink the comparison).
+
+    ``declaration``: the envelope from ``declare_watch_roots``, or
+    None when no declaration is configured. None -> verdict
+    ``"undeclared"`` with no events: the explicit downgrade, never
+    silently treated as declared.
+
+    Returns a report dict::
+
+        {"verdict": "declared" | "undeclared" | "undeclared_change"
+                    | "unverifiable",
+         "declared_roots": [...], "effective_roots": [...],
+         "added": [...], "removed": [...],
+         "reason": <"" when declared/undeclared>,
+         "events": [emitted event dicts]}
+
+    - ``"declared"``: the effective set equals the declared set --
+      quiet, zero events.
+    - ``"undeclared_change"``: roots were added/removed out-of-band
+      (or the config was edited directly) -- one LOUD
+      ``artifact_sweep_roots_undeclared_change`` event naming the
+      added/removed roots. Fail-closed: the sweep over the effective
+      roots is unpinned/unverified, never silently swept as if it
+      were the declared set.
+    - ``"unverifiable"``: the declaration envelope failed
+      verification (forged, damaged, stale key epoch, or key
+      unavailable) -- one LOUD
+      ``artifact_sweep_roots_undeclared_change`` event; the sweep is
+      unverified.
+
+    ``audit``: optional callable taking each emitted event dict
+    (e.g. the executor's chained ``log.append``); when None the
+    events are only returned in the report.
+    """
+    effective = _coverage_roots(configured_roots)
+    if declaration is None:
+        return {"verdict": "undeclared",
+                "declared_roots": [],
+                "effective_roots": list(effective),
+                "added": [], "removed": [],
+                "reason": ("no watch-root declaration configured: the "
+                           "sweep is not verified against any declared "
+                           "set"),
+                "events": []}
+    ok, reason = verify_roots_declaration(
+        declaration, hmac_key=hmac_key, current_epoch=current_epoch)
+    if not ok:
+        declared = _untrusted_declared_watch_roots(declaration)
+        ev = {"event": ROOTS_UNDECLARED_CHANGE_EVENT,
+              "severity": "LOUD",
+              "flag": "undeclared_roots_change",
+              "run_id": run_id,
+              "declared_roots": declared,
+              "effective_roots": list(effective),
+              "added": [],
+              "removed": [],
+              "reason": ("WATCH ROOTS UNVERIFIABLE: the watch-root "
+                         "declaration envelope failed verification "
+                         "(%s) -- the effective watch-root set cannot "
+                         "be checked against a trusted declaration. "
+                         "The sweep over these roots is UNVERIFIED "
+                         "(fail-closed): it must never be read as a "
+                         "declared-roots sweep. Re-declare the watch "
+                         "roots through the declaration ceremony."
+                         % reason),
+              "ts": _utcnow_iso()}
+        events = [ev]
+        if audit is not None:
+            audit(ev)
+        return {"verdict": "unverifiable",
+                "declared_roots": declared,
+                "effective_roots": list(effective),
+                "added": [], "removed": [],
+                "reason": reason,
+                "events": events}
+    declared_set = set(declaration["roots"])
+    effective_set = set(effective)
+    added = sorted(effective_set - declared_set)
+    removed = sorted(declared_set - effective_set)
+    if not added and not removed:
+        return {"verdict": "declared",
+                "declared_roots": sorted(declared_set),
+                "effective_roots": list(effective),
+                "added": [], "removed": [],
+                "reason": "",
+                "events": []}
+    ev = {"event": ROOTS_UNDECLARED_CHANGE_EVENT,
+          "severity": "LOUD",
+          "flag": "undeclared_roots_change",
+          "run_id": run_id,
+          "declared_roots": sorted(declared_set),
+          "effective_roots": list(effective),
+          "added": added,
+          "removed": removed,
+          "reason": ("WATCH ROOTS UNDECLARED CHANGE: the effective "
+                     "watch-root set differs from the last declared "
+                     "set (added: %s; removed: %s) -- roots were "
+                     "added/removed out-of-band or the configuration "
+                     "was edited directly. The sweep over these roots "
+                     "is UNVERIFIED (fail-closed): a narrowed set must "
+                     "never be swept as if it were the declared one. "
+                     "Re-declare through the ceremony or restore the "
+                     "declared configuration."
+                     % (", ".join(added) if added else "none",
+                        ", ".join(removed) if removed else "none")),
+          "ts": _utcnow_iso()}
+    events = [ev]
+    if audit is not None:
+        audit(ev)
+    return {"verdict": "undeclared_change",
+            "declared_roots": sorted(declared_set),
+            "effective_roots": list(effective),
+            "added": added,
+            "removed": removed,
+            "reason": ("effective roots differ from declared: added=%s "
+                       "removed=%s" % (added, removed)),
+            "events": events}
+
+
+def verify_declaration_chained(log_path, envelope):
+    """Auditor path: confirm a declaration's ceremony event is present
+    in the chained audit log and the chain verifies end-to-end.
+
+    Returns ``(True, "")`` when a chained
+    ``artifact_sweep_roots_declared`` event carrying this
+    declaration's digest exists AND the audit chain verifies.
+    Returns ``(False, reason)`` -- LOUD, unmissable -- otherwise: a
+    tampered or removed ceremony event breaks the chain, so
+    tampering fails loudly, never silently. Never raises on
+    unreadable or malformed logs: an unreadable log is a
+    verification FAILURE (fail-closed), not an exception.
+    """
+    # Lazy import: gov.log must never import this module (cycle).
+    from .log import read_entries, verify_chain
+    try:
+        digest = declaration_digest(envelope)
+    except ValueError as e:
+        return (False, "LOUD: cannot confirm a malformed declaration "
+                "envelope: %s" % (e,))
+    try:
+        entries = read_entries(log_path)
+    except Exception as e:  # noqa: BLE001 - fail closed, never raise
+        return (False, "LOUD: audit log unreadable -- the declaration "
+                "ceremony cannot be confirmed: %s: %s"
+                % (type(e).__name__, e))
+    found = [e for e in entries
+             if isinstance(e, dict)
+             and e.get("event") == ROOTS_DECLARED_EVENT
+             and e.get("declaration_digest") == digest]
+    if not found:
+        return (False, "LOUD: no chained %s ceremony event matches "
+                "declaration digest %s... -- the declaration was never "
+                "ceremonially recorded, or the ceremony event was "
+                "removed." % (ROOTS_DECLARED_EVENT, digest[:12]))
+    try:
+        ok, broken_seq, _count = verify_chain(str(log_path))
+    except Exception as e:  # noqa: BLE001 - fail closed, never raise
+        return (False, "LOUD: audit chain verification errored: %s: %s "
+                "-- treating the ceremony as unconfirmed."
+                % (type(e).__name__, e))
+    if not ok:
+        return (False, "LOUD: audit chain BROKEN at seq %s -- the %s "
+                "ceremony event (or a later entry) was tampered with "
+                "or removed. The declaration is NOT confirmed."
+                % (broken_seq, ROOTS_DECLARED_EVENT))
+    return (True, "")
+
