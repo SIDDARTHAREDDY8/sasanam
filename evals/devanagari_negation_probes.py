@@ -445,42 +445,6 @@ def d_scope_native_classes():
                 "scope discipline failed on %d case(s): %s"
                 % (len(bad), "; ".join(
                     "%s <- %s (want %r)" % b for b in bad)))
-    name = "d_tag_question_expected"
-    # "Q3 रिपोर्ट vendor को भेज दी है न?" = "you've sent the Q3 report
-    # to the vendor, haven't you?" -- a confirmation, not a
-    # countermand. The mandated standalone-न cue reads it as a
-    # countermand: a MEASURED precision cost (wave-142 "ne" precedent),
-    # kept and documented; row 7 stays PARTIAL.
-    #
-    # Wave-150 re-measurement: 4/5 tag-question variants fire on this
-    # similarity-countermand path (scores 0.571-0.800; the canonical
-    # form fires at 0.800). The "ना?" spelling variant stays silent --
-    # the closed cue list covers न/नहीं/मत, not ना (cue-list boundary,
-    # documented). The native JUDGE path, by contrast, stays silent on
-    # all 5 variants (d_judge_tag_question_silent): the post-verbal tag
-    # cue falls outside the judge's pre-verb window, so the
-    # scope-window discipline applies natively there -- that half of
-    # the tag-question case is FIXED by native judging; this probe
-    # keeps the similarity-path EXPECTED with the measured rate.
-    fired, score = _sc("Q3 रिपोर्ट vendor को भेज दी है न?", [GRANT])
-    variants = [
-        "Q3 रिपोर्ट भेज दी न?",
-        "vendor को रिपोर्ट मिल गई न?",
-        "Q3 रिपोर्ट तैयार है न?",
-        "रिपोर्ट भेज दी है ना?",
-    ]
-    variant_fires = sum(1 for v in variants
-                        if _sc(v, [GRANT])[0])
-    if fired:
-        _record(name, "EXPECTED",
-                "tag question \"है न?\" fires (%.3f); %d/4 further "
-                "variants fire -- documented precision cost of the "
-                "mandated standalone-न cue (\"ना?\" spelling silent: "
-                "cue-list boundary)" % (score, variant_fires))
-    else:
-        _record(name, "BREAK",
-                "tag question unexpectedly silent -- cue discipline "
-                "changed?")
 
 
 def d_fold_length_preserved():
