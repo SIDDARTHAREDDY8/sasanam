@@ -623,6 +623,38 @@ _CORRELATION_WINDOW_SEND = 32
 _CORRELATION_WINDOW_API = 16
 
 
+def _type_to_confirm_reference_texts(goal):
+    """Wave-145 (row-11): reference scope texts for the type-to-confirm
+    ceremony, rendered from the goal's DECLARED scope at queue time.
+
+    The list carries the goal description plus one ``"verb target"``
+    text per declared effect atom (wildcard targets included -- the
+    ``"*"`` contributes no tokens, so the verb carries the mechanical
+    half; a pure-wildcard goal stays approvable, which the wave-135
+    "acknowledge its breadth" path requires). The human's typed scope
+    is matched against these texts with ``gov.target_match``
+    token-tversky at ``DEFAULT_THRESHOLD`` (see
+    ``ApprovalQueue.decide``). Deterministic, order-stable,
+    de-duplicated; the stamped list is MAC-bound on the review record
+    (F38), so the check runs against exactly what the review
+    displayed.
+    """
+    texts = []
+    if not isinstance(goal, dict):
+        return texts
+    desc = goal.get("description")
+    if isinstance(desc, str) and desc.strip():
+        texts.append(desc.strip())
+    for atom in goal.get("effects") or []:
+        if isinstance(atom, (tuple, list)) and len(atom) == 2:
+            verb, tgt = atom
+            s = ("%s %s" % ("" if verb is None else verb,
+                            "" if tgt is None else tgt)).strip()
+            if s and s not in texts:
+                texts.append(s)
+    return texts
+
+
 class ToolExecutor:
     def __init__(self, run_dir, policy, log, approvals, ledger_path=None,
                  principal_registry=None, session_identity=None,
@@ -2300,6 +2332,14 @@ class ToolExecutor:
         own vagueness away. Queue-failure is LOUD (the
         ``goal_specificity_pending`` registry event is already in
         the log, so the signal survives).
+
+        Wave-145 (row-11): the review is stamped with
+        ``type_to_confirm_reference`` -- the goal's declared scope
+        (description + effect atoms), MAC-bound on the record (F38).
+        Approving the review requires the human to TYPE the narrowed
+        scope, checked against this reference at token-tversky >=
+        DEFAULT_THRESHOLD (``ApprovalQueue.decide``); a bare
+        click-approve is refused fail-closed.
         """
         # Wave-135: route the vague goal to a human. A vague goal can
         # also conflict (against active goals); both reviews are
@@ -2314,7 +2354,12 @@ class ToolExecutor:
                  "args": {"goal_id": goal["goal_id"],
                           "agent_id": agent_id,
                           "description": description,
-                          "specificity_reasons": reasons},
+                          "specificity_reasons": reasons,
+                          # Wave-145 (row-11): type-to-confirm
+                          # reference scope -- the goal's declared
+                          # scope, MAC-bound on the record.
+                          "type_to_confirm_reference":
+                              _type_to_confirm_reference_texts(goal)},
                  "identity": identity.as_dict(),
                  "agent_justification": None,
                  "redactions": []},
@@ -2531,13 +2576,47 @@ class ToolExecutor:
             # contract as the conflict path: inner failures
             # propagate to the queue's LOUD decision_hook_failed
             # handler; the human decision still stands.
+            #
+            # Wave-145 (row-11): an allow that passed the
+            # type-to-confirm ceremony carries the human's typed
+            # scope on the record (stored MAC-bound by
+            # ApprovalQueue.decide). It is recorded as the narrowed
+            # scope: the audit trail shows what the human claimed to
+            # approve, at what match score. Wave-135 semantics are
+            # unchanged -- the goal still activates with
+            # broad_scope_acknowledged; the typed scope is additive
+            # evidence, not a re-narrowing (narrowing stays
+            # registry.narrow's append-only job).
             args = record.get("args") or {}
             if not isinstance(args, dict):
                 return
-            self._goal_registry.resolve_specificity(
+            summary = self._goal_registry.resolve_specificity(
                 args.get("goal_id"),
                 acknowledged=bool(approved),
                 approval_id=record.get("id"))
+            typed = record.get("typed_scope")
+            if (approved and isinstance(typed, str) and typed.strip()
+                    and summary.get("decision") == "acknowledged"):
+                live = self._goal_registry.get_goal(args.get("goal_id"))
+                if live is not None:
+                    live["narrowed_scope"] = typed.strip()
+                self.log.append({
+                    "event": "goal_specificity_scope_typed",
+                    "flag": "goal_specificity",
+                    "run_id": self.run_id,
+                    "agent_id": (live or {}).get("agent_id"),
+                    "goal_id": args.get("goal_id"),
+                    "approval_id": record.get("id"),
+                    "typed_scope": typed.strip(),
+                    "match_score": record.get("typed_scope_score"),
+                    "match_method": record.get("typed_scope_method"),
+                    "reason": ("human typed the narrowed scope for goal "
+                               "%r (token-tversky %.3f >= %.2f); recorded "
+                               "as the narrowed scope"
+                               % (args.get("goal_id"),
+                                  record.get("typed_scope_score") or 0.0,
+                                  _target_match.DEFAULT_THRESHOLD)),
+                })
             return
         if tool != "goal_conflict_review":
             return

@@ -178,10 +178,13 @@ def p1_wildcard_pending_until_ack():
     if any(f["finding"] == "goal_wildcard_cover" for f in findings):
         return ("BREAK", "pending goal gave wildcard cover")
 
-    # Human acknowledges the breadth.
+    # Human acknowledges the breadth (wave-145: the type-to-confirm
+    # ceremony requires the human to type the narrowed scope -- a
+    # bare click-approve is refused fail-closed).
     ctx["approvals"].decide(reviews[0]["id"], True,
                             reason="probe: operator accepts the mandate",
-                            decided_by="human-operator")
+                            decided_by="human-operator",
+                            typed_scope="do whatever is needed")
     rec = ex._goal_registry.get_goal(g["goal_id"])
     if rec["status"] != "active" or not rec["broad_scope_acknowledged"]:
         return ("BREAK", "after ack: status=%r acked=%r" %
@@ -281,9 +284,12 @@ def p4_ack_makes_later_cover_loud():
     reviews = _specificity_reviews(ctx)
     if not reviews:
         return ("ERROR", "specificity review was not queued")
+    # Wave-145: the type-to-confirm ceremony requires the human to
+    # type the narrowed scope on a vague goal's review.
     ctx["approvals"].decide(reviews[0]["id"], True,
                             reason="probe: operator accepts breadth",
-                            decided_by="human-operator")
+                            decided_by="human-operator",
+                            typed_scope="do whatever is needed")
     rec = ex._goal_registry.get_goal(g["goal_id"])
     if not rec.get("broad_scope_acknowledged"):
         return ("BREAK", "ack did not set broad_scope_acknowledged")

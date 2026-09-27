@@ -111,8 +111,9 @@ _REDIRECT_RE = re.compile(
 # the elided "n'" (straight/curly apostrophe; the elided form must
 # start at whitespace so "'n'" in "rock 'n' roll" cannot anchor it).
 # Wave-144: "keinerlei"/"keinesfalls" graduate from pinned miss to
-# standalone-word cues (unambiguous negation words; "keineswegs" is
-# the sole German leftover, deliberately out of scope). The French
+# standalone-word cues (unambiguous negation words; "keineswegs" was
+# the sole German leftover, deliberately out of scope -- wave-145
+# closes it: see below). The French
 # paired pattern fires in BOTH orders -- "ne ... X" and "X ... ne"
 # (e.g. "rien ne va" as well as "ne va rien") -- with the same
 # elision/whitespace guards (symmetric: the elided n' must start at
@@ -136,10 +137,55 @@ _FRENCH_NE_PAIR_SRC = (
     r")"
 )
 _FRENCH_NE_PAIR_RE = re.compile(_FRENCH_NE_PAIR_SRC, re.IGNORECASE)
+# Wave-145: "keineswegs" ("in no way / by no means") graduates from
+# the wave-144 pinned miss to a standalone-word cue -- the last
+# German leftover is closed. Same word-boundary discipline, same
+# style: "keineswegs" cues only as a whole word. The "keines" prefix
+# it shares with "keinesfalls" cannot double-fire -- the boundary
+# after "keines" fails inside "keineswegs", so the alternation falls
+# through to the full-word alternative. Scope imprecision carries
+# over unchanged: a keineswegs scoping over the wrong predicate
+# ("Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an den
+# vendor.") now revokes -- the same seeded-approach ceiling the
+# keinerlei/keinesfalls words carry, pinned EXPECTED in the
+# wave-144/145 battery rather than claimed away.
+# Wave-145 precision guards (measured on the 48-sentence benign
+# corpus in evals/negation_precision_probes.py -- every sentence
+# scores >= gate similarity, so each suppressed hit below was a REAL
+# false revocation, and each guard is pinned by a regression probe):
+#   - "no"/"kein"/"keine" do NOT cue in the affirmative idiom
+#     "no problem" / "kein Problem" / "keine Probleme"
+#     ("No problem -- please send the Q3 report..." FIRED pre-guard).
+#     A genuine "no"/"kein" countermand ("There is no Q3 report")
+#     still fires; so does "don't"/"never"/"not" in the same
+#     sentence ("No problem, don't send it" still revokes via
+#     "don't"). The guard is positional (immediately followed by
+#     "problem(s)"/"Problem(e)"); "kein grosses Problem" (adjective
+#     between) is out of scope, documented in the battery.
+#   - "not" does NOT cue in the correlative "not only ... (but
+#     also)" ("Not only send the Q3 report..., but also archive a
+#     copy" FIRED pre-guard -- an EXTENSION of the grant, not a
+#     countermand). Positional: only "not" immediately followed by
+#     "only".
+#   - "pas" does NOT cue in the French tag question "n'est-ce pas"
+#     ("Envoyez le Q3 report au vendor, n'est-ce pas?" FIRED
+#     pre-guard -- a confirmation request, not a countermand) nor
+#     as the noun "un pas" = "a step" ("faites un pas a la fois"
+#     FIRED pre-guard). Both guards are fixed-width lookbehinds at
+#     the "pas" position, so "n'est pas" / "ne ... pas" countermands
+#     ("Le Q3 report n'est pas pret; ne l'envoyez pas") still fire.
+# Scope note: the guards live in the search-form cue (the
+# similarity-countermand gate). _negated_verb fullmatches single
+# window tokens, where the lookaheads/lookbehinds are vacuous --
+# unchanged, and unreachable for these idioms (that path requires an
+# explicit redirect signal, which the idiom sentences lack).
 _NEGATION_RE = re.compile(
-    r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not|no|stop|halt|"
-    r"cease|avoid|refrain|cancel|ne|pas|nicht|kein|keine|keinen|"
-    r"keinem|keiner|keines|keinerlei|keinesfalls|nahi)\b"
+    r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
+    r"no(?!\s+problems?\b)|stop|halt|"
+    r"cease|avoid|refrain|cancel|ne|"
+    r"(?<!n['\u2019]est-ce\s)(?<!\bun\s)pas|"
+    r"nicht|kein(?!\s+probleme?\b)|keine(?!\s+probleme?\b)|keinen|"
+    r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)\b"
     r"|" + _FRENCH_NE_PAIR_SRC,
     re.IGNORECASE,
 )

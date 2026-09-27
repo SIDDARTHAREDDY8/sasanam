@@ -593,13 +593,11 @@ class NegationInflectionSeamTest(unittest.TestCase):
         # silent even at/above gate similarity. (similarity_countermand
         # short-circuits to 0.0 when the cue misses, so the raw
         # similarity is measured directly to keep the probe
-        # meaningful.) Wave-144: "keineswegs" is the sole German
-        # lookalike -- "keinerlei"/"keinesfalls" are cues now (their
+        # meaningful.) Wave-145: "keineswegs" left this list -- it
+        # is a cue now ("keinerlei"/"keinesfalls" are cues too; their
         # scope imprecision is a documented ceiling, not a lookalike
         # probe).
-        for msg in ("Der Q3 report ist keineswegs fertig; bitte "
-                    "senden Sie ihn an den vendor.",
-                    "Il y a de plus en plus de Q3 reports pour le "
+        for msg in ("Il y a de plus en plus de Q3 reports pour le "
                     "vendor.",
                     "Merci pour le Q3 report; rien d'autre pour le "
                     "vendor.",
@@ -610,6 +608,35 @@ class NegationInflectionSeamTest(unittest.TestCase):
             fired, _, _ = similarity_countermand(
                 msg, [self.GRANT], threshold=0.5)
             self.assertFalse(fired, msg)
+
+    def test_wave145_keineswegs_fires_at_ledger(self):
+        # Wave-145: keineswegs graduates from pinned miss to cue and
+        # revokes through the real ledger seam.
+        led = IntentLedger()
+        led.record_intent("op", self.GRANT)
+        for msg in ("Keineswegs geht der Q3 report an den vendor.",
+                    "Keineswegs senden Sie den Q3 report an den "
+                    "vendor."):
+            r = led.record_intent("op", msg)
+            self.assertTrue(r["similarity_countermand"], msg)
+            self.assertTrue(r["is_countermand"], msg)
+
+    def test_wave145_keineswegs_scope_sentence_still_fires(self):
+        # Honest pin, not a claim: keineswegs scoping over the wrong
+        # predicate ("fertig", not the grant verb) still fires the
+        # gate -- seeded-approach scope imprecision, the same class
+        # as the keinerlei ceiling. Pinned here so the precision
+        # battery's EXPECTED pin cannot silently rot. Explicit
+        # threshold (not record_intent's derived per-message
+        # threshold): the raw similarity is 0.545, inside the
+        # derived [0.4, 0.6) band, so record_intent would be flaky
+        # here -- the pin is about the cue+score, not calibration.
+        fired, _, score = similarity_countermand(
+            "Der Q3 report ist keineswegs fertig; bitte senden Sie "
+            "ihn an den vendor.",
+            [self.GRANT], threshold=0.5)
+        self.assertTrue(fired)
+        self.assertGreaterEqual(score, 0.5)
 
     def test_wave144_cues_fire_at_ledger(self):
         # The wave-144 leftovers revoke through the real ledger

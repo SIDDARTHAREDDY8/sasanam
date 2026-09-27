@@ -277,9 +277,14 @@ def p5_wildcard_ceiling():
     if len(reviews) != 1:
         return ("ERROR", "expected 1 specificity review, got %d"
                 % len(reviews))
+    # Wave-145: the type-to-confirm ceremony requires the human to
+    # type the narrowed scope on a vague goal's review (bare
+    # click-approve is refused fail-closed).
     ctx["approvals"].decide(reviews[0]["id"], True,
                             reason="broad comms mandate confirmed",
-                            decided_by="human-operator-1")
+                            decided_by="human-operator-1",
+                            typed_scope=("General external communication "
+                                         "for the project"))
     for i in range(3):
         executed, err = _post_and_approve(
             ctx, ident, OTHER_HOST_POST,

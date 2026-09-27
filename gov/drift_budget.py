@@ -155,6 +155,53 @@ construction, so a benign workload that persistently alternates
 near-threshold bursts WILL be adapted early (pinned by
 ``evals/flip_pacing_probes.py`` f6). ``adapt_flip_floor`` is operator
 calibration like every other adaptation parameter.
+
+N-period rotation pacing (wave-145): the wave-144 flip tripwire
+closes only 2-period (A/B/A) oscillations, and the wave-139
+direction-aware near-trip streak provably covers odd-period paced
+rotations (parity argument: for the streak to stay blind every
+consecutive paced pair must cancel, so the large components
+satisfy L_{i+1} ≈ -L_i while periodicity demands L_{i+p} = L_i;
+for odd p this forces L_i ≈ 0, contradicting "paced" -- a bounded
+randomized search over ~125k paced burst shapes found zero
+3-period streak+flip-evading constructions). The remaining
+residual is EVEN-period: a 4-period "wobble" rotation
+(pairwise-canceling bursts whose small wobble moves morph the
+direction signature each cycle) evades the streak (every
+consecutive pair cancels ≥50% in L1), the flip tripwire (the
+signatures never close a 2-period), and the static budget -- only
+the wave-141 buckets catch it, at ~run 42. ``AdaptiveBudgetPolicy``
+therefore carries a rotation-confirmation tripwire for periods
+3..K (K=4, a fixed conservative bound, not operator policy; longer
+rotations stay with the buckets): paced defuse cycles (near-trip
+at >= ``adapt_flip_floor`` -- the SAME floor and the SAME
+direction-consistency gating the flip detector uses, reusing that
+machinery rather than a parallel one; sub-floor alternating
+bursts never enter the history) append their direction signature
+to a rotation history riding the chained reset records (capped at
+2K entries; any non-paced cycle clears it, exactly like the flip
+state; folded by ``BudgetStore._rotation_fold``, kept out of
+``_adapt_fold`` whose return arity is frozen by the wave-144
+tests). When the trailing window's last 2p signatures are two
+clean back-to-back repetitions of one period-p pattern
+(autocorrelation at lag p = 1.0 via ``_rotation_period_score``)
+with at least two distinct directions inside the period (period 1
+-- a single repeated direction -- belongs to the near-trip
+streak; period 2 belongs to the flip tripwire, which fires first
+on any A/B/A subsequence), pacing confirms LOUD with trigger
+``rotation_pacing_confirmed`` -- exactly like a confirmed flip
+(same floor, same tightening: ``reset_streak`` +
+``reset_directions``), and the next contributing run trips under
+the tightened limit. The 4-period wobble pacer now confirms at
+the 8th paced cycle's defuse (run 16) and trips at run 17. The
+price is measured, not hidden: a benign workload that
+persistently rotates near-threshold bursts WILL adapt early
+(pinned by ``evals/rotation_pacing_probes.py`` r5) -- sustained
+rotating near-threshold bursts are pacing-indistinguishable from
+the attack by construction. 5+-period rotations still evade the
+confirmation (buckets remain the backstop); sub-floor pacing,
+state-breaking cycles, many-shot framing drift, and from-birth
+baseline poisoning are unchanged residuals.
 """
 
 from collections import Counter
@@ -174,6 +221,17 @@ __all__ = [
 ]
 
 _BUDGET_VERSION = 1
+
+_ROTATION_MAX_PERIOD = 4
+"""Max period of the wave-145 rotation-confirmation tripwire.
+
+The rotation detector confirms periods 3..``_ROTATION_MAX_PERIOD``.
+Period 2 is the wave-144 flip tripwire's (it fires first on any
+A/B/A subsequence); period 1 -- a single repeated direction -- is
+the wave-139 near-trip streak's. K=4 is a fixed conservative
+bound, not operator policy: 5+-period rotations stay with the
+wave-141 per-direction buckets (which catch them later).
+"""
 
 
 def default_store_dir():
@@ -270,6 +328,17 @@ class AdaptiveBudgetPolicy(BudgetPolicy):
     tightens LOUD with trigger ``direction_pacing_confirmed``.
     All three are operator calibration, like every other adaptation
     parameter.
+
+    Wave-145 adds the rotation-confirmation tripwire (no new policy
+    fields): paced defuse cycles -- near-trip at >=
+    ``adapt_flip_floor``, the SAME floor and direction-consistency
+    gating the flip detector uses -- append their direction
+    signature to a rotation history (capped at ``2*K`` entries,
+    ``K=4`` fixed). A trailing window whose last ``2p`` signatures
+    are two clean repetitions of one period-``p`` pattern
+    (``p`` in 3..K, >= 2 distinct directions) tightens LOUD with
+    trigger ``rotation_pacing_confirmed``, exactly like a confirmed
+    flip.
     """
 
     __slots__ = ("adapt_near_floor", "adapt_cycles", "adapt_factor",
@@ -366,6 +435,25 @@ def _direction_key(net):
     parts = ["%s:%+d" % (tool, 1 if v > 0 else -1)
              for tool, v in sorted(net.items()) if v != 0]
     return "|".join(parts)
+
+
+def _rotation_period_score(history, period):
+    """Agreement fraction of the trailing window at lag ``period``.
+
+    1.0 means the last ``2*period`` paced-cycle direction signatures
+    are two clean back-to-back repetitions of one period-``period``
+    pattern -- autocorrelation at lag ``period`` over the trailing
+    window. Histories shorter than two full periods score 0.0. Pure
+    and deterministic (exact signature equality; the confirmation
+    bar is deliberately at its maximum).
+    """
+    n = len(history)
+    if period < 1 or n < 2 * period:
+        return 0.0
+    tail = history[-2 * period:]
+    agree = sum(1 for i in range(period)
+                if tail[i] == tail[i + period])
+    return agree / period
 
 
 class BudgetContribution:
@@ -521,6 +609,34 @@ class BudgetStore(ChainedStore):
                 flip_prev2 = r.get("flip_prev2")
         return (level, streak, streak_net, streak_gross, last_adapt_seq,
                 direction_scores, flip_prev, flip_prev2)
+
+    @staticmethod
+    def _rotation_fold(records):
+        """Fold reset/adapt records to the rotation signature history.
+
+        The history is the paced-cycle direction signatures since
+        the last non-paced defuse cycle, capped at
+        ``2*_ROTATION_MAX_PERIOD`` entries; an adapt record with
+        ``reset_directions`` zeroes it (a confirmed pacing
+        tightening restarts the hunt). It is folded separately
+        from ``_adapt_fold`` -- that tuple's arity is frozen by the
+        wave-144 tests, so the rotation state rides alongside it,
+        not inside it. Logs predating wave-145 carry no
+        ``rot_history`` and fold to []. Deterministic: pure fold
+        over the chained log.
+        """
+        history = []
+        cap = 2 * _ROTATION_MAX_PERIOD
+        for r in records:
+            kind = r.get("kind")
+            if kind == "adapt":
+                if r.get("reset_directions"):
+                    history = []
+            elif kind == "reset":
+                raw = r.get("rot_history") or []
+                history = [s for s in raw
+                           if isinstance(s, str) and s][:cap]
+        return history
 
     @staticmethod
     def _effective(policy, level):
@@ -708,6 +824,7 @@ class BudgetStore(ChainedStore):
         records = self._read_all(agent_id)
         level, streak, s_net, s_gross, _, dir_scores, flip_prev, \
             flip_prev2 = self._adapt_fold(records)
+        rot_history = self._rotation_fold(records)
         eff_limit, eff_window = self._effective(policy, level)
         cycle, _, _ = self._cycle_contributions(records, eff_window)
         cum, cons, net, gross = self._window_stats(cycle)
@@ -791,6 +908,44 @@ class BudgetStore(ChainedStore):
                 new_flip_prev, new_flip_prev2 = sig, flip_prev
         else:
             new_flip_prev, new_flip_prev2 = None, None
+        # Wave-145 (row 9): N-period rotation confirmation. Paced
+        # cycles append their direction signature to the rotation
+        # history (capped at 2K entries); any non-paced cycle
+        # clears it -- consecutiveness, exactly like the flip
+        # state above, and gated by the SAME "paced" definition
+        # (the flip detector's floor + direction-consistency
+        # gating, reused, not a parallel mechanism). For periods
+        # p in 3..K, a trailing window whose last 2p signatures
+        # are two clean back-to-back repetitions of one period-p
+        # pattern (autocorrelation at lag p = 1.0) with at least
+        # two distinct directions inside the period confirms
+        # pacing: period 2 is the flip tripwire's (it fires first
+        # on any A/B/A subsequence, so the rotation check is
+        # skipped when the flip confirms), and a single repeated
+        # direction (period 1) belongs to the near-trip streak.
+        rotation_confirmed = False
+        rotation_period = 0
+        rotation_pattern = []
+        if paced:
+            new_rot_history = ((rot_history + [sig])
+                               [-2 * _ROTATION_MAX_PERIOD:])
+            if not flip_confirmed:
+                for p in range(3, _ROTATION_MAX_PERIOD + 1):
+                    if (_rotation_period_score(new_rot_history, p)
+                            == 1.0):
+                        period_sigs = new_rot_history[-p:]
+                        if len(set(period_sigs)) >= 2:
+                            rotation_confirmed = True
+                            rotation_period = p
+                            rotation_pattern = list(period_sigs)
+                            break
+                if rotation_confirmed:
+                    # Tightens exactly like a confirmed flip: both
+                    # hunts restart from zero.
+                    new_rot_history = []
+                    new_flip_prev, new_flip_prev2 = None, None
+        else:
+            new_rot_history = []
         record.update({
             "near_trip": near_trip, "streak": new_streak,
             "cycle_cumulative": cum,
@@ -804,11 +959,15 @@ class BudgetStore(ChainedStore):
             "flip_paced": bool(paced),
             "flip_prev": new_flip_prev,
             "flip_prev2": new_flip_prev2,
-            "flip_confirmed": bool(flip_confirmed)})
+            "flip_confirmed": bool(flip_confirmed),
+            "rot_history": list(new_rot_history),
+            "rotation_confirmed": bool(rotation_confirmed),
+            "rotation_period": rotation_period})
         audit_event["near_trip"] = near_trip
         audit_event["near_streak"] = new_streak
         audit_event["direction_trip"] = bool(dir_trip)
         audit_event["flip_confirmed"] = bool(flip_confirmed)
+        audit_event["rotation_confirmed"] = bool(rotation_confirmed)
         self._write(agent_id, record, audit_event, audit)
         if flip_confirmed and level < policy.adapt_max_level:
             new_level = level + 1
@@ -819,6 +978,19 @@ class BudgetStore(ChainedStore):
                 {"flip_sig": sig,
                  "flip_prev": flip_prev, "flip_prev2": flip_prev2,
                  "flip_floor": policy.adapt_flip_floor,
+                 "cycle_cumulative": cum,
+                 "cycle_consistency": round(cons, 6)}, audit,
+                reset_streak=True, reset_directions=True)
+        elif (rotation_confirmed and level < policy.adapt_max_level):
+            new_level = level + 1
+            nl, nw = self._effective(policy, new_level)
+            self._write_adapt(
+                agent_id, run_seq, new_level, "tighten",
+                "rotation_pacing_confirmed", nl, nw,
+                {"rotation_period": rotation_period,
+                 "rotation_pattern": rotation_pattern,
+                 "rotation_sig": sig,
+                 "pacing_floor": policy.adapt_flip_floor,
                  "cycle_cumulative": cum,
                  "cycle_consistency": round(cons, 6)}, audit,
                 reset_streak=True, reset_directions=True)

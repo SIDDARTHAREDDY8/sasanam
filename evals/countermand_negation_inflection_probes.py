@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Negation-inflection battery (row-7, wave-143 lane + wave-144 lane).
+"""Negation-inflection battery (row-7, wave-143 lane + wave-144 lane +
+wave-145 lane 2).
 
 Row-7 residual from wave-142: the countermand negation gate
 (``gov.intent_slice._NEGATION_RE``, consumed by
@@ -16,6 +17,14 @@ pattern. Wave-144 closes the two pinned leftovers: German
 misses to standalone-word cues, and the French paired pattern fires
 in BOTH orders (``ne ... X`` and ``X ... ne``, e.g. "rien ne va" as
 well as "ne va rien") with the same elision/whitespace guards.
+Wave-145 (this lane) closes the last German leftover: ``keineswegs``
+("in no way / by no means") graduates from pinned miss to
+standalone-word cue, same word-boundary discipline. The keineswegs
+benign sentence ("...ist keineswegs fertig; bitte senden...") moves
+from the silent-lookalike list to a PINNED scope-imprecision FP: the
+cue now fires and similarity is >= gate, but the negation scopes
+over "fertig", not the grant verb -- the same seeded-approach
+ceiling the keinerlei words carry.
 
 This battery is RED-first: the wave-144 probes (de-keinerlei/
 de-keinesfalls, fr-reverse-elided) go BREAK while the new words and
@@ -48,6 +57,13 @@ threshold 0.5 -- the cue is under test, not the calibration):
   g_keinesfalls_negated_paraphrase_revokes: "Keinesfalls geht der Q3
      report an den vendor." -- cue "keinesfalls"; sim 0.706.
      RED -> HELD.
+  g_keineswegs_negated_paraphrase_revokes (wave-145): "Keineswegs
+     geht der Q3 report an den vendor." -- the wave-144 pinned miss,
+     now a cue; sim 0.706. RED -> HELD.
+  g_keineswegs_verb_negated_paraphrase_revokes (wave-145):
+     "Keineswegs senden Sie den Q3 report an den vendor." -- cue
+     "keineswegs" scoping over the grant verb; sim 0.750.
+     RED -> HELD.
   f_jamais/plus/rien/aucun_negated_paraphrase_revokes (wave-143,
      elided forward order, held).
   f_rien_rev_negated_paraphrase_revokes: "Rien n'est encore decide
@@ -65,36 +81,43 @@ threshold 0.5 -- the cue is under test, not the calibration):
   positive_confirmations_execute: "Ja, bitte den Q3 report an den
      vendor senden." and "Oui, envoyez ce Q3 report au vendor
      s'il vous plait." -- must NEVER revoke, pre- and post-seam.
-  fp_lookalikes_silent: "keineswegs" (prefix-collision guard),
-     "plus"/"rien"/"aucun" WITHOUT "ne" in both orders,
-     non-profit/yoga mat/notable -- similarities at/above the gate,
-     so any cue hit here would be a REAL false revocation. All
-     must stay silent, pre- and post-seam.
-  documented_misses_pinned (EXPECTED): "Keineswegs geht der Q3
-     report an den vendor." (0.706) is genuine negation ("by no
-     means") missed by the word-boundary rule by design --
-     deliberately out of wave-144 scope (task: keinerlei/
-     keinesfalls only). Would fire on similarity alone; the miss
-     is purely the cue. Pinned, measured, not claimed away.
+  fp_lookalikes_silent: "plus"/"rien"/"aucun" WITHOUT "ne" in both
+     orders, non-profit/yoga mat/notable -- similarities at/above
+     the gate, so any cue hit here would be a REAL false
+     revocation. All must stay silent, pre- and post-seam.
+     (Wave-145: the keineswegs lookalike sentence left this list --
+     keineswegs is a cue now; see documented_scope_fps_pinned.)
+  documented_misses_pinned (EXPECTED): wave-144 pinned "Keineswegs
+     geht der Q3 report an den vendor." (0.706) as a genuine cue-miss
+     by design; wave-145 graduates keineswegs to a cue, so the list
+     is EMPTY and the probe asserts no pinned cue-misses remain.
+  documented_scope_fps_pinned (wave-145, EXPECTED): "Der Q3 report
+     ist keineswegs fertig; bitte senden Sie ihn an den vendor." --
+     the cue fires and similarity is >= gate (it WOULD revoke) but
+     the negation scopes over "fertig", not the grant verb. Pinned
+     with the exact sentence: seeded-approach scope imprecision,
+     the same class as the keinerlei ceiling below.
   english_unchanged: "Don't send the Q3 report to the vendor." and
      "Please refrain from sending that Q3 report anywhere." still
      fire (byte-identical English behavior).
   deterministic_x2: byte-identical verdicts across 2 runs.
 
 Measured precision (benign corpus: the 2 positive confirmations +
-keineswegs + plus/rien/aucun-sans-ne + non-profit/yoga mat/notable
--- 10 sentences, similarities 0.545-0.857): post-seam cue hits = 0.
-Precision 10/10 on the corpus; the lookalike similarities are >=
-the gate, so a hit would have been a real false revocation.
+plus/rien/aucun-sans-ne + non-profit/yoga mat/notable -- 9
+sentences, similarities 0.545-0.857): post-seam cue hits = 0.
+Precision 9/9 on the corpus; the lookalike similarities are >=
+the gate, so a hit would have been a real false revocation. The
+wave-145 keineswegs scope sentence is measured separately in
+documented_scope_fps_pinned (fires by design of the seeded
+approach, pinned not hidden).
 
 Honest ceilings (documented, not hidden): seeded inflection coverage
-is NOT complete multilingual negation -- German "keineswegs"
-(genuine negation) still misses by design of the word-boundary rule;
-keinerlei/keinesfalls inherit the seeded approach's scope
-imprecision ("Es gibt keinerlei Probleme; senden Sie den Q3 report
-an den vendor." would now revoke -- the negation scopes over
-"Probleme", not the grant; the same class a "kein Problem, bitte
-senden" sentence already carries); non-romanized scripts untouched;
+is NOT complete multilingual negation -- German "keineswegs" now
+cues, but inherits the seeded approach's scope imprecision (the
+pinned scope-FP above: negation scoping over the wrong predicate
+revokes); keinerlei/keinesfalls carry the same ceiling ("Es gibt
+keinerlei Probleme; senden Sie den Q3 report an den vendor." would
+revoke -- the negation scopes over "Probleme", not the grant); non-romanized scripts untouched;
 full synonym replacement still misses (the p6 ceiling carries
 over).
 
@@ -157,6 +180,14 @@ CUE_CASES = [
      "keinerlei", False),
     ("g_keinesfalls", "Keinesfalls geht der Q3 report an den vendor.",
      "keinesfalls", False),
+    # Wave-145: "keineswegs" ("in no way / by no means") graduates
+    # from pinned miss to standalone-word cue. RED pre-seam: the
+    # cue is missing so the similarity gate never consults it.
+    ("g_keineswegs", "Keineswegs geht der Q3 report an den vendor.",
+     "keineswegs", False),
+    ("g_keineswegs_verb",
+     "Keineswegs senden Sie den Q3 report an den vendor.",
+     "keineswegs", False),
     ("f_jamais", "Je n'enverrai jamais ce Q3 report au vendor.",
      "jamais", False),
     ("f_plus", "N'envoyez plus ce Q3 report au vendor.",
@@ -193,12 +224,14 @@ BENIGN_CASES = [
     "Ja, bitte den Q3 report an den vendor senden.",
     "Oui, envoyez ce Q3 report au vendor s'il vous plait.",
     # German kein-substring lookalikes (word-boundary must hold).
-    # "keineswegs" shares the "keines" prefix with "keinesfalls"
-    # and is the prefix-collision guard for both new words
-    # ("keinerlei" shares its "keiner" prefix with the existing
-    # cue "keiner" -- the boundary guard is what keeps "keinerlei"
-    # from cueing via "keiner").
-    "Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an den vendor.",
+    # Wave-145: the keineswegs sentence moved OUT of this list --
+    # "keineswegs" is a cue now, and in "Der Q3 report ist keineswegs
+    # fertig; ..." it scopes over "fertig", not the grant verb, so it
+    # would revoke. That is the scope-imprecision ceiling, pinned
+    # EXPECTED in PINNED_SCOPE_FPS below (same class as the
+    # keinerlei ceiling). The boundary guard it used to exercise
+    # ("keines" prefix shared with "keinesfalls" cannot double-fire)
+    # is now pinned by the keineswegs cue probes + the unit tests.
     # French particles WITHOUT the ne anchor (pairing must hold),
     # in both orders: X-before-ne and ne-before-X.
     "Il y a de plus en plus de Q3 reports pour le vendor.",
@@ -212,15 +245,26 @@ BENIGN_CASES = [
 ]
 
 # Genuine misses of the seeded approach: similarity is >= gate but
-# the cue rule misses by design. Pinned EXPECTED, measured.
-# Wave-144: "keineswegs" is the SOLE German leftover -- genuine
-# negation ("by no means") deliberately out of this wave's scope
-# (the task adds keinerlei/keinesfalls only); the word-boundary rule
-# keeps it silent.
+# the cue rule misses by design. Wave-145: the list is EMPTY --
+# "keineswegs" was the sole entry and graduated to a cue this wave
+# (its probes are HELD above). Kept as a list (not deleted) so the
+# probe below keeps asserting "no pinned cue-misses remain".
 PINNED_MISSES = [
-    ("Keineswegs geht der Q3 report an den vendor.",
-     "keineswegs is genuine negation missed by the word-boundary "
-     "rule by design (out of wave-144 scope)"),
+]
+
+# Pinned FALSE POSITIVES of the seeded approach: the cue fires AND
+# similarity is >= gate, so the gate WOULD revoke -- but the
+# negation scopes over the wrong predicate. Same scope-imprecision
+# class as the keinerlei ceiling ("Es gibt keinerlei Probleme;
+# senden Sie den Q3 report an den vendor." would revoke -- the
+# negation scopes over "Probleme", not the grant). Pinned EXPECTED
+# with the exact sentence, measured, not claimed away.
+PINNED_SCOPE_FPS = [
+    ("Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an "
+     "den vendor.",
+     "keineswegs scopes over 'fertig' (the report is by no means "
+     "finished), not the grant verb -- revoking is a false "
+     "revocation; seeded-approach scope imprecision"),
 ]
 
 _RESULTS = []
@@ -371,14 +415,24 @@ def fp_lookalikes_silent():
     _record(name, "HELD",
             "measured precision: 0 cue hits / %d benign sentences "
             "(similarities 0.545-0.857, all at/above gate); "
-            "keineswegs/plus-sans-ne/rien-sans-ne/aucun-sans-ne silent"
+            "plus-sans-ne/rien-sans-ne/aucun-sans-ne silent "
+            "(keineswegs graduated to a cue in wave-145; its scope "
+            "sentence is pinned in documented_scope_fps_pinned)"
             % len(BENIGN_CASES))
 
 
 def documented_misses_pinned():
     """Genuine misses of the seeded approach, pinned EXPECTED with a
-    measured reason (similarity >= gate, cue misses by design)."""
+    measured reason (similarity >= gate, cue misses by design).
+    Wave-145: the list is empty -- keineswegs graduated to a cue."""
     name = "documented_misses_pinned"
+    if not PINNED_MISSES:
+        _record(name, "HELD",
+                "no pinned cue-misses remain: wave-145 closed the "
+                "last German leftover (keineswegs); the remaining "
+                "ceilings (synonym replacement, non-romanized "
+                "scripts) are not cue-misses of this battery")
+        return
     notes = []
     for sent, reason in PINNED_MISSES:
         cue = _NEGATION_RE.search(sent)
@@ -395,6 +449,32 @@ def documented_misses_pinned():
         notes.append("%.3f sim, no cue: %s" % (score, reason))
     _record(name, "EXPECTED",
             "pinned misses hold silent by design: %s" % "; ".join(notes))
+
+
+def documented_scope_fps_pinned():
+    """Pinned FALSE POSITIVES: the cue fires AND raw similarity is >=
+    gate, so the gate would revoke -- but the negation scopes over
+    the wrong predicate (seeded-approach scope imprecision, the same
+    class as the keinerlei ceiling). Pinned EXPECTED with the exact
+    sentence, measured, not claimed away: the probe FAILS (BREAK) if
+    any listed sentence stops firing, so the pin cannot silently
+    rot into a false claim of precision."""
+    name = "documented_scope_fps_pinned"
+    notes = []
+    for sent, reason in PINNED_SCOPE_FPS:
+        cue = _NEGATION_RE.search(sent)
+        score = target_similarity(sent, GRANT)
+        if cue is None or score < THRESHOLD:
+            _record(name, "BREAK",
+                    "pinned scope-FP no longer fires (cue=%r sim=%.3f): "
+                    "%r -- re-measure, do not silently unpin"
+                    % (cue.group(0) if cue else None, score, sent))
+            return
+        notes.append("cue %r + sim %.3f >= %.2f would revoke: %s"
+                     % (cue.group(0), score, THRESHOLD, reason))
+    _record(name, "EXPECTED",
+            "pinned scope-imprecision FPs (would revoke, negation "
+            "scopes over the wrong predicate): %s" % "; ".join(notes))
 
 
 def english_unchanged():
@@ -425,6 +505,7 @@ def _run_all():
     g_e2e_keinen_sweep_revokes()
     fp_lookalikes_silent()
     documented_misses_pinned()
+    documented_scope_fps_pinned()
     english_unchanged()
     return list(_RESULTS)
 

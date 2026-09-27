@@ -58,6 +58,8 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
+from .target_match import (target_similarity, DEFAULT_THRESHOLD,
+                           MATCH_METHOD)
 
 
 def _utcnow():
@@ -594,6 +596,70 @@ def _goal_review_goal_ids(record):
     from . import goals as _goals
     ids = _goals.conflict_review_goal_ids(record.get("args") or {})
     return ids or None
+
+
+def _type_to_confirm_reference(target):
+    """Wave-145 (row-11): the type-to-confirm reference scope for a
+    pending approval record, or None when the ceremony does not apply.
+
+    The ceremony applies ONLY to ``goal_specificity_review`` records
+    carrying the queue-time-stamped ``type_to_confirm_reference`` --
+    the goal's declared scope (description + effect atoms), stamped by
+    the executor at queue time and MAC-bound on the record (F38), so
+    the reference the human's typing is checked against is exactly
+    what the review displayed. Every other record type -- and any
+    specificity review queued WITHOUT the stamp (pre-wave-145 or
+    hand-crafted records) -- returns None: zero behavior change, the
+    record is decided exactly as before. A hand-crafted review is
+    still attested by the executor's decision hook (goal_specificity
+    noop when the goal is unknown), not by this ceremony.
+    """
+    if not isinstance(target, dict):
+        return None
+    if target.get("tool") != "goal_specificity_review":
+        return None
+    args = target.get("args")
+    if not isinstance(args, dict):
+        return None
+    ref = args.get("type_to_confirm_reference")
+    if not isinstance(ref, list) or not ref:
+        return None
+    texts = [t for t in ref if isinstance(t, str) and t.strip()]
+    return texts or None
+
+
+def _type_to_confirm_ok(reference_texts, typed_scope):
+    """Wave-145 (row-11): check the human's typed scope against the
+    reference scope. Returns ``(ok, score, detail)``.
+
+    ``typed_scope`` must be a non-blank string scoring >=
+    ``DEFAULT_THRESHOLD`` (``gov.target_match`` token-tversky -- the
+    same measure AND threshold as the row-11 paraphrase tier, reused
+    not re-implemented) against at least one reference text. A missing,
+    blank, or non-string typed scope is NEVER a match (fail-closed):
+    a bare click cannot satisfy the ceremony. The best sub-threshold
+    score is reported (not zeroed) so the LOUD refusal event names
+    the actual measured mismatch.
+    """
+    if not isinstance(typed_scope, str) or not typed_scope.strip():
+        return (False, 0.0,
+                "no typed scope provided: approving a vague/wildcard "
+                "goal requires typing the narrowed scope")
+    best = 0.0
+    for text in reference_texts:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        score = target_similarity(typed_scope, text)
+        if score > best:
+            best = score
+    if best >= DEFAULT_THRESHOLD:
+        return (True, best,
+                "typed scope matches the declared scope (token-tversky "
+                "%.3f >= %.2f)" % (best, DEFAULT_THRESHOLD))
+    return (False, best,
+            "typed scope does not match the goal's declared scope "
+            "(token-tversky %.3f < %.2f)"
+            % (best, DEFAULT_THRESHOLD))
 
 
 # -- F49 (R11): human-provisioned break-glass tickets ----------------------
@@ -3479,14 +3545,25 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             [json.dumps(r, ensure_ascii=True, default=str) + "\n"
              for r in records])
 
-    def decide(self, approval_id, approved, reason, decided_by="human-operator",
-               shield_ack=None, challenge_answers=None):
+    def decide(self, approval_id, approved, reason,
+               decided_by="human-operator", shield_ack=None,
+               challenge_answers=None, typed_scope=None):
         """Record a human decision and log it. Returns (record, log_entry).
 
         Rejected decision *attempts* (unknown id, self-approval, or a
         record that is no longer pending) are also appended to the audit
         log before the ValueError propagates, so abuse of the approval
         workflow itself leaves a trace.
+
+        Wave-145 (row-11) type-to-confirm: ``typed_scope`` is the
+        human's TYPED narrowed scope. It is required -- and checked
+        against the record's stamped reference scope with
+        ``gov.target_match`` token-tversky at >= DEFAULT_THRESHOLD --
+        when APPROVING a ``goal_specificity_review`` for a vague or
+        wildcard-scope goal (a bare click-approve is refused
+        fail-closed with a LOUD ``approval_scope_mismatch`` event).
+        Denials ignore it; every other record type ignores it
+        (zero behavior change).
 
         F38: the pending record's keyed digest is verified BEFORE the
         decision is recorded — a record tampered with after queueing
@@ -3834,6 +3911,66 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     "is past the decision-velocity threshold; approval "
                     "%r requires a different approver"
                     % (decided_by, approval_id))
+            # Wave-145 (row-11): type-to-confirm for vague/wildcard goals.
+            # A goal_specificity_review adjudicates a goal held in
+            # pending_specificity (vague or wildcard scope) -- a bare
+            # click-approve is too cheap for a careless human. The
+            # approver must TYPE the narrowed scope, and the typed text
+            # must match the goal's declared scope (stamped MAC-bound on
+            # the record at queue time, so the check runs against exactly
+            # what the review displayed) at token-tversky >=
+            # DEFAULT_THRESHOLD. Missing/blank/mismatched typed scope ->
+            # the decision is REFUSED (fail-closed, ValueError, record
+            # stays pending) with a LOUD approval_scope_mismatch event.
+            # Denials skip the ceremony (rejection is the safe direction,
+            # GAP-3 precedent); records without the stamp are decided
+            # exactly as before (zero behavior change).
+            _ttc_reference = _type_to_confirm_reference(target)
+            if _ttc_reference is not None:
+                _ttc_ok, _ttc_score, _ttc_detail = _type_to_confirm_ok(
+                    _ttc_reference, typed_scope)
+                if not _ttc_ok:
+                    try:
+                        self._log({
+                            "event": "approval_scope_mismatch",
+                            "flag": "approval_scope_mismatch",
+                            "run_id": target.get("run_id"),
+                            "agent_id": "human-operator",
+                            "role": "approver",
+                            "principal": "human-operator",
+                            "tool": target["tool"],
+                            "decision": "refused",
+                            "policy_id": target.get("policy_id"),
+                            "approval_id": approval_id,
+                            "decided_by": decided_by,
+                            "related_agent": target.get("agent_id"),
+                            "typed_scope": (typed_scope
+                                            if isinstance(typed_scope, str)
+                                            else None),
+                            "match_score": _ttc_score,
+                            "match_threshold": DEFAULT_THRESHOLD,
+                            "match_method": MATCH_METHOD,
+                            "goal_id": (target.get("args") or {}).get(
+                                "goal_id"),
+                            "reason": ("type_to_confirm: %s" % _ttc_detail),
+                        })
+                    except Exception:
+                        pass
+                    _log_attempt(
+                        "rejected_attempt",
+                        "decision refused (type_to_confirm): %s" % _ttc_detail,
+                        agent_id=target.get("agent_id"),
+                        role=target.get("role"), tool=target.get("tool"))
+                    raise ValueError(
+                        "decision refused (type_to_confirm): approval %r "
+                        "adjudicates a vague/wildcard goal: %s"
+                        % (approval_id, _ttc_detail))
+                # The ceremony passed: the typed scope rides the record
+                # (bound into the re-MAC below) and the decision event, so
+                # the audit trail shows what the human claimed to approve.
+                target["typed_scope"] = typed_scope
+                target["typed_scope_score"] = _ttc_score
+                target["typed_scope_method"] = MATCH_METHOD
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
@@ -3900,6 +4037,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # with the independent signals.
             "shield_tier": target.get("shield_tier"),
             "shield_handshake": _shield_detail,
+            # Wave-145 (row-11): the human's typed narrowed scope, when
+            # the type-to-confirm ceremony ran for this approval (None
+            # on every other record -- additive, zero behavior change
+            # elsewhere). The goal-resolution events carry the
+            # approval id back, so the trail cross-references both
+            # ways.
+            "typed_scope": target.get("typed_scope"),
+            "typed_scope_score": target.get("typed_scope_score"),
+            "typed_scope_method": target.get("typed_scope_method"),
             # Wave-134 (row-11): a goal_conflict_review decision names
             # the goals it adjudicates (None for every other record
             # type). The goal-resolution events carry the approval id

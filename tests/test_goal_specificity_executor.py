@@ -10,6 +10,9 @@ Seams under test:
   * The approval-decision hook: goal_specificity_review allow/deny
     resolves the goal (active+acknowledged / superseded); unrelated
     decisions touch no goal; unknown goal ids noop LOUD.
+  * Wave-145 type-to-confirm: allowing a specificity review requires
+    the human's typed scope (checked against the stamped reference);
+    a bare click-approve is refused fail-closed.
 
 Expectations are hand-computed at the public seams.
 """
@@ -54,6 +57,10 @@ class SpecificityQueueingTest(unittest.TestCase):
         args = reviews[0]["args"]
         self.assertEqual(args["goal_id"], g["goal_id"])
         self.assertTrue(args["specificity_reasons"])
+        # Wave-145: the review is stamped with the type-to-confirm
+        # reference scope (description + effect atoms), MAC-bound.
+        self.assertEqual(args["type_to_confirm_reference"],
+                         ["do whatever is needed", "send *"])
         pending = _events(ctx, "goal_specificity_pending")
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].get("flag"), "goal_specificity")
@@ -106,12 +113,24 @@ class SpecificityDecisionHookTest(unittest.TestCase):
 
     def test_allow_decision_activates_and_acknowledges(self):
         ctx, _ident, g, review = self._vague_with_review()
+        # Wave-145: allowing a vague goal's review requires the
+        # type-to-confirm ceremony -- the human types the narrowed
+        # scope; the bare click-approve is refused (see
+        # tests/test_type_to_confirm.py for the refusal contract).
         ctx["approvals"].decide(review["id"], True,
                                 reason="operator accepts the mandate",
-                                decided_by="human-op")
+                                decided_by="human-op",
+                                typed_scope="do whatever is needed")
         rec = ctx["executor"]._goal_registry.get_goal(g["goal_id"])
         self.assertEqual(rec["status"], "active")
         self.assertTrue(rec["broad_scope_acknowledged"])
+        # The typed scope is recorded as the narrowed scope.
+        self.assertEqual(rec["narrowed_scope"], "do whatever is needed")
+        scoped = _events(ctx, "goal_specificity_scope_typed")
+        self.assertEqual(len(scoped), 1)
+        self.assertEqual(scoped[0]["goal_id"], g["goal_id"])
+        self.assertEqual(scoped[0]["typed_scope"], "do whatever is needed")
+        self.assertGreaterEqual(scoped[0]["match_score"], 0.5)
         resolved = _events(ctx, "goal_specificity_resolved")
         self.assertEqual(len(resolved), 1)
         self.assertEqual(resolved[0]["decision"], "acknowledged")

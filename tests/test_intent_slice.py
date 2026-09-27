@@ -102,14 +102,15 @@ class NegationInflectionTest(unittest.TestCase):
 
     def test_german_substring_lookalikes_do_not_match(self):
         # Word-boundary guarded: words merely containing "kein" stay
-        # silent. "keineswegs" shares the "keines" prefix with the
-        # wave-144 cue "keinesfalls" -- it is the prefix-collision
-        # guard for both new words. ("keinerlei" shares its "keiner"
-        # prefix with the existing cue "keiner"; the boundary guard
-        # is what keeps "keinerlei" from cueing via "keiner" -- it
-        # cues only via its own alternative, pinned below.)
-        self.assertIsNone(self._cue("keineswegs"))
-        self.assertIsNone(self._cue("Keineswegs ist er fertig."))
+        # silent. ("keinerlei" shares its "keiner" prefix with the
+        # existing cue "keiner"; the boundary guard is what keeps
+        # "keinerlei" from cueing via "keiner" -- it cues only via
+        # its own alternative, pinned below. Wave-145: "keineswegs"
+        # graduated from this guard list to a full cue of its own --
+        # see NegationKeineswegsTest.)
+        self.assertIsNone(self._cue("Der kleine Bericht."))
+        self.assertIsNone(self._cue("Nichts zu beanstanden."))
+        self.assertIsNone(self._cue("Nichtsdestotrotz senden."))
 
     def test_german_keinerlei_keinesfalls_match(self):
         # Wave-144: unambiguous negation words graduate to cues.
@@ -182,6 +183,54 @@ class NegationInflectionTest(unittest.TestCase):
                             "send_email"))
         self.assertFalse(
             m._negated_verb("Ja, bitte den Q3 report senden.",
+                            "send_email"))
+
+
+class NegationKeineswegsTest(unittest.TestCase):
+    """Wave-145: "keineswegs" ("in no way / by no means") graduates
+    from the wave-144 pinned miss to a standalone-word cue -- the
+    last German leftover. Same word-boundary discipline, same
+    style."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0).lower() if hit else None
+
+    def test_keineswegs_matches(self):
+        self.assertEqual(self._cue("keineswegs"), "keineswegs")
+        self.assertEqual(
+            self._cue("Keineswegs geht der Q3 report an den vendor."),
+            "keineswegs")
+        self.assertEqual(
+            self._cue("Keineswegs senden Sie den Q3 report an den "
+                      "vendor."),
+            "keineswegs")
+
+    def test_keineswegs_fires_exactly_once_no_prefix_double_fire(self):
+        # The "keines" prefix shared with "keinesfalls" cannot cue
+        # inside "keineswegs": the word boundary fails mid-word, so
+        # the full-word alternative wins exactly once. Same guard
+        # for the keinerlei/keinesfalls family.
+        for text, want in (
+                ("Keineswegs geht der Q3 report.", "keineswegs"),
+                ("Keinesfalls geht der Q3 report.", "keinesfalls"),
+                ("Keinerlei Q3 report geht an den vendor.", "keinerlei"),
+                ("Keines der reports.", "keines")):
+            hits = [mm.group(0).lower()
+                    for mm in m._NEGATION_RE.finditer(text)]
+            self.assertEqual(hits, [want], text)
+
+    def test_negated_verb_picks_up_keineswegs(self):
+        # The verb-scope consumer shares the core: keineswegs before
+        # the verb stem counts as negation (the wave-145 battery's
+        # g_keineswegs_verb probe exercises the same seam).
+        self.assertTrue(
+            m._negated_verb("Keineswegs senden Sie den Q3 report an "
+                            "den vendor.",
+                            "send_email"))
+        self.assertFalse(
+            m._negated_verb("Keineswegs ist der Q3 report fertig; "
+                            "bitte senden Sie ihn an den vendor.",
                             "send_email"))
 
 
