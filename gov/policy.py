@@ -70,6 +70,9 @@ KNOWN_MATCH_KEYS = {
     "min_external_calls", "min_sends", "min_writes", "min_deletes",
     "domain_allowlisted", "carries_read_content", "source_untrusted",
     "read_sensitive", "read_classified", "cross_run_campaign",
+    # Row-12: artifact-inventory egress signals, computed by
+    # ToolExecutor._context from the call's own file references.
+    "artifact_unknown", "artifact_tampered", "artifact_restricted",
     # F99: keyword-free framed-secret signal for api_call payloads,
     # computed by ToolExecutor._context from the call's own params.
     "high_entropy_payload",
@@ -949,6 +952,20 @@ class PolicyEngine:
         # Row-13 closure: classification-labeled provenance taint.
         if "read_classified" in match:
             if bool(context.get("read_classified")) != bool(match["read_classified"]):
+                return False
+        # Row-12: artifact-inventory egress signals (unknown = file
+        # referenced at egress was never registered; tampered = bytes
+        # changed since registration; restricted = registered +
+        # restricted label). Loudest-first ordering is by rule
+        # declaration order in the policy file, not here.
+        if "artifact_unknown" in match:
+            if bool(context.get("artifact_unknown")) != bool(match["artifact_unknown"]):
+                return False
+        if "artifact_tampered" in match:
+            if bool(context.get("artifact_tampered")) != bool(match["artifact_tampered"]):
+                return False
+        if "artifact_restricted" in match:
+            if bool(context.get("artifact_restricted")) != bool(match["artifact_restricted"]):
                 return False
         if "cross_run_campaign" in match:
             if bool(context.get("cross_run_campaign")) != bool(match["cross_run_campaign"]):

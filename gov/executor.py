@@ -73,8 +73,10 @@ from urllib.parse import urlparse
 from . import dlp
 from . import advisory as _advisory
 from . import canary as _canary
+from . import goals as _goals
 from . import sentinel_substitution as _sentinel
 from . import classification as _classification
+from . import artifacts as _artifacts
 from . import intent_slice as _intent_slice
 from . import delegation_tokens as _delegation_tokens
 from . import exchange_ledger as _exchange_ledger
@@ -1362,6 +1364,11 @@ class ToolExecutor:
         self.classification = _classification.ClassificationRegistry()
         self._read_classification = None  # max level string, or None
         self._read_classification_sources = []  # [(path, level)]
+        # Row-12 (wave-130): run-scoped artifact inventory. Every
+        # successful write_file registers (path, sha256, size, agent,
+        # label); egress referencing a file is checked against it.
+        # Empty by default: no writes, no behavior change.
+        self.artifacts = _artifacts.ArtifactInventory()
         # Wave-129 (row-7 intent slice): opt-in user-turn context for
         # the intent-slice judge. The executor is a tool executor -- it
         # never sees user messages on its own; the harness/operator
@@ -1369,6 +1376,14 @@ class ToolExecutor:
         # approvals carry the judge's MAC-bound annotation; when unset
         # the judge is inert (verdict None, queueing unchanged).
         self._intent_user_turns = None
+
+        # Wave-130 (row-11 goal registry): per-run registry of declared
+        # agent goals with deterministic conflict detection. Opt-in:
+        # with no registrations the detector is inert (zero behavior
+        # change). Registrations and conflicts are audit-chained via
+        # the registry's own sub-chain; the executor routes conflicts
+        # LOUD to the log and the approval queue in register_goal().
+        self._goal_registry = _goals.GoalRegistry(audit=self.log.append)
 
     def _eviction_index(self):
         """H26: index into ``_read_contents`` of the oldest
@@ -1774,6 +1789,11 @@ class ToolExecutor:
         # One sub-chain, one lock: the child shares the parent's BOM
         # head cell, so it must share the guard too.
         child._advisory_lock = self._advisory_lock
+        # Row-12: one run, one artifact inventory — the child shares
+        # the parent's registry by reference, so a child egressing a
+        # parent-written artifact sees it as registered (not unknown).
+        # Registration order = the shared chain order.
+        child.artifacts = self.artifacts
         # Wave-90 (S6, F137): the child carries its birth certificate.
         # One lineage, one tracker: shared by reference like the bus.
         child._lineage_cert = lineage_cert
@@ -2100,6 +2120,109 @@ class ToolExecutor:
         else:
             self._intent_user_turns = [str(t) for t in user_turns]
 
+    def register_goal(self, agent_id, description, effects=(),
+                      constraints=(), identity=None):
+        """Wave-130 (row-11): register an agent's declared goal.
+
+        ``agent_id``/``description`` describe the objective;
+        ``effects``/``constraints`` are the structured atoms
+        ``gov.goals`` reasons over (see its vocabulary). ``identity``
+        is the minted AgentIdentity for the registering agent --
+        REQUIRED (F42): a conflicting registration is routed to the
+        approval queue, and queue() never trusts caller-supplied
+        identity fields.
+
+        Returns ``(goal_dict, [conflict_dicts])``. Registration never
+        denies: conflicts are flagged LOUD (``goal_conflict`` audit
+        event, already chained by the registry) and a
+        ``goal_conflict_review`` item is queued for human resolution.
+        A conflicting goal is still registered as active -- the human
+        resolves which objective stands; use ``resolve_goal`` to mark
+        the outcome.
+        """
+        if identity is None:
+            raise TypeError(
+                "register_goal() requires identity: an AgentIdentity "
+                "minted by the executor for the registering agent "
+                "(F42); a conflicting registration is routed to the "
+                "approval queue, which never trusts caller-supplied "
+                "identity fields")
+        goal, conflicts = self._goal_registry.register(
+            agent_id, self.run_id, description,
+            effects=effects, constraints=constraints)
+        if not conflicts:
+            return goal, conflicts
+        # LOUD is already in the log (registry chained it); route to
+        # humans. Synthetic action (tool "goal_conflict_review") so the
+        # queue's separation-of-duties still applies: the agent can
+        # never approve its own conflict away.
+        detail_lines = "; ".join(
+            "%s: %s" % (c["type"], c["explanation"]) for c in conflicts)
+        try:
+            self.approvals.queue(
+                {"tool": "goal_conflict_review",
+                 "args": {"goal_id": goal["goal_id"],
+                          "agent_id": agent_id,
+                          "description": description,
+                          "conflicts": conflicts},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Goal conflict for agent %r: %s"
+                    % (agent_id, detail_lines),
+                    policy_id="goal-registry",
+                    flag="goal_conflict"),
+                "agent_direct",
+                "review goal conflict for agent %r (%d conflict(s))"
+                % (agent_id, len(conflicts)),
+                caller_identity=identity)
+        except Exception:
+            # The LOUD goal_conflict audit events above are the audit
+            # trail; the conflict stands flagged even if queueing the
+            # review item fails. Fail closed on the signal, never
+            # warn-and-continue silently.
+            self.log.append({
+                "event": "goal_conflict_queue_failed",
+                "flag": "goal_conflict",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "goal_id": goal["goal_id"],
+                "reason": ("goal_conflict_review approval could not be "
+                           "queued; the goal_conflict audit events "
+                           "remain the record -- operator must review "
+                           "manually"),
+            })
+        return goal, conflicts
+
+    def resolve_goal(self, goal_id, resolution, note=""):
+        """Wave-130: record a human's resolution of a goal conflict.
+
+        ``resolution`` is "upheld" (goal stands) or "superseded" (goal
+        withdrawn). The goal's status is updated and a
+        ``goal_resolved`` event is chained. Unknown goal_id or
+        resolution -> ValueError (fail-closed, no silent no-op).
+        """
+        if resolution not in ("upheld", "superseded"):
+            raise ValueError(
+                "resolution must be 'upheld' or 'superseded', got %r"
+                % (resolution,))
+        g = self._goal_registry.set_status(
+            goal_id, "active" if resolution == "upheld" else "superseded")
+        self.log.append({
+            "event": "goal_resolved",
+            "run_id": self.run_id,
+            "goal_id": goal_id,
+            "agent_id": g.get("agent_id"),
+            "resolution": resolution,
+            "note": str(note),
+            "reason": ("human resolved goal %s as %s%s"
+                       % (goal_id[:8], resolution,
+                          (": " + note) if note else "")),
+        })
+        return g
+
     def _intent_slice_verdict(self, tool, args, justification, identity):
         """Wave-129: run the intent-slice judge for a candidate queued
         action. Returns the verdict dict, or None when no intent
@@ -2185,6 +2308,144 @@ class ToolExecutor:
             })
         except Exception:
             pass
+
+    def _artifact_register_on_write(self, tool, args, result, agent_id):
+        """Row-12: register a successful governed write in the
+        artifact inventory.
+
+        Called at the single public execution seam after a tool call
+        completes (and at the approved-sweep use-time re-execution),
+        next to the classification-taint hook. Only fires on a
+        successful ``write_file``: result carries a real path (or a
+        quarantine path for outside-sandbox/unexpected-target writes,
+        which is inventoried under its actual location). The SHA-256
+        is recomputed from the bytes ON DISK — never from the
+        caller-supplied content — so a lie in ``content`` cannot
+        register a false hash. Never raises and never breaks the write:
+        on any trouble the artifact is simply not registered (fail-open
+        on the inventory; the write itself already succeeded).
+        """
+        if tool != "write_file":
+            return
+        try:
+            path = None
+            if isinstance(result, dict):
+                path = result.get("path")
+            if not path:
+                return
+            rel = self._resolved_path_for_policy(path) or path
+            real = self._lineage_real_path(path)
+            sha, nbytes = self._lineage_file_digest(real)
+            label = self.classification.level_for(rel)
+            # F167 ordering: the audit event appends BEFORE the
+            # in-memory registration, so a logging failure never
+            # leaves a registered-but-unaudited artifact.
+            self.log.append({
+                "event": "artifact_registered",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "path": rel,
+                "sha256": sha,
+                "bytes": nbytes,
+                "classification": label,
+            })
+            self.artifacts.register(
+                rel, sha256=sha, size=nbytes, agent_id=agent_id,
+                run_id=str(self.run_id), classification=label)
+        except Exception:
+            pass
+
+    # Designated file-reference fields per egress tool. The artifact
+    # egress contract (Row-12) reads file references ONLY from these
+    # fields (recursively): an arbitrary string that merely mentions
+    # a filename is not an artifact egress. This bounds the FP
+    # surface — see the c2_fp_phantom_path_clean probe.
+    _ARTIFACT_REF_KEYS = {
+        "send_email": ("attachments", "attachment"),
+        "http_post": ("files", "file", "attachments", "attachment"),
+        "api_call": ("file", "files", "attachments", "attachment",
+                     "file_path", "filepath", "filename"),
+    }
+
+    def _artifact_file_refs(self, tool, args):
+        """Extract candidate artifact file references from egress args.
+
+        Returns a list of raw string candidates found under the
+        tool's designated file-reference keys (recursively through
+        lists/dicts). A candidate becomes a REAL reference only if it
+        (a) exactly matches an inventory path, or (b) is path-shaped
+        and resolves to an existing file inside the sandbox. Anything
+        else is a phantom and is ignored (no FP on mere mentions).
+        """
+        keys = self._ARTIFACT_REF_KEYS.get(tool, ())
+        if not keys or not isinstance(args, dict):
+            return []
+        # api_call carries its payload one level down (params={...});
+        # the other egress tools take the fields at the top level.
+        root = args.get("params") if tool == "api_call" else args
+        if not isinstance(root, dict):
+            return []
+        found = []
+
+        def _walk(value):
+            if isinstance(value, str):
+                found.append(value)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    _walk(item)
+            elif isinstance(value, dict):
+                for item in value.values():
+                    _walk(item)
+
+        for key in keys:
+            if key in root:
+                _walk(root[key])
+
+        refs = []
+        for cand in found:
+            if not isinstance(cand, str) or not cand.strip():
+                continue
+            cand = cand.strip()
+            # (a) exact inventory match — always a real reference.
+            if self.artifacts.lookup(cand) is not None:
+                refs.append(cand)
+                continue
+            # (b) path-shaped and resolves to a real sandbox file.
+            if self._looks_like_path(cand) and self._resolves_to_file(cand):
+                refs.append(cand)
+        # De-duplicate, preserving order.
+        seen = set()
+        out = []
+        for r in refs:
+            if r not in seen:
+                seen.add(r)
+                out.append(r)
+        return out
+
+    @staticmethod
+    def _looks_like_path(value):
+        """Cheap path-shape test (no I/O)."""
+        if "://" in value or value.startswith(("http:", "https:")):
+            return False
+        if "/" in value or "\\" in value:
+            return True
+        # Bare filename with an extension: report.txt, weights.bin.
+        if "." in value and " " not in value and len(value) < 256:
+            head, dot, tail = value.rpartition(".")
+            if head and dot and 1 <= len(tail) <= 8 and tail.isalnum():
+                return True
+        return False
+
+    def _resolves_to_file(self, value):
+        """True iff the value resolves to an existing regular file
+        inside the sandbox (I/O, fail-closed False)."""
+        try:
+            if self._is_outside_sandbox(value):
+                return False
+            real = self._lineage_real_path(value)
+            return real.is_file()
+        except Exception:
+            return False
 
     def ingest_foreign_result(self, tool, result, principal=None):
         """F37: ingest a FOREIGN tool result into the provenance/taint store.
@@ -3680,6 +3941,52 @@ class ToolExecutor:
         # approval-classified-egress policy rule gates subsequent
         # egress for human declassification review. Run-scoped.
         ctx["read_classified"] = self._read_classification is not None
+        # Row-12: artifact-aware egress. For the outbound tools,
+        # extract file references from the designated fields and check
+        # each against the artifact inventory: unknown (never
+        # registered), tampered (bytes changed since registration), or
+        # restricted (registered + restricted label). The bytes are
+        # re-hashed at every check (check-time AND the approved-sweep
+        # use-time re-check, because _context is rebuilt there), so a
+        # post-approval mutation cannot slip a stale registration past.
+        # All False when no file reference is found: zero behavior
+        # change for file-less egress. Signal computation never raises:
+        # an internal error degrades to "no artifact signal" (fail-open
+        # on the artifact layer only — the DLP, canary, and policy
+        # layers still apply). Fail-closed here would deny all egress
+        # on any artifact-layer bug; the artifact check is
+        # defense-in-depth, not the primary boundary.
+        ctx["artifact_unknown"] = False
+        ctx["artifact_tampered"] = False
+        ctx["artifact_restricted"] = False
+        ctx["artifact_refs"] = []
+        if tool in _SEND_TOOLS or tool == "api_call":
+            try:
+                for ref in self._artifact_file_refs(tool, args or {}):
+                    rel = (self._resolved_path_for_policy(ref) or ref)
+                    real = self._lineage_real_path(ref)
+                    if not real.is_file():
+                        continue  # phantom or deleted: no signal
+                    try:
+                        sha_now, _nbytes = self._lineage_file_digest(real)
+                    except Exception:
+                        sha_now = None
+                    verdict = self.artifacts.check_egress(
+                        rel, sha256_now=sha_now,
+                        current_label=self.classification.level_for(rel))
+                    ctx["artifact_refs"].append({
+                        "path": verdict.get("path"),
+                        "status": verdict["status"],
+                        "flag": verdict["flag"],
+                    })
+                    if verdict["status"] == "unknown":
+                        ctx["artifact_unknown"] = True
+                    elif verdict["status"] == "tampered":
+                        ctx["artifact_tampered"] = True
+                    elif verdict["status"] == "restricted":
+                        ctx["artifact_restricted"] = True
+            except Exception:
+                pass
         if "path" in args:
             ctx["path_outside_sandbox"] = self._is_outside_sandbox(args["path"])
             # F146 (PaperCut class): the symlink-resolved target of the
@@ -6516,6 +6823,10 @@ class ToolExecutor:
             # Row-13 closure: classification label taint on successful
             # read_file (provenance-based; paraphrase cannot shed it).
             self._classification_taint_on_read(tool, kwargs, result)
+            # Row-12: register successful governed writes in the
+            # artifact inventory (path, sha256, size, agent, label).
+            self._artifact_register_on_write(tool, kwargs, result,
+                                             identity.agent_id)
             if tool == "api_call":
                 self.api_calls += 1
             # F33: charge the execution budgets exactly once, at execution
@@ -7382,6 +7693,19 @@ class ToolExecutor:
                         % (aid, decision.reason), decision.flag or "policy_re_eval_deny",
                         policy_id=decision.policy_id or "approval-execution-refused")
                 continue
+            # Row-12 TOCTOU: the fresh _context above re-hashes every
+            # referenced artifact. If the bytes changed between approval
+            # and this sweep, the human approved DIFFERENT bytes than
+            # would now leave — refuse, do not execute. (The general
+            # sweep only refuses on deny; the artifact layer needs this
+            # targeted guard because require_approval is the correct
+            # check-time effect for a stale registration.)
+            if ctx.get("artifact_tampered"):
+                _refuse("Approval %s refused: artifact bytes changed "
+                        "since approval (stale registration)." % (aid,),
+                        "artifact_tampered",
+                        policy_id="approval-tampered-artifact-egress")
+                continue
 
             # F33 (HARDENING-R8): re-check the volume budgets at the actual
             # execution boundary (TOCTOU guard) — the budget may have been
@@ -7609,6 +7933,12 @@ class ToolExecutor:
             # read_file, mirroring the direct-call path above.
             self._classification_taint_on_read(rec["tool"], rec["args"],
                                                result)
+            # Row-12: register successful governed writes, mirroring the
+            # direct-call path (an approved write_file enters the
+            # inventory exactly like a direct one).
+            self._artifact_register_on_write(rec["tool"], rec["args"],
+                                             result,
+                                             rec.get("agent_id"))
             if rec["tool"] == "api_call":
                 self.api_calls += 1
             # F33: charge the execution budgets exactly once, at execution

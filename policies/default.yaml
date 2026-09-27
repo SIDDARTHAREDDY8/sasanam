@@ -255,6 +255,41 @@ policies:
       read_classified: true
     reason: Run previously read classification-labeled content; possible exfiltration of classified meaning via paraphrase, summary, fragmentation, or re-encoding. Human review required before declassification. (Row-13 closure: label-based provenance taint, not content inspection — rewording cannot shed the label. Unlabeled sensitive content is not covered.)
 
+  # --- Row-12: artifact-aware egress (wave-130). Loudest first: an
+  # egress that references a file NEVER registered (side-channel
+  # write) is the loudest unknown; a registered file whose bytes
+  # changed since registration is a stale registration; a registered
+  # restricted artifact needs declassification review. All three are
+  # require_approval (never silent deny: the human sees the exact
+  # artifact, hash state, and label). A registered public artifact
+  # with matching bytes emits no signal (FP ceiling).
+  - id: approval-unknown-artifact-egress
+    description: Egress referencing a file with no artifact inventory record — written outside the governed write path.
+    effect: require_approval
+    flag: unknown_artifact_egress
+    match:
+      tool: [send_email, http_post, api_call]
+      artifact_unknown: true
+    reason: The referenced file was never registered in the run's artifact inventory — it was not written through the governed write_file path (side-channel write, pre-run plant, or compromised writer). The inventory cannot vouch for its bytes. Human review required. (Row-12: identity-based artifact egress detection.)
+
+  - id: approval-tampered-artifact-egress
+    description: Egress referencing a registered artifact whose bytes changed since registration.
+    effect: require_approval
+    flag: artifact_tampered
+    match:
+      tool: [send_email, http_post, api_call]
+      artifact_tampered: true
+    reason: The referenced file is registered, but the bytes on disk no longer match the registered SHA-256 — the registration is stale (post-write modification outside the governed path). The approved bytes are not the bytes that would leave. Human review required. (Row-12: stale-registration detection.)
+
+  - id: approval-restricted-artifact-egress
+    description: Egress referencing a registered artifact classified restricted.
+    effect: require_approval
+    flag: artifact_restricted_egress
+    match:
+      tool: [send_email, http_post, api_call]
+      artifact_restricted: true
+    reason: The referenced artifact is registered and classified restricted. Human declassification review required before it leaves the boundary. (Row-12: artifact-tuned egress; the row-13 rule covers classified MEANING via paraphrase, this rule covers the artifact FILE itself.)
+
   - id: approval-cross-run-campaign
     description: Small high-entropy api_call fragments — or the same api_call structure repeated thinly across runs — to the same registered domain may be a low-and-slow campaign.
     effect: require_approval

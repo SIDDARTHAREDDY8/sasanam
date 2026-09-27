@@ -170,6 +170,13 @@ def _reconstruct_context(entry, counters, policy):
             # predates the snapshot contract but the taint mechanism
             # existed.)
             return False, None
+        if key in ("artifact_unknown", "artifact_tampered",
+                   "artifact_restricted"):
+            # Row-12 (wave-130): the artifact inventory did not exist
+            # before this feature. An old entry whose snapshot lacks
+            # the key predates the inventory and the egress check, so
+            # no artifact signal could have been set — honestly False.
+            return False, None
         if key == "credential_identity_mismatch":
             # F111 (wave-34): deterministic False when the recorded args
             # carry nothing the identity check could trip on. The
