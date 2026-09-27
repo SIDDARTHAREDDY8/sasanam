@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 
 __all__ = [
     "UserIntent",
@@ -246,10 +247,139 @@ _VERB_CLASSES = {
         "loeschen", "loschen", "loescht", "loesche", "geloescht",
         "supprimer", "supprime",
     )),
+    # Wave-148 (row 7): tier-2 verb classes. Same closed-list
+    # discipline as tier 1: every form below was measured against
+    # labeled sentences at the +-8 token scope window (see
+    # evals/negation_verb_tier2_probes.py: 54 labeled sentences, 0
+    # misses; the 47-sentence precision corpus holds 0 false
+    # revocations). Language notes:
+    # - DE umlaut/eszett forms are carried BOTH as traditional
+    #   transcriptions ("schwaerzen", "veroeffentlichen") AND as
+    #   NFKD-folded forms ("schwarzen", "veroffentlichen") -- real
+    #   text with umlauts is accent-folded before scope
+    #   tokenization (see _fold_accents), which maps ä->a (not ae).
+    # - FR/ES accented forms are carried folded ("transferer",
+    #   "reenvie") for the same reason; the _NEGATION_RE cue list
+    #   is untouched (it matches raw text).
+    # - HI forms are romanized; English loanwords ("forward",
+    #   "upload") are the realistic romanized-Hindi verbs for
+    #   these actions and double as EN forms (harmless: the class
+    #   is language-agnostic by design).
+    # - German separable verbs (hoch+laden, weiter+leiten) are NOT
+    #   single tokens in main clauses ("laden Sie es nicht hoch"),
+    #   so they are matched by the _DE_SEPARABLE particle+stem
+    #   rule below, not by this table; the infinitives
+    #   ("hochladen", "weiterzuleiten") ARE single tokens and live
+    #   here.
+    "REDACT": frozenset((
+        "redact", "redacts", "redacting", "redacted",
+        "schwaerzen", "schwaerzt", "schwaerze", "geschwaerzt",
+        "schwarzen", "schwarzt", "schwarze", "geschwarzt",
+        "caviarder", "caviardez", "caviarde", "caviardent",
+        "censurar", "censura", "censure", "censurado",
+        "hatao", "hataana", "hataaya", "hataate",
+    )),
+    "SHARE": frozenset((
+        "share", "shares", "sharing", "shared",
+        "teilen", "teilt", "teile", "geteilt",
+        "partager", "partagez", "partage", "partagent",
+        "compartir", "comparte", "comparta", "compartido",
+        "baanto", "baantna", "baante", "baanta",
+    )),
+    "PUBLISH": frozenset((
+        "publish", "publishes", "publishing", "published",
+        "veroeffentlichen", "veroeffentlicht", "veroeffentliche",
+        "veroffentlichen", "veroffentlicht", "veroffentliche",
+        "publier", "publiez", "publie", "publient",
+        "publicar", "publica", "publique", "publicado",
+        "chhaapo", "chhaapna", "chhaape", "chhaapa",
+    )),
+    "FORWARD": frozenset((
+        "forward", "forwards", "forwarding", "forwarded",
+        "weiterleiten", "weiterleite", "weitergeleitet",
+        "weiterzuleiten",
+        "transferer", "transferez", "transfere", "transferent",
+        "reenviar", "reenvia", "reenvie", "reenviado",
+    )),
+    "UPLOAD": frozenset((
+        "upload", "uploads", "uploading", "uploaded",
+        "hochladen", "hochlade", "hochgeladen", "hochzuladen",
+        "telecharger", "telechargez", "telecharge", "telechargent",
+        "subir", "sube", "suba", "subido",
+        "cargar", "carga", "cargue", "cargado",
+    )),
 }
 _VERB_CLASS_BY_FORM = {
     form: cls for cls, forms in _VERB_CLASSES.items() for form in forms
 }
+
+
+# Wave-148 (row 7): German separable verbs for the tier-2 classes.
+# In main clauses the particle separates ("laden Sie es nicht
+# hoch", "leiten Sie die Kette nicht weiter"), so no single token
+# names the verb. A separable verb matches a token list when the
+# particle AND a stem form co-occur in the SAME clause/token list:
+# the stem requirement is the false-positive guard ("hoch" alone
+# means "high"; "weiter" alone means "onward" -- e.g. "Leiten Sie
+# das Team weiter" (keep leading the team) must not read as
+# FORWARD). Closed table, two entries; other separable verbs are a
+# documented residual (row 7 stays PARTIAL).
+_DE_SEPARABLE = {
+    "UPLOAD": (
+        ("hoch", frozenset((
+            "laden", "lade", "ladest", "ladet", "lud", "luden",
+            "geladen",
+        ))),
+    ),
+    "FORWARD": (
+        ("weiter", frozenset((
+            "leiten", "leite", "leitest", "leitet", "leiteten",
+            "geleitet",
+        ))),
+    ),
+}
+
+
+def _fold_accents(text):
+    """Strip diacritics for scope tokenization (wave-148, row 7).
+
+    NFKD decomposition with combining marks dropped, so
+    "transférer" -> "transferer" and "veröffentlichen" ->
+    "veroffentlichen" BEFORE the [a-z0-9']+ scope tokenizer runs
+    (without this the tokenizer splits "transférer" into "transf" +
+    "rer" and no class form ever matches). ASCII text is unchanged,
+    so tier-1 behavior is untouched. The negation cue regex
+    (_NEGATION_RE) still runs on raw text -- only scope
+    tokenization folds. German ß has no NFKD decomposition, so
+    ß-forms are carried as ss-transcriptions in the class table
+    (same as the tier-1 "loeschen" convention).
+    Deterministic, stdlib unicodedata only.
+    """
+    if not isinstance(text, str):
+        return ""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text)
+        if not unicodedata.combining(c))
+
+
+def _separable_verb_hits(normed):
+    """index -> class for German separable verbs in a token list.
+
+    For each (particle, stems) entry: when the particle token and at
+    least one stem token both occur in the list, every particle and
+    stem token index is marked with the class (both parts are verb
+    positions for the +-8 window -- in "laden Sie es nicht hoch" the
+    cue "nicht" sits next to the particle "hoch").
+    """
+    hits = {}
+    present = set(normed)
+    for cls, pairs in _DE_SEPARABLE.items():
+        for particle, stems in pairs:
+            if particle in present and (present & stems):
+                for i, tok in enumerate(normed):
+                    if tok == particle or tok in stems:
+                        hits[i] = cls
+    return hits
 
 
 def _scope_norm_token(token):
@@ -261,12 +391,19 @@ def _scope_norm_token(token):
 
 def _anchor_verb_classes(anchor_text):
     """Verb classes named by the anchor clause (the intent's action
-    verb, measured against the anchor clause)."""
+    verb, measured against the anchor clause). Wave-148: the text
+    is accent-folded before tokenization (so "transférer" matches
+    the folded "transferer" form) and German separable verbs
+    (particle+stem in the same text) contribute their class."""
     classes = set()
-    for tok in _SCOPE_WORD_RE.findall(anchor_text.lower()):
-        cls = _VERB_CLASS_BY_FORM.get(_scope_norm_token(tok))
+    normed = [_scope_norm_token(tok) for tok in
+              _SCOPE_WORD_RE.findall(
+                  _fold_accents(anchor_text.lower()))]
+    for tok in normed:
+        cls = _VERB_CLASS_BY_FORM.get(tok)
         if cls is not None:
             classes.add(cls)
+    classes.update(_separable_verb_hits(normed).values())
     return classes
 
 
@@ -288,12 +425,19 @@ def negation_scopes_grant(message, anchor_text,
         return True
     verb_seen = False
     for clause in _CLAUSE_SPLIT_RE.split(message):
-        toks = list(_SCOPE_WORD_RE.finditer(clause.lower()))
+        # Wave-148: accent-fold before scope tokenization (folding
+        # preserves string length for precomposed Latin diacritics,
+        # so the raw-text cue spans below still align with these
+        # token indices).
+        toks = list(_SCOPE_WORD_RE.finditer(
+            _fold_accents(clause.lower())))
         if not toks:
             continue
         normed = [_scope_norm_token(t.group(0)) for t in toks]
+        sep_hits = _separable_verb_hits(normed)
         verb_idx = [i for i, n in enumerate(normed)
-                    if _VERB_CLASS_BY_FORM.get(n) in anchor_classes]
+                    if _VERB_CLASS_BY_FORM.get(n) in anchor_classes
+                    or sep_hits.get(i) in anchor_classes]
         if verb_idx:
             verb_seen = True
         cue_idx = set()

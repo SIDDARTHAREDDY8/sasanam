@@ -71,6 +71,7 @@ $0, stdlib only, no network calls. Deterministic per run_id.
 import base64
 import binascii
 import hashlib
+import math
 import random
 import re
 import string
@@ -349,28 +350,128 @@ class CanaryMint:
         return [dict(c) for c in self._canaries if c["channel"] == channel]
 
 
-def _derive_fragments(value):
-    """Overlapping length-FRAGMENT_LEN fragments of a canary value.
+def _derive_fragments(value, kind=None, frag_len=FRAGMENT_LEN):
+    """Overlapping length-``frag_len`` fragments of a canary value.
 
     The value is split on predictable words (``_PREDICTABLE_SPLIT_RE``)
     and only the unpredictable remainders are fragmented (step 1,
     maximal overlap within each remainder): an attacker exfiltrating an
     unaligned 16-char slice of the secret still matches a derived
     fragment, while predictable structure never becomes a fragment.
-    Remainders shorter than FRAGMENT_LEN yield nothing. Values shorter
-    than FRAGMENT_LEN yield no fragments (the mint guarantees >=
+    Remainders shorter than ``frag_len`` yield nothing. Values shorter
+    than ``frag_len`` yield no fragments (the mint guarantees >=
     MIN_MATCHABLE_LEN > FRAGMENT_LEN, so this is defense-in-depth).
+
+    Wave-148 row 13: ``frag_len`` is clamped UP to the per-format floor
+    (``_fragment_floor(kind)``) -- no caller can derive fragments below
+    the measured specificity floor for a format. The operational default
+    stays FRAGMENT_LEN=16 for every format (floors are a lower bound,
+    not a target: we do not lower derivation to chase coverage).
     Deterministic, stdlib-only.
     """
-    if not isinstance(value, str) or len(value) < FRAGMENT_LEN:
+    frag_len = max(frag_len, _fragment_floor(kind))
+    if not isinstance(value, str) or len(value) < frag_len:
         return []
     frags = []
     for part in _PREDICTABLE_SPLIT_RE.split(value):
-        if len(part) < FRAGMENT_LEN:
+        if len(part) < frag_len:
             continue
-        for i in range(len(part) - FRAGMENT_LEN + 1):
-            frags.append(part[i:i + FRAGMENT_LEN])
+        for i in range(len(part) - frag_len + 1):
+            frags.append(part[i:i + frag_len])
     return frags
+
+
+# Wave-148 (row 13): measured per-format minimum fragment lengths.
+# Measured 2026-09-27 (see evals/canary_fragment_floor_probes.py):
+# for each planted format, fragments were derived at lengths
+# 8/10/12/14/16 across 20 run_ids and checked against an 80-text
+# benign ops-chatter corpus for cross-canary false positives. The
+# floor is the shortest length with ZERO benign hits:
+#   token formats (aws_access_key/aws_secret_key/bearer_token): 8
+#   hostname: 8 (hostnames are ~fully predictable, so they yield
+#       almost no fragments at any length; the whole-value path
+#       protects them)
+#   structured/env (env_entry): 10 -- at length 8 the structural
+#       prefix "sk_live_" itself becomes a fragment and matches
+#       benign chatter about stripe key shapes (40 hits); at 10
+#       the windows carry random chars and hits drop to zero.
+# The operational derivation length stays 16 everywhere; these floors
+# only forbid going shorter. Unknown kinds get the conservative max.
+_FRAGMENT_FLOOR_BY_KIND = {
+    "aws_access_key": 8,
+    "aws_secret_key": 8,
+    "bearer_token": 8,
+    "hostname": 8,
+    "env_entry": 10,
+}
+
+
+def _fragment_floor(kind):
+    """Minimum derivable fragment length for a canary format."""
+    return _FRAGMENT_FLOOR_BY_KIND.get(kind, FRAGMENT_LEN)
+
+
+def _fragment_entropy(frag):
+    """Shannon entropy of a fragment, in bits per character.
+
+    Deterministic, stdlib-only. A 16-char fragment over a 16-symbol
+    alphabet tops out at 4.0 bits/char.
+    """
+    n = len(frag)
+    if n == 0:
+        return 0.0
+    return -sum((frag.count(c) / n) * math.log2(frag.count(c) / n)
+                for c in set(frag))
+
+
+# Wave-148 (row 13): entropy gate for single-fragment trips. A
+# low-entropy fragment (repetitive runs, digit-heavy spans, common
+# substrings) is never ALONE sufficient for a trip: it requires a
+# second distinct fragment from the same canary (the pair rule, which
+# is entropy-blind by design). The gate applies only to the
+# half-span rule; the two-distinct-fragments rule and the
+# whole-canary path are unaffected.
+#
+# Threshold measured 2026-09-27: 6080 genuine half-spans over 40
+# run_ids bottom out at 2.371 bits/char (an aws_access_key draw
+# "HH0Q5900IH"); 3660 genuine 16-char fragments bottom out at 2.125
+# (slack-token digit runs, which can never half-span-trip alone
+# anyway: the slack value is ~50 chars, half = 25 > 16). 2.0 sits
+# below every genuine measurement with margin, while gating
+# repetitive content ("abababab..." = 1.0, "abcabc..." = 1.58,
+# constant runs = 0.0).
+#
+# Known residual (row 13 stays PARTIAL): dictionary-word fragments
+# above the gate ("passwordpassword" = 2.75) still half-span-trip
+# alone. Random mints essentially never contain dictionary words,
+# so this is a documented boundary, not a live false-positive.
+_LOW_ENTROPY_BITS = 2.0
+
+
+def _is_low_entropy_fragment(frag):
+    """True when a fragment is too low-entropy to trip alone."""
+    return _fragment_entropy(frag) < _LOW_ENTROPY_BITS
+
+
+def _half_span_match(s, value):
+    """The matched contiguous span, or None.
+
+    Same predictable-aware matching as before (wave-146 fix): the
+    value is split on predictable words first, and the span must lie
+    within an unpredictable remainder long enough to hold
+    ceil(len(value)/2) chars. Returns the actual span from ``s`` so
+    callers can entropy-gate it (wave-148, row 13).
+    """
+    need = (len(value) + 1) // 2
+    if not isinstance(s, str) or len(s) < need or need < 1:
+        return None
+    for part in _PREDICTABLE_SPLIT_RE.split(value):
+        if len(part) < need:
+            continue
+        for i in range(len(s) - need + 1):
+            if s[i:i + need] in part:
+                return s[i:i + need]
+    return None
 
 
 def _has_half_span(s, value):
@@ -389,16 +490,7 @@ def _has_half_span(s, value):
     shared across rotated hostnames trips the half-span rule -- a
     false positive (canary.p1.rotation_previous_run_no_trip).
     """
-    need = (len(value) + 1) // 2
-    if not isinstance(s, str) or len(s) < need or need < 1:
-        return False
-    for part in _PREDICTABLE_SPLIT_RE.split(value):
-        if len(part) < need:
-            continue
-        for i in range(len(s) - need + 1):
-            if s[i:i + need] in part:
-                return True
-    return False
+    return _half_span_match(s, value) is not None
 
 
 class CanaryRegistry:
@@ -442,7 +534,8 @@ class CanaryRegistry:
             self._by_value_norm[normalize_canary_text(c["value"])] = c
             if c["kind"] == "hostname":
                 self._by_host[c["value"].lower()] = c
-            self._fragments[c["value"]] = _derive_fragments(c["value"])
+            self._fragments[c["value"]] = _derive_fragments(
+                c["value"], kind=c.get("kind"))
 
     def match_value(self, s):
         """Exact credential/token match, then normalized match.
@@ -513,7 +606,9 @@ class CanaryRegistry:
             (cumulatively across egress attempts -- the piecemeal
             exfiltration signal), or
           - ``s`` contains one contiguous fragment of at least half
-            the canary (``_has_half_span``).
+            the canary (``_half_span_match``), AND that span is not
+            low-entropy (wave-148 row 13: a repetitive/digit-heavy span
+            alone never trips -- it needs a second distinct fragment).
         Never accumulates across different canaries. Returns a trip
         dict ``{kind, label, value, fragments_seen, trigger}`` on a
         trip, else None. A repeat scan of already-seen fragments does
@@ -531,7 +626,13 @@ class CanaryRegistry:
                 if frag in s:
                     seen.add(frag)
             revealed = len(seen) - before
-            half = _has_half_span(s, value)
+            half_span = _half_span_match(s, value)
+            # Wave-148 row 13: entropy gate -- a low-entropy half-span
+            # alone is never sufficient for a trip (it needs a second
+            # distinct fragment via the pair rule). The pair rule is
+            # entropy-blind by design.
+            half = (half_span is not None
+                    and not _is_low_entropy_fragment(half_span))
             if revealed or half:
                 if len(seen) >= 2:
                     meta = self._by_value[value]

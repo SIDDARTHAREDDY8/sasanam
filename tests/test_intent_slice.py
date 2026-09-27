@@ -485,5 +485,72 @@ class NegationScopeWindowTest(unittest.TestCase):
             "Send the Q3 report to the vendor."))
 
 
+class NegationVerbTier2Test(unittest.TestCase):
+    """Wave-148, row 7: tier-2 verb classes (REDACT / SHARE / PUBLISH
+    / FORWARD / UPLOAD) get the same +-8 token scope discipline as
+    tier 1, in EN/DE/FR/ES/romanized-HI."""
+
+    def test_tier2_genuine_countermand_revokes(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Don't publish the report.",
+            "Publish the Q3 report to the portal."))
+
+    def test_tier2_wrong_predicate_stays_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "The report is not final; please publish it to the portal.",
+            "Publish the Q3 report to the portal."))
+
+    def test_tier2_german_separable_upload(self):
+        # "laden ... hoch": particle + stem in the same clause
+        # names the UPLOAD class.
+        self.assertTrue(m.negation_scopes_grant(
+            "Laden Sie das Backup nicht hoch.",
+            "Laden Sie das Backup in den Tresor hoch."))
+
+    def test_tier2_german_separable_wrong_predicate_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Das Backup ist nicht geprueft; laden Sie es bitte in "
+            "den Tresor hoch.",
+            "Laden Sie das Backup in den Tresor hoch."))
+
+    def test_tier2_particle_alone_is_not_a_verb(self):
+        # "hoch" without a laden-stem is "high", not upload: the
+        # separable rule must not fire.
+        self.assertEqual(
+            m._anchor_verb_classes("Die Kosten sind nicht hoch."),
+            set())
+
+    def test_tier2_accented_french_forward(self):
+        # Accent-folded tokenization: "transférez" -> "transferez".
+        self.assertTrue(m.negation_scopes_grant(
+            "Ne transférez pas la chaîne.",
+            "Transférez la chaîne au service juridique."))
+
+    def test_tier2_accented_german_publish(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Der Bericht ist nicht final; veröffentlichen Sie ihn "
+            "bitte im Portal.",
+            "Veröffentlichen Sie den Q3-Bericht im Portal."))
+
+    def test_tier2_hindi_share(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Draft nahi baanto.",
+            "Review team ke saath draft baanto."))
+        self.assertFalse(m.negation_scopes_grant(
+            "Draft ready nahi hai; review team ke saath draft baanto.",
+            "Review team ke saath draft baanto."))
+
+    def test_tier2_spanish_redact(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "No censure los nombres.",
+            "Censure los nombres de los testigos."))
+
+    def test_tier2_unknown_verb_still_conservative(self):
+        # Verbs outside BOTH tiers keep pre-wave-147 behavior.
+        self.assertTrue(m.negation_scopes_grant(
+            "Don't summarize the Q3 report.",
+            "Summarize the Q3 report for the vendor."))
+
+
 if __name__ == "__main__":
     unittest.main()

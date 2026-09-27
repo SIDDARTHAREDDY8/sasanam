@@ -205,9 +205,12 @@ baseline poisoning are unchanged residuals.
 """
 
 from collections import Counter
+import hashlib
+import hmac
 from pathlib import Path
 
-from gov.chained_store import ChainedStore
+from . import keyprovider as _keyprovider
+from gov.chained_store import ChainedStore, canonical
 from gov.drift import RunFingerprint, fingerprint_tool_distance
 
 __all__ = [
@@ -232,6 +235,89 @@ the wave-139 near-trip streak's. K=4 is a fixed conservative
 bound, not operator policy: 5+-period rotations stay with the
 wave-141 per-direction buckets (which catch them later).
 """
+
+
+# Wave-148 (row 9): cross-run drift continuity digest.
+#
+# The pacing-aware adaptive state (tightness level, paced-cycle
+# rotation history, slow-burn accumulator) lives in the executor's
+# chained store. When the executor restarts with a fresh store, that
+# state is lost and paced bursts split across the restart never
+# tighten -- the attacker gets a clean budget for free. The digest
+# is the compact, MAC'd bridge: the old executor exports it, the
+# new executor imports it before recording runs.
+#
+# The digest is HMAC-SHA256 over the canonical JSON body (domain
+# separated), following gov/taint_ledger.py's commitment pattern.
+# ``hmac_key`` is explicit bytes on both calls -- production wires
+# the deployment key provider through the same seam; tests pass a
+# fixed key. A forged digest (tampered body, wrong key, unknown
+# agent, bad version) is refused: LOUD ``drift_digest_forgery_attempt``
+# and NO state change -- the run continues on clean state.
+#
+# Restored state (documented approximations -- the digest is compact):
+# - adapt_level: restored exactly. The tightness SURVIVES the restart;
+#   check() folds it from the chained continuity_restore record, so
+#   the effective limit/window stay tightened.
+# - rot_history: restored exactly (capped). The rotation detector
+#   re-arms from the paced-signature history.
+# - slow_accum / slow_runs: restored as the accumulator baseline;
+#   direction consistency re-arms from post-restart contributions.
+# - In-cycle counters (near-trip streak, per-direction buckets, flip
+#   state) restart at zero -- a restart breaks the attacker's streak
+#   exactly as it breaks the defender's, but it cannot shed the level.
+#
+# Known residuals (row 9 stays PARTIAL): many-shot/framing drift and
+# from-birth baseline poisoning are untouched by this seam; a stale
+# but MAC-valid digest replayed across a FULL store loss is refused
+# only if an older import already exists in this store -- otherwise
+# the operator must treat the digest path as latest-wins
+# (export overwrites); see import_continuity.
+_CONTINUITY_VERSION = 1
+_CONTINUITY_MAC_DOMAIN = "drift-continuity-v1"
+
+
+def _continuity_body_canonical(body):
+    """Canonical JSON of the digest body (without the MAC)."""
+    return canonical({k: v for k, v in body.items() if k != "mac"})
+
+
+def _continuity_mac(hmac_key, body):
+    """HMAC-SHA256 MAC for a continuity digest body.
+
+    ``hmac_key`` is always resolved bytes here -- callers go through
+    ``_continuity_key`` first.
+    """
+    if not isinstance(hmac_key, (bytes, bytearray)) or not hmac_key:
+        raise ValueError("hmac_key must be non-empty bytes")
+    msg = (_CONTINUITY_MAC_DOMAIN + "\n"
+           + _continuity_body_canonical(body)).encode("utf-8")
+    return hmac.new(bytes(hmac_key), msg, hashlib.sha256).hexdigest()
+
+
+def _continuity_key(hmac_key):
+    """Resolve the continuity digest key (wave-148 key-path fix).
+
+    Explicit bytes win (tests, offline tooling). ``None`` resolves
+    through the guarded key chokepoint
+    (``gov.keyprovider.resolve_active_key()`` -- the same seam
+    ``gov/taint_ledger.py`` uses) and fails closed with
+    ``NoKeyConfiguredError`` when the deployment has no key
+    provisioned. This keeps the wave-70 HMAC chokepoint audit green:
+    the only key path into ``_continuity_mac`` is the chokepoint or
+    an explicit caller-supplied test key.
+    """
+    if hmac_key is None:
+        key_bytes, _epoch = _keyprovider.resolve_active_key()
+        return key_bytes
+    if not isinstance(hmac_key, (bytes, bytearray)) or not hmac_key:
+        raise ValueError("hmac_key must be non-empty bytes")
+    return bytes(hmac_key)
+
+
+def _continuity_digest_fields():
+    return ("v", "agent_id", "run_seq", "adapt_level", "paced_cycles",
+            "rot_history", "slow_accum", "slow_runs")
 
 
 def default_store_dir():
@@ -658,6 +744,23 @@ class BudgetStore(ChainedStore):
                     r.get("direction_scores", {}).items()}
                 flip_prev = r.get("flip_prev")
                 flip_prev2 = r.get("flip_prev2")
+            elif kind == "continuity_restore":
+                # Wave-148 (row 9): executor-restart import of a
+                # MAC-verified digest. The tightness level survives;
+                # in-cycle counters restart at zero (documented in
+                # the continuity block above).
+                level = int(r.get("adapt_level", level))
+                last_adapt_seq = max(last_adapt_seq,
+                                     int(r.get("run_seq", -1)))
+                streak = int(r.get("streak", 0))
+                streak_net = {k: float(v) for k, v in
+                              r.get("streak_net", {}).items()}
+                streak_gross = float(r.get("streak_gross", 0.0))
+                direction_scores = {
+                    str(k): float(v) for k, v in
+                    r.get("direction_scores", {}).items()}
+                flip_prev = r.get("flip_prev")
+                flip_prev2 = r.get("flip_prev2")
         return (level, streak, streak_net, streak_gross, last_adapt_seq,
                 direction_scores, flip_prev, flip_prev2)
 
@@ -683,6 +786,11 @@ class BudgetStore(ChainedStore):
             if kind == "adapt":
                 if r.get("reset_directions"):
                     history = []
+            elif kind == "continuity_restore":
+                # Wave-148 (row 9): the imported digest's paced-cycle
+                # signature history re-arms the rotation detector.
+                history = [s for s in r.get("rot_history", [])
+                           if isinstance(s, str) and s][:cap]
             elif kind == "reset":
                 raw = r.get("rot_history") or []
                 history = [s for s in raw
@@ -727,22 +835,40 @@ class BudgetStore(ChainedStore):
         eff_limit, eff_window = BudgetStore._effective(policy, level)
         floor_te = policy.adapt_flip_floor * eff_limit
         long_window = eff_window * policy.slow_window_factor
+        # Wave-148 (row 9): continuity seed. The latest
+        # continuity_restore record (MAC-verified digest import on
+        # executor restart) seeds the accumulator baseline and the
+        # sub-floor run count; records at/before it were already
+        # counted into the seed, so the epoch folds only later
+        # records. A later epoch restart (trip marker, manual reset,
+        # adapt tightening) voids the seed -- old evidence never
+        # double-counts, exactly like pre-existing evidence.
+        seed_accum, seed_runs, seed_at = 0.0, 0, -1
+        for i, r in enumerate(records):
+            if r.get("kind") == "continuity_restore":
+                seed_at = i
+                seed_accum = round(float(r.get("slow_accum", 0.0)), 9)
+                seed_runs = int(r.get("slow_runs", 0))
         epoch = []
-        for r in records:
+        void_seed = False
+        for r in records[seed_at + 1:]:
             kind = r.get("kind")
             if kind == "slow_burn_trip":
                 epoch = []
+                void_seed = True
             elif kind == "reset" and r.get("trigger") == "manual":
                 epoch = []
+                void_seed = True
             elif kind == "adapt" and (r.get("reset_streak")
                                      or r.get("reset_directions")):
                 epoch = []
+                void_seed = True
             elif kind in ("contribution", "reset"):
                 epoch.append(r)
-        accum = 0.0
+        accum = 0.0 if void_seed else seed_accum
         net = {}
         gross = 0.0
-        runs = 0
+        runs = 0 if void_seed else seed_runs
         weight = policy.slow_weight
         decay = policy.slow_clean_decay
         for r in epoch[-long_window:]:
@@ -1201,6 +1327,153 @@ class BudgetStore(ChainedStore):
                            {"event": "drift_budget_reset",
                             "agent_id": agent_id, "trigger": "manual",
                             "reason": str(reason)}, audit)
+
+    # -------------------------------------- cross-run continuity (w148)
+
+    def export_continuity(self, agent_id, policy, hmac_key=None):
+        """Export a compact MAC'd continuity digest for an agent.
+
+        Covers the adaptive tightness level, the paced-signature
+        count/history (paced_cycles, rot_history), and the slow-burn
+        accumulator level (slow_accum, slow_runs). Deterministic.
+        ``policy`` is needed because the slow-burn accumulator is
+        policy-relative. ``hmac_key``: non-empty bytes, or None to
+        resolve through the guarded key chokepoint
+        (``gov.keyprovider.resolve_active_key()`` -- the same seam as
+        ``gov/taint_ledger.py``; fails closed when unprovisioned).
+        """
+        if not isinstance(policy, BudgetPolicy):
+            raise TypeError("policy must be a BudgetPolicy, got %r"
+                            % type(policy).__name__)
+        agent_id = str(agent_id)
+        records = self._read_all(agent_id)
+        level, _, _, _, _, _, _, _ = self._adapt_fold(records)
+        rot_history = self._rotation_fold(records)
+        accum, _, runs, _ = self._slow_burn_state(records, policy,
+                                                 level)
+        paced_cycles = sum(
+            1 for r in records
+            if r.get("kind") == "reset"
+            and int(r.get("streak", 0)) >= 1)
+        # Note: a tightening adapt record rides the same defuse
+        # reset, so counting resets counts each completed near-trip
+        # pacer cycle exactly once.
+        last_seq = max([int(r.get("run_seq", -1)) for r in records]
+                       + [-1])
+        body = {"v": _CONTINUITY_VERSION,
+                "agent_id": agent_id,
+                "run_seq": last_seq,
+                "adapt_level": int(level),
+                "paced_cycles": int(paced_cycles),
+                "rot_history": list(rot_history),
+                "slow_accum": round(float(accum), 9),
+                "slow_runs": int(runs)}
+        return dict(body, mac=_continuity_mac(_continuity_key(hmac_key),
+                                                 body))
+
+    def _continuity_refusal_reason(self, agent_id, digest):
+        """Why a digest must be refused, or None if it is well-formed.
+
+        (MAC verification is separate -- it needs the key.)
+        """
+        if not isinstance(digest, dict):
+            return "malformed"
+        if digest.get("v") != _CONTINUITY_VERSION:
+            return "bad_version"
+        if str(digest.get("agent_id")) != agent_id:
+            return "agent_mismatch"
+        for field in _continuity_digest_fields():
+            if field not in digest:
+                return "malformed"
+        if not isinstance(digest.get("mac"), str) or not digest["mac"]:
+            return "missing_mac"
+        if not isinstance(digest["run_seq"], int):
+            return "malformed"
+        if not isinstance(digest["adapt_level"], int):
+            return "malformed"
+        if not isinstance(digest["rot_history"], list):
+            return "malformed"
+        return None
+
+    def import_continuity(self, agent_id, digest, hmac_key, run_seq,
+                         audit=None):
+        """Import a continuity digest into a (fresh) store.
+
+        Verifies the MAC (constant-time compare); on success writes a
+        chained ``continuity_restore`` record and emits LOUD
+        ``drift_state_restored``. On ANY refusal -- bad MAC, wrong
+        key, malformed digest, agent mismatch, or a digest not newer
+        than the last import in this store -- emits LOUD
+        ``drift_digest_forgery_attempt``, writes nothing, and returns
+        False: the run continues on clean state (fail-closed, never
+        silently ignoring a forgery).
+
+        ``run_seq`` is the new executor's first run seq for the
+        restore record. Returns True on restore, False on refusal.
+        Deterministic.
+        """
+        agent_id = str(agent_id)
+        self._check_seq(run_seq)
+        auditor = self._audit if audit is None else audit
+
+        def _refuse(reason):
+            if auditor is not None:
+                auditor({"event": "drift_digest_forgery_attempt",
+                         "severity": "LOUD",
+                         "agent_id": agent_id,
+                         "run_seq": run_seq,
+                         "reason": reason})
+            return False
+
+        reason = self._continuity_refusal_reason(agent_id, digest)
+        if reason is not None:
+            return _refuse(reason)
+        try:
+            expected = _continuity_mac(_continuity_key(hmac_key), digest)
+        except ValueError:
+            # Invalid key is operator error: fail closed, loudly.
+            return _refuse("bad_key")
+        if not hmac.compare_digest(expected, digest["mac"]):
+            return _refuse("bad_mac")
+        records = self._read_all(agent_id)
+        last_restore = max(
+            [int(r.get("run_seq", -1)) for r in records
+             if r.get("kind") == "continuity_restore"] + [-1])
+        if int(digest["run_seq"]) <= last_restore:
+            # Stale-but-valid digest replayed into a store that
+            # already imported newer state: refuse as a downgrade
+            # attempt. (Across a FULL store loss there is no newer
+            # state to compare against -- the operator must treat
+            # the digest path as latest-wins; documented above.)
+            return _refuse("stale_seq")
+        record = {"kind": "continuity_restore",
+                  "agent_id": agent_id,
+                  "run_seq": run_seq,
+                  "drift_budget_version": _BUDGET_VERSION,
+                  "adapt_level": int(digest["adapt_level"]),
+                  "streak": 0,
+                  "streak_net": {},
+                  "streak_gross": 0.0,
+                  "direction_scores": {},
+                  "flip_prev": None,
+                  "flip_prev2": None,
+                  "rot_history": [s for s in digest["rot_history"]
+                                  if isinstance(s, str)],
+                  "slow_accum": round(float(digest["slow_accum"]), 9),
+                  "slow_runs": int(digest["slow_runs"]),
+                  "paced_cycles": int(digest["paced_cycles"]),
+                  "digest_run_seq": int(digest["run_seq"]),
+                  "digest_mac": digest["mac"]}
+        event = {"event": "drift_state_restored",
+                 "severity": "LOUD",
+                 "agent_id": agent_id,
+                 "run_seq": run_seq,
+                 "adapt_level": int(digest["adapt_level"]),
+                 "paced_cycles": int(digest["paced_cycles"]),
+                 "slow_accum": round(float(digest["slow_accum"]), 9),
+                 "digest_run_seq": int(digest["run_seq"])}
+        self._write(agent_id, record, event, audit)
+        return True
 
     # ----------------------------------------------------------- reads
 

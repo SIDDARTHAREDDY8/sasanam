@@ -9318,3 +9318,34 @@ their 2 w70 failures are the stale-allowlist side of the same race).
 **Findings:** none filed (the silent-delivery composition is the documented residual, pinned EXPECTED). Next free: F183. Row 1 stays PARTIAL (compositional paraphrase reaches the known ceiling; arbitrary phrasing remains an arms race).
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-147 push: 1ed0283..445685b
+
+**Pre-push gates** (fresh push clone at /tmp/push147/agent-governance-demo, based at 1ed0283, tree copied from the shared workspace sans .git/__pycache__; workstream sibling links realagent/platform/crypto verified incl. platform/approval_web.py; every gate with its own mkdir-p'd unique TMPDIR, sequential):
+- canonical `tests/run_tests.py`: **4713 OK (skipped=9, expected failures=5)**, exit 0. First attempt caught 1 failure — `test_pinned_fps_still_fire_at_gate` left stale (asserted pre-lane-2 firing); graduated honestly to `test_pinned_scope_fps_now_silent_at_gate`, re-ran green.
+- registry `evals/run_evals.py --registry-gate`: **GREEN**, exit 0 (rewrote `evals/artifacts/wave23_b2/battery_100_results.json` as expected — reverted via `git checkout --`, verified clean).
+- matrix `evals/run_evals.py`: **3216/3216 SHIP-GATE GREEN** (134 registered situations ×3×4×2 — baseline holds), exit 0.
+- realistic `tests/run_realistic.py`: **7/7**, exit 0.
+
+**Red-first post-wave closure audit:** wave-147 claims zero closures (rows 1/7/11 stay PARTIAL; no findings filed or closed) — nothing to re-verify break-first. The 3 EXPECTED diversity shapes re-checked against the documented paraphrase-laundering residual (F154 #1): tier=agent, no ≥64-char verbatim link, shaping=None even under the H17 tainted_run rule — exact documented shape, pinned not claimed away. No overstatements; no new findings. Next free: F183. Open findings: none.
+
+**Pushed** 2026-09-27: `1ed0283..445685b` → origin main (SSH, config_abs). 16 files: 12 modified + 3 new batteries + BUILD_LOG/status/chapman updates.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-148 lane work (row 13 fragment floor, row 9 restart continuity, row 7 verb tier-2)
+
+**Lane 1 — Row 13 canary fragment length floor + entropy gating (PARTIAL).**
+`gov/canary.py`: per-format minimum fragment length (`_fragment_floor`, measured per planted format) + fragment entropy gating — low-entropy fragments (repetitive/dictionary/common substrings) are never alone sufficient for a trip; they require a second distinct fragment. Battery `evals/canary_fragment_floor_probes.py` (module-level staging; `env -u GOV_DEPLOYMENT_MODE` verified; deterministic ×2): **7 HELD / 0 BREAK / 1 EXPECTED / 0 ERROR** — the EXPECTED is the documented structural miss (a 9-char below-floor slice stays silent). Adjacent `canary_fragment_probes` 9/0/0/0. Units in `tests/test_canary_fragments.py` green. Residual: fragments shorter than the floor still miss by construction; fully paraphrased-away canaries still miss. Row 13 stays PARTIAL.
+
+**Lane 2 — Row 9 restart continuity (PARTIAL).**
+`gov/drift_budget.py`: `BudgetStore.export_continuity()` → compact deterministic HMAC-SHA256 digest (`adapt_level`, `paced_cycles`, `rot_history`, `slow_accum`/`slow_runs`, `run_seq`); `import_continuity()` verifies MAC with `hmac.compare_digest`, reinstates tightness on success (chained `continuity_restore` record + LOUD `drift_state_restored`); any refusal (bad MAC, wrong key, malformed, bad version, agent mismatch, stale-replay downgrade) emits LOUD `drift_digest_forgery_attempt`, writes nothing, returns False — run continues on clean state. Folds restore tightness/rotation history/slow-burn seeding; without a restore record the folds are provably identical to before. Battery `evals/drift_continuity_probes.py`: pre-seam **1 HELD / 3 BREAK** (no continuity seam), post-seam **4 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** both envs — r1 restart→restore→trip at run 6 under restored 0.6 limit; r2 tampered/wrong-key refused LOUD, no state change; r3 200 benign restart sequences, 0 false trips/tightenings; r4 deterministic. Units: 10 new `TestContinuity` in `tests/test_drift_budget.py` (52 OK; drift modules 97 OK). Adjacent batteries hold (adaptive 7/0/2, drift_budget 5/0/1, drift 4/0/1, slow_burn 4/0/1). Residuals: in-cycle counters (streak, buckets, flip state) restart at zero (documented approximation); a stale-but-MAC-valid digest replayed across full store loss cannot be detected — digest path is latest-wins, operator-noted. Row 9 stays PARTIAL (many-shot/framing drift, from-birth baseline poisoning untouched).
+
+**Lane 3 — Row 7 negation scope verb tier-2 (PARTIAL).**
+`gov/intent_slice.py`: tier-2 verb classes REDACT/SHARE/PUBLISH/FORWARD/UPLOAD across EN/DE/FR/ES/romanized-Hindi (incl. German separable-verb handling), same ±8-token scope window as tier-1. Battery `evals/negation_verb_tier2_probes.py`: **6 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** both envs — 54 labeled sentences (5 verbs × 5 langs, genuine + wrong-predicate), 0 misses; 47-sentence precision corpus stays green (no false-revocation regression). Units: tier-2 pins in `tests/test_intent_slice.py` green. Row 7 stays PARTIAL (non-romanized scripts, full synonym replacement remain).
+
+**Findings:** none filed. Next free: F183. Open findings: none.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+**Wave-148 pre-push catch (2026-09-27):** the push-clone canonical run failed 2/4741 — `tests/test_w70_hmac_chokepoint_audit` (`test_no_unguarded_hmac_call_sites`, `test_audit_covers_expected_site_count`). Lane 2's continuity digest added an `hmac.new` call site in `gov/drift_budget.py::_continuity_mac` whose key came only from a caller-supplied parameter — outside the wave-69/81 guarded key chokepoint. Fixed honestly (not allowlisted as-is): `export_continuity`/`import_continuity` now take `hmac_key=None` and resolve through `gov.keyprovider.resolve_active_key()` (the same seam `gov/taint_ledger.py` uses; fail-closed `NoKeyConfiguredError` when unprovisioned), with an explicit-bytes override kept for tests/offline tooling; the site is allowlisted with that custody story + domain separation (`_CONTINUITY_MAC_DOMAIN`). New pin tests: `test_none_key_resolves_via_chokepoint` (None-keyed digest round-trips through the provisioned suite key) and `test_none_key_unprovisioned_fails_closed` (scrubbed env raises `NoKeyConfiguredError` on both export and import). Note: `import_continuity` validates digest shape BEFORE key resolution, so a malformed digest under a scrubbed env still gets the LOUD forgery refusal (returns False) rather than a key error — correct fail-closed behavior, pinned by the test's use of a well-formed digest. This is exactly what the chokepoint audit is for.

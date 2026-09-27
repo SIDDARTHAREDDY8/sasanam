@@ -9,7 +9,8 @@ import unittest
 
 from gov.canary import (CanaryMint, CanaryRegistry, CanaryTripHalt,
                         FRAGMENT_LEN, _derive_fragments,
-                        _has_half_span)
+                        _fragment_floor, _has_half_span,
+                        _is_low_entropy_fragment)
 
 
 def _reg(run_id="run-frag-unit"):
@@ -125,6 +126,87 @@ class TestMatchFragments(unittest.TestCase):
         self.assertEqual(len(reg._fragment_seen[v]), 1)
         reg.register(CanaryMint("run-b"))
         self.assertEqual(reg._fragment_seen, {})
+
+
+def _low_entropy_reg():
+    # Registry holding a single hand-built low-entropy canary
+    # ("ab" * 16, every 16-char window has entropy 1.0). Stands in
+    # for short structured canaries with repetitive segments; the
+    # matching path is the real one.
+    reg = CanaryRegistry()
+    v = "ab" * 16
+    reg._by_value[v] = {"kind": "bearer_token", "label": "synth-lowent",
+                        "value": v, "channel": "decoy_config"}
+    reg._fragments[v] = _derive_fragments(v)
+    return reg, v
+
+
+class TestFragmentFloorAndEntropy(unittest.TestCase):
+    """Wave-148 row 13: per-format fragment floors + entropy gate."""
+
+    def test_floor_table_matches_measurements(self):
+        # Measured 2026-09-27: shortest fragment length with zero
+        # benign-corpus hits per format (see
+        # evals/canary_fragment_floor_probes.py).
+        self.assertEqual(_fragment_floor("aws_access_key"), 8)
+        self.assertEqual(_fragment_floor("aws_secret_key"), 8)
+        self.assertEqual(_fragment_floor("bearer_token"), 8)
+        self.assertEqual(_fragment_floor("hostname"), 8)
+        self.assertEqual(_fragment_floor("env_entry"), 10)
+        # Unknown kinds stay conservative: never below 16.
+        self.assertEqual(_fragment_floor("something-new"), FRAGMENT_LEN)
+
+    def test_derive_clamps_below_floor(self):
+        v = "sk_live_" + "R" * 24
+        frags = _derive_fragments(v, kind="env_entry", frag_len=8)
+        self.assertTrue(frags)
+        for f in frags:
+            self.assertEqual(len(f), 10)
+
+    def test_derive_at_floor_token(self):
+        reg = _reg()
+        v = _value(reg, "aws-key-0")
+        frags = _derive_fragments(v, kind="aws_access_key", frag_len=8)
+        self.assertTrue(frags)
+        for f in frags:
+            self.assertEqual(len(f), 8)
+            self.assertIn(f, v)
+
+    def test_default_derive_unchanged(self):
+        # No kind/frag_len: the operational 16-char derivation.
+        reg = _reg()
+        v = _value(reg, "aws-key-0")
+        self.assertEqual(_derive_fragments(v), reg._fragments[v])
+
+    def test_entropy_gate_boundaries(self):
+        self.assertTrue(_is_low_entropy_fragment("abababababababab"))
+        self.assertTrue(_is_low_entropy_fragment("a" * 16))
+        # A genuine access-key fragment is far above the gate.
+        self.assertFalse(_is_low_entropy_fragment(
+            _value(_reg(), "aws-key-0")[4:20]))
+
+    def test_single_low_entropy_fragment_no_trip(self):
+        reg, _ = _low_entropy_reg()
+        self.assertIsNone(
+            reg.match_fragments("xx abababababababab yy"))
+
+    def test_two_low_entropy_fragments_trip(self):
+        reg, _ = _low_entropy_reg()
+        self.assertIsNone(
+            reg.match_fragments("xx abababababababab yy"))
+        hit = reg.match_fragments("zz babababababababa ww")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["trigger"], "two_distinct_fragments")
+
+    def test_high_entropy_half_span_still_trips(self):
+        # The gate must not silence genuine high-entropy spans. (A
+        # 20-char span holds several 16-char windows, so the pair rule
+        # may fire first -- either trigger is a trip, not silence.)
+        reg = _reg()
+        v = _value(reg, "github-token")  # 40 chars
+        hit = reg.match_fragments("xx " + v[:20] + " yy")
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit["label"], "github-token")
 
 
 if __name__ == "__main__":

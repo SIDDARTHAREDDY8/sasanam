@@ -628,5 +628,212 @@ class TestSlowBurn(_AdaptiveHarness):
         self.assertIsNone(chk.detail["slow_burn_threshold"])
 
 
+class TestContinuity(_AdaptiveHarness):
+    """Unit tests for the wave-148 row-9 continuity digest seam."""
+
+    KEY = b"wave148-unit-test-continuity-key"
+
+    def _pace_to_level_1(self, agent="a"):
+        for i in range(2):
+            self.record(agent, _shifted(_X09), 2 * i + 1)
+            self.record(agent, dict(BASE_TOOLS), 2 * i + 2)
+        self.assertEqual(
+            self.store.check(agent, self.policy).detail["adapt_level"],
+            1)
+
+    def test_none_key_resolves_via_chokepoint(self):
+        # Wave-148 key-path fix: hmac_key=None resolves through the
+        # guarded key chokepoint (gov.keyprovider.resolve_active_key,
+        # provisioned for the suite by tests/__init__.py), not through
+        # a dev fallback. The chokepoint-keyed digest must import
+        # cleanly with hmac_key=None.
+        self._pace_to_level_1()
+        d = self.store.export_continuity("a", self.policy, None)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        store2 = BudgetStore(tmp2 / "budget")
+        self.assertTrue(store2.import_continuity("a", d, None, 5))
+
+    def test_none_key_unprovisioned_fails_closed(self):
+        # With no key provisioned, the None path fails closed
+        # (NoKeyConfiguredError) instead of inventing key material.
+        from gov.keys import NoKeyConfiguredError
+        from tests.keyfixture import scrub_key_env
+        self._pace_to_level_1()
+        digest = self.store.export_continuity("a", self.policy, self.KEY)
+        restore = scrub_key_env()
+        try:
+            with self.assertRaises(NoKeyConfiguredError):
+                self.store.export_continuity("a", self.policy, None)
+            tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+            store2 = BudgetStore(tmp2 / "budget")
+            with self.assertRaises(NoKeyConfiguredError):
+                store2.import_continuity("a", digest, None, 5)
+        finally:
+            restore()
+
+    def test_export_digest_shape(self):
+        from gov.drift_budget import _CONTINUITY_VERSION
+        self._pace_to_level_1()
+        d = self.store.export_continuity("a", self.policy, self.KEY)
+        for k in ("v", "agent_id", "run_seq", "adapt_level",
+                  "paced_cycles", "rot_history", "slow_accum",
+                  "slow_runs", "mac"):
+            self.assertIn(k, d)
+        self.assertEqual(d["v"], _CONTINUITY_VERSION)
+        self.assertEqual(d["agent_id"], "a")
+        self.assertEqual(d["adapt_level"], 1)
+        self.assertGreaterEqual(d["paced_cycles"], 1)
+        self.assertEqual(d["run_seq"], 4)
+
+    def test_export_mac_independent_verification(self):
+        # Recompute the MAC without _continuity_mac to prove the
+        # scheme (domain separation + canonical JSON) is exactly as
+        # documented.
+        import hashlib
+        import hmac
+        from gov.chained_store import canonical
+        from gov.drift_budget import _CONTINUITY_MAC_DOMAIN
+        self._pace_to_level_1()
+        d = self.store.export_continuity("a", self.policy, self.KEY)
+        body = {k: v for k, v in d.items() if k != "mac"}
+        msg = (_CONTINUITY_MAC_DOMAIN + "\n"
+               + canonical(body)).encode("utf-8")
+        expected = hmac.new(self.KEY, msg,
+                            hashlib.sha256).hexdigest()
+        self.assertEqual(d["mac"], expected)
+
+    def test_export_is_deterministic(self):
+        self._pace_to_level_1()
+        d1 = self.store.export_continuity("a", self.policy, self.KEY)
+        d2 = self.store.export_continuity("a", self.policy, self.KEY)
+        self.assertEqual(d1, d2)
+
+    def test_import_restores_tightness_and_emits_loud(self):
+        self._pace_to_level_1()
+        digest = self.store.export_continuity("a", self.policy,
+                                             self.KEY)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        events2 = []
+        store2 = BudgetStore(tmp2 / "budget",
+                             audit=events2.append)
+        self.assertTrue(store2.import_continuity("a", digest,
+                                                 self.KEY, 5))
+        self.assertTrue(store2.verify_chain("a"))
+        restored = [e for e in events2
+                    if e.get("event") == "drift_state_restored"]
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(restored[0].get("severity"), "LOUD")
+        self.assertEqual(restored[0]["adapt_level"], 1)
+        kinds = [r.get("kind")
+                 for r in store2.contributions("a")]
+        self.assertIn("continuity_restore", kinds)
+        # The restored store enforces the tightened limit: check()
+        # reports level 1 and the 0.6 effective limit.
+        chk = store2.check("a", self.policy)
+        self.assertEqual(chk.detail["adapt_level"], 1)
+        self.assertAlmostEqual(chk.detail["effective_limit"], 0.6)
+
+    def test_import_tampered_body_refused_loud_no_state_change(self):
+        self._pace_to_level_1()
+        digest = self.store.export_continuity("a", self.policy,
+                                             self.KEY)
+        tampered = dict(digest, adapt_level=0)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        events2 = []
+        store2 = BudgetStore(tmp2 / "budget",
+                             audit=events2.append)
+        self.assertFalse(store2.import_continuity("a", tampered,
+                                                  self.KEY, 5))
+        forged = [e for e in events2
+                  if e.get("event")
+                  == "drift_digest_forgery_attempt"]
+        self.assertEqual(len(forged), 1)
+        self.assertEqual(forged[0].get("severity"), "LOUD")
+        self.assertEqual(forged[0]["reason"], "bad_mac")
+        self.assertEqual(store2.contributions("a"), [])
+        self.assertTrue(store2.verify_chain("a"))
+
+    def test_import_wrong_key_refused_loud(self):
+        self._pace_to_level_1()
+        digest = self.store.export_continuity("a", self.policy,
+                                             self.KEY)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        events2 = []
+        store2 = BudgetStore(tmp2 / "budget",
+                             audit=events2.append)
+        self.assertFalse(store2.import_continuity(
+            "a", digest, b"wrong-key-0123456789abcdef", 5))
+        forged = [e for e in events2
+                  if e.get("event") == "drift_digest_forgery_attempt"]
+        self.assertEqual(len(forged), 1)
+        self.assertEqual(forged[0].get("severity"), "LOUD")
+        self.assertEqual(store2.contributions("a"), [])
+
+    def test_import_agent_mismatch_refused(self):
+        self._pace_to_level_1()
+        digest = self.store.export_continuity("a", self.policy,
+                                             self.KEY)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        store2 = BudgetStore(tmp2 / "budget", audit=lambda e: None)
+        self.assertFalse(store2.import_continuity("b", digest,
+                                                  self.KEY, 5))
+        self.assertEqual(store2.contributions("b"), [])
+
+    def test_import_stale_replay_refused(self):
+        self._pace_to_level_1()
+        new_digest = self.store.export_continuity("a", self.policy,
+                                                 self.KEY)
+        tmp2 = Path(tempfile.mkdtemp(prefix="test_adaptdrift2_"))
+        events2 = []
+        store2 = BudgetStore(tmp2 / "budget",
+                             audit=events2.append)
+        self.assertTrue(store2.import_continuity("a", new_digest,
+                                                 self.KEY, 5))
+        # A stale digest (older run_seq) re-imported into the same
+        # store is refused as a downgrade attempt.
+        from gov.drift_budget import _continuity_mac
+        old_body = dict(new_digest)
+        old_body["run_seq"] = 2
+        del old_body["mac"]
+        old = dict(old_body,
+                   mac=_continuity_mac(self.KEY, old_body))
+        events2.clear()
+        self.assertFalse(store2.import_continuity("a", old,
+                                                  self.KEY, 6))
+        forged = [e for e in events2
+                  if e.get("event")
+                  == "drift_digest_forgery_attempt"]
+        self.assertEqual(len(forged), 1)
+        self.assertEqual(forged[0]["reason"], "stale_seq")
+        # The newer state survives: still level 1.
+        self.assertEqual(store2.check("a", self.policy)
+                         .detail["adapt_level"], 1)
+
+    def test_import_seeds_slow_burn_accumulator(self):
+        # A synthetic-but-MAC-valid digest seeds the slow-burn
+        # accumulator and sub-floor run count; later contributions
+        # fold on top of the seed.
+        from gov.drift_budget import _continuity_mac
+        body = {"v": 1, "agent_id": "a", "run_seq": 3,
+                "adapt_level": 0, "paced_cycles": 0,
+                "rot_history": [], "slow_accum": 0.5,
+                "slow_runs": 4}
+        digest = dict(body,
+                      mac=_continuity_mac(self.KEY, body))
+        self.assertTrue(self.store.import_continuity("a", digest,
+                                                     self.KEY, 4))
+        records = self.store.contributions("a")
+        accum, consistency, runs, _ = \
+            self.store._slow_burn_state(records, self.policy, 0)
+        self.assertAlmostEqual(accum, 0.5)
+        self.assertEqual(runs, 4)
+
+    def test_export_rejects_non_policy(self):
+        # export_continuity needs the slow-burn fold of the same
+        # policy family; a non-BudgetPolicy is rejected loudly.
+        with self.assertRaises(TypeError):
+            self.store.export_continuity("a", object(), self.KEY)
+
+
 if __name__ == "__main__":
     unittest.main()

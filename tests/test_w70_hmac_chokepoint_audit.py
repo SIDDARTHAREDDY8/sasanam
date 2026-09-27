@@ -180,6 +180,19 @@ ALLOWED_HMAC_SITES = {
     # configuration-integrity binding, not a credential.
     ("gov/artifact_sweep.py", "_roots_decl_mac", 0):
         "roots-declaration MAC; key from resolve_active_key() chokepoint, domain-separated",
+    # gov/drift_budget.py (wave-148, row-9): the drift-continuity
+    # digest MAC. The key is gov.keyprovider.resolve_active_key()
+    # output when the caller passes hmac_key=None (or an explicit
+    # caller-supplied key for tests/offline tooling) -- the
+    # wave-69/81 guarded chokepoint (explicit provisioning,
+    # fail-closed, no dev fallback) -- never hard-coded, never
+    # committed; domain-separated via _CONTINUITY_MAC_DOMAIN
+    # ("drift-continuity-v1") and bound to (v, agent_id, run_seq,
+    # adapt_level, paced_cycles, rot_history, slow_accum, slow_runs)
+    # so a digest cannot collide with any other MAC domain. The
+    # digest carries drift-state counters, not credentials.
+    ("gov/drift_budget.py", "_continuity_mac", 0):
+        "drift-continuity digest MAC; key from resolve_active_key() chokepoint, domain-separated",
 }
 
 
