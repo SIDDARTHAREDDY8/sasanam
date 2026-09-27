@@ -2929,7 +2929,10 @@ class ToolExecutor:
           >=1 token-bearing document (this run, or a prior run when
           the tracker has a ``taint_ledger`` attached — see
           gov/taint_ledger.py) AND the destination is a
-          concrete novel one.
+          concrete novel one (novelty is per-run, or against
+          run-1..N history when the tracker has a
+          ``destination_ledger`` attached — see
+          gov/destination_ledger.py).
 
         Every audit event carries counts and doc ids ONLY — token
         strings are never logged (privacy). With no tracker
@@ -2944,8 +2947,9 @@ class ToolExecutor:
         attached, cross-run read->egress stays invisible (the tracker
         is per-run; opt-in ceiling). With a ledger attached, the
         ledger's ceilings apply (operator TTL, stable identity,
-        key-rotation blinding, per-run destination history). See
-        gov/rare_token.py and gov/taint_ledger.py.
+        key-rotation blinding; destination history persists across
+        runs when a ``destination_ledger`` is attached, per-run
+        otherwise). See gov/rare_token.py and gov/taint_ledger.py.
         """
         silent = {"verdict": "allow", "overlap": 0, "source_id": None,
                   "reason": "no_rare_token_tracker",
@@ -3158,7 +3162,17 @@ class ToolExecutor:
         the resolved ``root``). Each finding is audited as a chained
         ``artifact_sweep_finding`` event; one
         ``artifact_sweep_complete`` event carries the sweep stats as
-        evidence the sweep ran. Returns the findings list.
+        evidence the sweep ran. Wave-140: when the ``artifact_sweep``
+        opt-in dict carries a non-empty ``"declared_inventory"`` (an
+        operator-declared list of egress-capable directories), a
+        coverage report compares it against the configured watch
+        roots BEFORE the sweep: every inventoried directory with no
+        covering watch root is audited LOUD as a chained
+        ``artifact_sweep_coverage_gap`` event plus one
+        ``artifact_sweep_coverage_complete`` summary. Absent/empty
+        inventory = no report, zero behavior change.
+
+        Returns the findings list.
 
         Works whether or not the ``artifact_sweep`` opt-in is
         installed (the opt-in only controls the AUTOMATIC run at the
@@ -3171,6 +3185,20 @@ class ToolExecutor:
         if isinstance(self.artifact_sweep, dict):
             watch_roots = self.artifact_sweep.get("watch_roots", ()) or ()
         try:
+            if isinstance(self.artifact_sweep, dict):
+                declared = self.artifact_sweep.get("declared_inventory") \
+                    or ()
+                if declared:
+                    # Wave-140: coverage report runs BEFORE the sweep
+                    # so a blind spot is LOUD even when the sweep
+                    # itself is clean. Events ride the chained audit
+                    # log (self.log). Inside the try: a malformed
+                    # inventory is audited as artifact_sweep_failed
+                    # like any other sweep failure (never raises).
+                    _artifact_sweep.report_coverage_gaps(
+                        declared, watch_roots,
+                        audit=lambda ev: self.log.append(ev),
+                        run_id=self.run_id)
             findings, stats = _artifact_sweep.sweep_run_dir(
                 self.run_dir, self.artifacts, watch_roots=watch_roots)
         except Exception as e:  # noqa: BLE001 - sweep must not break runs

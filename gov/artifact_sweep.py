@@ -38,7 +38,11 @@ What this is NOT (honest ceilings, documented not hidden):
   construction — see probe p5. OPERATOR-CONFIGURED WATCH ROOTS
   (below) extend the view to named directories, but unconfigured
   roots stay invisible by default: the operator must remember to
-  opt them in.
+  opt them in. The COVERAGE REPORT (wave-140, below) makes that
+  opt-in gap LOUD, but it can only compare against the roots the
+  operator *declared* — a directory the operator doesn't know
+  about stays invisible. The residual mutates from "unconfigured
+  roots invisible" to "undeclared roots invisible".
 - Not a content oracle. Like the inventory, it keys on file identity
   (path + hash), never on what the bytes mean.
 - Symlinks are skipped, never followed: a symlink inside the sandbox
@@ -66,6 +70,24 @@ the same reason; the root path itself is resolved (a symlink to
 roots should be narrow (a data dir, a workspace subdir), never a
 whole home directory or filesystem.
 
+Coverage report (wave-140): ``report_coverage_gaps`` takes an
+operator-DECLARED inventory of egress-capable directories — an
+explicit list, no auto-discovery — and compares it against the
+configured watch roots. Every inventoried directory with no
+covering watch root is audited LOUD as an
+``artifact_sweep_coverage_gap`` evidence event, plus one
+``artifact_sweep_coverage_complete`` summary (evidence the report
+ran). A watch root covers a declared directory when the root is an
+ancestor of (or equal to) it. The report is VISIBILITY, not
+prevention: it does not stop a write, it tells the operator a
+declared directory is unwatched. The inventory itself is
+operator-declared — a directory the operator doesn't know about
+stays invisible (undeclared, not unconfigured: the residual
+mutated). Same trust boundary as the sweep: a compromised executor
+in the same process can skip the report or forge its events —
+this catches the careless operator configuration, not the
+adversarial one.
+
 $0, stdlib only. Deterministic.
 """
 
@@ -80,15 +102,27 @@ from .artifacts import normalize_path, ArtifactInventory
 __all__ = [
     "sweep_run_dir",
     "register_watch_root",
+    "compare_coverage",
+    "report_coverage_gaps",
     "WatchRootError",
     "SWEEP_FINDING_EVENT",
     "SWEEP_COMPLETE_EVENT",
+    "COVERAGE_GAP_EVENT",
+    "COVERAGE_COMPLETE_EVENT",
     "NEVER_REGISTERED",
     "INTEGRITY_VIOLATION",
 ]
 
 SWEEP_FINDING_EVENT = "artifact_sweep_finding"
 SWEEP_COMPLETE_EVENT = "artifact_sweep_complete"
+
+#: Wave-140: LOUD evidence event for one inventoried directory with
+#: no covering watch root.
+COVERAGE_GAP_EVENT = "artifact_sweep_coverage_gap"
+
+#: Wave-140: summary evidence event proving the coverage report ran
+#: (declared / covered / gap counts).
+COVERAGE_COMPLETE_EVENT = "artifact_sweep_coverage_complete"
 
 NEVER_REGISTERED = "never_registered"
 INTEGRITY_VIOLATION = "integrity_violation"
@@ -380,3 +414,149 @@ def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
 
     stats["findings"] = len(findings)
     return findings, stats
+
+
+# ---------------------------------------------------------------------------
+# Coverage report (wave-140): operator-declared inventory vs configured
+# watch roots. Pure path comparison — no filesystem crawling beyond
+# resolving the declared paths (no scandir, no discovery).
+# ---------------------------------------------------------------------------
+
+def _coverage_roots(entries):
+    """Normalize configured watch roots to resolved paths.
+
+    Accepts the same ``(root, baseline)`` tuples ``sweep_run_dir``
+    takes, or plain root paths. Returns the resolved root strings in
+    order. A non-path entry raises ValueError fail-closed (a
+    mis-shaped configured root must never silently shrink coverage).
+    """
+    roots = []
+    for entry in entries or ():
+        root = entry[0] if isinstance(entry, (tuple, list)) else entry
+        if not isinstance(root, (str, os.PathLike)):
+            raise ValueError(
+                "configured watch root must be a path, got %r"
+                % (root,))
+        roots.append(os.path.realpath(os.path.abspath(str(root))))
+    return roots
+
+
+def compare_coverage(declared_roots, configured_roots):
+    """Compare the operator-declared inventory against configured
+    watch roots — pure path logic, no filesystem walking.
+
+    ``declared_roots``: the operator's explicit inventory of
+    egress-capable directories (str/PathLike entries). An entry
+    that is not a path raises ValueError (fail-closed: a malformed
+    inventory must be LOUD at setup, not a silent gap). Declared
+    roots are resolved (realpath) for comparison only — they are
+    NEVER walked or crawled.
+
+    ``configured_roots``: iterable of watch-root paths (already
+    resolved or raw; resolved again for comparison).
+
+    A declared directory is COVERED when some configured root is an
+    ancestor of (or equal to) it — the sweep walks that root, so
+    writes under the declared directory are seen. Otherwise it is
+    a GAP.
+
+    Returns an ordered list of dicts::
+
+        {"declared_root": <resolved path>,
+         "covering_root": <resolved covering root | None>,
+         "exists": <os.path.isdir at report time>}
+
+    Empty ``declared_roots`` -> empty list (silent: no inventory
+    declared, nothing to report).
+    """
+    cfg = _coverage_roots(configured_roots)
+    rows = []
+    for entry in declared_roots or ():
+        if not isinstance(entry, (str, os.PathLike)):
+            raise ValueError(
+                "declared inventory entries must be paths, got %r"
+                % (entry,))
+        resolved = os.path.realpath(os.path.abspath(str(entry)))
+        covering = None
+        for root in cfg:
+            if _is_ancestor_or_equal(root, resolved):
+                covering = root
+                break
+        rows.append({"declared_root": resolved,
+                     "covering_root": covering,
+                     "exists": os.path.isdir(resolved)})
+    return rows
+
+
+def report_coverage_gaps(declared_roots, watch_roots, audit=None,
+                         run_id=None):
+    """Emit LOUD evidence events for every inventoried directory
+    with no covering watch root.
+
+    ``declared_roots``: the operator's explicit inventory (see
+    ``compare_coverage``). ``watch_roots``: the same
+    ``(root, baseline)`` tuples ``sweep_run_dir`` takes (or plain
+    root paths). ``audit``: optional callable taking each event dict
+    (e.g. the executor's chained ``log.append``); when None the
+    events are only returned. ``run_id``: stamped into each event.
+
+    Each gap is audited as a LOUD ``artifact_sweep_coverage_gap``
+    event naming the declared root; one
+    ``artifact_sweep_coverage_complete`` summary follows (evidence
+    the report ran, even when clean). An empty/None declared
+    inventory emits NOTHING — the coverage report is then absent,
+    not clean (silent, zero behavior change).
+
+    Returns the report dict::
+
+        {"declared": [...], "covered": [...], "gaps": [...],
+         "gap_roots": [...], "covered_roots": [...],
+         "events": [gap events..., summary event]}
+
+    The report is visibility, not prevention; the inventory is
+    operator-declared (undeclared directories stay invisible).
+    """
+    rows = compare_coverage(declared_roots, watch_roots)
+    report = {"declared": [r["declared_root"] for r in rows],
+              "covered": [r["declared_root"] for r in rows
+                          if r["covering_root"]],
+              "gaps": [r["declared_root"] for r in rows
+                       if not r["covering_root"]],
+              "gap_roots": [],
+              "covered_roots": [],
+              "events": []}
+    if not rows:
+        return report
+    events = []
+    for row in rows:
+        if row["covering_root"] is not None:
+            report["covered_roots"].append(
+                {"declared_root": row["declared_root"],
+                 "covering_root": row["covering_root"]})
+            continue
+        gap = {"event": COVERAGE_GAP_EVENT,
+               "flag": "coverage_gap",
+               "run_id": run_id,
+               "declared_root": row["declared_root"],
+               "covering_root": None,
+               "reason": ("COVERAGE GAP: operator-inventoried "
+                          "egress-capable directory %r has NO "
+                          "covering watch root -- writes there are "
+                          "invisible to the artifact sweep. Add a "
+                          "watch root or accept the blind spot "
+                          "explicitly." % row["declared_root"]),
+               "ts": _utcnow_iso()}
+        events.append(gap)
+        report["gap_roots"].append(row["declared_root"])
+    events.append({"event": COVERAGE_COMPLETE_EVENT,
+                   "run_id": run_id,
+                   "declared": len(report["declared"]),
+                   "covered": len(report["covered"]),
+                   "gaps": len(report["gaps"]),
+                   "gap_roots": report["gap_roots"],
+                   "ts": _utcnow_iso()})
+    report["events"] = events
+    if audit is not None:
+        for ev in events:
+            audit(ev)
+    return report

@@ -60,8 +60,10 @@ What this is NOT (honest ceiling):
   tokens (token overlap is not semantics -- the wave-136 residual,
   unchanged by the fresh-ID leg), semantic laundering ("archive" in
   run 1 vs "compress" in run 2 meaning the same data), a denied goal
-  aged out of the persisted store (recency is bounded by the
-  detector's prior-goals scope), and any agent that rotates its
+  aged out of the persisted store WHEN NO ARCHIVE IS ATTACHED (with
+  a ``DeniedGoalArchive`` attached -- wave-140 -- the fresh-ID leg
+  consults the bounded archive too; the archive's own bound/TTL
+  then become the horizon), and any agent that rotates its
   agent_id every run (cross-run attribution keys on stable agent
   identity -- a fresh identity per run defeats it).
 - Not an enforcer. Registration never denies: conflicts are flagged
@@ -426,12 +428,18 @@ class GoalRegistry(object):
     conflict appends a LOUD ``goal_conflict`` event. When None, events
     are recorded on the returned records only (never silently
     dropped -- the caller can always inspect them).
+
+    ``denied_archive`` is an optional ``DeniedGoalArchive``
+    (gov/denied_goal_archive.py); when attached, every goal is
+    archived the moment it transitions to ``"superseded"``. None =
+    zero behavior change.
     """
 
-    def __init__(self, audit=None):
+    def __init__(self, audit=None, denied_archive=None):
         self._goals = []
         self._prev_digest = ""
         self.audit = audit
+        self._denied_archive = denied_archive
 
     def _loud(self, event):
         if self.audit is not None:
@@ -606,6 +614,12 @@ class GoalRegistry(object):
         approval id rides the chained ``goal_status_changed`` event so
         the goal trail cross-references the approval trail (the
         ``approval_decision`` event carries the goal ids back).
+
+        Wave-140 (row-11): when a ``denied_archive`` was attached at
+        construction, a transition TO ``"superseded"`` archives the
+        goal first (F167 ordering — an archive failure fails the
+        denial closed); re-superseding an already-superseded goal
+        does not re-archive.
         """
         if status not in ("active", "superseded", "pending_specificity"):
             raise ValueError(
@@ -613,6 +627,15 @@ class GoalRegistry(object):
                 "'pending_specificity', got %r" % (status,))
         for g in self._goals:
             if g.get("goal_id") == goal_id:
+                if (status == "superseded"
+                        and self._denied_archive is not None
+                        and g.get("status") != "superseded"):
+                    # Wave-140 (row-11): archive the denial BEFORE the
+                    # status mutation (F167 ordering) -- an archive
+                    # failure fails the denial closed rather than
+                    # recording a denial the archive forgot. A goal
+                    # that is already superseded is not re-archived.
+                    self._denied_archive.record_denial(g)
                 g["status"] = status
                 self._loud({
                     "event": "goal_status_changed",
@@ -816,8 +839,13 @@ class GoalRegistry(object):
                 "cannot save goal registry to %r: %s" % (path, e))
 
     @classmethod
-    def load(cls, path, audit=None):
+    def load(cls, path, audit=None, denied_archive=None):
         """Load a registry previously written by ``save``.
+
+        ``denied_archive`` (wave-140): an optional
+        ``DeniedGoalArchive`` to attach to the loaded registry; the
+        archive itself is NOT persisted inside the registry file —
+        the operator owns the archive path and re-attaches it here.
 
         Fail-closed: missing/unreadable file, malformed JSON, a
         wrong record_type sequence, a ``file_digest`` mismatch, a
@@ -870,7 +898,7 @@ class GoalRegistry(object):
             raise GoalPersistenceError(
                 "goal registry file %r: file_digest mismatch -- the "
                 "store was modified outside save()" % (path,))
-        reg = cls(audit=audit)
+        reg = cls(audit=audit, denied_archive=denied_archive)
         reg._goals = records
         reg._prev_digest = (records[-1].get("goal_digest", "")
                             if records else "")
@@ -1035,7 +1063,7 @@ def _fresh_id_match(new_goal, prior):
 
 
 def detect_cross_run_laundering(registry, new_goal, executed_history=None,
-                                prior_goals=None):
+                                prior_goals=None, denied_archive=None):
     """Flag cross-run goal laundering for a newly registered goal.
 
     ``registry``: GoalRegistry (ideally loaded from a previous run's
@@ -1049,7 +1077,11 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
     ValueError. ``prior_goals``: optional explicit list of previous-
     run goal dicts (defaults to the registry's goals from other
     runs); lets a fresh per-run registry still be checked against a
-    supplied history.
+    supplied history. ``denied_archive``: optional
+    ``DeniedGoalArchive`` (gov/denied_goal_archive.py); its live
+    records are consulted with the same fresh-ID match rule, so a
+    denied goal re-minted after aging out of the persisted store is
+    still caught (wave-140).
 
     Only the new goal's own agent is considered: cross-run
     attribution keys on stable agent identity, and a fresh agent_id
@@ -1289,7 +1321,10 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
     #    rotation ceiling). "Recently" is the detector's
     #    prior-goals scope (loaded persistence + explicit
     #    prior_goals + executed_history): a denied goal aged out
-    #    of the persisted store is invisible (honest ceiling).
+    #    of the persisted store is invisible UNLESS a denied_archive
+    #    is attached (wave-140 extends the scope with the bounded
+    #    archive's live records; the archive's bound/TTL then become
+    #    the horizon -- honest ceiling, not an oversight).
     #
     #    Deliberate FP-averse narrowings (not oversights): silent
     #    without executed history (unobserved != denied); silent
@@ -1328,6 +1363,57 @@ def detect_cross_run_laundering(registry, new_goal, executed_history=None,
                       % (new_goal.get("goal_id", "")[:8],
                          (prior.get("goal_id") or "")[:8],
                          prior.get("run_id"),
+                         FRESH_ID_SIMILARITY_THRESHOLD,
+                         [round(s, 3) for s in atom_scores]))
+
+    # 4b. Denied-goal archive (wave-140): denied goals that aged out
+    # of the persisted store are invisible to the loop above. The
+    # archive's live records are consulted with the SAME conjunctive
+    # match rule (no new similarity invented) and the same exercised
+    # guard where the prior's run is still in executed history. The
+    # archive record itself is the denial evidence (the goal was
+    # archived at denial time), so the prior's run need not be in
+    # executed_history -- that is the archive's whole point. The
+    # detector-wide executed-history gate is kept (uniform FP
+    # posture: the detector fires only where the deployment reports
+    # execution). A record the registry leg already checked (same
+    # goal id) is not double-flagged.
+    if history and denied_archive is not None:
+        checked_ids = {p.get("goal_id") for p in prior_goals
+                       if isinstance(p, dict)}
+        for prior in denied_archive.priors_for(agent_id):
+            if not isinstance(prior, dict):
+                continue
+            if prior.get("goal_id") in checked_ids:
+                continue
+            if prior.get("run_id") == new_run:
+                continue
+            if _prior_exercised(prior, history):
+                continue
+            matched, atom_scores = _fresh_id_match(new_goal, prior)
+            if matched:
+                _flag("fresh_id_laundering", "high",
+                      {"prior_goal_id": prior.get("goal_id"),
+                       "prior_run_id": prior.get("run_id"),
+                       "match_method": MATCH_METHOD,
+                       "threshold": FRESH_ID_SIMILARITY_THRESHOLD,
+                       "atom_scores": [round(s, 3) for s in atom_scores],
+                       "prior_effects": [list(e) for e in
+                                         (prior.get("effects") or [])],
+                       "new_effects": new_effects,
+                       "archive": True,
+                       "decided_at": prior.get("decided_at")},
+                      "goal %r is a fresh-ID re-mint of the same "
+                      "agent's denied goal %r (run %r, denied %s), "
+                      "recovered from the denied-goal archive after it "
+                      "aged out of the persisted store: every declared "
+                      "effect atom matches a prior atom (same verb, "
+                      "token-tversky target similarity >= %.2f, scores "
+                      "%s) -- the denial is being laundered through a "
+                      "new registration"
+                      % (new_goal.get("goal_id", "")[:8],
+                         (prior.get("goal_id") or "")[:8],
+                         prior.get("run_id"), prior.get("decided_at"),
                          FRESH_ID_SIMILARITY_THRESHOLD,
                          [round(s, 3) for s in atom_scores]))
 

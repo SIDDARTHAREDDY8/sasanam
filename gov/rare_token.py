@@ -72,12 +72,18 @@ evals/rare_token_probes.py and evals/read_then_egress_probes.py):
   persists across runs keyed by stable agent identity: a later run's
   ``check_egress`` scores blinded-commitment overlap against prior
   runs' taint (same verdict ladder) and the behavioral tier fires on
-  prior-run reads too. Without a ledger attached, a read in run N
-  followed by an egress in run N+1 stays invisible to both tiers
-  (the opt-in ceiling). The ledger's own ceilings apply: operator
-  TTL (an attacker who knows it can wait it out), stable identity
-  required, key rotation blinds prior taint, destination history
-  stays per-run.
+  prior runs' reads too. Wave-140 adds the destination-side
+  counterpart: when constructed with a ``destination_ledger``
+  (gov/destination_ledger.py), destination history ALSO persists
+  across runs — a destination first used in run 1 is known in run
+  2, so a legit read-then-send to a known destination no longer
+  flags every run (fewer false positives cross-run). Without a
+  ledger attached, a read in run N followed by an egress in run N+1
+  stays invisible to both tiers (the opt-in ceiling). Each ledger's
+  own ceilings apply: operator TTL (an attacker who knows it can
+  wait it out), stable identity required, key rotation blinds prior
+  taint; the destination ledger proves WHERE bytes went, not WHAT
+  they contained.
 
 The reference wordlist choice: a bundled static list of common
 English words (function words + frequent content words), embedded so
@@ -251,7 +257,8 @@ class RareTokenTracker:
                  carryover_threshold=DEFAULT_CARRYOVER_THRESHOLD,
                  max_docs_per_agent=MAX_DOCS_PER_AGENT,
                  max_tokens_per_doc=MAX_TOKENS_PER_DOC,
-                 taint_ledger=None):
+                 taint_ledger=None,
+                 destination_ledger=None):
         if (not isinstance(carryover_threshold, int)
                 or carryover_threshold < 1):
             raise ValueError("carryover_threshold must be a positive int")
@@ -265,6 +272,11 @@ class RareTokenTracker:
         # Wave-139: optional durable cross-run taint (opt-in; None =
         # zero behavior change vs the per-run tracker).
         self._taint_ledger = taint_ledger
+        # Wave-140: optional durable cross-run destination history
+        # (opt-in; None = zero behavior change vs the per-run
+        # tracker). See gov/destination_ledger.py for the privacy
+        # contract (destinations are already audit-logged).
+        self._destination_ledger = destination_ledger
 
     # -- reads ------------------------------------------------------
     def observe_read(self, agent_id, source_id, text):
@@ -321,13 +333,28 @@ class RareTokenTracker:
         takes precedence: any overlap >= 1 never degrades to a
         behavioral flag. A tool call with no extractable destination
         stays silent under the behavioral tier (FP control); the
-        content tier treats an unknown destination as novel."""
+        content tier treats an unknown destination as novel.
+        Wave-140: with a ``destination_ledger`` attached, "novel" is
+        evaluated against run-1..N history — a destination first used
+        in an earlier run is known in this run, so a legit
+        read-then-send to a known destination stays silent cross-run
+        (fewer false positives); the attempted destination is
+        recorded durably at check time."""
         agent_id = str(agent_id)
         payload = (payload_text if isinstance(payload_text, str)
                    else _extract_payload(tool, args or {}))
         destination = _extract_destination(tool, args or {})
         seen = self._destinations.setdefault(agent_id, set())
-        novel = destination is None or destination not in seen
+        # Wave-140: with a destination_ledger attached, "novel"
+        # consults run-1..N history too — a destination first used in
+        # an earlier run is known, not novel. None = zero behavior
+        # change (per-run novelty only).
+        ledger_known = (
+            self._destination_ledger is not None
+            and destination is not None
+            and self._destination_ledger.known(agent_id, destination))
+        novel = (destination is None
+                 or (destination not in seen and not ledger_known))
 
         payload_rare = set(extract_rare_tokens(payload, self._reference))
         best_overlap = 0
@@ -360,6 +387,15 @@ class RareTokenTracker:
                     best_source = sid
 
         if destination:
+            if self._destination_ledger is not None:
+                # Durable destination history (wave-140 row-13):
+                # the attempted destination is recorded for later
+                # runs. F167 ordering: the durable write goes first,
+                # so a ledger failure leaves the in-run tracker
+                # unchanged too — a failure propagates fail-closed,
+                # mirroring observe_read's taint-ledger discipline;
+                # history is never silently dropped.
+                self._destination_ledger.record(agent_id, destination)
             seen.add(destination)
 
         bearing = self._token_bearing_sources(agent_id)
