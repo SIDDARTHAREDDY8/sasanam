@@ -126,6 +126,8 @@ from .identity import (
     warn_self_asserted_identity_once,
 )
 from .policy import PolicyDecision
+from .decision_contract import Request
+from . import decision_replay as _decision_replay
 from .tool_ratings import normalize_tool_ratings
 from .log import (_verify, newest_refusal_ts_per_flag, read_entries,
                    refusal_ts_within_window, verify_chain_tip,
@@ -7841,7 +7843,15 @@ class ToolExecutor:
             "path_resolved": ctx.get("path_resolved"),
             "counters": dict(ctx.get("counters") or {}),
         }
-        decision = policy.evaluate(action, ctx)
+        # Decision-trace replay lane: capture the full typed Decision
+        # rather than the legacy PolicyDecision. Verdict semantics are
+        # IDENTICAL -- PolicyEngine.evaluate() is implemented as
+        # decide(Request.from_action(action, context))
+        # .to_policy_decision(), so this is the same computation with
+        # the diagnostics retained for the replayable trace built
+        # below. Capture only; no verdict-logic change.
+        _decision_full = policy.decide(Request.from_action(action, ctx))
+        decision = _decision_full.to_policy_decision()
 
         # Monotonic advisory layer (opt-in, adapted from
         # microsoft/agent-governance-toolkit). Runs AFTER the
@@ -8303,6 +8313,36 @@ class ToolExecutor:
                     "policy_id": "precommit-required",
                     "seq": entry["seq"]}
 
+        # Decision-trace replay lane: lazily build the replayable
+        # decision trace for this call's verdict. Built once, at the
+        # first verdict entry, so post_verdict reflects the FINAL
+        # effect after every post-policy layer (advisory tightening,
+        # tool-rating / deferred-effect / breaker forcing -- whose
+        # own policy_id/flag already name the forcing layer). Trace
+        # capture never raises into the verdict path: a capture
+        # failure degrades to a loud capture-error marker, never a
+        # changed verdict.
+        _decision_trace_cache = {}
+
+        def _decision_trace():
+            if "trace" not in _decision_trace_cache:
+                try:
+                    _decision_trace_cache["trace"] = (
+                        _decision_replay.build_trace(
+                            decision=_decision_full,
+                            action=action,
+                            context=ctx,
+                            policy=policy,
+                            final_effect=decision.effect,
+                            final_policy_id=decision.policy_id,
+                            final_flag=decision.flag))
+                except Exception as e:  # noqa: BLE001 - evidence only
+                    _decision_trace_cache["trace"] = {
+                        "trace_version": _decision_replay.TRACE_VERSION,
+                        "capture_error": "%s: %s" % (type(e).__name__, e),
+                    }
+            return _decision_trace_cache["trace"]
+
         if decision.effect == "allow":
             # F162 (HIGH): charge the per-class tempo wire at this
             # execution boundary, BEFORE the side effect. A trip
@@ -8318,6 +8358,9 @@ class ToolExecutor:
                 "matched_rules": decision.matched_rules,
                 "reason": decision.reason,
                 "flag": decision.flag,
+                # Decision-trace replay lane: the replayable trace for
+                # this verdict (see gov/decision_replay.py).
+                "decision_trace": _decision_trace(),
             }))
             # Wave-79 (pre-commit, atomic): irreversible tools with the
             # gate installed consume their bound approval IN the commit
@@ -8511,6 +8554,9 @@ class ToolExecutor:
                 "matched_rules": decision.matched_rules,
                 "reason": decision.reason,
                 "flag": decision.flag,
+                # Decision-trace replay lane: the replayable trace for
+                # this verdict (see gov/decision_replay.py).
+                "decision_trace": _decision_trace(),
             }))
             return {"status": "denied", "reason": decision.reason,
                     "policy_id": decision.policy_id, "seq": entry["seq"]}
@@ -8640,6 +8686,9 @@ class ToolExecutor:
             "reason": decision.reason,
             "flag": decision.flag,
             "approval_id": approval_id,
+            # Decision-trace replay lane: the replayable trace for
+            # this verdict (see gov/decision_replay.py).
+            "decision_trace": _decision_trace(),
         }))
         # Low-risk auto-approval: only fires when the ACTIVE policy
         # explicitly opts in (auto_approve.enabled + risk cap). The audit
