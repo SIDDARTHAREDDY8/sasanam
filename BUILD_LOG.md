@@ -1,3 +1,51 @@
+## 2026-09-27 — Wave-134: row-9 population-relative baseline validation (not pushed)
+
+**Scope:** Row 9's pinned residual — "a from-birth malicious agent teaches drift detection that exfiltration is normal" (poisoned initial baseline). The task: validate a new agent's baseline against the *population* of other agents' baselines, in `gov/drift.py` (not a fork).
+
+**Built (gov/drift.py):** `_chi2_stat` — the Laplace-smoothed chi-square tool-distribution computation factored out of `_signal_tool_distribution` (behavior unchanged; `tests.test_drift` still 32/32). `fingerprint_tool_distance(a, b)` — symmetric chi-square distance (mean of both directional statistics). `validate_baseline_against_population(agent_id, fingerprint, population, outlier_quantile=0.99, min_peers=3)` — pure, deterministic: the agent's distance is the median of symmetric distances to each peer (self excluded defensively); the outlier threshold is the 99th-percentile of pairwise peer distances; beyond the threshold → `provisional_untrusted`, else `trusted`; <3 measurable peers → documented `unvalidated_no_population` skip; thin fingerprints → `unvalidated_insufficient_data`. `cap_drift_verdict(result)` — forces any DriftResult to WARN (signals preserved, reason prefixed `provisional_baseline:`). `PopulationStore` — durable hash-chained JSONL population (`population.jsonl`; baseline/trust/convergence records; audit-before-mutation like DriftStore): `record_baseline` (trust from the validation result), `trust_of`, `confirm_baseline` (human confirm → trusted), `note_run` (K=3 consecutive population-conforming runs auto-confirm; a deviating run resets the counter). Fail-closed: chain failure OR unreadable JSON both raise `PopulationCorruptedError` (a truncated/garbage file is indistinguishable from tampering).
+
+**Executor wiring (gov/executor.py):** `population_store=None` appended LAST after `intent_ledger` (positional compatibility preserved; None = zero behavior change). `validate_baseline(agent_id, fingerprint, identity)` — validates, records trust, emits LOUD `baseline_population_outlier` on provisional (also on corrupt-population fail-closed). `check_run_drift` — when the agent's baseline trust is provisional, every drift verdict is forced to WARN via `cap_drift_verdict` (never SILENT, never HOLD, no review auto-queued), a LOUD `drift_provisional_warn` event is logged, and conforming runs are tracked toward auto-confirmation. `_population_trust` fails closed to provisional on a corrupt store.
+
+**Break-first battery:** `evals/baseline_population_probes.py` (module-level staging default; verified standalone under `env -u GOV_DEPLOYMENT_MODE`; deterministic ×2 — identical md5) — **6 HELD / 0 BREAK / 2 MISS-DOCUMENTED / 0 ERROR**: p1 pure-exfil newcomer → provisional (dist 5676.4 > thr 0.3), SILENT and HOLD raw verdicts both forced to WARN, LOUD events present; p2 normal newcomer → trusted, stable drift stays SILENT; p3 empty population → documented skip; p4 corrupted population → fail closed to provisional; p5 3 conforming runs auto-confirm, cap lifts; p6 human confirmation → trusted; p7 whole-population/Sybil poisoning validates a poisoned newcomer as trusted (MISS-DOCUMENTED ceiling); p8 exact-copy profile validates trusted (MISS-DOCUMENTED threshold-game ceiling — the exfil would have to hide in payload content, which a tool-distribution comparison cannot see).
+
+**Units:** `tests/test_baseline_population.py` — 35/35 OK (chi2 refactor equivalence, distance ordering, validation statuses incl. self-exclusion and bad-quantile rejection, store chain tampering + garbage-file fail-closed, trust transitions, convergence reset/confirmation, WARN cap signal preservation, quantile/median).
+
+**Two-axis review (self, pre-gate):** Standards — staging default present, audit-before-mutation, hash-chained JSONL, TypeError/ValueError guards on public seams, unittest only, deterministic battery, `battery_100_results.json` untouched. Spec — all eight spec items hold: exact public function name/signature, tool-distribution comparison, 99th-percentile default, provisional_untrusted + LOUD event, WARN cap (unconditional — silent/watch/hold all become warn) until human confirm or K=3 converging runs, fail-closed store, documented ceilings (Sybil, threshold game, ≥3 peers).
+
+**Regression:** `tests.test_drift` + `tests.test_baseline_population` 67/67 OK; `tests.test_framing` 40/40 OK; `tests.test_delegation_executor_wiring` + `tests.test_goal_resolution` + `tests.test_cross_run_goals` 57/57 OK. Full canonical/registry/matrix/realistic gates run separately at the push clone.
+
+**Lane-collision note (2026-09-27 ~04:41–04:42 UTC):** while this lane worked, `gov/drift.py` was concurrently modified in the shared tree — first the import block and `_canonical`/`_sha256_hex`/`_utcnow_iso` helpers were deleted (repaired by this lane), then `fingerprint_tool_distance` was rewritten (param names `fp_a`/`fp_b`, mass threshold 20 via `_MIN_TOOL_CALLS_FOR_CHISQ`, single-category union → 0.0 instead of None) with a different docstring. The merged file is coherent: the break-first battery passes unchanged (6/2/0/0), all 35 unit tests and adjacent suites pass. The behavioral delta between the two distance variants is negligible at the spec seams (relative percentile comparison). The parent should confirm single ownership of `gov/drift.py` before the next lane edits it.
+
+**Honest ceilings:** whole-population/Sybil poisoning defeats the comparison by construction; an attacker can sit inside the envelope (exact copy validates trusted); ≥3 peers needed; same-destination payload-meaning drift still invisible (row-9 e4 residual unchanged).
+
+**Row 9 stays PARTIAL.** Poisoned-baseline tripwire landed and measured, NOT closed.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-135: row-11 vague-goal registration hardening (not pushed)
+
+**Scope:** Row 11's pinned residual — "wildcard/vague goals give cover." The gap: a goal registered as ("send", "*") (or with no declared effects) silently covered arbitrary sends, and the auditor reported wildcard cover only informationally. The task: vague registrations must stay `pending_specificity`, cover nothing, and queue a `goal_specificity_review`; humans may narrow the goal or explicitly acknowledge its breadth; an acknowledged wildcard goal becomes active, but its wildcard cover must fire LOUD.
+
+**Built (new, gov/goals.py):** `check_specificity(goal)` — structural, not semantic: empty effects → vague; any effect target missing/empty/`"*"` → vague. Vague registrations land in `pending_specificity` with `broad_scope_acknowledged=False`, `specificity_reasons`, and a LOUD `goal_specificity_pending` event (flag `goal_specificity`); they cover nothing. `resolve_specificity(goal_id, acknowledged, approval_id)` — allow/acknowledge → active + `broad_scope_acknowledged=True`; deny → superseded; unknown/already-resolved → LOUD `goal_specificity_noop`; always chains `goal_specificity_resolved`. `narrow(goal_id, effects, constraints)` — validates before mutation, supersedes the pending goal, and registers a FRESH goal (append-only chain; never an in-place edit), re-running the specificity check so a still-vague narrowing re-pends. `broad_scope_acknowledged` is excluded from the immutable goal digest (its mutation is separately audited).
+
+**Executor wiring (gov/executor.py):** `register_goal()` queues exactly one `goal_specificity_review` (F42-minted identity, same as the conflict path) via the new `_queue_specificity_review` helper; queue failure is LOUD (`goal_specificity_queue_failed` — the pending event is already in the log). The queueing was refactored into `_queue_specificity_review` / `_queue_conflict_review` so `narrow_goal()` routes through the identical path (no drift between call sites). `narrow_goal(goal_id, effects, constraints, identity, note)` — identity REQUIRED (F42), still-vague narrowing re-queues its own review, conflicting narrowing queues a `goal_conflict_review`. The `_on_approval_decision` hook gained the `goal_specificity_review` branch (allow → activate+acknowledge, deny → supersede; unknown ids noop LOUD inside `resolve_specificity`); same F180 contract as the conflict path (inner failures propagate to the queue's LOUD `decision_hook_failed`; the human decision still stands).
+
+**Auditor (gov/goal_audit.py):** reconstructs registration status and `broad_scope_acknowledged`; pending goals provide no cover (gap, not wildcard cover); acknowledged wildcard cover is now severity HIGH with flag `goal_wildcard_acknowledged` (was informational).
+
+**Break-first battery:** `evals/goal_specificity_probes.py` (module-level staging; verified standalone under `env -u GOV_DEPLOYMENT_MODE`; deterministic ×2) — **5/5 HELD / 0 BREAK / 0 ERROR**: p1 vague goal pending + review queued + send audits as gap until the human allows, then the same send audits as LOUD wildcard cover (high); p2 specific goal active immediately, covered send silent (no FP); p3 human narrows → old superseded, fresh specific goal active with no ack, sends silent, chain intact; p4 ack then a LATER send to a fresh exfil host fires LOUD wildcard cover; p5 empty-effects goal pends with a review queued. One red-first catch in the battery: the `worker` role is denied `http_post` by the default policy (least privilege) — switched probe identities to `researcher`.
+
+**Units:** `tests/test_goal_specificity.py` — 29/29 OK (registry seam, reconstruction, narrow, specificity events). `tests/test_goal_specificity_executor.py` (new) — 12/12 OK: exactly-one review on vague / none on specific / queue-failure LOUD / allow activates+acknowledges / deny supersedes / unrelated decision touches no goal / forged unknown-goal review noops LOUD / narrow activates without ack / still-vague re-narrowing re-queues / narrow requires identity (TypeError, fail-closed) / conflicting narrowing queues conflict review.
+
+**Two-axis review (self, pre-gate):** Standards — fail-closed, F42 identity on narrow, F31 write-once hook preserved, wave/row docstrings with ceilings, append-only goal chain; the queueing refactor keeps one routing path for both registration entry points. Spec — all five spec items hold; verified `queue()` returns the id (test fix), and the resolved event's `decision` field ("acknowledged"/"withdrawn") is what tests assert.
+
+**Regression:** adjacent goal suites green — `tests.test_goals` + `tests.test_goal_audit` + `tests.test_goal_resolution` (61/61 OK), `tests.test_cross_run_goals` + `tests.test_goal_specificity` + `tests.test_goal_specificity_executor` (64/64 OK). Full canonical/registry/matrix/realistic gates run separately at the push clone; the battery_100_results.json artifact untouched.
+
+**Honest ceilings:** the specificity check is structural, not semantic — a specific-looking but semantically broad goal still passes (paraphrase ceiling, pinned in unit tests); a human can acknowledge a maliciously broad goal without reading (judgment ceiling — the wiring automates the mechanics, not the judgment). Row 11's semantic-laundering residual is unchanged by this wave.
+
+**Row 11 stays PARTIAL.** Vague-registration mechanics landed and measured, NOT closed.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-27 — Wave-134: row-11 approval-decision → goal-resolution wiring (no push)
 
 **Scope:** Row 11's pinned residual — "approving a review does not itself update goal status; resolve_goal is separate." The gap: a human approves the `goal_conflict_review` item thinking the conflict is resolved, but both goals stay active and the conflict can re-fire. Extend `gov/goals.py` + `gov/executor.py` (+ the queue seam in `gov/approvals.py`), no fork.
@@ -8430,6 +8478,29 @@ All three fixes are recorded here, not quietly patched. F-RA3 battery re-verifie
 **Attribution gap:** NONE. All three modules already carry in-module attribution (repo, URL, license, copyright holder); no code was copied from any of them, so no MIT copyright-notice or Apache-2.0 NOTICE redistribution duty attaches. No legal files added — none needed while the repo stays concept-adaptation-only.
 
 **Follow-up (done 2026-09-27):** the `gov/intent_slice.py` docstring now carries the exact v0.3.2 commit (`60401f4ca6c832e8be1a82f6fc3783d6e51c59a9`); the Cedar pin in the correction note is labeled a contemporaneous retrospective pin. Standing rule: future adaptation lanes record the exact upstream commit hash in the module docstring at build time.
+
+**Findings:** none filed. Next free: **F178**. Open findings: none.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Cleanup: ChainedStore extraction (framing lane follow-up #2, no push)
+
+**Scope:** `gov/drift.py::DriftStore` and `gov/framing.py::FramingStore` deliberately duplicated ~100 lines of hash-chained JSONL store logic (framing lane left it additive to avoid touching drift.py). Extracted the shared base; pure refactor, zero behavior change.
+
+**What changed:**
+- New `gov/chained_store.py`: `ChainedStore` base (`__init__(store_dir, audit=None)`, `_path`/`_head`/`_read_all`, `_append_chained` = hash-link + audit-BEFORE-mutation + write, `record_run`, `runs`, `verify_chain`) plus the single canonical home for the chain primitives (`canonical`, `sha256_hex`, `utcnow_iso`, `sanitize_agent`). Stdlib only, deterministic.
+- `DriftStore(ChainedStore)` and `FramingStore(ChainedStore)` are thin subclasses declaring only their record schema (`drift_version`/`drift_run_recorded`/`RunFingerprint` vs `framing_version`/`framing_run_recorded`/`FramingFingerprint`). Public APIs unchanged: same signatures, same record schemas, `isinstance` checks in `detect_drift`/`detect_framing` unaffected.
+- Deliberate deviations from the sketch: kept the real `(store_dir, audit=None)` signature (not `(path, audit_log)`); no `save()`/`load()` invented (neither store has them); `_append_chained` not `_append_locked` (the original has no locking).
+- Concurrent-lane note: another lane added `PopulationStore` to `gov/drift.py` mid-task (single-file store, different shape — correctly NOT a ChainedStore). It had re-added local copies of the three chain helpers; aliased them to `gov.chained_store` (`d._canonical is c.canonical` etc. — literally the same function objects) and dropped the re-added `hashlib`/`datetime`/`re` imports. That lane's code and tests were otherwise untouched.
+
+**Byte-level compatibility proof** (one-off script `/tmp/compat_check.py`, not committed; old code = genuine pre-extraction files from remote `1bbcf8d`):
+- Records written by OLD code verify under NEW classes (`verify_chain` True, schemas intact, incl. agent-name sanitization and multi-agent files).
+- Records written by NEW classes verify under OLD code.
+- With timestamps pinned, old and new writers produce BYTE-IDENTICAL files (4/4 JSONL files) and BYTE-IDENTICAL audit events.
+
+**Tests:** `tests.test_drift` + `tests.test_framing` 72/72 OK; with the concurrent lane's suites 148/148 OK. Batteries: drift 4 HELD / 0 BREAK / 1 MISS-DOCUMENTED, framing 6 HELD / 0 BREAK / 1 MISS-DOCUMENTED — both envs (default and `env -u GOV_DEPLOYMENT_MODE`), readings identical to pre-extraction. Full canonical: **4138 OK** (skipped=9, expected failures=5) on a fresh mkdir -p'd TMPDIR.
+
+**Two-axis review:** Standards PASS — naming mirrors the old privates, no speculative generality (no invented save/load), the ~100-line duplication is gone with a single canonical home for the primitives, no debug residue; one judgement call (template-method via class attrs) is the standard pattern for this shape. Spec PASS — every brief requirement met; deviations (signature kept, no save/load, `_append_chained` naming) are documented above and forced by the actual codebase.
 
 **Findings:** none filed. Next free: **F178**. Open findings: none.
 

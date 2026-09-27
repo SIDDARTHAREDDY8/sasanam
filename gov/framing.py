@@ -62,11 +62,7 @@ validation is fail-closed: negative counts or untracked tools raise
 ValueError rather than being silently accepted.
 """
 
-import hashlib
-import json
-import re
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 from gov.drift import chi_square_sf
@@ -104,20 +100,6 @@ _SUBSTITUTIVE_MASS = 0.5
 _NON_ATTEMPT_DECISIONS = frozenset({
     "denied", "refused", "velocity_paused", "velocity_check_failed",
 })
-
-
-def _canonical(obj):
-    """Canonical JSON for hashing (stable key order, no whitespace)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      default=repr)
-
-
-def _sha256_hex(text):
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _utcnow_iso():
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ------------------------------------------------- argument extraction
@@ -278,14 +260,7 @@ def framing_fingerprint_from_entries(entries):
 
 # ---------------------------------------------------------------- store
 
-_AGENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
-
-
-def _sanitize_agent(agent_id):
-    s = _AGENT_RE.sub("_", str(agent_id)).strip("_")[:64]
-    if not s:
-        raise ValueError("agent_id sanitizes to empty, got %r" % (agent_id,))
-    return s
+from gov.chained_store import ChainedStore
 
 
 def default_store_dir():
@@ -294,7 +269,7 @@ def default_store_dir():
     return Path.home() / ".agent-governance-demo" / "framing"
 
 
-class FramingStore:
+class FramingStore(ChainedStore):
     """Durable per-agent cross-run framing-profile store.
 
     One JSONL file per agent under ``store_dir``. Every record is
@@ -302,90 +277,17 @@ class FramingStore:
     record): ``verify_chain`` rejects tampered payloads, dropped
     records, and broken linkage. Audit runs BEFORE local mutation
     (F167 lesson): a logging failure leaves the store unchanged.
+
+    Storage mechanics live in ``gov.chained_store.ChainedStore``; this
+    class only declares the framing record schema (``framing_version`` /
+    ``framing_run_recorded`` / ``FramingFingerprint``). The on-disk
+    format is identical to the pre-extraction store.
     """
 
-    def __init__(self, store_dir, audit=None):
-        self.store_dir = Path(store_dir)
-        self._audit = audit
-        self.store_dir.mkdir(parents=True, exist_ok=True)
-        self._heads = {}  # agent_id -> last digest (cache)
-
-    def _path(self, agent_id):
-        return self.store_dir / (_sanitize_agent(agent_id) + ".jsonl")
-
-    def _head(self, agent_id):
-        if agent_id not in self._heads:
-            runs = self._read_all(agent_id)
-            self._heads[agent_id] = runs[-1]["digest"] if runs else ""
-        return self._heads[agent_id]
-
-    def _read_all(self, agent_id):
-        p = self._path(agent_id)
-        if not p.exists():
-            return []
-        records = []
-        with p.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    records.append(json.loads(line))
-        return records
-
-    def record_run(self, agent_id, principal, fingerprint, audit=None):
-        """Append one run's framing fingerprint. Returns the record.
-
-        The audit event (``framing_run_recorded``) is appended BEFORE
-        the file write; an audit failure aborts the record
-        (fail-closed). ``audit`` overrides the construction-time audit
-        callable for this call.
-        """
-        if not isinstance(fingerprint, FramingFingerprint):
-            raise TypeError(
-                "fingerprint must be a FramingFingerprint, got %r"
-                % type(fingerprint).__name__)
-        auditor = self._audit if audit is None else audit
-        prev = self._head(agent_id)
-        record = {
-            "framing_version": _FRAMING_VERSION,
-            "agent_id": str(agent_id),
-            "principal": str(principal),
-            "recorded_at": _utcnow_iso(),
-            "fingerprint": fingerprint.to_dict(),
-            "prev_digest": prev,
-        }
-        record["digest"] = _sha256_hex(_canonical(
-            {k: v for k, v in record.items() if k != "digest"}))
-        if auditor is not None:
-            auditor({
-                "event": "framing_run_recorded",
-                "agent_id": str(agent_id),
-                "principal": str(principal),
-                "run_id": fingerprint.run_id,
-                "run_seq": fingerprint.run_seq,
-                "digest": record["digest"],
-                "prev_digest": prev,
-            })
-        with self._path(agent_id).open("a", encoding="utf-8") as f:
-            f.write(_canonical(record) + "\n")
-        self._heads[agent_id] = record["digest"]
-        return record
-
-    def runs(self, agent_id):
-        """All stored run records for the agent, oldest first."""
-        return self._read_all(agent_id)
-
-    def verify_chain(self, agent_id):
-        """True iff the agent's chain is intact (digests + linkage)."""
-        prev = ""
-        for rec in self._read_all(agent_id):
-            if rec.get("prev_digest") != prev:
-                return False
-            digest = rec.get("digest")
-            if digest != _sha256_hex(_canonical(
-                    {k: v for k, v in rec.items() if k != "digest"})):
-                return False
-            prev = digest
-        return True
+    _record_version_key = "framing_version"
+    _record_version = _FRAMING_VERSION
+    _record_event = "framing_run_recorded"
+    _fingerprint_cls = FramingFingerprint
 
 
 # --------------------------------------------------------------- signals

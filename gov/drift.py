@@ -40,19 +40,30 @@ Privacy: the store holds behavioral fingerprints (counts), never raw
 prompts, tool outputs, or log contents. Treat the store directory as
 sensitive operational data (same posture as the audit logs).
 
+Population-relative baseline validation (wave-134): ``PopulationStore``
++ ``validate_baseline_against_population`` compare a new agent's
+baseline fingerprint against OTHER agents' baselines (median symmetric
+chi-square tool-distribution distance vs the 99th percentile of
+pairwise peer distances). Extreme outliers are stored
+``provisional_untrusted`` (LOUD ``baseline_population_outlier``
+event); ``cap_drift_verdict`` forces every drift verdict against a
+provisional baseline to WARN -- never SILENT, never HOLD -- until a
+human confirms it or K subsequent runs converge toward the
+population. Honest ceilings: Sybil (a uniformly poisoned population
+validates poison into trust), the threshold game (a baseline shaped
+just inside the envelope passes), >= 3 peers required, and the
+comparison is tool-distribution only.
+
 $0, stdlib only, deterministic. All statistics are exact
 deterministic computations (no sampling, no RNG). Fingerprint
 validation is fail-closed: negative counts or unknown decision keys
 raise ValueError rather than being silently accepted.
 """
 
-import hashlib
 import json
 import math
-import re
 import tempfile
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 __all__ = [
@@ -65,6 +76,13 @@ __all__ = [
     "default_store_dir",
     "chi_square_sf",
     "mann_kendall_z",
+    # Wave-134 (row 9): population-relative baseline validation.
+    "PopulationStore",
+    "PopulationCorruptedError",
+    "BaselineValidationResult",
+    "validate_baseline_against_population",
+    "cap_drift_verdict",
+    "fingerprint_tool_distance",
 ]
 
 _DRIFT_VERSION = 1
@@ -84,20 +102,6 @@ _MIN_TOOL_CALLS_FOR_CHISQ = 20
 # shift is treated as benign evolution (new capability adoption) and
 # the distribution signal is capped at weak.
 _NOVEL_FRACTION_CAP = 0.5
-
-
-def _canonical(obj):
-    """Canonical JSON for hashing (stable key order, no whitespace)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      default=repr)
-
-
-def _sha256_hex(text):
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _utcnow_iso():
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ---------------------------------------------------------------- math
@@ -339,14 +343,15 @@ def fingerprint_from_entries(entries):
 
 # ------------------------------------------------------------ store
 
-_AGENT_RE = re.compile(r"[^A-Za-z0-9_-]+")
-
-
-def _sanitize_agent(agent_id):
-    s = _AGENT_RE.sub("_", str(agent_id)).strip("_")[:64]
-    if not s:
-        raise ValueError("agent_id sanitizes to empty, got %r" % (agent_id,))
-    return s
+from gov.chained_store import ChainedStore
+# Single canonical home for the chain primitives (wave-134 cleanup).
+# The local aliases keep this module's private references (e.g.
+# PopulationStore) unchanged.
+from gov.chained_store import (
+    canonical as _canonical,
+    sha256_hex as _sha256_hex,
+    utcnow_iso as _utcnow_iso,
+)
 
 
 def default_store_dir():
@@ -356,7 +361,7 @@ def default_store_dir():
     return Path.home() / ".agent-governance-demo" / "drift"
 
 
-class DriftStore:
+class DriftStore(ChainedStore):
     """Durable per-agent cross-run profile store.
 
     One JSONL file per agent under ``store_dir``. Every record is
@@ -364,90 +369,17 @@ class DriftStore:
     record): ``verify_chain`` rejects tampered payloads, dropped
     records, and broken linkage. Audit runs BEFORE local mutation
     (F167 lesson): a logging failure leaves the store unchanged.
+
+    Storage mechanics live in ``gov.chained_store.ChainedStore``; this
+    class only declares the drift record schema (``drift_version`` /
+    ``drift_run_recorded`` / ``RunFingerprint``). The on-disk format is
+    identical to the pre-extraction store.
     """
 
-    def __init__(self, store_dir, audit=None):
-        self.store_dir = Path(store_dir)
-        self._audit = audit
-        self.store_dir.mkdir(parents=True, exist_ok=True)
-        self._heads = {}  # agent_id -> last digest (cache)
-
-    def _path(self, agent_id):
-        return self.store_dir / (_sanitize_agent(agent_id) + ".jsonl")
-
-    def _head(self, agent_id):
-        if agent_id not in self._heads:
-            runs = self._read_all(agent_id)
-            self._heads[agent_id] = runs[-1]["digest"] if runs else ""
-        return self._heads[agent_id]
-
-    def _read_all(self, agent_id):
-        p = self._path(agent_id)
-        if not p.exists():
-            return []
-        records = []
-        with p.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    records.append(json.loads(line))
-        return records
-
-    def record_run(self, agent_id, principal, fingerprint, audit=None):
-        """Append one run's fingerprint. Returns the stored record.
-
-        ``fingerprint`` is a RunFingerprint. The audit event
-        (``drift_run_recorded``) is appended BEFORE the file write;
-        an audit failure aborts the record (fail-closed). ``audit``
-        overrides the construction-time audit callable for this call
-        (e.g. the executor routes drift events into its run log).
-        """
-        if not isinstance(fingerprint, RunFingerprint):
-            raise TypeError("fingerprint must be a RunFingerprint, got %r"
-                            % type(fingerprint).__name__)
-        auditor = self._audit if audit is None else audit
-        prev = self._head(agent_id)
-        record = {
-            "drift_version": _DRIFT_VERSION,
-            "agent_id": str(agent_id),
-            "principal": str(principal),
-            "recorded_at": _utcnow_iso(),
-            "fingerprint": fingerprint.to_dict(),
-            "prev_digest": prev,
-        }
-        record["digest"] = _sha256_hex(_canonical(
-            {k: v for k, v in record.items() if k != "digest"}))
-        if auditor is not None:
-            auditor({
-                "event": "drift_run_recorded",
-                "agent_id": str(agent_id),
-                "principal": str(principal),
-                "run_id": fingerprint.run_id,
-                "run_seq": fingerprint.run_seq,
-                "digest": record["digest"],
-                "prev_digest": prev,
-            })
-        with self._path(agent_id).open("a", encoding="utf-8") as f:
-            f.write(_canonical(record) + "\n")
-        self._heads[agent_id] = record["digest"]
-        return record
-
-    def runs(self, agent_id):
-        """All stored run records for the agent, oldest first."""
-        return self._read_all(agent_id)
-
-    def verify_chain(self, agent_id):
-        """True iff the agent's chain is intact (digests + linkage)."""
-        prev = ""
-        for rec in self._read_all(agent_id):
-            if rec.get("prev_digest") != prev:
-                return False
-            digest = rec.get("digest")
-            if digest != _sha256_hex(_canonical(
-                    {k: v for k, v in rec.items() if k != "digest"})):
-                return False
-            prev = digest
-        return True
+    _record_version_key = "drift_version"
+    _record_version = _DRIFT_VERSION
+    _record_event = "drift_run_recorded"
+    _fingerprint_cls = RunFingerprint
 
 
 # ---------------------------------------------------------- signals
@@ -497,13 +429,42 @@ class DriftResult:
                 "signals": [s.to_dict() for s in self.signals]}
 
 
+def _chi2_stat(expected_counts, observed_counts):
+    """Chi-square statistic of observed vs expected tool counts.
+
+    Laplace (+1) smoothing avoids zero expected counts. Returns
+    ``(stat, df, novel_fraction)`` where novel_fraction is the share
+    of the statistic contributed by categories the expected side
+    never saw, or None when the call mass is too small to measure
+    (FP guard) or fewer than two categories exist.
+    """
+    exp_total = sum(expected_counts.values())
+    obs_total = sum(observed_counts.values())
+    if exp_total < _MIN_TOOL_CALLS_FOR_CHISQ or \
+            obs_total < _MIN_TOOL_CALLS_FOR_CHISQ:
+        return None
+    cats = sorted(set(expected_counts) | set(observed_counts))
+    if len(cats) < 2:
+        return None
+    smooth_total = exp_total + len(cats)  # Laplace +1 per category
+    stat = 0.0
+    novel_stat = 0.0
+    for c in cats:
+        expected = (expected_counts.get(c, 0) + 1) / smooth_total * obs_total
+        observed = observed_counts.get(c, 0)
+        contrib = (observed - expected) ** 2 / expected
+        stat += contrib
+        if expected_counts.get(c, 0) == 0:
+            novel_stat += contrib
+    return stat, len(cats) - 1, (novel_stat / stat if stat > 0 else 0.0)
+
+
 def _signal_tool_distribution(baseline_fps, window_fps):
     """Chi-square shift in the tool-call distribution.
 
-    Laplace (+1) smoothing avoids zero expected counts. A shift whose
-    statistic is dominated by tool categories the baseline never saw
-    is capped at weak: novel-tool adoption is benign evolution until
-    corroborated by another signal.
+    A shift whose statistic is dominated by tool categories the
+    baseline never saw is capped at weak: novel-tool adoption is
+    benign evolution until corroborated by another signal.
     """
     base = Counter()
     for fp in baseline_fps:
@@ -511,40 +472,25 @@ def _signal_tool_distribution(baseline_fps, window_fps):
     win = Counter()
     for fp in window_fps:
         win.update(fp["fingerprint"]["tool_counts"])
-    base_total = sum(base.values())
-    win_total = sum(win.values())
-    if base_total < _MIN_TOOL_CALLS_FOR_CHISQ or \
-            win_total < _MIN_TOOL_CALLS_FOR_CHISQ:
+    res = _chi2_stat(dict(base), dict(win))
+    if res is None:
         return None
-    cats = sorted(set(base) | set(win))
-    if len(cats) < 2:
-        return None
-    smooth_base_total = base_total + len(cats)  # Laplace +1 per category
-    stat = 0.0
-    novel_stat = 0.0
-    for c in cats:
-        expected = (base.get(c, 0) + 1) / smooth_base_total * win_total
-        observed = win.get(c, 0)
-        contrib = (observed - expected) ** 2 / expected
-        stat += contrib
-        if base.get(c, 0) == 0:
-            novel_stat += contrib
-    p = chi_square_sf(stat, len(cats) - 1)
+    stat, df, novel_fraction = res
+    p = chi_square_sf(stat, df)
     if p >= 0.05:
         return None
     strength = "strong" if p < 0.001 else "weak"
-    novel_fraction = novel_stat / stat if stat > 0 else 0.0
     capped = False
     if novel_fraction > _NOVEL_FRACTION_CAP:
         strength = "weak"
         capped = True
     return DriftSignal(
         "tool_distribution", strength,
-        {"chi_square": stat, "df": len(cats) - 1, "p_value": p,
+        {"chi_square": stat, "df": df, "p_value": p,
          "novel_fraction": novel_fraction, "novel_capped": capped,
          "baseline_tools": dict(base), "window_tools": dict(win)},
         "tool-call distribution shifted vs baseline (chi2=%.1f, df=%d, "
-        "p=%.4g%s)" % (stat, len(cats) - 1, p,
+        "p=%.4g%s)" % (stat, df, p,
                        "; novel-tool dominated, capped at weak"
                        if capped else ""))
 
@@ -674,3 +620,455 @@ def detect_drift(store, agent_id, window=8, baseline_runs=5):
                        baseline_n=len(baseline_list),
                        window_n=len(window_runs),
                        reason="evaluated" if signals else "no_signal")
+
+
+# --------------------------------- population-relative baseline check
+# Wave-134 (row 9): the cross-run detector measures CHANGE against the
+# agent's own baseline, so a from-birth malicious agent poisons its
+# baseline and never drifts (pinned MISS-DOCUMENTED in
+# evals/drift_probes.py p4). This section narrows that gap with a
+# population-relative check: a new agent's baseline fingerprint is
+# compared against the baselines of OTHER agents. An extreme outlier
+# is marked provisional_untrusted (LOUD baseline_population_outlier
+# event); drift verdicts against a provisional baseline are forced to
+# WARN -- never SILENT (a poisoned baseline could be hiding badness),
+# never HOLD (a meaningless baseline should not queue a human
+# review) -- until a human confirms it or K subsequent runs converge
+# toward the population.
+#
+# Honest ceilings (documented, not hidden):
+# - Sybil: a uniformly poisoned population validates poison into
+#   trust. This mechanism measures deviance from the population, not
+#   badness; it says nothing when the population itself is bad.
+# - Threshold game: an attacker who shapes a baseline to sit just
+#   inside the population envelope defeats a percentile test by
+#   construction. The percentile is a tripwire, not a proof.
+# - Needs >= 3 peers (default) for a meaningful percentile; with
+#   fewer, validation is skipped and the baseline stays trusted with
+#   a no_population note (fail-open on absence, fail-closed on
+#   corruption).
+# - Tool-distribution only: the distance reuses the chi-square
+#   machinery on tool counts. Egress volume, decision outcomes, and
+#   argument framing are not part of the population comparison.
+# - Slow convergence gaming: an attacker can converge K runs toward
+#   the population and then deviate; the auto-confirm only attests
+#   that the baseline once looked normal.
+
+class PopulationCorruptedError(Exception):
+    """The population file failed chain verification: fail closed."""
+
+
+_POP_VERSION = 1
+
+# Runs that must consecutively validate as population-conforming
+# before a provisional baseline auto-confirms to trusted.
+_AUTO_CONFIRM_RUNS = 3
+
+
+def _quantile(sorted_vals, q):
+    """q-th quantile of an ascending-sorted list (nearest-rank)."""
+    if not sorted_vals:
+        raise ValueError("_quantile of empty list")
+    idx = math.ceil(q * len(sorted_vals)) - 1
+    return sorted_vals[max(0, min(idx, len(sorted_vals) - 1))]
+
+
+def _median(sorted_vals):
+    """Median of an ascending-sorted list."""
+    if not sorted_vals:
+        raise ValueError("_median of empty list")
+    n = len(sorted_vals)
+    mid = n // 2
+    if n % 2:
+        return sorted_vals[mid]
+    return (sorted_vals[mid - 1] + sorted_vals[mid]) / 2.0
+
+
+def fingerprint_tool_distance(fp_a, fp_b):
+    """Symmetric chi-square distance between two tool distributions.
+
+    Mean of the chi-square statistic in both directions (each side
+    serves as the expected distribution once), reusing the same
+    Laplace-smoothed machinery as the drift signal. Returns None when
+    either side has too few tool calls to measure
+    (< _MIN_TOOL_CALLS_FOR_CHISQ); 0.0 when both fingerprints use a
+    single identical tool category (no measurable shape difference).
+    """
+    if not isinstance(fp_a, RunFingerprint) or \
+            not isinstance(fp_b, RunFingerprint):
+        raise TypeError("fingerprint_tool_distance needs RunFingerprints")
+    a = dict(fp_a.tool_counts)
+    b = dict(fp_b.tool_counts)
+    if sum(a.values()) < _MIN_TOOL_CALLS_FOR_CHISQ or \
+            sum(b.values()) < _MIN_TOOL_CALLS_FOR_CHISQ:
+        return None
+    if len(set(a) | set(b)) < 2:
+        return 0.0
+    fwd = _chi2_stat(b, a)  # a observed against b expected
+    rev = _chi2_stat(a, b)  # b observed against a expected
+    # Both non-None here: mass checked above, >= 2 categories.
+    return (fwd[0] + rev[0]) / 2.0
+
+
+class BaselineValidationResult:
+    """Outcome of validate_baseline_against_population.
+
+    status in {"trusted", "provisional_untrusted",
+    "unvalidated_no_population", "unvalidated_insufficient_data"}.
+    """
+
+    __slots__ = ("status", "agent_id", "threshold", "agent_distance",
+                 "n_peers", "n_pairs", "detail")
+
+    _STATUSES = ("trusted", "provisional_untrusted",
+                 "unvalidated_no_population",
+                 "unvalidated_insufficient_data")
+
+    def __init__(self, status, agent_id="", threshold=None,
+                 agent_distance=None, n_peers=0, n_pairs=0, detail=None):
+        if status not in self._STATUSES:
+            raise ValueError("unknown baseline validation status %r"
+                             % (status,))
+        self.status = status
+        self.agent_id = str(agent_id)
+        self.threshold = threshold
+        self.agent_distance = agent_distance
+        self.n_peers = int(n_peers)
+        self.n_pairs = int(n_pairs)
+        self.detail = dict(detail) if detail else {}
+
+    def to_dict(self):
+        return {"status": self.status, "agent_id": self.agent_id,
+                "threshold": self.threshold,
+                "agent_distance": self.agent_distance,
+                "n_peers": self.n_peers, "n_pairs": self.n_pairs,
+                "detail": dict(self.detail)}
+
+
+def validate_baseline_against_population(agent_id, fingerprint, population,
+                                         outlier_quantile=0.99,
+                                         min_peers=3):
+    """Compare a new baseline fingerprint against a peer population.
+
+    ``population``: iterable of (agent_id, RunFingerprint) from OTHER
+    agents (the agent itself is excluded defensively). The distance
+    from the new fingerprint to the population is the median of the
+    symmetric chi-square tool-distribution distances to each peer;
+    the outlier threshold is the ``outlier_quantile`` quantile
+    (default 99th percentile) of the pairwise peer distances. Beyond
+    the threshold -> provisional_untrusted, else trusted.
+
+    Peers with too few tool calls to measure are excluded; with
+    fewer than ``min_peers`` measurable peers the check is skipped
+    (unvalidated_no_population). A new fingerprint with too little
+    mass is unvalidated_insufficient_data. Pure function: no I/O,
+    deterministic.
+    """
+    if not isinstance(fingerprint, RunFingerprint):
+        raise TypeError("fingerprint must be a RunFingerprint, got %r"
+                        % type(fingerprint).__name__)
+    if not 0.0 < outlier_quantile <= 1.0:
+        raise ValueError("outlier_quantile must be in (0, 1], got %r"
+                         % (outlier_quantile,))
+    peers = [(str(a), fp) for (a, fp) in population
+             if str(a) != str(agent_id)
+             and isinstance(fp, RunFingerprint)
+             and sum(fp.tool_counts.values()) >= _MIN_TOOL_CALLS_FOR_CHISQ]
+    if sum(fingerprint.tool_counts.values()) < _MIN_TOOL_CALLS_FOR_CHISQ:
+        return BaselineValidationResult(
+            "unvalidated_insufficient_data", agent_id=agent_id,
+            n_peers=len(peers),
+            detail={"note": "new fingerprint has too few tool calls "
+                            "to measure a distance"})
+    if len(peers) < min_peers:
+        return BaselineValidationResult(
+            "unvalidated_no_population", agent_id=agent_id,
+            n_peers=len(peers),
+            detail={"note": "no_population: fewer than %d measurable "
+                            "peers; cannot validate against nothing"
+                            % (min_peers,)})
+    pair_dists = []
+    for i in range(len(peers)):
+        for j in range(i + 1, len(peers)):
+            d = fingerprint_tool_distance(peers[i][1], peers[j][1])
+            if d is not None:
+                pair_dists.append(d)
+    if not pair_dists:
+        return BaselineValidationResult(
+            "unvalidated_insufficient_data", agent_id=agent_id,
+            n_peers=len(peers),
+            detail={"note": "no measurable peer pairs"})
+    pair_dists.sort()
+    threshold = _quantile(pair_dists, outlier_quantile)
+    dists = []
+    for _, fp in peers:
+        d = fingerprint_tool_distance(fingerprint, fp)
+        if d is not None:
+            dists.append(d)
+    dists.sort()
+    agent_distance = _median(dists)
+    status = ("provisional_untrusted" if agent_distance > threshold
+              else "trusted")
+    return BaselineValidationResult(
+        status, agent_id=agent_id, threshold=threshold,
+        agent_distance=agent_distance, n_peers=len(peers),
+        n_pairs=len(pair_dists),
+        detail={"outlier_quantile": outlier_quantile,
+                "distance": "median symmetric chi-square of tool "
+                            "distributions vs each peer",
+                "threshold": "%.4g-quantile of %d pairwise peer "
+                             "distances" % (outlier_quantile,
+                                            len(pair_dists))})
+
+
+def cap_drift_verdict(result):
+    """Force a DriftResult to WARN for a provisional baseline.
+
+    While an agent's baseline is provisional_untrusted, no verdict
+    computed against it can be trusted: SILENT might be a poisoned
+    baseline hiding badness, and HOLD would queue a human review
+    against a possibly-meaningless baseline. Every verdict becomes
+    WARN (LOUD operator attention, no review auto-queued). The
+    underlying signals are preserved for the human.
+    """
+    if not isinstance(result, DriftResult):
+        raise TypeError("cap_drift_verdict needs a DriftResult, got %r"
+                        % type(result).__name__)
+    return DriftResult(
+        "warn", signals=result.signals, agent_id=result.agent_id,
+        baseline_n=result.baseline_n, window_n=result.window_n,
+        reason="provisional_baseline: " + result.reason)
+
+
+class PopulationStore:
+    """Durable population of agent baseline fingerprints.
+
+    One JSONL file (``population.jsonl``) under ``store_dir``; every
+    record is hash-chained (prev_digest linkage, SHA-256 over the
+    canonical record) with the same audit-before-mutation discipline
+    as DriftStore. Record kinds:
+
+    - "baseline": one per agent (latest wins); carries the
+      fingerprint and its trust state ("trusted" | "provisional").
+    - "trust": a trust transition (human confirm or auto-converge).
+    - "convergence": consecutive population-conforming run counter
+      for a provisional agent.
+
+    Fail-closed: ``verify_chain()`` False -> ``all_baselines()``,
+    ``trust_of()``, ``record_baseline()``, ``confirm_baseline()`` and
+    ``note_run()`` raise PopulationCorruptedError.
+    """
+
+    def __init__(self, store_dir, audit=None):
+        self.store_dir = Path(store_dir)
+        self._audit = audit
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        self._head_cache = None
+
+    def _path(self):
+        return self.store_dir / "population.jsonl"
+
+    def _read_all(self):
+        p = self._path()
+        if not p.exists():
+            return []
+        records = []
+        try:
+            with p.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        records.append(json.loads(line))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+            # A truncated or garbage file is indistinguishable from
+            # tampering: fail closed, never silently skip records.
+            raise PopulationCorruptedError(
+                "population file %s is unreadable (%r): treating every "
+                "new baseline as untrusted" % (p, e))
+        return records
+
+    def _head(self):
+        if self._head_cache is None:
+            records = self._read_all()
+            self._head_cache = records[-1]["digest"] if records else ""
+        return self._head_cache
+
+    def verify_chain(self):
+        """True iff the chain is intact (digests + linkage)."""
+        try:
+            records = self._read_all()
+        except PopulationCorruptedError:
+            return False
+        prev = ""
+        for rec in records:
+            if rec.get("prev_digest") != prev:
+                return False
+            digest = rec.get("digest")
+            if digest != _sha256_hex(_canonical(
+                    {k: v for k, v in rec.items() if k != "digest"})):
+                return False
+            prev = digest
+        return True
+
+    def _require_intact(self):
+        if not self.verify_chain():
+            raise PopulationCorruptedError(
+                "population file %s failed chain verification: "
+                "treating every new baseline as untrusted"
+                % (self._path(),))
+
+    def _append(self, record, audit, event):
+        self._require_intact()
+        auditor = self._audit if audit is None else audit
+        prev = self._head()
+        record = dict(record)
+        record["pop_version"] = _POP_VERSION
+        record["recorded_at"] = _utcnow_iso()
+        record["prev_digest"] = prev
+        record["digest"] = _sha256_hex(_canonical(
+            {k: v for k, v in record.items() if k != "digest"}))
+        if auditor is not None:
+            evt = {"event": event, "prev_digest": prev,
+                   "digest": record["digest"]}
+            evt.update({k: v for k, v in record.items()
+                        if k not in ("digest", "prev_digest",
+                                     "fingerprint")})
+            auditor(evt)
+        with self._path().open("a", encoding="utf-8") as f:
+            f.write(_canonical(record) + "\n")
+        self._head_cache = record["digest"]
+        return record
+
+    def record_baseline(self, agent_id, principal, fingerprint, audit=None,
+                        validation=None):
+        """Record an agent's baseline fingerprint with its trust state.
+
+        ``validation`` is an optional BaselineValidationResult; a
+        provisional_untrusted verdict stores trust "provisional",
+        anything else stores "trusted" (with the validation status
+        noted). Audit (``baseline_recorded``) runs before the write;
+        an audit failure aborts the record (fail-closed).
+        """
+        if not isinstance(fingerprint, RunFingerprint):
+            raise TypeError("fingerprint must be a RunFingerprint, got %r"
+                            % type(fingerprint).__name__)
+        if validation is not None and not isinstance(
+                validation, BaselineValidationResult):
+            raise TypeError("validation must be a BaselineValidationResult")
+        trust = ("provisional"
+                 if validation is not None
+                 and validation.status == "provisional_untrusted"
+                 else "trusted")
+        return self._append(
+            {"kind": "baseline",
+             "agent_id": str(agent_id),
+             "principal": str(principal),
+             "fingerprint": fingerprint.to_dict(),
+             "baseline_trust": trust,
+             "validation_status": (validation.status
+                                   if validation is not None
+                                   else "unvalidated"),
+             "validation": (validation.to_dict()
+                            if validation is not None else None)},
+            audit, "baseline_recorded")
+
+    def all_baselines(self):
+        """Latest baseline per agent: [(agent_id, RunFingerprint)].
+
+        Fail-closed: raises PopulationCorruptedError when the chain
+        does not verify.
+        """
+        self._require_intact()
+        latest = {}
+        order = []
+        for rec in self._read_all():
+            if rec.get("kind") != "baseline":
+                continue
+            aid = rec.get("agent_id")
+            if aid not in latest:
+                order.append(aid)
+            latest[aid] = RunFingerprint.from_dict(rec["fingerprint"])
+        return [(aid, latest[aid]) for aid in order]
+
+    def trust_of(self, agent_id):
+        """(trust, detail) for an agent: latest baseline trust as
+        overridden by any later trust record.
+
+        Fail-closed: raises PopulationCorruptedError when the chain
+        does not verify.
+        """
+        self._require_intact()
+        aid = str(agent_id)
+        trust = None
+        detail = {"note": "no_baseline_recorded"}
+        for rec in self._read_all():
+            if rec.get("agent_id") != aid:
+                continue
+            kind = rec.get("kind")
+            if kind == "baseline":
+                trust = rec.get("baseline_trust", "trusted")
+                detail = {"validation_status": rec.get(
+                    "validation_status", "unvalidated")}
+            elif kind == "trust":
+                trust = rec.get("new_trust", trust)
+                detail = {"reason": rec.get("reason", ""),
+                          "at": rec.get("recorded_at", "")}
+        if trust is None:
+            return "trusted", {"note": "no_baseline_recorded"}
+        return trust, detail
+
+    def confirm_baseline(self, agent_id, reason="human_confirm", audit=None):
+        """Human (or operator) confirmation: provisional -> trusted."""
+        return self._append(
+            {"kind": "trust",
+             "agent_id": str(agent_id),
+             "new_trust": "trusted",
+             "reason": str(reason)},
+            audit, "baseline_confirmed")
+
+    def note_run(self, agent_id, fingerprint, peers, auto_confirm_runs=None,
+                 audit=None):
+        """Track one subsequent run toward auto-confirmation.
+
+        ``peers``: [(agent_id, RunFingerprint)] excluding this agent.
+        When the run validates as population-conforming, the
+        consecutive counter increments; at ``auto_confirm_runs``
+        (default 3) consecutive conforming runs a provisional
+        baseline auto-confirms to trusted (``baseline_auto_confirmed``
+        audit event). A non-conforming run resets the counter.
+        Already-trusted agents are a no-op. Returns (trust, detail).
+        """
+        if not isinstance(fingerprint, RunFingerprint):
+            raise TypeError("fingerprint must be a RunFingerprint, got %r"
+                            % type(fingerprint).__name__)
+        if auto_confirm_runs is None:
+            auto_confirm_runs = _AUTO_CONFIRM_RUNS
+        trust, _ = self.trust_of(agent_id)
+        if trust == "trusted":
+            return "trusted", {"already_trusted": True}
+        res = validate_baseline_against_population(agent_id, fingerprint,
+                                                  peers)
+        count = 0
+        for rec in self._read_all():
+            if rec.get("kind") == "convergence" and \
+                    rec.get("agent_id") == str(agent_id):
+                count = rec.get("consecutive_trusted", 0)
+        count = count + 1 if res.status == "trusted" else 0
+        self._append(
+            {"kind": "convergence",
+             "agent_id": str(agent_id),
+             "consecutive_trusted": count,
+             "validation_status": res.status},
+            audit, "baseline_convergence_noted")
+        if count >= auto_confirm_runs:
+            self._append(
+                {"kind": "trust",
+                 "agent_id": str(agent_id),
+                 "new_trust": "trusted",
+                 "reason": "auto_converged",
+                 "consecutive_runs": count},
+                audit, "baseline_auto_confirmed")
+            return "trusted", {"auto_converged": True,
+                               "consecutive_trusted": count}
+        return "provisional", {"consecutive_trusted": count,
+                               "validation_status": res.status}

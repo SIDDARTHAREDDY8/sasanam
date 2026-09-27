@@ -44,7 +44,13 @@ Honest ceiling (documented, not hidden):
   distinguish a legitimately broad mandate ("general external
   communication") from deliberate vagueness-as-cover. An operator who
   registers wildcards is explicitly granting latitude; the finding
-  makes that grant visible.
+  makes that grant visible. Wave-135 tightens the registration side:
+  vague goals (empty effects, wildcard targets) register in
+  ``pending_specificity`` and cover NOTHING until a human narrows
+  them or acknowledges their breadth -- and an acknowledged-broad
+  goal's wildcard cover fires LOUD (severity high), not
+  informational. The remaining gap is semantic: a specific-looking
+  goal that is semantically broad still passes the structural check.
 - Exact normalized-target matching, like gov/goals.py: paraphrased
   targets dodge the matcher by construction.
 - Post-hoc only: the finding arrives after the action executed. The
@@ -163,16 +169,38 @@ def _reconstruct_goals(entries, run_id):
                             and len(e) == 2],
                 "constraints": [list(c) for c in
                                 (ev.get("constraints") or [])],
-                "status": "active",
+                # Wave-135: registration-time status (pending_specificity
+                # for vague goals) and the human-acknowledged breadth
+                # flag. Pre-wave-135 logs carry neither: default to the
+                # old behavior (active, unacknowledged).
+                "status": ev.get("status") or "active",
+                "broad_scope_acknowledged":
+                    bool(ev.get("broad_scope_acknowledged")),
             }
         elif etype == "goal_status_changed":
             gid = ev.get("goal_id")
             status = ev.get("status")
-            if not gid or status not in ("active", "superseded"):
+            if not gid or status not in ("active", "superseded",
+                                        "pending_specificity"):
                 continue
             for agent_goals in goals.values():
                 if gid in agent_goals:
                     agent_goals[gid]["status"] = status
+        elif etype == "goal_specificity_resolved":
+            # Wave-135: the human's goal_specificity_review decision.
+            # Carries the post-resolution status AND the breadth flag;
+            # both must move together or the reconstruction drifts from
+            # the live registry.
+            gid = ev.get("goal_id")
+            status = ev.get("status")
+            if not gid or status not in ("active", "superseded",
+                                        "pending_specificity"):
+                continue
+            for agent_goals in goals.values():
+                if gid in agent_goals:
+                    agent_goals[gid]["status"] = status
+                    agent_goals[gid]["broad_scope_acknowledged"] = \
+                        bool(ev.get("broad_scope_acknowledged"))
     # Drop superseded: only live goals provide cover.
     return {a: {g: rec for g, rec in gs.items()
                 if rec.get("status") == "active"}
@@ -203,6 +231,10 @@ def _goals_from_registry(registry, run_id):
             "constraints": [list(c) for c in
                             (g.get("constraints") or [])],
             "status": "active",
+            # Wave-135: a human-acknowledged broad goal's wildcard
+            # cover is LOUD (severity high), not informational.
+            "broad_scope_acknowledged":
+                bool(g.get("broad_scope_acknowledged")),
         }
     return out
 
@@ -318,22 +350,49 @@ def audit_entries(run_id, entries, registry=None):
                     % (agent, tool, verb, target, extra)),
             })
         elif status == "wildcard":
-            findings.append({
-                "finding": "goal_wildcard_cover",
-                "severity": "info",
-                "agent_id": agent,
-                "run_id": run_id,
-                "tool": tool,
-                "effect": [verb, target],
-                "covering_goal_id": gid,
-                "explanation": (
-                    "Agent %r executed %r (%s %s) covered ONLY by a "
-                    "wildcard goal effect (%s *). The auditor cannot "
-                    "distinguish a legitimately broad mandate from "
-                    "deliberate vagueness-as-cover; the grant of "
-                    "latitude is surfaced here for operator review."
-                    % (agent, tool, verb, target, verb)),
-            })
+            # Wave-135 (row-11): a wildcard goal whose breadth a human
+            # explicitly acknowledged at registration
+            # (broad_scope_acknowledged via goal_specificity_review)
+            # covers LOUD, not informational -- the operator accepted
+            # the latitude, so its exercise stays maximally visible.
+            acked = bool((goals.get(gid) or {})
+                         .get("broad_scope_acknowledged"))
+            if acked:
+                findings.append({
+                    "finding": "goal_wildcard_cover",
+                    "severity": "high",
+                    "flag": "goal_wildcard_acknowledged",
+                    "agent_id": agent,
+                    "run_id": run_id,
+                    "tool": tool,
+                    "effect": [verb, target],
+                    "covering_goal_id": gid,
+                    "explanation": (
+                        "Agent %r executed %r (%s %s) covered ONLY by a "
+                        "wildcard goal effect (%s *). LOUD: a human "
+                        "explicitly acknowledged this goal's breadth at "
+                        "registration (goal_specificity_review), so the "
+                        "wildcard cover is surfaced at high severity, "
+                        "not informational."
+                        % (agent, tool, verb, target, verb)),
+                })
+            else:
+                findings.append({
+                    "finding": "goal_wildcard_cover",
+                    "severity": "info",
+                    "agent_id": agent,
+                    "run_id": run_id,
+                    "tool": tool,
+                    "effect": [verb, target],
+                    "covering_goal_id": gid,
+                    "explanation": (
+                        "Agent %r executed %r (%s %s) covered ONLY by a "
+                        "wildcard goal effect (%s *). The auditor cannot "
+                        "distinguish a legitimately broad mandate from "
+                        "deliberate vagueness-as-cover; the grant of "
+                        "latitude is surfaced here for operator review."
+                        % (agent, tool, verb, target, verb)),
+                })
         else:  # gap
             findings.append({
                 "finding": "goal_coverage_gap",

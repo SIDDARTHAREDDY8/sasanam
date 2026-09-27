@@ -672,7 +672,13 @@ class ToolExecutor:
                  # Opt-in: None (default) = zero behavior change (the
                  # cross-run countermand check in execute_approved is
                  # inert without one).
-                 intent_ledger=None):
+                 intent_ledger=None,
+                 # Population-relative baseline validation (row 9,
+                 # wave-134): appended LAST for the same
+                 # positional-misalignment reason. Opt-in: None
+                 # (default) = zero behavior change (validate_baseline
+                 # returns None; check_run_drift never caps).
+                 population_store=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -933,6 +939,11 @@ class ToolExecutor:
         # (the execution-boundary countermand check is inert without
         # one; record_intent_turn is a no-op returning None).
         self.intent_ledger = intent_ledger
+        # Wave-134 (row 9): population-relative baseline store,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (validate_baseline returns None; check_run_drift never
+        # applies the provisional WARN cap).
+        self.population_store = population_store
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2225,6 +2236,14 @@ class ToolExecutor:
         A conflicting goal is still registered as active -- the human
         resolves which objective stands; use ``resolve_goal`` to mark
         the outcome.
+
+        Wave-135 (row-11): a VAGUE goal (empty effects, wildcard
+        target) registers in ``pending_specificity`` and covers
+        NOTHING until a human narrows it (``narrow_goal``) or
+        acknowledges its breadth. A ``goal_specificity_review``
+        approval item is queued for human resolution -- same
+        separation-of-duties as the conflict review: the agent can
+        never acknowledge its own vagueness away.
         """
         if identity is None:
             raise TypeError(
@@ -2236,8 +2255,77 @@ class ToolExecutor:
         goal, conflicts = self._goal_registry.register(
             agent_id, self.run_id, description,
             effects=effects, constraints=constraints)
+        if goal.get("status") == "pending_specificity":
+            self._queue_specificity_review(goal, agent_id, description,
+                                           identity)
         if not conflicts:
             return goal, conflicts
+        self._queue_conflict_review(goal, agent_id, description,
+                                    conflicts, identity)
+        return goal, conflicts
+
+    def _queue_specificity_review(self, goal, agent_id, description,
+                                  identity, note=""):
+        """Wave-135: queue a ``goal_specificity_review`` approval item
+        for a vague (pending_specificity) goal.
+
+        Shared by ``register_goal`` and ``narrow_goal`` so a vague
+        goal can never slip through without a human review item --
+        the routing cannot drift between the two call sites.
+        Separation-of-duties: the agent can never acknowledge its
+        own vagueness away. Queue-failure is LOUD (the
+        ``goal_specificity_pending`` registry event is already in
+        the log, so the signal survives).
+        """
+        # Wave-135: route the vague goal to a human. A vague goal can
+        # also conflict (against active goals); both reviews are
+        # queued and both need human attention -- the conflict
+        # decision hook noops on a still-pending goal (wave-134
+        # attestation path), and the specificity decision is what
+        # activates it.
+        reasons = goal.get("specificity_reasons") or []
+        try:
+            self.approvals.queue(
+                {"tool": "goal_specificity_review",
+                 "args": {"goal_id": goal["goal_id"],
+                          "agent_id": agent_id,
+                          "description": description,
+                          "specificity_reasons": reasons},
+                 "identity": identity.as_dict(),
+                 "agent_justification": None,
+                 "redactions": []},
+                PolicyDecision(
+                    "require_approval",
+                    "Vague goal for agent %r held in "
+                    "pending_specificity%s: %s"
+                    % (agent_id,
+                       (" (%s)" % note) if note else "",
+                       "; ".join(reasons)),
+                    policy_id="goal-registry",
+                    flag="goal_specificity"),
+                "agent_direct",
+                "review vague goal for agent %r" % (agent_id,),
+                caller_identity=identity)
+        except Exception:
+            self.log.append({
+                "event": "goal_specificity_queue_failed",
+                "flag": "goal_specificity",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "goal_id": goal["goal_id"],
+                "reason": ("goal_specificity_review approval could "
+                           "not be queued; the "
+                           "goal_specificity_pending audit event "
+                           "remains the record -- operator must "
+                           "review manually"),
+            })
+
+    def _queue_conflict_review(self, goal, agent_id, description,
+                               conflicts, identity):
+        """Wave-135 refactor: the ``goal_conflict_review`` queueing
+        block extracted from ``register_goal`` unchanged, so
+        ``narrow_goal`` can route a conflicting narrowed registration
+        through the identical path (no drift between call sites)."""
         # LOUD is already in the log (registry chained it); route to
         # humans. Synthetic action (tool "goal_conflict_review") so the
         # queue's separation-of-duties still applies: the agent can
@@ -2280,7 +2368,6 @@ class ToolExecutor:
                            "remain the record -- operator must review "
                            "manually"),
             })
-        return goal, conflicts
 
     def resolve_goal(self, goal_id, resolution, note=""):
         """Wave-130: record a human's resolution of a goal conflict.
@@ -2309,9 +2396,71 @@ class ToolExecutor:
         })
         return g
 
+    def narrow_goal(self, goal_id, effects=(), constraints=(),
+                    identity=None, note=""):
+        """Wave-135 (row-11): narrow a vague (pending_specificity) goal.
+
+        The human/operator supplies narrowed ``effects``/``constraints``.
+        The pending goal is superseded and a FRESH goal is registered
+        with the narrowed atoms (see ``GoalRegistry.narrow``: the
+        goal sub-chain is append-only, so narrowing is a new
+        registration, never an in-place edit). The fresh registration
+        re-runs the specificity check -- a still-vague narrowing
+        lands in ``pending_specificity`` again and queues a new
+        review; nothing about the check is waived. A conflicting
+        narrowing queues a ``goal_conflict_review`` like any
+        registration.
+
+        ``identity`` is the minted AgentIdentity for the goal's agent
+        -- REQUIRED (F42): narrowed registrations route to the
+        approval queue exactly like fresh ones, and queue() never
+        trusts caller-supplied identity fields.
+
+        Returns ``(new_goal_dict, [conflict_dicts])``. Unknown goal,
+        non-pending goal, malformed atoms, or missing identity ->
+        ValueError/TypeError (fail-closed, registry unchanged).
+        """
+        if identity is None:
+            raise TypeError(
+                "narrow_goal() requires identity: an AgentIdentity "
+                "minted by the executor for the goal's agent (F42); a "
+                "narrowed registration is routed to the approval queue "
+                "exactly like a fresh one")
+        old = self._goal_registry.get_goal(goal_id)
+        if old is None:
+            raise ValueError("unknown goal_id %r" % (goal_id,))
+        agent_id = old.get("agent_id")
+        new_goal, conflicts = self._goal_registry.narrow(
+            goal_id, effects=effects, constraints=constraints)
+        self.log.append({
+            "event": "goal_narrowed_by_operator",
+            "run_id": self.run_id,
+            "agent_id": agent_id,
+            "old_goal_id": goal_id,
+            "new_goal_id": new_goal["goal_id"],
+            "new_status": new_goal["status"],
+            "note": str(note),
+            "reason": ("operator narrowed goal %s into goal %s (%s%s)"
+                       % (goal_id[:8], new_goal["goal_id"][:8],
+                          new_goal["status"],
+                          (": " + note) if note else "")),
+        })
+        # A narrowed registration can itself be vague (still pending)
+        # or conflicting: route through the same review queueing as a
+        # fresh registration so neither review is silently skipped.
+        if new_goal.get("status") == "pending_specificity":
+            self._queue_specificity_review(
+                new_goal, agent_id, new_goal.get("description") or "",
+                identity, note="re-narrowed goal still vague")
+        if conflicts:
+            self._queue_conflict_review(
+                new_goal, agent_id, new_goal.get("description") or "",
+                conflicts, identity)
+        return new_goal, conflicts
+
     def _on_approval_decision(self, record, approved, reason, decided_by,
                               decision_entry):
-        """Wave-134 (row-11): post-decision hook installed on the queue.
+        """Wave-134/135 (row-11): post-decision hook installed on the queue.
 
         When a ``goal_conflict_review`` approval item is DECIDED, the
         human's decision resolves the underlying goal conflict --
@@ -2346,7 +2495,27 @@ class ToolExecutor:
         """
         if not isinstance(record, dict):
             return
-        if record.get("tool") != "goal_conflict_review":
+        tool = record.get("tool")
+        if tool == "goal_specificity_review":
+            # Wave-135 (row-11): the human's decision on a vague goal.
+            # allow = explicitly acknowledge the breadth (goal goes
+            # active with broad_scope_acknowledged; its wildcard
+            # cover fires LOUD from then on); deny = withdraw the
+            # goal (superseded). Unknown/already-resolved goals
+            # produce a LOUD goal_specificity_noop inside
+            # resolve_specificity -- never a silent skip. Same F180
+            # contract as the conflict path: inner failures
+            # propagate to the queue's LOUD decision_hook_failed
+            # handler; the human decision still stands.
+            args = record.get("args") or {}
+            if not isinstance(args, dict):
+                return
+            self._goal_registry.resolve_specificity(
+                args.get("goal_id"),
+                acknowledged=bool(approved),
+                approval_id=record.get("id"))
+            return
+        if tool != "goal_conflict_review":
             return
         args = record.get("args") or {}
         if not isinstance(args, dict):
@@ -2387,6 +2556,79 @@ class ToolExecutor:
             audit=self.log.append,
             attested_existing_ids=attested)
 
+    def _population_trust(self, agent_id):
+        """("trusted"|"provisional", detail) for the agent's baseline.
+
+        A corrupted population file fails closed to provisional: no
+        new baseline can be validated, so none is trusted.
+        """
+        if self.population_store is None:
+            return ("trusted", {"no_store": True})
+        try:
+            return self.population_store.trust_of(str(agent_id))
+        except _drift.PopulationCorruptedError:
+            return ("provisional", {"population_corrupt": True})
+
+    def validate_baseline(self, agent_id, fingerprint, identity=None):
+        """Wave-134 (row 9): population-relative baseline validation.
+
+        Validates ``fingerprint`` as the agent's baseline against the
+        peer population, records it in the population store with its
+        trust state, and emits a LOUD ``baseline_population_outlier``
+        audit event when the baseline is an extreme outlier
+        (provisional_untrusted). A corrupted population file fails
+        closed: the baseline is treated as provisional and the LOUD
+        event records the corruption. With no population_store
+        installed this returns None and does nothing (zero behavior
+        change).
+        """
+        if self.population_store is None:
+            return None
+        principal = (identity.principal if identity is not None
+                     else "unknown")
+        store = self.population_store
+        try:
+            peers = [(a, fp) for (a, fp) in store.all_baselines()]
+        except _drift.PopulationCorruptedError:
+            res = _drift.BaselineValidationResult(
+                "provisional_untrusted", agent_id=str(agent_id),
+                detail={"reason": "population_corrupt",
+                        "note": "population file failed chain "
+                                "verification; failing closed"})
+            self.log.append({
+                "event": "baseline_population_outlier",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "principal": principal,
+                "status": res.status,
+                "reason": ("population file corrupt: new baseline "
+                           "treated as provisional_untrusted"),
+            })
+            return res
+        res = _drift.validate_baseline_against_population(
+            str(agent_id), fingerprint, peers)
+        store.record_baseline(str(agent_id), principal, fingerprint,
+                              audit=self.log.append, validation=res)
+        if res.status == "provisional_untrusted":
+            self.log.append({
+                "event": "baseline_population_outlier",
+                "run_id": self.run_id,
+                "agent_id": str(agent_id),
+                "principal": principal,
+                "status": res.status,
+                "threshold": res.threshold,
+                "agent_distance": res.agent_distance,
+                "n_peers": res.n_peers,
+                "reason": ("baseline tool distribution is an extreme "
+                           "outlier vs the peer population "
+                           "(dist=%.4g > thr=%.4g, n_peers=%d); drift "
+                           "verdicts against this baseline are capped "
+                           "at WARN until confirmed"
+                           % (res.agent_distance, res.threshold,
+                              res.n_peers)),
+            })
+        return res
+
     def check_run_drift(self, agent_id, fingerprint=None, record=True,
                         identity=None, window=8):
         """Wave-131 (row 9): cross-run drift check for an agent.
@@ -2420,6 +2662,43 @@ class ToolExecutor:
             self.drift_store.record_run(
                 agent_id, principal, fingerprint, audit=self.log.append)
         res = _drift.detect_drift(self.drift_store, agent_id, window=window)
+        # Wave-134 (row 9): a provisional_untrusted baseline cannot be
+        # trusted in either direction -- SILENT might be a poisoned
+        # baseline hiding badness, HOLD would queue a human review
+        # against a possibly-meaningless baseline. Force every
+        # verdict to WARN (LOUD operator attention, no review
+        # auto-queued) and track convergence toward the population so
+        # K conforming runs can auto-confirm the baseline.
+        if self.population_store is not None:
+            trust, tdetail = self._population_trust(agent_id)
+            if trust == "provisional":
+                res = _drift.cap_drift_verdict(res)
+                self.log.append({
+                    "event": "drift_provisional_warn",
+                    "run_id": self.run_id,
+                    "agent_id": str(agent_id),
+                    "level": res.level,
+                    "baseline_n": res.baseline_n,
+                    "window_n": res.window_n,
+                    "trust_detail": tdetail,
+                    "signals": [s.to_dict() for s in res.signals],
+                    "reason": ("drift verdict capped at WARN: agent "
+                               "baseline is provisional_untrusted "
+                               "(population-relative validation)"),
+                })
+                if fingerprint is not None and record:
+                    try:
+                        peers = [(a, fp)
+                                 for (a, fp) in
+                                 self.population_store.all_baselines()
+                                 if a != str(agent_id)]
+                        self.population_store.note_run(
+                            str(agent_id), fingerprint, peers,
+                            audit=self.log.append)
+                    except _drift.PopulationCorruptedError:
+                        # Stay provisional; the LOUD drift_provisional_
+                        # warn event above is the record.
+                        pass
         if res.level == "silent":
             return res
         event = {"watch": "drift_watch", "warn": "drift_warn",

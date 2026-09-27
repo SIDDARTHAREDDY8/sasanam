@@ -363,8 +363,32 @@ residual remains a documented ceiling, not a false claim).
 remnant to the old destination does not launder a substitutive shift
 into "additive"). Remaining ceilings: content-level framing drift
 (the exact e4), slow destination rotation below the trickle threshold
-(≤10%/run), baseline poisoning, redacted routing fields. This row is
-NOT on the D4 deliberately-not-proposed list.
+(≤10%/run), baseline poisoning, redacted routing fields. Wave-134
+(2026-09-27) narrowed the poisoned-initial-baseline residual:
+population-relative baseline validation in `gov/drift.py`
+(`validate_baseline_against_population` — median symmetric chi-square
+tool-distribution distance to peers vs the 99th percentile of pairwise
+peer distances; outliers become `provisional_untrusted` with a LOUD
+`baseline_population_outlier` audit event; drift still runs against
+provisional baselines but every verdict is forced to WARN — never
+SILENT or HOLD — until a human confirms the baseline or K=3
+subsequent runs converge toward the population; durable hash-chained
+`PopulationStore`, fail-closed on corruption; opt-in executor kwarg
+appended last, None = zero behavior change).
+`evals/baseline_population_probes.py`: **6 HELD / 0 BREAK /
+2 MISS-DOCUMENTED / 0 ERROR** (deterministic ×2, both envs) — a
+pure-exfil newcomer is provisional with SILENT and HOLD raw verdicts
+both forced to WARN, a normal newcomer is trusted and stays SILENT,
+empty population is a documented skip, a corrupted population fails
+closed, 3 conforming runs auto-confirm, human confirmation
+transitions provisional→trusted. `tests/test_baseline_population.py`
+35/35. Honest ceilings (pinned, not claimed): whole-population/Sybil
+poisoning defeats the comparison by construction, an attacker can
+shape a baseline just inside the envelope (exact-copy profile
+validates trusted — the exfil would have to hide in payload content,
+which a tool-distribution comparison cannot see), and ≥3 peers are
+needed for a meaningful percentile. Row 9 remains PARTIAL. This row
+is NOT on the D4 deliberately-not-proposed list.
 
 ### Row 10 — Reward hacking / spec gaming (memo: PARTIAL → now: PARTIAL, stronger)
 Anthropic Sept-2026 threat-report wave: F162 CLOSED (velocity/economic controls —
@@ -510,6 +534,31 @@ detector re-attestation) and F180 (LOW, hook swallow defeating the LOUD
 hook-failure audit — closed in-wave by deleting the swallow). **Row 11 remains
 PARTIAL — decision→resolution mechanics landed and measured, NOT
 closed.**
+
+Wave-135 (2026-09-27) hardened vague-goal registration: `gov/goals.py`
+gained `check_specificity` (structural — empty effects, or any effect
+target missing/empty/`"*"`, is vague) and `pending_specificity` status;
+vague registrations stay non-active, cover nothing, emit LOUD
+`goal_specificity_pending`, and queue a `goal_specificity_review`.
+`resolve_specificity(goal_id, acknowledged, approval_id)`: human allow
+acknowledges breadth (goal active + `broad_scope_acknowledged`, its
+wildcard cover now fires HIGH severity, LOUD) or deny withdraws it
+(superseded); unknown/already-resolved → LOUD `goal_specificity_noop`.
+`narrow(goal_id, effects, constraints)` lets a human narrow a vague
+goal into a fresh specific registration (append-only — the pending
+goal is superseded, never edited in place). `gov/goal_audit.py`
+reconstructs the pending state; pending goals give no cover and
+acknowledged wildcard cover is no longer informational. Break-first
+battery `evals/goal_specificity_probes.py`: **5/5 HELD / 0 BREAK /
+0 ERROR** (deterministic, clean env) — pending-until-ack, specific
+stays silent, narrow activates without ack, post-ack cover LOUD,
+empty-effects pending. Unit tests `tests/test_goal_specificity.py`
+(29/29) + `tests/test_goal_specificity_executor.py` (12/12). **Honest
+ceilings:** structural, not semantic — a specific-looking but
+semantically broad goal still passes (paraphrase ceiling); a human can
+acknowledge a maliciously broad goal without reading (judgment
+ceiling). **Row 11 remains PARTIAL — vague-registration mechanics
+landed and measured, NOT closed.**
 
 ### Row 12 — Model self-exfiltration (memo: PARTIAL → now: PARTIAL, stronger)
 F81's closure (genuine privileged validation, wave-98) hardens the egress half;

@@ -49,6 +49,19 @@ What this is NOT (honest ceiling):
   LOUD (``goal_conflict`` audit event) and routed to the approval
   queue for human resolution. The executor's ``register_goal`` is the
   wiring point.
+- Wave-135 (row-11): vague-goal specificity. A goal whose declared
+  effects are empty or carry a ``"*"`` wildcard target registers in
+  ``pending_specificity`` -- it covers NOTHING (gov.goal_audit
+  treats it as uncovered) until a human narrows it
+  (``GoalRegistry.narrow`` -- a fresh registration, since the chain
+  is append-only) or explicitly acknowledges its breadth
+  (``resolve_specificity`` via a ``goal_specificity_review``
+  approval decision, which sets ``broad_scope_acknowledged`` and
+  makes every later ``goal_wildcard_cover`` for that goal LOUD).
+  The check is structural, not semantic: a specific-looking goal
+  that is semantically broad still passes (paraphrase ceiling).
+  And a human can acknowledge a maliciously broad goal without
+  reading (judgment ceiling -- same as wave-134's wiring).
 
 $0, stdlib only, deterministic. Effect/constraint validation is
 fail-closed: unknown verbs raise ValueError rather than being
@@ -73,6 +86,7 @@ __all__ = [
     "DORMANT_RUN_THRESHOLD",
     "GoalPersistenceError",
     "GoalRegistry",
+    "check_specificity",
     "detect_conflict",
     "detect_cross_run_laundering",
     "normalize_target",
@@ -110,8 +124,13 @@ DORMANT_RUN_THRESHOLD = 3
 #: Fields excluded from the goal digest: mutable live state that is
 #: itself audited (goal_status_changed events) and must not read as
 #: "tampered" when the chain is verified after a status change or a
-#: cross-run reload.
-_MUTABLE_DIGEST_EXCLUSIONS = frozenset({"goal_digest", "status"})
+#: cross-run reload. ``broad_scope_acknowledged`` (wave-135) joins
+#: ``status``: it flips from False to True when a human acknowledges
+#: a vague goal's breadth via goal_specificity_review, and that flip
+#: is chained as a goal_specificity_resolved event -- including it in
+#: the digest would read the human's own resolution as tampering.
+_MUTABLE_DIGEST_EXCLUSIONS = frozenset({"goal_digest", "status",
+                                       "broad_scope_acknowledged"})
 
 
 class GoalPersistenceError(ValueError):
@@ -195,6 +214,49 @@ def _check_constraint(atom):
         raise ValueError("constraint target must be a non-empty string, "
                          "got %r" % (target,))
     return ("forbid", verb, normalize_target(target))
+
+
+def check_specificity(goal):
+    """Wave-135 (row-11): registration-time specificity check.
+
+    ``goal`` is a dict (or goal record) with ``"effects"`` -- a list
+    of (verb, target) atoms, normalized or not. Returns
+    ``(vague, reasons)`` where ``vague`` is True when the declared
+    objective is too broad for the detector to reason about:
+
+    * no declared effects at all -- the goal declares nothing the
+      coverage auditor can match against;
+    * any effect whose target is missing, empty, or the ``"*"``
+      wildcard -- an unbounded effect atom.
+
+    Deliberately STRUCTURAL, not semantic: a "specific-looking" goal
+    (``("send", "vendor.example.com")`` that in practice means "send
+    anything anywhere") passes the check. Semantic laundering is the
+    documented paraphrase ceiling -- this check closes the
+    *mechanical* vagueness (empty/wildcard), not the semantic kind.
+
+    Never raises on malformed atoms: an unparseable effect is itself
+    a vagueness reason (fail-closed toward "vague", since a goal the
+    checker cannot parse is a goal the auditor cannot reason about).
+    """
+    reasons = []
+    effects = goal.get("effects") if isinstance(goal, dict) else None
+    if not effects:
+        reasons.append(
+            "no declared effects: the goal declares nothing the "
+            "coverage auditor can match an action against")
+        return True, reasons
+    for atom in effects:
+        verb = target = None
+        if isinstance(atom, (tuple, list)) and len(atom) == 2:
+            verb, target = atom
+        t = normalize_target(str(target)) if target is not None else ""
+        if not t or t == "*":
+            reasons.append(
+                "effect (%r %r) is unbounded: a missing, empty, or "
+                "\"*\" target covers every action of that verb"
+                % (verb, target))
+    return (bool(reasons), reasons)
 
 
 def detect_conflict(new_goal, existing_goals):
@@ -382,9 +444,23 @@ class GoalRegistry(object):
             "effects": [list(e) for e in norm_effects],
             "constraints": [list(c) for c in norm_constraints],
             "status": "active",
+            # Wave-135 (row-11): vague-goal specificity. A goal whose
+            # declared effects are empty or carry a wildcard target is
+            # NOT silently accepted as active: it registers in
+            # "pending_specificity", covers nothing, and needs a
+            # human to narrow it (registry.narrow) or acknowledge its
+            # breadth (resolve_specificity via a
+            # goal_specificity_review approval decision) before it can
+            # cover actions. Fail-closed: pending goals provide no
+            # cover in gov.goal_audit.
+            "broad_scope_acknowledged": False,
             "registered_at": _utcnow_iso(),
             "prev_goal_digest": self._prev_digest,
         }
+        vague, spec_reasons = check_specificity(record)
+        if vague:
+            record["status"] = "pending_specificity"
+            record["specificity_reasons"] = list(spec_reasons)
         record["goal_digest"] = _record_digest(record, self._prev_digest)
 
         conflicts = detect_conflict(record, self.active_goals())
@@ -401,11 +477,35 @@ class GoalRegistry(object):
             "description": description,
             "effects": [list(e) for e in norm_effects],
             "constraints": [list(c) for c in norm_constraints],
+            "status": record["status"],
+            "broad_scope_acknowledged": False,
+            "specificity_reasons": list(spec_reasons),
             "goal_digest": record["goal_digest"],
             "prev_goal_digest": record["prev_goal_digest"],
             "conflict_count": len(conflicts),
             "ts": record["registered_at"],
         })
+        if vague:
+            # LOUD: a vague goal was registered and is being held in
+            # pending_specificity. The executor routes this to a
+            # goal_specificity_review approval item; the registry
+            # itself never queues (no queue access here).
+            self._loud({
+                "event": "goal_specificity_pending",
+                "flag": "goal_specificity",
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "goal_id": record["goal_id"],
+                "specificity_reasons": list(spec_reasons),
+                "reason": (
+                    "VAGUE GOAL HELD: goal %r declares %s. It is "
+                    "registered in pending_specificity and covers "
+                    "NOTHING until a human narrows it or explicitly "
+                    "acknowledges its breadth."
+                    % (record["goal_id"][:8],
+                       "; ".join(spec_reasons))),
+                "ts": _utcnow_iso(),
+            })
         for c in conflicts:
             self._loud({
                 "event": "goal_conflict",
@@ -456,7 +556,8 @@ class GoalRegistry(object):
         return None
 
     def set_status(self, goal_id, status, approval_id=None):
-        """Update a goal's status ('active' | 'superseded').
+        """Update a goal's status ('active' | 'superseded' |
+        'pending_specificity').
 
         Returns the goal dict. Unknown goal_id or status ->
         ValueError (fail-closed, no silent no-op). Status changes do
@@ -470,10 +571,10 @@ class GoalRegistry(object):
         the goal trail cross-references the approval trail (the
         ``approval_decision`` event carries the goal ids back).
         """
-        if status not in ("active", "superseded"):
+        if status not in ("active", "superseded", "pending_specificity"):
             raise ValueError(
-                "status must be 'active' or 'superseded', got %r"
-                % (status,))
+                "status must be 'active', 'superseded', or "
+                "'pending_specificity', got %r" % (status,))
         for g in self._goals:
             if g.get("goal_id") == goal_id:
                 g["status"] = status
@@ -488,6 +589,155 @@ class GoalRegistry(object):
                 })
                 return g
         raise ValueError("unknown goal_id %r" % (goal_id,))
+
+    # ------------------------------------------------------------------
+    # Wave-135 (row-11): vague-goal specificity resolution
+    # ------------------------------------------------------------------
+
+    def resolve_specificity(self, goal_id, acknowledged, approval_id):
+        """Wave-135 (row-11): apply a human's ``goal_specificity_review``
+        decision to a vague goal.
+
+        A ``goal_specificity_review`` approval item adjudicates one
+        goal held in ``pending_specificity``:
+
+        * acknowledged (allow): the human explicitly accepts the
+          goal's breadth. The goal becomes ``active`` with
+          ``broad_scope_acknowledged=True`` -- and from then on every
+          ``goal_wildcard_cover`` finding for it in gov.goal_audit is
+          LOUD (severity high), not informational. The breadth was
+          human-accepted, so its exercise stays maximally visible.
+        * withdrawn (deny): the goal is marked ``superseded``; it
+          never covered anything and never will.
+
+        A chained ``goal_specificity_resolved`` event carries the
+        approval id, so the goal trail cross-references the approval
+        trail.
+
+        Fail-closed: an unknown goal id, or a goal that is no longer
+        pending (resolved separately before the human decided), is
+        NOT silently skipped -- a LOUD ``goal_specificity_noop``
+        event is chained for it, and the decision is still recorded
+        by the caller. Nothing is re-applied.
+
+        Honest ceiling: this automates the mechanics, not the
+        judgment. A human who acknowledges a maliciously broad goal
+        without reading still acknowledges it -- the wiring does not
+        second-guess the human.
+
+        Returns a summary dict: ``{"decision", "goal_id", "noop"}``
+        where ``decision`` is "acknowledged" | "withdrawn" | "noop".
+        """
+        goal = self.get_goal(goal_id)
+
+        def _noop(reason):
+            self._loud({
+                "event": "goal_specificity_noop",
+                "flag": "goal_specificity_noop",
+                "run_id": (goal or {}).get("run_id"),
+                "agent_id": (goal or {}).get("agent_id"),
+                "approval_id": approval_id,
+                "goal_id": goal_id,
+                "reason": reason,
+                "ts": _utcnow_iso(),
+            })
+
+        if goal is None:
+            reason = ("goal %r referenced by approval %r is unknown "
+                      "to this registry -- the specificity review "
+                      "cannot be resolved against it"
+                      % (goal_id, approval_id))
+            _noop(reason)
+            return {"decision": "noop", "goal_id": goal_id,
+                    "noop": [(goal_id, reason)]}
+        if goal.get("status") != "pending_specificity":
+            reason = ("goal %r is %r, not pending_specificity -- a "
+                      "separate resolution already settled it; the "
+                      "approval is recorded but nothing is re-applied"
+                      % (goal_id, goal.get("status")))
+            _noop(reason)
+            return {"decision": "noop", "goal_id": goal_id,
+                    "noop": [(goal_id, reason)]}
+
+        if acknowledged:
+            self.set_status(goal_id, "active", approval_id=approval_id)
+            goal["broad_scope_acknowledged"] = True
+            decision = "acknowledged"
+        else:
+            self.set_status(goal_id, "superseded", approval_id=approval_id)
+            decision = "withdrawn"
+        self._loud({
+            "event": "goal_specificity_resolved",
+            "flag": "goal_specificity",
+            "run_id": goal.get("run_id"),
+            "agent_id": goal.get("agent_id"),
+            "goal_id": goal_id,
+            "decision": decision,
+            "status": goal["status"],
+            "broad_scope_acknowledged":
+                bool(goal.get("broad_scope_acknowledged")),
+            "approval_id": approval_id,
+            "reason": ("human %s goal_specificity_review %r for goal "
+                       "%r: %s"
+                       % (decision, approval_id, goal_id[:8], decision)),
+            "ts": _utcnow_iso(),
+        })
+        return {"decision": decision, "goal_id": goal_id, "noop": []}
+
+    def narrow(self, goal_id, effects=(), constraints=()):
+        """Wave-135 (row-11): narrow a vague (pending_specificity) goal.
+
+        The human/operator supplies narrowed ``effects``/``constraints``;
+        the pending goal is marked ``superseded`` and a FRESH goal is
+        registered with the narrowed atoms -- narrowing is a new
+        registration, not an in-place edit, because the goal sub-chain
+        is append-only: rewriting a chained record's effects would
+        break every later link's ``prev_goal_digest`` binding. The
+        fresh registration re-runs the specificity check automatically:
+        a still-vague narrowing lands in ``pending_specificity``
+        again (the check is re-applied, never waived).
+
+        A chained ``goal_narrowed`` event links old_goal_id ->
+        new_goal_id. Returns ``(new_goal_dict, [conflict_dicts])``.
+
+        Fail-closed: unknown goal_id, a goal that is not pending
+        (only vague goals can be narrowed -- narrowing an active goal
+        is a fresh registration by the operator), or malformed atoms
+        raise ValueError; the registry is unchanged.
+        """
+        goal = self.get_goal(goal_id)
+        if goal is None:
+            raise ValueError("unknown goal_id %r" % (goal_id,))
+        if goal.get("status") != "pending_specificity":
+            raise ValueError(
+                "only a pending_specificity goal can be narrowed, "
+                "goal %r is %r" % (goal_id, goal.get("status")))
+        # Validate the narrowed atoms BEFORE touching state: register()
+        # is fail-closed on malformed atoms, so pre-validate by
+        # normalizing here through the same checkers.
+        norm_effects = [_check_effect(a) for a in (effects or ())]
+        norm_constraints = [_check_constraint(c)
+                            for c in (constraints or ())]
+        self.set_status(goal_id, "superseded")
+        new_goal, conflicts = self.register(
+            goal["agent_id"], goal["run_id"], goal["description"],
+            effects=[tuple(e) for e in norm_effects],
+            constraints=[tuple(c) for c in norm_constraints])
+        self._loud({
+            "event": "goal_narrowed",
+            "flag": "goal_specificity",
+            "run_id": goal.get("run_id"),
+            "agent_id": goal.get("agent_id"),
+            "old_goal_id": goal_id,
+            "new_goal_id": new_goal["goal_id"],
+            "new_status": new_goal["status"],
+            "reason": ("goal %r narrowed to goal %r with %d effect(s); "
+                       "new goal is %r"
+                       % (goal_id[:8], new_goal["goal_id"][:8],
+                          len(norm_effects), new_goal["status"])),
+            "ts": _utcnow_iso(),
+        })
+        return new_goal, conflicts
 
     # ------------------------------------------------------------------
     # Cross-run persistence
