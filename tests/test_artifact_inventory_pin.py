@@ -60,14 +60,20 @@ class TestPinCeremony(unittest.TestCase):
         self.assertEqual(pinned["inventory"], [])
 
     def test_pin_is_deterministic_for_same_inputs(self):
-        # Same (inventory, pinned_at) -> same pin: recomputation at
-        # verify time must match.
+        # Same (inventory, pinned_at, key_epoch) -> same pin:
+        # recomputation at verify time must match.
         pinned = _pin(["/tmp/a"])
         body = sweep._pinned_body(pinned["pinned_inventory"],
                                   pinned["inventory"],
-                                  pinned["pinned_at"])
+                                  pinned["pinned_at"],
+                                  pinned["key_epoch"])
         self.assertEqual(sweep._inventory_pin_mac(TEST_KEY, body),
                          pinned["pin"])
+
+    def test_pin_records_explicit_override_epoch(self):
+        pinned = _pin(["/tmp/a"])
+        self.assertEqual(pinned["key_epoch"],
+                         sweep.EXPLICIT_KEY_EPOCH)
 
 
 class TestVerifyFailClosed(unittest.TestCase):
@@ -244,6 +250,153 @@ class TestReportVerdicts(unittest.TestCase):
         evs = [e for e in events
                if e.get("event") == sweep.INVENTORY_UNVERIFIABLE_EVENT]
         self.assertEqual(len(evs), 1)
+
+
+class TestPinCeremonyAudit(unittest.TestCase):
+    """Wave-142: the pinning ceremony is auditable -- key epoch is
+    MAC-bound into the pin, pin_inventory emits a chained ceremony
+    event, and stale pins (rotated epoch, expired TTL) verify as
+    stale_pin_epoch, LOUD and fail-closed."""
+
+    def _pin_live(self, roots, **kw):
+        return sweep.pin_inventory(roots, **kw)
+
+    def test_live_pin_records_ambient_epoch(self):
+        pinned = self._pin_live(["/tmp/a"])
+        _, epoch = keyprovider.resolve_active_key()
+        self.assertEqual(pinned["key_epoch"], epoch)
+
+    def test_ceremony_event_carries_digest_epoch_ts(self):
+        events = []
+        pinned = self._pin_live(["/tmp/a", "/tmp/b"],
+                                audit=events.append, run_id="cer")
+        self.assertEqual(len(events), 1)
+        ev = events[0]
+        self.assertEqual(ev["event"], sweep.INVENTORY_PINNED_EVENT)
+        self.assertEqual(ev["run_id"], "cer")
+        self.assertEqual(ev["key_epoch"], pinned["key_epoch"])
+        self.assertEqual(ev["pinned_at"], pinned["pinned_at"])
+        self.assertEqual(ev["inventory_digest"],
+                         sweep.inventory_digest(pinned))
+        self.assertTrue(ev["ts"])
+
+    def test_inventory_digest_recomputable(self):
+        pinned = self._pin_live(["/tmp/a"])
+        d1 = sweep.inventory_digest(pinned)
+        d2 = sweep.inventory_digest(dict(pinned))
+        self.assertEqual(d1, d2)
+        self.assertEqual(len(d1), 64)
+        # A different inventory digests differently.
+        other = self._pin_live(["/tmp/b"])
+        self.assertNotEqual(d1, sweep.inventory_digest(other))
+        with self.assertRaises(ValueError):
+            sweep.inventory_digest({"pinned_inventory": "bogus"})
+
+    def test_rewriting_epoch_breaks_mac(self):
+        # The epoch is MAC-bound: swapping it post-ceremony is a
+        # forgery, not a freshening.
+        pinned = self._pin_live(["/tmp/a"])
+        forged = dict(pinned, key_epoch="forged-epoch")
+        ok, reason = sweep.verify_inventory_pin(forged)
+        self.assertFalse(ok)
+        self.assertIn("pin mismatch", reason)
+
+    def test_rotated_epoch_is_stale(self):
+        pinned = self._pin_live(["/tmp/a"])
+        ok, reason = sweep.verify_inventory_pin(
+            pinned, current_epoch="rotated-epoch")
+        self.assertFalse(ok)
+        self.assertIn("stale_pin_epoch", reason)
+
+    def test_same_epoch_verifies(self):
+        pinned = self._pin_live(["/tmp/a"])
+        _, epoch = keyprovider.resolve_active_key()
+        ok, reason = sweep.verify_inventory_pin(
+            pinned, current_epoch=epoch)
+        self.assertTrue(ok, reason)
+
+    def test_legacy_pin_without_epoch_fails_closed(self):
+        # A wave-141-shaped pin (no key_epoch) cannot prove its
+        # ceremony epoch -- fail closed, re-pin.
+        pinned = self._pin_live(["/tmp/a"])
+        legacy = {k: v for k, v in pinned.items()
+                  if k != "key_epoch"}
+        ok, reason = sweep.verify_inventory_pin(legacy)
+        self.assertFalse(ok)
+        self.assertIn("key_epoch", reason)
+
+    def test_ttl_expired_pin_is_stale(self):
+        import datetime as _dt
+        old_ts = (_dt.datetime.now(_dt.timezone.utc)
+                  - _dt.timedelta(days=90)).isoformat()
+        real_now = sweep._utcnow_iso
+        sweep._utcnow_iso = lambda: old_ts
+        try:
+            pinned = self._pin_live(["/tmp/a"])
+        finally:
+            sweep._utcnow_iso = real_now
+        # No TTL: the old pin still verifies (TTL is opt-in).
+        ok, _ = sweep.verify_inventory_pin(pinned)
+        self.assertTrue(ok)
+        ok, reason = sweep.verify_inventory_pin(
+            pinned, pin_ttl_seconds=30 * 86400)
+        self.assertFalse(ok)
+        self.assertIn("stale_pin_epoch", reason)
+        # A generous TTL passes.
+        ok, _ = sweep.verify_inventory_pin(
+            pinned, pin_ttl_seconds=365 * 86400)
+        self.assertTrue(ok)
+
+    def test_garbage_ttl_fails_closed_never_raises(self):
+        pinned = self._pin_live(["/tmp/a"])
+        ok, reason = sweep.verify_inventory_pin(
+            pinned, pin_ttl_seconds="not-a-number")
+        self.assertFalse(ok)
+        self.assertIn("stale_pin_epoch", reason)
+
+    def test_report_surfaces_epoch_and_age(self):
+        pinned = self._pin_live(["/tmp/a"])
+        events = []
+        rep = sweep.report_coverage_gaps(
+            pinned, [], audit=events.append, run_id="u")
+        self.assertEqual(rep["verdict"], "pinned")
+        self.assertEqual(rep["key_epoch"], pinned["key_epoch"])
+        self.assertIsInstance(rep["pin_age_seconds"], float)
+        self.assertGreaterEqual(rep["pin_age_seconds"], 0)
+        comps = [e for e in events
+                 if e.get("event") == sweep.COVERAGE_COMPLETE_EVENT]
+        self.assertEqual(len(comps), 1)
+        self.assertEqual(comps[0]["key_epoch"], pinned["key_epoch"])
+        self.assertIsInstance(comps[0]["pin_age_seconds"], float)
+
+    def test_stale_epoch_report_is_loud_full_gap(self):
+        # The real rotation scenario at the report layer: same key
+        # bytes, new epoch label (the operator rotated the epoch).
+        pinned = self._pin_live(["/tmp/a", "/tmp/b"])
+        _, epoch = keyprovider.resolve_active_key()
+        saved = os.environ.get("GOV_LOG_KEY_EPOCH")
+        os.environ["GOV_LOG_KEY_EPOCH"] = epoch + "-rotated"
+        try:
+            events = []
+            rep = sweep.report_coverage_gaps(
+                pinned, [], audit=events.append, run_id="u")
+        finally:
+            if saved is None:
+                os.environ.pop("GOV_LOG_KEY_EPOCH", None)
+            else:
+                os.environ["GOV_LOG_KEY_EPOCH"] = saved
+        self.assertEqual(rep["verdict"], "unverifiable")
+        self.assertIn("stale_pin_epoch", rep["reason"])
+        self.assertEqual(rep["presented_key_epoch"], epoch)
+        evs = [e for e in events
+               if e.get("event") == sweep.INVENTORY_UNVERIFIABLE_EVENT]
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["severity"], "LOUD")
+        self.assertIn("stale_pin_epoch", evs[0]["reason"])
+        # Fail-closed full-gap over the presented declared list.
+        self.assertEqual(rep["gaps"], [os.path.realpath("/tmp/a"),
+                                       os.path.realpath("/tmp/b")])
+        self.assertEqual(rep["covered"], [])
 
 
 if __name__ == "__main__":

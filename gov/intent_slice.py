@@ -87,9 +87,24 @@ _REDIRECT_RE = re.compile(
 )
 
 # Negation words for verb-scope negation ("don't delete", "never send").
+# Wave-142: a small, high-precision multilingual particle set, still
+# word-boundary matched through this same regex (no new detection
+# architecture). Spanish "no" was already covered by the English
+# "no"; added French "ne"/"pas", German "nicht"/"kein"/"keine",
+# Hindi (romanized) "nahi". Measured precision on a 17-sentence
+# realistic benign corpus (grant-adjacent tokens, similarities
+# 0.533-0.857 -- a cue hit there would be a REAL false positive at
+# the similarity-countermand gate): "non" DROPPED (2 hits:
+# "non-profit"/"Our non-profit partner..."), "mat" DROPPED (1 hit:
+# "yoga mat"); "ne" kept (0 realistic hits -- sole hit on the
+# contrived "ne'er-do-wells", a documented precision cost);
+# "pas"/"nicht"/"kein"/"keine"/"nahi" 0 hits. Four languages is a
+# start: full multilingual coverage is NOT claimed (German
+# inflection keinen/keinem/keiner misses; French ne...jamais/plus/rien
+# without "pas" misses; non-romanized scripts untouched).
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not|no|stop|halt|"
-    r"cease|avoid|refrain|cancel)\b",
+    r"cease|avoid|refrain|cancel|ne|pas|nicht|kein|keine|nahi)\b",
     re.IGNORECASE,
 )
 

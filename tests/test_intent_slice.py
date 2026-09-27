@@ -35,6 +35,53 @@ def _act(tool, args=None, justification="", agent_id="agent-1"):
             "agent_id": agent_id}
 
 
+class MultilingualNegationTest(unittest.TestCase):
+    """Wave-142: the _NEGATION_RE word list gains high-precision
+    multilingual particles (French ne/pas, German nicht/kein/keine,
+    Hindi nahi; Spanish no was already covered). "non"/"mat" were
+    measured and DROPPED (false positives on "non-profit" /
+    "yoga mat") -- these tests pin both the additions and the
+    drops."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0).lower() if hit else None
+
+    def test_french_particles_match(self):
+        self.assertEqual(self._cue("Ne pas envoyer le rapport."), "ne")
+        self.assertEqual(self._cue("ne jamais envoyer"), "ne")
+
+    def test_german_particles_match(self):
+        self.assertEqual(self._cue("Bitte nicht senden."), "nicht")
+        self.assertEqual(self._cue("Kein Bericht senden."), "kein")
+        self.assertEqual(self._cue("Keine E-Mail senden."), "keine")
+
+    def test_hindi_particle_matches(self):
+        self.assertEqual(self._cue("Nahi bhejo."), "nahi")
+
+    def test_spanish_no_still_matches(self):
+        self.assertEqual(self._cue("No enviar."), "no")
+
+    def test_dropped_non_does_not_match(self):
+        # Measured FP on "non-profit": dropped from the set.
+        self.assertIsNone(self._cue("Our non-profit partner filed."))
+        self.assertIsNone(self._cue("The nonprofit filed."))
+
+    def test_dropped_mat_does_not_match(self):
+        # Measured FP on "yoga mat": dropped from the set.
+        self.assertIsNone(self._cue("The yoga mat is in the closet."))
+
+    def test_lookalike_substrings_do_not_match(self):
+        self.assertIsNone(self._cue("Notable progress on the report."))
+        self.assertIsNone(self._cue("The vendor passed the report."))
+
+    def test_english_cues_unchanged(self):
+        for text, cue in (("Don't send it.", "don't"),
+                          ("Please refrain from sending.", "refrain"),
+                          ("Never send the report.", "never")):
+            self.assertEqual(self._cue(text), cue)
+
+
 class SliceTest(unittest.TestCase):
     def test_no_user_message_all_neutral(self):
         s = m.slice_intent([_act("read_file", {"path": "a"})])

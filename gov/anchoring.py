@@ -90,6 +90,12 @@ Honest ceilings (documented, not hidden):
   exists but no live-anchor battery runs against the network; $0).
 * A receipt verified without a pinned/independent anchor proves
   self-consistency only -- the pre-existing K-060 ceiling, restated.
+* Wave-142 binds the export's filter/selection parameters into the
+  anchored commitment (``filter_digest``): an anchor now commits to
+  WHAT WAS FILTERED, not just the checkpoint head -- but it still
+  does NOT judge whether the narrowing was wise. Narrowing is
+  VISIBLE (the digest is over the stated filter params), not
+  prevented. An auditor still judges the operator's stated filters.
 
 $0, stdlib only, deterministic.
 """
@@ -106,6 +112,8 @@ __all__ = [
     "LocalAnchorLog",
     "RekorBackend",
     "BUNDLE_ANCHOR_DOMAIN",
+    "FILTER_DIGEST_DOMAIN",
+    "export_filter_digest",
     "bundle_head_digest",
     "anchor_bundle",
     "verify_bundle_anchor",
@@ -115,6 +123,9 @@ BUNDLE_ANCHOR_DOMAIN = b"gov-export-anchor/v1\x00"
 # NOTE: this domain MUST differ from gov.anchor_adapter._STATEMENT_DOMAIN
 # (b"gov-bundle-anchor/v1\x00"): domain separation exists so two different
 # hash protocols never share a prefix. (Standards review, wave-137.)
+FILTER_DIGEST_DOMAIN = b"gov-export-filter/v1\x00"
+# Domain-separated commitment over the export's filter/selection
+# parameters. MUST differ from BUNDLE_ANCHOR_DOMAIN for the same reason.
 
 
 def _canonical(obj):
@@ -139,6 +150,27 @@ def _walk(o, conv):
     return conv_o
 
 
+def export_filter_digest(filter_params):
+    """Canonical commitment over an export's filter/selection parameters.
+
+    ``filter_params`` is the ``**query`` dict of ``gov.log.export_bundle``
+    (seq/ts ranges, run filters, limit -- the narrowing the exporter
+    claims to have applied). Returns the 64-char hex SHA-256 of
+    ``FILTER_DIGEST_DOMAIN + canonical_json(filter_params)``.
+
+    The digest commits to the filter PARAMETERS only -- never entry
+    contents, so it cannot leak raw data. It proves the parameters
+    are AS STATED, not that they were WISE: a malicious-but-disclosed
+    narrowing is still the auditor's judgment call. Raises TypeError
+    on any value that is not JSON-native (fail-closed: refuse to
+    commit to a filter the verifier could not recompute).
+    """
+    if not isinstance(filter_params, dict):
+        raise TypeError("filter_params must be a dict")
+    return hashlib.sha256(
+        FILTER_DIGEST_DOMAIN + _canonical(filter_params)).hexdigest()
+
+
 def bundle_head_digest(bundle):
     """Canonical commitment over a bundle's signed checkpoints.
 
@@ -151,14 +183,27 @@ def bundle_head_digest(bundle):
     exporter attested "no entries matched". Raises ValueError on a
     malformed bundle (fail-closed at export time, never a silent
     unanchored export when a backend was requested).
+
+    Wave-142: when the bundle carries a ``filter_digest`` (anchored
+    exports only -- see ``gov.log.export_bundle``), the committed body
+    is ``{"checkpoints": ..., "filter_digest": ...}`` instead, so the
+    anchor binds WHAT WAS FILTERED as well as the checkpoint head.
+    Bundles without ``filter_digest`` (all pre-wave-142 receipts)
+    commit exactly as before, so old receipts keep verifying.
     """
     if not isinstance(bundle, dict):
         raise ValueError("bundle must be a dict")
     checkpoints = bundle.get("checkpoints")
     if not isinstance(checkpoints, list):
         raise ValueError("bundle has no checkpoints list")
+    body = {"checkpoints": checkpoints}
+    filter_digest = bundle.get("filter_digest")
+    if filter_digest is not None:
+        if not isinstance(filter_digest, str) or not filter_digest:
+            raise ValueError("bundle has a malformed filter_digest")
+        body["filter_digest"] = filter_digest
     return hashlib.sha256(
-        BUNDLE_ANCHOR_DOMAIN + _canonical(checkpoints)).hexdigest()
+        BUNDLE_ANCHOR_DOMAIN + _canonical(body)).hexdigest()
 
 
 def anchor_bundle(bundle, backend):

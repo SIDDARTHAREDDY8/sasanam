@@ -350,7 +350,33 @@ the deployment key must be managed like other secrets — if the attacker learns
 calibration returns; paraphrase pairs scoring in (0.5, 0.6) may now miss where the
 fixed 0.5 caught them (measured corpora: minimum firing paraphrase 0.706, recall
 preserved there — accepted tradeoff, documented in the module docstring).
-**Findings:** none filed. Next free: **F182**. Open findings: F178.
+**Wave-142 (2026-09-27) — multilingual negation seeded; row stays
+PARTIAL.** The negation gate (`gov/intent_slice._NEGATION_RE`, consumed
+by `similarity_countermand`) is no longer English-only: it gains the
+tight, high-precision set French `ne`/`pas`, German
+`nicht`/`kein`/`keine`, Hindi (romanized) `nahi` (Spanish `no` needed
+nothing — already an English cue). No new detection architecture.
+Break-first battery `evals/countermand_multilingual_negation_probes.py`
+(written RED: pre-seam 4 HELD / 5 BREAK — fr/de/hi/e2e-french broke
+exactly on the missing cues) = **9 HELD / 0 BREAK / 0 EXPECTED /
+0 ERROR**, deterministic x2, both envs: per-language negated
+paraphrases revoke at the similarity seam (es control already held),
+the end-to-end French countermand revokes the grant via
+`approval_intent_changed` + `match_method="token-tversky"`, 5
+high-similarity benign lookalikes stay silent, English behavior
+unchanged. Measured precision that drove the set: on a 17-sentence
+realistic benign corpus (similarities 0.533–0.857), `non` hit twice
+("non-profit") and `mat` hit once ("yoga mat") → both DROPPED; `ne`
+kept (0 realistic hits — sole hit the contrived "ne'er-do-wells",
+documented precision cost); the rest 0 hits. The battery pins the
+drops (the lookalikes score up to 0.857 — with `non`/`mat` in the set
+they WOULD revoke). `tests/test_intent_slice.py` +9 (MultilingualNegationTest);
+paraphrase/cross-run/threshold batteries unchanged. Stated honestly:
+four languages is a START, not full multilingual coverage (German
+inflection, French ne…jamais/plus/rien without "pas", non-romanized
+scripts all miss); the no-negation paraphrase ceiling (p6) is
+unchanged.
+**Findings:** none filed. Next free: **F183**. Open findings: none.
 
 ### Row 8 — Monitor / governance-layer attacks (memo: PARTIAL → now: PARTIAL, stronger)
 F129 CLOSED (detection-reset laundering via trip-kind shadowing — fixed 2026-09-22);
@@ -991,6 +1017,31 @@ event, not the gap list, is the shrink signal); undeclared
 directories stay invisible. **Row 12 stays PARTIAL** — the
 forged-report leg is measured and pinned, NOT closed.
 
+**Wave-142 (2026-09-27) — pin key-epoch ceremony landed; row stays
+PARTIAL.** Pins were MACs over (inventory, pinned_at) only — an old
+pin under a rotated key verified silently. Now every pin is MAC-bound
+to the key epoch at pin time (`gov/keyprovider.resolve_active_key()`
+deployment key, never hardcoded; explicit raw-key pins use the
+`explicit-override` epoch sentinel), a chained ceremony event
+`artifact_sweep_inventory_pinned` (inventory digest, key_epoch,
+pinned_at, run_id, version, roots) is emitted when the caller passes
+`audit=ActionLog.append`, `inventory_digest(pinned)` is public and
+recomputable (domain-separated SHA-256), and `verify_inventory_pin`
+fails pins under a different current epoch (or past TTL) with
+`stale_pin_epoch` — legacy wave-141 pins without `key_epoch` fail
+closed and require re-pinning. `report_coverage_gaps` treats stale
+pins as LOUD `unverifiable` full-gap and surfaces `key_epoch` /
+`pin_age_seconds`; the executor wires configured
+`pin_ttl_seconds` through. Break-first battery
+`evals/artifact_pin_ceremony_probes.py` (RED: 1 HELD / 4 BREAK
+pre-seam) = **5 HELD / 0 BREAK**, both envs; wave-141 pin battery
+unchanged 8/8 (F182 regression p7 holds under the new verifier);
+pin units 34/34; coverage/sweep adjacent 32/32. Honest ceiling: the
+ceremony proves WHEN/WHAT/WHICH EPOCH, not whether the pinned
+inventory was wise — a compromised executor WITH deployment-key
+access can still pin a malicious inventory; undeclared directories
+stay invisible. The residual MUTATES, it does not die.
+
 ### Row 13 — Zero-click exfil via trusted infrastructure (memo: PARTIAL → now: PARTIAL, stronger)
 Canaries + DLP + sterile windows + egress ledger (mechanism class covered);
 F128 CLOSED (canary/DLP non-string-arg blind spot); F139/F140 CLOSED
@@ -1199,6 +1250,22 @@ truncates the log tail + rewrites the key-held checkpoint sidecar to
 match) and e3 (window narrowed from the head, to_seq == tip) both seal
 and VERIFY (code 0); e4 (non-tip window) is still refused. Honest
 ceiling: external transparency anchor (H24, v2 decision).
+**Wave-142 (2026-09-27) — filter-binding landed in the anchor
+statement; H20 residual narrows, NOT closed.** Anchored exports now
+carry `filter_digest` (domain-separated SHA-256 over the export's
+filter/selection parameters — never entry contents), committed BEFORE
+anchoring, so the anchor statement binds the stated query AND the
+checkpoint head; `verify_export_bundle` recomputes it from the
+bundle's `query` and fails closed on mismatch. Break-first battery
+`evals/export_filter_binding_probes.py` (RED: 2 HELD / 4 BREAK
+pre-seam) = **6 HELD / 0 BREAK**, both envs: distinct filters →
+distinct digests (both verify); post-anchor query alteration fails;
+digest rewrite alone fails at receipt verification; no-filter export
+(digest of the empty filter) verifies; no-backend exports are
+byte-identical to pre-wave-142. Narrowing is now VISIBLE in the
+anchor — a malicious-but-disclosed narrowing is the auditor's
+judgment call, not prevented. Completeness against exporter
+misbehavior stays K-049's transparency-anchor story.
 
 ### Row 18 — Delegation abuse / confused deputy (memo: COVERED → now: COVERED, re-verified 2026-09-26)
 Three-token delegation + audience binding (F132) + spawn lineage (F133) +

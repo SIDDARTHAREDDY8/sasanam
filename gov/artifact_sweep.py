@@ -141,6 +141,9 @@ __all__ = [
     "COVERAGE_GAP_EVENT",
     "COVERAGE_COMPLETE_EVENT",
     "INVENTORY_UNVERIFIABLE_EVENT",
+    "INVENTORY_PINNED_EVENT",
+    "EXPLICIT_KEY_EPOCH",
+    "inventory_digest",
     "PINNED_INVENTORY_VERSION",
     "NEVER_REGISTERED",
     "INTEGRITY_VIOLATION",
@@ -163,6 +166,15 @@ COVERAGE_COMPLETE_EVENT = "artifact_sweep_coverage_complete"
 #: never read as "covered".
 INVENTORY_UNVERIFIABLE_EVENT = "artifact_sweep_inventory_unverifiable"
 
+#: Wave-142: evidence event emitted by the pinning ceremony itself.
+#: Records the inventory digest, the key epoch the pin was made
+#: under, and the pin timestamp -- the auditable "who pinned what,
+#: when, under which key" record. Chained by the caller's audit
+#: callable (e.g. the executor's log.append); carrying the digest
+#: (not the inventory) keeps the event compact while binding it to
+#: the exact pinned list.
+INVENTORY_PINNED_EVENT = "artifact_sweep_inventory_pinned"
+
 #: Wave-141: pinned-inventory envelope version.
 PINNED_INVENTORY_VERSION = "artifact-inventory-pin/1.0"
 
@@ -170,6 +182,21 @@ PINNED_INVENTORY_VERSION = "artifact-inventory-pin/1.0"
 #: ever valid as an inventory pin -- it cannot collide with any other
 #: MAC domain in the repo.
 _PIN_DOMAIN = b"artifact-inventory-pin-v1"
+
+#: Wave-142: domain separation for the inventory digest carried in
+#: the ceremony event. The digest is a public commitment (no key),
+#: so it gets its own domain -- it must never collide with the pin
+#: MAC domain above.
+_DIGEST_DOMAIN = b"artifact-inventory-digest-v1"
+
+#: Wave-142: sentinel epoch recorded on pins made with an explicit
+#: ``hmac_key`` override instead of the deployment key. An override
+#: carries no key-provider epoch, so staleness cannot be judged
+#: against rotation -- two override pins share this label and verify
+#: against each other; a pin made via the key provider never matches
+#: it (fail-closed: you cannot smuggle a raw-key pin past an
+#: epoch check, or vice versa).
+EXPLICIT_KEY_EPOCH = "explicit-override"
 
 NEVER_REGISTERED = "never_registered"
 INTEGRITY_VIOLATION = "integrity_violation"
@@ -479,7 +506,16 @@ def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
 # Honest ceilings (documented, not hidden): the pin moves trust to
 # key custody and the pinning ceremony. A compromised executor WITH
 # deployment-key access can still pin a malicious inventory -- the
-# ceremony (who pins, when, audited) is the control, not the MAC.
+# ceremony (who pins, when, under which key epoch, audited) is the
+# control, not the MAC. Wave-142 makes the ceremony auditable:
+# ``pin_inventory`` records the key epoch (MAC-bound) and emits a
+# chained ``artifact_sweep_inventory_pinned`` event carrying the
+# inventory digest, key epoch, and timestamp; a pin presented under a
+# rotated-out epoch (or older than an operator TTL) verifies as
+# ``stale_pin_epoch`` -- LOUD, fail-closed. The ceremony proves WHEN
+# and WHAT was pinned, not that the pinned list was wise: a
+# malicious-but-fresh pin by a key-holder is still the operator's
+# problem.
 # The pin binds the inventory the operator DECLARED; a directory the
 # operator doesn't know about stays undeclared (the row-12
 # undeclared-directory ceiling persists, pinned not closed).
@@ -499,11 +535,54 @@ def _inventory_pin_mac(key, body):
                     sha256).hexdigest()
 
 
-def _pinned_body(version, inventory, pinned_at):
-    """Canonical bytes covered by the inventory pin."""
+def _pinned_body(version, inventory, pinned_at, key_epoch):
+    """Canonical bytes covered by the inventory pin.
+
+    Wave-142: the key epoch the pin was made under is MAC-bound into
+    the body -- a pin presented after the epoch rotated cannot be
+    freshened by rewriting its ``key_epoch`` field (that breaks the
+    MAC). The epoch is checked AFTER MAC verification, when its
+    value is authenticated.
+    """
     return canonical({"pinned_inventory": version,
                       "inventory": list(inventory),
-                      "pinned_at": pinned_at}).encode("utf-8")
+                      "pinned_at": pinned_at,
+                      "key_epoch": key_epoch}).encode("utf-8")
+
+
+def _inventory_pin_body_digest(body):
+    """Domain-separated SHA-256 over the canonical pinned body.
+
+    The public inventory commitment carried in the ceremony event:
+    no key material involved, recomputable by any holder of the
+    pinned dict.
+    """
+    return sha256(_DIGEST_DOMAIN + b"\x00" + body).hexdigest()
+
+
+def inventory_digest(pinned):
+    """Recompute the ceremony inventory digest for a pinned dict.
+
+    Raises ValueError on a malformed envelope (fail-fast for
+    auditors; this is the recomputation path, not the fail-closed
+    verification path). The digest binds the exact (inventory,
+    pinned_at, key_epoch) the ceremony committed to.
+    """
+    if not isinstance(pinned, dict):
+        raise ValueError("pinned inventory must be a dict")
+    version = pinned.get("pinned_inventory")
+    inventory = pinned.get("inventory")
+    pinned_at = pinned.get("pinned_at")
+    key_epoch = pinned.get("key_epoch")
+    if (version != PINNED_INVENTORY_VERSION
+            or not isinstance(inventory, list)
+            or not all(isinstance(e, str) for e in inventory)
+            or not isinstance(pinned_at, str) or not pinned_at
+            or not isinstance(key_epoch, str) or not key_epoch):
+        raise ValueError("malformed pinned inventory envelope")
+    resolved = [_resolve_declared(e) for e in inventory]
+    return _inventory_pin_body_digest(
+        _pinned_body(version, resolved, pinned_at, key_epoch))
 
 
 def _resolve_declared(entry):
@@ -511,7 +590,8 @@ def _resolve_declared(entry):
     return os.path.realpath(os.path.abspath(str(entry)))
 
 
-def pin_inventory(declared_roots, *, hmac_key=None):
+def pin_inventory(declared_roots, *, hmac_key=None, audit=None,
+                run_id=None):
     """Operator pinning ceremony: bind the declared inventory with an HMAC.
 
     ``declared_roots``: the operator's explicit inventory of
@@ -527,22 +607,45 @@ def pin_inventory(declared_roots, *, hmac_key=None):
     deployment raises ``NoKeyConfiguredError`` fail-closed -- the
     ceremony requires a key, there is no unsigned pin.
 
+    ``audit``: optional callable taking one event dict (e.g. the
+    executor's chained ``log.append``). When given, the ceremony
+    emits one ``artifact_sweep_inventory_pinned`` event recording
+    the inventory digest, the key epoch, and the pin timestamp --
+    the auditable "who pinned what, when, under which key" record.
+    ``run_id`` is stamped into the event.
+
+    Wave-142: the pin records the KEY EPOCH it was made under
+    (``gov.keyprovider.resolve_active_key()`` epoch, or
+    ``"explicit-override"`` for an ``hmac_key`` override), MAC-bound
+    into the pin body. A pin presented after the epoch rotated (or
+    older than an operator TTL -- see ``verify_inventory_pin``)
+    verifies as ``stale_pin_epoch``: LOUD, fail-closed, treated as
+    unverifiable by the gap report.
+
     Returns the pinned inventory dict::
 
         {"pinned_inventory": "artifact-inventory-pin/1.0",
          "inventory": [<resolved paths>],
          "pinned_at": <ISO-8601>,
+         "key_epoch": <epoch at pin time>,
          "pin": <hex HMAC-SHA256>}
 
     The operator hands this dict (not the bare list) to the executor
     as ``artifact_sweep={"declared_inventory": pinned}``.
+
+    Honest ceiling (documented, not hidden): the ceremony proves
+    WHEN and WHAT was pinned and under WHICH key epoch -- not that
+    the pinned list was wise. A malicious-but-fresh pin made by a
+    key-holder verifies cleanly; that is the operator's problem.
+    The control is the ceremony, stated plainly.
     """
     if hmac_key is None:
-        key_bytes, _epoch = _keyprovider.resolve_active_key()
+        key_bytes, key_epoch = _keyprovider.resolve_active_key()
     else:
         key_bytes = bytes(hmac_key)
         if not key_bytes:
             raise ValueError("hmac_key must be non-empty bytes")
+        key_epoch = EXPLICIT_KEY_EPOCH
     resolved = []
     for entry in declared_roots or ():
         if not isinstance(entry, (str, os.PathLike)):
@@ -551,25 +654,63 @@ def pin_inventory(declared_roots, *, hmac_key=None):
                 % (entry,))
         resolved.append(_resolve_declared(entry))
     pinned_at = _utcnow_iso()
-    pin = _inventory_pin_mac(
-        key_bytes,
-        _pinned_body(PINNED_INVENTORY_VERSION, resolved, pinned_at))
-    return {"pinned_inventory": PINNED_INVENTORY_VERSION,
-            "inventory": resolved,
-            "pinned_at": pinned_at,
-            "pin": pin}
+    body = _pinned_body(PINNED_INVENTORY_VERSION, resolved, pinned_at,
+                        key_epoch)
+    pin = _inventory_pin_mac(key_bytes, body)
+    pinned = {"pinned_inventory": PINNED_INVENTORY_VERSION,
+              "inventory": resolved,
+              "pinned_at": pinned_at,
+              "key_epoch": key_epoch,
+              "pin": pin}
+    if audit is not None:
+        audit({"event": INVENTORY_PINNED_EVENT,
+               "run_id": run_id,
+               "inventory_digest": _inventory_pin_body_digest(body),
+               "key_epoch": key_epoch,
+               "pinned_at": pinned_at,
+               "declared_roots": list(resolved),
+               "pin_version": PINNED_INVENTORY_VERSION,
+               "ts": _utcnow_iso()})
+    return pinned
 
 
-def verify_inventory_pin(pinned, *, hmac_key=None):
+def _pin_age_seconds(pinned_at):
+    """Age of a pin in seconds, or None when ``pinned_at`` is
+    unparseable. Fail-safe: an unparseable timestamp yields None,
+    never an exception and never a fabricated age."""
+    try:
+        made = datetime.fromisoformat(str(pinned_at))
+    except (ValueError, TypeError):
+        return None
+    if made.tzinfo is None:
+        made = made.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - made).total_seconds()
+
+
+def verify_inventory_pin(pinned, *, hmac_key=None, current_epoch=None,
+                         pin_ttl_seconds=None):
     """Verify a pinned declared inventory.
 
     Returns ``(True, "")`` when the pin recomputes over the presented
-    (inventory, pinned_at), else ``(False, reason)``. NEVER raises on
-    malformed input -- a forged or damaged pin is a verification
-    FAILURE (fail-closed, LOUD at the report layer), not an
-    exception. A key that cannot be resolved (unprovisioned
-    deployment, empty override) also fails closed: without the key
-    the pin is unverifiable, never trusted.
+    (inventory, pinned_at, key_epoch), the pin's key epoch is the
+    CURRENT key epoch, and the pin is within the operator TTL, else
+    ``(False, reason)``. NEVER raises on malformed input -- a forged
+    or damaged pin is a verification FAILURE (fail-closed, LOUD at
+    the report layer), not an exception. A key that cannot be
+    resolved (unprovisioned deployment, empty override) also fails
+    closed: without the key the pin is unverifiable, never trusted.
+
+    Wave-142 -- staleness is fail-closed: a pin whose ``key_epoch``
+    differs from the current epoch, or whose age exceeds
+    ``pin_ttl_seconds`` (when given), verifies as ``stale_pin_epoch``
+    -- LOUD at the report layer, treated as unverifiable (the gap
+    report goes full-gap). The epoch check runs AFTER the MAC check:
+    the presented epoch is only trustworthy once the MAC proves the
+    pin is genuine. ``current_epoch`` overrides the resolved current
+    epoch (tests/probes); when None it is resolved from the key
+    provider (or ``"explicit-override"`` for an ``hmac_key``
+    override). ``pin_ttl_seconds=None`` (default) disables the TTL
+    check -- the TTL is an operator opt-in, not a default.
     """
     if not isinstance(pinned, dict):
         return (False, "pinned inventory must be a dict, got %s"
@@ -585,25 +726,57 @@ def verify_inventory_pin(pinned, *, hmac_key=None):
     pinned_at = pinned.get("pinned_at")
     if not isinstance(pinned_at, str) or not pinned_at:
         return (False, "pinned_at is missing")
+    key_epoch = pinned.get("key_epoch")
+    if not isinstance(key_epoch, str) or not key_epoch:
+        return (False, "key_epoch is missing: the pin predates the "
+                "wave-142 ceremony audit (or was tampered with) -- "
+                "re-pin the inventory")
     pin = pinned.get("pin")
     if not isinstance(pin, str) or not pin:
         return (False, "pin is missing")
     try:
         if hmac_key is None:
-            key_bytes, _epoch = _keyprovider.resolve_active_key()
+            key_bytes, resolved_epoch = _keyprovider.resolve_active_key()
         else:
             key_bytes = bytes(hmac_key)
             if not key_bytes:
                 raise ValueError("hmac_key must be non-empty bytes")
+            resolved_epoch = EXPLICIT_KEY_EPOCH
     except Exception as e:  # noqa: BLE001 - fail closed, never raise
         return (False, "key unavailable for verification: %s: %s"
                 % (type(e).__name__, e))
     resolved = [_resolve_declared(e) for e in inventory]
     expected = _inventory_pin_mac(
-        key_bytes, _pinned_body(version, resolved, pinned_at))
+        key_bytes, _pinned_body(version, resolved, pinned_at, key_epoch))
     if not hmac.compare_digest(expected, pin):
         return (False, "pin mismatch: the declared inventory does not "
                 "match its pin (shrunk, extended, reordered, or forged)")
+    # The MAC verified: the presented key_epoch is now authenticated.
+    now_epoch = (resolved_epoch if current_epoch is None
+                 else current_epoch)
+    if key_epoch != now_epoch:
+        return (False, "stale_pin_epoch: the pin was made under key "
+                "epoch %r but the current key epoch is %r -- the "
+                "deployment key rotated (or the pin was moved across "
+                "deployments). Re-pin the inventory under the current "
+                "key epoch." % (key_epoch, now_epoch))
+    if pin_ttl_seconds is not None:
+        try:
+            ttl = float(pin_ttl_seconds)
+        except (TypeError, ValueError):
+            return (False, "stale_pin_epoch: the operator TTL %r is "
+                    "not a number -- the pin's age cannot be judged; "
+                    "fix the configured pin_ttl_seconds"
+                    % (pin_ttl_seconds,))
+        age = _pin_age_seconds(pinned_at)
+        if age is None:
+            return (False, "stale_pin_epoch: pinned_at %r is "
+                    "unparseable -- the pin's age cannot be judged "
+                    "against the operator TTL" % (pinned_at,))
+        if age > ttl:
+            return (False, "stale_pin_epoch: pin age %.0fs exceeds "
+                    "the operator TTL of %.0fs -- re-pin the "
+                    "inventory" % (age, ttl))
     return (True, "")
 
 
@@ -718,7 +891,7 @@ def compare_coverage(declared_roots, configured_roots):
 
 
 def report_coverage_gaps(declared_roots, watch_roots, audit=None,
-                         run_id=None):
+                         run_id=None, pin_ttl_seconds=None):
     """Emit LOUD evidence events for every inventoried directory
     with no covering watch root.
 
@@ -745,7 +918,7 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
     The report is visibility, not prevention; the inventory is
     operator-declared (undeclared directories stay invisible).
 
-    Wave-141: ``declared_roots`` may be a pinned inventory dict from
+    Wave-142: ``declared_roots`` may be a pinned inventory dict from
     ``pin_inventory`` instead of a plain list. A pinned inventory is
     VERIFIED before use: a shrunk/tampered/forged pin fails LOUD
     with one ``artifact_sweep_inventory_unverifiable`` event and a
@@ -757,12 +930,27 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
     ``"verdict"`` (``"pinned"`` | ``"unpinned"`` |
     ``"unverifiable"``), and the summary event carries
     ``"inventory_verdict"``.
+
+    Wave-142 ceremony audit: ``pin_ttl_seconds`` is the operator TTL
+    for pins (None = no TTL enforcement). A pin made under a
+    rotated-out key epoch, or older than the TTL, verifies as
+    ``stale_pin_epoch`` -- LOUD, fail-closed, treated as
+    unverifiable. On a ``"pinned"`` verdict the report (and the
+    summary event) surface the pin's ``key_epoch`` and
+    ``pin_age_seconds`` -- the "when, under which key" half of the
+    ceremony, visible to the verifier.
     """
     pinned_form = _is_pinned_form(declared_roots)
     inventory_verdict = "unpinned"
     declared_list = declared_roots
+    pin_key_epoch = None
+    pin_age_seconds = None
+    presented_key_epoch = None
     if pinned_form:
-        ok, reason = verify_inventory_pin(declared_roots)
+        if isinstance(declared_roots, dict):
+            presented_key_epoch = declared_roots.get("key_epoch")
+        ok, reason = verify_inventory_pin(
+            declared_roots, pin_ttl_seconds=pin_ttl_seconds)
         if not ok:
             # Fail-closed: the inventory is untrusted. One LOUD
             # event; every declared directory is reported as a gap
@@ -794,9 +982,13 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
                     "gap_roots": list(declared),
                     "covered_roots": [],
                     "reason": reason,
+                    "presented_key_epoch": presented_key_epoch,
                     "events": events}
         inventory_verdict = "pinned"
         declared_list = declared_roots["inventory"]
+        pin_key_epoch = declared_roots.get("key_epoch")
+        pin_age_seconds = _pin_age_seconds(
+            declared_roots.get("pinned_at"))
     rows = compare_coverage(declared_list, watch_roots)
     report = {"verdict": inventory_verdict,
               "declared": [r["declared_root"] for r in rows],
@@ -806,6 +998,8 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
                        if not r["covering_root"]],
               "gap_roots": [],
               "covered_roots": [],
+              "key_epoch": pin_key_epoch,
+              "pin_age_seconds": pin_age_seconds,
               "events": []}
     if not rows:
         return report
@@ -838,6 +1032,8 @@ def report_coverage_gaps(declared_roots, watch_roots, audit=None,
                    "gaps": len(report["gaps"]),
                    "gap_roots": report["gap_roots"],
                    "inventory_verdict": inventory_verdict,
+                   "key_epoch": pin_key_epoch,
+                   "pin_age_seconds": pin_age_seconds,
                    "ts": _utcnow_iso()})
     report["events"] = events
     if audit is not None:

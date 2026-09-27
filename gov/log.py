@@ -1583,11 +1583,18 @@ def export_bundle(path, roster=None, anchor_backend=None, **query):
     Honest scope: the bundle proves authenticity of INCLUDED entries,
     not completeness of the filter. An exporter who omits entries is
     the deployment itself; completeness against exporter misbehavior
-    is K-049's transparency-anchor story, not this bundle's. An
-    anchor over a NARROWED export is still an anchor over narrowed
-    input -- the receipt binds the checkpoints, not the filter.
-    Raises ValueError when the log has no signed checkpoints (export
-    needs signed heads to prove against).
+    is K-049's transparency-anchor story, not this bundle's. Wave-142
+    binds the filter PARAMETERS into the anchor (``"filter_digest"``,
+    committed before anchoring): an anchor over a narrowed export is
+    still an anchor over narrowed input, but the narrowing is now
+    VISIBLE -- the receipt commits to the stated query as well as the
+    checkpoints, so post-anchor filter tampering fails verification
+    (``verify_export_bundle`` recomputes the digest). What the digest
+    cannot do is judge whether the stated filter was wise -- that is
+    the auditor's call. Raises ValueError when the log has no signed
+    checkpoints (export needs signed heads to prove against), and
+    TypeError on non-canonical filter values when anchoring (fail
+    closed: refuse to anchor a filter the verifier cannot recompute).
     """
     entries = query_log(path, **query)
     seqs = [e["seq"] for e in entries
@@ -1609,7 +1616,20 @@ def export_bundle(path, roster=None, anchor_backend=None, **query):
             cps[cp["seq"]] = cp
         bundle["checkpoints"] = [cps[k] for k in sorted(cps)]
     if anchor_backend is not None:
+        # Wave-142 filter binding: commit to the filter/selection
+        # parameters BEFORE anchoring, so the anchor receipt binds
+        # WHAT WAS FILTERED (the stated query) as well as the
+        # checkpoint head. Non-canonical filter values fail closed
+        # here (TypeError from export_filter_digest): refuse to
+        # anchor a filter the verifier could not recompute.
+        # Unanchored exports skip this and stay byte-identical to
+        # pre-wave-142 (no behavior change when anchoring is off).
+        # NOTE: local import, not module-level: gov.sandbox must not
+        # pull gov.anchor_backend into the process (test_w72_anchor
+        # boundary).
         from . import anchoring as _anchoring
+        bundle["filter_digest"] = _anchoring.export_filter_digest(
+            dict(query))
         bundle["anchor_receipt"] = _anchoring.anchor_bundle(
             bundle, anchor_backend)
     return bundle
@@ -1631,6 +1651,12 @@ def verify_export_bundle(bundle, trusted_keys=None, roster=None,
     verified WITHOUT a backend fails closed -- the receipt is never
     silently skipped. Bundles without a receipt verify exactly as
     before (``anchor_backend`` is ignored).
+
+    Wave-142: when the bundle carries ``"filter_digest"`` (anchored
+    exports only), the digest is recomputed from the bundle's stated
+    ``"query"`` and verification fails closed on mismatch -- filter
+    parameters altered after anchoring do not verify, even when the
+    checkpoint proofs are intact.
     """
     try:
         if not isinstance(bundle, dict) or bundle.get(
@@ -1686,6 +1712,30 @@ def verify_export_bundle(bundle, trusted_keys=None, roster=None,
             bundle, receipt, anchor_backend)
         if not ok:
             return False, "anchor receipt: %s" % (reason,)
+    # Wave-142: filter binding. A bundle that claims a filter_digest
+    # (anchored exports only) must have filter parameters consistent
+    # with it: recompute the digest from the bundle's stated query and
+    # fail closed on mismatch. Filter parameters altered after
+    # anchoring fail here even when the checkpoint proofs and the
+    # anchor receipt are otherwise intact. (Local import: keep
+    # gov.anchor_backend out of the sandbox import graph --
+    # test_w72_anchor boundary. Separate import because the receipt
+    # branch above may not have run.)
+    filter_digest = bundle.get("filter_digest")
+    if filter_digest is not None:
+        from . import anchoring as _anchoring
+        if not isinstance(filter_digest, str):
+            return False, "malformed filter_digest in bundle"
+        try:
+            expected = _anchoring.export_filter_digest(
+                bundle.get("query", {}))
+        except (TypeError, ValueError):
+            return False, ("export filter parameters are not "
+                           "canonically recomputable (filter_digest "
+                           "mismatch)")
+        if filter_digest != expected:
+            return False, ("export filter parameters were altered "
+                           "after anchoring (filter_digest mismatch)")
     return True, None
 
 

@@ -8928,3 +8928,85 @@ their 2 w70 failures are the stale-allowlist side of the same race).
 **Verification:** new regression probe p7 (+ covered-keys variant) in `evals/artifact_inventory_pin_probes.py`: **8 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (staging + `env -u GOV_DEPLOYMENT_MODE` identical, deterministic ×2); `tests/test_artifact_inventory_pin.py` +2 tests (pin-stripped fails LOUD full-gap; dict-keyed never silently covered); 38/38 OK with `test_artifact_coverage`. F182 close-when (1)–(3) met verbatim → **F182 CLOSED same-wave**. Footer: next free **F183**, open findings none.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-142 lane 1: row-12 pinned-inventory key-epoch ceremony (no push)
+
+**Scope:** row-12 residual on top of the wave-141 pinned inventory + F182 pin-stripping fix — pins were MACs over (inventory, pinned_at) only: an old pin under a rotated key verified fine, there was no pinning-ceremony audit event, no inventory digest, and no TTL, so a stale pin was silently trusted. This lane binds every pin to the key epoch at pin time, emits a chained ceremony event, and makes the gap report treat stale pins as LOUD unverifiable. This lane did NOT push and did NOT commit.
+
+**Break-first (diagnosing-bugs + tdd):** new battery `evals/artifact_pin_ceremony_probes.py` written RED first. Pre-seam: **1 HELD / 4 BREAK / 0 EXPECTED / 0 ERROR** — c1 (epoch rotation: pin verified after key rotation with no stale signal), c2 (no ceremony event), c3 (no inventory digest in the report), c4 (no TTL handling) all broke exactly on the missing seam. Post-seam: **5 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (staging + `env -u GOV_DEPLOYMENT_MODE` identical — the clean-env run was re-verified with unmasked exit capture, EXIT=0).
+
+**What changed:**
+- `gov/artifact_sweep.py`: `pin_inventory` accepts `audit=None, run_id=None`; pins now carry MAC-bound `key_epoch` (resolved via `gov.keyprovider.resolve_active_key()` — the deployment key, never hardcoded — or `hmac_key=` in tests; explicit raw-key override pins use epoch sentinel `"explicit-override"`), plus `pinned_at` and the existing inventory. New public `inventory_digest(pinned)` recomputes the domain-separated SHA-256 commitment. New ceremony event `artifact_sweep_inventory_pinned` carries `inventory_digest`, `key_epoch`, `pinned_at`, `run_id`, version, declared roots, and event timestamp — chained when the caller passes `audit=ActionLog.append`. `verify_inventory_pin` accepts `current_epoch=None, pin_ttl_seconds=None`: a valid-MAC pin under a different current epoch fails with `stale_pin_epoch`; TTL-expired or unparseable-age pins also fail with `stale_pin_epoch`; legacy wave-141 pins without `key_epoch` fail closed and require re-pinning. Verification never raises (fail-closed verdicts).
+- `report_coverage_gaps` accepts `pin_ttl_seconds` and treats stale pins as LOUD `unverifiable` full-gap, surfacing `key_epoch` and `pin_age_seconds` in the report metadata.
+- `gov/executor.py`: `ToolExecutor.run_artifact_sweep` passes configured `artifact_sweep["pin_ttl_seconds"]` through.
+- `evals/artifact_pin_ceremony_probes.py` (new): 5 probes — c1 epoch rotation → stale (no silent trust), c2 ceremony event present + chained, c3 inventory digest recomputable and bound, c4 TTL-expired pin → stale_pin_epoch LOUD full-gap, c5 deterministic ×2.
+- `tests/test_artifact_inventory_pin.py`: 5 new test classes (pin ceremony round-trip/epochs/override sentinel, fail-closed verify incl. legacy pins and garbage TTL, key discipline incl. epoch-rewrite-breaks-MAC, report verdicts incl. stale-epoch full-gap, ceremony audit incl. live-epoch recording and digest recomputation) — 34/34 OK.
+
+**Verification:** new battery **5 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (both envs, unmasked EXIT=0). New+existing pin units **34/34**; adjacent `test_artifact_coverage` + `test_artifact_sweep` 32/32; wave-141 `evals/artifact_inventory_pin_probes.py` unchanged **8 HELD / 0 BREAK** (F182 regression p7 still holds under the new verifier). `evals/artifacts/wave23_b2/battery_100_results.json` untouched (registry gate never run).
+
+**Two-axis review (manual — the code-review skill needs git; this tree is a snapshot with no .git):** Standards PASS — docstring style with honest ceilings, stdlib-only, deterministic, fail-closed (verify never raises; ceremony failures raise at pin time, never silently), opt-in zero-behavior-change (unpinned/plain-list path untouched), no DEBUG tags, no scratch in the tree. Spec PASS — MAC-bound key_epoch at pin time, chained ceremony event, recomputable digest, stale→LOUD full-gap, legacy pins fail closed, TTL wired through the executor.
+
+**Honest ceilings (module docstrings + battery, not hidden):** the ceremony proves WHEN/WHAT/WHICH EPOCH — not whether the pinned inventory was wise; a compromised executor WITH deployment-key access can still pin a malicious inventory (the ceremony + key custody is the control, not the MAC). A verifier cannot recover dropped roots from a shrunk list (the LOUD event, not the gap list, is the shrink signal — unchanged from wave-141). Undeclared directories stay invisible. The residual MUTATES, it does not die.
+
+**Findings:** none filed. Next free: **F183**. Open findings: none. Row 12 stays PARTIAL (the forged-report leg is now epoch-bound and ceremony-audited, NOT closed — key-custody/ceremony and undeclared directories are structural).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-142 lane 2: row-7 multilingual negation cues (no push)
+
+**Scope:** row-7 residual — the similarity-countermand gate (`gov/intent_slice._NEGATION_RE`, consumed by `gov.intent_ledger.similarity_countermand`) was English-keyword based, so a negated paraphrased countermand in French/German/Hindi missed the gate entirely and executed. This lane extends the existing word list — no new detection architecture. This lane did NOT push and did NOT commit.
+
+**Break-first (diagnosing-bugs + tdd):** new battery `evals/countermand_multilingual_negation_probes.py` written RED first. Pre-seam: **4 HELD / 5 BREAK / 0 EXPECTED / 0 ERROR** — m_fr, m_de_nicht, m_de_kein, m_hi, and the m_e2e French sweep broke exactly on the missing cues (no negation cue found → similarity gate never consulted); m_es (Spanish "no", already covered — HELD control), m_fp (lookalike silence), m_english, determinism held. Post-seam: **9 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (staging + `env -u GOV_DEPLOYMENT_MODE` identical, unmasked EXIT=0).
+
+**What changed:**
+- `gov/intent_slice.py`: `_NEGATION_RE` gains the tight, high-precision set — French `ne`/`pas`, German `nicht`/`kein`/`keine`, Hindi (romanized) `nahi`; Spanish `no` needed nothing (already an English cue). Word-boundary matching preserved. Comment documents the measured precision and the drops.
+- Measured precision that drove the drops (documented, not hidden): on a 17-sentence realistic benign corpus (grant-adjacent, similarities 0.533–0.857 — a cue hit there would be a REAL false positive at the similarity gate), `non` hit twice ("non-profit"/"Our non-profit partner") → DROPPED; `mat` hit once ("yoga mat") → DROPPED; `ne` kept (0 realistic hits — sole hit on the contrived "ne'er-do-wells", a documented precision cost); `pas`/`nicht`/`kein`/`keine`/`nahi` 0 hits. The battery's m_fp probe pins the drops (the lookalike sentences score up to 0.857 against the grant — with `non`/`mat` in the set they WOULD revoke).
+- `gov/intent_ledger.py`: the `similarity_countermand` honest-ceilings note updated — it previously claimed "Negation detection is English-keyword-based", now states the wave-142 set and its limits.
+- `evals/countermand_multilingual_negation_probes.py` (new): 9 probes — per-language negated paraphrase at the similarity seam (es control, fr via `ne`, de via `nicht`/`kein`, hi via `nahi`), end-to-end French countermand through grant → countermand → sweep (REVOKED, `approval_intent_changed`, `match_method="token-tversky"`), 5 high-similarity benign lookalikes silent, English behavior unchanged, deterministic ×2.
+- `tests/test_intent_slice.py`: new `MultilingualNegationTest` (9 tests — per-particle matches, the `non`/`mat` drops, lookalike substrings, English cues unchanged).
+
+**Verification:** new battery **9 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (both envs, unmasked EXIT=0). Slice/ledger/target_match units **99/99**; `evals/countermand_paraphrase_probes.py` unchanged (0 BREAK / 5 HELD, p6 ceiling unchanged); `evals/cross_run_intent_probes.py` unchanged (p6 expected ceiling); `evals/countermand_threshold_calibration_probes.py` unchanged (0 BREAK / 5 HELD / 1 EXPECTED-DIVERGENCE). `evals/artifacts/wave23_b2/battery_100_results.json` untouched.
+
+**Two-axis review (manual):** Standards PASS — a single regex alternation extended with a precision comment, no new architecture, docstrings updated where they claimed English-only, stdlib-only, deterministic, $0. Spec PASS — per-language negated paraphrases revoke at the seam and end-to-end, English behavior byte-identical, lookalike false positives pinned silent, drops documented with measured numbers.
+
+**Honest ceilings (battery module docstring + `intent_ledger` docstring, not hidden):** four languages is a START, not full multilingual coverage — German inflection (keinen/keinem/keiner) misses, French ne…jamais/plus/rien without "pas" misses, non-romanized scripts are untouched. A French non-countermand carrying "ne" with ≥ threshold similarity to a prior intent can still misfire (the inherent precision cost of keeping "ne" — measured 0 realistic FP). The no-negation paraphrase ceiling (p6) is unchanged.
+
+**Findings:** none filed. Next free: **F183**. Open findings: none. Row 7 stays PARTIAL (the paraphrase ceiling is narrowed, not closed; negation coverage is now multilingual-seeded but far from multilingual-complete).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-142 lane 3: K-060 filter-binding in anchor statements (no push)
+
+**Scope:** K-060 residual (H20, wave-125) — the exporter could narrow the export before anchoring and the anchor stayed silent about it: the receipt bound the checkpoint head but not WHAT was filtered. This lane binds the export's filter/selection parameters into the anchored commitment (anchored exports only; unanchored exports byte-identical). This lane did NOT push and did NOT commit.
+
+**Break-first (diagnosing-bugs + tdd):** new battery `evals/export_filter_binding_probes.py` written RED first. Pre-seam: **2 HELD / 4 BREAK / 0 EXPECTED / 0 ERROR** — f1/f2/f3/f5 broke exactly on the missing seam (`gov.anchoring.export_filter_digest` not implemented); f4 (no-backend byte-identical) and determinism held. Post-seam: **6 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (staging + `env -u GOV_DEPLOYMENT_MODE` identical, unmasked EXIT=0).
+
+**What changed:**
+- `gov/anchoring.py`: new `FILTER_DIGEST_DOMAIN` (domain-separated from `BUNDLE_ANCHOR_DOMAIN`) + public `export_filter_digest(filter_params)` — 64-hex SHA-256 over `FILTER_DIGEST_DOMAIN + canonical_json(filter_params)`, where the params are the export's `**query` (seq/ts ranges, run filters, limit) — parameters ONLY, never entry contents, so it cannot leak raw data. `bundle_head_digest` now commits to `{"checkpoints": ..., "filter_digest": ...}` when the bundle carries a digest; bundles without one (all pre-wave-142 receipts) commit exactly as before — old receipts keep verifying. Non-canonical filter values fail closed (TypeError). The honest-ceiling docstring now states the filter is VISIBLE, not judged.
+- `gov/log.py::export_bundle`: when a backend is supplied, sets `bundle["filter_digest"]` BEFORE anchoring (anchor path only — the no-backend path returns earlier, byte-identical to pre-wave-142). Non-canonical filter values fail closed before anchoring.
+- `gov/log.py::verify_export_bundle`: recomputes the digest from the bundle's stated `"query"` and fails closed on mismatch — filter parameters altered after anchoring fail even when the checkpoint proofs are intact. A rewritten `filter_digest` alone fails at receipt verification (the receipt binds the committed digest). Both use local imports, preserving the `test_w72_anchor` boundary (an initial module-level import in `gov/log.py` broke `test_sandbox_has_no_anchor_client` — `import gov.sandbox` must not pull `gov.anchor_backend` in; caught by the boundary test, reverted to the file's local-import convention).
+- `evals/export_filter_binding_probes.py` (new): 6 probes — f1 limit=2 vs limit=4 → distinct digests, both verify; f2 altered post-anchor query fails (filter_digest mismatch), rewritten digest fails (receipt binds); f3 no-filter export → digest of the empty filter, verifies; f4 no-backend export byte-identical to pre-wave-142 (no `filter_digest`/`anchor_receipt` keys); f5 narrowed + re-digested WITHOUT re-anchoring fails receipt verification; f6 deterministic ×2.
+
+**Verification:** new battery **6 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR** (both envs, unmasked EXIT=0). Existing `evals/anchoring_probes.py` unchanged (0 BREAK / 7 HELD); anchoring/log-merkle/evidence-exports/w72-anchor units **81/81** (the boundary test that caught the import regression now passes). `evals/artifacts/wave23_b2/battery_100_results.json` untouched.
+
+**Two-axis review (manual):** Standards PASS — new domain separated from the existing one with the wave-137 rationale cited, local-import convention kept for the sandbox boundary, fail-closed on non-canonical values, no-backend path untouched, docstrings carry the ceilings, stdlib-only, deterministic, $0. Spec PASS — digest over selection params only, anchored-only, receipt binds checkpoints + filter, verifier recomputes and fails closed, empty filter verifies, no-backend byte-identical.
+
+**Honest ceilings (module docstrings + battery, not hidden):** the digest proves the filter parameters are AS STATED, not that they were WISE — a malicious-but-disclosed narrowing is the auditor's judgment call; narrowing is VISIBLE, not prevented. Unpinned verification still proves self-consistency only (the pre-existing K-060 ceiling, restated). The digest covers the SELECTION parameters (the export's query), never entry contents.
+
+**Findings:** none filed. Next free: **F183**. Open findings: none. Row 17's H20 residual is narrowed (exporter narrowing is now visible in the anchor), NOT closed (completeness against exporter misbehavior stays K-049's transparency-anchor story).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-27 — Wave-142 push audit (Krishna, post-coordinator)
+
+**Scope:** the wave-139→141 autonomous chain shipped without my per-wave reports (coordinator handoffs arrived without final responses). Re-verified before pushing wave-142.
+
+**Audit findings:**
+- F178 closure re-verified: the three known-hitting run_ids (prod-run-2948/4238/4660) mint cleanly, `tests/test_w51_canary` 35/35 OK, `CanaryMintError` on bound exhaustion, zero bare asserts in `gov/canary.py`. The wave-138 lane-1 "NOT closed" note was the lane honestly deferring closure to the coordinator's gate run; the coordinator's FINDINGS.md entry documents all three close-when criteria with evidence. Closure stands.
+- F182 closure re-verified on the pushed tree: `evals/artifact_inventory_pin_probes.py` 8/8 HELD (p7 pin-stripped envelope → LOUD unverifiable + fail-closed full-gap).
+- Wave-140 matrix discrepancy: the wave-140 commit claims "matrix SHIP-GATE GREEN 1608/1608" but the matrix at that commit is 134×3×4×2 = 3216 cells — the wave-140 gate ran exactly half the matrix (one harness). Corrected here: full 3216/3216 SHIP-GATE GREEN verified at wave-142. The product was never red; the gate *run* was partial, not the gate itself. Commit messages must state the cell count the gate actually ran.
+- Wave-142 gates (shared tree, unique mkdir-p'd TMPDIRs, workstream sibling links verified): canonical 4530 OK (skipped=9, expected failures=5); registry GREEN; matrix 3216/3216 SHIP-GATE GREEN; realistic 7/7. New batteries: pin-ceremony 5/5, multilingual-negation 9/9, filter-binding 6/6 — all 0 BREAK, both deployment envs.
+
+**Finding state verified from FINDINGS.md:** open findings none. Next free: F183.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

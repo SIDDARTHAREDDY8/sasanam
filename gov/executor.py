@@ -3201,10 +3201,17 @@ class ToolExecutor:
                     # log (self.log). Inside the try: a malformed
                     # inventory is audited as artifact_sweep_failed
                     # like any other sweep failure (never raises).
+                    # Wave-142: the opt-in may carry
+                    # "pin_ttl_seconds" -- the operator TTL for pins;
+                    # a pin older than the TTL (or made under a
+                    # rotated-out key epoch) verifies as
+                    # stale_pin_epoch: LOUD, fail-closed full-gap.
+                    ttl = self.artifact_sweep.get("pin_ttl_seconds")
                     _artifact_sweep.report_coverage_gaps(
                         declared, watch_roots,
                         audit=lambda ev: self.log.append(ev),
-                        run_id=self.run_id)
+                        run_id=self.run_id,
+                        pin_ttl_seconds=ttl)
             findings, stats = _artifact_sweep.sweep_run_dir(
                 self.run_dir, self.artifacts, watch_roots=watch_roots)
         except Exception as e:  # noqa: BLE001 - sweep must not break runs

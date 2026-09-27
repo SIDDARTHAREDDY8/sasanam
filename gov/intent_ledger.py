@@ -268,8 +268,15 @@ def similarity_countermand(message, prior_messages,
       by design ("Please apply standard retention handling..." has
       neither a negation word nor enough shared tokens) -- the
       remaining paraphrase ceiling.
-    - Negation detection is English-keyword-based; "ne ... pas" and
-      other languages are not covered.
+    - Negation detection is keyword-based: English plus a small
+      wave-142 multilingual set (French ne/pas, German
+      nicht/kein/keine, Hindi nahi; Spanish no was already covered).
+      Four languages is a start, not full multilingual coverage:
+      German inflection (keinen/keinem), French ne...jamais/plus/rien
+      without "pas", and non-romanized scripts miss. "non"/"mat"
+      were measured and DROPPED (false positives on "non-profit" /
+      "yoga mat"); "ne" is kept on 0 realistic-corpus FP (sole hit:
+      the contrived "ne'er-do-wells").
     - Full synonym replacement with no shared tokens still scores
       0.0 and misses -- token overlap is not semantics.
     - The deployment key must be managed like other secrets: if the
