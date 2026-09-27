@@ -1,12 +1,14 @@
-"""Unit tests for the wave-145 type-to-confirm ceremony (row-11).
+"""Unit tests for the wave-145 type-to-confirm ceremony (row-11),
+wave-147 synonym layer.
 
 A careless human can acknowledge a vague/broad goal
 (pending_specificity) or a wildcard-scope goal without reading it --
 click-approve is too cheap. Approving a ``goal_specificity_review``
 now REQUIRES the human to TYPE the narrowed scope; the typed text is
 checked against the goal's declared scope (stamped MAC-bound on the
-review record at queue time) with ``gov.target_match`` token-tversky
-at >= ``DEFAULT_THRESHOLD``.
+review record at queue time) with
+``gov.target_match.typed_scope_similarity`` (synonym-aware
+token-tversky, wave-147) at >= ``DEFAULT_THRESHOLD``.
 
 Seams under test:
   * Threshold reuse: the ceremony uses ``gov.target_match``'s
@@ -206,7 +208,7 @@ class RefusalContractTest(unittest.TestCase):
         self.assertIsNone(ev["typed_scope"])
         self.assertEqual(ev["match_score"], 0.0)
         self.assertEqual(ev["match_threshold"], 0.5)
-        self.assertEqual(ev["match_method"], "token-tversky")
+        self.assertEqual(ev["match_method"], "token-tversky+synonym")
         # The rejected attempt itself is audited (existing contract).
         attempts = _events(ctx, "approval_decision_attempt")
         self.assertTrue(any(a.get("decision") == "rejected_attempt"
@@ -267,7 +269,7 @@ class ApproveContractTest(unittest.TestCase):
         # The typed scope rides the record, MAC-bound.
         self.assertEqual(rec["typed_scope"], "do whatever is needed")
         self.assertEqual(rec["typed_scope_score"], 1.0)
-        self.assertEqual(rec["typed_scope_method"], "token-tversky")
+        self.assertEqual(rec["typed_scope_method"], "token-tversky+synonym")
         # Wave-135 semantics unchanged: active + acknowledged...
         goal = ctx["executor"]._goal_registry.get_goal(g["goal_id"])
         self.assertEqual(goal["status"], "active")
@@ -281,7 +283,7 @@ class ApproveContractTest(unittest.TestCase):
         self.assertEqual(scoped[0]["approval_id"], review["id"])
         self.assertEqual(scoped[0]["typed_scope"], "do whatever is needed")
         self.assertEqual(scoped[0]["match_score"], 1.0)
-        self.assertEqual(scoped[0]["match_method"], "token-tversky")
+        self.assertEqual(scoped[0]["match_method"], "token-tversky+synonym")
         # ...and on the decision event itself.
         decisions = _events(ctx, "approval_decision")
         self.assertTrue(any(d.get("approval_id") == review["id"]
@@ -359,5 +361,103 @@ class NormalRecordNoOpTest(unittest.TestCase):
         self.assertEqual(len(noops), 1)
 
 
+class TestTypedScopeSynonymLayer(unittest.TestCase):
+    """Wave-147 (row-11): the synonym-aware typed-scope check.
+
+    ``gov.target_match.typed_scope_similarity`` is used ONLY by the
+    type-to-confirm ceremony (``_type_to_confirm_ok``); the row-11
+    paraphrase tier keeps raw ``target_similarity`` (pinned below:
+    the grant path is not widened).
+    """
+
+    def test_synonym_verb_pair_matches(self):
+        # "erase" canonicalizes to DELETE: 0.8889, above the raw
+        # 0.5714 the shared noun already gave.
+        score = tm.typed_scope_similarity("erase the report",
+                                          "delete the Q3 report")
+        self.assertGreaterEqual(score, tm.DEFAULT_THRESHOLD)
+        self.assertAlmostEqual(score, 0.8889, places=3)
+
+    def test_wrong_verb_pair_refused_by_veto(self):
+        # "send" vs "archive": different canonical verbs -> 0.0,
+        # even though raw token-tversky scores 0.5714.
+        self.assertEqual(
+            tm.typed_scope_similarity("send the report",
+                                      "archive the Q3 report"), 0.0)
+        self.assertAlmostEqual(
+            tm.target_similarity("send the report",
+                                 "archive the Q3 report"), 0.5714,
+            places=3)  # raw still matches: the miss this veto fixes
+
+    def test_grant_path_uses_raw_similarity_only(self):
+        # The row-11 paraphrase tier must NOT see the veto: raw
+        # matching is unchanged by the synonym layer.
+        self.assertAlmostEqual(
+            tm.target_similarity("erase the report",
+                                 "delete the Q3 report"), 0.5714,
+            places=3)
+
+    def test_destination_veto_survives_canonicalization(self):
+        self.assertEqual(
+            tm.typed_scope_similarity(
+                "send invoices to accounting@vendor.com",
+                "send invoices to evil.com"), 0.0)
+
+    def test_verbless_typed_scope_falls_back_gracefully(self):
+        # No verb-class token on the typed side -> no veto; raw
+        # behavior decides (here: match, as before).
+        score = tm.typed_scope_similarity("the Q3 report",
+                                          "delete the Q3 report")
+        self.assertGreaterEqual(score, tm.DEFAULT_THRESHOLD)
+
+    def test_one_sided_verb_no_veto(self):
+        # Only the reference names a verb-class verb -> the veto
+        # needs BOTH sides; the pair scores on tokens.
+        score = tm.typed_scope_similarity("quarterly numbers",
+                                          "delete the Q3 report")
+        self.assertLess(score, tm.DEFAULT_THRESHOLD)
+
+    def test_synonym_noun_canonicalization_adds_match(self):
+        # "document" -> REPORT canonical: a pair raw would miss at
+        # 0.4444 is lifted over the threshold by canonicalization.
+        raw = tm.target_similarity("remove the document",
+                                   "delete the Q3 report")
+        canon = tm.typed_scope_similarity("remove the document",
+                                          "delete the Q3 report")
+        self.assertLess(raw, tm.DEFAULT_THRESHOLD)
+        self.assertGreaterEqual(canon, tm.DEFAULT_THRESHOLD)
+
+    def test_q3_is_identity_not_expanded(self):
+        # Q3 maps to itself: no synonym expansion of time refs.
+        self.assertEqual(tm._TTC_SYNONYM_MAP["q3"], "q3")
+        self.assertIsNone(tm._verb_class("q3 report"))
+
+    def test_type_discipline_matches_target_similarity(self):
+        self.assertEqual(tm.typed_scope_similarity(None, "x"), 0.0)
+        self.assertEqual(tm.typed_scope_similarity("x", None), 0.0)
+        self.assertEqual(tm.typed_scope_similarity("   ", "x"), 0.0)
+        with self.assertRaises(ValueError):
+            tm.typed_scope_similarity(123, "x")
+
+    def test_ceremony_uses_synonym_aware_method_tag(self):
+        self.assertEqual(tm.TTC_MATCH_METHOD, "token-tversky+synonym")
+
+    def test_deterministic(self):
+        a = tm.typed_scope_similarity("erase the report",
+                                      "delete the Q3 report")
+        b = tm.typed_scope_similarity("erase the report",
+                                      "delete the Q3 report")
+        self.assertEqual(a, b)
+
+
 if __name__ == "__main__":
+    # Direct script execution: provision an explicit test key the same
+    # way tests/__init__.py does for the canonical runner (wave-81: no
+    # dev key anywhere in gov/, fail-closed without one). Hermetic --
+    # provision_test_key replaces ambient key env vars.
+    try:
+        from tests.keyfixture import provision_test_key
+    except ImportError:  # executed with tests/ directly on sys.path
+        from keyfixture import provision_test_key
+    provision_test_key()
     unittest.main()

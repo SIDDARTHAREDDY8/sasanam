@@ -98,6 +98,7 @@ from datetime import datetime, timezone
 
 from . import keyprovider as _keyprovider
 from .intent_slice import _detect_countermand, _NEGATION_RE
+from .intent_slice import negation_scopes_grant
 from .intent_slice import _english_double_negation_cancels
 from .target_match import (
     target_similarity,
@@ -267,6 +268,14 @@ def similarity_countermand(message, prior_messages,
         similarity is high: it is an affirmation, not a countermand.
         The measured score is still returned. Ambiguous stacking
         and stacked emphasis do not resolve (conservative: revoke).
+      - wave-147 row 7: scope-window discipline
+        (``gov.intent_slice.negation_scopes_grant``) -- the cue must
+        fall within a bounded token window (+-8) of the anchor's
+        action verb in the same clause; a cue scoping over the wrong
+        predicate in a separate clause does not revoke. When the
+        message names no grant verb at all, or the anchor's verb is
+        outside the curated classes, the pre-wave-147 behavior holds
+        (conservative: revoke). The measured score is still returned.
 
     Non-string messages never fire; non-string priors are skipped
     (never coerced); an empty prior list cannot fire. These fail-safe
@@ -342,6 +351,14 @@ def similarity_countermand(message, prior_messages,
             # high similarity, suppressed cue). Conservative:
             # ambiguous stacking and stacked emphasis do not resolve
             # and revoke below.
+            return (False, None, best_score)
+        if not negation_scopes_grant(message, prior_messages[best_idx]):
+            # Wave-147 row 7: scope-window discipline -- the cue must
+            # fall within a bounded token window of the anchor's
+            # action verb in the same clause. A cue scoping over the
+            # wrong predicate (e.g. "keineswegs" over "fertig" while
+            # the grant verb is re-affirmed in another clause) does
+            # not revoke. The measured score is still returned.
             return (False, None, best_score)
         return (True, best_idx, best_score)
     return (False, None, best_score)

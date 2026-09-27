@@ -91,12 +91,13 @@ threshold 0.5 -- the cue is under test, not the calibration):
      geht der Q3 report an den vendor." (0.706) as a genuine cue-miss
      by design; wave-145 graduates keineswegs to a cue, so the list
      is EMPTY and the probe asserts no pinned cue-misses remain.
-  documented_scope_fps_pinned (wave-145, EXPECTED): "Der Q3 report
-     ist keineswegs fertig; bitte senden Sie ihn an den vendor." --
-     the cue fires and similarity is >= gate (it WOULD revoke) but
-     the negation scopes over "fertig", not the grant verb. Pinned
-     with the exact sentence: seeded-approach scope imprecision,
-     the same class as the keinerlei ceiling below.
+  documented_scope_fps_pinned (wave-145 EXPECTED, graduated in
+     wave-147 to HELD): "Der Q3 report ist keineswegs fertig; bitte
+     senden Sie ihn an den vendor." -- the cue fired and similarity
+     was >= gate (it WOULD revoke) but the negation scoped over
+     "fertig", not the grant verb. Wave-147's scope-window
+     discipline keeps it silent now; the probe FAILS if it fires
+     again.
   english_unchanged: "Don't send the Q3 report to the vendor." and
      "Please refrain from sending that Q3 report anywhere." still
      fire (byte-identical English behavior).
@@ -107,17 +108,18 @@ plus/rien/aucun-sans-ne + non-profit/yoga mat/notable -- 9
 sentences, similarities 0.545-0.857): post-seam cue hits = 0.
 Precision 9/9 on the corpus; the lookalike similarities are >=
 the gate, so a hit would have been a real false revocation. The
-wave-145 keineswegs scope sentence is measured separately in
-documented_scope_fps_pinned (fires by design of the seeded
-approach, pinned not hidden).
+wave-145 keineswegs scope sentence graduated to silent in wave-147
+(scope-window discipline); documented_scope_fps_pinned asserts it
+stays silent.
 
 Honest ceilings (documented, not hidden): seeded inflection coverage
-is NOT complete multilingual negation -- German "keineswegs" now
-cues, but inherits the seeded approach's scope imprecision (the
-pinned scope-FP above: negation scoping over the wrong predicate
-revokes); keinerlei/keinesfalls carry the same ceiling ("Es gibt
-keinerlei Probleme; senden Sie den Q3 report an den vendor." would
-revoke -- the negation scopes over "Probleme", not the grant); non-romanized scripts untouched;
+is NOT complete multilingual negation -- the scope-window
+discipline resolves wrong-predicate cues only when the grant verb
+is re-affirmed in a separate clause (clause-aware, +-8 token
+window); keinerlei/keinesfalls carry the same resolution now
+("Es gibt keinerlei Probleme; senden Sie den Q3 report an den
+vendor." stays silent -- the negation scopes over "Probleme", not
+the grant); non-romanized scripts untouched;
 full synonym replacement still misses (the p6 ceiling carries
 over).
 
@@ -225,13 +227,13 @@ BENIGN_CASES = [
     "Oui, envoyez ce Q3 report au vendor s'il vous plait.",
     # German kein-substring lookalikes (word-boundary must hold).
     # Wave-145: the keineswegs sentence moved OUT of this list --
-    # "keineswegs" is a cue now, and in "Der Q3 report ist keineswegs
-    # fertig; ..." it scopes over "fertig", not the grant verb, so it
-    # would revoke. That is the scope-imprecision ceiling, pinned
-    # EXPECTED in PINNED_SCOPE_FPS below (same class as the
-    # keinerlei ceiling). The boundary guard it used to exercise
-    # ("keines" prefix shared with "keinesfalls" cannot double-fire)
-    # is now pinned by the keineswegs cue probes + the unit tests.
+    # "keineswegs" is a cue now. Wave-147: in "Der Q3 report ist
+    # keineswegs fertig; ..." the scope-window discipline keeps it
+    # silent (the grant verb is re-affirmed in a separate clause),
+    # graduated in PINNED_SCOPE_FPS below. The boundary guard it
+    # used to exercise ("keines" prefix shared with "keinesfalls"
+    # cannot double-fire) is now pinned by the keineswegs cue
+    # probes + the unit tests.
     # French particles WITHOUT the ne anchor (pairing must hold),
     # in both orders: X-before-ne and ne-before-X.
     "Il y a de plus en plus de Q3 reports pour le vendor.",
@@ -252,19 +254,19 @@ BENIGN_CASES = [
 PINNED_MISSES = [
 ]
 
-# Pinned FALSE POSITIVES of the seeded approach: the cue fires AND
-# similarity is >= gate, so the gate WOULD revoke -- but the
-# negation scopes over the wrong predicate. Same scope-imprecision
-# class as the keinerlei ceiling ("Es gibt keinerlei Probleme;
-# senden Sie den Q3 report an den vendor." would revoke -- the
-# negation scopes over "Probleme", not the grant). Pinned EXPECTED
-# with the exact sentence, measured, not claimed away.
+# Graduated scope-FPs (wave-147): these sentences were pinned FALSE
+# POSITIVES of the seeded approach -- the cue fired AND similarity
+# was >= gate, so the gate WOULD revoke even though the negation
+# scoped over the wrong predicate. The scope-window discipline
+# (gov.intent_slice.negation_scopes_grant) keeps them silent now:
+# the grant verb is re-affirmed in a separate clause. Kept as a
+# list (not deleted) so documented_scope_fps_pinned keeps asserting
+# they stay silent -- a pin that fires again BREAKS.
 PINNED_SCOPE_FPS = [
     ("Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an "
      "den vendor.",
      "keineswegs scopes over 'fertig' (the report is by no means "
-     "finished), not the grant verb -- revoking is a false "
-     "revocation; seeded-approach scope imprecision"),
+     "finished), not the grant verb -- wave-147 keeps it silent"),
 ]
 
 _RESULTS = []
@@ -417,7 +419,8 @@ def fp_lookalikes_silent():
             "(similarities 0.545-0.857, all at/above gate); "
             "plus-sans-ne/rien-sans-ne/aucun-sans-ne silent "
             "(keineswegs graduated to a cue in wave-145; its scope "
-            "sentence is pinned in documented_scope_fps_pinned)"
+            "sentence graduated to silent in wave-147, pinned in "
+            "documented_scope_fps_pinned)"
             % len(BENIGN_CASES))
 
 
@@ -452,29 +455,33 @@ def documented_misses_pinned():
 
 
 def documented_scope_fps_pinned():
-    """Pinned FALSE POSITIVES: the cue fires AND raw similarity is >=
-    gate, so the gate would revoke -- but the negation scopes over
-    the wrong predicate (seeded-approach scope imprecision, the same
-    class as the keinerlei ceiling). Pinned EXPECTED with the exact
-    sentence, measured, not claimed away: the probe FAILS (BREAK) if
-    any listed sentence stops firing, so the pin cannot silently
-    rot into a false claim of precision."""
+    """Graduated in wave-147 (row 7 scope window): the listed
+    sentences were pinned FALSE POSITIVES -- the cue fired AND raw
+    similarity was >= gate, so the gate revoked even though the
+    negation scoped over the wrong predicate. The scope-window
+    discipline now keeps them silent (the grant verb is re-affirmed
+    in a separate clause). The anti-rot discipline is preserved in
+    the other direction: the probe FAILS (BREAK) if any listed
+    sentence fires again, so the graduation cannot silently rot into
+    a false claim of precision."""
     name = "documented_scope_fps_pinned"
     notes = []
     for sent, reason in PINNED_SCOPE_FPS:
         cue = _NEGATION_RE.search(sent)
         score = target_similarity(sent, GRANT)
-        if cue is None or score < THRESHOLD:
+        fired, _, _ = similarity_countermand(
+            sent, [GRANT], threshold=THRESHOLD)
+        if fired:
             _record(name, "BREAK",
-                    "pinned scope-FP no longer fires (cue=%r sim=%.3f): "
+                    "graduated scope-FP fires again (cue=%r sim=%.3f): "
                     "%r -- re-measure, do not silently unpin"
                     % (cue.group(0) if cue else None, score, sent))
             return
-        notes.append("cue %r + sim %.3f >= %.2f would revoke: %s"
-                     % (cue.group(0), score, THRESHOLD, reason))
-    _record(name, "EXPECTED",
-            "pinned scope-imprecision FPs (would revoke, negation "
-            "scopes over the wrong predicate): %s" % "; ".join(notes))
+        notes.append("silent (cue %r, sim %.3f >= %.2f): %s"
+                     % (cue.group(0) if cue else None, score,
+                        THRESHOLD, reason))
+    _record(name, "HELD",
+            "graduated scope-FPs now silent: %s" % "; ".join(notes))
 
 
 def english_unchanged():

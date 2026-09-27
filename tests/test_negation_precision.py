@@ -13,9 +13,14 @@ so each suppressed hit was a REAL false revocation):
     and as the noun "un pas" ("a step").
 
 Each guard is positional, never blanket: the companion tests pin
-that genuine cues in the same words still fire. The 4 remaining FPs
-(double negation, scope imprecision) are pinned EXPECTED -- the
-last test asserts they still fire so the pin cannot rot.
+that genuine cues in the same words still fire. The 3 scope-FP pins
+(wave-145 EXPECTED false revocations: cue + sim >= gate, negation
+scoping over the wrong predicate) were GRADUATED in wave-147 by the
+row-7 scope-window discipline -- the last test asserts they now stay
+silent, and a pin that fires again FAILS, so the pin cannot rot.
+(Wave-146 removed the fourth pin, the English double negation --
+now resolved by _english_double_negation_cancels; its coverage moved
+to evals/double_negation_probes.py and the resolver unit tests.)
 """
 
 import unittest
@@ -113,15 +118,17 @@ class PrecisionGuardTest(unittest.TestCase):
         self.assertIsNone(
             self._cue("Merci pour le Q3 report; rien d'autre."))
 
-    def test_pinned_fps_still_fire_at_gate(self):
-        # Honest EXPECTED pins (see
-        # evals/negation_precision_probes.py::PINNED_FPS): these
-        # benign sentences trip the gate -- negation scoping over the
-        # wrong predicate, which the seeded word-list approach cannot
-        # resolve. Pinned here too so the pin cannot silently rot at
-        # the unit level. (Wave-146 removed the fourth pin, the
-        # English double negation "There is no reason not to send
-        # the Q3 report to the vendor." -- now resolved by
+    def test_pinned_scope_fps_now_silent_at_gate(self):
+        # Graduated in wave-147 (row-7 scope-window discipline; see
+        # evals/negation_precision_probes.py::PINNED_FPS): these benign
+        # sentences were EXPECTED false revocations -- cue + sim >=
+        # gate, but the negation scoped over the wrong predicate while
+        # the grant verb was re-affirmed in a separate clause. The
+        # scope window now keeps them silent. Pinned here too so the
+        # pin cannot silently rot at the unit level: a pin that fires
+        # again FAILS. (Wave-146 removed the fourth pin, the English
+        # double negation "There is no reason not to send the Q3
+        # report to the vendor." -- now resolved by
         # _english_double_negation_cancels; its coverage moved to
         # evals/double_negation_probes.py and the resolver unit
         # tests.)
@@ -134,7 +141,9 @@ class PrecisionGuardTest(unittest.TestCase):
                 "report an den vendor."):
             fired, _, score = similarity_countermand(
                 sent, [GRANT], threshold=0.5)
-            self.assertTrue(fired, sent)
+            self.assertFalse(fired, sent)
+            # The cue and the gate similarity are still present --
+            # only the scope discipline suppresses the revocation.
             self.assertGreaterEqual(score, 0.5, sent)
 
     def test_double_negation_no_longer_revokes(self):

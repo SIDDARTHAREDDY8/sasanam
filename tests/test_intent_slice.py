@@ -439,5 +439,51 @@ class QueueWiringTest(unittest.TestCase):
                                      "j", ident))
 
 
+class NegationScopeWindowTest(unittest.TestCase):
+    """Wave-147, row 7: negation_scopes_grant -- a negation cue only
+    cancels an intent when it falls within a bounded token window of
+    the intent's action verb in the same clause."""
+
+    def test_cue_on_grant_verb_scopes(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Don't send the Q3 report.",
+            "Send the Q3 report to the vendor."))
+
+    def test_wrong_predicate_other_clause_does_not_scope(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Der Q3 report ist keineswegs fertig; bitte senden Sie "
+            "ihn an den vendor.",
+            "Senden Sie den Q3-Bericht an den Vendor."))
+
+    def test_wrong_predicate_french_does_not_scope(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Le Q3 report n'est pas en retard; envoyez-le au vendor.",
+            "Send the Q3 report to the vendor."))
+
+    def test_no_grant_verb_in_message_stays_conservative(self):
+        # "There is no Q3 report" -- the grant's object is denied;
+        # no verb to attribute scope to, so the old behavior holds.
+        self.assertTrue(m.negation_scopes_grant(
+            "There is no Q3 report for the vendor.",
+            "Send the Q3 report to the vendor."))
+
+    def test_unknown_anchor_verb_stays_conservative(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Don't review the Q3 report.",
+            "Review the Q3 report with the vendor."))
+
+    def test_elided_french_verb_matches_send_class(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "N'envoyez plus ce Q3 report au vendor.",
+            "Send the Q3 report to the vendor."))
+
+    def test_elliptical_cross_clause_countermand_is_boundary(self):
+        # Known boundary, documented: the bare cue's clause carries
+        # no verb, so the re-affirmed verb clause wins -> silent.
+        self.assertFalse(m.negation_scopes_grant(
+            "Send the report. Don't.",
+            "Send the Q3 report to the vendor."))
+
+
 if __name__ == "__main__":
     unittest.main()

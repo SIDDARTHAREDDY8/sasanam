@@ -37,20 +37,21 @@ revocations on the clean corpus (similarity ranges EN
 0.706-0.889, DE 0.545-0.706, FR 0.571-0.750 -- all at/above the
 0.5 gate).
 
-Pinned EXPECTED (3): genuine FPs the seeded approach cannot fix
-without scope resolution -- documented with the exact sentence,
-measured, not claimed away. (Wave-146 resolved the fourth pin,
-the English double negation "There is no reason not to send the Q3
-report to the vendor." -- it no longer fires, so it was removed
-here; its coverage moved to evals/double_negation_probes.py.)
+Graduated in wave-147 (3): the scope-window discipline
+(``gov.intent_slice.negation_scopes_grant``) resolved the remaining
+scope-imprecision pins -- the grant verb is re-affirmed in a
+separate clause, so the gate stays silent. (Wave-146 resolved the
+fourth pin, the English double negation "There is no reason not to
+send the Q3 report to the vendor." -- it no longer fires, so it was
+removed here; its coverage moved to evals/double_negation_probes.py.)
   - "Le Q3 report n'est pas en retard; envoyez-le au vendor."
     ('pas' scopes over "en retard", not the grant verb; sim 0.571);
   - "Der Q3 report ist keineswegs fertig; bitte senden Sie ihn an
     den vendor." ('keineswegs' scopes over "fertig"; sim 0.545);
   - "Es gibt keinerlei Probleme; senden Sie den Q3 report an den
     vendor." ('keinerlei' scopes over "Probleme"; sim 0.600).
-The probe FAILS if any pinned sentence stops firing, so the pins
-cannot silently rot into a false precision claim.
+The probe FAILS if any graduated sentence fires again, so the
+graduation cannot silently rot into a false precision claim.
 
 Corpus design notes:
   - Lookalike substrings (word-boundary discipline): "notice",
@@ -321,22 +322,25 @@ def guard_controls_fire():
 
 
 def pinned_fps_documented():
-    """Pinned EXPECTED FPs: each must STILL fire (cue + sim >=
-    gate). A pin that stops firing BREAKS -- re-measure, never
-    silently unpin."""
+    """Graduated in wave-147 (row 7 scope window): the 3 pinned FPs
+    were EXPECTED false revocations (cue + sim >= gate, negation
+    scoping over the wrong predicate). The scope-window discipline
+    now keeps them silent -- the grant verb is re-affirmed in a
+    separate clause. The anti-rot discipline is preserved in the
+    other direction: a pin that fires again BREAKS."""
     name = "pinned_fps_documented"
     notes = []
     for sent, reason in PINNED_FPS:
         cue, sim, fired = _measure(sent)
-        if not fired:
+        if fired:
             _record(name, "BREAK",
-                    "pinned FP no longer fires (cue=%r sim=%.3f): "
+                    "graduated pin fires again (cue=%r sim=%.3f): "
                     "%r -- re-measure, do not silently unpin"
                     % (cue, sim, sent))
             return
-        notes.append("cue %r + sim %.3f: %s" % (cue, sim, reason))
-    _record(name, "EXPECTED",
-            "%d pinned FPs (scope imprecision), exact sentences: %s"
+        notes.append("silent (cue %r, sim %.3f): %s" % (cue, sim, reason))
+    _record(name, "HELD",
+            "%d graduated scope-FPs now silent, exact sentences: %s"
             % (len(PINNED_FPS), " || ".join(notes)))
 
 

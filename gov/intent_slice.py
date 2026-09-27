@@ -190,6 +190,124 @@ _NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Wave-147 (row 7): scope-window discipline for negation. A negation
+# cue only cancels an intent when it falls within a bounded token
+# window of the intent's action verb, measured against the anchor
+# clause; a cue scoping over the wrong predicate in a separate clause
+# does NOT revoke. Clause-aware first, then window-bounded: in "Der
+# Q3 report ist keineswegs fertig; bitte senden Sie ihn an den
+# vendor." the cue and the grant verb are only a few tokens apart but
+# live in different clauses, so a whole-message distance check is
+# insufficient -- the cue must share a clause with the anchor's
+# action verb (or a same-class multilingual form) within
+# _NEGATION_SCOPE_WINDOW tokens.
+#
+# Decision table for one (message, anchor) pair:
+#   - a cue within +-window of a grant-verb token in the SAME clause
+#     -> the cue demonstrably scopes the grant -> MAY REVOKE;
+#   - no grant-verb token anywhere in the message (e.g. "There is no
+#     Q3 report", "Kein Q3 report fuer den vendor.") -> conservative
+#     pre-wave-147 behavior -> MAY REVOKE;
+#   - the grant verb appears, but every cue sits in a different
+#     clause (the speaker re-affirmed the action separately from the
+#     negation, e.g. "...ist keineswegs fertig; bitte senden Sie
+#     ihn...") -> SILENT.
+# Unknown anchor verbs (no curated class) keep the pre-wave-147
+# behavior (conservative revoke) -- the scope check only narrows what
+# it can positively attribute, never what it cannot see. The verb
+# classes are a curated closed list for the languages the cue set
+# covers (EN/DE/FR/ES/HI romanized); synonyms outside the list and
+# non-romanized scripts are documented residuals (row 7 stays
+# PARTIAL). Elliptical cross-clause countermands ("Send the report.
+# Don't.") are a known boundary: the bare cue's clause carries no
+# verb, so the re-affirmed-verb clause wins and the gate stays
+# silent.
+_NEGATION_SCOPE_WINDOW = 8
+_CLAUSE_SPLIT_RE = re.compile(r"[.!?;]+")
+_SCOPE_WORD_RE = re.compile(r"[a-z0-9']+")
+_SCOPE_ELISION_RE = re.compile(r"^(?:n|d|l|s|c|j|t|qu)['’]")
+
+_VERB_CLASSES = {
+    "SEND": frozenset((
+        "send", "sends", "sending", "sent",
+        "senden", "sendet", "sende",
+        "envoyer", "envoyez", "envoie", "envoient",
+        "enverrai", "enverrais", "enverra", "enverront",
+        "enviar", "envia", "enviado",
+        "bhejo", "bhejna", "bhej", "bheje",
+    )),
+    "ARCHIVE": frozenset((
+        "archive", "archives", "archiving", "archived",
+        "archivieren", "archiviert", "archiviere",
+        "archiver", "archivez",
+    )),
+    "DELETE": frozenset((
+        "delete", "deletes", "deleting", "deleted",
+        "loeschen", "loschen", "loescht", "loesche", "geloescht",
+        "supprimer", "supprime",
+    )),
+}
+_VERB_CLASS_BY_FORM = {
+    form: cls for cls, forms in _VERB_CLASSES.items() for form in forms
+}
+
+
+def _scope_norm_token(token):
+    """Lowercase + strip French-style elision prefixes (n'/d'/l'/...)
+    so "n'envoyez" matches the SEND class as "envoyez"."""
+    tok = token.lower().replace("’", "'")
+    return _SCOPE_ELISION_RE.sub("", tok)
+
+
+def _anchor_verb_classes(anchor_text):
+    """Verb classes named by the anchor clause (the intent's action
+    verb, measured against the anchor clause)."""
+    classes = set()
+    for tok in _SCOPE_WORD_RE.findall(anchor_text.lower()):
+        cls = _VERB_CLASS_BY_FORM.get(_scope_norm_token(tok))
+        if cls is not None:
+            classes.add(cls)
+    return classes
+
+
+def negation_scopes_grant(message, anchor_text,
+                          window=_NEGATION_SCOPE_WINDOW):
+    """True iff the negation cue in `message` may cancel the intent
+    anchored at `anchor_text`: some cue falls within `window` tokens
+    of the anchor's action verb in the same clause, or the message
+    names no grant verb at all (conservative pre-wave-147 behavior).
+    False when the grant verb appears in a clause of its own, apart
+    from every cue -- the negation demonstrably scopes elsewhere."""
+    if not isinstance(message, str) or not message.strip():
+        return True
+    anchor_classes = _anchor_verb_classes(
+        anchor_text if isinstance(anchor_text, str) else "")
+    if not anchor_classes:
+        # Unknown action verb: the scope check cannot attribute, so it
+        # must not narrow -- keep the pre-wave-147 behavior.
+        return True
+    verb_seen = False
+    for clause in _CLAUSE_SPLIT_RE.split(message):
+        toks = list(_SCOPE_WORD_RE.finditer(clause.lower()))
+        if not toks:
+            continue
+        normed = [_scope_norm_token(t.group(0)) for t in toks]
+        verb_idx = [i for i, n in enumerate(normed)
+                    if _VERB_CLASS_BY_FORM.get(n) in anchor_classes]
+        if verb_idx:
+            verb_seen = True
+        cue_idx = set()
+        for m in _NEGATION_RE.finditer(clause):
+            s, e = m.span()
+            for i, t in enumerate(toks):
+                if t.start() < e and t.end() > s:
+                    cue_idx.add(i)
+        if (cue_idx and verb_idx
+                and any(abs(c - v) <= window
+                        for c in cue_idx for v in verb_idx)):
+            return True
+    return not verb_seen
+
 # Wave-146 (row 7): English double-negation resolution. Two negation
 # cues in a bounded same-sentence construction that cancel into
 # affirmation ("There is no reason not to send the Q3 report") must

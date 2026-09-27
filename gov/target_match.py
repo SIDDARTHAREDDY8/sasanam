@@ -74,8 +74,10 @@ __all__ = [
     "target_similarity",
     "match_target",
     "tokenize",
+    "typed_scope_similarity",
     "DEFAULT_THRESHOLD",
     "MATCH_METHOD",
+    "TTC_MATCH_METHOD",
 ]
 
 #: Default cover threshold. Measured FP/FN tradeoff (see module
@@ -136,6 +138,24 @@ def _destinations(text):
     return set(_DEST_RE.findall(text.lower()))
 
 
+def _tversky(ta, tb):
+    """Tversky core over two token sets (alpha=beta=_DIFF_PENALTY).
+
+    Shared with ``target_similarity`` and ``typed_scope_similarity``
+    so the measure is identical on both paths; only the token sets
+    (raw vs synonym-canonicalized) and the vetoes differ.
+    """
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    if inter == 0:
+        return 0.0
+    only_a = len(ta - tb)
+    only_b = len(tb - ta)
+    return inter / (inter + _DIFF_PENALTY * only_a
+                    + _DIFF_PENALTY * only_b)
+
+
 def target_similarity(a, b):
     """Token-overlap similarity of two targets, 0.0--1.0.
 
@@ -155,13 +175,7 @@ def target_similarity(a, b):
     da, db = _destinations(a), _destinations(b)
     if da and db and da != db:
         return 0.0  # destination veto: never fuzz where it goes
-    inter = len(ta & tb)
-    if inter == 0:
-        return 0.0
-    only_a = len(ta - tb)
-    only_b = len(tb - ta)
-    return inter / (inter + _DIFF_PENALTY * only_a
-                    + _DIFF_PENALTY * only_b)
+    return _tversky(ta, tb)
 
 
 def match_target(action_target, goal_targets, threshold=DEFAULT_THRESHOLD):
@@ -212,3 +226,161 @@ def match_target(action_target, goal_targets, threshold=DEFAULT_THRESHOLD):
     if best_score >= threshold:
         return (best_key, best_score)
     return (None, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Wave-147 (row-11): synonym-aware typed-scope similarity.
+#
+# Residual from wave-145/146: the type-to-confirm ceremony's raw
+# token-tversky check is synonym-INDIFFERENT in the dangerous
+# direction. "send the report" vs "archive the Q3 report" scores
+# 0.5714 >= 0.5 -- the shared noun "report" carries a DIFFERENT
+# action over the threshold, so the ceremony would accept a typed
+# scope naming the wrong action (fail-open on meaning, fail-closed
+# only on tokens). Meanwhile "erase the report" vs "delete the Q3
+# report" (a true synonym match) also scores 0.5714 -- held, but
+# only by noun luck, not by verb understanding.
+#
+# The layer below is used ONLY by the type-to-confirm ceremony
+# (gov/approvals._type_to_confirm_ok). The row-11 paraphrase tier
+# (gov/goal_audit.py, gov/goals.py detect_cross_run_laundering)
+# keeps raw token-tversky: the GRANT path is NOT widened.
+#
+# Curated synonym map (bounded, documented; every entry hand-picked
+# for the ceremony's verb/noun space -- NOT auto-expanded from any
+# external wordlist: $0, stdlib, deterministic, and no silent
+# vocabulary drift):
+#   DELETE  <- delete, erase, remove, destroy
+#   SEND    <- send, transmit, dispatch
+#   ARCHIVE <- archive, store, backup
+#   REPORT  <- report, document, file      (nouns canonicalize too)
+#   Q3      <- q3                          (identity: deliberately NOT
+#              expanded -- "Q3"/"quarter-three" stays a literal token;
+#              expanding time references would fuzz what the scope is)
+#
+# Design (deviation from the wave-147 sketch, measured): the sketch
+# proposed additive synonym EXPANSION and max(raw, expanded). That
+# provably cannot refuse the wrong-verb pair: expansion only ADDS
+# overlap, and the pair already scores 0.5714 >= 0.5 raw, so
+# max(raw, expanded) >= 0.5 always. The shipped design instead
+# CANONICALIZES (each token maps to its canonical form) and adds a
+# VERB-AGREEMENT VETO in the wave-136 destination-veto idiom: when
+# BOTH texts name an action verb from the curated verb classes and
+# the canonical verbs DIFFER, similarity is forced to 0.0. The veto
+# is conservative by design -- it can only suppress matches, never
+# create them. max(raw, canonical) is taken only when no veto fires,
+# so canonicalization can only ever ADD true-synonym matches on top
+# of the raw behavior, never remove them.
+#
+# The veto needs both sides to name a verb: a typed scope with no
+# verb-class token ("the Q3 report", "please handle it") falls back
+# to max(raw, canonical) -- graceful, no new refusal mode for
+# verbless typing. A one-sided destination veto is unchanged from
+# the raw path (veto computed on the ORIGINAL texts, since
+# canonicalization strips the dotted-domain shape the veto reads).
+# ---------------------------------------------------------------------------
+
+#: Auditable method tag for the synonym-aware ceremony path (recorded
+#: on approval_scope_mismatch / goal_specificity_scope_typed events
+#: and on the narrowed record, replacing MATCH_METHOD there).
+TTC_MATCH_METHOD = "token-tversky+synonym"
+
+#: Curated synonym map: stemmed token -> canonical form. Keys are
+#: post-stemming (the map is applied after _stem, matching
+#: tokenize()'s pipeline). Q3 maps to itself: identity, not
+#: expansion (see the design note above).
+_TTC_SYNONYM_MAP = {
+    # verbs: DELETE class
+    "delete": "delete", "erase": "delete", "remove": "delete",
+    "destroy": "delete",
+    # verbs: SEND class
+    "send": "send", "transmit": "send", "dispatch": "send",
+    # verbs: ARCHIVE class
+    "archive": "archive", "store": "archive", "backup": "archive",
+    # nouns: REPORT class
+    "report": "report", "document": "report", "file": "report",
+    # identity (deliberately unexpanded)
+    "q3": "q3",
+}
+
+#: Verb classes: stemmed token -> canonical verb. Only verbs are
+#: veto-relevant; nouns canonicalize but never veto.
+_TTC_VERB_CLASSES = {
+    "delete": "delete", "erase": "delete", "remove": "delete",
+    "destroy": "delete",
+    "send": "send", "transmit": "send", "dispatch": "send",
+    "archive": "archive", "store": "archive", "backup": "archive",
+}
+
+
+def _canonical_tokens(text):
+    """Token set with synonym canonicalization applied.
+
+    Same pipeline as tokenize() (lowercase, _TOKEN_RE, stem,
+    stopwords dropped), then each stem maps through
+    _TTC_SYNONYM_MAP (identity when absent).
+    """
+    out = set()
+    for t in _TOKEN_RE.findall(text.lower()):
+        if t in _STOPWORDS:
+            continue
+        stemmed = _stem(t)
+        out.add(_TTC_SYNONYM_MAP.get(stemmed, stemmed))
+    return out
+
+
+def _verb_class(text):
+    """Canonical verb class of the FIRST verb-class token in ``text``.
+
+    Scans tokens in order (lowercased, stemmed); returns the
+    canonical verb ("delete"/"send"/"archive") or None when no
+    verb-class token appears. First-verb-wins matches the ceremony's
+    reference shape ("verb target" effect atoms) and ordinary
+    imperative phrasing ("erase the report").
+    """
+    for t in _TOKEN_RE.findall(text.lower()):
+        cls = _TTC_VERB_CLASSES.get(_stem(t))
+        if cls is not None:
+            return cls
+    return None
+
+
+def typed_scope_similarity(typed, reference):
+    """Synonym-aware similarity for the type-to-confirm ceremony.
+
+    ``max(raw token-tversky, canonicalized token-tversky)`` at the
+    same DEFAULT_THRESHOLD, with two conservative vetoes (either
+    forces 0.0):
+      - destination veto (wave-136, unchanged): both texts name
+        explicit differing destinations -> 0.0. Computed on the
+        ORIGINAL texts.
+      - verb-agreement veto (wave-147): both texts name a
+        verb-class action verb and the canonical verbs differ ->
+        0.0. "send the report" vs "archive the Q3 report" is 0.0;
+        "erase the report" vs "delete the Q3 report" is 0.8889.
+
+    Empty/None inputs score 0.0 and never match; non-string inputs
+    raise ValueError (same type discipline as target_similarity).
+    Deterministic, stdlib-only.
+
+    Used ONLY by gov/approvals._type_to_confirm_ok. The row-11
+    paraphrase tier keeps raw target_similarity.
+    """
+    if typed is None or reference is None:
+        return 0.0
+    if not isinstance(typed, str) or not isinstance(reference, str):
+        raise ValueError(
+            "typed_scope_similarity requires strings, got %s and %s"
+            % (type(typed).__name__, type(reference).__name__))
+    if not typed.strip() or not reference.strip():
+        return 0.0
+    raw = target_similarity(typed, reference)
+    da, db = _destinations(typed), _destinations(reference)
+    if da and db and da != db:
+        return 0.0  # destination veto (on originals): never fuzz
+    expanded = _tversky(_canonical_tokens(typed),
+                        _canonical_tokens(reference))
+    va, vb = _verb_class(typed), _verb_class(reference)
+    if va is not None and vb is not None and va != vb:
+        return 0.0  # verb-agreement veto: different actions
+    return max(raw, expanded)

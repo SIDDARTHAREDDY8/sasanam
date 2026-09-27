@@ -58,8 +58,8 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
-from .target_match import (target_similarity, DEFAULT_THRESHOLD,
-                           MATCH_METHOD)
+from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
+                           TTC_MATCH_METHOD)
 
 
 def _utcnow():
@@ -633,13 +633,15 @@ def _type_to_confirm_ok(reference_texts, typed_scope):
     reference scope. Returns ``(ok, score, detail)``.
 
     ``typed_scope`` must be a non-blank string scoring >=
-    ``DEFAULT_THRESHOLD`` (``gov.target_match`` token-tversky -- the
-    same measure AND threshold as the row-11 paraphrase tier, reused
-    not re-implemented) against at least one reference text. A missing,
-    blank, or non-string typed scope is NEVER a match (fail-closed):
-    a bare click cannot satisfy the ceremony. The best sub-threshold
-    score is reported (not zeroed) so the LOUD refusal event names
-    the actual measured mismatch.
+    ``DEFAULT_THRESHOLD`` (``gov.target_match.typed_scope_similarity``
+    -- the synonym-aware token-tversky variant, wave-147: max of raw
+    and synonym-canonicalized token-tversky with the destination veto
+    and a verb-agreement veto, at the same threshold) against at
+    least one reference text. A missing, blank, or non-string typed
+    scope is NEVER a match (fail-closed): a bare click cannot
+    satisfy the ceremony. The best sub-threshold score is reported
+    (not zeroed) so the LOUD refusal event names the actual
+    measured mismatch.
     """
     if not isinstance(typed_scope, str) or not typed_scope.strip():
         return (False, 0.0,
@@ -649,16 +651,17 @@ def _type_to_confirm_ok(reference_texts, typed_scope):
     for text in reference_texts:
         if not isinstance(text, str) or not text.strip():
             continue
-        score = target_similarity(typed_scope, text)
+        score = typed_scope_similarity(typed_scope, text)
         if score > best:
             best = score
     if best >= DEFAULT_THRESHOLD:
         return (True, best,
                 "typed scope matches the declared scope (token-tversky "
-                "%.3f >= %.2f)" % (best, DEFAULT_THRESHOLD))
+                "+synonym %.3f >= %.2f) %s" % (best, DEFAULT_THRESHOLD,
+                                               TTC_MATCH_METHOD))
     return (False, best,
             "typed scope does not match the goal's declared scope "
-            "(token-tversky %.3f < %.2f)"
+            "(token-tversky+synonym %.3f < %.2f)"
             % (best, DEFAULT_THRESHOLD))
 
 
@@ -3558,7 +3561,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         Wave-145 (row-11) type-to-confirm: ``typed_scope`` is the
         human's TYPED narrowed scope. It is required -- and checked
         against the record's stamped reference scope with
-        ``gov.target_match`` token-tversky at >= DEFAULT_THRESHOLD --
+        ``gov.target_match.typed_scope_similarity`` (synonym-aware
+        token-tversky, wave-147) at >= DEFAULT_THRESHOLD --
         when APPROVING a ``goal_specificity_review`` for a vague or
         wildcard-scope goal (a bare click-approve is refused
         fail-closed with a LOUD ``approval_scope_mismatch`` event).
@@ -3949,7 +3953,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                                             else None),
                             "match_score": _ttc_score,
                             "match_threshold": DEFAULT_THRESHOLD,
-                            "match_method": MATCH_METHOD,
+                            "match_method": TTC_MATCH_METHOD,
                             "goal_id": (target.get("args") or {}).get(
                                 "goal_id"),
                             "reason": ("type_to_confirm: %s" % _ttc_detail),
@@ -3970,7 +3974,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 # the audit trail shows what the human claimed to approve.
                 target["typed_scope"] = typed_scope
                 target["typed_scope_score"] = _ttc_score
-                target["typed_scope_method"] = MATCH_METHOD
+                target["typed_scope_method"] = TTC_MATCH_METHOD
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()

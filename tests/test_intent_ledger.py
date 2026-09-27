@@ -621,21 +621,22 @@ class NegationInflectionSeamTest(unittest.TestCase):
             self.assertTrue(r["similarity_countermand"], msg)
             self.assertTrue(r["is_countermand"], msg)
 
-    def test_wave145_keineswegs_scope_sentence_still_fires(self):
-        # Honest pin, not a claim: keineswegs scoping over the wrong
-        # predicate ("fertig", not the grant verb) still fires the
-        # gate -- seeded-approach scope imprecision, the same class
-        # as the keinerlei ceiling. Pinned here so the precision
-        # battery's EXPECTED pin cannot silently rot. Explicit
-        # threshold (not record_intent's derived per-message
-        # threshold): the raw similarity is 0.545, inside the
-        # derived [0.4, 0.6) band, so record_intent would be flaky
-        # here -- the pin is about the cue+score, not calibration.
+    def test_wave147_keineswegs_scope_sentence_now_silent(self):
+        # Graduated in wave-147 (row 7 scope window): keineswegs
+        # scoping over the wrong predicate ("fertig", not the grant
+        # verb) while the grant verb is re-affirmed in a separate
+        # clause no longer fires the gate. The anti-rot discipline
+        # is preserved in the other direction: if this sentence ever
+        # fires again, this test FAILS. Explicit threshold (not
+        # record_intent's derived per-message threshold): the raw
+        # similarity is 0.545, inside the derived [0.4, 0.6) band, so
+        # record_intent would be flaky here -- the pin is about the
+        # cue+scope, not calibration.
         fired, _, score = similarity_countermand(
             "Der Q3 report ist keineswegs fertig; bitte senden Sie "
             "ihn an den vendor.",
             [self.GRANT], threshold=0.5)
-        self.assertTrue(fired)
+        self.assertFalse(fired)
         self.assertGreaterEqual(score, 0.5)
 
     def test_wave144_cues_fire_at_ledger(self):
