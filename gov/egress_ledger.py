@@ -308,6 +308,16 @@ def _checkpoint_mac(key, key_epoch, seq, entry_hash):
 LEDGER_LOCK_TIMEOUT_SECS = 30
 _LEDGER_LOCK_POLL_SECS = 0.02
 
+# Row-20 (wave-151 lane 2): read/write rendezvous (covert-channel
+# restriction escape, SwarmTraces class) pairing bounds. The pair key is
+# the F13/F20 registered domain, so api.short.ly pairs with short.ly;
+# a write pairs with a later read to the same domain within the window.
+# Both bounds are finite and documented as honest ceilings: a patient
+# agent that separates write/read by more than the window, or buries
+# the write under IO_MAX_SCAN newer IO entries, evades the pairing.
+IO_WINDOW_SECS = 24 * 3600
+IO_MAX_SCAN = 1000
+
 
 class LedgerLockError(OSError):
     """F74: the egress-ledger lock could not be acquired in time.
@@ -1227,6 +1237,121 @@ class EgressLedger:
                               if len(runs) >= 2)
         return (len(thin_principal_runs) >= k
                 and established >= max(1, k - 1))
+
+    # -- row-20 read/write rendezvous (covert-channel restriction escape)
+    # ------------------------------------------------------------------
+    # Wave-151 lane 2 (SwarmTraces class): a content-blind, triage-only
+    # detector for write->read rendezvous through the same third-party
+    # host. A write (POST/PUT/...) to a host followed by a read (GET)
+    # from the same host's domain completes a link-shortener-style
+    # covert channel; the executor records one egress_io entry per
+    # executed host egress call and, on reads, pairs it with the newest
+    # prior same-host write (same-agent preferred, cross-agent also
+    # reported). NEVER blocks -- the caller emits a LOUD
+    # `covert_channel_suspect` audit event for human review.
+
+    def record_egress_io(self, direction, endpoint, principal, agent_id,
+                         run_id, ts, bytes_out, bytes_in, event_id):
+        """Append a content-blind egress IO record. Returns the record.
+
+        ``direction`` is "write" or "read"; ``endpoint`` the full
+        URL/endpoint. Stores ROUTING/METADATA ONLY -- host (the F13/F20
+        registered domain, so api.short.ly pairs with short.ly and IP
+        literals keep their own bucket), the exact endpoint URL, byte
+        counts, attribution, ts, and the caller's audit event id. No
+        params, bodies, slugs, or response text ever land here (the
+        detector is content-blind by design; the byte counts are the
+        only payload-derived numbers). F74: the write lock is held
+        inside ``append`` -- no second lock here.
+        """
+        if direction not in ("write", "read"):
+            raise ValueError("direction must be 'write' or 'read'")
+        host = registered_domain(endpoint or "")
+        entry = {
+            "kind": "egress_io",
+            "ts": ts,
+            "run_id": run_id,
+            "principal": principal,
+            "agent_id": agent_id,
+            "io": direction,
+            "host": host,
+            "exact": endpoint or "",
+            "bytes_out": int(bytes_out or 0),
+            "bytes_in": int(bytes_in or 0),
+            "event_id": event_id,
+        }
+        self.append(entry)
+        return entry
+
+    def io_rendezvous(self, host, agent_id, read_ts,
+                      window_secs=IO_WINDOW_SECS, now=None):
+        """Newest prior WRITE IO entries to ``host`` at/before
+        ``read_ts``. Returns (same_agent_write, cross_agent_write) --
+        each the most recent qualifying write entry, or None.
+
+        The pair key is the registered domain: a write to
+        api.short.ly pairs with a read of short.ly (the SwarmTraces
+        shape), at the cost of also pairing unrelated subdomains of
+        one tenant (documented inherent FP). Two finite bounds: the
+        write must be within ``window_secs`` of the read, and the scan
+        covers at most the last IO_MAX_SCAN egress_io entries. A
+        patient agent that waits out the window, or buries the write
+        under IO_MAX_SCAN newer IO entries, evades the pairing --
+        documented honest ceiling, not a solved bound.
+
+        F74: the verify+scan runs under the shared ledger lock
+        (F-RA1).
+        """
+        if not self.path.exists() or not host:
+            return None, None
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()  # nested: reentrant under hold
+                lines = self.path.read_text(
+                    encoding="utf-8").splitlines()
+        except _LedgerMissing:
+            return None, None
+        ios = []
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("kind") == "egress_io":
+                ios.append(entry)
+        # Bounded tail scan (IO_MAX_SCAN): deterministic memory and
+        # time; entries older than the bound never pair.
+        ios = ios[-IO_MAX_SCAN:]
+        newest_first = []
+        for entry in reversed(ios):
+            if entry.get("io") != "write":
+                continue
+            if entry.get("host") != host:
+                continue
+            try:
+                ts = float(entry.get("ts", 0))
+            except (TypeError, ValueError):
+                continue
+            if ts > read_ts:
+                continue
+            if read_ts - ts > window_secs:
+                continue
+            newest_first.append(entry)
+        same = None
+        cross = None
+        for entry in newest_first:
+            entry_agent = entry.get("agent_id")
+            if same is None and agent_id and entry_agent == agent_id:
+                same = entry
+            if (cross is None and entry_agent
+                    and entry_agent != agent_id):
+                cross = entry
+            if same is not None and cross is not None:
+                break
+        return same, cross
 
     # -- principal-scoped sensitive-read taint (F15) ------------------------
 

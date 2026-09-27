@@ -196,6 +196,54 @@ _DEVA_WORD_CHAR = r"[\w\u0900-\u0963\u0966-\u097F]"
 _DEVA_NEG_SRC = (r"(?<!" + _DEVA_WORD_CHAR + r")"
                  r"(?:नहीं|न|मत)"
                  r"(?!" + _DEVA_WORD_CHAR + r")")
+# Wave-151 (row 7): Russian Cyrillic negation cues (pilot -- Russian
+# only; Arabic/CJK and other non-romanized scripts remain untouched).
+# Unlike Devanagari combining marks, Cyrillic letters ARE \w, so plain
+# \b fires correctly around Cyrillic words: \bне\b matches "отчёт не
+# отправляйте" and does NOT match "менеджер", "ниже", "некоторые",
+# "интернет" (нет), or "организация"/"униформа" (ни) -- measured,
+# pinned in evals/cyrillic_negation_probes.py::c_lookalike_boundaries
+# (0 cue hits on 6 word-internal lookalikes). No hand-rolled guards
+# needed.
+#
+# Cues: не ("not"), нет ("no" / "there is no"), ни (the
+# "neither/nor" particle, also the standalone negator in "ни в коем
+# случае"), нельзя ("must not" / "forbidden"), plus the paired
+# ни...ни ("neither...nor", _CYRILLIC_NI_PAIR_SRC -- up to 8
+# intervening words, embedded in _NEGATION_RE like the French paired
+# pattern so every consumer of the core picks it up). The paired form
+# is detection-equivalent to the standalone ни cue (ни is itself a
+# mandated cue, so the pair adds no new search hits); it is kept for
+# structural parity with the French pattern and to name the
+# construction explicitly.
+#
+# Wave-151 precision guards (wave-145 discipline -- each suppressed
+# hit below was a REAL false revocation at the gate, pinned by a
+# regression probe):
+#   - "нельзя" does NOT cue in the polite idiom "нельзя ли"
+#     ("Нельзя ли отправить Q3 отчёт?" = "could you please send the
+#     report?" -- FIRED pre-guard at similarity 0.571). A genuine
+#     "Q3 отчёт отправлять нельзя" still fires; the guard is
+#     positional (immediately followed by "ли").
+#   - "не" does NOT cue in the tag question "не так ли" ("Вы
+#     отправили Q3 отчёт, не так ли?" = "you sent it, didn't you?"
+#     -- FIRED pre-guard at 0.571). "Не так отправляйте" (no "ли")
+#     still fires; the guard is positional.
+# Scope note (same as wave-145): the guards live in the search-form
+# cue (the similarity-countermand gate). _negated_verb fullmatches
+# single window tokens, where the lookaheads are vacuous -- the
+# нельзя-ли idiom therefore still fires the RAW judge (pinned
+# EXPECTED in the battery); it is unreachable in production because
+# the judge path requires a redirect-signal countermand, which the
+# idiom lacks. The не-так-ли tag question is natively silent in the
+# judge: its cue comes after the verb, outside the pre-verb window.
+_CYRILLIC_NI_PAIR_SRC = (
+    r"(?:\bни\b(?:\s+\S+){0,8}?\s+\bни\b)"
+)
+_CYRILLIC_NEG_SRC = (
+    r"(?:\bне(?!\s+так\s+ли\b)\b|\bнет\b|\bни\b|"
+    r"\bнельзя(?!\s+ли\b)\b)"
+)
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|not(?!\s+only\b)|"
     r"no(?!\s+problems?\b)|stop|halt|"
@@ -204,7 +252,9 @@ _NEGATION_RE = re.compile(
     r"nicht|kein(?!\s+probleme?\b)|keine(?!\s+probleme?\b)|keinen|"
     r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)\b"
     r"|" + _FRENCH_NE_PAIR_SRC
-    + r"|" + _DEVA_NEG_SRC,
+    + r"|" + _DEVA_NEG_SRC
+    + r"|" + _CYRILLIC_NI_PAIR_SRC
+    + r"|" + _CYRILLIC_NEG_SRC,
     re.IGNORECASE,
 )
 
@@ -252,7 +302,12 @@ _CLAUSE_SPLIT_RE = re.compile(r"[.!?;\u0964\u0965]+")
 # anchor-class detection) and the danda acts as a token boundary like
 # other punctuation. Accents folded under NFKD (Devanagari is
 # unaffected); case lowered.
-_SCOPE_WORD_RE = re.compile(r"[a-z0-9'\u0900-\u0963\u0966-\u097F]+")
+# Wave-151 (row 7): Cyrillic block (U+0400-U+04FF) added so Russian
+# scope windows can be walked. Cyrillic has no sentence terminator
+# outside .!?; (already covered), and _fold_accents is
+# length-identical on Cyrillic (ё->е, й->и), so cue-span alignment
+# holds. Latin tokenization unchanged.
+_SCOPE_WORD_RE = re.compile(r"[a-z0-9'\u0400-\u04FF\u0900-\u0963\u0966-\u097F]+")
 _SCOPE_ELISION_RE = re.compile(r"^(?:n|d|l|s|c|j|t|qu)['’]")
 
 _VERB_CLASSES = {
@@ -268,6 +323,17 @@ _VERB_CLASSES = {
         # Wave-150: भेजिए (polite imperative) -- the common form in
         # countermand requests ("कृपया न भेजिए").
         "भेजिए",
+        # Wave-151: Russian Cyrillic SEND forms (pilot). Natural
+        # spellings; the й->и / ё->е folded duplicates are ALSO
+        # carried because the scope path folds (_fold_accents) while
+        # the judge does not -- e.g. "отправляйте" folds to
+        # "отправляите", so both spellings must be in the table for
+        # both paths to match (pinned in the battery's fold probe).
+        "отправлять", "отправить", "отправьте", "отправляйте",
+        "отправляите", "отправляй", "отправляи", "отправь",
+        "отправляет", "отправляют",
+        "отправил", "отправила", "отправили", "отправлен",
+        "отправлён", "послать", "посылать", "пошлите",
     )),
     "ARCHIVE": frozenset((
         "archive", "archives", "archiving", "archived",
@@ -286,6 +352,16 @@ _VERB_CLASSES = {
         # (remove/take away) and मिटाना (erase) families.
         "हटाएँ", "हटाना", "हटाओ", "हटाए", "हटा",
         "मिटाएँ", "मिटाना", "मिटाओ", "मिटाए", "मिटा",
+        # Wave-151: Russian Cyrillic DELETE forms (pilot; same
+        # dual-spelling discipline as SEND -- удалён/удален,
+        # удаляй/удаляи, удаляйте/удаляите). The imperfective
+        # imperatives (удаляй/удаляйте) are the natural countermand
+        # forms ("не удаляйте" -- caught missing by the wave-151
+        # battery's judge probe, fixed same wave).
+        "удалить", "удалите", "удали", "удалять", "удаляй",
+        "удаляи", "удаляйте", "удаляите", "удалил",
+        "удалила", "удалили", "удалён", "удален", "стереть",
+        "сотрите", "сотри",
     )),
     # Wave-148 (row 7): tier-2 verb classes. Same closed-list
     # discipline as tier 1: every form below was measured against
@@ -311,6 +387,12 @@ _VERB_CLASSES = {
     #   rule below, not by this table; the infinitives
     #   ("hochladen", "weiterzuleiten") ARE single tokens and live
     #   here.
+    # - Wave-151 (row 7): Cyrillic (Russian) pilot covers
+    #   SEND/DELETE/SHARE only. ARCHIVE/REDACT/PUBLISH/FORWARD/
+    #   UPLOAD carry no Cyrillic forms -- real Russian verbs for
+    #   these (архивировать, опубликовать, загрузить, переслать,
+    #   цензурировать) exist but are deliberately out of this
+    #   pilot's scope (documented residual; row 7 stays PARTIAL).
     "REDACT": frozenset((
         "redact", "redacts", "redacting", "redacted",
         "schwaerzen", "schwaerzt", "schwaerze", "geschwaerzt",
@@ -336,6 +418,11 @@ _VERB_CLASSES = {
         # "share" of साझा करना.
         "बाँटना", "बाँटें", "बाँटो", "बाँटे", "बाँटा", "बाँट",
         "साझा",
+        # Wave-151: Russian Cyrillic SHARE forms (pilot):
+        # поделиться/делиться ("to share") families. No folded
+        # duplicates needed (no й/ё in these forms -- verified).
+        "поделиться", "поделитесь", "поделись", "делись",
+        "делиться", "делитесь", "поделился", "поделились",
     )),
     "PUBLISH": frozenset((
         "publish", "publishes", "publishing", "published",
@@ -740,7 +827,9 @@ def _verb_stems(tool):
 # the similarity-countermand signal. The Devanagari range mirrors
 # _SCOPE_WORD_RE (danda U+0964/U+0965 excluded, so "भेजें।"
 # tokenises as "भेजें" and the danda stays a token boundary).
-_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0900-\u0963\u0966-\u097F]+")
+# Wave-151 (row 7): Cyrillic block added for the Russian pilot (same
+# range as _SCOPE_WORD_RE).
+_NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u097F]+")
 
 # Wave-150 (row 7): tool -> tier-1/tier-2 verb classes whose
 # Devanagari forms the judge matches natively. The Latin prefix-stem
@@ -749,6 +838,11 @@ _NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0900-\u0963\u0966-\u097F]+")
 # _VERB_CLASS_BY_FORM), so Latin behavior is bit-identical and only
 # Devanagari gains judge coverage. Tools with no class mapping keep
 # the pre-wave-150 behavior.
+# Wave-151 (row 7): the same native match now also carries the
+# Cyrillic (Russian) SEND/DELETE forms (SHARE has no share tool in
+# _TOOL_VERBS, so SHARE Cyrillic forms live in the
+# similarity-countermand scope path only -- same as Latin, which
+# also has no share tool).
 _TOOL_VERB_CLASSES = {
     "send_email": ("SEND",),
     "delete_file": ("DELETE",),
@@ -772,12 +866,18 @@ def _negated_verb(latest_text, tool):
     tokens = _NEGATED_VERB_TOKEN_RE.findall(
         str(latest_text or "").lower())
     stems = _verb_stems(tool)
-    deva_forms = set()
+    # Wave-151 (row 7): renamed from deva_forms -- the exact
+    # non-ASCII class-form match now also carries the Cyrillic
+    # (Russian) SEND/DELETE forms. Latin behavior is unchanged: the
+    # set only gains Cyrillic entries, which no Latin token can
+    # equal (and SHARE has no share tool, so its Cyrillic forms are
+    # scope-path only).
+    native_forms = set()
     for cls in _TOOL_VERB_CLASSES.get(tool, ()):
-        deva_forms.update(f for f in _VERB_CLASSES[cls]
-                          if not f.isascii())
+        native_forms.update(f for f in _VERB_CLASSES[cls]
+                            if not f.isascii())
     for i, tok in enumerate(tokens):
-        if any(tok.startswith(s) for s in stems) or tok in deva_forms:
+        if any(tok.startswith(s) for s in stems) or tok in native_forms:
             window = tokens[max(0, i - _NEGATION_WINDOW):i]
             if any(_NEGATION_RE.fullmatch(w) for w in window):
                 return True

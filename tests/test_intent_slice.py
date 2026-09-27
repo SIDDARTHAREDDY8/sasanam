@@ -624,5 +624,85 @@ class DevanagariNegationTest(unittest.TestCase):
             "Send the Q3 report to the vendor."))
 
 
+class CyrillicNegationTest(unittest.TestCase):
+    """Wave-151, row 7: Russian Cyrillic negation cues (не/нет/ни/
+    нельзя + paired ни...ни) with plain-\\b boundary discipline,
+    Cyrillic SEND/DELETE/SHARE verb forms (dual spellings for the
+    fold's й->и / ё->е normalization), and the positional "нельзя
+    ли" / "не так ли" precision guards."""
+
+    def _cue(self, text):
+        hit = m._NEGATION_RE.search(text)
+        return hit.group(0) if hit else None
+
+    def test_cues_match_standalone(self):
+        self.assertEqual(self._cue("отчёт не отправляйте"), "не")
+        self.assertEqual(self._cue("Нет. Q3 отчёт подождёт."), "Нет")
+        self.assertEqual(self._cue("Q3 отчёт ни в коем случае."), "ни")
+        self.assertEqual(self._cue("Q3 отчёт отправлять нельзя"),
+                         "нельзя")
+
+    def test_paired_ni_ni_matches(self):
+        self.assertIsNotNone(
+            m._NEGATION_RE.search("Ни отправлять, ни сохранять Q3 отчёт"))
+
+    def test_embedded_cue_does_not_match(self):
+        # "не"/"нет"/"ни" inside larger words: \b fires correctly
+        # around Cyrillic (letters are \w).
+        for w in ("менеджер", "некоторые", "интернет", "организация",
+                  "униформа", "ниже"):
+            self.assertIsNone(self._cue(w), w)
+
+    def test_nelzya_li_guard(self):
+        # The polite idiom "нельзя ли" ("could you please...") is not
+        # a countermand; bare "нельзя" still cues.
+        self.assertIsNone(self._cue("Нельзя ли отправить Q3 отчёт?"))
+        self.assertEqual(self._cue("Q3 отчёт отправлять нельзя"),
+                         "нельзя")
+
+    def test_ne_tak_li_guard(self):
+        # The tag question "не так ли" ("...didn't you?") is not a
+        # countermand; "не так" without "ли" still cues.
+        self.assertIsNone(
+            self._cue("Вы отправили Q3 отчёт, не так ли?"))
+        self.assertEqual(self._cue("Не так отправляйте Q3 отчёт"),
+                         "Не")
+
+    def test_fold_length_identical_cyrillic(self):
+        # The cue regex runs on raw text while scope tokens run on
+        # folded text: any length change misaligns cue spans. ё->е
+        # and й->и normalization is length-preserving (not identity).
+        for s in ("отправляйте", "нельзя", "удалён", "поделитесь",
+                  "Q3 отчёт не отправляйте"):
+            self.assertEqual(len(m._fold_accents(s)), len(s), s)
+        self.assertEqual(m._fold_accents("отправляйте"), "отправляите")
+        self.assertEqual(m._fold_accents("удалён"), "удален")
+
+    def test_judge_native_cyrillic_countermand(self):
+        self.assertTrue(m._negated_verb("Q3 отчёт не отправляйте",
+                                       "send_email"))
+        self.assertTrue(m._negated_verb("Q3 отчёт не удаляйте",
+                                       "delete_file"))
+        self.assertTrue(m._negated_verb("Нельзя удалять Q3 отчёт",
+                                       "delete_file"))
+
+    def test_judge_wrong_predicate_silent(self):
+        self.assertFalse(m._negated_verb("Q3 отчёт не отправляйте",
+                                        "delete_file"))
+
+    def test_scope_split_silent(self):
+        self.assertFalse(m.negation_scopes_grant(
+            "Q3 отчёт не готов; отправьте его vendor.",
+            "Send the Q3 report to the vendor."))
+
+    def test_scope_delete_share_forms(self):
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 отчёт удалять нельзя",
+            "Delete the Q3 report."))
+        self.assertTrue(m.negation_scopes_grant(
+            "Q3 отчётом делиться нельзя",
+            "Share the Q3 report with the vendor."))
+
+
 if __name__ == "__main__":
     unittest.main()

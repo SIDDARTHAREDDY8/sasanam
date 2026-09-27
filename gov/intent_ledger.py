@@ -303,7 +303,20 @@ def similarity_countermand(message, prior_messages,
       the guard so "नहीं।" still cues). Other non-romanized scripts
       (Arabic/CJK/Cyrillic) still miss. The tag question "है न?"
       ("...haven't you?") is a measured precision cost of the "न"
-      cue: it can read as a countermand.
+      cue: it can read as a countermand. Wave-151 adds a Russian
+      Cyrillic pilot: не/нет/ни/нельзя cues plus the paired ни...ни
+      construction, with plain-\b boundary discipline (Cyrillic
+      letters are \w, so \b fires correctly -- the word-internal
+      lookalikes менеджер/интернет/организация/униформа/ниже/
+      некоторые are pinned silent), Cyrillic SEND/DELETE/SHARE verb
+      forms (dual spellings carried for the fold's й->и / ё->е
+      normalization), and positional precision guards for the
+      "нельзя ли" polite idiom and the "не так ли" tag question
+      (both were real false revocations pre-guard). Arabic/CJK
+      still miss; Cyrillic verb coverage is SEND/DELETE/SHARE
+      only (ARCHIVE/REDACT/PUBLISH/FORWARD/UPLOAD have no Cyrillic
+      forms -- e.g. архивировать/опубликовать/загрузить/переслать
+      are real Russian verbs this pilot does not cover).
     - Full synonym replacement with no shared tokens still scores
       0.0 and misses -- token overlap is not semantics.
     - The deployment key must be managed like other secrets: if the

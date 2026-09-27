@@ -110,6 +110,7 @@ from .egress_ledger import (
     CAMPAIGN_WINDOW_SECS,
     FRAGMENT_MAX_BYTES,
     FRAGMENT_MIN_ENTROPY,
+    IO_WINDOW_SECS,
     SENSITIVE_TAINT_TTL_SECS,
     EgressLedger,
     LedgerUnverifiableError,
@@ -723,7 +724,14 @@ class ToolExecutor:
                  # reason. Opt-in: None (default) = zero behavior
                  # change (check_rare_token_carryover returns a silent
                  # allow without touching anything).
-                 rare_token_tracker=None):
+                 rare_token_tracker=None,
+                 # Injection-propagation screening (Row 19, wave-151):
+                 # appended LAST for the same positional-misalignment
+                 # reason. Opt-in: None (default) = zero behavior
+                 # change (check_output_propagation returns a silent
+                 # allow without touching anything; note_propagation_input
+                 # is a no-op).
+                 propagation_tracker=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -1000,6 +1008,11 @@ class ToolExecutor:
         # (check_rare_token_carryover returns a silent allow without
         # touching anything; note_read_output is a no-op).
         self.rare_token_tracker = rare_token_tracker
+        # Wave-151 (Row 19): injection-propagation tracker,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (check_output_propagation returns a silent allow without
+        # touching anything; note_propagation_input is a no-op).
+        self.propagation_tracker = propagation_tracker
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -2991,6 +3004,73 @@ class ToolExecutor:
                     "source_id": str(source_id)}
         return self.rare_token_tracker.observe_read(agent_id, source_id,
                                                     text)
+
+    def note_propagation_input(self, agent_id, source_id, text):
+        """Wave-151 (Row 19): observe one input-context segment for the
+        injection-propagation tracker.
+
+        Records the instruction spans of ``text`` (tool results,
+        retrieved docs, emails, commit summaries -- whatever the
+        deployment feeds it) so a later ``check_output_propagation``
+        can spot the agent reproducing them into a new output
+        channel. With no tracker installed this is a no-op returning
+        ``{"observed": False}`` (zero behavior change). Explicit-only:
+        no automatic read observation (the wave-141 rare-token
+        discipline is a named follow-up, not this pilot).
+        """
+        if self.propagation_tracker is None:
+            return {"observed": False, "agent_id": str(agent_id),
+                    "source_id": str(source_id)}
+        return self.propagation_tracker.observe_input(agent_id, source_id,
+                                                      text)
+
+    def check_output_propagation(self, agent_id, channel, output_text,
+                                 user_request=None):
+        """Wave-151 (Row 19): output-boundary injection-propagation check.
+
+        When a ``propagation_tracker`` was installed at construction
+        (opt-in), scores one boundary-crossing output (``channel`` is
+        "file"/"chat"/"code"/... -- recorded for triage, never
+        verdict-relevant) for injected-instruction propagation: the
+        output reproduces an imperative instruction that was present
+        in the observed input context but NOT in the user's original
+        request.
+
+        Response is TRIAGE TIER ONLY, like the wave-137
+        ``read_then_egress_novel`` flag: on ``propagation_suspect`` a
+        LOUD ``injection_propagation_suspect`` audit event is appended
+        (flag "injection_propagation", reproduced span(s), source
+        ids, channel) and execution PROCEEDS -- no approval is queued,
+        nothing is blocked, nothing halts. With no tracker installed
+        this returns a silent ``allow`` and does nothing (zero
+        behavior change).
+        """
+        silent = {"verdict": "allow", "spans": [], "channel": str(channel),
+                  "agent_id": str(agent_id), "sources": [],
+                  "reason": "no_propagation_tracker"}
+        if self.propagation_tracker is None:
+            return silent
+        res = self.propagation_tracker.check_output(agent_id, channel,
+                                                    output_text,
+                                                    user_request=user_request)
+        if res.get("verdict") != "propagation_suspect":
+            return res
+        detail = ("channel=%s spans=%d sources=%s" % (
+            res.get("channel"), len(res.get("spans", [])),
+            ",".join(res.get("sources", []))))
+        self.log.append({
+            "event": "injection_propagation_suspect",
+            "flag": "injection_propagation",
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "channel": res.get("channel"),
+            "spans": res.get("spans", []),
+            "sources": res.get("sources", []),
+            "detail": detail,
+            "reason": ("injection-propagation suspect (triage-only, "
+                       "execution proceeds; never a block): %s" % detail),
+        })
+        return res
 
     def check_rare_token_carryover(self, agent_id, tool, args,
                                    payload_text=None, identity=None):
@@ -5178,6 +5258,153 @@ class ToolExecutor:
                                "reflected in cross-run upload memory; "
                                "citation correlation for this URL will be "
                                "run-log-only." % (type(e).__name__, e)),
+                })
+            except Exception:
+                pass
+
+    # Row-20 (wave-151 lane 2): read/write rendezvous (covert-channel
+    # restriction escape, SwarmTraces class) -- triage tier, never
+    # blocking. Called at the two execution boundaries AFTER the
+    # executed call's audit entry is appended, so the IO record carries
+    # the real audit event seq. Content-blind: records routing/metadata
+    # only (host, byte counts), never params/bodies/slugs/response
+    # text. Same-host write->read pairs emit a LOUD
+    # `covert_channel_suspect` audit event (decision
+    # flagged_for_review); ledger trouble degrades to a LOUD
+    # `covert_channel_check_skipped` event (fail-open -- the execution
+    # already happened). Queued-but-never-executed calls are not
+    # checked: a queued write is not a rendezvous half.
+
+    @staticmethod
+    def _io_direction(tool, args):
+        """Classify an executed host-egress call as a channel
+        write/read. http_post is always a write. api_call is
+        method-driven: GET/HEAD/OPTIONS read; POST/PUT/PATCH/DELETE
+        write; a missing or unknown method with non-empty params is a
+        write (params are outbound bytes in this engine's model -- see
+        _egress_bytes_for); a missing method with empty params is a
+        read (a bare fetch). Returns None when the call carries no host
+        URL/endpoint (not a host egress call)."""
+        if tool == "http_post":
+            url = args.get("url")
+        elif tool == "api_call":
+            url = args.get("endpoint")
+        else:
+            return None
+        if not url:
+            return None
+        if tool == "http_post":
+            return "write"
+        method = str(args.get("method") or "").upper()
+        if method in ("GET", "HEAD", "OPTIONS"):
+            return "read"
+        if method in ("POST", "PUT", "PATCH", "DELETE"):
+            return "write"
+        return "write" if args.get("params") else "read"
+
+    def _check_covert_channel(self, tool, args, result, principal,
+                              agent_id, run_id, event_seq):
+        """Row-20 rendezvous check at an execution boundary.
+
+        Records one content-blind egress_io entry in the shared ledger
+        (F74 lock discipline lives in the ledger methods), then -- for
+        reads -- pairs it with the newest prior same-host write within
+        IO_WINDOW_SECS / the last IO_MAX_SCAN IO entries. Each
+        completed pair emits one LOUD `covert_channel_suspect` audit
+        event keyed by the unique (write_event_id, read_event_id), so a
+        second read-back of the same planted write is a second suspect
+        event (a second exfil). Same-agent pairs are preferred;
+        cross-agent pairs are reported separately (noisier by
+        construction: two agents may legitimately share one SaaS API).
+        The call itself is never blocked or queued by this check.
+        """
+        direction = self._io_direction(tool, args or {})
+        if direction is None:
+            return
+        try:
+            endpoint = (args.get("endpoint") if tool == "api_call"
+                        else args.get("url"))
+            host = registered_domain(endpoint or "")
+            ts = time.time()
+            # Honest byte counts on the RAW args at the boundary so DLP
+            # redaction never reduces the count (same contract as
+            # _egress_bytes_for's docstring). Values are counted, never
+            # logged: the suspect event and the ledger entry carry only
+            # the counts.
+            bytes_out = self._egress_bytes_for(tool, args or {})
+            try:
+                bytes_in = len(json.dumps(result, sort_keys=True,
+                                          default=str).encode("utf-8"))
+            except Exception:
+                bytes_in = 0
+            self._ledger.record_egress_io(direction, endpoint or "",
+                                          principal, agent_id, run_id,
+                                          ts, bytes_out, bytes_in,
+                                          event_seq)
+            if direction != "read" or not host:
+                return
+            same, cross = self._ledger.io_rendezvous(host, agent_id, ts)
+            for pair_kind, write in (("same_agent", same),
+                                     ("cross_agent", cross)):
+                if write is None:
+                    continue
+                self.log.append({
+                    "event": "covert_channel_suspect",
+                    "run_id": run_id,
+                    "agent_id": agent_id,
+                    "role": "agent",
+                    "principal": principal,
+                    "tool": tool,
+                    "decision": "flagged_for_review",
+                    "policy_id": "covert-channel-rendezvous",
+                    "flag": "covert_channel_suspect",
+                    "severity": "review",
+                    "host": host,
+                    "pair_kind": pair_kind,
+                    "write_event_id": write.get("event_id"),
+                    "read_event_id": event_seq,
+                    "write_agent_id": write.get("agent_id"),
+                    "read_agent_id": agent_id,
+                    "write_ts": write.get("ts"),
+                    "read_ts": ts,
+                    "write_bytes_out": write.get("bytes_out"),
+                    "write_bytes_in": write.get("bytes_in"),
+                    "read_bytes_out": bytes_out,
+                    "read_bytes_in": bytes_in,
+                    # Triage-only heuristic: content-blind
+                    # write->read rendezvous pairing, never a verdict.
+                    "reason": ("Write->read rendezvous on %s within "
+                               "%ds: %s write event %s (%s out / %s in "
+                               "bytes) paired with %s read event %s "
+                               "(%s out / %s in bytes). Heuristic, "
+                               "content-blind, triage tier only -- "
+                               "does not block or queue the call."
+                               % (host, IO_WINDOW_SECS,
+                                  pair_kind, write.get("event_id"),
+                                  write.get("bytes_out"),
+                                  write.get("bytes_in"), agent_id,
+                                  event_seq, bytes_out, bytes_in)),
+                })
+        except Exception as e:
+            # Fail open, LOUD: the execution already happened; audit
+            # the missing check instead of breaking the result
+            # (mirrors _record_upload's upload_record_skipped).
+            try:
+                self.log.append({
+                    "event": "covert_channel_check_skipped",
+                    "run_id": run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "principal": principal,
+                    "tool": tool,
+                    "decision": "check_skipped",
+                    "policy_id": "covert-channel-rendezvous",
+                    "flag": "covert_channel_check_skipped",
+                    "reason": ("Read/write rendezvous check skipped "
+                               "(fail-open): %s: %s. The execution is "
+                               "not reflected in covert-channel IO "
+                               "memory; a later read cannot pair with "
+                               "this call." % (type(e).__name__, e)),
                 })
             except Exception:
                 pass
@@ -8145,6 +8372,15 @@ class ToolExecutor:
                 "usage": dict((result.get("_usage") or {})),
                 "budget_meter": self._budget_meter(),
             }))
+            # Row-20 (wave-151 lane 2): read/write rendezvous check at
+            # the execution boundary -- triage tier, never blocking.
+            # Runs AFTER the audit append so the IO record carries the
+            # real event seq; kwargs are the RAW args at the boundary
+            # (byte counts are computed, values never logged).
+            self._check_covert_channel(tool, kwargs, result,
+                                       identity.principal,
+                                       identity.agent_id,
+                                       identity.run_id, entry["seq"])
             return {"status": "executed", "result": result, "seq": entry["seq"]}
 
         if decision.effect == "deny":
@@ -9547,6 +9783,18 @@ class ToolExecutor:
                 "usage": dict((result.get("_usage") or {})),
                 "budget_meter": self._budget_meter(),
             })
+            # Row-20 (wave-151 lane 2): read/write rendezvous check at
+            # the approved-execution boundary -- triage tier, never
+            # blocking. Runs AFTER the audit append so the IO record
+            # carries the real event seq; _exec_args are the raw
+            # sentinel-substituted execution args (byte counts are
+            # computed, values never logged).
+            self._check_covert_channel(rec["tool"], _exec_args, result,
+                                       (rec.get("identity") or {}).get(
+                                           "principal"),
+                                       rec.get("agent_id"),
+                                       rec.get("run_id", self.run_id),
+                                       entry["seq"])
             # F39: the durable claim (mark_executed) happened BEFORE the
             # side effect above — nothing to mark here.
             done.append({"agent_id": rec.get("agent_id"),
