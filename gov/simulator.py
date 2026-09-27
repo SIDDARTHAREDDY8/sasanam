@@ -160,6 +160,16 @@ def _reconstruct_context(entry, counters, policy):
             # None (bool(None)==False, the engine's semantics). No
             # run-time state involved; old entries stay reconstructible.
             return None, None
+        if key == "read_classified":
+            # Row-13 (2026-09-26): the classification taint did not exist
+            # before this feature. The snapshot (checked first above) is
+            # authoritative for new entries; an old entry whose snapshot
+            # lacks the key predates the registry and hook, so the taint
+            # could not have been set — honestly False, not indeterminate.
+            # (Unlike carries_read_content, where absence means the capture
+            # predates the snapshot contract but the taint mechanism
+            # existed.)
+            return False, None
         if key == "credential_identity_mismatch":
             # F111 (wave-34): deterministic False when the recorded args
             # carry nothing the identity check could trip on. The

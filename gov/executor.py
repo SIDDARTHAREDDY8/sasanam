@@ -71,6 +71,8 @@ from urllib.parse import urlparse
 
 from . import dlp
 from . import canary as _canary
+from . import sentinel_substitution as _sentinel
+from . import classification as _classification
 from . import delegation_tokens as _delegation_tokens
 from . import exchange_ledger as _exchange_ledger
 from . import rules_tiering as _rules_tiering
@@ -626,7 +628,11 @@ class ToolExecutor:
                  skill_tool_map=None, skill_mcp_map=None,
                  skill_pin_path=None,
                  capability_gate_binding=None, capability_assessment=None,
-                 capability_ungoverned_ack=None):
+                 capability_ungoverned_ack=None,
+                 # Sentinel credential substitution (adapted from
+                 # anthropics/sandbox-runtime): appended LAST so no
+                 # existing positional caller can misalign.
+                 sentinel_registry=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -844,6 +850,18 @@ class ToolExecutor:
         # change. When set, check_and_trip runs on the egress-attempt path
         # inside call() and halts fail-closed on a hit.
         self.canary_registry = canary_registry
+        # Sentinel credential substitution (adapted from
+        # anthropics/sandbox-runtime credential-sentinel.ts): the run's
+        # SentinelVault (operator trust domain, process memory only).
+        # Default None = substitution off, zero behavior change. When
+        # set, validate_sentinel_binding runs on the egress-attempt
+        # path inside call() (binding verified BEFORE the policy
+        # decision; mismatch trips SentinelTripHalt fail-closed), and
+        # substitute_for_execution swaps sentinels for real values ONLY
+        # at the execution boundary (direct-allow path and approved
+        # sweep), into an ephemeral copy — the secret never enters the
+        # audit path.
+        self.sentinel_registry = sentinel_registry
         # Wave-51 P1: persistent run-halt flag. Once a canary trips, the
         # run stays halted server-side: every later call() raises
         # CanaryTripHalt immediately, so catching the exception and
@@ -1310,6 +1328,17 @@ class ToolExecutor:
         self._read_contents = []  # fingerprints of executed read results
         self._read_sensitive = False  # F9: a read returned DLP-sensitive
         # content this run; api_call afterwards is taint-gated.
+        # Row-13 closure: classification-labeled provenance taint. When
+        # a read_file returns content from a labeled path, the run is
+        # tainted with the label's level (max wins); subsequent egress
+        # is gated for human declassification review
+        # (approval-classified-egress). Label-based, not content-based:
+        # paraphrase cannot shed a label attached to the read event.
+        # Run-scoped (no cross-run ledger persistence in v1; documented
+        # residual).
+        self.classification = _classification.ClassificationRegistry()
+        self._read_classification = None  # max level string, or None
+        self._read_classification_sources = []  # [(path, level)]
 
     def _eviction_index(self):
         """H26: index into ``_read_contents`` of the oldest
@@ -2016,6 +2045,50 @@ class ToolExecutor:
         # _usage-less dict, so this line accrues 0 (no-op) and the
         # foreign path's loud accrual is the single metering event.
         self._accrue_result_usage(result)
+
+    def _classification_taint_on_read(self, tool, args, result):
+        """Row-13 closure: label-based provenance taint on read_file.
+
+        If a successful read_file returned content from a
+        classification-labeled path, taint the run with the label
+        (max level wins) and record the source for provenance
+        annotation. Called on the execution path after
+        ``_ingest_result`` (direct calls and the approved sweep).
+
+        Label-based, not content-based: the taint attaches to the
+        read *event*, so paraphrase, restructuring, fragmentation, or
+        semantic re-encoding of the content cannot shed it. Only
+        fires when the read actually returned content (denied,
+        queued, or refused reads taint nothing).
+        """
+        if tool != "read_file":
+            return
+        if not isinstance(result, dict) or not result.get("content"):
+            return
+        path = (args or {}).get("path")
+        if not path:
+            return
+        try:
+            rel = self._resolved_path_for_policy(path)
+        except Exception:
+            return
+        level = self.classification.level_for(rel)
+        if level is None:
+            return
+        prev = self._read_classification
+        if prev is None or _classification.rank_of(level) > _classification.rank_of(prev):
+            self._read_classification = level
+        self._read_classification_sources.append((rel, level))
+        try:
+            self.log.append({
+                "event": "classification_taint_set",
+                "run_id": self.run_id,
+                "path": rel,
+                "level": level,
+                "max_level": self._read_classification,
+            })
+        except Exception:
+            pass
 
     def ingest_foreign_result(self, tool, result, principal=None):
         """F37: ingest a FOREIGN tool result into the provenance/taint store.
@@ -3506,6 +3579,11 @@ class ToolExecutor:
     def _context(self, tool, args, principal=None, record_ledger=True,
                  agent_id=None):
         ctx = {"api_calls": self.api_calls, "counters": dict(self.counters)}
+        # Row-13 closure: classification-labeled provenance taint. True
+        # once this run read classification-labeled content; the
+        # approval-classified-egress policy rule gates subsequent
+        # egress for human declassification review. Run-scoped.
+        ctx["read_classified"] = self._read_classification is not None
         if "path" in args:
             ctx["path_outside_sandbox"] = self._is_outside_sandbox(args["path"])
             # F146 (PaperCut class): the symlink-resolved target of the
@@ -5262,6 +5340,25 @@ class ToolExecutor:
                 pass  # marker is best-effort; the flag + audit stand
             raise
 
+        # Sentinel binding validation (adapted from
+        # anthropics/sandbox-runtime credential-sentinel.ts): host-gated
+        # credential control on the egress-attempt path, BEFORE the
+        # policy decision. Opt-in: sentinel_registry None = zero
+        # behavior change. This validates the binding only — args pass
+        # through UNCHANGED (sentinel-bearing), so DLP, policy,
+        # approval, previews, and every audit-bound snapshot see only
+        # the sentinel form. A host mismatch raises SentinelTripHalt
+        # fail-closed (the secret is unusable outside its authorized
+        # channel, and the mismatch is a LOUD trip signal). The real
+        # values are substituted ONLY at the execution boundary, into
+        # an ephemeral copy, via substitute_for_execution — never into
+        # the audit path.
+        if getattr(self, "sentinel_registry", None) is not None:
+            _sentinel_validated = _sentinel.validate_sentinel_binding(
+                self, identity, tool, kwargs)
+        else:
+            _sentinel_validated = []
+
         # F162 (HIGH): sticky velocity pause. A tempo trip (or budget
         # exhaustion that pauses) halts the WHOLE run fail-closed — the
         # canary pattern: catching the trip and calling again still
@@ -5278,6 +5375,26 @@ class ToolExecutor:
 
         blocked, blocking_rule, redacted_args, redactions = dlp.scan_tool_args(
             tool, kwargs)
+
+        # Sentinel binding marker: the DLP field-redaction summarizes
+        # payloads (the approval record never sees the sentinel value
+        # itself), so record WHICH credential placeholder is bound for
+        # this destination in the redactions channel — the approver and
+        # the auditor see "credential vendor-key bound", never the
+        # secret. The credential id is an operator label, not secret
+        # material.
+        if _sentinel_validated:
+            redactions = list(redactions) + [
+                "sentinel:credential %s bound to this destination" % cid
+                for cid in _sentinel_validated]
+            # Preserve the validated sentinel placeholders through the
+            # DLP payload summary: the summary would otherwise destroy
+            # the sentinel before queueing, leaving the approved sweep
+            # nothing to substitute. Sentinels are fixed-format
+            # vault-minted placeholders (provably not secret
+            # material); every non-sentinel string stays summarized.
+            redacted_args = _sentinel.preserve_sentinels(
+                self.sentinel_registry, redacted_args, kwargs)
 
         # Evaluation-context snapshot (the "decision input"): attached to
         # every downstream decision entry so offline tools (the policy
@@ -5632,6 +5749,11 @@ class ToolExecutor:
             "domain_allowlisted": ctx.get("domain_allowlisted"),
             "carries_read_content": ctx.get("carries_read_content"),
             "read_sensitive": ctx.get("read_sensitive"),
+            # Row-13 classification provenance (2026-09-26): the labeled-
+            # read taint rides the snapshot so offline replay sees exactly
+            # what the engine saw (None when no labeled file was read —
+            # bool(None) == bool(False), the engine's semantics).
+            "read_classified": ctx.get("read_classified"),
             "cross_run_campaign": ctx.get("cross_run_campaign"),
             "velocity_exceeded": ctx.get("velocity_exceeded"),
             "source_untrusted": ctx.get("source_untrusted"),
@@ -6117,6 +6239,20 @@ class ToolExecutor:
             # so nested/spawned executions attribute to the innermost
             # reader. The pre-commit commit() thunk runs synchronously
             # inside commit(), so the binding covers it too.
+            #
+            # Sentinel substitution at the execution boundary: the
+            # ephemeral substituted copy goes ONLY to the tool
+            # invocation. Every audit-bound snapshot (write-ahead
+            # entry, usage minting, firewall/lineage hooks below) keeps
+            # the sentinel-bearing kwargs — the real credential never
+            # enters the audit path. (The pre-commit digest binds the
+            # sentinel form: the human approves the placeholder, the
+            # trusted layer performs the deterministic host-gated fill
+            # afterwards — same model as the upstream design.)
+            _exec_kwargs = kwargs
+            if getattr(self, "sentinel_registry", None) is not None:
+                _exec_kwargs = _sentinel.substitute_for_execution(
+                    self.sentinel_registry, tool, kwargs)[0]
             with _exchange_ledger.bind_reader(
                     identity.principal, identity.run_id,
                     action_log=self.log):
@@ -6124,10 +6260,10 @@ class ToolExecutor:
                         and _precommit.is_irreversible(tool)):
                     result = self._precommit_gate.commit(
                         precommit_approval_id, tool, kwargs,
-                        lambda: self._invoke_simulate(tool, kwargs, ctx,
-                                                     identity))
+                        lambda: self._invoke_simulate(tool, _exec_kwargs,
+                                                     ctx, identity))
                 else:
-                    result = self._invoke_simulate(tool, kwargs, ctx,
+                    result = self._invoke_simulate(tool, _exec_kwargs, ctx,
                                                   identity)
             # H2 (wave-117 audit fix): the SandboxedToolBackend is a
             # drop-in _simulate replacement with no chain writer of its
@@ -6158,6 +6294,9 @@ class ToolExecutor:
             self._lineage_file_hook(tool, kwargs, result,
                                     identity.agent_id)
             self._ingest_result(tool, result, identity.principal)
+            # Row-13 closure: classification label taint on successful
+            # read_file (provenance-based; paraphrase cannot shed it).
+            self._classification_taint_on_read(tool, kwargs, result)
             if tool == "api_call":
                 self.api_calls += 1
             # F33: charge the execution budgets exactly once, at execution
@@ -7152,6 +7291,9 @@ class ToolExecutor:
                 "domain_allowlisted": ctx.get("domain_allowlisted"),
                 "carries_read_content": ctx.get("carries_read_content"),
                 "read_sensitive": ctx.get("read_sensitive"),
+                # Row-13 classification provenance (2026-09-26): same
+                # contract as the pre-execution snapshot path.
+                "read_classified": ctx.get("read_classified"),
                 "cross_run_campaign": ctx.get("cross_run_campaign"),
                 "velocity_exceeded": ctx.get("velocity_exceeded"),
                 "source_untrusted": ctx.get("source_untrusted"),
@@ -7206,7 +7348,20 @@ class ToolExecutor:
                         "principal"),
                     "run_id": rec.get("run_id", self.run_id),
                 }
-                result = self._invoke_simulate(rec["tool"], rec["args"], ctx,
+                # Sentinel substitution at the execution boundary: the
+                # record's MAC-bound args are sentinel-bearing (the
+                # human approved the placeholder form); the real values
+                # go ONLY into this ephemeral copy, re-validated
+                # fail-closed against the CURRENT vault bindings. The
+                # write-ahead audit entry above already logged the
+                # sentinel-bearing args, and every hook below keeps
+                # rec["args"] — the secret never enters the audit path.
+                _exec_args = rec["args"]
+                if getattr(self, "sentinel_registry", None) is not None:
+                    _exec_args = _sentinel.substitute_for_execution(
+                        self.sentinel_registry, rec["tool"],
+                        rec["args"])[0]
+                result = self._invoke_simulate(rec["tool"], _exec_args, ctx,
                                               _approved_identity)
             # F162 (S2-GAP-1): mint governed-side usage on the result.
             self._mint_result_usage(rec["tool"], rec["args"], result)
@@ -7222,6 +7377,10 @@ class ToolExecutor:
                 rec["tool"], rec["args"], result, rec.get("agent_id"))
             self._ingest_result(rec["tool"], result,
                                 (rec.get("identity") or {}).get("principal"))
+            # Row-13 closure: classification label taint on successful
+            # read_file, mirroring the direct-call path above.
+            self._classification_taint_on_read(rec["tool"], rec["args"],
+                                               result)
             if rec["tool"] == "api_call":
                 self.api_calls += 1
             # F33: charge the execution budgets exactly once, at execution

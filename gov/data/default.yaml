@@ -246,6 +246,15 @@ policies:
       read_sensitive: true
     reason: Run previously read content matching DLP sensitive patterns; this api_call may exfiltrate a paraphrase or summary. Human review required. (F94: deny-egress-unallowlisted denies non-allowlisted api_call endpoints first, so this fires only for allowlisted endpoints.)
 
+  - id: approval-classified-egress
+    description: Egress after the run read classification-labeled content needs declassification review.
+    effect: require_approval
+    flag: classified_egress_review
+    match:
+      tool: [send_email, http_post, api_call]
+      read_classified: true
+    reason: Run previously read classification-labeled content; possible exfiltration of classified meaning via paraphrase, summary, fragmentation, or re-encoding. Human review required before declassification. (Row-13 closure: label-based provenance taint, not content inspection — rewording cannot shed the label. Unlabeled sensitive content is not covered.)
+
   - id: approval-cross-run-campaign
     description: Small high-entropy api_call fragments — or the same api_call structure repeated thinly across runs — to the same registered domain may be a low-and-slow campaign.
     effect: require_approval

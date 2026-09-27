@@ -1,0 +1,649 @@
+#!/usr/bin/env python3
+"""Standalone offline evidence-bundle verifier (standard library only).
+
+Verifies a bundle directory produced by ``gov/offline_bundle.py`` WITHOUT
+the repository installed and WITHOUT trusting the exporter. Usage::
+
+    python3 offline-verify <bundle-dir> [--pin-log-pubkey HEX]
+                                        [--pin-entry-pubkey HEX]
+                                        [--format text|json]
+
+Exit codes: 0 = VERIFIED (both pins match) · 1 = FAILED ·
+2 = SELF_CONSISTENT (unpinned: internally intact, authorship NOT
+established) · 3 = usage error.
+
+Checks:
+  T1  BUNDLE_DIGEST recomputes over the file tree (transport integrity)
+  V0  bundle format version
+  I2  monotonicity: seqs strictly increase by 1
+  I3  containment: seqs exactly cover [from_seq, to_seq] — no gaps, no
+      duplicates, no out-of-window entries
+  I1  integrity: the export hash chain recomputes from the bundle's
+      ledger; the chain tip equals the manifest's ledger_digest; the
+      original prev_hash linkage is intact (defense in depth)
+  A1  anchor authenticity: the receipt's statement commits to THIS
+      bundle (ledger tip + window + redaction digest, two-level hash);
+      the receipt is from the claimed log (log_id); the log's Ed25519
+      SET signature verifies; the Merkle inclusion proof verifies
+  R1  redaction honesty: every entry EITHER carries a valid per-entry
+      Ed25519 signature (unredacted) OR is listed in the redaction
+      report with its redacted fields (and those fields are absent).
+      A silently-redacted entry satisfies neither and is REJECTED.
+
+Design adapted from attenu-io/attenu-guard (Apache-2.0): verify from the
+bundle alone against integrity / monotonicity / containment, plus a
+redaction report disclosing what was withheld.
+
+WHAT THIS DOES NOT PROVE (printed on every run):
+recorded events only; integrity is not truth; field redaction is
+trusted at export time (the verifier checks redacted fields are absent
+and listed, but cannot see what was removed); the source HMAC chain is
+not re-verifiable offline — the operator's key never leaves the
+operator; timestamps are operator wall-clock; unpinned bundles prove
+self-consistency only, never authorship; single-tenant scope; no auditor
+or regulator has accepted this format.
+
+$0 spend. No network. Pure Python, no dependencies.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+
+# ---------------------------------------------------------------------------
+# Vendored cryptography (marked sections — do not hand-edit; canonical
+# sources live in the repo: gov/ed25519.py, gov/merkle.py, gov/log.py,
+# gov/anchor_adapter.py).
+# ---------------------------------------------------------------------------
+
+# --- begin vendored gov/ed25519.py::verify (verbatim, RFC 8032 5.1.7) ---
+_Q = (1 << 255) - 19
+_L = (1 << 252) + 27742317777372353535851937790883648493
+_D = (-121665 * pow(121666, _Q - 2, _Q)) % _Q
+_I = pow(2, (_Q - 1) // 4, _Q)
+
+
+def _inv(x):
+    return pow(x, _Q - 2, _Q)
+
+
+def _xrecover(y):
+    xx = (y * y - 1) * _inv((_D * y * y + 1) % _Q) % _Q
+    x = pow(xx, (_Q + 3) // 8, _Q)
+    if (x * x - xx) % _Q != 0:
+        x = (x * _I) % _Q
+    if x & 1:
+        x = _Q - x
+    return x
+
+
+_BY = (4 * _inv(5)) % _Q
+_BX = _xrecover(_BY)
+_B = (_BX, _BY, 1, (_BX * _BY) % _Q)
+_IDENTITY = (0, 1, 1, 0)
+
+
+def _add(P, Q):
+    X1, Y1, Z1, T1 = P
+    X2, Y2, Z2, T2 = Q
+    A = ((Y1 - X1) * (Y2 - X2)) % _Q
+    B = ((Y1 + X1) * (Y2 + X2)) % _Q
+    C = (T1 * ((2 * _D) % _Q) * T2) % _Q
+    Dd = ((2 * Z1) * Z2) % _Q
+    E = (B - A) % _Q
+    F = (Dd - C) % _Q
+    G = (Dd + C) % _Q
+    H = (B + A) % _Q
+    return ((E * F) % _Q, (G * H) % _Q, (F * G) % _Q, (E * H) % _Q)
+
+
+def _scalarmult(P, e):
+    e %= _L
+    Q = _IDENTITY
+    for i in range(255, -1, -1):
+        Q = _add(Q, Q)
+        if (e >> i) & 1:
+            Q = _add(Q, P)
+    return Q
+
+
+def _encode_point(P):
+    X, Y, Z, _T = P
+    zinv = _inv(Z)
+    x = (X * zinv) % _Q
+    y = (Y * zinv) % _Q
+    return (y | ((x & 1) << 255)).to_bytes(32, "little")
+
+
+def _decode_point(s):
+    if len(s) != 32:
+        raise ValueError("encoded point must be 32 bytes")
+    y = int.from_bytes(s, "little") & ((1 << 255) - 1)
+    if y >= _Q:
+        raise ValueError("y coordinate out of range")
+    x = _xrecover(y)
+    if (x & 1) != (s[31] >> 7):
+        x = _Q - x
+    if ((-x * x + y * y - 1 - _D * x * x * y * y) % _Q) != 0:
+        raise ValueError("point not on curve")
+    return (x, y, 1, (x * y) % _Q)
+
+
+def _ed_verify(pub, msg, sig):
+    """Ed25519 verify (RFC 8032 5.1.7). True/False; never raises on
+    malformed inputs (fail-closed for verifiers)."""
+    if (not isinstance(pub, (bytes, bytearray)) or len(pub) != 32
+            or not isinstance(sig, (bytes, bytearray)) or len(sig) != 64):
+        return False
+    if not isinstance(msg, (bytes, bytearray)):
+        return False
+    pub, sig, msg = bytes(pub), bytes(sig), bytes(msg)
+    try:
+        A = _decode_point(pub)
+        R = _decode_point(sig[:32])
+    except ValueError:
+        return False
+    s = int.from_bytes(sig[32:], "little")
+    if s >= _L:
+        return False
+    k = int.from_bytes(hashlib.sha512(sig[:32] + pub + msg).digest(),
+                       "little") % _L
+    lhs = _scalarmult(_B, s)
+    rhs = _add(R, _scalarmult(A, k))
+    return _encode_point(lhs) == _encode_point(rhs)
+
+
+# --- end vendored gov/ed25519.py ---
+
+# --- begin vendored gov/merkle.py::verify_inclusion, raw-leaf variant ---
+# Adapted from gov/merkle.py::verify_inclusion: the anchor log's Merkle
+# tree stores raw 32-byte statement hashes as leaves (see
+# gov/anchor_adapter.py::FakeLogAdapter — no leaf-domain hashing), so
+# this variant starts the recursion from the leaf directly instead of
+# hashing a leaf input. All other semantics identical.
+_MERKLE_NODE_DOMAIN = b"gov-merkle-node/v1\x00"
+
+
+def _mk_node_hash(left, right):
+    return hashlib.sha256(_MERKLE_NODE_DOMAIN + left + right).digest()
+
+
+def _mk_largest_pow2_lt(n):
+    p = 1
+    while 2 * p < n:
+        p *= 2
+    return p
+
+
+def _raw_verify_inclusion(leaf32, index, proof, root, tree_size):
+    """Verify a raw 32-byte leaf's inclusion. True/False; never raises
+    on malformed inputs."""
+    if (not isinstance(leaf32, (bytes, bytearray)) or len(leaf32) != 32
+            or not isinstance(root, (bytes, bytearray))
+            or len(root) != 32):
+        return False
+    if not isinstance(index, int) or not isinstance(tree_size, int):
+        return False
+    if not (0 <= index < tree_size):
+        return False
+    try:
+        proof = [bytes(p) for p in proof]
+    except TypeError:
+        return False
+    if any(len(p) != 32 for p in proof):
+        return False
+    h = bytes(leaf32)
+    pos = 0
+
+    def rec(m, n):
+        nonlocal h, pos
+        if n == 1:
+            return True
+        if pos >= len(proof):
+            return False
+        k = _mk_largest_pow2_lt(n)
+        sib = proof[pos]
+        pos += 1
+        if m < k:
+            if not rec(m, k):
+                return False
+            h = _mk_node_hash(h, sib)
+        else:
+            if not rec(m - k, n - k):
+                return False
+            h = _mk_node_hash(sib, h)
+        return True
+
+    if not rec(index, tree_size):
+        return False
+    if pos != len(proof):
+        return False
+    return h == bytes(root)
+
+
+# --- end vendored gov/merkle.py (raw-leaf variant) ---
+
+# --- constants mirroring gov/log.py / gov/anchor_adapter.py / ---
+# --- gov/offline_bundle.py (see those files for the canonical defs) ---
+_ENTRY_SIG_DOMAIN = b"gov-entry-sig/v1\x00"
+_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id"})
+_EXPORT_STRIP_FIELDS = frozenset({"export_hash", "redacted"})
+_STATEMENT_DOMAIN = b"gov-bundle-anchor/v1\x00"
+_FAKE_SET_DOMAIN = b"gov-fake-anchor-set/v1\x00"
+_EXPORT_CHAIN_DOMAIN = b"offline-export-chain/v1\x00"
+EXPORT_GENESIS = "EXPORT-GENESIS"
+BUNDLE_FORMAT = "offline-evidence-bundle/1.0"
+
+HONESTY_FOOTER = (
+    "WHAT THIS DOES NOT PROVE: recorded events only — the bundle cannot "
+    "prove what was never logged; integrity is not truth — a verified "
+    "bundle can be a true record of a bad decision; field redaction is "
+    "trusted at export time (redacted fields are checked absent and "
+    "listed, but their content cannot be inspected); the source HMAC "
+    "chain is not re-verifiable offline — the operator's key never "
+    "leaves the operator; timestamps are operator wall-clock; unpinned "
+    "bundles prove self-consistency only, never authorship; "
+    "single-tenant scope; no auditor or regulator has accepted this "
+    "format."
+)
+
+
+def _canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, default=str).encode("utf-8")
+
+
+def _chain_hash(prev_export_hash, canonical_entry):
+    return hashlib.sha256(
+        _EXPORT_CHAIN_DOMAIN
+        + prev_export_hash.encode("utf-8") + b"\x00"
+        + canonical_entry).hexdigest()
+
+
+class _Ctx:
+    def __init__(self, bundle_dir, pin_log, pin_entry):
+        self.dir = bundle_dir
+        self.pin_log = pin_log
+        self.pin_entry = pin_entry
+        self.checks = []
+
+
+def _check(ctx, cid, name):
+    c = {"id": cid, "name": name, "ok": True, "detail": ""}
+    ctx.checks.append(c)
+    return c
+
+
+def _fail(c, detail):
+    c["ok"] = False
+    c["detail"] = detail
+    return c
+
+
+def _read(bundle_dir, rel):
+    with open(os.path.join(bundle_dir, rel), "rb") as f:
+        return f.read()
+
+
+def _load_json(bundle_dir, rel):
+    return json.loads(_read(bundle_dir, rel).decode("utf-8"))
+
+
+def _bundle_digest(bundle_dir):
+    """Recompute BUNDLE_DIGEST (mirrors
+    gov/safeguard_bundle.compute_bundle_digest)."""
+    h = hashlib.sha256()
+    rels = []
+    for root, _dirs, names in os.walk(bundle_dir):
+        for n in names:
+            rel = os.path.relpath(os.path.join(root, n), bundle_dir)
+            if rel == "BUNDLE_DIGEST.sha256":
+                continue
+            rels.append(rel)
+    for rel in sorted(rels):
+        with open(os.path.join(bundle_dir, rel), "rb") as f:
+            content = f.read()
+        h.update(rel.encode("utf-8") + b"\x00" + content + b"\x00")
+    return h.hexdigest()
+
+
+def _hex32(value):
+    """Parse a 32-byte hex string; return bytes or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        b = bytes.fromhex(value)
+    except ValueError:
+        return None
+    return b if len(b) == 32 else None
+
+
+def _hex64(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        b = bytes.fromhex(value)
+    except ValueError:
+        return None
+    return b if len(b) == 64 else None
+
+
+# -- checks ---------------------------------------------------------------
+
+def t1_transport_digest(ctx):
+    c = _check(ctx, "T1", "transport digest")
+    try:
+        stored = _read(ctx.dir, "BUNDLE_DIGEST.sha256").decode(
+            "utf-8").strip()
+    except OSError as e:
+        return _fail(c, "cannot read BUNDLE_DIGEST.sha256: %s" % e)
+    if stored != _bundle_digest(ctx.dir):
+        return _fail(c, "digest mismatch: bundle tampered in transit")
+    return c
+
+
+def v_version(ctx):
+    c = _check(ctx, "V0", "bundle format version")
+    try:
+        text = _read(ctx.dir, "VERSION").decode("utf-8").strip()
+    except OSError as e:
+        return _fail(c, "cannot read VERSION: %s" % e)
+    if text != BUNDLE_FORMAT:
+        return _fail(c, "VERSION %r != %r" % (text, BUNDLE_FORMAT))
+    return c
+
+
+def i2_i3_sequence(ctx):
+    c = _check(ctx, "I2/I3", "monotonicity + containment")
+    entries = ctx.entries
+    w = ctx.manifest["window"]
+    seqs = [e.get("seq") for e in entries]
+    want = list(range(w["from_seq"], w["to_seq"] + 1))
+    if seqs != want:
+        return _fail(c, "seqs are not exactly the contiguous window "
+                        "%d..%d" % (w["from_seq"], w["to_seq"]))
+    if w["entry_count"] != len(entries):
+        return _fail(c, "window entry_count != ledger length")
+    c["detail"] = "%d entries, seq %d..%d contiguous" % (
+        len(entries), w["from_seq"], w["to_seq"])
+    return c
+
+
+def i1_chain(ctx):
+    c = _check(ctx, "I1", "export-chain integrity")
+    entries = ctx.entries
+    prev = EXPORT_GENESIS
+    for e in entries:
+        body = {k: v for k, v in e.items() if k != "export_hash"}
+        want = _chain_hash(prev, _canonical(body))
+        if e.get("export_hash") != want:
+            return _fail(c, "export chain breaks at seq %r" % (e.get("seq"),))
+        prev = want
+    if prev != ctx.manifest.get("ledger_digest"):
+        return _fail(c, "chain tip != manifest ledger_digest")
+    # Original prev_hash linkage (defense in depth; free to check).
+    for a, b in zip(entries, entries[1:]):
+        if b.get("prev_hash") != a.get("hash"):
+            return _fail(c, "original prev_hash linkage breaks at seq %r"
+                            % (b.get("seq"),))
+    if entries[0].get("prev_hash") != "GENESIS":
+        return _fail(c, "first entry prev_hash != GENESIS")
+    c["detail"] = "chain recomputes over %d entries; tip matches" % len(
+        entries)
+    return c
+
+
+def _anchor_input(ctx):
+    """The exact dict the anchor statement must commit to (mirrors
+    gov/offline_bundle._anchor_input)."""
+    m = ctx.manifest
+    rr = m.get("redaction_report") or {}
+    return {
+        "bundle_id": m.get("bundle_id"),
+        "ledger_digest": m.get("ledger_digest"),
+        "window": m.get("window"),
+        "redaction_digest": hashlib.sha256(_canonical(rr)).hexdigest(),
+    }
+
+
+def a1_anchor(ctx):
+    c = _check(ctx, "A1", "anchor authenticity")
+    receipt = ctx.receipt
+    if not isinstance(receipt, dict) or receipt.get("adapter") != "fake-log":
+        return _fail(c, "anchor receipt is not a fake-log receipt")
+
+    # (1) The statement must commit to THIS bundle (two-level hash,
+    # mirroring gov/anchor_adapter.bundle_statement + _statement_hash).
+    bundle_hash = hashlib.sha256(
+        _STATEMENT_DOMAIN + _canonical(_anchor_input(ctx))).hexdigest()
+    want_statement = {"statement_version": 1, "bundle_hash": bundle_hash}
+    if receipt.get("statement") != want_statement:
+        return _fail(c, "anchor statement does not commit to this bundle")
+    stmt_hash = hashlib.sha256(
+        _STATEMENT_DOMAIN + _canonical(want_statement)).hexdigest()
+    if receipt.get("statement_hash") != stmt_hash:
+        return _fail(c, "anchor statement_hash mismatch")
+
+    # (2) The log key: the pin if the auditor brought one, else the
+    # bundle's claim (self-consistency only — never authorship).
+    if ctx.pin_log:
+        log_pub = _hex32(ctx.pin_log)
+        if log_pub is None:
+            return _fail(c, "--pin-log-pubkey is not 32-byte hex")
+        claimed = _hex32(ctx.manifest.get("anchor", {}).get(
+            "log_pubkey_hex"))
+        if claimed is not None and claimed != log_pub:
+            return _fail(c, "manifest claims a different log key than "
+                            "the pin")
+    else:
+        log_pub = _hex32(ctx.manifest.get("anchor", {}).get(
+            "log_pubkey_hex"))
+        if log_pub is None:
+            return _fail(c, "no pinned log key and manifest carries no "
+                            "usable log pubkey")
+    if receipt.get("log_id") != hashlib.sha256(log_pub).hexdigest():
+        return _fail(c, "receipt log_id != sha256(log pubkey): receipt "
+                        "is from a different log")
+
+    # (3) The log's Ed25519 SET signature over index|root|stmt_hash.
+    log_sig = _hex64(receipt.get("log_sig"))
+    try:
+        log_index = receipt["log_index"]
+        tree_size = receipt["tree_size"]
+        log_root = receipt["log_root"]
+        if not isinstance(log_index, int) or not isinstance(
+                tree_size, int) or not isinstance(log_root, str):
+            raise ValueError("bad types")
+        root32 = bytes.fromhex(log_root)
+        if len(root32) != 32:
+            raise ValueError("bad root")
+    except (KeyError, ValueError, TypeError):
+        return _fail(c, "receipt has malformed log_index/tree_size/"
+                        "log_root")
+    set_body = (_FAKE_SET_DOMAIN
+                + ("%d|%s|%s" % (log_index, log_root,
+                                 stmt_hash)).encode("utf-8"))
+    if log_sig is None or not _ed_verify(log_pub, set_body, log_sig):
+        return _fail(c, "log SET signature does not verify")
+
+    # (4) Merkle inclusion of the statement hash under the signed root.
+    try:
+        proof = [bytes.fromhex(p)
+                 for p in receipt.get("inclusion_proof", [])]
+    except (ValueError, TypeError):
+        return _fail(c, "receipt has a malformed inclusion proof")
+    if not _raw_verify_inclusion(bytes.fromhex(stmt_hash), log_index,
+                                 proof, root32, tree_size):
+        return _fail(c, "Merkle inclusion proof does not verify")
+    c["detail"] = ("statement binds ledger+window+redaction; SET sig "
+                   "verifies; inclusion proof verifies (index %d, size "
+                   "%d)" % (log_index, tree_size))
+    return c
+
+
+def r1_redaction(ctx):
+    c = _check(ctx, "R1", "redaction honesty (sig-or-listed)")
+    entries = ctx.entries
+    rr = ctx.manifest.get("redaction_report") or {}
+    listed = rr.get("field_redactions") or []
+    by_seq = {}
+    for r in listed:
+        if not isinstance(r, dict):
+            return _fail(c, "redaction report has a malformed listing")
+        seq = r.get("seq")
+        fields = r.get("fields")
+        if not isinstance(seq, int) or not isinstance(fields, list) \
+                or not fields or not all(isinstance(f, str)
+                                         for f in fields):
+            return _fail(c, "redaction report has a malformed listing")
+        if seq in by_seq:
+            return _fail(c, "redaction report lists seq %d twice" % seq)
+        by_seq[seq] = r
+
+    # The entry-signer key: the pin if the auditor brought one, else
+    # the bundle's claim (self-consistency only).
+    if ctx.pin_entry:
+        entry_pub = _hex32(ctx.pin_entry)
+        if entry_pub is None:
+            return _fail(c, "--pin-entry-pubkey is not 32-byte hex")
+        claimed = _hex32(ctx.manifest.get("entry_signer", {}).get(
+            "public_key_hex"))
+        if claimed is not None and claimed != entry_pub:
+            return _fail(c, "manifest claims a different entry-signer "
+                            "key than the pin")
+    else:
+        entry_pub = _hex32(ctx.manifest.get("entry_signer", {}).get(
+            "public_key_hex"))
+        if entry_pub is None:
+            return _fail(c, "no pinned entry key and manifest carries "
+                            "no usable entry-signer pubkey")
+
+    def sig_body(e):
+        content = {k: v for k, v in e.items()
+                   if k != "hash" and k not in _SIG_ENVELOPE_FIELDS
+                   and k not in _EXPORT_STRIP_FIELDS}
+        return (_ENTRY_SIG_DOMAIN + _canonical(content)
+                + b"\x00" + str(e.get("hash")).encode("utf-8"))
+
+    n_sig, n_listed = 0, 0
+    for e in entries:
+        seq = e.get("seq")
+        redacted = e.get("redacted") is True
+        listing = by_seq.get(seq)
+        if redacted:
+            # Listed redaction: the listed fields must be absent, and
+            # no signature envelope may be present (a signature over
+            # redacted content cannot verify — keeping one would be a
+            # lie about what was signed).
+            if listing is None:
+                return _fail(c, "seq %r is marked redacted but is NOT "
+                                "listed in the redaction report "
+                                "(undisclosed redaction)" % (seq,))
+            for f in listing["fields"]:
+                if f in e:
+                    return _fail(c, "seq %r: redacted field %r is still "
+                                    "present in the ledger" % (seq, f))
+            if "ed_sig" in e or "sig_key_id" in e:
+                return _fail(c, "seq %r: redacted entry carries a "
+                                "signature envelope" % (seq,))
+            n_listed += 1
+        else:
+            # Unredacted entry: must carry a VALID per-entry signature.
+            if listing is not None:
+                return _fail(c, "seq %r is listed as redacted but is "
+                                "not marked redacted" % (seq,))
+            sig = _hex64(e.get("ed_sig"))
+            if sig is None:
+                return _fail(c, "seq %r has no valid ed_sig and is not "
+                                "listed as redacted (undisclosed "
+                                "redaction)" % (seq,))
+            if not _ed_verify(entry_pub, sig_body(e), sig):
+                return _fail(c, "seq %r: per-entry signature does not "
+                                "verify" % (seq,))
+            n_sig += 1
+    # No phantom listings.
+    entry_seqs = {e.get("seq") for e in entries}
+    for seq in by_seq:
+        if seq not in entry_seqs:
+            return _fail(c, "redaction report lists seq %r, which is "
+                            "not in the ledger" % (seq,))
+    c["detail"] = ("%d entries signature-verified, %d redacted-and-"
+                   "listed" % (n_sig, n_listed))
+    return c
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Verify an offline evidence bundle (stdlib only).")
+    ap.add_argument("bundle_dir")
+    ap.add_argument("--pin-log-pubkey", default=None,
+                    help="32-byte log pubkey hex, pinned out-of-band")
+    ap.add_argument("--pin-entry-pubkey", default=None,
+                    help="32-byte entry-signer pubkey hex, pinned "
+                         "out-of-band")
+    ap.add_argument("--format", choices=("text", "json"), default="text")
+    args = ap.parse_args(argv)
+
+    ctx = _Ctx(args.bundle_dir, args.pin_log_pubkey, args.pin_entry_pubkey)
+    failed = []
+
+    def run(fn):
+        try:
+            c = fn(ctx)
+        except Exception as e:  # never raise: malformed is a verdict
+            c = {"id": "EXC", "name": fn.__name__, "ok": False,
+                 "detail": "verifier exception (treated as failure): %s"
+                           % (e,)}
+            ctx.checks.append(c)
+        if not c["ok"]:
+            failed.append(c)
+        return c
+
+    # Load phase (failures here fail the bundle).
+    try:
+        ctx.manifest = _load_json(ctx.dir, "manifest.json")
+        ctx.receipt = _load_json(ctx.dir, "anchor_receipt.json")
+        with open(os.path.join(ctx.dir, "ledger.jsonl"), "rb") as f:
+            ctx.entries = [json.loads(line) for line in
+                           f.read().decode("utf-8").splitlines()
+                           if line.strip()]
+    except Exception as e:
+        print("FAILED: cannot load bundle: %s" % (e,))
+        print(HONESTY_FOOTER)
+        return 1
+
+    run(t1_transport_digest)
+    run(v_version)
+    run(i2_i3_sequence)
+    run(i1_chain)
+    run(a1_anchor)
+    run(r1_redaction)
+
+    pinned = bool(ctx.pin_log and ctx.pin_entry)
+    if not failed and pinned:
+        verdict, rc = "VERIFIED", 0
+    elif not failed:
+        verdict, rc = "SELF_CONSISTENT", 2
+    else:
+        verdict, rc = "FAILED", 1
+
+    if args.format == "json":
+        print(json.dumps({
+            "verdict": verdict,
+            "checks": [{"id": c["id"], "name": c["name"], "ok": c["ok"],
+                        "detail": c["detail"]} for c in ctx.checks],
+            "what_this_does_not_prove": HONESTY_FOOTER,
+        }, indent=2))
+    else:
+        print("offline evidence bundle: %s" % verdict)
+        for c in ctx.checks:
+            print("  [%s] %s %s" % ("ok" if c["ok"] else "FAIL",
+                                    c["id"], c["detail"]))
+        print(HONESTY_FOOTER)
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

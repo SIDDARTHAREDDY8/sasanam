@@ -1,14 +1,14 @@
 # Readiness Gaps — agent-governance-layer
 
-**Status:** Wave-113 refresh, 2026-09-26. Companion to `docs/DEPLOYMENT.md` and the
+**Status:** Wave-127 refresh, 2026-09-26. Companion to `docs/DEPLOYMENT.md` and the
 B6 honesty bar in `workstreams/architect/REALWORLD_BAR.md`.
 
 Organization: **§1 blocks production** (deploying without these is negligent);
 **§2 is nice-to-have** (deferrable without lying). Every gap is grounded in the
 code or the dated record — nothing is aspirational marketing.
 
-**Since wave-27:** waves 80–115 filed and closed findings F138–F174 (next free:
-F175; open findings: none): citation-provenance controls (F139–F142),
+**Since wave-27:** waves 80–127 filed and closed findings F138–F175 plus F-RA3
+(next free: F176; open findings: none): citation-provenance controls (F139–F142),
 skill-watch fail-closed (F143), memory-poisoning ingestion (F144), MCP server
 instructions (F145), path-symlink TOCTOU (F146/F147), launcher audit-witness
 (F148/F149), the Anthropic Sept-2026-report velocity/economic battery
@@ -21,8 +21,21 @@ transit adapter validated against a real Vault OSS v1.20.0 dev server (20/20
 live checks); F69 timing-flake hardened (deterministic gate); a MaxKB-shaped
 sandbox sustaining probe landed; the Safeguard Benchmark primitive shipped
 (wave-99, UNSC/RSI response). The F81 privileged battery ran under genuine
-privilege in wave-98 (2026-09-24, 11/11 CLOSED ×2 on f81-lab; F81 CLOSED —
-see §1 for the residual).
+privilege in wave-98 (2026-09-24, 11/11 CLOSED ×2 on f81-lab; F81 CLOSED) and
+was **re-verified on the current tree in wave-127 (2026-09-26, 11/11 CLOSED ×2,
+durable artifact `evals/f81_privileged_run_2026-09-26.json` — see §1**).
+
+Waves 116–127 (2026-09-26) addressed the full v1 hardening backlog (H1–H26):
+row-9 caution-erosion monitor (row 9 GAP → PARTIAL; no full-row GAP remains),
+`send_email` fingerprinting (F175 CLOSED), F-RA3 fail-closed read quarantine
+(CLOSED), row-13 authorized-channel exfil pins (4 BREAK pinned residual),
+rows 7/11/12 probe pins, H17/H18/H26 tightens (F143 p2/p6 → HELD),
+approver-shield web brief (H19), skill pin-file authentication (H22),
+exporter-narrowing + ISO 42001 conformance + outcome-auditing pins
+(H20/H21/H25), F170 measured-absent + anchor-ready transparency seam
+(H23/H24), and the F81 re-verification. The 2026-09-26 industry sweep's
+Darktrace history-poisoning class was probed and maps to the F143 p3
+factual-poison residual — not a new finding.
 
 ---
 
@@ -73,18 +86,27 @@ see §1 for the residual).
   `tests/run_tests.py` runs before test collection, and artifact
   verification. The HIGH-for-production escalation is retired; residual:
   audit checks installed names/versions, not post-install file bytes.
-- **Open findings: none** (next free finding **F175**). F173 (LOW) and
-  F174 (LOW), filed by the wave-114 adversarial rerun, were **CLOSED
-  2026-09-26** (Wave-115, red-first): F173 — bundle format
+- **Open findings: none** (next free finding **F176**). F175 (MEDIUM), filed by
+  the wave-117 H11 probe, was **CLOSED 2026-09-26** (Wave-118, red-first):
+  `send_email` result content is now fingerprinted through the identical
+  machinery (`read_file`, `api_call`, `http_post`, `send_email` — same 64-char
+  verbatim-overlap fingerprints, same 256 KiB FIFO store, same 64 KiB
+  per-result cap). F-RA3 (LOW, workstream), re-opened as partial in wave-117
+  when its same-day CLOSED label overstated the close-when, was **CLOSED
+  2026-09-26** (Wave-120): escaping `read_file` now returns fail-closed
+  quarantine with no synthetic content (mirroring the write side). F173
+  (LOW) and F174 (LOW), filed by the wave-114 adversarial rerun, were
+  **CLOSED 2026-09-26** (Wave-115, red-first): F173 — bundle format
   `evidence-bundle/1.1`, signature domain `evidence-bundle/v2`, the
   operator-signed claim now binds inclusion presence/coverage + receipt
   bundle-presence/reason (unsigned stripping fails V7/V12; legacy 1.0
   bundles fail V1 closed); F174 — verifier renders `operator_id` in text
   and JSON labeled as operator-supplied/unverified. Adversarial battery
-  post-fix: CAUGHT=9 MISS=0 BREAK=0. Every finding ≤ F174 is recorded
-  CLOSED (F163 re-closed 2026-09-24
-  after the Wave-109 quality audit; the wave-112 post-wave red-first audit ran
-  GO with zero overstatements). The **accepted residual is F81 (LOW, CLOSED
+  post-fix: CAUGHT=9 MISS=0 BREAK=0. Every finding ≤ F175 is recorded
+  CLOSED (F163 re-closed 2026-09-24 after the Wave-109 quality audit; the
+  standing post-wave red-first audit ran GO on every wave since; the
+  wave-120 and wave-124 boundaries each caught genuine lane-missed
+  regressions — the rule works). The **accepted residual is F81 (LOW, CLOSED
   2026-09-24)**: the filtered-egress wall was lab-validated on f81-lab
   2026-09-23 (17 STOPPED / 0 BREAK across all 11 attack classes), the
   governed launcher exists (`gov/egress_launcher.py`, F136/F138 CLOSED
@@ -94,11 +116,13 @@ see §1 for the residual).
   break was filed and closed as F148 the same wave). Correction, wave-113:
   the wave-112 B1–B6 delta report's "never ran under real privilege" line was
   an error (it restated the wave-96 state and missed the wave-98 closure).
-  Residual: no durable run artifact of the wave-98 run exists in the tree
-  (prose claims only) and waves 99–112 changed code around those seams, so
-  the closure is not re-verifiable from the tree today; the 2026-09-26
-  re-verification attempt was genuinely blocked (f81-lab stopped, no
-  recoverable IP) — `evals/f81_privilege_carry_decision.md`. The duplicate
+  **Residual RETIRED, wave-127 (2026-09-26):** the "not re-verifiable from
+  today's tree" gap is closed — the privileged battery re-ran under genuine
+  privilege on f81-lab (root, CAP_SYS_ADMIN, kernel 7.0.0-1011-gcp) against
+  the wave-126 tree (`eb28f7f`): **11/11 CLOSED ×2, zero BREAK/SKIP/ERROR**,
+  and the durable artifact `evals/f81_privileged_run_2026-09-26.json`
+  (probe-by-probe ×2 runs, environment, tree pin) makes the closure
+  re-verifiable going forward. VM stopped after the run ($0). The duplicate
   F81 headings in FINDINGS.md are cosmetic (wave-112 audit note), and the
   main F81 entry's top status line (still "OPEN 2026-09-22") was stale —
   corrected wave-113.
@@ -120,6 +144,53 @@ see §1 for the residual).
   (`gov/adapters/trust.py` exists) has no authenticated message-passing
   primitive; the D1-core delegation invariants (S1–S7) assume queue-mediated
   delegation, not peer-to-peer agent messaging.
+
+### Pinned enforcement residuals (capability boundaries, adversarially measured)
+
+Every residual below is pinned by a battery that fires RED — none is a
+closure claim. Full detail in `workstreams/architect/REALWORLD_BAR.md` B6(7)
+(waves-116–127 addendum).
+
+- **Row 13 — semantic exfil over authorized channels** (wave-121, 4 BREAK /
+  3 HELD): paraphrased/summary/fragmented exfil over allowlisted,
+  human-approved channels is not stopped; content-based paraphrase
+  detection is not viable pre-freeze (benign paraphrases share more
+  lexical overlap than malicious ones). Research-grade problem.
+- **F143 p3/p5 — factual poison + heuristic dodge** (wave-123; the
+  2026-09-26 Darktrace history-poisoning class maps to p3): factual
+  claims delivered with zero warning are allowed by design; the
+  quarantine conjunction requires instruction-shaped content.
+- **Row 7 — no intent/temporal correlation, no revoke-after-approve**
+  (wave-122, 2 BREAK / 1 HELD): staged plant→post exfil across steps
+  has no linking signal; revocation is not an operation.
+- **Row 11 — no goal registration/conflict detection** (wave-122, 1 BREAK /
+  2 HELD): in-budget, policy-clean trajectories with no registered goal
+  produce no conflict signal.
+- **Row 12 — no artifact inventory / artifact-tuned egress detection**
+  (wave-122, 1 BREAK / 2 HELD): hex-encoded weight-shard-shaped payloads
+  bypass credential-tuned detection; no clean content-shape seam exists.
+- **Row 10 — no outcome auditing** (wave-125, 1 BREAK / 2 HELD): velocity
+  gates tempo, not goal-alignment; a goal-divergent trajectory fires zero
+  outcome signal. Goal ontology + outcome judge are v2 research.
+- **Row 9 — many-shot residual + cross-run erosion** (wave-119): the
+  trajectory-erosion monitor is opt-in; e4 many-shot framing drift and
+  cross-run erosion remain.
+- **K-060 — bundle proves authenticity of included entries, not
+  completeness against a misbehaving exporter** (wave-125, 2 BREAK / 2
+  HELD; spec §7 honest scope). External anchor is the v2 fix; the H24
+  seam makes a v2 adapter cheap.
+- **Repo-default posture:** the "42/44 legacy `ToolExecutor` sites
+  ungoverned" line described the **pre-wave-85** state (wave-84
+  text-search census). Wave-85's fail-closed constructor gate closed the
+  construction seam. Fresh AST census 2026-09-26 (wave-127 tree):
+  119 sites — 81 deliberately acked (LOUD `ungoverned_bypass`
+  declarations), 20 full-core (19 test fixtures + 1 product site,
+  `gov/executor.py:1680` child spawn), 6 store-only+ack test fixtures,
+  12 bare/`**kw` confined to refusal batteries and test helpers;
+  **0 silent ungoverned sites in product code**. Evidence:
+  `evals/tool_executor_inventory_2026-09-26.md`. The demos/examples
+  (7 acked sites) stay acked by design — teaching scaffolds, not
+  deployed paths.
 
 ### Reality checks (non-technical, still blocking)
 - **Private repo, no certifications, no managed offering.** There is no SOC 2,
@@ -200,8 +271,9 @@ see §1 for the residual).
   resource-abuse containment for the tool scripts we generate, with honest
   per-call isolation reporting. It is not a container or VM boundary. The
   filtered-egress wall is lab-validated plus launcher-governed; its privileged
-  battery ran under genuine privilege in wave-98 (11/11 ×2) but the closure
-  has no re-verifiable artifact on today's tree (see §1).
+  battery ran under genuine privilege in wave-98 (11/11 ×2) and was
+  re-verified on the current tree in wave-127 (11/11 ×2, durable artifact
+  `evals/f81_privileged_run_2026-09-26.json`).
 - **Not certified, audited, or supported.** No SOC 2, no pen test, no SLA, no
   managed offering, private repo. Anyone evaluating it for production use
   should start from §1, not from the test count.

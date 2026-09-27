@@ -19,7 +19,7 @@ Match keys (all optional; every listed key must hold for the rule to match):
   tool, role, agent, path_contains_any, path_outside_sandbox,
   min_external_calls, min_sends, min_writes, min_deletes,
   domain_allowlisted, carries_read_content, source_untrusted,
-  read_sensitive, cross_run_campaign, velocity_exceeded,
+  read_sensitive, read_classified, cross_run_campaign, velocity_exceeded,
   high_entropy_payload, package_fetch, install_allowlisted,
   install_integrity_verified, when
 
@@ -57,7 +57,7 @@ KNOWN_MATCH_KEYS = {
     "path_contains_any", "path_outside_sandbox",
     "min_external_calls", "min_sends", "min_writes", "min_deletes",
     "domain_allowlisted", "carries_read_content", "source_untrusted",
-    "read_sensitive", "cross_run_campaign",
+    "read_sensitive", "read_classified", "cross_run_campaign",
     # F99: keyword-free framed-secret signal for api_call payloads,
     # computed by ToolExecutor._context from the call's own params.
     "high_entropy_payload",
@@ -838,6 +838,10 @@ class PolicyEngine:
                 return False
         if "read_sensitive" in match:
             if bool(context.get("read_sensitive")) != bool(match["read_sensitive"]):
+                return False
+        # Row-13 closure: classification-labeled provenance taint.
+        if "read_classified" in match:
+            if bool(context.get("read_classified")) != bool(match["read_classified"]):
                 return False
         if "cross_run_campaign" in match:
             if bool(context.get("cross_run_campaign")) != bool(match["cross_run_campaign"]):

@@ -270,6 +270,14 @@ The viable direction is **channel discipline, not a content oracle**: sterile eg
 windows (P1), canary-fact tripwires (P2), provenance-annotated declassify approvals
 (P3) — a product-semantics decision for the hardening backlog, not a pre-freeze
 red-first closure. Residual re-pinned honestly; no semantic-exfil control claimed.
+**2026-09-27 closure attempt (P3 implemented):** classification-label provenance control
+(`gov/classification.py` + `approval-classified-egress` rule). `evals/row13_classification_closure.py`:
+**0 BREAK / 5 HELD / 1 FRICTION / 0 ERROR** — all 4 labeled BREAK shapes convert to HELD
+(paraphrase/summary/fragmentation/re-encoding all gated with `classified_egress_review`);
+FP ceiling holds; measured friction is 1 declassification approval per egress after a
+classified read. Original expanded battery still **4 BREAK / 3 HELD** (unlabeled residual
+intact). **Honest claim: 4/4 shapes convert WHEN the source is labeled; row 13 NOT fully
+closed** (unlabeled content unprotected, taint run-scoped). No new finding filed.
 **Stale-evidence note:** F81's privileged validation (11/11 ×2 on f81-lab,
 wave-98) has no durable run artifact, and waves 99–112 changed code around those
 seams — the closure stands on the tree record (adjudicated wave-113) but is not

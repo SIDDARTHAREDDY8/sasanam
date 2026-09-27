@@ -2437,3 +2437,148 @@ items, and the 10-21 freeze criteria; `evals/v1_scope_inventory_2026-09-26.md`
 is the full thread ledger (11 CLOSE / 7 HARDEN / 41 DEFER). Open
 findings: none; next free F175. B6 MET — the window now covers waves
 80→115.
+
+**Waves-116–127 addendum (2026-09-26, B6 maintained).** The v1 hardening
+backlog (`evals/v1_hardening_backlog_2026-09-26.md`, H1–H26) is fully
+addressed; the 18-row attack program stands at 3 COVERED / 15 PARTIAL /
+0 GAP.
+
+- Wave-116: `docs/V1_SCOPE.md` (v1 feature set, 13 deferred items, 10-21
+  freeze criteria); ranked 26-item hardening backlog; F174/F172 closure
+  check. Wave-117: H1–H12 hardening — H2 (F-RA3 read-side containment
+  made loud; the sibling lane's same-day CLOSED label was overstated
+  against the close-when, so F-RA3 re-opened as OPEN (partial) — the
+  wave-112/113 precedent of honest re-opening, not quiet patching), H3
+  (`http_post` content-hash plant records), H5 (discovery inventory
+  snapshot sealed into the evidence bundle), H6 (seal-time config
+  attestation), H7 Phase A (row-9 erosion probe battery: 4 BREAK / 1
+  HELD — the only GAP row, measured), H8 (cross-run infection lineage
+  keyed by principal), H9 (`check_citations` default in
+  `accept_eval_results`, closing F141's opt-in residual), H11 (filed
+  F175: `send_email` fingerprint gap), H12 (realistic +3 scenarios).
+- Wave-118: F175 CLOSED red-first (`send_email` result-content
+  fingerprinting, mirroring F144). Wave-119: row-9 Phase-B
+  `TrajectoryErosionMonitor` (opt-in, four counters — fragment
+  reassembly, borderline-result rate, queue clustering, privilege-probe
+  sequencing; never denies, trips a per-identity breaker; one chained
+  `trajectory_caution_erosion` signal per transition) — row 9 moves
+  GAP → PARTIAL; no full-row GAP remains. Wave-120: F-RA3 CLOSED
+  (fail-closed quarantine for escaping reads, no synthetic content;
+  stratified-100 re-pinned 100/100). The wave-120 pre-push boundary
+  caught **three lane-introduced regressions** the lane's own gates
+  missed (F147 discriminator bug — discriminating on check-time vs
+  use-time verdict — plus two others), fixed honestly, not waived.
+- Wave-121: row-13 authorized-channel exfil, probe-only — expanded
+  battery **4 BREAK / 3 HELD** (synonym paraphrase, restructured
+  summary, cross-call fragmentation, api_call semantic re-encoding all
+  BREAK; sandbox laundering re-taints so the verbatim chain survives;
+  two benign FP-ceiling probes HELD). Honest verdict: content-based
+  paraphrase detection is not viable pre-freeze (benign paraphrases
+  share MORE words with sources than malicious ones do — any lexical
+  threshold fires harder on benign traffic). Residual pinned; no
+  closure claimed.
+- Wave-122: probe-only pins — H14 (row 7: 2 BREAK / 1 HELD; no
+  intent/temporal correlation for staged plant→post, no
+  revoke-after-approve operation), H15 (row 11: 1 BREAK / 2 HELD; eight
+  in-budget unregistered bulk-export posts produce no goal-conflict
+  signal), H16 (row 12: 1 BREAK / 2 HELD; hex-encoded weight-shard
+  payload bypasses artifact-tuned detection — no clean content-shape
+  seam, tighten correctly deferred).
+- Wave-123: H17 (tainted-run retrieval escalation; FP 0/6; knocks on —
+  F143 p2 and p6 flip BREAK→HELD, battery now 2 BREAK / 6 HELD, p3
+  factual poison and p5 heuristic dodge remain residuals), H18 (forged
+  lineage stamp quarantines the delivering sender; recipient warned,
+  not quarantined; gap2 battery 7/7), H26 (fingerprint eviction
+  prioritizes instruction-shaped fingerprints under junk flood).
+- Wave-124: H19 (approver-shield brief rendered in web UI — display-only,
+  same bytes as CLI, no new auth surface) + H22 (skill pin-file
+  authentication: HMAC-SHA256 over canonical manifest, tamper raises
+  `PinStoreError` loud; operator key via keyprovider, no fallback).
+  The pre-push boundary caught a REAL lane-missed regression — H22's new
+  pin-manifest HMAC site was not in the HMAC chokepoint audit's
+  allowlist; fixed by adding the site with its custody story, not by
+  waiving the audit.
+- Wave-125: probe-only pins — H20 (exporter-narrowing: 2 BREAK / 2 HELD;
+  K-060 pinned honestly — truncated/narrowed logs still VERIFY; the
+  external anchor is the v2 fix), H21 (ISO 42001 mapping conformance:
+  36 controls / 38 mechanisms, no drift; wired into the canonical suite
+  so drift fails loudly), H25 (row-10 outcome-auditing: 1 BREAK / 2
+  HELD; a policy-clean, tempo-clean, goal-divergent trajectory fires
+  zero outcome signal).
+- Wave-126: H23 measured-absent (F170's append-time compaction +
+  tail-budgeted scans still satisfy the acceptance on the current tree;
+  10× growth flat), H24 anchor-ready transparency seam
+  (`gov/anchor_adapter.py` — interface + FakeLogAdapter +
+  RekorStubAdapter, 27-check conformance battery GREEN, zero network;
+  live anchoring remains v2). The 2026-09-26 industry sweep's Darktrace
+  history-poisoning class was probed honestly (1 BREAK / 1 HELD) and
+  maps exactly to the F143 p3 factual-poison residual — not a new
+  finding.
+- Wave-127: F81 privileged re-verification under genuine privilege on
+  f81-lab (root, CAP_SYS_ADMIN, kernel 7.0.0-1011-gcp) — **11/11 CLOSED
+  ×2, zero BREAK/SKIP/ERROR**, durable artifact
+  `evals/f81_privileged_run_2026-09-26.json` (probe-by-probe ×2 runs,
+  environment, tree pin). **The wave-113 honest residual is RETIRED:**
+  the F81 closure is re-verifiable from the current tree. VM stopped
+  after the run ($0).
+
+- **B1:** 14/16 full (P13 partial-by-design, P8 uncovered-by-design) —
+  unchanged in count; the 2026-09-26 sweep's new incidents (Australia
+  Medicare agent breach, Hermes–Strix–Cairn campaign, CVE-2026-77521)
+  map onto covered classes (Medicare → authorized-channel exfil P13;
+  Hermes–Strix–Cairn → multi-agent infection P2; MaxKB → sandbox F81).
+- **B2:** wave-127 push gates — canonical **3715 OK** (9 skipped, 5
+  expected failures), registry **GREEN**, adversary matrix **3216/3216
+  SHIP-GATE GREEN**, realistic battery **7/7**. Stratified-100:
+  **100/100** (re-pinned wave-120; `careless-typo-014` asserts quarantine
+  + signal; verifier PASS).
+- **B3:** ISO 42001 mapping conformance now gate-wired (H21) — drift
+  fails the canonical suite loudly; the mapping remains provisional
+  (official text not consulted).
+- **B4:** **Open findings: NONE** (next free **F176**). F175 CLOSED
+  wave-118; F-RA3 CLOSED wave-120; no finding filed waves 121–127 —
+  every BREAK is a pinned residual, never a filed defect, by the
+  batteries' own verdicts. The red-first post-wave audit (standing
+  2026-09-25 order) ran GO on every wave; wave-120's boundary caught
+  three lane regressions and wave-124's boundary caught the HMAC
+  allowlist miss — the rule works.
+- **B5:** ratchets capped per SHIP_PLAN §2 (sustaining only). New
+  standing ratchets this window: the erosion monitor (row 9), the
+  exporter-narrowing battery (K-060), the ISO 42001 conformance gate,
+  the outcome-auditing battery (row 10), the anchor conformance suite
+  (H24), the F81 durable artifact.
+- **B6:** honest readiness — the v1 boundaries, stated plainly: (1)
+  Vault custody still dev-mode only; production Vault, TLS end-to-end,
+  non-token auth, HA, live ceremonies UNTESTED; no cloud-KMS provider
+  in-repo. (2) End-to-end TLS is a reverse-proxy reference, not an
+  in-repo stack. (3) Live Rekor anchoring is test-double level — but
+  the H24 seam now makes a v2 adapter cheap (interface + conformance
+  battery pinned). (4) No production SSO; v1 single-tenant. (5)
+  Approval console localhost-grade; queue file-only JSONL; no enforced
+  retention; no monitoring pipeline. (6) Evidence-bundle residuals per
+  spec §7 (K-060 honest scope — H20 pins it adversarially; key custody
+  claimed not proven; operator wall-clock timestamps; single-operator
+  manifest trust). (7) The enforcement residuals, all pinned
+  adversarially: row-13 semantic exfil over authorized channels
+  (wave-121), F143 p3 factual poison + p5 heuristic dodge (wave-123;
+  Darktrace class maps to p3), row-7 intent/temporal correlation +
+  revoke-after-approve (wave-122), row-11 goal registration/conflict
+  (wave-122), row-12 artifact inventory (wave-122), row-10 outcome
+  auditing (wave-125), row-9 e4 many-shot residual + cross-run
+  (wave-119 monitor is opt-in). (8) Repo-default posture: the "42/44
+  legacy sites" figure was pre-wave-85; fresh AST census 2026-09-26
+  finds 119 sites with 0 silent ungoverned in product code
+  (`evals/tool_executor_inventory_2026-09-26.md`). The repo stays
+  private; nothing
+  ships to market without the user's explicit decision.
+
+**Bottom line:** the v1 hardening backlog is done and the enforcement
+core's claims are all re-verified on the current tree — F81's
+privileged proof now has a durable artifact, every residual is pinned
+by a battery that fires RED, and no wave shipped on green tests alone.
+The distance to v1 is unchanged in kind: the deployment-hardening
+surface (production Vault path, TLS in front, approval-console auth,
+retention, monitoring) and the correctly-deferred research items
+(semantic exfil detection, goal ontology, external anchor). Still a
+prototype against the bar; no victory on green tests. B6 MET — the
+window now covers waves 80→127.

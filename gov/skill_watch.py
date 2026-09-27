@@ -408,12 +408,19 @@ class SkillWatch:
         # H22: when this watcher was loaded from (or saved to) an
         # authenticated pin file, the path and the verified MAC are
         # attached. check_at_use()/verify_all() revalidate the file
-        # (mtime-gated; full MAC only on change) so a post-load
-        # rewrite on disk is caught fail-closed.
+        # (stat-prefiltered; the cheap path is content-hash-bound per
+        # F177, full MAC re-verification on any content change) so a
+        # post-load rewrite on disk is caught fail-closed.
         self._pin_path = None
         self._pin_mac = None
         self._pin_mac_key = None
         self._pin_stat = None
+        # F177: SHA-256 of the exact on-disk pin-file bytes last
+        # verified. The (mtime_ns, size) stat hint is NOT a security
+        # boundary (both are attacker-malleable via utime+padding);
+        # the cheap revalidation path re-hashes content and compares
+        # against this value.
+        self._pin_content_sha256 = None
 
     # -- introspection --------------------------------------------------------
 
@@ -914,11 +921,17 @@ class SkillWatch:
         return report
 
     def _revalidate_pin_file(self):
-        """H22: revalidate the attached pin file (if any).
+        """H22/F177: revalidate the attached pin file (if any).
 
-        Mtime-gated: if the file is unchanged since load/save, returns
-        True immediately (no I/O beyond stat). If the file changed or
-        vanished, the MAC is re-verified with the attached key; on
+        Stat-prefiltered: if (mtime_ns, size) are unchanged since the
+        last verification, the cheap path re-reads the file and
+        compares a SHA-256 of the exact bytes against the cached
+        content hash — the cheap path is cryptographically bound to
+        content, not to attacker-malleable metadata. F177: a bare
+        (mtime_ns, size) match NEVER skips authentication, because
+        both are restorable by anyone with write access (utime +
+        padding). If the file changed, vanished, or the content hash
+        mismatches, the MAC is re-verified with the attached key; on
         failure every registered skill is quarantined fail-closed and
         False is returned.
         """
@@ -935,17 +948,37 @@ class SkillWatch:
             # Pin file vanished: fail closed.
             self._quarantine_all("pin-file-missing")
             return False
-        if self._pin_stat is not None and cur == self._pin_stat:
-            return True
-        # File changed: re-verify the MAC.
+        if (self._pin_stat is not None and cur == self._pin_stat
+                and self._pin_content_sha256 is not None):
+            # F177: stat matches — bind to content before trusting.
+            # An attacker who restores (mtime_ns, size) cannot forge a
+            # SHA-256 preimage of the verified bytes.
+            try:
+                with open(self._pin_path, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                raw = None
+            if (raw is not None and len(raw) == cur[1]
+                    and hashlib.sha256(raw).hexdigest()
+                    == self._pin_content_sha256):
+                return True
+            # Content changed under a (possibly restored) stat: fall
+            # through to full MAC re-verification, which fails closed.
+        # File changed (or stat/content unverifiable): re-verify the MAC.
         try:
             data = PinStore.peek(self._pin_path,
                                  mac_key=self._pin_mac_key)
         except PinStoreError:
             self._quarantine_all("pin-file-tamper")
             return False
-        # MAC valid: update the stat hint.
+        # MAC valid: refresh the stat hint AND the content binding.
         self._pin_stat = cur
+        try:
+            with open(self._pin_path, "rb") as f:
+                self._pin_content_sha256 = hashlib.sha256(
+                    f.read()).hexdigest()
+        except OSError:
+            self._pin_content_sha256 = None
         return True
 
     def _quarantine_all(self, reason):
@@ -1420,8 +1453,11 @@ class PinStore:
         fd, tmp = tempfile.mkstemp(prefix=".skill-pins-",
                                    dir=directory)
         try:
+            # F177: hash the exact bytes that hit the disk so the
+            # revalidation stat hint is bound to content.
+            written = _canonical_manifest_bytes(data)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(_canonical_manifest_bytes(data).decode("utf-8"))
+                f.write(written.decode("utf-8"))
             os.chmod(tmp, 0o600)
             os.replace(tmp, path)
         except OSError as e:
@@ -1439,8 +1475,11 @@ class PinStore:
             try:
                 st = os.stat(path)
                 watch._pin_stat = (st.st_mtime_ns, st.st_size)
+                watch._pin_content_sha256 = hashlib.sha256(
+                    written).hexdigest()
             except OSError:
                 watch._pin_stat = None
+                watch._pin_content_sha256 = None
         return path
 
     @staticmethod
@@ -1458,6 +1497,15 @@ class PinStore:
         a rewritten pin file is never used silently. A manifest
         without a MAC (pre-H22 layout) loads as before when no key is
         given.
+
+        F176: when ``mac_key`` IS given but the manifest carries no
+        ``manifest_mac``, raise LOUD as well — a keyed deployment
+        never silently accepts an unsigned trust anchor (an attacker
+        who strips the MAC field must not downgrade a signed manifest
+        to the pre-H22 layout). The pre-H22 unsigned layout still
+        loads when no key is given (backward compatibility for
+        keyless deployments; the migration path is load-without-key
+        then save-with-key).
         """
         path = os.fspath(path)
         try:
@@ -1473,6 +1521,14 @@ class PinStore:
                 % (path, type(data).__name__, _PIN_FORMAT))
         # H22: verify the manifest MAC before trusting anything else.
         claimed_mac = data.pop(_PIN_MAC_FIELD, None)
+        if claimed_mac is None and mac_key is not None:
+            # F176: fail closed on downgrade — a keyed deployment
+            # refuses an unsigned trust anchor LOUD.
+            raise PinStoreError(
+                "skill pin file %r carries no %r field but an operator "
+                "key was provided (skill_pin_tamper): refusing an "
+                "unsigned trust anchor in a keyed deployment"
+                % (path, _PIN_MAC_FIELD))
         if claimed_mac is not None:
             if mac_key is None:
                 raise PinStoreError(
@@ -1640,6 +1696,13 @@ class PinStore:
             try:
                 st = os.stat(watch._pin_path)
                 watch._pin_stat = (st.st_mtime_ns, st.st_size)
+                # F177: bind the stat hint to the exact on-disk bytes
+                # (peek already verified the MAC above, so these bytes
+                # are authenticated).
+                with open(watch._pin_path, "rb") as f:
+                    watch._pin_content_sha256 = hashlib.sha256(
+                        f.read()).hexdigest()
             except OSError:
                 watch._pin_stat = None
+                watch._pin_content_sha256 = None
         return watch

@@ -595,6 +595,93 @@ class TestPinStore(unittest.TestCase):
             PinStore.save(object(), self.path)
 
 
+class TestF176F177PinAuth(unittest.TestCase):
+    """Regression: H22 pin-file authentication bypasses (F176, F177).
+
+    F176: a keyed deployment must never silently accept an unsigned
+    trust anchor (MAC-stripping downgrade).
+    F177: (mtime_ns, size) restoration must not bypass MAC
+    re-verification (TOCTOU).
+    """
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="f176f177-")
+        self.path = os.path.join(self.tmpdir, "skill_pins.json")
+        self.skill_path = os.path.join(self.tmpdir, "w.skill")
+        with open(self.skill_path, "wb") as f:
+            f.write(V1)
+        self.key = _pin_key()
+
+    def _watch(self):
+        w = SkillWatch()
+        w.register_skill("w", FileContentSource(self.skill_path),
+                         origin=file_origin(self.skill_path))
+        return w
+
+    def test_f176_keyed_peek_refuses_unsigned_manifest(self):
+        """Stripping manifest_mac from a signed file is refused LOUD."""
+        PinStore.save(self._watch(), self.path, mac_key=self.key)
+        with open(self.path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("manifest_mac", data)
+        del data["manifest_mac"]
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+        with self.assertRaises(PinStoreError) as cm:
+            PinStore.peek(self.path, mac_key=self.key)
+        self.assertIn("tamper", str(cm.exception).lower())
+        with self.assertRaises(PinStoreError):
+            PinStore.load(self.path, mac_key=self.key)
+
+    def test_f176_unsigned_still_loads_without_key(self):
+        """Pre-H22 unsigned files load when no key is given (compat)."""
+        PinStore.save(self._watch(), self.path)
+        data = PinStore.peek(self.path)
+        self.assertNotIn("manifest_mac", data)
+
+    def test_f177_stat_restoration_does_not_bypass_reverify(self):
+        """Rewritten pins + restored (mtime_ns, size) are caught."""
+        PinStore.save(self._watch(), self.path, mac_key=self.key)
+        w2 = PinStore.load(
+            self.path, mac_key=self.key,
+            source_factory=lambda sid, o: FileContentSource(
+                self.skill_path))
+        # Baseline: clean check takes the content-bound cheap path.
+        ok, _ = w2.check_at_use("w")
+        self.assertTrue(ok)
+        # Attacker: flip a digest, pad to original size, restore mtime.
+        st = os.stat(self.path)
+        orig_mtime_ns, orig_size = st.st_mtime_ns, st.st_size
+        with open(self.path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["pins"]["w"]["pinned_digest"] = "0" * 64
+        payload = (json.dumps(data, indent=2, sort_keys=True)
+                   .encode("utf-8") + b"\n")
+        if len(payload) < orig_size:
+            payload = payload + b" " * (orig_size - len(payload))
+        else:
+            payload = payload[:orig_size]
+        with open(self.path, "wb") as f:
+            f.write(payload)
+        os.utime(self.path, ns=(orig_mtime_ns, orig_mtime_ns))
+        # Stat is restored, but revalidation must still fail closed.
+        self.assertFalse(w2._revalidate_pin_file())
+        self.assertTrue(w2.is_quarantined("w"))
+
+    def test_f177_cheap_path_survives_untouched_file(self):
+        """Unchanged file still revalidates cheaply with no quarantine."""
+        PinStore.save(self._watch(), self.path, mac_key=self.key)
+        w2 = PinStore.load(
+            self.path, mac_key=self.key,
+            source_factory=lambda sid, o: FileContentSource(
+                self.skill_path))
+        self.assertTrue(w2._revalidate_pin_file())
+        self.assertFalse(w2.is_quarantined("w"))
+        ok, detail = w2.check_at_use("w")
+        self.assertEqual((ok, detail), (True, "clean"))
+
+
 if __name__ == "__main__":
     unittest.main()
 
