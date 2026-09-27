@@ -279,7 +279,15 @@ class TestProductionRefusesEvenDeclared(unittest.TestCase):
         ex = r.build(policy_store=_store([h1, _human()], log=r.log,
                                     mode="production"),
                      delegation_context=_bound_ctx(keys),
-                     capability_gate_binding=binding)
+                     capability_gate_binding=binding,
+                     # Wave-158 (row 12): the deployment manifest is
+                     # default-on -- production construction requires a
+                     # manifest decision. This test's subject is the
+                     # wave-85 gate (governed production constructs), so
+                     # it records the orthogonal opt-out explicitly.
+                     deployment_manifest_opt_out=(
+                         "w85 test: manifest seam not under test; no "
+                         "deployment-critical files in this fixture"))
         self.assertTrue(ex.is_governed)
 
 

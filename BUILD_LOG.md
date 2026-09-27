@@ -9636,3 +9636,17 @@ Rows 11/18: the residual itself (receipts missing from executor/approval records
 **Findings:** none filed. Next free: F189. Open findings: F188.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-159 — row-12 default-on deployment-manifest attachment merge
+
+**Merge.** Team tree `teams/row12-manifest/tree` merged into the shared tree (owned artifacts only; unrelated drift excluded). The lane tree predated wave-158, so the merge was surgical: `gov/executor.py` took ONLY the manifest-gate hunks (verified identical to the lane file post-merge; the wave-155 `decision_replay` and wave-157 `delegation_receipt` hooks are byte-preserved — 9 `decision_trace` + 19 `delegation_receipt` mentions, same as the lane base). Changed: `gov/executor.py` (new `DeploymentManifestRequiredError` + `_deployment_manifest_construction_check()` — the default-on gate at construction: staging/dev silent absence proceeds LOUD via chained `deployment_manifest_absent`; production silent absence is fail-closed refusal + chained `deployment_manifest_refused`; envelope attaches verified fail-loud (`inventory.attach_deployment_manifest`); explicit opt-out requires a real non-blank reason (F131); envelope+opt-out together refused; unknown/unresolvable mode fails closed toward refusal; spawned children inherit the parent's manifest posture; gate runs with the construction declarations BEFORE the F22 log-size guard arms). `tests/test_new_controls.py` (exact-count updates seq 4→5, 5→6, 9→10, 7→8 for the new declaration). `tests/test_w85_legacy_seam.py` (explicit opt-out for the production-construction case — its wave-85 subject preserved). New: `evals/manifest_default_on_probes.py` (15 probes), `tests/test_deployment_manifest_default_on.py` (13 tests).
+
+Red-first on the merged tree: pre-seam demonstration via pristine-`executor.py` swap — **0 HELD / 15 BREAK** (p1: production executor constructed with no manifest and no decision, the seam silently absent). Post-seam: **15 HELD / 0 BREAK** (staging ×2 deterministic + clean env). Adjacent exact on the merged tree: `decision_replay_probes` 7/7 (wave-155 canary intact), `deleg_receipt_stamping_probes` 12 HELD / 0 BREAK (wave-157 canary intact), `artifact_deployment_manifest_probes` 6 HELD / 0 BREAK (wave-152/153 baseline exact), `tests.test_deployment_manifest_default_on` + `tests.test_w85_legacy_seam` 32 OK, `tests.test_new_controls` 6 OK.
+
+**Push-clone gates (fresh clone of 36c9a7f + rsync, workstream sibling symlinks, fresh unique TMPDIRs, no concurrent lane suites):** canonical **5087 OK** (5066 + 21 new: 13 manifest-default-on + 8 ... see note; skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**.
+
+Row 12: the default-on residual is closed — the artifact-integrity seam can no longer be silently absent at construction. The row stays PARTIAL for the documented out-of-scope ceilings: undeclared paths and content-shape exfiltration without file references remain fail-open by design; same-process compromised executor / dishonest ceremony stays outside the tamper-evidence model. (Rows 11/18 likewise stay PARTIAL for cross-runtime delegation and non-executor `queue()` callers.)
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

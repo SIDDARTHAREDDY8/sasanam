@@ -201,6 +201,162 @@ class UngovernedConstructionError(Exception):
     """
 
 
+class DeploymentManifestRequiredError(Exception):
+    """Row-12 (wave-158): ToolExecutor construction refused fail-closed,
+    before anything executes.
+
+    Raised when the deployment-manifest decision is contradictory (an
+    envelope AND an opt-out reason), when the opt-out reason is blank
+    (F131 hollow justification), or when the decision is silently
+    absent in production. In non-production modes the silent absence
+    is instead recorded LOUD as a chained ``deployment_manifest_absent``
+    event -- silence is never an acceptable deployment posture for the
+    artifact-integrity seam.
+    """
+
+
+def _deployment_manifest_construction_check(run_id, log_append, inventory,
+                                            deployment_manifest,
+                                            deployment_manifest_opt_out):
+    """Row-12 (wave-158): default-on deployment-manifest decision gate.
+
+    The deployment manifest (gov/artifact_inventory_manifest.py) is the
+    only record that knows what deployment-critical files are SUPPOSED
+    to be. Attachment was opt-in (wave-152/153): a deployment that
+    skipped it ran with the artifact-integrity seam silently absent.
+    The safe state is the DEFAULT state -- the operator hands over the
+    pinned envelope, or explicitly opts out with a recorded reason
+    (aviation-checklist idiom, same as the wave-85 ungoverned_ack
+    gate: skipping the safe state requires an explicit, recorded
+    declaration).
+
+    Returns ``(decision, opt_out_reason)`` where decision is one of
+    "attached" / "opt_out" / "absent". Raises
+    DeploymentManifestRequiredError on contradiction, on a hollow
+    opt-out, and on silent absence in production. A malformed or
+    unverifiable envelope raises ValueError from the inventory's
+    attach ceremony (fail-loud at setup, never a silent gap at
+    consult). NoKeyConfiguredError from the audit write propagates
+    unchanged (a key problem is not a declaration problem).
+    """
+    from . import artifact_inventory_manifest as _manifest
+    from .keys import NoKeyConfiguredError
+
+    def _emit(event, decision, reason, **fields):
+        record = {"event": event,
+                  "run_id": run_id,
+                  "agent_id": "system",
+                  "role": "system",
+                  "decision": decision,
+                  "policy_id": "deployment-manifest-seam",
+                  "reason": reason}
+        record.update(fields)
+        log_append(record)
+
+    # Contradictory: an envelope AND an opt-out reason.
+    if (deployment_manifest is not None
+            and deployment_manifest_opt_out is not None):
+        raise DeploymentManifestRequiredError(
+            "REFUSED: deployment_manifest and "
+            "deployment_manifest_opt_out were both given -- "
+            "contradictory. Hand over the pinned envelope OR declare "
+            "the opt-out reason, not both.")
+    # The envelope: attach now, verified fail-loud at setup by the
+    # inventory's attach ceremony (ValueError on malformed / forged /
+    # stale envelopes -- never a silent gap).
+    if deployment_manifest is not None:
+        inventory.attach_deployment_manifest(deployment_manifest)
+        pinned = deployment_manifest
+        try:
+            _emit("deployment_manifest_attached", "attached",
+                  "LOUD: deployment manifest attached at construction; "
+                  "artifact egress is now checked against the deployment "
+                  "pin in addition to the run inventory.",
+                  manifest_digest=_manifest.manifest_digest(pinned),
+                  key_epoch=pinned.get("key_epoch"),
+                  pinned_at=pinned.get("pinned_at"),
+                  entry_count=len(pinned.get("manifest", {})))
+        except NoKeyConfiguredError:
+            raise
+        except Exception:
+            pass  # the attachment stands; the event is informational
+        return "attached", None
+    # Explicit opt-out: the reason must be real (F131 -- a
+    # whitespace-only justification is hollow). An unrecorded
+    # declaration is not a declaration: if the opt-out cannot be
+    # chained, the opt-out is refused.
+    if deployment_manifest_opt_out is not None:
+        reason = deployment_manifest_opt_out
+        if not isinstance(reason, str) or not reason.strip():
+            raise DeploymentManifestRequiredError(
+                "REFUSED: deployment_manifest_opt_out is blank or "
+                "whitespace-only -- a hollow justification (F131). "
+                "State a real reason (e.g. 'no deployment-critical "
+                "files in this deployment') or hand over the pinned "
+                "envelope.")
+        reason = reason.strip()
+        try:
+            _emit("deployment_manifest_opt_out", "opt_out",
+                  "LOUD: deployment runs WITHOUT a deployment manifest "
+                  "under an explicit, recorded opt-out. Declared reason: "
+                  "%r. Artifact egress is checked against the run "
+                  "inventory only; the cross-run deployment-pin leg is "
+                  "absent BY DECLARATION -- audit accordingly." % (reason,),
+                  opt_out_reason=reason)
+        except NoKeyConfiguredError:
+            raise
+        except Exception as exc:
+            raise DeploymentManifestRequiredError(
+                "REFUSED: the deployment_manifest_opt_out declaration "
+                "could not be chained (%s) -- an unrecorded declaration "
+                "is not a declaration." % (exc,))
+        return "opt_out", reason
+    # Silent absence: resolve the mode. Unknown/unresolvable modes fail
+    # closed TOWARD refusal, never silently toward "no guard" (wave-85
+    # idiom: ambiguity defaults to the safe direction).
+    from .keyprovider import resolve_deployment_mode
+    try:
+        mode = resolve_deployment_mode()
+    except Exception:
+        mode = "production"
+    if mode == "production":
+        try:
+            _emit("deployment_manifest_refused", "refused",
+                  "REFUSED: ToolExecutor constructed in production "
+                  "without a deployment manifest and without an explicit "
+                  "opt-out -- the artifact-integrity seam must never be "
+                  "silently absent where the stakes are real.",
+                  deployment_mode=mode)
+        except NoKeyConfiguredError:
+            raise
+        except Exception:
+            pass  # the refusal stands even if the audit write fails
+        raise DeploymentManifestRequiredError(
+            "REFUSED: ToolExecutor constructed in production without "
+            "deployment_manifest and without deployment_manifest_opt_out "
+            "-- hand over the operator-pinned envelope "
+            "(gov.artifact_inventory_manifest.pin_manifest) or declare "
+            "deployment_manifest_opt_out='<reason>'.")
+    try:
+        _emit("deployment_manifest_absent", "absent",
+              "LOUD: ToolExecutor constructed WITHOUT a deployment "
+              "manifest and without an explicit opt-out (deployment "
+              "mode: %s). Artifact egress is checked against the run "
+              "inventory only; the cross-run deployment-pin leg is "
+              "absent -- audit accordingly. Silence is not an "
+              "acceptable deployment posture: hand over the pinned "
+              "envelope or record an opt-out reason." % (mode,),
+              deployment_mode=mode)
+    except NoKeyConfiguredError:
+        raise
+    except Exception as exc:
+        raise DeploymentManifestRequiredError(
+            "REFUSED: the deployment_manifest_absent declaration could "
+            "not be chained (%s) -- silence is not an acceptable "
+            "deployment posture." % (exc,))
+    return "absent", None
+
+
 class SpawnBudgetExhaustedError(Exception):
     """Wave-86 (governed spawn): the run's spawn budget is exhausted.
 
@@ -734,7 +890,22 @@ class ToolExecutor:
                  # change (check_output_propagation returns a silent
                  # allow without touching anything; note_propagation_input
                  # is a no-op).
-                 propagation_tracker=None):
+                 propagation_tracker=None,
+                 # Deployment-pinned artifact manifest (row 12,
+                 # wave-158): appended LAST for the same
+                 # positional-misalignment reason. DEFAULT-ON: the
+                 # deployment hands over the operator-pinned envelope
+                 # (dict from
+                 # gov.artifact_inventory_manifest.pin_manifest --
+                 # attached and verified fail-loud at construction),
+                 # or explicitly opts out with a recorded reason
+                 # (deployment_manifest_opt_out="<reason>"). Silent
+                 # absence (both None) is fail-closed in production
+                 # and LOUD (chained deployment_manifest_absent)
+                 # elsewhere -- the artifact-integrity seam must never
+                 # be silently absent.
+                 deployment_manifest=None,
+                 deployment_manifest_opt_out=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -780,6 +951,29 @@ class ToolExecutor:
                 self.run_id, log, policy_store, delegation_context,
                 capability_gate_binding, capability_assessment,
                 capability_ungoverned_ack))
+        # Row-12 (wave-158): the deployment manifest is DEFAULT-ON at
+        # the deployment ceremony (executor construction). The operator
+        # hands over the pinned envelope (attached and verified
+        # fail-loud here) or explicitly opts out with a recorded
+        # reason; silent absence is fail-closed in production and LOUD
+        # (chained deployment_manifest_absent) elsewhere. The decision
+        # inputs are kept so spawned children inherit the deployment's
+        # manifest posture instead of re-deciding it. This runs with
+        # the other construction-time declarations, BEFORE the F22 log
+        # size guard is armed below: the declaration is part of the
+        # ceremony and must chain even under a tiny test cap (the guard
+        # constrains run activity, not the deployment's own declaration).
+        # Row-12 (wave-130): run-scoped artifact inventory. Every
+        # successful write_file registers (path, sha256, size, agent,
+        # label); egress referencing a file is checked against it.
+        # Empty by default: no writes, no behavior change.
+        self.artifacts = _artifacts.ArtifactInventory()
+        (self._deployment_manifest_decision,
+         self._deployment_manifest_opt_out_reason) = (
+            _deployment_manifest_construction_check(
+                self.run_id, log.append, self.artifacts,
+                deployment_manifest, deployment_manifest_opt_out))
+        self._deployment_manifest_envelope = deployment_manifest
         # Wave-75 (governing the governors): the governed policy path.
         # Opt-in: None = pre-wave-75 behavior, zero behavior change.
         # When installed, call() snapshots the store's CURRENT engine
@@ -1521,11 +1715,6 @@ class ToolExecutor:
         self.classification = _classification.ClassificationRegistry()
         self._read_classification = None  # max level string, or None
         self._read_classification_sources = []  # [(path, level)]
-        # Row-12 (wave-130): run-scoped artifact inventory. Every
-        # successful write_file registers (path, sha256, size, agent,
-        # label); egress referencing a file is checked against it.
-        # Empty by default: no writes, no behavior change.
-        self.artifacts = _artifacts.ArtifactInventory()
         # Wave-129 (row-7 intent slice): opt-in user-turn context for
         # the intent-slice judge. The executor is a tool executor -- it
         # never sees user messages on its own; the harness/operator
@@ -1978,7 +2167,20 @@ class ToolExecutor:
             # (spawn must not bypass advisory tightening) and shares
             # the BOM chain cell, so parent and child extend ONE
             # decision-BOM sub-chain in the shared audit log.
-            advisors=self._advisors)
+            advisors=self._advisors,
+            # Row-12 (wave-158): one deployment, one manifest posture --
+            # the child inherits the parent's manifest decision (the
+            # envelope or the recorded opt-out reason) so a production
+            # spawn is not refused for a decision the deployment
+            # already made; the child's inventory is then overwritten
+            # with the parent's shared registry (row-12, one run one
+            # inventory), so the manifest itself is shared by
+            # reference. In the absent case the declaration chains once
+            # per child construction (loud, by design -- same as the
+            # capability acknowledged-ungoverned precedent).
+            deployment_manifest=self._deployment_manifest_envelope,
+            deployment_manifest_opt_out=(
+                self._deployment_manifest_opt_out_reason))
         child._advisory_bom_chain = self._advisory_bom_chain
         # One sub-chain, one lock: the child shares the parent's BOM
         # head cell, so it must share the guard too.
