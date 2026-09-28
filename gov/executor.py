@@ -94,6 +94,8 @@ from . import skill_watch as _skill_watch
 # binding (perceptual channels in tool args ride the queue packet).
 from . import audio_carrier as _audio_carrier
 from . import invocation_receipts as _receipts
+from . import authority_proof as _authority_proof
+from . import decision_packet as _decision_packet
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
 from . import target_match as _target_match
@@ -1005,7 +1007,15 @@ class ToolExecutor:
                  # GOV_RECEIPT_KEY_FILE; unconfigured = receipts disabled
                  # with one loud chained event (never silent, never a
                  # dev-key fallback).
-                 receipt_key_seed=None):
+                 receipt_key_seed=None,
+                 # Wave-176 (OpenShell steal #2, constructive decision
+                 # packets): explicit 32-byte hex seed for the
+                 # decision-packet signing key. None (default) = resolve
+                 # from GOV_DECISION_PACKET_KEY /
+                 # GOV_DECISION_PACKET_KEY_FILE; unconfigured = packets
+                 # disabled with one loud chained event (never silent,
+                 # never a dev-key fallback).
+                 packet_key_seed=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -1195,6 +1205,64 @@ class ToolExecutor:
                            "Ed25519 countersigned invocation receipt."
                            % (self._receipt_key["key_id"],)),
             })
+        # Wave-176 (OpenShell steal #2, constructive decision packets):
+        # the packet-signing key. Same two-tier custody idiom as the
+        # invocation receipts (wave-175 lane 1):
+        #   (a) a key was INTENDED (explicit seed or env/file set) but is
+        #       broken -> raise LOUD at construction: a deployment that
+        #       asked for signed packets must not silently run unsigned.
+        #   (b) nothing configured (opt-in off) -> one loud chained
+        #       decision_packet_disabled event, no packets, executions
+        #       proceed. Never silent, never a dev-key fallback (wave-81
+        #       precedent).
+        _packet_intent = (packet_key_seed is not None
+                          or os.environ.get("GOV_DECISION_PACKET_KEY",
+                                            "").strip()
+                          or os.environ.get("GOV_DECISION_PACKET_KEY_FILE",
+                                            "").strip())
+        try:
+            self._packet_key = _decision_packet.resolve_packet_key(
+                explicit=packet_key_seed)
+        except _decision_packet.NoPacketKeyError as _pke:
+            if _packet_intent:
+                raise
+            self._packet_key = None
+            self.log.append({
+                "event": "decision_packet_disabled",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "absent",
+                "policy_id": "decision-packet-seam",
+                "reason": ("No decision-packet signing key configured: %s. "
+                           "Policy decisions will execute WITHOUT a signed "
+                           "decision packet." % (_pke,)),
+            })
+        else:
+            self.log.append({
+                "event": "decision_packet_enabled",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "present",
+                "policy_id": "decision-packet-seam",
+                "packet_key_id": self._packet_key["key_id"],
+                "packet_pubkey": self._packet_key["pubkey_hex"],
+                "reason": ("Decision-packet signing key %s configured: "
+                           "policy decisions will carry a signed, "
+                           "self-describing decision packet."
+                           % (self._packet_key["key_id"],)),
+            })
+        # Wave-176 (OpenShell steal #1, AuthorityProof contract): the
+        # operator-declared authority boundary. None = the deployment
+        # declared no boundary -> the checker runs advisory-only and
+        # attaches its proof to the decision record; a declared
+        # boundary makes exceeds/unsupported/inconclusive refuse
+        # fail-closed at the pre-decision path and the approved sweep.
+        # Set post-construction via set_authority_boundary(); the
+        # boundary object is immutable and validated at load, so the
+        # seam never mutates operator authority mid-flight.
+        self._authority_boundary = None
         # Wave-90 (S6, F137 — infection lineage): the lineage substrate
         # (gov.lineage.LineageTracker), constructed by the deployment in
         # the operator trust domain and shared across a spawn lineage by
@@ -8027,6 +8095,126 @@ class ToolExecutor:
                 policy_id="advisory-layer",
                 flag="advisory_failed_closed")
 
+    def set_authority_boundary(self, boundary):
+        """Install the operator-declared authority boundary (wave-176).
+
+        ``boundary`` must be a gov.authority_proof.AuthorityBoundary
+        (build with authority_proof.boundary_from_dict, which validates
+        loudly). Pass None to return to advisory mode. The boundary is
+        operator authority: the agent-facing paths never call this.
+        """
+        if boundary is not None and not isinstance(
+                boundary, _authority_proof.AuthorityBoundary):
+            raise _authority_proof.BoundaryError(
+                "set_authority_boundary expects an AuthorityBoundary or "
+                "None, got %r" % type(boundary).__name__)
+        self._authority_boundary = boundary
+
+    def _emit_decision_packet(self, *, decision, decision_seq, head_digest,
+                              tool, redacted_args, policy_decision, policy,
+                              policy_ctx_snapshot, identity,
+                              skill_id=None, skill_attested_digest=None,
+                              approval_id=None):
+        """Wave-176 (OpenShell steal #2, constructive decision packet).
+
+        Build, sign, and audit-chain the decision packet for one FINAL
+        policy decision ("allow" | "deny" | "queue"; the caller maps
+        require_approval -> queue). Additive: the packet composes
+        existing bindings by digest (policy decision, preview) rather
+        than re-binding them, and rides its own ``decision_packet``
+        audit entry chained immediately under the decision's own entry
+        (``head_digest`` = that entry's hash).
+
+        Returns the appended audit entry, or None when packets are
+        disabled (no key configured). A concurrent writer slipping an
+        entry between the decision append and ours is handled by
+        rebuild-once under the true head; a second slip raises LOUD --
+        the seam never emits a packet that misstates its chain head.
+        """
+        if self._packet_key is None:
+            return None
+        _dp = _decision_packet
+        _snap = (policy_ctx_snapshot
+                 if isinstance(policy_ctx_snapshot, dict) else {})
+        _boundary_declared = self._authority_boundary is not None
+        _proof = _snap.get("authority_proof")
+        # Memory act-gate tier for this decision: the run's un-elevated
+        # reads at decision time (the disclosure digest binds the exact
+        # list; the packet names the tier, not the contents).
+        _disclosure = _snap.get("memory_provenance")
+        _disclosure_list = (_disclosure if isinstance(_disclosure, list)
+                            else [])
+        if self._memory_actgate is None:
+            _tier = "gate_not_attached"
+        elif _disclosure_list:
+            _tier = "un_elevated_reads_present"
+        else:
+            _tier = "no_un_elevated_reads"
+        _mem_carriers = sorted({
+            str(r.get("input_carrier")) for r in _disclosure_list
+            if isinstance(r, dict) and r.get("input_carrier")})
+        _preview_text = self._preview(tool, redacted_args)
+        _head = head_digest
+        for _attempt in (0, 1):
+            _body = _dp.build_decision_packet(
+                decision=decision,
+                boundary_declared=_boundary_declared,
+                authority_proof=_proof if _boundary_declared else None,
+                policy_id=policy_decision.policy_id,
+                policy_version=getattr(policy, "policy_version",
+                                       "unversioned"),
+                matched_rules=policy_decision.matched_rules,
+                policy_flag=policy_decision.flag,
+                decision_digest=hashlib.sha256(
+                    _dp.canonical_bytes(
+                        policy_decision.to_dict())).hexdigest(),
+                canonical_target=_snap.get("path_resolved"),
+                preview_digest=hashlib.sha256(
+                    str(_preview_text or "").encode("utf-8")).hexdigest(),
+                capability_manifest_digest=skill_attested_digest,
+                skill_id=skill_id,
+                actgate_tier=_tier,
+                actgate_disclosure_digest=hashlib.sha256(
+                    _dp.canonical_bytes(
+                        _disclosure_list)).hexdigest(),
+                attachment_carriers=(_snap.get("attachment_carriers")
+                                     or []),
+                memory_carriers=_mem_carriers,
+                evidence_head_digest=_head,
+                identity={"agent_id": identity.agent_id,
+                          "role": identity.role,
+                          "principal": identity.principal,
+                          "run_id": identity.run_id},
+                approval_id=approval_id,
+                decision_seq=decision_seq,
+                policy_reason=policy_decision.reason)
+            _packet = _dp.sign_packet(_body, self._packet_key["seed"])
+            _entry = self.log.append({
+                "event": "decision_packet",
+                "run_id": identity.run_id,
+                "agent_id": identity.agent_id,
+                "role": identity.role,
+                "principal": identity.principal,
+                "tool": tool,
+                "decision": decision,
+                "decision_seq": decision_seq,
+                "approval_id": approval_id,
+                "packet_digest": _dp.packet_digest(_packet),
+                "packet": _packet,
+                "policy_id": "decision-packet-seam",
+            })
+            if _entry.get("prev_hash") == _head:
+                return _entry
+            # Another writer appended between the decision entry and
+            # ours: rebuild once under the TRUE head (the prev_hash the
+            # log actually chained us under). The stale packet's entry
+            # stays in the chain and fails linkage honestly -- it is not
+            # rewritten.
+            _head = _entry.get("prev_hash")
+        raise _dp.PacketError(
+            "decision_packet emission: the evidence chain moved twice "
+            "under the packet; refusing to emit a stale-head packet")
+
     def call(self, identity, tool, **kwargs):
         """Run one tool call through the governance pipeline."""
         if not isinstance(identity, AgentIdentity):
@@ -8841,6 +9029,45 @@ class ToolExecutor:
         _decision_full = policy.decide(Request.from_action(action, ctx))
         decision = _decision_full.to_policy_decision()
 
+        # Wave-176 (OpenShell steal #1, AuthorityProof contract): check
+        # the proposed action against the operator-declared authority
+        # boundary at the policy pre-decision seam. The proof ALWAYS
+        # rides the policy-context snapshot (MAC-bound with the rest of
+        # policy_context) so the audit trail names exactly what was
+        # checked -- covered vs uncovered domains -- for every action.
+        # Enforcing vs advisory (explicit): a DECLARED boundary makes
+        # exceeds/unsupported/inconclusive refuse FAIL-CLOSED here,
+        # before any side effect, in the fail-closed direction only (a
+        # within_boundary proof never upgrades a policy deny). With NO
+        # declared boundary the proof is advisory and the policy
+        # verdict stands -- refusing every action for a boundary the
+        # operator never wrote would be the governor denying its own
+        # deployment's legitimate work. check() never raises on
+        # hostile action shapes (they become unsupported).
+        _ap_ctx = dict(ctx)
+        _ap_ctx["sandbox_root"] = str(self._sandbox_resolved)
+        _ap_proof = _authority_proof.check(
+            action, _ap_ctx, self._authority_boundary)
+        policy_ctx_snapshot["authority_proof"] = _ap_proof.to_dict()
+        if (self._authority_boundary is not None
+                and _ap_proof.verdict != _authority_proof.WITHIN):
+            _ap_entry = self.log.append(_base({
+                "decision": "denied",
+                "policy_id": "authority-boundary",
+                "flag": "authority_boundary_refused",
+                "matched_rules": [],
+                "authority_proof": _ap_proof.to_dict(),
+                "reason": ("Refusing to act: authority proof %r for %s "
+                           "(%s); the operator-declared boundary does "
+                           "not cover this action."
+                           % (_ap_proof.verdict, tool,
+                              _ap_proof.detail)),
+            }))
+            return {"status": "denied",
+                    "reason": _ap_entry["reason"],
+                    "policy_id": "authority-boundary",
+                    "seq": _ap_entry["seq"]}
+
         # Monotonic advisory layer (opt-in, adapted from
         # microsoft/agent-governance-toolkit). Runs AFTER the
         # deterministic verdict: advisors can only move the effect UP
@@ -9381,6 +9608,23 @@ class ToolExecutor:
                 # this verdict (see gov/decision_replay.py).
                 "decision_trace": _decision_trace(),
             }))
+            # Wave-176 (OpenShell steal #2): the constructive decision
+            # packet for the FINAL allow verdict, chained immediately
+            # under the write-ahead execution_authorized entry -- the
+            # packet's evidence.head_digest names its actual audit
+            # parent, and it is emitted BEFORE the side effect.
+            self._emit_decision_packet(
+                decision="allow",
+                decision_seq=auth_entry.get("seq"),
+                head_digest=auth_entry.get("hash"),
+                tool=tool,
+                redacted_args=redacted_args,
+                policy_decision=decision,
+                policy=policy,
+                policy_ctx_snapshot=policy_ctx_snapshot,
+                identity=identity,
+                skill_id=_skill_id,
+                skill_attested_digest=_sw_attested_digest)
             # Wave-79 (pre-commit, atomic): irreversible tools with the
             # gate installed consume their bound approval IN the commit
             # that executes them — a single-use ticket. The earlier
@@ -9604,6 +9848,24 @@ class ToolExecutor:
                 # this verdict (see gov/decision_replay.py).
                 "decision_trace": _decision_trace(),
             }))
+            # Wave-176 (OpenShell steal #2): the constructive decision
+            # packet for the FINAL deny verdict, chained immediately
+            # under the denial's own entry. A denied policy decision
+            # gets its packet too -- denials are the refusals an
+            # auditor needs to reconstruct (counterexample + repair
+            # hint included).
+            self._emit_decision_packet(
+                decision="deny",
+                decision_seq=entry.get("seq"),
+                head_digest=entry.get("hash"),
+                tool=tool,
+                redacted_args=redacted_args,
+                policy_decision=decision,
+                policy=policy,
+                policy_ctx_snapshot=policy_ctx_snapshot,
+                identity=identity,
+                skill_id=_skill_id,
+                skill_attested_digest=_sw_attested_digest)
             return {"status": "denied", "reason": decision.reason,
                     "policy_id": decision.policy_id, "seq": entry["seq"]}
 
@@ -9743,6 +10005,25 @@ class ToolExecutor:
             # this verdict (see gov/decision_replay.py).
             "decision_trace": _decision_trace(),
         }))
+        # Wave-176 (OpenShell steal #2): the constructive decision
+        # packet for the FINAL queue verdict, chained immediately under
+        # the queued_pending entry and carrying the approval_id the
+        # queue just minted. A require_approval is a decision too --
+        # the packet names what queued it and why, so the human's
+        # decision record is reconstructable offline.
+        self._emit_decision_packet(
+            decision="queue",
+            decision_seq=entry.get("seq"),
+            head_digest=entry.get("hash"),
+            tool=tool,
+            redacted_args=redacted_args,
+            policy_decision=decision,
+            policy=policy,
+            policy_ctx_snapshot=policy_ctx_snapshot,
+            identity=identity,
+            skill_id=_skill_id,
+            skill_attested_digest=_sw_attested_digest,
+            approval_id=approval_id)
         # Low-risk auto-approval: only fires when the ACTIVE policy
         # explicitly opts in (auto_approve.enabled + risk cap). The audit
         # record is identical to a human approval. Wave-79: disabled for
@@ -10635,6 +10916,38 @@ class ToolExecutor:
                         "display_execution_mismatch",
                         policy_id="display-execution-execution-refused")
                 continue
+            # Wave-176 (OpenShell steal #1, AuthorityProof contract):
+            # authority-boundary continuity at execution time. The
+            # boundary is operator authority and may have tightened
+            # between approval and sweep (TOCTOU); re-prove the exact
+            # args about to execute against the CURRENT boundary.
+            # Fail-closed direction only, same as the F190 and display
+            # checks above: a declared boundary with a non-within proof
+            # refuses; no boundary declared (advisory mode) skips the
+            # check entirely. check() never raises on hostile shapes.
+            if self._authority_boundary is not None:
+                _ap_args = rec.get("args") or {}
+                _ap_ctx = {"sandbox_root": str(self._sandbox_resolved)}
+                if isinstance(_ap_args.get("path"), str):
+                    _ap_ctx["path_resolved"] = (
+                        self._resolved_path_for_policy(
+                            _ap_args.get("path")))
+                _ap_proof = _authority_proof.check(
+                    {"tool": rec.get("tool"), "args": _ap_args,
+                     "agent_id": rec.get("agent_id"),
+                     "role": rec.get("role")},
+                    _ap_ctx, self._authority_boundary)
+                if _ap_proof.verdict != _authority_proof.WITHIN:
+                    _refuse("Approval %s refused: authority proof %r at "
+                            "execution time (%s); the operator-declared "
+                            "boundary no longer covers this action -- "
+                            "re-approval required under the current "
+                            "boundary."
+                            % (aid, _ap_proof.verdict, _ap_proof.detail),
+                            "authority_boundary_exceeded",
+                            policy_id=
+                            "authority-boundary-execution-refused")
+                    continue
             # Wave-173 lane 1 (TMA-NM M1 act-time gate): memory-provenance
             # continuity. The human granted this approval under a
             # queue-time disclosure of the run's un-elevated memory reads
