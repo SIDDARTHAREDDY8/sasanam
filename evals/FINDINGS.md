@@ -6023,7 +6023,13 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F193: install_package gets a vacuous within_boundary authority proof (MEDIUM)
 
-**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+**Status: CLOSED (2026-09-28, wave-178 F193 lane; red-first verified, gates green).**
+
+**Closure.** `gov/authority_proof.check()` now derives `install_package`'s accesses at the public seam: the governed registry host set (`ctx["registry_hosts"]` override, else `gov/supplychain_install.REGISTRY_HOSTS`) as egress accesses — EVERY candidate host must be boundary-covered, since the checker cannot attest which registry a fetch will hit — and the declared install target (`args["path"]` / `ctx["path_resolved"]`, same resolution semantics as path tools) as a filesystem write. Per the in-toto REQUIRE steer (wave-178 prospectus), a boundary for `install_package` carries REQUIRE-style expected accesses: with no declared target the proof returns `within_boundary` but names `filesystem` in `uncovered_domains` instead of claiming it covered; malformed materials (wildcard/NUL/whitespace registry hosts, NUL/`..` targets, unattestable registry set) fail closed as `unsupported`. The four-outcome contract is unchanged and fail-closed behavior holds (a proof never upgrades a denial). Red-first probe `teams/wave178-f193/probe_f193_red.py`: 3/9 on the pristine tree (vacuous `within_boundary`, "all 0 declared access(es)") -> 9/9 x2 deterministic after the fix. Regression: `tests/test_authority_proof_install.py` (13 tests, new), AuthorityProof battery 15/15, MCP/GraphQL battery 21/21, decision-packet + authority unit tests 86 OK, `evals/w177_redteam_probes.py` BREAK-1/BREAK-2 now HELD (breaks=2 remaining are F194/F195, other lanes). One probe expectation updated with rationale: `HELD_nonallowlisted_install_denied` now expects the boundary pre-decision gate (`authority_boundary_refused` + attached `exceeds_boundary` proof) instead of the policy allowlist flag — first refusal wins in the fail-closed chain; the denial stands, only the attribution moved, and the recorded reason is truthful.
+
+**Honest residual:** even with derived accesses, the proof attests the declared install (right package, right registry), not the runtime behavior of the installed code — supply-chain integrity stays P7's pin, not the proof's. Note (not a finding, not reachable via the executor): standalone `check()` on a tool name the engine does not know still returns `within_boundary` with full coverage claimed; the executor refuses unknown tools at the role-allowlist layer before the proof seam, so no execution path can mint such a proof — documented for the record.
+
+**Found by:** wave-177 lane A red-team (`teams/wave177-redteam/`), 2026-09-28, break-first pressure against the wave-176 tree (`e3a1e45`). **Closed by:** wave-178 F193 lane (retry), 2026-09-28.
 
 **Claim broken.** A `within_boundary` proof with `covered_domains=(filesystem, egress)` means the action's filesystem and egress effects were checked against the operator boundary. `gov/authority_proof._derive_fs_accesses` / `_derive_egress_accesses` only model six tools (`read_file`, `write_file`, `delete_file`, `http_post`, `api_call`, `send_email`). `install_package` — which fetches from a package registry over the network (egress), writes files, and installs executable code — is in `KNOWN_TOOLS` and policy-allowed when allowlisted, but derives **zero** accesses. `check()` returns `within_boundary`, `covered_domains=('filesystem','egress')`, detail "all 0 declared access(es) inside the declared boundary".
 
@@ -6071,4 +6077,4 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F196**. **Open findings: F193, F194, F195.**
+Next free finding: **F196**. **Open findings: F194, F195.** (F193 closed 2026-09-28, wave-178.)

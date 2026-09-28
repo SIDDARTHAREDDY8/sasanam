@@ -127,7 +127,12 @@ VERDICTS = (WITHIN, EXCEEDS, UNSUPPORTED, INCONCLUSIVE)
 COVERED_DOMAINS = ("filesystem", "egress", "mcp_tools", "graphql")
 # Domains named in every proof. process_identity is carried as an
 # explicit uncovered domain: the engine does not model it, and the
-# contract refuses to pretend otherwise.
+# contract refuses to pretend otherwise. A proof for a tool in
+# _REQUIRED_ACCESS_DOMAINS may additionally name "filesystem" or
+# "egress" uncovered (in-toto REQUIRE semantics): the tool has real
+# effects in that domain which the declared shape did not attest, so
+# the proof says exactly what it examined instead of passing
+# vacuously.
 ALL_DOMAINS = ("filesystem", "egress", "mcp_tools", "graphql",
                "process_identity")
 
@@ -141,6 +146,30 @@ _MAIL_EGRESS_TOOLS = ("send_email",)
 # documented in the module docstring.
 _MCP_TOOLS = ("mcp_call",)
 _GRAPHQL_TOOLS = ("graphql",)
+
+# install_package: the governed install path. It fetches the artifact
+# from a package registry (egress), writes files, and installs
+# executable code -- real effects in the filesystem and egress
+# domains that the per-shape derivations above do not model (its
+# declared args carry name/version, not a URL or path).
+_INSTALL_TOOL = "install_package"
+
+# in-toto REQUIRE semantics (pattern-steal, Apache-2.0 -- in-toto's
+# artifact rules: REQUIRE/MATCH fail closed on absent materials, with
+# DISALLOW * as the recommended final rule). Tools with REAL effects
+# in a domain that the checker models only conditionally: a proof for
+# one of these tools MUST NOT claim the domain covered while deriving
+# zero accesses there. check() names such a domain uncovered -- the
+# evidence product says exactly what was examined -- instead of
+# passing vacuously; materials that cannot be attested at all become
+# unsupported (fail closed), never a silent pass. Today only
+# install_package needs this: every other engine tool either derives
+# its domain accesses from its declared shape (read/write/http/...)
+# or genuinely has no effects in the covered domains (window_close,
+# goal_specificity_review), for which an empty derivation is honest.
+_REQUIRED_ACCESS_DOMAINS = {
+    _INSTALL_TOOL: ("egress", "filesystem"),
+}
 
 # Default bound on declared accesses per check: evaluation is linear,
 # the cap exists so a hostile action dict cannot turn the seam into a
@@ -454,6 +483,59 @@ def _covered_by_prefix(access: str,
     return any(access == r or access.startswith(r + "/") for r in rules)
 
 
+def _resolve_fs_target(args: Mapping[str, Any], ctx: Mapping[str, Any]):
+    """Resolve the filesystem target path for a path-shaped tool.
+
+    Returns (norm, unsupported, resolution_source, had_signal):
+    ``norm`` is the normalized absolute path (or None); ``unsupported``
+    are (raw, reason) pairs; ``resolution_source`` is "path_resolved",
+    "declared_path", or "none"; ``had_signal`` is True when any path
+    signal was present at all. Prefers ``ctx["path_resolved"]`` -- the
+    check-time resolved target the containment verdict binds --
+    absolutized against ``ctx["sandbox_root"]`` when the engine
+    reports it sandbox-relative; falls back to the declared
+    ``args["path"]``.
+    """
+    declared = args.get("path")
+    resolved = ctx.get("path_resolved")
+    raw = resolved if isinstance(resolved, str) and resolved else None
+    resolution_source = "none"
+    had_signal = False
+    if raw is not None:
+        resolution_source = "path_resolved"
+        had_signal = True
+    elif isinstance(declared, str) and declared:
+        raw = declared
+        resolution_source = "declared_path"
+        had_signal = True
+    if raw is None:
+        return None, [], "none", False
+    if "\x00" in raw:
+        return None, [(raw, "path contains NUL")], resolution_source, True
+    if ".." in raw.replace("\\", "/").split("/"):
+        # Never silently normalize an escape: without filesystem
+        # state the checker cannot attest what ".." resolves through
+        # (symlinks), so the shape is unmodelable -> unsupported.
+        return None, [(raw, "path contains '..' escape: the resolved "
+                             "target cannot be attested without filesystem "
+                             "state")], resolution_source, True
+    norm = posixpath.normpath(raw.replace("\\", "/"))
+    if not norm.startswith("/"):
+        root = ctx.get("sandbox_root")
+        if isinstance(root, str) and root.startswith("/"):
+            norm = posixpath.normpath(
+                root.rstrip("/") + "/" + norm.lstrip("/"))
+            if ".." in norm.split("/"):
+                return None, [(
+                    raw, "sandbox-relative path escapes the sandbox root")
+                ], resolution_source, True
+        else:
+            return None, [(
+                raw, "non-absolute path with no sandbox_root to resolve "
+                     "it against")], resolution_source, True
+    return norm, [], resolution_source, True
+
+
 def _derive_fs_accesses(tool: str, args: Mapping[str, Any],
                         ctx: Mapping[str, Any]):
     """Derive (kind, access) filesystem accesses and unmodelable shapes.
@@ -476,44 +558,14 @@ def _derive_fs_accesses(tool: str, args: Mapping[str, Any],
         kinds.append("read")
     if not kinds:
         return accesses, unsupported, resolution_source
-    declared = args.get("path")
-    resolved = ctx.get("path_resolved")
-    raw = resolved if isinstance(resolved, str) and resolved else None
-    if raw is not None:
-        resolution_source = "path_resolved"
-    elif isinstance(declared, str) and declared:
-        raw = declared
-        resolution_source = "declared_path"
-    if raw is None:
-        unsupported.append((repr(declared),
+    norm, target_unsupported, resolution_source, had_signal = (
+        _resolve_fs_target(args, ctx))
+    unsupported.extend(target_unsupported)
+    if not had_signal:
+        unsupported.append((repr(args.get("path")),
                             "no usable path signal for a path tool"))
+    if norm is None:
         return accesses, unsupported, resolution_source
-    if "\x00" in raw:
-        unsupported.append((raw, "path contains NUL"))
-        return accesses, unsupported, resolution_source
-    if ".." in raw.replace("\\", "/").split("/"):
-        # Never silently normalize an escape: without filesystem
-        # state the checker cannot attest what ".." resolves through
-        # (symlinks), so the shape is unmodelable -> unsupported.
-        unsupported.append(
-            (raw, "path contains '..' escape: the resolved target cannot "
-                  "be attested without filesystem state"))
-        return accesses, unsupported, resolution_source
-    norm = posixpath.normpath(raw.replace("\\", "/"))
-    if not norm.startswith("/"):
-        root = ctx.get("sandbox_root")
-        if isinstance(root, str) and root.startswith("/"):
-            norm = posixpath.normpath(
-                root.rstrip("/") + "/" + norm.lstrip("/"))
-            if ".." in norm.split("/"):
-                unsupported.append(
-                    (raw, "sandbox-relative path escapes the sandbox root"))
-                return accesses, unsupported, resolution_source
-        else:
-            unsupported.append(
-                (raw, "non-absolute path with no sandbox_root to resolve "
-                      "it against"))
-            return accesses, unsupported, resolution_source
     for kind in kinds:
         accesses.append((kind, norm))
     return accesses, unsupported, resolution_source
@@ -571,6 +623,111 @@ def _derive_egress_accesses(tool: str, args: Mapping[str, Any]):
         hosts.append(host)
     # Deterministic order; duplicates carry no extra meaning.
     return sorted(set(hosts)), unsupported
+
+
+def _default_registry_hosts():
+    """The governed package-registry host set, or None when unknown.
+
+    Lazy import keeps this module importable stdlib-only: the product
+    registry set lives in gov.supplychain_install. When it cannot be
+    imported (standalone use) the caller fails closed as unsupported --
+    an install whose fetch origin cannot be attested must never pass
+    vacuously.
+    """
+    try:
+        from .supplychain_install import REGISTRY_HOSTS
+    except ImportError:
+        try:
+            from gov.supplychain_install import REGISTRY_HOSTS
+        except ImportError:
+            return None
+    return REGISTRY_HOSTS
+
+
+def _derive_install_egress_hosts(tool: str, ctx: Mapping[str, Any]):
+    """Derive install_package egress hosts and unmodelable shapes.
+
+    Returns (hosts, unsupported): hosts are normalized exact registry
+    host names; unsupported are (raw, reason) pairs. The candidate set
+    is ``ctx["registry_hosts"]`` when it is a usable non-empty
+    sequence, else the governed ``REGISTRY_HOSTS``. EVERY candidate
+    host must be boundary-covered: the checker cannot attest which
+    registry a given fetch will hit, so an install is within_boundary
+    only when all of them are. Malformed materials fail closed
+    (unsupported), never a silent pass.
+    """
+    hosts = []
+    unsupported = []
+    if tool != _INSTALL_TOOL:
+        return hosts, unsupported
+    raw_hosts = ctx.get("registry_hosts")
+    candidates = None
+    if (isinstance(raw_hosts, (list, tuple, set, frozenset))
+            and len(raw_hosts) > 0):
+        candidates = list(raw_hosts)
+    else:
+        default = _default_registry_hosts()
+        if default is None:
+            unsupported.append(
+                ("install_package",
+                 "registry host set unattestable: no usable "
+                 "ctx['registry_hosts'] and "
+                 "gov.supplychain_install.REGISTRY_HOSTS unavailable"))
+            return hosts, unsupported
+        candidates = list(default)
+    for raw in candidates:
+        if not isinstance(raw, str) or not raw or "\x00" in raw:
+            unsupported.append(
+                (repr(raw)[:128],
+                 "registry host is not a usable hostname string"))
+            continue
+        host = raw.strip().lower().rstrip(".")
+        if (not host or "*" in host
+                or any(c.isspace() for c in host)):
+            unsupported.append(
+                (raw[:128], "registry host is empty, a wildcard, or "
+                            "contains whitespace: unattestable"))
+            continue
+        try:
+            host = host.encode("idna").decode("ascii")
+        except Exception:
+            unsupported.append(
+                (raw[:128], "registry host is not IDNA-encodable"))
+            continue
+        hosts.append(host)
+    hosts = sorted(set(hosts))
+    if not hosts and not unsupported:
+        unsupported.append(
+            ("install_package",
+             "no usable registry hosts: the install fetch origin "
+             "cannot be attested"))
+    return hosts, unsupported
+
+
+def _derive_install_fs_write(tool: str, args: Mapping[str, Any],
+                             ctx: Mapping[str, Any]):
+    """Derive the install_package filesystem write, when declared.
+
+    Returns (accesses, unsupported, resolution_source,
+    target_declared): accesses are ("write", normalized-absolute-path)
+    for the install target; unsupported are (raw, reason) pairs. The
+    target is attested only when the declared shape names it
+    (``args["path"]`` / ``ctx["path_resolved"]``, same resolution
+    semantics as path tools). An UNDECLARED target is not unsupported
+    here -- check() names "filesystem" uncovered for the proof instead
+    (in-toto REQUIRE: never claim unexamined coverage). A MALFORMED
+    declared target is unsupported: a claimed target that cannot be
+    attested fails closed.
+    """
+    if tool != _INSTALL_TOOL:
+        return [], [], "none", False
+    norm, target_unsupported, resolution_source, had_signal = (
+        _resolve_fs_target(args, ctx))
+    if not had_signal:
+        return [], [], "none", False
+    if norm is None:
+        return [], target_unsupported, resolution_source, True
+    return [("write", norm)], [], resolution_source, True
 
 
 def _derive_mcp_accesses(tool: str, args: Mapping[str, Any]):
@@ -1022,17 +1179,44 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
     fs_accesses, fs_unsupported, resolution_source = _derive_fs_accesses(
         tool, args, ctx)
     egress_hosts, egress_unsupported = _derive_egress_accesses(tool, args)
+    (install_fs, install_fs_unsupported, install_rs,
+     install_target_declared) = _derive_install_fs_write(tool, args, ctx)
+    install_hosts, install_egress_unsupported = _derive_install_egress_hosts(
+        tool, ctx)
     mcp_accesses, mcp_unsupported = _derive_mcp_accesses(tool, args)
     graphql_accesses, graphql_unsupported = _derive_graphql_accesses(
         tool, args)
+
+    fs_accesses = list(fs_accesses) + install_fs
+    egress_hosts = list(egress_hosts) + install_hosts
+    if install_target_declared and install_rs != "none":
+        # The install target was bound to a resolved/declared path:
+        # the proof's resolution binds the filesystem verdict to it.
+        resolution_source = install_rs
+
+    # in-toto REQUIRE (pattern-steal): a tool with real effects in a
+    # domain must not ride a proof that claims the domain covered
+    # while zero accesses were derived there. Such a domain is named
+    # uncovered -- the evidence product says exactly what was
+    # examined -- instead of passing vacuously. Tools without required
+    # domains keep the full coverage claim (their empty derivation is
+    # honest: nothing to examine).
+    required_domains = _REQUIRED_ACCESS_DOMAINS.get(tool, ())
+    narrowed = tuple(
+        d for d in ("filesystem", "egress")
+        if d in required_domains
+        and not (fs_accesses if d == "filesystem" else egress_hosts))
+    covered_domains = tuple(
+        d for d in COVERED_DOMAINS if d not in narrowed)
+    uncovered_domains = narrowed + ("process_identity",)
 
     total = (len(fs_accesses) + len(egress_hosts) + len(mcp_accesses)
              + len(graphql_accesses))
     if total > max_accesses:
         return AuthorityProof(
             verdict=INCONCLUSIVE,
-            covered_domains=COVERED_DOMAINS,
-            uncovered_domains=("process_identity",),
+            covered_domains=covered_domains,
+            uncovered_domains=uncovered_domains,
             counterexample=None,
             boundary_id=boundary.boundary_id,
             boundary_version=boundary.version,
@@ -1043,8 +1227,12 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
 
     unsupported = ([("filesystem", raw, reason)
                     for raw, reason in fs_unsupported]
+                   + [("filesystem", raw, reason)
+                      for raw, reason in install_fs_unsupported]
                    + [("egress", raw, reason)
                       for raw, reason in egress_unsupported]
+                   + [("egress", raw, reason)
+                      for raw, reason in install_egress_unsupported]
                    + [("mcp_tools", raw, reason)
                       for raw, reason in mcp_unsupported]
                    + [("graphql", raw, reason)
@@ -1056,8 +1244,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             unsupported, key=lambda e: (e[0], str(e[1]), e[2]))[0]
         return AuthorityProof(
             verdict=UNSUPPORTED,
-            covered_domains=COVERED_DOMAINS,
-            uncovered_domains=("process_identity",),
+            covered_domains=covered_domains,
+            uncovered_domains=uncovered_domains,
             counterexample=Counterexample(
                 domain=domain, access=str(raw)[:256], nearest_rule=None,
                 reason=reason),
@@ -1073,8 +1261,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if not _covered_by_prefix(access, rules):
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="filesystem", access=access,
                     nearest_rule=_nearest_rule(access, rules),
@@ -1089,8 +1277,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if host not in boundary.egress_hosts:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="egress", access=host,
                     nearest_rule=_nearest_rule(
@@ -1111,8 +1299,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if server not in boundary.mcp_servers:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="mcp_tools", access=pair,
                     nearest_rule=_nearest_rule(
@@ -1127,8 +1315,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if pair not in boundary.mcp_tools:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="mcp_tools", access=pair,
                     nearest_rule=_nearest_rule(
@@ -1143,8 +1331,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if arg_bytes > boundary.mcp_max_arg_bytes:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="mcp_tools", access=pair,
                     nearest_rule=None,
@@ -1162,8 +1350,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if has_intro and not boundary.graphql_allow_introspection:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="graphql", access=op_access,
                     nearest_rule=None,
@@ -1178,8 +1366,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
         if max_depth > boundary.graphql_max_depth:
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="graphql", access=op_access,
                     nearest_rule=None,
@@ -1196,8 +1384,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             if not boundary.graphql_allow_mutations:
                 return AuthorityProof(
                     verdict=EXCEEDS,
-                    covered_domains=COVERED_DOMAINS,
-                    uncovered_domains=("process_identity",),
+                    covered_domains=covered_domains,
+                    uncovered_domains=uncovered_domains,
                     counterexample=Counterexample(
                         domain="graphql",
                         access="mutation:%s" % ",".join(mut_roots),
@@ -1213,8 +1401,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
                 if root not in boundary.graphql_mutation_allowlist:
                     return AuthorityProof(
                         verdict=EXCEEDS,
-                        covered_domains=COVERED_DOMAINS,
-                        uncovered_domains=("process_identity",),
+                        covered_domains=covered_domains,
+                        uncovered_domains=uncovered_domains,
                         counterexample=Counterexample(
                             domain="graphql",
                             access="mutation:%s" % root,
@@ -1236,8 +1424,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             # declared -- exceeds, never silently allowed.
             return AuthorityProof(
                 verdict=EXCEEDS,
-                covered_domains=COVERED_DOMAINS,
-                uncovered_domains=("process_identity",),
+                covered_domains=covered_domains,
+                uncovered_domains=uncovered_domains,
                 counterexample=Counterexample(
                     domain="graphql", access=op_access,
                     nearest_rule=None,
@@ -1251,8 +1439,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             )
     return AuthorityProof(
         verdict=WITHIN,
-        covered_domains=COVERED_DOMAINS,
-        uncovered_domains=("process_identity",),
+        covered_domains=covered_domains,
+        uncovered_domains=uncovered_domains,
         counterexample=None,
         boundary_id=boundary.boundary_id,
         boundary_version=boundary.version,

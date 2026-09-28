@@ -488,13 +488,25 @@ def p_held_nonallowlisted_install_denied():
     ex.set_authority_boundary(_boundary(egress=("pypi.org",)))
     r = ex.call(ident, "install_package", name="typosquat-evil",
                 version="1.0.0")
+    # Post-F193 (wave-178): check() derives install_package's governed
+    # registry set as egress accesses, so the authority pre-decision
+    # gate fires BEFORE the policy layer when the declared boundary
+    # covers only pypi.org. First refusal wins in the fail-closed chain:
+    # the install is still denied -- only the attribution moves from
+    # the policy allowlist (install_not_allowlisted) to the boundary
+    # gate (authority_boundary_refused), and the recorded reason is
+    # truthful: the attached proof names the exceeded registry host.
     denied = [e for e in ctx["read_log"]()
               if e.get("decision") == "denied"
-              and e.get("flag") == "install_not_allowlisted"]
-    held = r.get("status") == "denied" and len(denied) == 1
+              and e.get("flag") == "authority_boundary_refused"]
+    proof_ok = (len(denied) == 1
+                and isinstance(denied[0].get("authority_proof"), dict)
+                and denied[0]["authority_proof"].get("verdict")
+                == "exceeds_boundary")
+    held = r.get("status") == "denied" and proof_ok
     _record(name, "HELD" if held else "BREAK",
-            "status=%r not_allowlisted_denials=%d" % (
-                r.get("status"), len(denied)))
+            "status=%r boundary_refusals=%d proof_ok=%s" % (
+                r.get("status"), len(denied), proof_ok))
     return not held
 
 
