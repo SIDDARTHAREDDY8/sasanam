@@ -591,10 +591,24 @@ def _verify(packet, entries):
     # from the chained decision entry this packet answers. The decision
     # entry is located by the packet's stated evidence.head_digest (the
     # declared audit parent), never by head position, so the check
-    # survives the rebuild-once path. A GENESIS head means no audit
-    # parent exists; there is no decision entry to re-derive from (a
-    # GENESIS-head packet is visibly parentless) and this check skips.
-    if head != "GENESIS":
+    # survives the rebuild-once path.
+    if head == "GENESIS":
+        # F199: a GENESIS head claims "no audit parent exists". That
+        # claim is only honest when the supplied chain carries no
+        # decision entries (the first-decision case, e.g. the
+        # round-trip pin where the chain holds only the packet's own
+        # entry). A key-holding producer can otherwise mint a
+        # GENESIS-head packet with an arbitrary decision_digest that
+        # dodges re-derivation on a chain that DOES contain the real
+        # decision entry (probe D5), so the GENESIS-head case fails
+        # closed whenever decision entries are present.
+        for e in entries:
+            if isinstance(e, dict) and e.get("event") == "decision":
+                return False, \
+                    "F199: GENESIS-head packet presented on a chain " \
+                    "that carries decision entries; decision_digest " \
+                    "cannot be re-derived (opaque pointer)"
+    else:
         decision_entry = None
         for e in entries:
             if isinstance(e, dict) and e.get("hash") == head:

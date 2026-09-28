@@ -338,5 +338,53 @@ class EvidenceHead(unittest.TestCase):
                 os.unlink(path)
 
 
+class F199Regression(unittest.TestCase):
+    """F199: GENESIS-head packet must not dodge F196 re-derivation.
+
+    Red-first: ``test_genesis_head_with_decision_entries_refused``
+    verified (True, "ok") pre-fix with an arbitrary decision_digest
+    (probe D5 shape); it must fail closed post-fix. A GENESIS-head
+    packet verifies only when the chain carries no decision entries
+    (the honest first-decision case).
+    """
+
+    def _genesis_packet(self, decision_digest=None):
+        pkt = _signed()
+        if decision_digest is not None:
+            p = copy.deepcopy(pkt)
+            p["policy"]["value"]["decision_digest"] = decision_digest
+            # Re-seal so the signature seam is intact; the BOM does not
+            # bind decision_digest, so the refusal must come from the
+            # F199 check, not from a signature/BOM seam.
+            body = {k: v for k, v in p.items() if k != "signature"}
+            body.pop("authority", None)
+            pkt = dp.sign_packet(body, SEED)
+        return pkt
+
+    def _chain_with_decision(self, packet):
+        return [
+            {"event": "decision", "hash": "dech0",
+             "prev_hash": "GENESIS", "approval_id": "A1",
+             "decision_seq": 1,
+             "policy_decision": {"policy_id": "default",
+                                 "decision": "allow"}},
+            {"event": "decision_packet",
+             "packet_digest": dp.packet_digest(packet),
+             "prev_hash": "GENESIS", "hash": "entryhash1", "seq": 1},
+        ]
+
+    def test_genesis_head_with_decision_entries_refused(self):
+        pkt = self._genesis_packet(decision_digest="ff" * 32)
+        ok, reason = dp.verify_decision_packet(
+            pkt, self._chain_with_decision(pkt))
+        self.assertFalse(ok, reason)
+        self.assertIn("F199", reason)
+
+    def test_genesis_head_without_decision_entries_still_verifies(self):
+        pkt = self._genesis_packet()
+        ok, reason = dp.verify_decision_packet(pkt, _chain_for(pkt))
+        self.assertTrue(ok, reason)
+
+
 if __name__ == "__main__":
     unittest.main()

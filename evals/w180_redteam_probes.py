@@ -717,13 +717,16 @@ def _d4():
     return "BREAK", "verified with head at receipt entry"
 
 
-@probe("D5", "GENESIS-head packet with bogus digest verifies (F196 dodge)")
+@probe("D5", "GENESIS-head packet with bogus digest refused (F199 closed)")
 def _d5():
-    # build_decision_packet defaults evidence_head_digest="GENESIS";
-    # the F196 MATCH re-derivation skips GENESIS heads ("visibly
-    # parentless"). A key-holding producer (F196's own threat model)
-    # can therefore mint a verifying packet carrying an arbitrary
-    # decision_digest.
+    # F199 closure: build_decision_packet defaults
+    # evidence_head_digest="GENESIS", but the F196 re-derivation no
+    # longer skips GENESIS heads -- a GENESIS-head packet verifies only
+    # when the chain carries no decision entries (the honest
+    # first-decision case). A key-holding producer (F196's own threat
+    # model) minting a GENESIS-head packet with an arbitrary
+    # decision_digest on a chain that DOES contain the decision entry
+    # must now fail closed.
     bogus = "ff" * 32
     ident = {"agent_id": "ag", "role": "coder",
              "principal": "p", "run_id": "r"}
@@ -751,11 +754,15 @@ def _d5():
          "decision_seq": 1, "packet_digest": digest, "packet": pkt},
     ]
     ok, reason = _dp.verify_decision_packet(pkt, entries)
+    if not ok and "F199" in reason:
+        return ("HELD",
+                "GENESIS-head packet with bogus decision_digest "
+                "REFUSED (%s): F199 closure holds" % reason)
     if ok:
         return ("BREAK",
                 "GENESIS-head packet with bogus decision_digest "
                 "VERIFIES (%s): F196 re-derivation dodged" % reason)
-    return "HELD", "refused: %s" % reason
+    return "HELD*", "refused but not via F199: %s" % reason
 
 
 @probe("D6", "honest trajectory verifies end to end (sanity)")

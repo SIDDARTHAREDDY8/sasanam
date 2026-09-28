@@ -6156,7 +6156,7 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F199: GENESIS-head decision packet dodges F196 re-derivation — bogus decision_digest verifies (LOW)
 
-**Status: OPEN (2026-09-28, wave-180 lane D red-team).**
+**Status: CLOSED (2026-09-28, wave-181 F199 closure lane; red-first, fixed in the same diff).**
 
 **Claim broken.** F196 closed the receipt-swap hole by re-deriving `decision_digest` from the chained `policy_decision` — but the F196 MATCH in `gov/decision_packet.py::_verify` skips re-derivation when `head == "GENESIS"` ("visibly parentless"). At the public `verify_decision_packet(packet, entries)` seam, a key-holding producer (F196's own threat model) can mint a packet with `evidence_head_digest="GENESIS"` — the **default** of `build_decision_packet()` when the caller fails to pass a head — carrying an ARBITRARY `decision_digest`, present it alongside a colluding `decision_packet` chain entry whose `prev_hash` is `GENESIS`, and `verify_decision_packet` returns `(True, "ok")`. The binding F196 was filed to establish (packet digest ↔ audited decision) does not hold on this path. The verifier emits no parentlessness signal; callers of the public seam cannot distinguish "honest first packet on an empty chain" from "malicious GENESIS-head packet on a non-empty chain".
 
@@ -6168,6 +6168,8 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 **Found by:** wave-180 lane D (red-team), 2026-09-28, against `88261a9`.
 
+**Closure (wave-181 F199 closure lane, 2026-09-28):** the F196 re-derivation block in `gov/decision_packet.py::_verify` no longer skips GENESIS heads — a GENESIS head now fails closed whenever the supplied chain carries any `decision`-event entries ("F199: GENESIS-head packet presented on a chain that carries decision entries; decision_digest cannot be re-derived"), and only verifies when the chain carries none (the honest first-decision case). `build_decision_packet()`'s GENESIS default is untouched (the finding was about verify's skip). Red-first evidence: probe D5 flipped BREAK→HELD for the right reason (`tests/test_decision_packet.py::F199Regression::test_genesis_head_with_decision_entries_refused` fails pre-fix with `True is not false : ok`, passes post-fix; the pin `test_round_trip_with_linkage` and the no-decision-entries control pass pre- and post-fix). `evals/w180_redteam_probes.py` now reads 0 BREAK / 22 HELD / 5 HELD* / 0 errors (D5 asserts refusal via the F199 reason); `evals/receiptswap_probes.py` 0 BREAK / 7 HELD; `evals/decision_packet_probes.py` 10/10 pass; adjacent unit suites 251 OK (incl. `env -u GOV_DEPLOYMENT_MODE` for the packet module).
+
 ---
 
-Next free finding: **F200**. **Open findings: F199.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B.)
+Next free finding: **F200**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane.)
