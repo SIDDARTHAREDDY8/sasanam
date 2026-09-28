@@ -5944,4 +5944,27 @@ The p3 factual-poison layer — provenance traveling with the bytes — is strip
 
 **Related non-findings from the same lane (documented, not filed):** A1 default-off firewall bypass — documented deployment boundary (opt-in explicit in docstring; wave-79 precedent), spec recommends default-on with audited opt-out for v1. A2 forged countermand via `record_intent_turn` with no turn provenance — availability-only (ledger can revoke, never grant); exploitation needs the harness to misattribute attacker text as the operator's turn, which is the documented dishonest-ceremony boundary. A3 paraphrase laundering with firewall ON — documented residual (F154 c4, F15 class), evidence for replacing the verbatim-overlap contract.
 
-Next free finding: **F190**. **Open findings: F189.**
+## F190: Approved sweep never re-verifies the MAC-bound canonical target — canonical-target TOCTOU (HIGH)
+
+**Status: CLOSED 2026-09-28 (wave-171 integration).** Red-first on the merged tree: `evals/f190_target_binding_battery.py` **12/12 PASS** — p1/p4 FIXED (both refused as `canonical_target_mismatch`, zero `write_undeclared_path` events, nothing executed), p2/p3 HELD; deterministic ×2 (6 probes byte-identical across runs); the battery FAILS on the unmodified tree (verified in the fix lane). Fix: `canonical_packet()` packet_version 2→3 renders the MAC-bound `canonical_target` alongside the declared target; `_execute_approved_locked()` compares sweep-time vs bound `path_resolved` and refuses fail-closed on any difference. Unicode `compare_digest` `TypeError` edge handled with a plain-equality fallback for governor-computed strings. Web and shield surfaces expose the canonical target. **Residuals (honest):** pre-upgrade queued records (packet_version 2) fail decide() packet re-verification fail-closed — drain or decide queued items before upgrading; the approved-sweep redacted-arguments execution-fidelity issue remains flagged, not filed.
+
+**Status at filing: OPEN (filed 2026-09-28, canonical-target-binding red-team lane).**
+
+**Severity: HIGH.**
+
+**Attack shape.** The approval receipt's MAC binds the QUEUE-time canonical target (`policy_context.path_resolved`, call it R1). But the decision packet rendered for the human shows only the RAW declared target (e.g. `~/foo`) — the bound value R1 is never displayed. When the operator sweeps approved items, the sweep re-resolves the declared target at sweep time (R2) and never compares R2 against the MAC-bound R1. Wave-162's `check_write_declared_path` (which FORCES declared-path writes onto the `write_undeclared_path` deny path) runs only inside `call()` — it does not exist on the approved sweep path.
+
+A pre-positioned symlink `dirA -> dirB`, flipped while the approval is human-pending, turns a human-approved `write_file` on `dirA` into an effect on `dirB`:
+- The receipt continues to bind and verify R1 = dirA — the audit trail stays intact AND wrong about where the effect landed.
+- With a manifest attached, the approved write executes against a path never declared, with zero `write_undeclared_path` events — the wave-162 row-12 forcing is bypassed on the approved path.
+- Demonstrated end-to-end on the unmodified tree, deterministic x2.
+
+**Why this is a break (and new).** The approval queue's core promise is "the human approves exactly what executes." The MAC binding of R1 looks like it provides this, but the bound value is never consulted at the two points that matter: display and execution. The demonstrated primitive converts a human's explicit approval into an effect on an attacker-chosen sibling path while the receipt continues to verify.
+
+**Close-when.** (1) The decision packet renders the MAC-bound canonical target (R1) so the human approves what is bound. (2) The approved sweep compares its sweep-time resolution R2 against the bound R1 and refuses fail-closed on any difference (`canonical_target_mismatch`) — no write executes. (3) The p4 manifest bypass is closed: an approved write against a manifest-attached path that resolves elsewhere is refused. (4) p2/p3 controls HELD: a declared write to a real directory executes; a symlink that does NOT move resolves identically and executes. (5) The new battery FAILS on the unmodified tree and PASSES on the fixed tree. (6) Canonical suite + matrix + realistic stay green.
+
+**Found by:** canonical-target-binding red-team lane (`teams/target-binding-redteam/`), 2026-09-28, read-only red-team against the wave-170 tree. Draft at `teams/target-binding-redteam/F190_CANDIDATE_DRAFT.md`.
+
+**Adjacent issue flagged, NOT filed:** the approved sweep executes with REDACTED arguments — the executed payload may be a content summary rather than the original bytes. Execution-fidelity issue, not a finding; left for a future lane.
+
+Next free finding: **F191**. **Open findings: none.**

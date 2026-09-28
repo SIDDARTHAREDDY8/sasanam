@@ -202,6 +202,9 @@ def shield_brief(record, *, citation_index=None, citing_identity=None,
         "action": {
             "tool": record.get("tool"),
             "target": packet.get("target") or _machine_target(record),
+            # F190: the bound canonical target the receipt MAC-binds,
+            # shown alongside the declared target.
+            "canonical_target": packet.get("canonical_target"),
             "executor_preview": preview,
             "requested_by": {
                 "agent_id": record.get("agent_id"),

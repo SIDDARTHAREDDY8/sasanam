@@ -514,5 +514,87 @@ class HandoffTest(unittest.TestCase):
                             for v in self.ledger.candidates()))
 
 
+class ShadowScanSeamTest(unittest.TestCase):
+    """Behavioral shadow scan over the audit trail (prospecting R6 #1).
+
+    scan_action_log() closes the surface scan_directory cannot see:
+    an unregistered agent acting through the governed executor at
+    machine rate. Signals, not verdicts — findings are sightings.
+    """
+
+    BASE = 1_788_000_000  # fixed epoch: deterministic
+
+    def _machine(self, principal, cadence_s=45, n=60, t0=None):
+        entries = []
+        t = self.BASE if t0 is None else t0
+        for _ in range(n):
+            t += cadence_s
+            entries.append({"ts": t, "principal": principal,
+                            "tool": "list_documents",
+                            "event": "enumerate"})
+            for k in range(3):
+                entries.append({"ts": t + 1 + k, "principal": principal,
+                                "tool": "read_document",
+                                "event": "read %d" % k})
+        return entries
+
+    def test_machine_rate_unregistered_is_sighted(self):
+        from gov.discovery import scan_action_log
+        entries = self._machine("svc-indexer")
+        with tempfile.TemporaryDirectory() as d:
+            ledger = DiscoveryLedger(os.path.join(d, "ledger.jsonl"))
+            sigs = scan_action_log(entries, set())
+            self.assertTrue(sigs)
+            self.assertTrue(all(s["kind"] in
+                                discovery.SHADOW_SIGNAL_KINDS
+                                for s in sigs))
+            self.assertTrue(all(s["source"] ==
+                                "principal:svc-indexer" for s in sigs))
+            cids = ledger.note_signals(sigs)
+            self.assertEqual(len(cids), 1)
+            self.assertTrue(cids[0].startswith("shadow:"))
+            findings = unregistered_candidates(ledger)
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["sources"],
+                             ["principal:svc-indexer"])
+            ledger.verify()
+
+    def test_registered_principal_excluded(self):
+        from gov.discovery import scan_action_log
+        sigs = scan_action_log(self._machine("svc-indexer"),
+                               {"svc-indexer"})
+        self.assertEqual(sigs, [])
+
+    def test_human_burst_not_sighted(self):
+        from gov.discovery import scan_action_log
+        entries = [{"ts": self.BASE + i * 3, "principal": "human-op",
+                    "tool": "read_file", "event": "paste"}
+                   for i in range(40)]  # 40 reads in 2 min: span gate
+        self.assertEqual(scan_action_log(entries, set()), [])
+
+    def test_malformed_entries_skipped_not_trusted(self):
+        from gov.discovery import scan_action_log
+        entries = self._machine("svc-indexer")
+        entries += [{"principal": "svc-indexer", "tool": "read_file"},
+                    {"ts": "not-a-time", "principal": "svc-indexer",
+                     "tool": "read_file"}]
+        sigs = scan_action_log(entries, set())
+        self.assertTrue(sigs)  # the 240 good entries still fingerprint
+        self.assertTrue(all(s["source"] == "principal:svc-indexer"
+                            for s in sigs))
+
+    def test_shadow_candidate_id_never_collides_with_fs(self):
+        from gov.discovery import scan_action_log
+        sigs = scan_action_log(self._machine("svc-indexer"), set())
+        for s in sigs:
+            cid = candidate_id_for_sig(s)
+            self.assertTrue(cid.startswith("shadow:"))
+            self.assertFalse(cid.startswith("fs:"))
+
+    def test_empty_log_no_signals(self):
+        from gov.discovery import scan_action_log
+        self.assertEqual(scan_action_log([], set()), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

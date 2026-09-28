@@ -71,11 +71,25 @@ SIGNAL_WEIGHTS = {
     "credential": 2,        # credential-shaped secret in a file
     "agent_process": 4,     # running process matching a known harness
     "prompt_footprint": 1,  # CLAUDE.md / AGENTS.md style instruction files
+    # Shadow-scan kinds (gov/shadow_scan.py): behavioral signals over
+    # the audit trail. scan_action_log() passes the MEASURED 0..1
+    # signal strength explicitly, so these weights are the default
+    # scale only — see scan_action_log's docstring.
+    "machine_cadence": 3,        # sustained machine-rate action cadence
+    "orchestration_patterns": 3,  # LLM-orchestration tool-use patterns
+    "credential_shape": 2,       # operator-hinted credential shape
     # scan_error is a ledger EVENT, not a candidate signal: strength 0,
     # and candidate_id_for_sig() returns None for it. Scanner failures
     # are recorded, never silent — the fail-closed direction.
     "scan_error": 0,
 }
+
+#: Signal kinds emitted by the behavioral shadow scan (audit-trail
+#: surface). Their candidate ids key on the principal fingerprint,
+#: never on a filesystem path.
+SHADOW_SIGNAL_KINDS = frozenset({
+    "machine_cadence", "orchestration_patterns", "credential_shape",
+})
 
 #: Directory names that mark an agent harness workspace.
 HARNESS_DIRS = frozenset({
@@ -327,6 +341,74 @@ def scan_directory(root, *, process_snapshot=(), allowed_base=None):
 
 
 # ---------------------------------------------------------------------------
+# Behavioral shadow scan over the audit trail
+# ---------------------------------------------------------------------------
+
+from . import shadow_scan as _shadow_scan
+
+
+def scan_action_log(entries, registered_principals, credential_hints=None):
+    """Behavioral shadow-agent fingerprinting over audit-log entries.
+
+    This closes the telemetry surface ``scan_directory`` cannot see:
+    an unregistered agent acting through the governed executor at
+    machine rate leaves no filesystem/config/process footprint, but it
+    does leave cadence + orchestration-pattern evidence in the audit
+    trail. The fingerprinting itself lives in ``gov/shadow_scan.py``
+    (MandateZ shadow-scan shape, rebuilt from documentation):
+    machine-rate cadence, LLM-orchestration tool patterns, and
+    operator-hinted credential shape.
+
+    Signals, not verdicts: one signal per PRESENT signal kind per
+    flagged principal (``machine_cadence`` / ``orchestration_patterns``
+    / ``credential_shape``), each with the measured 0..1 strength
+    passed explicitly — the ordinal ``SIGNAL_WEIGHTS`` are the default
+    scale only, and the measured scale is documented here so ledger
+    readers are not misled. The candidate id keys on the principal
+    fingerprint (``shadow:<fp16>``); registration stays an explicit
+    operator act via ``DiscoveryLedger.mark_registered``.
+
+    Feed the returned signals into ``DiscoveryLedger.note_signals``
+    exactly like a ``scan_directory`` batch.
+    """
+    findings = _shadow_scan.scan(entries, set(registered_principals),
+                                 credential_hints)
+    signals = []
+    for f in findings:
+        for s in f["signals"]:
+            if not s["present"]:
+                continue
+            signals.append(signal(
+                s["kind"],
+                "principal:%s" % f["principal"],
+                {"principal": f["principal"],
+                 "fingerprint_score": f["score"],
+                 "actions": f["actions"],
+                 "skipped": f["skipped"],
+                 "signal_strength": s["strength"],
+                 "signal_detail": s["detail"],
+                 "remediation": f["remediation"]},
+                strength=s["strength"]))
+    _log.info("shadow scan over %d entries: %d signals for %d principals",
+              len(entries), len(signals), len(findings))
+    return signals
+
+
+def scan_log_file(path, registered_principals, *, credential_hints=None,
+                  limit=None):
+    """Read-only convenience: ``gov.log.query_log`` on ``path``, then
+    :func:`scan_action_log`. Never raises on content problems — the
+    query path reads, it does not judge (malformed lines are skipped
+    by ``query_log`` and malformed entries by the fingerprinter, both
+    counted, never silently trusted).
+    """
+    from .log import query_log  # lazy: keep discovery importable alone
+    entries = query_log(path, limit=limit)
+    return scan_action_log(entries, registered_principals,
+                           credential_hints)
+
+
+# ---------------------------------------------------------------------------
 # Candidate identity + hash-chained ledger
 # ---------------------------------------------------------------------------
 
@@ -334,7 +416,9 @@ def candidate_id_for_sig(sig):
     """Stable candidate id for a signal.
 
     Filesystem/config/credential signals key on the real path (the file
-    IS the footprint); process signals key on pid+name fingerprint.
+    IS the footprint); process signals key on pid+name fingerprint;
+    shadow-scan signals key on the principal fingerprint (the principal
+    IS the footprint — never a path, never colliding with ``fs:``).
     """
     kind = sig["kind"]
     if kind == "agent_process":
@@ -342,6 +426,8 @@ def candidate_id_for_sig(sig):
             sig["detail"], sort_keys=True))
     if kind == "scan_error":
         return None  # errors are ledger events, not candidates
+    if kind in SHADOW_SIGNAL_KINDS:
+        return "shadow:" + _fingerprint(sig["source"])
     path = os.path.realpath(sig["source"]) \
         if os.path.exists(sig["source"]) else sig["source"]
     return "fs:" + _fingerprint(path)

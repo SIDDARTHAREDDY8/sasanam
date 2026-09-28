@@ -59,6 +59,7 @@ from .log import (ActionLog, _active_key, _approval_record_mac,
 from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
 from . import delegation_tokens as _delegation_tokens
+from . import ceremony_integrity as _ceremony_integrity
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
                            structural_scope_match,
                            TTC_MATCH_METHOD, TTC_STRUCT_METHOD)
@@ -1212,9 +1213,26 @@ def canonical_packet(record):
     """
     score = record.get("packet_risk_score") or 0
     return {
-        "packet_version": 2,
+        # F190: packet_version 2 -> 3 — the canonical-target display
+        # facet below is part of what the human saw, so it joins the
+        # WYSINWYS digest. Pre-upgrade records (version-2 packets) fail
+        # decide()'s packet re-verification fail-closed — drain or
+        # decide queued items before upgrading (the F34/F38/R11/D1
+        # fail-closed-upgrade precedent).
+        "packet_version": 3,
         "action": record.get("tool"),
         "target": _packet_target(record.get("tool"), record.get("args")),
+        # F190: the bound canonical target the receipt MAC-binds
+        # (policy_context.path_resolved, queue-time symlink-resolved
+        # via the same _resolved_path_for_policy seam the sweep uses).
+        # Displayed ALONGSIDE the declared "target" above so the human
+        # approves the object the receipt binds — a pending-window
+        # symlink flip otherwise executes against a canonical target
+        # the approver never saw. None for tools that take no path
+        # arg. Pure function of the MAC-bound record, so the packet
+        # digest covers it.
+        "canonical_target": (record.get("policy_context") or {}).get(
+            "path_resolved"),
         "risk_tier": risk_level(score),
         "risk_score": score,
         "risk_factors": list(record.get("packet_risk_factors") or []),
@@ -4104,6 +4122,75 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 target["typed_scope"] = typed_scope
                 target["typed_scope_score"] = _ttc_score
                 target["typed_scope_method"] = _ttc_method
+        # Ceremony-integrity pre-verification (R5 deterministic rebuild of
+        # the awaithumans pre-verification shape): the human's stated
+        # reason is checked BEFORE the decision is recorded and the
+        # receipt stamped. A bounced decision is NOT a denial of the
+        # action -- the record stays pending and the human re-submits
+        # with a real reason (the awaithumans re-presentation loop). The
+        # pending record is deliberately NOT mutated here: any write
+        # would invalidate the F38 queue-time digest and make the record
+        # undecidable on retry. The bounce and re-presentation context
+        # are chained audit events instead.
+        (_ci_passed, _ci_code,
+         _ci_message) = _ceremony_integrity.check_decision_reason(
+            target, approved, reason)
+        if not _ci_passed:
+            # Advisory-only signals (never gates): consecutive-approval
+            # streak and copy-paste boilerplate for this decider, from
+            # already-decided records. A fast, terse, legitimate operator
+            # must never be blocked by statistics.
+            _ci_hist = [r for r in records
+                        if r.get("decided_by") == decided_by
+                        and r.get("status") in ("approved", "rejected")]
+            _ci_hist = _ci_hist[-5:]
+            _ci_streak = _ceremony_integrity.rubber_stamp_streak(
+                [r.get("status") == "approved" for r in _ci_hist])
+            _ci_copypaste = _ceremony_integrity.copypaste_reason(
+                reason, [r.get("decision_reason") for r in _ci_hist])
+            try:
+                self._log({
+                    "event": "ceremony_integrity_bounce",
+                    "flag": "ceremony_integrity_bounce",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "bounced",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "decided_by": decided_by,
+                    "related_agent": target.get("agent_id"),
+                    "ceremony_code": _ci_code,
+                    "reason_given": (reason if isinstance(reason, str)
+                                     else ""),
+                    "advisory_rubber_stamp_streak": _ci_streak,
+                    "advisory_copypaste_reason": _ci_copypaste,
+                    "re_present": {
+                        "tool": target.get("tool"),
+                        "preview": target.get("preview", ""),
+                        "decision_attempted": ("approve" if approved
+                                               else "reject"),
+                    },
+                    "reason": ("ceremony-integrity: %s" % _ci_message),
+                })
+            except Exception:
+                pass
+            _log_attempt(
+                "rejected_attempt",
+                "decision bounced (ceremony_integrity:%s): %s"
+                % (_ci_code, _ci_message),
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "decision bounced (ceremony_integrity:%s): approval %r "
+                "(%s) still needs a human decision -- %s. "
+                "Re-submit the %s with a reason describing what was "
+                "reviewed; the reason you gave was: %r"
+                % (_ci_code, approval_id, target.get("tool"), _ci_message,
+                   "approval" if approved else "rejection",
+                   reason if isinstance(reason, str) else ""))
         target["status"] = "approved" if approved else "rejected"
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()

@@ -834,6 +834,11 @@ def _packet_panel(record):
     rows = [
         ("action", _esc(pkt.get("action"))),
         ("target", "<code>%s</code>" % _esc(pkt.get("target"))),
+        # F190: the bound canonical target alongside the declared
+        # target — the approver sees the object the receipt binds.
+        ("canonical target (bound)",
+         "<code>%s</code>"
+         % _esc(pkt.get("canonical_target") or "(n/a — no path arg)")),
         ("risk", "<strong class='risk-%s'>%s (%s)</strong>" % (
             _esc(pkt.get("risk_tier")), _esc(pkt.get("risk_score")),
             _esc(pkt.get("risk_tier")))),

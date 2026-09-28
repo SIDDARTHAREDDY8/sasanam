@@ -10343,6 +10343,45 @@ class ToolExecutor:
                         "artifact_tampered",
                         policy_id="approval-tampered-artifact-egress")
                 continue
+            # F190 (canonical-target TOCTOU): the sweep-time resolved
+            # canonical target must equal the queue-time resolved target
+            # the receipt MAC-binds (policy_context.path_resolved). The
+            # fresh _context above re-resolves through the SAME
+            # _resolved_path_for_policy seam as queue time, so a symlink
+            # flip (or directory rename) during the human-pending window
+            # shows up here as R2 != R1 — executing would act on a
+            # different canonical action object than the human approved.
+            # Refuse fail-closed; re-approval required under the new
+            # target. Records whose tool takes no path arg carry no
+            # bound target and skip this check (zero behavior change).
+            # This subsumes the wave-162 check_write_declared_path gap
+            # on the approved path: a declared→undeclared flip IS a
+            # target mismatch and refuses here.
+            _f190_bound = (rec.get("policy_context") or {}).get(
+                "path_resolved")
+            if _f190_bound is not None:
+                _f190_sweep = ctx.get("path_resolved")
+                try:
+                    _f190_match = hmac.compare_digest(str(_f190_sweep),
+                                                      str(_f190_bound))
+                except TypeError:
+                    # Non-ASCII path components: compare_digest only
+                    # handles ASCII str. Both values are
+                    # governor-computed (never attacker-chosen secrets),
+                    # so constant-time is not load-bearing — fall back
+                    # to plain equality, still fail-closed on mismatch.
+                    _f190_match = (_f190_sweep == _f190_bound)
+                if not _f190_match:
+                    _refuse("Approval %s refused: the resolved canonical "
+                            "target changed between approval and execution "
+                            "(%r -> %r) — the human approved a different "
+                            "canonical action object than would now "
+                            "execute; re-approval required under the new "
+                            "target (F190 canonical-target continuity)."
+                            % (aid, _f190_bound, _f190_sweep),
+                            "canonical_target_mismatch",
+                            policy_id="canonical-target-execution-refused")
+                    continue
             # Row-7 (wave-131, revoke-after-approve): intent re-validation
             # at the execution boundary (TOCTOU guard). The human granted
             # this approval under one intent; a countermand arriving
