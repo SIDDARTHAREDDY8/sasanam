@@ -6110,9 +6110,6 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-
----
-
 ## F197: discovery process scanner silently drops novel-harness processes (LOW)
 
 **Status: CLOSED (2026-09-28, wave-179 lane E; red-first demonstrated on the pre-fix tree, differential closes it).**
