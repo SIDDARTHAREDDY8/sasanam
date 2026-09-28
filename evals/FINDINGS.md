@@ -6152,4 +6152,22 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F199**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B.)
+---
+
+## F199: GENESIS-head decision packet dodges F196 re-derivation — bogus decision_digest verifies (LOW)
+
+**Status: OPEN (2026-09-28, wave-180 lane D red-team).**
+
+**Claim broken.** F196 closed the receipt-swap hole by re-deriving `decision_digest` from the chained `policy_decision` — but the F196 MATCH in `gov/decision_packet.py::_verify` skips re-derivation when `head == "GENESIS"` ("visibly parentless"). At the public `verify_decision_packet(packet, entries)` seam, a key-holding producer (F196's own threat model) can mint a packet with `evidence_head_digest="GENESIS"` — the **default** of `build_decision_packet()` when the caller fails to pass a head — carrying an ARBITRARY `decision_digest`, present it alongside a colluding `decision_packet` chain entry whose `prev_hash` is `GENESIS`, and `verify_decision_packet` returns `(True, "ok")`. The binding F196 was filed to establish (packet digest ↔ audited decision) does not hold on this path. The verifier emits no parentlessness signal; callers of the public seam cannot distinguish "honest first packet on an empty chain" from "malicious GENESIS-head packet on a non-empty chain".
+
+**Demonstration.** Probe D5 in `evals/w180_redteam_probes.py` (deterministic x2, 0 errors): a GENESIS-head packet with `decision_digest="ff"*32` verifies against a chain that DOES contain the decision entry it answers (with a real `policy_decision`). Run: `TMPDIR=/var/tmp/... GOV_SKIP_GREEN=1 python evals/w180_redteam_probes.py` → `D5 BREAK`.
+
+**Close-when:** `verify_decision_packet` must not skip the F196 re-derivation for a GENESIS head when the supplied chain contains decision entries the packet plausibly answers; equivalently, a GENESIS-head packet verifies only when the chain carries no decision entries (the honest first-decision case). The existing pin test `test_round_trip_with_linkage` (decision_packet entry only, no decision entries) must continue to pass.
+
+**Severity rationale: LOW.** Requires a key-holding/buggy producer (same bar as F196's threat model); the packet is visibly parentless (`head_digest: "GENESIS"`), so a verifier-side caller that inspects the head can notice. Integrity gap in the seam, not an external exploit.
+
+**Found by:** wave-180 lane D (red-team), 2026-09-28, against `88261a9`.
+
+---
+
+Next free finding: **F200**. **Open findings: F199.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B.)

@@ -10047,3 +10047,11 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 **Findings:** none filed. Next free: F191. Open findings: none.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-28 — Wave-180 lane D: permanent red-team battery on wave-179 surfaces
+
+**Scope.** File-only red-team lane (no product code modified) on pristine base `88261a9`. New `evals/w180_redteam_probes.py`: 27 deterministic break-first probes (each run x2) across wave-179's four surfaces — Ed25519 audit-signer wiring (A), TUF pin expiry/rollback (B), differential discovery (C), F196 packet↔receipt pairing (D). Module-level `GOV_DEPLOYMENT_MODE=staging`; passes under `env -u GOV_DEPLOYMENT_MODE`; depth-1 green check (`GOV_SKIP_GREEN=1`) runs the F196 receipt-swap battery (0 BREAK / 7 HELD). Verdicts x2 identical: 1 BREAK / 21 HELD / 5 HELD* / 0 errors. Adjacent suites: 232/232 OK (audit_entry_signing, skill_watch x2, discovery_diff, decision_packet, invocation_receipts).
+
+**Finding: F199 (LOW, OPEN).** GENESIS-head decision packets dodge the F196 re-derivation: `verify_decision_packet` skips the `decision_digest`↔`policy_decision` re-binding for `head == "GENESIS"`, and `build_decision_packet()` defaults `evidence_head_digest="GENESIS"`. A key-holding producer (F196's threat model) can mint a verifying packet with an arbitrary `decision_digest` (probe D5: `(True, "ok")` against a chain containing the real decision entry). Close-when: GENESIS-head packets verify only when the chain carries no decision entries; `test_round_trip_with_linkage` must keep passing. Probe details: `evals/w180_redteam_probes.py` (probe D5 demonstrates the break).
+
+**Documented residuals (not findings):** sweep report shape frozen (expiry at `check_at_use` only); forward pin-file write leaves in-memory `not_after` stale (needs MAC key, not adversary-reachable); bare-name inventory spoof (documented trade-off, use exe paths); restarted process = new candidate by design; approved-sweep seqless receipt residual already declared in F196's closure (pressure-tested: pairing skips rather than misattributes).
