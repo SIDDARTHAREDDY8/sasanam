@@ -112,7 +112,7 @@ import os
 import re
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 # ---------------------------------------------------------------------------
@@ -301,6 +301,7 @@ _EVENT_UNVERIFIABLE = "skill_unverifiable"
 _EVENT_REPIN_REQUESTED = "skill_repin_requested"
 _EVENT_REPINNED = "skill_repinned"
 _EVENT_SWEEP = "skill_sweep_completed"
+_EVENT_PIN_EXPIRED = "skill_pin_expired"
 # GAP-5: use-time binding drift events (identity + version).
 _EVENT_IDENTITY_DRIFT = "skill_server_identity_drift"
 _EVENT_VERSION_DRIFT = "skill_version_drift"
@@ -444,6 +445,16 @@ class SkillWatch:
         # the cheap revalidation path re-hashes content and compares
         # against this value.
         self._pin_content_sha256 = None
+        # TUF-steal (wave-179 lane D): highest pin-file manifest_version
+        # this watcher has written or loaded. A validly-signed but
+        # OLDER file swapped in behind us is the rollback shape the
+        # H22 MAC alone cannot catch; _revalidate_pin_file compares
+        # against this and quarantines on backward movement.
+        self._pin_manifest_version = None
+        # Detail returned by check_at_use() when _revalidate_pin_file()
+        # fails (defaults to the historic tamper detail; the rollback
+        # path overrides it so callers can distinguish the two).
+        self._pin_revalidate_detail = "pin-file-tamper-quarantined"
 
     # -- introspection --------------------------------------------------------
 
@@ -520,6 +531,14 @@ class SkillWatch:
         ``version_hint()`` must return the same label at registration,
         otherwise registration is refused — a version the deployment
         cannot observe is a trust hole, not a pin.
+
+        TUF-steal (wave-179 lane D): ``origin`` may also carry
+        ``not_after`` (ISO-8601 with timezone): the pin's freshness
+        bound. Malformed or timezone-naive values refuse registration
+        fail-closed. Absent -> registered_at + 90 days
+        (``_PIN_NOT_AFTER_TTL_SECONDS``). check_at_use() refuses stale
+        pins ("pin-expired"); the bound renews on every governed
+        re-pin.
 
         GAP-5 server-identity binding: when ``source.identity_bytes()``
         returns bytes, their sha256 is pinned as the skill's live wire
@@ -608,13 +627,25 @@ class SkillWatch:
                     "identity_bytes() for skill %r must return non-empty "
                     "bytes or None" % skill_id)
             identity_digest = _digest(bytes(identity))
+        # TUF-steal (wave-179 lane D): freshness bound for the pin.
+        # Explicit not_after is validated strictly (fail-closed);
+        # absent -> registered_at + default TTL (never unbounded).
+        registered_at = _utcnow()
+        not_after_raw = origin.get("not_after")
+        if not_after_raw is None:
+            not_after = _default_not_after(registered_at)
+        else:
+            _parse_not_after(
+                not_after_raw,
+                context="skill %r registration" % skill_id)
+            not_after = not_after_raw
         self._skills[skill_id] = {
             "source": source,
             "pinned_digest": digest,
             "origin": origin,
-            "registered_at": _utcnow(),
+            "registered_at": registered_at,
             "last_stat": last_stat,
-            "last_verified_at": _utcnow(),
+            "last_verified_at": registered_at,
             "mutation_count": 0,
             # F142 Leg B: referenced-URL content bindings (bound at
             # registration; see _bind_references).
@@ -623,11 +654,16 @@ class SkillWatch:
             # GAP-5: live wire-identity digest + pinned version label.
             "identity_digest": identity_digest,
             "pinned_version": pinned_version,
+            # TUF-steal (wave-179 lane D): freshness bound + monotonic
+            # pin version (bumped on every governed re-pin).
+            "not_after": not_after,
+            "pin_version": _PIN_MANIFEST_VERSION_START,
         }
         self._record_event(_EVENT_REGISTERED, skill_id,
                            pinned_digest=digest, origin=dict(origin),
                            pinned_version=pinned_version,
-                           identity_bound=identity_digest is not None)
+                           identity_bound=identity_digest is not None,
+                           not_after=not_after)
         return digest
 
     def _bind_references(self, skill_id, content):
@@ -993,6 +1029,7 @@ class SkillWatch:
         failure every registered skill is quarantined fail-closed and
         False is returned.
         """
+        self._pin_revalidate_detail = "pin-file-tamper-quarantined"
         if self._pin_path is None or self._pin_mac is None:
             return True
         if self._pin_mac_key is None:
@@ -1029,6 +1066,23 @@ class SkillWatch:
         except PinStoreError:
             self._quarantine_all("pin-file-tamper")
             return False
+        # TUF-steal (wave-179 lane D) rollback check: the MAC is valid,
+        # but is this file OLDER than what we have already seen? A
+        # validly-signed older file swapped in behind us is the rollback
+        # shape the MAC alone cannot catch (the attacker holds a
+        # previous legitimate snapshot, not the key).
+        seen_version = data.get("manifest_version",
+                                _PIN_MANIFEST_VERSION_START)
+        known_version = self._pin_manifest_version or 0
+        if seen_version < known_version:
+            self._pin_revalidate_detail = \
+                "pin-manifest-rollback-quarantined"
+            self._quarantine_all("pin-manifest-rollback")
+            return False
+        if seen_version > known_version:
+            # Forward movement under a valid MAC is legitimate (e.g. a
+            # deployment-side save from a newer writer); adopt it.
+            self._pin_manifest_version = seen_version
         # MAC valid: refresh the stat hint AND the content binding.
         self._pin_stat = cur
         try:
@@ -1093,6 +1147,12 @@ class SkillWatch:
         only the manifest file; identity and version are independent
         observations). Drift, withdrawal, or observation failure
         quarantines fail-closed.
+
+        TUF-steal (wave-179 lane D): the pin's freshness bound
+        (``not_after``) is checked before any content is attested. A
+        stale pin refuses the use ("pin-expired") without quarantining
+        -- expiry is staleness, not compromise; the bound renews via
+        the governed re-pin flow.
         """
         ok, _verified_bytes, detail = self._check_at_use_full(skill_id)
         return ok, detail
@@ -1128,12 +1188,28 @@ class SkillWatch:
         # trusting the in-memory pins — a post-load rewrite on disk
         # quarantines fail-closed.
         if not self._revalidate_pin_file():
-            return False, None, "pin-file-tamper-quarantined"
+            return False, None, self._pin_revalidate_detail
         if skill_id in self._quarantined:
             return False, None, "quarantined"
         rec = self._skills.get(skill_id)
         if rec is None:
             return False, None, "unregistered-no-pin"
+        # TUF-steal (wave-179 lane D): refuse stale pin metadata. The
+        # pin is the trust anchor for the content check below, so its
+        # freshness is verified BEFORE any content is attested. Expiry
+        # is staleness, not compromise: refuse the use without
+        # quarantining — the pin renews via the governed re-pin flow.
+        try:
+            expiry = _parse_not_after(
+                rec.get("not_after"),
+                context="skill %r pin" % skill_id)
+        except SkillWatchError:
+            self._record_event("skill_pin_expiry_unparseable", skill_id)
+            return False, None, "pin-expiry-unparseable"
+        if datetime.now(timezone.utc) > expiry:
+            self._record_event(_EVENT_PIN_EXPIRED, skill_id,
+                               not_after=rec.get("not_after"))
+            return False, None, "pin-expired"
         # Content binding: ALWAYS re-read and re-hash against the pin.
         # F177 parity — the stat hint is never trusted as proof of
         # sameness (restorable via utime + padding by anyone with
@@ -1285,6 +1361,12 @@ class SkillWatch:
         the wire must not move under the operator's review. A skill
         whose version drifted cannot be re-pinned without an explicit
         ``new_version`` naming the reviewed label.
+
+        TUF-steal (wave-179 lane D): ``approval`` may also carry
+        ``new_not_after`` (ISO-8601 with timezone): the renewed
+        freshness bound for the pin. Malformed/naive values refuse the
+        approval fail-closed; absent -> now + 90 days. Every re-pin
+        also bumps the pin's monotonic ``pin_version``.
         """
         if skill_id not in self._skills:
             raise SkillWatchError("unknown skill %r" % (skill_id,))
@@ -1414,6 +1496,19 @@ class SkillWatch:
                     "identity changed after review; re-review required "
                     "(bait-and-switch refused)" % skill_id)
             validated_identity_digest = target_identity
+        # TUF-steal (wave-179 lane D): the re-pin renews the pin's
+        # freshness bound. An explicit new_not_after is validated
+        # strictly (fail-closed); absent -> now + default TTL. This is
+        # operator-chosen metadata, so no fresh-observation binding is
+        # needed — only format validity.
+        new_not_after_raw = approval.get("new_not_after")
+        if new_not_after_raw is not None:
+            _parse_not_after(
+                new_not_after_raw,
+                context="approval new_not_after for skill %r" % skill_id)
+            validated_not_after = new_not_after_raw
+        else:
+            validated_not_after = _default_not_after(_utcnow())
         # Commit point: every approval-time check passed. The version
         # and identity pins move here, atomically with the manifest
         # digest, so a refused approval above left them untouched.
@@ -1422,6 +1517,9 @@ class SkillWatch:
         if validated_identity_digest is not None:
             rec["identity_digest"] = validated_identity_digest
         rec["pinned_digest"] = observed
+        rec["not_after"] = validated_not_after
+        rec["pin_version"] = rec.get("pin_version",
+                                     _PIN_MANIFEST_VERSION_START) + 1
         rec["last_stat"] = stat
         rec["last_verified_at"] = _utcnow()
         if new_ref_hashes:
@@ -1440,6 +1538,8 @@ class SkillWatch:
                            new_version=rec.get("pinned_version"),
                            previous_identity_digest=previous_identity_digest,
                            new_identity_digest=rec.get("identity_digest"),
+                           new_not_after=rec.get("not_after"),
+                           pin_version=rec.get("pin_version"),
                            operator=operator, reason=str(reason)[:300])
         return observed
 
@@ -1473,6 +1573,70 @@ def _canonical_manifest_bytes(data):
     """Canonical bytes the H22 MAC covers (same layout as the file)."""
     return (json.dumps(data, indent=2, sort_keys=True)
             .encode("utf-8") + b"\n")
+
+
+# ---------------------------------------------------------------------------
+# TUF-steal: expiry + rollback/freeze protection on pin metadata (wave-179
+# lane D). Reimplemented from theupdateframework/python-tuf (MIT license;
+# pattern only, no vendored code — python-tuf's LICENSE-MIT was verified
+# from the actual file on the develop branch, 2026-09-28; see
+# teams/wave179-prospect/PROSPECTUS.md). TUF's update client refuses
+# expired metadata and refuses metadata older than what it has already
+# seen. We apply the same two checks to our pins:
+#   * every pin record carries ``not_after`` (ISO-8601, tz-aware);
+#     check_at_use() refuses stale pins fail-closed ("pin-expired").
+#     Absent at registration -> registered_at + 90 days (fail-closed on
+#     malformed, never silent on missing).
+#   * the pin file carries a monotonic ``manifest_version``; PinStore.load
+#     refuses a file older than a caller-supplied floor, and the live
+#     watcher quarantines when the on-disk file moves backward under a
+#     still-valid MAC (the rollback shape the MAC alone cannot catch).
+# Deliberately NOT stolen: the four-role ceremony, delegations, and the
+# tuf package dependency (prospectus "Avoid" list).
+# ---------------------------------------------------------------------------
+
+_PIN_NOT_AFTER_TTL_SECONDS = 90 * 24 * 3600  # default pin lifetime: 90 days
+_PIN_MANIFEST_VERSION_START = 1
+
+
+def _parse_not_after(value, *, context):
+    """Strictly parse a pin ``not_after`` bound. Fail closed.
+
+    Must be a non-empty ISO-8601 string with explicit timezone info.
+    Naive datetimes are refused outright — never silently assumed UTC.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise SkillWatchError(
+            "%s: pin not_after must be a non-empty ISO-8601 string "
+            "with timezone, got %r" % (context, value))
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise SkillWatchError(
+            "%s: pin not_after %r is not valid ISO-8601"
+            % (context, value))
+    if parsed.tzinfo is None:
+        raise SkillWatchError(
+            "%s: pin not_after %r has no timezone (naive datetimes "
+            "refused: never assume UTC)" % (context, value))
+    return parsed
+
+
+def _default_not_after(registered_at):
+    """Freshness bound for pins registered without an explicit not_after."""
+    base = _parse_not_after(registered_at, context="registered_at")
+    return (base + timedelta(seconds=_PIN_NOT_AFTER_TTL_SECONDS)).isoformat(
+        timespec="seconds")
+
+
+def _check_manifest_version(value, *, field="pin manifest_version"):
+    """Validate a monotonic version field. Fail closed."""
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < _PIN_MANIFEST_VERSION_START):
+        raise PinStoreError(
+            "%s must be an integer >= %d, got %r"
+            % (field, _PIN_MANIFEST_VERSION_START, value))
+    return value
 
 
 def default_source_factory(skill_id, origin):
@@ -1528,10 +1692,24 @@ class PinStore:
                 # (None when the skill never bound them).
                 "pinned_version": rec.get("pinned_version"),
                 "identity_digest": rec.get("identity_digest"),
+                # TUF-steal (wave-179 lane D): freshness bound +
+                # monotonic pin version. The bound is never None on
+                # disk: fall back to registered_at + TTL for records
+                # that predate the field (fail-closed toward expiry,
+                # not toward unbounded trust).
+                "not_after": (rec.get("not_after")
+                              or _default_not_after(rec["registered_at"])),
+                "pin_version": rec.get("pin_version",
+                                       _PIN_MANIFEST_VERSION_START),
             }
         return {
             "format": _PIN_FORMAT,
             "saved_at": _utcnow(),
+            # TUF-steal (wave-179 lane D): monotonic manifest version,
+            # bumped on every save. Rollback protection compares this
+            # against the newest version the reader has seen.
+            "manifest_version": (getattr(watch, "_pin_manifest_version",
+                                        None) or 0) + 1,
             "pins": pins,
             "quarantined": sorted(watch._quarantined),
         }
@@ -1576,6 +1754,9 @@ class PinStore:
             raise PinStoreError("cannot persist skill pins to %r: %s"
                                 % (path, e))
         # H22: attach the pin path/auth state for revalidation.
+        # TUF-steal: track the manifest version we just wrote (the
+        # rollback floor for future revalidations), with or without MAC.
+        watch._pin_manifest_version = data["manifest_version"]
         if mac_key is not None:
             watch._pin_path = path
             watch._pin_mac = data[_PIN_MAC_FIELD]
@@ -1664,6 +1845,16 @@ class PinStore:
             raise PinStoreError(
                 "skill pin file %r has unknown format %r (expected %r)"
                 % (path, data.get("format"), _PIN_FORMAT))
+        # TUF-steal (wave-179 lane D): manifest_version is additive --
+        # pre-change pin files predate the field and read as version 1.
+        # Malformed values fail closed (never silently trusted).
+        try:
+            manifest_version = _check_manifest_version(
+                data.get("manifest_version", _PIN_MANIFEST_VERSION_START))
+        except PinStoreError as e:
+            raise PinStoreError(
+                "skill pin file %r: %s" % (path, e))
+        data["manifest_version"] = manifest_version
         pins = data.get("pins")
         quarantined = data.get("quarantined", [])
         if not isinstance(pins, dict) or not isinstance(quarantined, list):
@@ -1711,6 +1902,41 @@ class PinStore:
                     raise PinStoreError(
                         "skill pin file %r: record %r identity_digest not "
                         "a 64-char hex digest" % (path, skill_id))
+            # TUF-steal (wave-179 lane D): freshness bound + monotonic
+            # pin version, both additive. A record that predates the
+            # fields gets a bound of registered_at + TTL (fail-closed
+            # toward expiry) and pin version 1. Malformed values fail
+            # closed — a trust anchor with an unparseable expiry is
+            # never used.
+            not_after = rec.get("not_after")
+            if not_after is None:
+                try:
+                    not_after = _default_not_after(rec["registered_at"])
+                except SkillWatchError as e:
+                    raise PinStoreError(
+                        "skill pin file %r: record %r cannot derive a "
+                        "freshness bound: %s" % (path, skill_id, e))
+                rec["not_after"] = not_after
+            else:
+                try:
+                    _parse_not_after(
+                        not_after,
+                        context="skill pin file %r record %r"
+                                % (path, skill_id))
+                except SkillWatchError as e:
+                    raise PinStoreError(
+                        "skill pin file %r: record %r: %s"
+                        % (path, skill_id, e))
+            pin_version = rec.get("pin_version",
+                                  _PIN_MANIFEST_VERSION_START)
+            try:
+                _check_manifest_version(pin_version,
+                                        field="pin_version for %r" % skill_id)
+            except PinStoreError as e:
+                raise PinStoreError(
+                    "skill pin file %r: record %r pin_version invalid: %s"
+                    % (path, skill_id, e))
+            rec["pin_version"] = pin_version
             for ref in refs:
                 if not isinstance(ref, dict):
                     raise PinStoreError(
@@ -1735,7 +1961,7 @@ class PinStore:
 
     @staticmethod
     def load(path, source_factory=None, emit=None, reference_resolver=None,
-             *, mac_key=None):
+             *, mac_key=None, min_manifest_version=None):
         """Rebuild a ``SkillWatch`` from a persisted pin file.
 
         ``source_factory(skill_id, origin)`` re-attaches content
@@ -1750,8 +1976,31 @@ class PinStore:
         H22: ``mac_key`` is passed through to :meth:`peek` — a
         MAC-authenticated manifest is verified, and tamper refuses
         LOUD.
+
+        TUF-steal (wave-179 lane D): ``min_manifest_version`` is the
+        newest manifest version the caller has already seen (kept in
+        the deployment's trusted local state). A file older than that
+        floor is a rollback — refused LOUD, never silently loaded. The
+        MAC alone cannot catch this: an attacker holding a previous
+        legitimately-signed file (but not the key) passes MAC
+        verification. Without a floor, rollback across a restart is
+        undetectable — the same trusted-local-state assumption TUF
+        makes; keyed deployments SHOULD retain the last version they
+        wrote (it is returned by :meth:`save` via the watcher's
+        ``_pin_manifest_version``).
         """
         data = PinStore.peek(path, mac_key=mac_key)
+        manifest_version = data.get("manifest_version",
+                                    _PIN_MANIFEST_VERSION_START)
+        if min_manifest_version is not None:
+            _check_manifest_version(min_manifest_version,
+                                    field="min_manifest_version")
+            if manifest_version < min_manifest_version:
+                raise PinStoreError(
+                    "skill pin file %r manifest rollback: version %d is "
+                    "older than the newest version seen (%d): refusing a "
+                    "downgraded trust anchor"
+                    % (path, manifest_version, min_manifest_version))
         factory = (source_factory if source_factory is not None
                    else default_source_factory)
         watch = SkillWatch(emit=emit,
@@ -1788,9 +2037,17 @@ class PinStore:
                 # (pre-GAP-5 pin files carry neither).
                 "pinned_version": rec.get("pinned_version"),
                 "identity_digest": rec.get("identity_digest"),
+                # TUF-steal (wave-179 lane D): restored freshness
+                # bound + pin version (peek normalized both, so they
+                # are always present here).
+                "not_after": rec["not_after"],
+                "pin_version": rec["pin_version"],
             }
         for skill_id in data["quarantined"]:
             watch._quarantined.add(skill_id)
+        # TUF-steal: the loaded manifest version becomes this
+        # watcher's rollback floor for future revalidations.
+        watch._pin_manifest_version = manifest_version
         watch._record_event("skill_pins_restored", "-",
                            restored=len(data["pins"]),
                            quarantined_restored=len(data["quarantined"]))
