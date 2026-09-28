@@ -616,11 +616,13 @@ _VERB_CLASSES = {
     #   ("hochladen", "weiterzuleiten") ARE single tokens and live
     #   here.
     # - Wave-151 (row 7): Cyrillic (Russian) pilot covers
-    #   SEND/DELETE/SHARE only. ARCHIVE/REDACT/PUBLISH/FORWARD/
-    #   UPLOAD carry no Cyrillic forms -- real Russian verbs for
-    #   these (архивировать, опубликовать, загрузить, переслать,
-    #   цензурировать) exist but are deliberately out of this
-    #   pilot's scope (documented residual; row 7 stays PARTIAL).
+    #   SEND/DELETE/SHARE only. ARCHIVE/REDACT carry no Cyrillic,
+    #   Arabic, or CJK forms -- real verbs for these
+    #   (архивировать, цензурировать) exist but are deliberately
+    #   out of scope (documented residual; row 7 stays PARTIAL).
+    #   The row-7 verb-expansion work extended the Cyrillic,
+    #   Arabic, and CJK pilots to PUBLISH/FORWARD/UPLOAD and added
+    #   the GRANT/REVOKE/LEAK classes in all five scripts.
     "REDACT": frozenset((
         "redact", "redacts", "redacting", "redacted",
         "schwaerzen", "schwaerzt", "schwaerze", "geschwaerzt",
@@ -668,6 +670,9 @@ _VERB_CLASSES = {
     )),
     "PUBLISH": frozenset((
         "publish", "publishes", "publishing", "published",
+        "post", "posts", "posting", "posted",
+        "posten", "postet", "postete", "gepostet",
+        "poster", "postez", "poste", "postent",
         "veroeffentlichen", "veroeffentlicht", "veroeffentliche",
         "veroffentlichen", "veroffentlicht", "veroffentliche",
         "publier", "publiez", "publie", "publient",
@@ -678,6 +683,32 @@ _VERB_CLASSES = {
         # the formal "published" (प्रकाशित करें).
         "छापना", "छापें", "छापो", "छापे", "छापा", "छाप",
         "प्रकाशित",
+        # Row-7 verb expansion: Cyrillic (Russian) PUBLISH forms.
+        # опубликовать/публиковать ("to publish") families plus
+        # разместить/разместить ("to place/post content"). The
+        # й->и fold duals are carried (same discipline as SEND:
+        # the scope path folds while the judge does not).
+        "опубликовать", "опубликуйте", "опубликуй",
+        "опубликуите", "опубликуи",
+        "публиковать", "публикуйте", "публикуите",
+        "публикует", "опубликовано", "опубликуют",
+        "разместить", "разместите", "размещать",
+        # Row-7 verb expansion: Arabic (MSA) PUBLISH forms. انشر
+        # (imperative "publish!"), تنشر (2nd-person imperfect),
+        # ينشر (3rd-person imperfect), نشر (verbal noun/past),
+        # نشرت (1st/2nd-person past). Bare-alef spellings: انشر
+        # has no hamza, so no dual is needed.
+        "انشر", "تنشر", "ينشر", "نشر", "نشرت",
+        # Row-7 verb expansion: CJK PUBLISH forms. Mandarin 发布
+        # ("publish/release"), 公开 ("make public"), 发表
+        # ("publish an article"), 刊登 ("carry in print"); Japanese
+        # 公開/公表 ("make public/announce"), 投稿 ("post/
+        # contribute"), 掲載 ("publish/carry"). Korean 게시 is
+        # deliberately absent: it substrings-matches 게시판
+        # ("bulletin board") -- a measured FP class of the same
+        # shape as the excluded single-char 发 (cf. 发现).
+        "发布", "公开", "发表", "刊登",
+        "公開", "公表", "投稿", "掲載",
     )),
     "FORWARD": frozenset((
         "forward", "forwards", "forwarding", "forwarded",
@@ -690,6 +721,21 @@ _VERB_CLASSES = {
         # "forwarded" (अग्रेषित करें).
         "फॉरवर्ड",
         "अग्रेषित",
+        # Row-7 verb expansion: Cyrillic (Russian) FORWARD forms.
+        # переслать/пересылать ("to forward") families, with the
+        # й->и fold dual for пересылайте.
+        "переслать", "перешлите", "перешли",
+        "пересылать", "пересылайте", "пересылаите",
+        "переслал", "пересылает",
+        # Row-7 verb expansion: Arabic (MSA) FORWARD forms. وجّه
+        # (imperative "direct/forward!") with the unvocalized dual
+        # وجه (shadda-dropping is the common orthography), يوجّه
+        # (3rd-person imperfect), توجيه (verbal noun "forwarding").
+        "وجّه", "وجه", "يوجّه", "توجيه",
+        # Row-7 verb expansion: CJK FORWARD forms. Mandarin 转发
+        # ("forward"), 转交 ("hand over"); Japanese 転送
+        # ("forward"); Korean 전달 (전달하다, "deliver/forward").
+        "转发", "转交", "転送", "전달",
     )),
     "UPLOAD": frozenset((
         "upload", "uploads", "uploading", "uploaded",
@@ -701,6 +747,106 @@ _VERB_CLASSES = {
         # loanword ("अपलोड करें"); native चढ़ाना is not the
         # file-upload verb in practice, so it is deliberately absent.
         "अपलोड",
+        # Row-7 verb expansion: Cyrillic (Russian) UPLOAD forms.
+        # загрузить/загружать ("to upload") families, with the
+        # й->и fold dual for загружайте.
+        "загрузить", "загрузите", "загрузи",
+        "загружать", "загружайте", "загружаите",
+        "загрузил", "загружено",
+        # Row-7 verb expansion: Arabic (MSA) UPLOAD forms. ارفع
+        # (imperative "upload!"), ترفع (2nd-person imperfect),
+        # يرفع (3rd-person imperfect), رفع (verbal noun/past),
+        # رفعت (1st/2nd-person past).
+        "ارفع", "ترفع", "يرفع", "رفع", "رفعت",
+        # Row-7 verb expansion: CJK UPLOAD forms. Mandarin 上传
+        # ("upload"), 上载; Japanese アップロード (katakana
+        # loanword); Korean 업로드 (loanword), 올리다/올려 (native
+        # "put up" -- the upload verb in practice).
+        "上传", "上载", "アップロード", "업로드", "올리다", "올려",
+    )),
+    # Row-7 verb expansion: GRANT -- giving access or permission.
+    # No product tool maps to this class (SHARE precedent, wave-151):
+    # its forms live in the similarity-countermand scope path and
+    # the cue path. Same closed-list discipline as tier 2.
+    "GRANT": frozenset((
+        "grant", "grants", "granting", "granted",
+        "gewaehren", "gewaehre", "gewaehrt", "gewaehrte",
+        "gewahren", "gewahre", "gewahrt", "gewahrte",
+        "accorder", "accordez", "accorde", "accordent",
+        "otorgar", "otorga", "otorgue", "otorgado", "otorgan",
+        "conceder", "concede", "conceda", "concedido", "conceden",
+        "pradaan",
+        # Devanagari GRANT forms: प्रदान ("grant" -- प्रदान करें),
+        # अनुमति ("permission" -- अनुमति दें), अधिकृत ("authorized").
+        "प्रदान", "अनुमति", "अधिकृत",
+        # Cyrillic (Russian) GRANT forms: предоставить/
+        # предоставлять ("to grant/provide") families. No й/ё in
+        # these forms -- no fold duals needed (verified).
+        "предоставить", "предоставьте", "предоставь",
+        "предоставляет", "предоставлено", "предоставлять",
+        # Arabic (MSA) GRANT forms: امنح (imperative "grant!"),
+        # تمنح (2nd-person imperfect), يمنح (3rd-person imperfect),
+        # منح (verbal noun/past), منحت (1st/2nd-person past).
+        "امنح", "تمنح", "يمنح", "منح", "منحت",
+        # CJK GRANT forms: Mandarin 授予 ("confer/grant"), 授权
+        # ("authorize"); Japanese 付与 ("confer" -- 許可 is
+        # deliberately absent: it substrings-matches 許可証
+        # "license", the 게시판-class FP shape); Korean 부여
+        # ("grant"), 승인 ("approval"), 허용 ("permission").
+        "授予", "授权", "付与", "부여", "승인", "허용",
+    )),
+    # Row-7 verb expansion: REVOKE -- taking access away.
+    # Scope/cue path only (no product tool maps here).
+    "REVOKE": frozenset((
+        "revoke", "revokes", "revoking", "revoked",
+        "widerrufen", "widerrufe", "widerrufst", "widerruft",
+        "widerrief",
+        "entziehen", "entziehe", "entziehst", "entzieht",
+        "entzogen",
+        "revoquer", "revoquez", "revoque", "revoquent",
+        "revocar", "revoca", "revoque", "revocado", "revocan",
+        # Devanagari REVOKE forms: रद्द ("cancel" -- रद्द करें),
+        # वापस ("take back" -- वापस लें).
+        "रद्द", "वापस",
+        # Cyrillic (Russian) REVOKE forms: отозвать/отзывать
+        # ("to revoke/recall") families. No й/ё -- no fold duals
+        # (verified).
+        "отозвать", "отзовите", "отзови",
+        "отзывает", "отозван", "отзывать",
+        # Arabic (MSA) REVOKE forms: ألغ (imperative "cancel!")
+        # with the colloquial bare-alef dual الغ, تلغي
+        # (2nd-person imperfect), يلغي (3rd-person imperfect),
+        # إلغاء/الغاء (verbal noun "cancellation", hamza dual
+        # carried like wave-152's أرسل/ارسل).
+        "ألغ", "الغ", "تلغي", "يلغي", "إلغاء", "الغاء",
+        # CJK REVOKE forms: Mandarin 撤销 ("revoke"), 取消
+        # ("cancel"), 撤回 ("withdraw"); Korean 취소 ("cancel"),
+        # 철회 ("withdraw"). Japanese 取消す carries the 取消 form.
+        "撤销", "取消", "撤回", "취소", "철회",
+    )),
+    # Row-7 verb expansion: LEAK -- exfiltration by disclosure.
+    # Scope/cue path only (no product tool maps here).
+    "LEAK": frozenset((
+        "leak", "leaks", "leaking", "leaked",
+        "exfiltrate", "exfiltrates", "exfiltrating", "exfiltrated",
+        "disclose", "discloses", "disclosing", "disclosed",
+        "divulguer", "divulguez", "divulgue", "divulguent",
+        "filtrar", "filtra", "filtre", "filtrado", "filtran",
+        # Devanagari LEAK form: लीक is the realistic loanword
+        # ("लीक करें").
+        "लीक",
+        # Cyrillic (Russian) LEAK forms: слить/сливать ("to leak",
+        # slang) family, with the й->и fold duals for слейте/слей.
+        "слить", "слейте", "слей", "слеите", "слеи",
+        "сливает", "слив",
+        # Arabic (MSA) LEAK forms: سرّب (imperative "leak!") with
+        # the unvocalized dual سرب, يسرّب (3rd-person imperfect),
+        # تسرّب (2nd-person imperfect), تسريب (verbal noun).
+        "سرّب", "سرب", "يسرّب", "تسرّب", "تسريب",
+        # CJK LEAK forms: Mandarin 泄露/泄漏 ("leak"); Japanese
+        # 漏洩 ("leak"), 流出 ("outflow/leak"); Korean 유출
+        # ("leak"), 누출 ("leak").
+        "泄露", "泄漏", "漏洩", "流出", "유출", "누출",
     )),
 }
 _VERB_CLASS_BY_FORM = {
@@ -1176,6 +1322,11 @@ _NEGATED_VERB_TOKEN_RE = re.compile(r"[a-z'\u0400-\u04FF\u0900-\u0963\u0966-\u09
 # _TOOL_VERBS, so SHARE Cyrillic forms live in the
 # similarity-countermand scope path only -- same as Latin, which
 # also has no share tool).
+# Row-7 verb expansion: FORWARD/GRANT/REVOKE/LEAK likewise have no
+# product tool, so their forms (all scripts) live in the scope path
+# and the cue path only -- the SHARE precedent. If a grant/revoke
+# tool ever exists, map it here the way http_post maps to
+# (PUBLISH, UPLOAD).
 _TOOL_VERB_CLASSES = {
     "send_email": ("SEND",),
     "delete_file": ("DELETE",),
