@@ -210,10 +210,19 @@ def _check_proof_shape(proof):
     if ce is not None:
         if not isinstance(ce, dict):
             return False, "authority_proof.counterexample is not a dict"
-        for key in ("domain", "access", "nearest_rule", "reason"):
+        for key in ("domain", "access", "reason"):
             if not isinstance(ce.get(key), str):
                 return False, \
                     "authority_proof.counterexample.%s must be str" % key
+        # nearest_rule is Optional[str] on the producer side
+        # (Counterexample.to_dict emits None when no boundary entry is
+        # even close, or when the shape was unmodelable -- e.g. every
+        # `unsupported` verdict). Accept str or null; anything else is
+        # still malformed. (F195)
+        nr = ce.get("nearest_rule")
+        if nr is not None and not isinstance(nr, str):
+            return False, \
+                "authority_proof.counterexample.nearest_rule must be str or null"
     return True, "ok"
 
 
