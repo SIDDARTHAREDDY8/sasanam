@@ -2660,6 +2660,34 @@ class ToolExecutor:
                             self._ledger.taint_mark(principal, self.run_id)
                         except Exception:
                             pass
+            # S1-MEM cross-session lineage: feed instruction-shaped
+            # ingestions to the firewall's lineage journal so a LATER
+            # session's memory write can carry the lineage flag even
+            # when the writing run never re-ingested the poison (the
+            # cross-session laundering shape). The journal stores only
+            # fingerprint digests and flags, never content. Fail-closed:
+            # journal tamper raises loudly and the tool call is refused
+            # rather than ingesting with untrusted lineage state.
+            fw = self._memory_firewall
+            if fw is not None and principal:
+                try:
+                    fw.note_shaped_ingestion(
+                        principal, content, self.run_id)
+                except LedgerUnverifiableError as e:
+                    self.log.append({
+                        "event": "memory_ledger_unverifiable",
+                        "run_id": self.run_id,
+                        "tool": tool,
+                        "principal": principal,
+                        "decision": "refused",
+                        "policy_id": "memory-provenance",
+                        "flag": "memory_ledger_unverifiable",
+                        "reason": (
+                            "Refusing the tool call: the cross-session "
+                            "lineage journal cannot be authenticated: %s"
+                            % (e,)),
+                    })
+                    raise
             self._tainted = True
             if tool not in self._taint_sources:
                 self._taint_sources.append(tool)
@@ -4572,6 +4600,10 @@ class ToolExecutor:
             return
         self._mem_scanned_principals.add(principal)
         try:
+            # Cross-session lineage: the lineage journal must also be
+            # authenticated at session open -- a broken journal chain is
+            # fail-closed and loud, never silently consulted.
+            fw.verify_lineage_journal()
             flagged = fw.scan_at_session_open(principal)
         except LedgerUnverifiableError as e:
             self.log.append({
@@ -4704,14 +4736,36 @@ class ToolExecutor:
         content = (args or {}).get("content", "")
         if not isinstance(content, str):
             content = str(content)
-        _record, tier, shaping_reason = fw.record_memory_write(
-            principal=principal,
-            mem_key=mem_key,
-            content=content,
-            writer_agent_id=agent_id,
-            writer_run_id=self.run_id,
-            read_fingerprints=list(getattr(self, "_read_contents", [])),
-            tainted_run=bool(getattr(self, "_tainted", False)))
+        try:
+            _record, tier, shaping_reason = fw.record_memory_write(
+                principal=principal,
+                mem_key=mem_key,
+                content=content,
+                writer_agent_id=agent_id,
+                writer_run_id=self.run_id,
+                read_fingerprints=list(getattr(self, "_read_contents", [])),
+                tainted_run=bool(getattr(self, "_tainted", False)))
+        except LedgerUnverifiableError as e:
+            # Cross-session lineage journal (or the memory ledger)
+            # tampered: refuse the write rather than recording
+            # provenance against untrusted lineage state (fail-closed,
+            # loud -- never silently write with a broken chain).
+            self.log.append({
+                "event": "memory_ledger_unverifiable",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "role": role,
+                "principal": principal,
+                "tool": tool,
+                "mem_key": mem_key,
+                "decision": "denied",
+                "policy_id": "memory-provenance-firewall",
+                "flag": "memory_ledger_unverifiable",
+                "reason": ("Refusing to record memory write: provenance "
+                           "ledger or lineage journal cannot be "
+                           "authenticated: %s" % e),
+            })
+            raise
         # Detection surface: a chained action-log marker (no raw content)
         # alongside the hash-chained ledger record.
         self.log.append({

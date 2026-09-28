@@ -45,11 +45,20 @@ INSTRUCTION_SHAPED_IDS = {
 
 def main() -> int:
     scenarios = attack_corpus() + benign_corpus()
-    scratch = tempfile.mkdtemp(prefix="amsb-")
     all_results = []
     for round_no in (1, 2):
         round_results = []
         for sc in scenarios:
+            # Fresh scratch per scenario: the harness discipline is
+            # "fresh adapter per scenario (no cross-scenario
+            # contamination)". The memory ledger is (principal, mem_key)
+            # keyed so a shared scratch was benign for it, but the
+            # cross-session lineage journal is principal-keyed
+            # deployment state: sharing it would let one scenario's
+            # shaped ingestion flag another scenario's benign write.
+            # Within a scenario, sessions share the adapter's scratch,
+            # so cross-session lineage still works where it should.
+            scratch = tempfile.mkdtemp(prefix="amsb-")
             res = run_scenario(sc, scratch)
             round_results.append(res)
         all_results.append(round_results)

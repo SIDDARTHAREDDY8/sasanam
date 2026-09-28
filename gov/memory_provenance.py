@@ -112,6 +112,7 @@ import json
 import re
 import time
 import unicodedata
+from pathlib import Path
 
 from .egress_ledger import (
     EgressLedger,
@@ -485,6 +486,138 @@ class MemoryLedger(EgressLedger):
             and e.get("principal") == principal)
 
 
+#: Default cross-session lineage window (seconds): a shaped ingestion
+#: taints the principal's subsequent memory writes for this long. The
+#: window bounds the "pending lineage" state -- without a bound, one
+#: shaped ingestion would banner the principal's writes forever (noise);
+#: with too short a bound, an attacker simply waits it out (bypass).
+#: 24h covers the realistic ingest-in-one-session / act-in-the-next
+#: laundering shape while keeping the journal's effective working set to
+#: recent entries. Deployment-tunable via
+#: ``MemoryFirewall(lineage_window_s=...)``.
+DEFAULT_LINEAGE_WINDOW_S = 24 * 60 * 60
+
+
+def _walk_back_lines(path, block_size=65536):
+    """Yield the lines of ``path`` newest-first, reading backward in
+    blocks. A keyed tail read: callers stop at the first match instead
+    of scanning history."""
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        end = f.tell()
+        buf = b""
+        while end > 0:
+            start = max(0, end - block_size)
+            f.seek(start)
+            buf = f.read(end - start) + buf
+            lines = buf.split(b"\n")
+            if start > 0:
+                # First line may be partial: carry it into the next block.
+                buf = lines[0]
+                lines = lines[1:]
+            else:
+                buf = b""
+            for raw in reversed(lines):
+                if raw.strip():
+                    yield raw
+            end = start
+
+
+class LineageJournal(EgressLedger):
+    """Append-only HMAC-chained JSONL of shaped-ingestion lineage facts.
+
+    One journal per deployment (NOT per run -- it must survive across
+    sessions). Records ``(fingerprint -> lineage_shaped_source)`` facts:
+    which principal ingested instruction-shaped external content, in
+    which run, when. The journal stores fingerprint SHA-256 digests and
+    flags -- never content -- so it cannot become a silent exfil
+    channel.
+
+    Inherits seq chaining, checkpoints, file locking, and fail-closed
+    reads from :class:`EgressLedger`; the entry ``kind`` is
+    ``shaped_ingestion``. A tampered journal raises
+    ``LedgerUnverifiableError`` on any consult -- the firewall then
+    refuses the dependent write (fail-closed, loud), never writes with
+    untrusted lineage state.
+    """
+
+    def __init__(self, path, window_s=DEFAULT_LINEAGE_WINDOW_S):
+        super().__init__(path)
+        self.window_s = window_s
+
+    def record_shaped_ingestion(self, principal, run_id, fp_sha256,
+                                instruction_reason, now=None):
+        """Append one shaped-ingestion fact; returns the record."""
+        return self.append({
+            "kind": "shaped_ingestion",
+            "principal": principal,
+            "run_id": run_id,
+            "fp_sha256": fp_sha256,
+            "instruction_reason": instruction_reason,
+            "ts": time.time() if now is None else now,
+        })
+
+    def _parse_line(self, raw):
+        try:
+            entry = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if not isinstance(entry, dict):
+            return None
+        return entry
+
+    def latest_for(self, principal):
+        """Newest shaped-ingestion entry for ``principal``, or None.
+        Verify-first (fail-closed like the memory ledger); a missing
+        journal is vacuously empty. Keyed tail read: stops at the first
+        match instead of scanning history."""
+        if not principal or not self.path.exists():
+            return None
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()
+                for raw in _walk_back_lines(self.path):
+                    entry = self._parse_line(raw)
+                    if (entry is not None
+                            and entry.get("kind") == "shaped_ingestion"
+                            and entry.get("principal") == principal):
+                        return entry
+        except _LedgerMissing:
+            return None
+        return None
+
+    def has_pending(self, principal, now=None):
+        """True when ``principal`` ingested instruction-shaped content
+        within the lineage window. Entries are append-ordered by ts, so
+        the walk stops at the first entry older than the cutoff: a keyed
+        read, O(recent entries), not O(history)."""
+        if not principal:
+            return False
+        now = time.time() if now is None else now
+        cutoff = now - self.window_s
+        if not self.path.exists():
+            return False
+        try:
+            with _ledger_read_locked(self.path):
+                self.require_verified()
+                for raw in _walk_back_lines(self.path):
+                    entry = self._parse_line(raw)
+                    if entry is None:
+                        continue
+                    try:
+                        ts = float(entry.get("ts", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if ts < cutoff:
+                        return False
+                    if (entry.get("kind") == "shaped_ingestion"
+                            and entry.get("principal") == principal):
+                        return True
+        except _LedgerMissing:
+            return False
+        return False
+
+
 class MemoryFirewall:
     """The firewall itself: path scoping, tier computation, read checks.
 
@@ -493,8 +626,17 @@ class MemoryFirewall:
     only routes write_file/read_file events through it.
     """
 
-    def __init__(self, ledger_path, memory_prefixes=None):
+    def __init__(self, ledger_path, memory_prefixes=None,
+                 lineage_journal_path=None,
+                 lineage_window_s=DEFAULT_LINEAGE_WINDOW_S):
         self.ledger = MemoryLedger(ledger_path)
+        if lineage_journal_path is None:
+            # Sibling of the memory ledger: same deployment, same
+            # lifetime, separate chain (different entry kinds).
+            lineage_journal_path = str(
+                Path(ledger_path).parent / "lineage_journal.jsonl")
+        self.lineage_journal = LineageJournal(
+            lineage_journal_path, window_s=lineage_window_s)
         self.memory_prefixes = tuple(
             memory_prefixes or _DEFAULT_MEMORY_PREFIXES)
 
@@ -530,7 +672,7 @@ class MemoryFirewall:
 
     def record_memory_write(self, principal, mem_key, content,
                             writer_agent_id, writer_run_id,
-                            read_fingerprints, tainted_run):
+                            read_fingerprints, tainted_run, now=None):
         """Tier, classify, and chain one memory write. Returns
         (record, tier, shaping_reason).
 
@@ -541,12 +683,21 @@ class MemoryFirewall:
         so a paraphrase derived from a shaped source is delivered with
         its provenance banner instead of silently -- paraphrase
         laundering is derivation, not detection-evasion, and the
-        paraphrase itself is never "detected" here."""
+        paraphrase itself is never "detected" here.
+
+        Cross-session lineage: the in-run fingerprint check cannot see a
+        shaped ingestion from an earlier session (the writing run's
+        fingerprint store is per-run), so the lineage journal is
+        consulted too. A journal hit sets the same flag -- the existing
+        read-time banner path then contains the write, with no read-path
+        changes. Raises LedgerUnverifiableError when the journal is
+        tampered (fail-closed, loud)."""
         tier = self.tier_for_write(content, read_fingerprints)
         reason = instruction_shaping_reason(content)
-        lineage_shaped = any(
-            instruction_shaping_reason(fp) is not None
-            for fp in (read_fingerprints or ()))
+        lineage_shaped = (
+            any(instruction_shaping_reason(fp) is not None
+                for fp in (read_fingerprints or ()))
+            or self.lineage_journal.has_pending(principal, now=now))
         record = self.ledger.record_write(
             principal=principal,
             mem_key=mem_key,
@@ -559,8 +710,43 @@ class MemoryFirewall:
             instruction_shaped=reason is not None,
             instruction_reason=reason,
             lineage_shaped_source=lineage_shaped,
+            now=now,
         )
         return record, tier, reason
+
+    def note_shaped_ingestion(self, principal, content, run_id, now=None):
+        """Cross-session lineage feed: record that ``principal`` ingested
+        instruction-shaped external content. Called by the executor at
+        the tool-result ingestion funnel (the single point where read
+        fingerprints enter the run) -- including ingestions that never
+        lead to a memory write in the same run, which is exactly the
+        cross-session laundering shape.
+
+        Stores only the fingerprint digest and the flag, never content,
+        so the journal cannot become a silent exfil channel. Deduped per
+        (principal, digest): re-ingesting the same bytes does not grow
+        the journal. Returns the journal record, or None when the
+        content is not instruction-shaped. Raises
+        LedgerUnverifiableError on journal tamper (fail-closed)."""
+        if (not principal or not isinstance(content, str)
+                or not content.strip()):
+            return None
+        reason = instruction_shaping_reason(content)
+        if reason is None:
+            return None
+        fp = content[:65536]  # the fingerprint cap, mirroring the executor
+        fp_sha256 = hashlib.sha256(fp.encode("utf-8")).hexdigest()
+        latest = self.lineage_journal.latest_for(principal)
+        if (latest is not None
+                and latest.get("fp_sha256") == fp_sha256):
+            return latest
+        return self.lineage_journal.record_shaped_ingestion(
+            principal, run_id, fp_sha256, reason, now=now)
+
+    def verify_lineage_journal(self):
+        """Fail-closed integrity check of the cross-session lineage
+        journal, for the session-open scan."""
+        self.lineage_journal.require_verified()
 
     def seed_entry(self, principal, mem_key, content, reviewer,
                    review_note="pre-ledger memory blessed after review"):

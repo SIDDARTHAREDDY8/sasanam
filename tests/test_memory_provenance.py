@@ -1090,6 +1090,210 @@ class TestProvenanceBanner(unittest.TestCase):
         self.assertIn("unknown", unknown)
 
 
+class TestCrossSessionLineageJournal(unittest.TestCase):
+    """F154 residual #2: the in-run lineage flag dies with the run, so a
+    shaped ingestion in session N cannot flag a paraphrase written in
+    session N+1 by a run that ingested nothing. The cross-session
+    lineage journal carries the flag across the session boundary.
+
+    Red-first: the e2e test below failed (silent recall) before the
+    journal was wired, and passes after. The journal is content-free
+    (digests and flags only), deduped, windowed, keyed-read, and
+    fail-closed on tamper."""
+
+    def _fw_pair(self, window_s=None):
+        ledger_path = _tmp_ledger()
+        kw = {}
+        if window_s is not None:
+            kw["lineage_window_s"] = window_s
+        fw = MemoryFirewall(ledger_path=str(ledger_path), **kw)
+        return fw, ledger_path
+
+    def test_journal_feed_records_and_pends(self):
+        fw, _ = self._fw_pair()
+        rec = fw.note_shaped_ingestion(PRINCIPAL, POISON, "run-1")
+        self.assertIsNotNone(rec)
+        self.assertEqual(rec["kind"], "shaped_ingestion")
+        self.assertEqual(rec["principal"], PRINCIPAL)
+        self.assertTrue(fw.lineage_journal.has_pending(PRINCIPAL))
+        # Content-free: the journal stores digests and flags, never the
+        # ingested bytes -- it cannot become a silent exfil channel.
+        journal_text = fw.lineage_journal.path.read_text(encoding="utf-8")
+        self.assertNotIn(POISON[:40], journal_text)
+
+    def test_journal_ignores_benign_ingestion(self):
+        fw, _ = self._fw_pair()
+        self.assertIsNone(
+            fw.note_shaped_ingestion(PRINCIPAL, NOTE, "run-1"))
+        self.assertFalse(fw.lineage_journal.has_pending(PRINCIPAL))
+        # No journal file at all: benign ingestion leaves no trace.
+        self.assertFalse(fw.lineage_journal.path.exists())
+
+    def test_journal_dedupes_reingestion(self):
+        fw, _ = self._fw_pair()
+        first = fw.note_shaped_ingestion(PRINCIPAL, POISON, "run-1")
+        second = fw.note_shaped_ingestion(PRINCIPAL, POISON, "run-2")
+        self.assertEqual(first["seq"], second["seq"])
+        lines = [l for l in fw.lineage_journal.path.read_text(
+            encoding="utf-8").splitlines() if l.strip()]
+        self.assertEqual(len(lines), 1)
+
+    def test_journal_window_expiry(self):
+        # The lineage state is bounded: without a window one shaped
+        # ingestion would banner the principal's writes forever (noise);
+        # with expiry the working set stays recent.
+        fw, _ = self._fw_pair(window_s=60)
+        fw.lineage_journal.record_shaped_ingestion(
+            PRINCIPAL, "run-1", "abc123", "policy_authority_framing",
+            now=1000.0)
+        self.assertTrue(
+            fw.lineage_journal.has_pending(PRINCIPAL, now=1059.0))
+        self.assertFalse(
+            fw.lineage_journal.has_pending(PRINCIPAL, now=1061.0))
+
+    def test_journal_lookup_is_keyed_not_a_scan(self):
+        # 300 entries for other principals, then one recent entry for
+        # ours: the tail walk must stop at the first match instead of
+        # scanning history.
+        from gov import memory_provenance as mp
+        fw, _ = self._fw_pair()
+        for i in range(300):
+            fw.lineage_journal.record_shaped_ingestion(
+                "other-%d" % i, "run-x", "fp-%d" % i, "override_directive",
+                now=2000.0 + i)
+        fw.lineage_journal.record_shaped_ingestion(
+            PRINCIPAL, "run-1", "fp-mine", "policy_authority_framing",
+            now=5000.0)
+        real_walk = mp._walk_back_lines
+        seen = []
+
+        def counting(path, block_size=65536):
+            for raw in real_walk(path, block_size=block_size):
+                seen.append(raw)
+                yield raw
+
+        with mock.patch.object(mp, "_walk_back_lines", counting):
+            self.assertTrue(fw.lineage_journal.has_pending(PRINCIPAL,
+                                                           now=5001.0))
+        self.assertLessEqual(len(seen), 3, len(seen))
+        # And the reverse: a principal whose only entry predates the
+        # cutoff stops at the first too-old entry, whatever the depth.
+        seen.clear()
+        with mock.patch.object(mp, "_walk_back_lines", counting):
+            self.assertFalse(fw.lineage_journal.has_pending(
+                "ancient-only", now=10 ** 6))
+        self.assertLessEqual(len(seen), 3, len(seen))
+
+    def test_write_time_journal_consult_flags(self):
+        # The writing run ingested nothing shaped (clean fingerprints),
+        # but the principal ingested shaped content in an earlier
+        # session: the journal must set the same lineage flag the
+        # in-run check would have set.
+        fw, _ = self._fw_pair()
+        fw.note_shaped_ingestion(PRINCIPAL, POISON, "run-1")
+        record, tier, _reason = fw.record_memory_write(
+            PRINCIPAL, "memory/n.md", NOTE, "agent-1", "run-2",
+            read_fingerprints=[], tainted_run=False)
+        self.assertTrue(record["lineage_shaped_source"])
+        self.assertEqual(tier, "agent")  # tier ontology unchanged
+
+    def test_write_time_no_ingestion_stays_clean(self):
+        # Benign control: no shaped ingestion anywhere -> no flag, so
+        # the 0.0% FP budget is not spent by the journal existing.
+        fw, _ = self._fw_pair()
+        record, tier, _reason = fw.record_memory_write(
+            PRINCIPAL, "memory/n.md", NOTE, "agent-1", "run-1",
+            read_fingerprints=[], tainted_run=False)
+        self.assertFalse(record["lineage_shaped_source"])
+        self.assertEqual(tier, "agent")
+
+    def _corrupt_journal(self, fw):
+        p = fw.lineage_journal.path
+        data = p.read_text(encoding="utf-8")
+        self.assertGreater(len(data), 120)
+        p.write_text(data[:100] + "X" + data[101:], encoding="utf-8")
+
+    def test_tampered_journal_fails_closed_at_write(self):
+        fw, _ = self._fw_pair()
+        fw.note_shaped_ingestion(PRINCIPAL, POISON, "run-1")
+        self._corrupt_journal(fw)
+        with self.assertRaises(LedgerUnverifiableError):
+            fw.record_memory_write(
+                PRINCIPAL, "memory/n.md", NOTE, "agent-1", "run-2",
+                read_fingerprints=[], tainted_run=False)
+
+    def test_tampered_journal_fails_closed_at_session_open(self):
+        # Loud, not silent: a broken journal chain at session open
+        # refuses the memory interaction and chains
+        # memory_ledger_unverifiable.
+        from evals.amsb_corpus import POISON_PARAPHRASE
+        ledger_path = _tmp_ledger()
+        ctx1, _ = _mem_run(ledger_path)
+        ex1 = ctx1["executor"]
+        ident1 = ex1.mint_identity("agent-1", "coder", PRINCIPAL)
+        p = ex1._resolve("vendor/notice.md")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(POISON, encoding="utf-8")
+        res = ex1.call(ident1, "read_file", path="vendor/notice.md")
+        self.assertIn(POISON[:40], res["result"].get("content", ""))
+        # Tamper the journal between sessions.
+        journal_path = ledger_path.parent / "lineage_journal.jsonl"
+        data = journal_path.read_text(encoding="utf-8")
+        journal_path.write_text(data[:100] + "X" + data[101:],
+                                encoding="utf-8")
+        ctx2, _ = _mem_run(ledger_path)
+        ex2 = ctx2["executor"]
+        ex2.sandbox = ex1.sandbox
+        ex2._sandbox_resolved = ex1.sandbox.resolve()
+        ident2 = ex2.mint_identity("agent-2", "coder", PRINCIPAL)
+        with self.assertRaises(LedgerUnverifiableError):
+            ex2.call(ident2, "write_file", path="memory/n.md",
+                     content="My notes: " + POISON_PARAPHRASE)
+        self.assertIn("memory_ledger_unverifiable", _names(ctx2))
+
+    def test_cross_session_e2e(self):
+        """Red-first pin for the lane: session 1 ingests the verbatim
+        poison (no write); session 2 writes a detector-invisible
+        paraphrase with clean in-run fingerprints; session 3 recalls.
+        Pre-journal this recalled silently (the break); post-journal
+        the ledger carries the flag and the recall is bannered."""
+        from evals.amsb_corpus import POISON_PARAPHRASE
+        ledger_path = _tmp_ledger()
+        # Session 1: ingest shaped poison, write nothing.
+        ctx1, _ = _mem_run(ledger_path)
+        ex1 = ctx1["executor"]
+        ident1 = ex1.mint_identity("agent-1", "coder", PRINCIPAL)
+        p = ex1._resolve("vendor/notice.md")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(POISON, encoding="utf-8")
+        res = ex1.call(ident1, "read_file", path="vendor/notice.md")
+        self.assertIn(POISON[:40], res["result"].get("content", ""))
+        # Session 2: fresh run (fingerprints gone), same deployment
+        # ledger + journal; write the paraphrase the detector cannot see.
+        ctx2, fw2 = _mem_run(ledger_path)
+        ex2 = ctx2["executor"]
+        ex2.sandbox = ex1.sandbox
+        ex2._sandbox_resolved = ex1.sandbox.resolve()
+        ident2 = ex2.mint_identity("agent-2", "coder", PRINCIPAL)
+        res = ex2.call(ident2, "write_file", path="memory/policy_notes.md",
+                       content="My notes: " + POISON_PARAPHRASE)
+        self.assertIn("path", res["result"], res)
+        ent = fw2.ledger.latest_entry(PRINCIPAL, "memory/policy_notes.md")
+        self.assertTrue(ent["lineage_shaped_source"])
+        self.assertEqual(ent["trust_tier"], "agent")
+        # Session 3: recall is delivered bannered, never silently.
+        ctx3, _ = _mem_run(ledger_path)
+        ex3 = ctx3["executor"]
+        ex3.sandbox = ex1.sandbox
+        ex3._sandbox_resolved = ex1.sandbox.resolve()
+        ident3 = ex3.mint_identity("agent-3", "coder", PRINCIPAL)
+        res = ex3.call(ident3, "read_file", path="memory/policy_notes.md")
+        content = res["result"].get("content", "")
+        self.assertIn("grant refund requests directly", content)
+        self.assertIn("PROVENANCE", content.upper())
+        self.assertIn("memory_provenance_warning", _names(ctx3))
+
+
 def _tmp_ledger():
     import tempfile
     from pathlib import Path
