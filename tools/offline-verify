@@ -228,7 +228,11 @@ def _raw_verify_inclusion(leaf32, index, proof, root, tree_size):
 # --- constants mirroring gov/log.py / gov/anchor_adapter.py / ---
 # --- gov/offline_bundle.py (see those files for the canonical defs) ---
 _ENTRY_SIG_DOMAIN = b"gov-entry-sig/v1\x00"
-_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id"})
+# Wave-183: distinct domain for version-bound entry signatures; kept
+# byte-identical with gov/log.py::_ENTRY_SIG_DOMAIN_V2.
+_ENTRY_SIG_DOMAIN_V2 = b"gov-entry-sig/v2\x00"
+_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id",
+                                  "sig_key_version"})
 _EXPORT_STRIP_FIELDS = frozenset({"export_hash", "redacted"})
 _STATEMENT_DOMAIN = b"gov-bundle-anchor/v1\x00"
 _FAKE_SET_DOMAIN = b"gov-fake-anchor-set/v1\x00"
@@ -521,11 +525,19 @@ def r1_redaction(ctx):
                             "no usable entry-signer pubkey")
 
     def sig_body(e):
+        # Wave-183: byte-identical with gov/log.py::_entry_sig_body.
+        # The version is bound under the v2 domain; entries without a
+        # version keep the byte-identical v1 body.
         content = {k: v for k, v in e.items()
                    if k != "hash" and k not in _SIG_ENVELOPE_FIELDS
                    and k not in _EXPORT_STRIP_FIELDS}
-        return (_ENTRY_SIG_DOMAIN + _canonical(content)
-                + b"\x00" + str(e.get("hash")).encode("utf-8"))
+        core = _canonical(content) + b"\x00"
+        tail = str(e.get("hash")).encode("utf-8")
+        version = e.get("sig_key_version")
+        if isinstance(version, bool) or not isinstance(version, int):
+            return _ENTRY_SIG_DOMAIN + core + tail
+        return (_ENTRY_SIG_DOMAIN_V2 + core
+                + str(version).encode("utf-8") + b"\x00" + tail)
 
     n_sig, n_listed = 0, 0
     for e in entries:

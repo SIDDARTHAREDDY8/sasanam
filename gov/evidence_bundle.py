@@ -137,6 +137,35 @@ class EvidenceBundleError(Exception):
     """Loud failure: unverifiable chain, missing signer, bad inputs."""
 
 
+def _coerce_entry_keyset(entry_keyset):
+    """Wave-183: normalize seal()'s ``entry_keyset`` to a keyset
+    document dict (or None). Accepts a ``gov.keyset.Keyset`` or a raw
+    sasanam-keyset/v1 document dict; the keyset's own verification
+    (structure + rotation lineage + revocation records) always runs,
+    fail-closed. Anything else raises ``EvidenceBundleError``: a bundle
+    must never carry a keyset the producer would not trust."""
+    if entry_keyset is None:
+        return None
+    from gov import keyset as _keyset
+    if isinstance(entry_keyset, _keyset.Keyset):
+        keyset = entry_keyset
+    elif isinstance(entry_keyset, dict):
+        try:
+            keyset = _keyset.Keyset.from_dict(entry_keyset)
+        except _keyset.KeysetError as e:
+            raise EvidenceBundleError("entry_keyset invalid: %s" % e)
+    else:
+        raise EvidenceBundleError(
+            "entry_keyset must be a gov.keyset.Keyset or a "
+            "sasanam-keyset/v1 document dict, got %r"
+            % type(entry_keyset).__name__)
+    ok, err = keyset.verify()
+    if not ok:
+        raise EvidenceBundleError(
+            "entry_keyset failed verification: %s" % err)
+    return keyset.to_dict()
+
+
 def canonical(obj):
     """Deterministic bytes for hashing/signing.
 
@@ -797,7 +826,7 @@ class EvidenceBundle:
                 + bytes.fromhex(manifest["export_sha256"])
                 + canonical(claim))
 
-    def seal(self, payload, *, signer=None):
+    def seal(self, payload, *, signer=None, entry_keyset=None):
         """Bind the rendered payload to the verified log.
 
         ``signer`` (a ``gov.signing.Signer``) defaults to the operator
@@ -807,12 +836,21 @@ class EvidenceBundle:
         an evidence bundle — if no signer is given AND the anchor key
         is missing, seal() refuses (fail closed). Re-verifies the chain
         at seal time; refuses when it does not verify.
+
+        Wave-183: ``entry_keyset`` (a ``gov.keyset.Keyset`` or a
+        sasanam-keyset/v1 document dict) is embedded in the manifest's
+        ``audit_entry_signing`` block as ``keyset``. The offline
+        verifier's V9d check then enforces keyset revocation for the
+        window's entries. The block rides in the operator-signed claim,
+        so the embedded keyset is operator-attested. Omit it for
+        yesterday's behavior (key ids only), unchanged.
         """
         if signer is None:
             signer = _resolve_operator_signer()
         if self._entries is None:
             raise EvidenceBundleError(
                 "seal() requires build() first (log not loaded)")
+        keyset_doc = _coerce_entry_keyset(entry_keyset)
         ok, broken_seq, _count = _log.verify_chain(self.log_path)
         if not ok:
             raise EvidenceBundleError(
@@ -896,6 +934,11 @@ class EvidenceBundle:
                 and isinstance(e.get("sig_key_id"), str)),
             "total_entries": len(window_entries),
         }
+        if keyset_doc is not None:
+            # Wave-183: embed the versioned keyset so the offline
+            # verifier (V9d) can enforce revocation. Bound into the
+            # operator-signed claim below like the rest of the block.
+            audit_entry_signing["keyset"] = keyset_doc
         manifest = {
             "kind": "evidence_bundle_manifest",
             "generator": GENERATOR,

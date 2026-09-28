@@ -358,7 +358,8 @@ def mk_verify_inclusion(leaf_input, root, leaf_index, proof, tree_size):
 # --- end vendored gov/merkle.py ---
 
 # --- begin vendored gov/log.py leaf/checkpoint conventions ---
-_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id"})
+_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id",
+                                  "sig_key_version"})
 _CHECKPOINT_SIG_DOMAIN = b"gov-checkpoint-sig/v1\x00"
 _SINGLE_ROSTER_MARK = "single:1-of-1:"
 
@@ -378,6 +379,9 @@ def _leaf_input(entry):
 
 
 _ENTRY_SIG_DOMAIN = b"gov-entry-sig/v1\x00"
+# Wave-183: distinct domain for version-bound entry signatures; kept
+# byte-identical with gov/log.py::_ENTRY_SIG_DOMAIN_V2.
+_ENTRY_SIG_DOMAIN_V2 = b"gov-entry-sig/v2\x00"
 
 
 def _entry_sig_body(entry):
@@ -387,10 +391,20 @@ def _entry_sig_body(entry):
     offline entry-signature check (V9d) recomputes byte-identical
     bodies from the transported slice. NOTE: this module's
     _canonical_entry returns bytes (unlike gov.log._canonical's str),
-    so no .encode() here."""
-    return (_ENTRY_SIG_DOMAIN
-            + _canonical_entry(entry) + b"\x00"
-            + str(entry["hash"]).encode("utf-8"))
+    so no .encode() here.
+
+    Wave-183: when the envelope carries ``sig_key_version`` the version
+    is bound into the signed bytes under the v2 domain (byte-identical
+    with gov/log.py). Entries without a version keep the byte-identical
+    v1 body.
+    """
+    version = entry.get("sig_key_version")
+    core = _canonical_entry(entry) + b"\x00"
+    tail = str(entry["hash"]).encode("utf-8")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return _ENTRY_SIG_DOMAIN + core + tail
+    return (_ENTRY_SIG_DOMAIN_V2 + core
+            + str(version).encode("utf-8") + b"\x00" + tail)
 
 
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
@@ -1218,6 +1232,17 @@ def v9d_entry_signatures(ctx):
     shipped checkpoint_keys envelope -- offline, with the auditor's
     pinned keys only, no shared HMAC secret.
 
+    Wave-183: the block may additionally carry ``keyset`` (a
+    sasanam-keyset/v1 document). When present, every signed entry's
+    key version is resolved through it and entries signed by a
+    *revoked* version fail loudly -- the compromise story for
+    evidence. The keyset's own authorization signatures (rotation
+    lineage, revocation records) are the online auditor's job
+    (``gov.keyset.Keyset.verify``); inside the bundle the keyset rides
+    in the operator-signed claim, so the standalone verifier trusts
+    the operator's attestation here exactly as it trusts the key_ids
+    list -- no crypto is duplicated in this module.
+
     Fail-closed notes: stripping ed_sig from entries does NOT break
     Merkle inclusion (the leaf deliberately excludes the sig envelope
     so re-signing never changes tree roots) -- the bound
@@ -1245,6 +1270,9 @@ def v9d_entry_signatures(ctx):
     if not bound_kids:
         return c.fail("slice carries entry signatures but the manifest "
                       "binds no audit_entry_signing key_ids")
+    ks_map, ks_err = _v9d_keyset_statuses(bound)
+    if ks_err is not None:
+        return c.fail(ks_err)
     pubs = {}
     for kenv in ctx.cp_envelope or []:
         try:
@@ -1268,11 +1296,84 @@ def v9d_entry_signatures(ctx):
         except ValueError:
             return c.fail("entry seq %d: ed_sig is not hex"
                           % e.get("seq"))
+        # Wave-183: _entry_sig_body dispatches on sig_key_version, so a
+        # versioned entry verifies under the v2 body -- tampering with
+        # or stripping the version changes the verified bytes and fails
+        # here (no silent downgrade to the legacy body).
         if len(sig) != 64 or not verify(pub, _entry_sig_body(e), sig):
             return c.fail("entry seq %d: ed_sig does not verify"
                           % e.get("seq"))
-    return c.ok("%d entry signatures verified against manifest-bound "
-                "keys (no shared secret needed)" % len(signed))
+        if ks_map is not None:
+            by_ver, by_kid = ks_map
+            ver = e.get("sig_key_version")
+            if isinstance(ver, int) and not isinstance(ver, bool):
+                status = by_ver.get(ver)
+                if status is None:
+                    return c.fail("entry seq %d names key version %r "
+                                  "unknown to the bound keyset"
+                                  % (e.get("seq"), ver))
+            else:
+                # Legacy entry (no version bound): resolve by key id.
+                status = by_kid.get(kid)
+                if status is None:
+                    return c.fail("entry seq %d signed by key %r unknown "
+                                  "to the bound keyset" % (e.get("seq"),
+                                                           kid))
+            if status == "revoked":
+                return c.fail("entry seq %d signed by REVOKED key version "
+                              "(keyset revocation enforced)"
+                              % e.get("seq"))
+    n = len(signed)
+    note = ("%d entry signatures verified against manifest-bound "
+            "keys (no shared secret needed)" % n)
+    if ks_map is not None:
+        note += "; keyset revocation enforced"
+    return c.ok(note)
+
+
+def _v9d_keyset_statuses(bound):
+    """Wave-183: optional keyset revocation map for V9d.
+
+    Reads ``audit_entry_signing.keyset`` (a sasanam-keyset/v1 document
+    embedded by the bundle producer). Returns ``((by_version,
+    by_key_id), None)`` mapping versions/key ids to their status
+    strings, ``(None, None)`` when no keyset is bound (yesterday's
+    behavior, unchanged), or ``(None, error)`` on a malformed keyset
+    (fail-closed: a bundle that claims a keyset carries a usable one).
+
+    Deliberately a light parse, not a re-implementation of
+    ``gov.keyset``: the keyset's rotation/revocation authorization
+    signatures are verified by the online auditor
+    (``gov.keyset.Keyset.verify``). In here the keyset is attested by
+    the operator's claim signature (V7), the same trust basis as the
+    key_ids list.
+    """
+    doc = bound.get("keyset")
+    if doc is None:
+        return None, None
+    if not isinstance(doc, dict):
+        return None, ("manifest audit_entry_signing.keyset is not a "
+                      "mapping")
+    if doc.get("format") != "sasanam-keyset/v1":
+        return None, ("manifest audit_entry_signing.keyset has unsupported "
+                      "format %r" % (doc.get("format"),))
+    versions = doc.get("versions")
+    if not isinstance(versions, list) or not versions:
+        return None, ("manifest audit_entry_signing.keyset carries no "
+                      "versions")
+    by_ver, by_kid = {}, {}
+    for v in versions:
+        if not isinstance(v, dict):
+            return None, "keyset version entry is not a mapping"
+        ver, kid, status = (v.get("version"), v.get("key_id"),
+                            v.get("status"))
+        if (isinstance(ver, bool) or not isinstance(ver, int)
+                or not isinstance(kid, str)
+                or status not in ("active", "verify-only", "revoked")):
+            return None, "keyset version entry malformed"
+        by_ver[ver] = status
+        by_kid[kid] = status
+    return (by_ver, by_kid), None
 
 
 def v10_manifest_completeness(ctx):

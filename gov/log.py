@@ -50,7 +50,9 @@ only) or format 2 (HMAC + public-key signed tree head, see section 3).
 3. **Public-key signatures + Merkle history tree (P2).** When an
 ``ActionLog`` is constructed with ``signer=`` (a ``gov.signing.Signer``),
 every entry additionally carries an Ed25519 signature (``ed_sig`` /
-``sig_key_id`` -- excluded from the HMAC canonical form, so chain
+``sig_key_id``, plus ``sig_key_version`` when the signer is keyset-aware
+-- ``gov.keyset.KeysetSigner``, wave-183; the version is bound into the
+v2 signature body -- all excluded from the HMAC canonical form, so chain
 semantics for existing HMAC logs are byte-identical), and every
 checkpoint is written as format 2: the HMAC fields plus a Merkle root
 over entries 1..seq and Ed25519 signature(s) over the checkpoint body.
@@ -110,6 +112,7 @@ from .exchange_ledger import check_exchange_read
 from . import merkle as _merkle
 from . import signing as _signing
 from . import ed25519 as _ed25519
+from . import keyset as _keyset
 # NOTE (wave-137): gov.anchoring is imported LAZILY inside
 # export_bundle/verify_export_bundle, never at module level. The
 # anchor client (gov.anchor_backend) is executor-side only: importing
@@ -317,21 +320,39 @@ def resolve_audit_signer(explicit=None):
 def open_audit_log(path, **kwargs):
     """Open the production audit log at ``path``.
 
-    ``ActionLog(path, signer=resolve_audit_signer(), **kwargs)``: when
-    an audit-signing key is configured the log's entries carry Ed25519
-    ``ed_sig``/``sig_key_id`` and checkpoints are written format-2
-    (signed tree heads); when absent the log is HMAC-only,
-    byte-identical to ``ActionLog(path)``. An explicit ``signer=``
-    kwarg (including ``None``) is respected as-is -- explicit always
-    wins over the environment.
+    ``ActionLog(path, signer=<resolved>, **kwargs)``. Signer resolution
+    (wave-183): when ``GOV_AUDIT_KEYSET_FILE`` names a versioned keyset
+    document the signer is a ``gov.keyset.KeysetSigner`` for the
+    keyset's primary version -- any keyset misconfiguration raises
+    ``gov.keyset.KeysetError`` loudly, never silently downgrades. When
+    no keyset is configured this is ``resolve_audit_signer()``: a
+    configured audit-signing key yields Ed25519 ``ed_sig``/``sig_key_id``
+    entries and format-2 checkpoints (signed tree heads); an absent key
+    yields an HMAC-only log, byte-identical to ``ActionLog(path)``. An
+    explicit ``signer=`` kwarg (including ``None``) is respected as-is
+    -- explicit always wins over the environment.
 
     This is the seam the production constructions go through so the
     P2 signature layer is actually live on real logs instead of
     test-only.
     """
     if "signer" not in kwargs:
-        kwargs["signer"] = resolve_audit_signer()
+        kwargs["signer"] = _resolve_entry_signer()
     return ActionLog(path, **kwargs)
+
+
+def _resolve_entry_signer():
+    """Resolve the per-entry signer: keyset-aware, then legacy.
+
+    ``GOV_AUDIT_KEYSET_FILE`` set -> ``(Keyset, KeysetSigner)`` from
+    ``gov.keyset.keyset_signer_from_config`` (fail-closed on any
+    misconfiguration). Unset -> :func:`resolve_audit_signer` (the
+    legacy single-seed path, behavior unchanged).
+    """
+    _ks, signer = _keyset.keyset_signer_from_config()
+    if _ks is not None:
+        return signer
+    return resolve_audit_signer()
 
 
 def _utcnow():
@@ -341,12 +362,19 @@ def _utcnow():
 # P2: signature envelope fields. Excluded from the HMAC canonical form
 # so chain semantics for existing HMAC logs are byte-identical: entries
 # without these fields canonicalize exactly as before, and the HMAC
-# never depends on the public-key signature layer.
-_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id"})
+# never depends on the public-key signature layer. Wave-183 adds
+# sig_key_version (the keyset version a KeysetSigner signed as); it is
+# bound into the v2 signature body, not the canonical content, so
+# Merkle leaves stay identical across signer types for the same event.
+_SIG_ENVELOPE_FIELDS = frozenset({"ed_sig", "sig_key_id",
+                                  "sig_key_version"})
 
 # Domain separation for the signature layer (distinct from the Merkle
 # tree's own domains in gov/merkle.py).
 _ENTRY_SIG_DOMAIN = b"gov-entry-sig/v1\x00"
+# Wave-183: distinct domain for version-bound entry signatures. A
+# versioned envelope must never verify as a legacy one and vice versa.
+_ENTRY_SIG_DOMAIN_V2 = b"gov-entry-sig/v2\x00"
 _CHECKPOINT_SIG_DOMAIN = b"gov-checkpoint-sig/v1\x00"
 # Single-signer checkpoints carry no roster; this conventional marker
 # keeps the signed body shape identical to the threshold case.
@@ -363,10 +391,63 @@ def _canonical(entry):
 def _entry_sig_body(entry):
     """Bytes a per-entry Ed25519 signature covers: canonical content
     (sig fields excluded) plus the chain hash, domain-separated. Binds
-    the signature to both the entry's content and its chain position."""
-    return (_ENTRY_SIG_DOMAIN
-            + _canonical(entry).encode("utf-8") + b"\x00"
-            + str(entry["hash"]).encode("utf-8"))
+    the signature to both the entry's content and its chain position.
+
+    Wave-183: when the envelope carries ``sig_key_version`` (written by
+    ActionLog for keyset-aware signers), the version is
+    cryptographically BOUND into the signed bytes under a distinct
+    domain (``gov-entry-sig/v2``). Entries without a version keep the
+    byte-identical v1 body. Tampering with or stripping the version
+    changes the verified bytes, so verification fails -- there is no
+    silent downgrade to the legacy path.
+    """
+    version = entry.get("sig_key_version")
+    core = (_canonical(entry).encode("utf-8") + b"\x00")
+    tail = str(entry["hash"]).encode("utf-8")
+    if isinstance(version, bool) or not isinstance(version, int):
+        # Legacy path (no version bound): byte-identical to the
+        # pre-wave-183 body.
+        return _ENTRY_SIG_DOMAIN + core + tail
+    return (_ENTRY_SIG_DOMAIN_V2 + core
+            + str(version).encode("utf-8") + b"\x00" + tail)
+
+
+def verify_entry_against_keyset(entry, keyset):
+    """Keyset-aware per-entry signature verification (wave-183).
+
+    ``keyset`` is a ``gov.keyset.Keyset`` (public material). Returns
+    ``(ok, reason)``; never raises. The envelope's version selects both
+    the verifying key (via ``Keyset.find_verifying_key``) and the
+    signature body (v2 when a version is bound, v1 for legacy
+    entries). Revoked versions refuse; version/key_id confusion fails
+    closed; malformed envelopes fail closed.
+
+    Contract: verify the keyset ONCE with ``Keyset.verify()`` before
+    using it here (``keyset_signer_from_config`` already does). This
+    helper trusts the keyset's structure; the keyset's own lineage /
+    revocation authorization is the caller's one-time job, not a
+    per-entry cost.
+    """
+    key_version, reason = keyset.find_verifying_key(entry)
+    if key_version is None:
+        return False, reason
+    sig_hex = entry.get("ed_sig")
+    sig = None
+    if isinstance(sig_hex, str):
+        try:
+            sig = bytes.fromhex(sig_hex)
+        except ValueError:
+            sig = None
+    if sig is None or len(sig) != 64:
+        return False, "envelope carries a malformed ed_sig"
+    try:
+        body = _entry_sig_body(entry)
+    except Exception as e:  # missing "hash" etc. -> not verifiable
+        return False, "cannot reconstruct signature body: %s" % e
+    # gov.ed25519.verify never raises; malformed is False.
+    if _ed25519.verify(key_version.public_key, body, sig):
+        return True, reason
+    return False, "signature does not verify"
 
 
 def _leaf_input(entry):
@@ -965,6 +1046,21 @@ class ActionLog:
                 # this uses the designated entry signer (single
                 # signature -- threshold-signing every entry would be
                 # operationally absurd, A5).
+                #
+                # Wave-183: a keyset-aware signer (gov.keyset.KeysetSigner)
+                # exposes key_version; it is written into the envelope
+                # BEFORE the body is computed so the v2 body binds it.
+                # Only a sane version (int >= 1) is written, so the
+                # envelope stays consistent: version present <=> v2
+                # body. Legacy signers write no version and keep the
+                # byte-identical v1 body.
+                key_version = getattr(self._signer, "key_version", None)
+                if isinstance(key_version, bool) \
+                        or not isinstance(key_version, int) \
+                        or key_version < 1:
+                    key_version = None
+                if key_version is not None:
+                    entry["sig_key_version"] = key_version
                 entry["ed_sig"] = self._signer.sign(
                     _entry_sig_body(entry)).hex()
                 entry["sig_key_id"] = self._signer.key_id
