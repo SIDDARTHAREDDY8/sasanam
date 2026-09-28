@@ -1,3 +1,15 @@
+## 2026-09-28 — Wave-182: F200 + F201 closures merged (Decision BOM hardening)
+
+**Scope.** Cherry-pick two wave-182 closure-lane commits (both based on `786101a`) onto the wave-181 second fast-follow. F200 (`25d857d`): `verify_bom` gains an optional, backward-compatible `approval_records={approval_id: record_digest}` parameter — the MATCH rule for the BOM→approval edge, symmetric with the policy and pins legs; tampered/unknown/malformed digests fail closed, absent input reports "; unverified: approval". F201 (`0976916`): `build_bom` validates `isinstance(pin_digests, dict)` BEFORE the `dict(...)` conversion, so every malformed `pin_digests` raises the documented `BomError` instead of bare `ValueError`/`TypeError`. Both fixes in `gov/decision_bom.py` (different functions).
+
+**Merge fix (coordinator).** Expected FINDINGS.md footer conflict (F200 lane's footer read "Open findings: F201"; F201 lane's read "Open findings: F200"). Resolved by hand to "F200 CLOSED / F201 CLOSED / open findings: none / next free F202". No quiet patch: both closure notes are the lanes' verbatim red-first write-ups.
+
+**Red-first audit (independent, at the public seams).** Pristine `786101a`: `evals/w181_bom_redteam_probes.py` → 2 BREAK (P5b=F200, P6e=F201) / 26 HELD / 4 HELD* / 0 errors — both break exactly as filed. Merged tree → 0 BREAK / 29 HELD / 4 HELD* / 0 errors — P5b and P6e both flip to HELD (includes the F200 lane's new P5d UNVERIFIED-reporting probe). No overstatement; no new findings filed.
+
+**Findings after this push:** F200 CLOSED, F201 CLOSED. Open findings: none. Next free: F202.
+
+**Gates (merged tree, serialized, fresh unique `/var/tmp/g182mN` TMPDIRs).** Canonical: 5611 OK (skipped=9, expected failures=5; +7 vs wave-181 = the lanes' new regression tests). Registry: GREEN. Matrix: 3216/3216 SHIP-GATE GREEN. Realistic: 7/7 (`GOV_RUN_ROOT` set explicitly). AMSB: 90.00 / FINAL C / FP 0.0% — identical to wave-181. Interaction battery `evals/w181_bom_redteam_probes.py`: 0 BREAK / 29 HELD / 4 HELD* / 0 errors (red-first audit). Adjacent suites `test_decision_bom` + `test_decision_packet` green via the lanes (31+6 and 32+1 new tests all OK in canonical).
+
 ## 2026-09-28 — Wave-181 second fast-follow: Decision-BOM red-team battery landed (F200/F201 filed OPEN)
 
 **Scope.** Cherry-pick `5eeb879` (BOM red-team lane, based on `94c8f84`) onto the F199 fast-follow (`3125c50`). Artifacts only: `evals/w181_bom_redteam_probes.py` (new, 836 lines) + `evals/FINDINGS.md` (F200/F201 OPEN entries). NO product code changes (`git diff 3125c50 HEAD -- gov/ tests/` empty). Reasoning for reduced gates below.
