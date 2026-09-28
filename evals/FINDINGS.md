@@ -6081,4 +6081,33 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F196**. **Open findings: none.** (F193, F194, F195 closed 2026-09-28, wave-178.)
+## F196: decision-packet digest references are opaque pointers; no verified packet↔receipt correspondence (LOW)
+
+**Status: OPEN.**
+
+**Claim broken.** Decision packets "compose approvals, receipts, and audit by digest" (`gov/decision_packet.py`). Two composition edges are opaque pointers that no verifier re-binds — the in-toto MATCH semantics the wave-178 prospectus proposed are absent:
+
+1. `packet.policy.decision_digest` is computed once by the executor (`gov/executor.py::_emit_decision_packet`, `sha256(_dp.canonical_bytes(policy_decision.to_dict()))`) and never recomputed by any verifier. `verify_decision_packet` checks the Ed25519 signature (which binds the digest *value*) and the `evidence.head_digest` linkage (the packet names its audit parent), but never checks that the named digest equals a recomputation over the chained decision entry the packet answers. A packet can honestly compose the WRONG decision's digest.
+2. There is no verified correspondence between a `decision_packet` entry and the `invocation_receipt` entry that answers it. The packet's `receipt_digest` is always `None` (documented honest ordering: receipts do not exist at decision time); the receipt carries `approval_id`/`challenge`, but no check — in `verify_decision_packet`, `verify_receipt`, `verify_chain`, or the offline evidence-bundle verifier — correlates a receipt with its decision packet. A receipt can be chained under decision 1 while carrying decision 2's attribution.
+
+**Demonstration (BREAK, `evals/receiptswap_probes.py`; real HMAC-chained log, real Ed25519 signatures, deterministic, pristine tree unmodified).** Two-decision trajectory (`decision -> decision_packet -> invocation_receipt`, twice) at the public seams:
+
+- **V5 — mint-time `decision_digest` pointer swap** (key-holding executor / minting bug): packet 1 is validly minted carrying decision 2's `decision_digest`. Verdicts: A (packet verify) PASS, B (receipt verify) PASS, C (offline core: seq contiguity + prev_hash walk + standalone receipt checks) PASS, D (keyed chain walk) PASS. The packet composes the wrong decision and nothing notices.
+- **V6 — mint-time receipt misattribution** (key-holding executor / minting bug): the receipt chained as decision 1's carries decision 2's `approval_id`, `challenge`, and output `result`, with valid HMACs and countersignature. All four verifiers PASS. Decision 1's evidence story silently attributes decision 2's output.
+- **V2 — whole-receipt transplant** (supporting): swapping the two receipt dicts between entry envelopes is blind to packet verification, receipt verification, AND the offline slice checks (V9-equivalent pointer walk + V17-equivalent standalone receipt verification); only the keyed chain walk catches it. Held-at-keyed-only, same opacity class.
+- Controls held: V1 (field-level output swap — receipt sigs + keyed chain catch it), V3 (entry reorder), V4 (entry drop). Baseline V0 passes all four verifiers.
+
+**Severity rationale: LOW.** A keyless attacker is fully stopped: entry tampering breaks the HMAC chain, and the honest evidence-bundle export gates on `verify_chain` (`gov/evidence_bundle.py::_load_verified` refuses a tampered log), so a transplant cannot reach a signed bundle through the honest path. The gap bites under two models: (a) a minting bug in the executor misattributing digests/receipts — silent, since even the keyed chain walk sees valid MACs over the misattributed content; (b) a key-holding executor, for whom this is one undetectable forgery among many. No execution bypass: the packet never grants authority and the policy decision is unchanged. Evidence-correspondence, F194-shaped.
+
+**Close-when:**
+1. `verify_decision_packet(packet, entries)`, when entries are supplied, re-derives `decision_digest` from the chained decision entry the packet answers (located by the packet's `evidence.head_digest`, the declared audit parent — not assumed from head position, to survive the rebuild-once path) and fails closed on mismatch — the MATCH rule for the packet→decision edge.
+2. A pairing check (in packet verification with entries, or a trajectory-level verifier) confirms the `invocation_receipt` entry answering a `decision_packet` entry carries the same `approval_id`/`decision_seq`, failing closed on mismatch; ideally the receipt entry records the `packet_digest` it answers so the binding is cryptographic rather than positional.
+3. Red-first: V5/V6 probes go BREAK→HELD; V1–V4 stay HELD; V2's offline-blindness is addressed or explicitly re-documented.
+
+**Honest residual:** transplant tamper-evidence lives exclusively in the shared-secret HMAC layer: the offline verifier (no key) checks `prev_hash` *pointers*, not entry MACs, so a content swap preserving pointers is invisible to it by design. The honest export path gates on the keyed walk, which is the actual defense. Also pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F196 is about the *correspondence* of recorded values, which was previously unexamined.
+
+**Found by:** wave-179 lane B (receipt-swap probe), 2026-09-28, break-first pressure against the wave-178 tree (`fed2c44`).
+
+---
+
+Next free finding: **F197**. **Open findings: F196.**
