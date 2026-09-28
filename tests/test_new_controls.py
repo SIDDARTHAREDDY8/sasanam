@@ -44,10 +44,12 @@ class TestReservedLogMetadata(unittest.TestCase):
         })
         # F48 (R11): the executor logs policy_loaded + policy_pin_absent
         # at construction, wave-85 logs the ungoverned_bypass
-        # declaration at seq 1, and wave-158 (row 12) logs the
-        # deployment_manifest_absent declaration -- so the first
-        # test-appended entry is seq 5.
-        self.assertEqual(entry["seq"], 5)
+        # declaration at seq 1, wave-158 (row 12) logs the
+        # deployment_manifest_absent declaration, and wave-175 logs the
+        # invocation_receipts_disabled declaration (loud when no receipt
+        # key is configured) -- so the first test-appended entry is
+        # seq 6.
+        self.assertEqual(entry["seq"], 6)
         # F48 (R11): two construction entries precede (four with the
         # wave-85 and wave-158 declarations), so prev_hash chains from
         # previous entry — the forged "FORGED" value is overridden,
@@ -79,11 +81,13 @@ class TestWrongKeyDetection(unittest.TestCase):
             # One call = authorization entry + completion entry
             # (write-ahead); F48 (R11) adds policy_loaded +
             # policy_pin_absent at executor construction, wave-85
-            # adds the ungoverned_bypass declaration at seq 1, and
+            # adds the ungoverned_bypass declaration at seq 1,
             # wave-158 (row 12) adds the deployment_manifest_absent
-            # declaration -- the manifest seam is default-on LOUD,
+            # declaration, and wave-175 adds the
+            # invocation_receipts_disabled declaration (loud, no receipt
+            # key configured) -- the manifest seam is default-on LOUD,
             # never silent.
-            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 6)
+            self.assertEqual(len(read_entries(ctx["run_dir"] / "actions.jsonl")), 7)
 
             os.environ["GOV_LOG_KEY"] = "attacker-guessed-key"
             ok, broken, count = verify_chain(ctx["run_dir"] / "actions.jsonl")
@@ -115,13 +119,14 @@ class TestTailTruncation(unittest.TestCase):
         # F48 (R11) adds policy_loaded + policy_pin_absent at construction;
         # wave-85 adds the ungoverned_bypass declaration at seq 1;
         # wave-158 (row 12) adds the deployment_manifest_absent
-        # declaration.
-        self.assertEqual(len(lines), 10)
+        # declaration; wave-175 adds the invocation_receipts_disabled
+        # declaration (loud, no receipt key configured).
+        self.assertEqual(len(lines), 11)
         # Attacker truncates the tail (newest call's two entries).
-        log_path.write_text("\n".join(lines[:8]) + "\n", encoding="utf-8")
+        log_path.write_text("\n".join(lines[:9]) + "\n", encoding="utf-8")
         ok, broken, count = verify_chain(log_path)
         self.assertFalse(ok, "tail truncation must be detected")
-        self.assertEqual(count, 8)
+        self.assertEqual(count, 9)
 
 
 class TestFailClosedLogging(unittest.TestCase):

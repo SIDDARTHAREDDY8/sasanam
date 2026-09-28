@@ -1,3 +1,53 @@
+## 2026-09-28 — Wave-175 integration: countersigned invocation receipts + enumeration signal + behavioral signatures + F192 carrier-visibility closure (watchdog takeover)
+
+**Scope:** the watchdog (agent-org-watchdog run, 14:25 UTC) found the wave-175 merge coordinator dead with nothing pushed — no active or recent subagents, remote HEAD still `a51398bd2a664049704ec7636c73e55280c3ad84`, shared tree holding four unpushed lanes (the wave-150 pattern: coordinator done, nothing pushed). Per the watchdog charter the watchdog finished the integration itself: verified the shared tree's merged state against each lane tree (byte-identical except lane-1's two files, where the lane tree was NEWER — the lane had added the direct-path `preview_digest: None` docstring and `import stat` after the coordinator's copy; took the lane-tree versions), built a fresh push-clone (stale `/tmp/push175` not reused — its canonical gate predated the F192 closure and receipt repairs), re-gated everything on the final tree, then pushed.
+
+**Lane 1 — countersigned invocation receipts.** New `gov/invocation_receipts.py` (Ed25519-countersigned receipts over executed consequential invocations: tool, args digest in sentinel form so substituted secrets never enter the receipt, canonical target, policy decision, preview digest, challenge, outcome digest; stdlib-only verifier that never raises on hostile input; key-custody idiom explicit: `GOV_RECEIPT_KEY` > `GOV_RECEIPT_KEY_FILE` (0600 enforced), no dev-key fallback). `gov/executor.py` 5-hunk change, two-tier fail-closed: broken configured key → `NoReceiptKeyError` before side effects; nothing configured → one loud chained `invocation_receipts_disabled` audit event, executions proceed (operational honesty, no silent downgrade). Receipts minted post-execution on approved sweep + direct-path irreversible-registry tools; denied/benign invocations mint nothing. `gov/evidence_verify.py` V17 extension check + `--pin-receipt-pubkey`; `tools/evidence-verify` re-synced byte-identical after a genuine drift-guard catch. Battery `evals/invocation_receipt_battery.py` 10/10 (incl. subprocess probe verifying with only evidence_verify.py on sys.path), new units 30/30. Cost measured: ~900 bytes/receipt, +~7 ms per consequential execution. **Honest residuals:** same-trust-boundary (not independent) countersigner; receipts attest recorded executions only; direct-path `preview_digest: None` (no human-approved preview to bind — documented in module docstring); pure-Python Ed25519 not constant-time.
+
+**Lane 2 — rate-independent enumeration signal.** New `gov/enumeration_signal.py` (`enumeration_structure`: pure deterministic stdlib, zero time arithmetic — timestamps order only; ≥3 list→read runs, ≥3 reads each, coverage ≥0.6, ≥20 actions; bounded 10k distinct targets/principal, fail-open on cap). Wired as the 4th fingerprint signal into `gov/shadow_scan.py` (`agent_like` OR-gate, no new enforcement) and registered in `gov/discovery.py` `SIGNAL_WEIGHTS` / `SHADOW_SIGNAL_KINDS`. Battery 10/10, units 22/22, discovery 43/43, shadow 8/8. Code review: Standards SHIP-WITH-NOTES (applied), Spec 5/5 (2 judged WARNs). **Honest residuals:** list-less enumeration evades; dilution degrades the signal; benign systematic research looks identical (advisory sighting, not a verdict).
+
+**Lane 3 — behavioral signatures.** New `gov/behavioral_sigs.py` (versioned deterministic stdlib-only registry, six v1 signatures: `fanned_egress`, `parallel_sessions`, `credential_then_export`, `burst_cadence`, `memory_write_heavy`, `approval_queue_spam`; every signature pins id/version/params + `fp_control` + `evasion_note`; advisory-only, feeds `to_discovery_signals`; zero modified files). Battery `evals/behavioral_sig_battery.py` 19/19 (RED 0/17 pre-fix lane report), units 14/14. **Honest residuals:** advisory only; a slow serialized single-destination actor evades all six; precision/recall are synthetic self-consistency, not field measurements.
+
+**F192 CLOSED (MEDIUM).** Carrier disclosures were MAC-bound in the approval packet v5 (`memory_provenance[].input_carrier`, `attachment_carriers`) but rendered on NEITHER approver surface — packet digest bound what the human never saw (display≡execution-class gap; hit F191's paraphrase residual where carrier is the only signal). New `gov/packet_display.py` (one shared packet-display schema rendering `input_carrier` + `attachment_carriers`) surfaced on both the web packet panel and CLI decision output; `approval_web.py` / `approvals.py` updated. Battery `evals/f192_carrier_visibility_battery.py` 7/7 PASS on the merged tree (red-first 7/7 on the closure lane tree). Red demo `teams/wave175-f192-closure/red_mem_pressure.py` was deterministic ×3 on the unmodified tree pre-closure. Filed honestly: F192 was filed OPEN in FINDINGS.md, closed only at this proof.
+
+**Rename fold-in.** The sasanam rename changes made outside all lane trees (README.md title/quickstart, `pyproject.toml` dist name `agent-governance` → `sasanam`, `gov/__init__.py` docstring) are included in this push; import package stays `gov`, console scripts stay `gov-*`.
+
+**Gates (fresh push-clone `/tmp/push175b`, venv `~/workspace/.gov-venv`, fresh UNIQUE TMPDIR per suite, serialized; memory 1.7–1.9 GB available — watched for the F186 contention-error pattern, none seen):**
+- Canonical **5388 OK** (skipped=9, expected failures=5) — first run showed 8 `LedgerUnverifiableError` errors at the TMPDIR root (known stale-key artifact class, wave-134/wave-173); the suspect module (`test_f152_sweep_capability_gate`) passed in isolation and a fresh-TMPDIR rerun was 5388 OK with zero errors, so no product regression
+- Registry **GREEN**; `evals/artifacts/wave23_b2/battery_100_results.json` re-checked-out after the gate rewrote it
+- Matrix **3216/3216 SHIP-GATE GREEN** (1608 provisional + 1608 real)
+- Realistic **7/7**
+- AMSB **90.00** (uncapped A, ceiling C, FINAL C), FP **0.0%**, sole critical breach the documented `a1-default-off` — unchanged
+- Lane batteries: F192 7/7, receipts 10/10, enumeration 10/10 (lane) / battery 8/8+green, behavioral 19/19
+
+**Red-first post-wave audit (standing rule):** F192 closure battery GREEN 7/7 on the merged tree; the closure lane had run it RED pre-fix on the unmodified tree (closure verified break-first at the public seam). Receipts 10/10, enumeration, and behavioral batteries likewise RED-verified pre-merge by their lanes. No overstatements found, no re-files.
+
+**Findings:** F192 CLOSED. Open findings: none. Next free: **F193**.
+
+**Pushed:** [PUSH-SHA TBD], base `a51398b`, remote HEAD verified exact pre-push, fast-forward, no force-push.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-28 — Wave-173 integration: TMA-NM act-gate + review inbox + ceremony-timing telemetry (backfill)
+
+**Scope:** backfilled — wave-173 was pushed without a BUILD_LOG entry. Integration coordinator merged three completed lanes from the R7 prospectus onto remote base `8b01f9f` (wave-172): (1) the TMA-NM act-gate lane, (2) the review-inbox + bounded-journal lane, (3) the ceremony-timing telemetry lane. All three RED-verified pre-merge.
+
+**Lane 1 — TMA-NM act-time gate** (headline R7 steal: corroboration-gated elevation + act-time gate binding memory provenance to consequential actions). New `gov/memory_actgate.py`: M3 corroboration-gated elevation (≥2 independent trusted principals), M1 provenance classification, queue-time disclosure, packet_version 3→4.
+
+**Lane 2 — review inbox + bounded journal.** New `gov/memory_inbox.py`: chained inbox (off|flag|enforce); approval clears a flag, never promotes trust; lineage-expiry → re-verification; per-principal quota 10k; chained tombstone compaction.
+
+**Lane 3 — ceremony-timing telemetry.** Fail-safe timing stamps with a ±1000 ms invariant; six advisory-only rubber-stamp signals; MAC-bound timing triple; server-side review-open registry.
+
+**Merge:** three-way merge — `approvals.py` + `approval_web.py` zero conflicts; `memory_provenance.py` one conflict (`ingested_before` vs `has_expired_lineage` block) resolved keeping both.
+
+**Gates:** canonical 5278 OK, registry GREEN, matrix 3216/3216, realistic 7/7, AMSB 90.00 (uncapped A, ceiling C, FINAL C), FP 0.0%, sole critical breach the documented `a1-default-off`.
+
+**Red-first post-wave audit (standing rule):** 9/9 fail-closed, 0 re-files. F191 left OPEN (audio-carrier gap, verified genuine). Next free: F192.
+
+**Pushed:** 2026-09-28 as `ce92f9df5ccd9574248153758d50ac879a731057`, base `8b01f9f`, fast-forward, no force-push.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-28 — Wave-174 integration: F191 audio-carrier closure + display≡execution + OSCAL evidence export
 
 **Scope:** integration coordinator merged three completed lanes onto remote base `ce92f9df5ccd9574248153758d50ac879a731057` (wave-173): (1) the F191 closure lane (audio-carrier prompt-injection defenses), (2) the display≡execution assertion lane (OpenClaw 32065 regression — the sweep refuses fail-closed on preview mismatch), (3) the OSCAL evidence-export lane (deterministic OSCAL v1.1.x component-definition packages). All three were RED-verified pre-merge; all three shipped with honest residuals documented below.

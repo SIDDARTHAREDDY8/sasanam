@@ -302,7 +302,9 @@ class TestEvidenceVerifyFormat(unittest.TestCase):
             self.assertIsInstance(doc["authorship"], dict)
             self.assertFalse(doc["authorship"]["pinned"])
             self.assertIsNone(doc["authorship"]["key_id"])
-            self.assertEqual(len(doc["checks"]), 16)
+            # 17 checks since wave-175: V17 "invocation receipts (v1 extension)"
+            # added the receipt-consistency check to the standalone verifier.
+            self.assertEqual(len(doc["checks"]), 17)
         finally:
             base.tearDown()
 

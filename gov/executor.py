@@ -93,6 +93,7 @@ from . import skill_watch as _skill_watch
 # F191 (wave-174): audio-carrier classification for the approval-path
 # binding (perceptual channels in tool args ride the queue packet).
 from . import audio_carrier as _audio_carrier
+from . import invocation_receipts as _receipts
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
 from . import target_match as _target_match
@@ -995,7 +996,16 @@ class ToolExecutor:
                  # set). Appended LAST so no existing positional caller
                  # can misalign. Opt-in: None (default) = pre-wave-173
                  # behavior, zero behavior change.
-                 memory_actgate=None):
+                 memory_actgate=None,
+                 # Countersigned invocation receipts (wave-175 lane 1,
+                 # R7 #7 Sigil shape): explicit 32-byte Ed25519 seed hex
+                 # for the executor's countersigning key. Appended LAST
+                 # so no existing positional caller can misalign.
+                 # None (default) = resolve from GOV_RECEIPT_KEY /
+                 # GOV_RECEIPT_KEY_FILE; unconfigured = receipts disabled
+                 # with one loud chained event (never silent, never a
+                 # dev-key fallback).
+                 receipt_key_seed=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -1134,6 +1144,57 @@ class ToolExecutor:
         # sweep refuses executions whose un-elevated reads were never
         # disclosed to the approver.
         self._memory_actgate = memory_actgate
+        # Wave-175 lane 1 (countersigned invocation receipts, R7 #7 Sigil
+        # shape): resolve the executor's countersigning key. Fail-closed
+        # two-tier:
+        #   (a) the deployment EXPRESSED intent (explicit seed, or
+        #       GOV_RECEIPT_KEY / GOV_RECEIPT_KEY_FILE set) but custody is
+        #       broken/unreadable -> raise NoReceiptKeyError at
+        #       construction. No executor exists, so no consequential side
+        #       effect can happen. This is the fail-closed behavior.
+        #   (b) nothing configured (opt-in off) -> one loud chained
+        #       invocation_receipts_disabled event, no receipts, executions
+        #       proceed. Never silent, never a dev-key fallback (wave-81
+        #       precedent).
+        _receipt_intent = (receipt_key_seed is not None
+                           or os.environ.get("GOV_RECEIPT_KEY",
+                                             "").strip()
+                           or os.environ.get("GOV_RECEIPT_KEY_FILE",
+                                             "").strip())
+        try:
+            self._receipt_key = _receipts.resolve_receipt_key(
+                explicit=receipt_key_seed)
+        except _receipts.NoReceiptKeyError as _rke:
+            if _receipt_intent:
+                raise
+            self._receipt_key = None
+            self.log.append({
+                "event": "invocation_receipts_disabled",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "absent",
+                "policy_id": "invocation-receipt-seam",
+                "reason": ("No receipt-signing key configured: %s. "
+                           "Consequential invocations will execute WITHOUT "
+                           "a countersigned invocation receipt."
+                           % (_rke,)),
+            })
+        else:
+            self.log.append({
+                "event": "invocation_receipts_enabled",
+                "run_id": self.run_id,
+                "agent_id": "system",
+                "role": "system",
+                "decision": "present",
+                "policy_id": "invocation-receipt-seam",
+                "receipt_key_id": self._receipt_key["key_id"],
+                "receipt_pubkey": self._receipt_key["pubkey_hex"],
+                "reason": ("Receipt-countersigning key %s configured: "
+                           "consequential invocations will carry an "
+                           "Ed25519 countersigned invocation receipt."
+                           % (self._receipt_key["key_id"],)),
+            })
         # Wave-90 (S6, F137 — infection lineage): the lineage substrate
         # (gov.lineage.LineageTracker), constructed by the deployment in
         # the operator trust domain and shared across a spawn lineage by
@@ -6495,6 +6556,70 @@ class ToolExecutor:
                   "read was still denied/contained."
                   % (type(e).__name__, e), file=sys.stderr)
 
+    def _countersign_invocation(self, *, tool, executed_args_sentinel,
+                                holder, challenge, approval_id, policy_id,
+                                canonical_target, preview_text, result,
+                                via):
+        """Wave-175 lane 1: mint and chain a countersigned invocation receipt.
+
+        Called AFTER the tool actually executed. ``executed_args_sentinel``
+        is the sentinel-bearing args form (the same form the audit path
+        records) — substituted secrets never enter the receipt. A signing
+        failure is a loud ``invocation_receipt_failed`` event; the
+        execution result stands (it cannot un-happen). Returns the chained
+        log entry, or None when receipts are disabled.
+        """
+        if self._receipt_key is None:
+            return None
+        try:
+            body = _receipts.build_receipt(
+                holder=holder or {},
+                challenge=challenge,
+                action_tool=tool,
+                action_args=executed_args_sentinel,
+                canonical_target=canonical_target,
+                policy_decision="execution_authorized",
+                approval_id=approval_id,
+                policy_id=policy_id,
+                preview_text=preview_text,
+                outcome_status="executed",
+                result=result,
+                key_id=self._receipt_key["key_id"],
+                pubkey_hex=self._receipt_key["pubkey_hex"])
+            receipt = _receipts.countersign(body, self._receipt_key["seed"])
+        except Exception as e:  # noqa: BLE001 - evidence only, fail loud
+            self.log.append({
+                "event": "invocation_receipt_failed",
+                "run_id": self.run_id,
+                "agent_id": (holder or {}).get("agent_id"),
+                "role": (holder or {}).get("role"),
+                "tool": tool,
+                "approval_id": approval_id,
+                "decision": "receipt_failed",
+                "policy_id": "invocation-receipt-seam",
+                "via": via,
+                "reason": ("The invocation executed but its countersigned "
+                           "receipt could not be minted (%s: %s); the "
+                           "execution stands and is recorded without a "
+                           "countersignature."
+                           % (type(e).__name__, e)),
+            })
+            return None
+        return self.log.append({
+            "event": "invocation_receipt",
+            "run_id": self.run_id,
+            "agent_id": (holder or {}).get("agent_id"),
+            "role": (holder or {}).get("role"),
+            "tool": tool,
+            "approval_id": approval_id,
+            "decision": "receipt_countersigned",
+            "policy_id": "invocation-receipt-seam",
+            "via": via,
+            "receipt": receipt,
+            "reason": ("Executor countersigned the executed invocation "
+                       "(key %s)." % (self._receipt_key["key_id"],)),
+        })
+
     def _invoke_simulate(self, tool, args, ctx, identity):
         """Call the ``_simulate`` seam, passing ``identity`` only when the
         installed callable accepts it.
@@ -9296,6 +9421,31 @@ class ToolExecutor:
                 else:
                     result = self._invoke_simulate(tool, _exec_kwargs, ctx,
                                                   identity)
+            # Wave-175 lane 1 (countersigned invocation receipts, R7 #7
+            # Sigil shape): a direct-path irreversible-registry tool
+            # actually executed — countersign it. Reads and
+            # non-irreversible direct tools stay self-attested (the
+            # receipt is evidence of consequential execution, not a
+            # per-read tax). The challenge binds the write-ahead
+            # execution_authorized entry's seq (direct:<seq>); the args
+            # digest covers kwargs, the sentinel-bearing form the audit
+            # path records — _exec_kwargs (substituted secrets) never
+            # enters the receipt.
+            if _precommit.is_irreversible(tool):
+                self._countersign_invocation(
+                    tool=tool,
+                    executed_args_sentinel=kwargs,
+                    holder={"agent_id": identity.agent_id,
+                            "role": identity.role,
+                            "principal": identity.principal,
+                            "run_id": identity.run_id},
+                    challenge="direct:%s" % (auth_entry.get("seq"),),
+                    approval_id=None,
+                    policy_id=decision.policy_id,
+                    canonical_target=ctx.get("path_resolved"),
+                    preview_text=None,
+                    result=result,
+                    via="direct_irreversible")
             # H2 (wave-117 audit fix): the SandboxedToolBackend is a
             # drop-in _simulate replacement with no chain writer of its
             # own; it reports a contained escaping read via the
@@ -10943,6 +11093,29 @@ class ToolExecutor:
                         rec["args"])[0]
                 result = self._invoke_simulate(rec["tool"], _exec_args, ctx,
                                               _approved_identity)
+            # Wave-175 lane 1 (countersigned invocation receipts, R7 #7
+            # Sigil shape): the approved sweep executed a consequential
+            # (human-authorized) invocation — countersign what ACTUALLY
+            # executed. The args digest covers rec["args"], the
+            # sentinel-bearing MAC-bound form the human approved and the
+            # audit path records; _exec_args (substituted secrets) never
+            # enters the receipt.
+            self._countersign_invocation(
+                tool=rec["tool"],
+                executed_args_sentinel=rec["args"],
+                holder={"agent_id": rec.get("agent_id"),
+                        "role": rec.get("role"),
+                        "principal": (rec.get("identity") or {}).get(
+                            "principal"),
+                        "run_id": rec.get("run_id", self.run_id)},
+                challenge=aid,
+                approval_id=aid,
+                policy_id=rec.get("policy_id"),
+                canonical_target=(rec.get("policy_context") or {}).get(
+                    "path_resolved"),
+                preview_text=rec.get("preview"),
+                result=result,
+                via="approved_sweep")
             # F162 (S2-GAP-1): mint governed-side usage on the result.
             self._mint_result_usage(rec["tool"], rec["args"], result)
             # S1-MEM: memory provenance firewall (opt-in; no-op when None).

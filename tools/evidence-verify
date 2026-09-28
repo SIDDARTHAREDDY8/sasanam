@@ -56,7 +56,9 @@ $0 spend. No network. Pure Python, no dependencies.
 """
 
 import argparse
+import base64
 import hashlib
+import hmac
 import json
 import os
 import sys
@@ -1359,6 +1361,116 @@ def v16_retention(ctx):
                 "truth not checked)")
 
 
+# Wave-175 lane 1 (countersigned invocation receipts, R7 #7 Sigil shape).
+# v1 extension (beyond the spec's normative thirteen): every
+# ``invocation_receipt`` entry in the slice carries an executor
+# countersignature over the executed invocation. The check re-verifies
+# each receipt's Ed25519 signature against the pubkey carried in the
+# receipt itself (self-consistency), and against --pin-receipt-pubkey
+# pins when given (authorship). Standalone: uses only this file's
+# vendored Ed25519 + the receipt's documented canonicalization
+# (domain b"agent-governance/invocation-receipt/v1." + RFC 8785-style
+# canonical JSON of the receipt minus "signature") — never imports
+# gov.invocation_receipts, so the verifier stays install-free.
+_RECEIPT_SIGNING_DOMAIN = b"agent-governance/invocation-receipt/v1."
+_RECEIPT_AUDIENCE = "agent-governance-executor"
+
+
+def _receipt_b64u_decode(text):
+    padded = text + "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(padded.encode("ascii"))
+
+
+def _verify_receipt_standalone(receipt):
+    """(ok, reason) — self-contained receipt verification for the bundle
+    verifier. Mirrors gov.invocation_receipts.verify_receipt exactly;
+    never raises on hostile input."""
+    try:
+        if not isinstance(receipt, dict):
+            return False, "receipt is not a dict"
+        body = {k: v for k, v in receipt.items() if k != "signature"}
+        if receipt.get("receipt_version") != 1:
+            return False, "unsupported receipt_version %r" % (
+                receipt.get("receipt_version"),)
+        for section in ("holder", "action", "policy", "outcome",
+                        "authority"):
+            if not isinstance(body.get(section), dict):
+                return False, "missing section %r" % section
+        if (not isinstance(body.get("challenge"), str)
+                or not body["challenge"]):
+            return False, "missing challenge"
+        if body.get("audience") != _RECEIPT_AUDIENCE:
+            return False, "audience mismatch"
+        auth = body["authority"]
+        pub = bytes.fromhex(auth.get("pubkey") or "")
+        if len(pub) != 32:
+            return False, "authority.pubkey not 32 bytes"
+        if auth.get("kid") != hashlib.sha256(pub).digest()[:16].hex():
+            return False, "authority.kid does not match pubkey"
+        sig = _receipt_b64u_decode(receipt.get("signature") or "")
+        signing_input = (_RECEIPT_SIGNING_DOMAIN
+                         + json.dumps(body, sort_keys=True,
+                                      separators=(",", ":"),
+                                      ensure_ascii=True,
+                                      default=str).encode("utf-8"))
+        if not verify(pub, signing_input, sig):
+            return False, "Ed25519 countersignature does not verify"
+        return True, "ok"
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        return False, "malformed receipt (%s: %s)" % (type(e).__name__, e)
+
+
+def _verify_receipt_pinned_standalone(receipt, pinned_pubkey_hex):
+    """_verify_receipt_standalone + authorship: the countersigning key
+    must equal the out-of-band pinned operator key (full 32-byte pubkey
+    hex, not a key id — same pin semantics as the evidence bundle's V6).
+    Stdlib-only, like _verify_receipt_standalone."""
+    ok, reason = _verify_receipt_standalone(receipt)
+    if not ok:
+        return False, reason
+    try:
+        pinned = bytes.fromhex((pinned_pubkey_hex or "").strip())
+    except (ValueError, TypeError):
+        return False, "pinned key not hex"
+    if len(pinned) != 32:
+        return False, "pinned key not 32 bytes"
+    claimed = bytes.fromhex(receipt["authority"]["pubkey"])
+    if not hmac.compare_digest(claimed, pinned):
+        return False, "countersigning key is not the pinned operator key"
+    return True, "ok"
+
+
+def v17_invocation_receipts(ctx):
+    c = Check("V17", "V17 invocation receipts (v1 extension)")
+    entries = [e for e in ctx.slice_entries
+               if e.get("event") == "invocation_receipt"]
+    if not entries:
+        return c.na("no invocation_receipt entries in the window: receipts "
+                    "are an opt-in evidence extension (absence is honest, "
+                    "not a failure)")
+    bad = []
+    for e in entries:
+        ok, reason = _verify_receipt_standalone(e.get("receipt"))
+        if not ok:
+            bad.append("seq %s: %s" % (e.get("seq"), reason))
+    pins = [p.lower() for p in (getattr(ctx, "receipt_pins", None) or [])]
+    if pins:
+        for e in entries:
+            receipt = e.get("receipt")
+            if not any(_verify_receipt_pinned_standalone(receipt, pin)[0]
+                       for pin in pins):
+                bad.append("seq %s: countersigning key is not a pinned "
+                           "receipt key" % (e.get("seq"),))
+    if bad:
+        return c.fail("; ".join(bad[:5]))
+    if pins:
+        return c.ok("%d invocation receipts countersigned by pinned "
+                    "key(s)" % len(entries))
+    return c.ok("%d invocation receipts countersigned "
+                "(self-consistent; authorship NOT established — no "
+                "--pin-receipt-pubkey)" % len(entries))
+
+
 def v12_receipt(ctx):
     c = Check("V12", "V12 export receipt")
     try:
@@ -1528,7 +1640,7 @@ class Ctx:
     pass
 
 
-def _run_checks_v4_v16(ctx, run, checks):
+def _run_checks_v4_v17(ctx, run, checks):
     """V4–V16 in spec order. Returns False when V4 fails (remaining
     checks are meaningless without the payload); True otherwise. Any
     unexpected exception propagates to verify_bundle's outer guard.
@@ -1551,6 +1663,7 @@ def _run_checks_v4_v16(ctx, run, checks):
     run(v14_bundle_id)
     run(v15_provenance)
     run(v16_retention)
+    run(v17_invocation_receipts)
     return True
 
 
@@ -1588,14 +1701,15 @@ def _discovery_snapshot(ctx):
 
 
 def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
-                   source_log=None):
-    """Run V1–V16. Returns (exit_code, checks, summary_dict)."""
+                   source_log=None, receipt_pins=()):
+    """Run V1–V17. Returns (exit_code, checks, summary_dict)."""
     ctx = Ctx()
     ctx.dir = bundle_dir
     ctx.pins = list(pins)
     ctx.pinned_cp_key_ids = (list(pinned_cp_key_ids)
                              if pinned_cp_key_ids else None)
     ctx.source_log = source_log
+    ctx.receipt_pins = list(receipt_pins)
     ctx.pin_failed = False
     checks = []
 
@@ -1648,7 +1762,7 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
     # V4-V16 run under one outer guard: hostile bundle data must FAIL
     # cleanly (a named check, exit 1), never crash with a traceback.
     try:
-        _run_checks_v4_v16(ctx, run, checks)
+        _run_checks_v4_v17(ctx, run, checks)
     except Exception as e:  # hostile/malformed bundle: fail, don't crash
         c = Check("V0", "bundle fatal")
         c.fail("unexpected error while verifying bundle: %r" % (e,))
@@ -1706,6 +1820,11 @@ def main(argv=None):
                     help="expected checkpoint signer key ids (key_id == "
                          "sha256(pub)[:16]). Repeatable; the envelope / "
                          "roster set must match exactly.")
+    ap.add_argument("--pin-receipt-pubkey", action="append", default=[],
+                    help="invocation-receipt countersigning Ed25519 public "
+                         "key hex (full 32-byte key, out-of-band). "
+                         "Repeatable. V17 checks authorship against these; "
+                         "without a pin V17 is self-consistency only.")
     ap.add_argument("--log", default=None, metavar="PATH",
                     help="auditor's copy of the source audit log: V12b "
                          "re-verifies the receipt against it.")
@@ -1737,10 +1856,20 @@ def main(argv=None):
             print("error: --pin-checkpoint-key-ids entries must be hex",
                   file=sys.stderr)
             return 3
+    for p in args.pin_receipt_pubkey:
+        try:
+            raw = bytes.fromhex(p)
+        except ValueError:
+            print("error: --pin-receipt-pubkey is not hex", file=sys.stderr)
+            return 3
+        if len(raw) != 32:
+            print("error: --pin-receipt-pubkey is not 32 bytes",
+                  file=sys.stderr)
+            return 3
     code, checks, summary = verify_bundle(
         args.bundle_dir, pins=args.pin_operator_pubkey,
         pinned_cp_key_ids=args.pin_checkpoint_key_ids or None,
-        source_log=args.log)
+        source_log=args.log, receipt_pins=args.pin_receipt_pubkey)
     if args.format == "json":
         payload = summary or {
             "verdict": "FAILED",

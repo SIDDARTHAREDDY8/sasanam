@@ -78,6 +78,11 @@ SIGNAL_WEIGHTS = {
     "machine_cadence": 3,        # sustained machine-rate action cadence
     "orchestration_patterns": 3,  # LLM-orchestration tool-use patterns
     "credential_shape": 2,       # operator-hinted credential shape
+    # R7 #5 (gov/enumeration_signal.py): rate-independent enumeration
+    # structure. scan_action_log() passes the MEASURED 0..1 strength
+    # explicitly, so this weight is the default scale only.
+    "enumeration_structure": 3,  # list->read loops + distinct-target
+                                 # coverage, no rate band, long window
     # scan_error is a ledger EVENT, not a candidate signal: strength 0,
     # and candidate_id_for_sig() returns None for it. Scanner failures
     # are recorded, never silent — the fail-closed direction.
@@ -89,6 +94,7 @@ SIGNAL_WEIGHTS = {
 #: never on a filesystem path.
 SHADOW_SIGNAL_KINDS = frozenset({
     "machine_cadence", "orchestration_patterns", "credential_shape",
+    "enumeration_structure",
 })
 
 #: Directory names that mark an agent harness workspace.

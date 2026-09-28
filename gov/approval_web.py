@@ -230,6 +230,7 @@ from gov.approvals import (  # noqa: E402
     PERSUASION_RISK_SCORE,
 )
 from gov import approver_shield as _shield  # noqa: E402  (H19: shield brief)
+from gov import packet_display as _packet_display  # noqa: E402  (F192: one shared carrier-display schema)
 from gov.log import ActionLog, read_entries_with_stats  # noqa: E402
 
 # Route used by tests (overridable per module for the naive shim).
@@ -847,18 +848,16 @@ def _packet_panel(record):
         ("canonical target (bound)",
          "<code>%s</code>"
          % _esc(pkt.get("canonical_target") or "(n/a — no path arg)")),
-        # Wave-173 lane 1 (TMA-NM act-time gate): the queue-time
-        # memory-provenance disclosure — the run's un-elevated memory
-        # reads the action may depend on. The approver's grant with
-        # this disclosure is the informed authorization the sweep
-        # enforces.
+        # F192 (wave-175): carrier disclosures are rendered from ONE
+        # shared schema (gov.packet_display) — the MAC-bound packet
+        # binds memory_provenance[].input_carrier and
+        # attachment_carriers, so the primary decision panel must name
+        # them; before this fix the panel rendered mem_key (detail)
+        # only and the approver never saw the perceptual channel.
         ("memory provenance (un-elevated reads)",
-         _esc("; ".join(
-             "%s (%s)" % (d.get("mem_key"), d.get("detail"))
-             for d in (pkt.get("memory_provenance") or [])
-             if isinstance(d, dict))
-             or "(none disclosed — no un-elevated reads at queue "
-                "time)")),
+         _esc(_packet_display.format_memory_provenance(pkt))),
+        ("attachment carriers (tool-arg audio)",
+         _esc(_packet_display.format_attachment_carriers(pkt))),
         ("risk", "<strong class='risk-%s'>%s (%s)</strong>" % (
             _esc(pkt.get("risk_tier")), _esc(pkt.get("risk_score")),
             _esc(pkt.get("risk_tier")))),

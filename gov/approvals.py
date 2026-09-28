@@ -60,6 +60,7 @@ from .egress_ledger import _ledger_keyring
 from . import approver_shield as _approver_shield
 from . import delegation_tokens as _delegation_tokens
 from . import ceremony_integrity as _ceremony_integrity
+from . import packet_display as _packet_display  # F192: one shared carrier-display schema
 from .target_match import (DEFAULT_THRESHOLD, typed_scope_similarity,
                            structural_scope_match,
                            TTC_MATCH_METHOD, TTC_STRUCT_METHOD)
@@ -6450,6 +6451,14 @@ def _print_records(records, queue=None, anomaly_ids=()):
                 (" | blast radius: %s" % "; ".join(_pkt.get("blast_radius") or []))
                 if _pkt.get("blast_radius") else ""))
             print("    packet digest: %s" % r.get("packet_digest"))
+            # F192 (wave-175): the carrier disclosures the packet
+            # digest binds — rendered from the same shared schema as
+            # the web panel (gov.packet_display), so the CLI approver
+            # sees the perceptual channel too.
+            print("    memory provenance: %s"
+                  % _packet_display.format_memory_provenance(_pkt))
+            print("    attachment carriers: %s"
+                  % _packet_display.format_attachment_carriers(_pkt))
         _ps = r.get("persuasion_score") or 0
         if _ps:
             print("    persuasion score: %d%s" % (

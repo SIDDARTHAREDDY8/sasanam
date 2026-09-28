@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-governance"
+name = "sasanam"
 dynamic = ["version"]
-description = "Policy enforcement, human approvals, and tamper-evident audit logs for AI agent tool use (synthetic demo)."
+description = "Sasanam — The AI Governance: policy enforcement, human approvals, and tamper-evident audit logs for AI agent tool use."
 readme = "README.md"
 requires-python = ">=3.9"
 # No license field: the licensing decision is deferred (no LICENSE file).

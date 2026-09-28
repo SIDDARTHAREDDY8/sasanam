@@ -1,6 +1,8 @@
 """Behavioral shadow-agent fingerprinting over the governed audit trail.
 
-PROSPECTING R6 PROTOTYPE (isolated tree only; NOT wired into product).
+PROSPECTING R6 PROTOTYPE, integrated wave-171 via
+gov/discovery.py scan_action_log (behavioral shadow-agent
+fingerprinting over the governed audit trail).
 Steal target: MandateZ Shadow Scan (mandatez/core, MIT) — deterministic
 behavioral signatures that distinguish agent traffic from human traffic:
 
@@ -37,6 +39,8 @@ $0 spend, synthetic/local only, stdlib only.
 import math
 from datetime import datetime, timezone
 
+from . import enumeration_signal as _enumeration_signal
+
 # --- event classification -------------------------------------------------
 
 _LIST = {"list", "enumerate", "search", "query", "scan", "discover"}
@@ -59,6 +63,20 @@ def _classify(entry):
         if any(n in blob for n in names):
             return cls
     return "other"
+
+
+#: Public aliases for the entry helpers shared with
+#: gov/enumeration_signal.py (the R7 #5 rate-independent signal).
+#: The underscore names above stay as the intra-module convention;
+#: cross-module callers use these.
+def entry_timestamp(entry):
+    """Entry timestamp as epoch seconds. Raises ValueError on garbage."""
+    return _ts(entry)
+
+
+def classify_action(entry):
+    """Map an audit entry to an action class for pattern detection."""
+    return _classify(entry)
 
 
 def _ts(entry):
@@ -204,6 +222,18 @@ def fingerprint_principal(principal, entries, credential_hints=None):
     Credential shape (MandateZ signature 3) is operator-supplied via
     credential_hints: {principal: {"long_lived": bool,
     "broad_scope": bool}}; absent hints contribute nothing.
+
+    The rate-independent enumeration-structure signal
+    (gov/enumeration_signal.py, R7 #5) is carried as a fourth signal.
+    It does not enter the weighted score -- it is an independent
+    sighting: a present enumeration structure makes the principal a
+    candidate even when every rate-gated signature is dark (the slow
+    shadow-agent residual). Advisory only, like every other signal
+    here.
+    Note: the three legacy signals carry string ``detail`` values;
+    the enumeration signal carries a structured (dict) detail --
+    see gov/enumeration_signal.py. Consumers must not assume
+    ``detail`` is always a string.
     """
     times = []
     skipped = 0
@@ -223,12 +253,19 @@ def fingerprint_principal(principal, entries, credential_hints=None):
         flags = [bool(hint.get("long_lived")), bool(hint.get("broad_scope"))]
         cred_strength = sum(flags) / 2.0
         cred_detail = "long_lived=%s broad_scope=%s" % tuple(flags)
+    enum_present, enum_strength, enum_detail = \
+        _enumeration_signal.enumeration_structure(usable)
     score = (0.45 * cad_strength + 0.45 * min(1.0, density * 2.0)
              + 0.10 * cred_strength)
+    # NOTE: the enumeration signal is the only fingerprint signal that
+    # can independently set agent_like. The three legacy signals feed
+    # only the weighted score; enumeration_structure is an OR-gate
+    # because it is a distinct structural sighting the rate-gated
+    # score cannot express by design.
     return {
         "principal": principal,
         "score": round(score, 3),
-        "agent_like": score >= 0.5,
+        "agent_like": score >= 0.5 or enum_present,
         "actions": len(usable),
         "skipped": skipped,
         "signals": [
@@ -239,6 +276,9 @@ def fingerprint_principal(principal, entries, credential_hints=None):
              "detail": pat_detail, "present": density >= 0.25},
             {"kind": "credential_shape", "strength": round(cred_strength, 3),
              "detail": cred_detail, "present": cred_strength >= 0.5},
+            {"kind": _enumeration_signal.SIGNAL_KIND,
+             "strength": enum_strength, "detail": enum_detail,
+             "present": enum_present},
         ],
     }
 

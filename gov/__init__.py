@@ -1,4 +1,4 @@
-"""gov: an agent-governance layer (synthetic demo, stdlib only)."""
+"""gov: Sasanam — the AI governance layer (synthetic demo, stdlib only)."""
 
 # Single source of truth for the package version (packaging, defect 6).
 # pyproject.toml reads this via [tool.setuptools.dynamic]; CHANGELOG.md
