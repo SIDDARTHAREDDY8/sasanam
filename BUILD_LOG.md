@@ -1,3 +1,19 @@
+## 2026-09-28 — Wave-180: Decision BOM + cedar diagnostics contract + advisory verification + wave-179 red-team battery
+
+**Scope.** Cherry-pick four wave-180 lane commits (all based on `88261a9`) onto wave-179 fast-follow. Product changes: lane A (Decision BOM), lane B (diagnostics threading); verification-only: lane C (advisory properties), lane D (red-team battery). Merge-integration fix by the coordinator: `evals/w180_redteam_probes.py` adapted to lane A's mandatory BOM (probe packets now carry a consistent BOM via `_d_bom()`; D4 rebuilds the BOM after re-pointing the head). Lane D's root `REPORT.md` excluded from the tree (lane reports live in team dirs).
+
+**Lanes.**
+- **Lane A — Decision BOM** (`ce4cbe3`): new `gov/decision_bom.py` (`build_bom`/`bom_digest`/`check_bom_shape`/`verify_bom`/`BomError`, stdlib only). `gov/decision_packet.py`: `bill_of_materials` is a mandatory builder argument and a signature-covered section; new `policy_bundle_digest` in the policy section; the verifier cross-checks the BOM against the packet's own sections (a producer that signed a lie must lie consistently everywhere). `gov/executor.py`: BOM built inside the rebuild-once loop. 25/25 red-first tests; adjacent 231 OK. Informed by wave-180 prospecting (SLSA v1 provenance predicate, STEAL verdict — pattern only, no vendored code; schema kept, predicate's parameter split + omission probe adopted).
+- **Lane B — cedar Request/Decision+Diagnostics contract** (`da99efb`): the contract already existed (`gov/decision_contract.py`); the real gap was `PolicyEngine.evaluate()` — the path every enforcement call site uses — dropping the diagnostics. Now every evaluation returns {decision, diagnostics}. 24/24 red-first tests; cedar probes 12/12 HELD; adjacent 229 OK. **F198 (LOW) filed and CLOSED**: `_validate_rule` computed `rule.get("id")` before the isinstance guard → bare `AttributeError` instead of fail-closed `ValueError` (error-reporting hardening; refused either way).
+- **Lane C — tightening-only advisory verification** (`856c388`): the mechanism already existed (`gov/advisory.py`, wave-129); lane produced independent red-first verification (`evals/advisory_lane_c_properties.py`, 14/14 x2). No product code changed.
+- **Lane D — red-team battery on wave-179 surfaces** (`81bff9d`): `evals/w180_redteam_probes.py`, 27 deterministic probes (Ed25519 wiring, TUF pins, differential discovery, F196 pairing). **F199 (LOW, OPEN)**: GENESIS-head decision packets dodge the F196 re-derivation — `build_decision_packet()` defaults `evidence_head_digest="GENESIS"` and `_verify` skips re-derivation for GENESIS heads, so a key-holding producer can mint a verifying packet with an arbitrary `decision_digest` (probe D5). Close-when: GENESIS-head packets verify only when the chain carries no decision entries; `test_round_trip_with_linkage` must keep passing.
+
+**Red-first post-wave audit (merge coordinator, independent): F198 1/1 genuine** — non-mapping rule → `ValueError: policy rule 0: rule must be a mapping...` (not AttributeError); `evaluate()` returns structured diagnostics (deciding_rule/forbid_hits/permit_hits/policy_ids/trace/approval_hits); `to_dict()` carries the diagnostics key (additive; no exact-equality pins); unmatched action → deny. **F199 confirmed OPEN**: D5 BREAK reproduces on the merged tree exactly as filed.
+
+**Findings:** F198 filed and CLOSED 2026-09-28; F199 filed OPEN 2026-09-28. Next free: F200. Open findings: F199.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-28 — Wave-179 fast-follow: F196 closure merged (MATCH-bound decision digests + packet↔receipt pairing)
 
 **Scope.** Cherry-pick `f1448d9` (F196 closure lane, based on `fed2c44`) onto wave-179 (`50e4adf`). The closure lane finished after the wave-179 merge; this fast-follow integrates it. Product changes: `gov/decision_packet.py` (+59) and `gov/executor.py` (+25), both additive.
