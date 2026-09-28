@@ -6110,4 +6110,26 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F197**. **Open findings: F196.**
+
+---
+
+## F197: discovery process scanner silently drops novel-harness processes (LOW)
+
+**Status: CLOSED (2026-09-28, wave-179 lane E; red-first demonstrated on the pre-fix tree, differential closes it).**
+
+**Claim broken.** `gov.discovery.scan_process_list` emits `agent_process` signals only for processes matching the KNOWN harness regexes (`HARNESS_PROCESS_RES`: codex/claude/cursor/aider/mcp-server/copilot/opencode). A running agent binary with no known-harness markers (e.g. name `novasync-agent`, cmdline `novasync-agent --daemon`) yields ZERO signals — silently dropped from the unknown-agent pipeline, the exact population ("agents nobody knows about", CSA: 82% of orgs run unidentified agents) the module exists to find.
+
+**Close-when:** a novel-harness process appearing between polls is surfaced as an unknown-agent finding without relying on harness-name matching. Red-first: `F197GapProbeTest.test_current_scanner_drops_novel_harness_process` passes on the pre-fix tree by demonstrating zero `agent_process` signals for the novel binary; `test_differential_catches_what_scanner_drops` shows `HostDiffer` emitting exactly one `unknown_agent` finding for the same process via inventory comparison.
+
+**Closure.** New `gov/discovery_diff.py`: osquery-pattern differential scheduled queries (`{query, interval, removed}`) reimplemented in stdlib — no osquery code, binary, or linking (pattern only; osquery is Apache-2.0 OR GPL-2.0-only, pattern elected). `HostDiffer.poll()` diffs injected `{key: record}` snapshots for `processes` / `listening_ports` / `apps` (osquery table vocabulary); added processes absent from the governed inventory become `unknown_agent` findings; removed rows become `lifecycle` events (`removed: true` semantics, suppressible per query); first poll is a silent baseline; changed rows are removed(old)+added(new); collector failures keep prior state (fail-closed, error recorded). Bridge `to_discovery_signals()` emits the new `unknown_agent_process` signal kind (weight 4, `gov/discovery.py`), flowing through `DiscoveryLedger.note_signals` → `unregistered_candidates` → `report_unregistered`; registration stays an explicit operator act. Regression: `tests/test_discovery_diff.py` (18/18, incl. `env -u GOV_DEPLOYMENT_MODE`, deterministic x2).
+
+**Honest residual:** inventory seeding is deployment-wired (empty inventory = loud: every addition is a finding, mirroring discovery.py's no-registry behavior); live `/proc` collectors are opt-in, tests inject snapshots; evented (non-polling) tables remain post-v1 per the prospectus graduation note.
+
+**Severity rationale: LOW.** Detection-coverage gap, not an integrity violation: the filesystem/config/shadow-scan surfaces (harness configs, MCP registrations, prompt footprints, behavioral signals) still catch many novel agents; only the process surface was blind to novel harnesses. No existing signal was suppressed — the signal never existed.
+
+**Found by:** wave-179 lane E (differential discovery), 2026-09-28, osquery-pattern ADAPT from the wave-179 prospecting lane, against `fed2c44`.
+
+---
+
+
+Next free finding: **F198**. **Open findings: F196.** (F197 filed and closed 2026-09-28, wave-179 lane E.)

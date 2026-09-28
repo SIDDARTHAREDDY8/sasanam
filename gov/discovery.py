@@ -43,7 +43,10 @@ SCOPE (honest boundary): filesystem + config + process-list signals
 only, read-only, synthetic fixture dirs in this integration (the
 ``allowed_base`` guard). No network traffic analysis, no host-wide
 daemon, no live /proc scraping in tests (the process source is
-injectable; production wiring is future work). Secret VALUES are never
+injectable; production wiring is future work). The differential
+live-host pattern (osquery-style {query, interval, removed} over
+stdlib snapshots, injectable in tests) now lives in
+gov/discovery_diff.py. Secret VALUES are never
 stored — only rule ids and fingerprints.
 
 $0 spend, synthetic/local only, no network, stdlib only.
@@ -70,6 +73,10 @@ SIGNAL_WEIGHTS = {
     "mcp_server": 3,        # MCP server registration entries
     "credential": 2,        # credential-shaped secret in a file
     "agent_process": 4,     # running process matching a known harness
+    "unknown_agent_process": 4,  # differential (gov/discovery_diff.py):
+                                 # added process absent from the governed
+                                 # inventory — same severity class as
+                                 # agent_process
     "prompt_footprint": 1,  # CLAUDE.md / AGENTS.md style instruction files
     # Shadow-scan kinds (gov/shadow_scan.py): behavioral signals over
     # the audit trail. scan_action_log() passes the MEASURED 0..1
@@ -427,7 +434,7 @@ def candidate_id_for_sig(sig):
     IS the footprint — never a path, never colliding with ``fs:``).
     """
     kind = sig["kind"]
-    if kind == "agent_process":
+    if kind in ("agent_process", "unknown_agent_process"):
         return "proc:" + _fingerprint(sig["source"] + json.dumps(
             sig["detail"], sort_keys=True))
     if kind == "scan_error":
