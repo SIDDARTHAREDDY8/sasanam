@@ -222,6 +222,18 @@ class ArtifactInventory(object):
         """True when a deployment manifest is attached."""
         return self._deployment_manifest is not None
 
+    @property
+    def deployment_manifest_envelope(self):
+        """The attached deployment-manifest envelope, or None.
+
+        Row-12 (wave-162): the undeclared-path write binding follows
+        the EFFECTIVE manifest -- the same envelope the egress
+        consult reads -- so a post-construction attach binds writes
+        and a detach releases the binding, exactly matching the
+        egress seam's behavior.
+        """
+        return self._deployment_manifest
+
     def _consult_manifest(self, key, sha256_now):
         """Consult the deployment manifest for one normalized path.
 

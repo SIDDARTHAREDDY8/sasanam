@@ -9650,3 +9650,47 @@ Row 12: the default-on residual is closed — the artifact-integrity seam can no
 **Findings:** none filed. Next free: F189. Open findings: NONE.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-160 — row-13 operational egress wiring merge
+
+**Merge.** Team tree `teams/row13-egress-wire/tree` merged into the shared tree (row-13 tiered-verdict hunks from `gov/executor.py` plus `evals/egress_tiered_wire_probes.py` and `tests/test_egress_tiered_wire.py`). Wired the existing T1→T2→T3 detection verdicts into the real `ToolExecutor` outbound path: every monitored egress payload produces a chained `egress_tiered_verdict` event; response is monotonic (clean proceeds; flagged/behavioral loud-audits and proceeds; hold/T3 composition goes to the standard human-approval queue; existing deny/hold decisions never weakened). No-monitor and partial-monitor deployments remain silent-allow by design; approved-sweep execution bypasses re-analysis (a human already reviewed the MAC-bound queue record).
+
+Red-first on the merged tree: disabled-hook swap → T3 egress executed silently with no verdict event (**12 BREAK**); restored byte-identical; enabled → **8 HELD / 0 BREAK / 5 EXPECTED / 0 FP** (staging ×2 deterministic + clean env; the 5 EXPECTED are semantic-paraphrase/split-dump misses, documented). Canaries: decision replay 7/7 (wave-155 intact), delegation stamping 12/0 (wave-157 intact), manifest default-on 15/0 (wave-159 intact). New units 11/11; unlabeled-egress baseline 7 HELD / 5 documented BREAK.
+
+**Push-clone gates (fresh clone of 8649396 + rsync, workstream sibling symlinks, fresh unique TMPDIRs, serialized suites):** canonical **5098 OK** (skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Pushed `8649396` → `02473c5` (verified via direct `git ls-remote`).
+
+Row 13: the operational-wiring residual is closed — tiered verdicts are no longer library-only. Row 13 stays PARTIAL for the documented honest ceilings: footprint-free prose paraphrase (triage-only under T2), salami drips, destination warming.
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-161 — row-9 trusted-only fold + keyed drift/framing/population chains merge
+
+**Merge.** Team tree `teams/row9-keyed-chain/tree` merged into the shared tree (the lane tree already carried all wave-155/157/159/160 hooks — `gov/executor.py` byte-identical, so the merge was a direct copy of the 16 row-9 files; verified post-merge shared tree == lane tree modulo `__pycache__`). Changed: `gov/drift.py` (trusted-only `all_baselines()` fold; defensive `note_run()` peer filtering; versioned keyed-chain records for `PopulationStore`), `gov/chained_store.py` (`resolve_chain_key` via `gov.keyprovider.resolve_active_key()`, `chain_domain`, `keyed_digest`, scheme-per-record `verify_chain`), `gov/framing.py` (docstring-only). New: `evals/row9_unverified_fold_probes.py`, `evals/row9_keyed_chain_probes.py`. Additive unit tests in `test_drift.py`, `test_framing.py`, `test_baseline_population.py`; key-provisioning harness adaptations (`keyfixture`/`GOV_LOG_KEY` setdefault) in 8 test files + 2 eval batteries; HMAC-chokepoint allowlist entry in `test_w70_hmac_chokepoint_audit.py`.
+
+Red-first on the merged tree: (1) fold — trust filter disabled → **4 BREAK** (provisional `evil` in the fold, voted on new baselines, provisional-only population validated a newcomer as trusted); restored byte-identical (md5) → **5 HELD / 0 BREAK**. (2) keyed chain — `keyed_digest` neutered to unkeyed → **2 BREAK** (history rewrite + recompute verifies clean without the key; cross-key verification succeeds); restored byte-identical (md5) → **5 HELD / 0 BREAK / 0 SKIP**. Both batteries deterministic ×2, staging + clean env.
+
+**Push-clone gates (fresh clone of 02473c5 + rsync, workstream sibling symlinks, fresh unique TMPDIRs, serialized suites):** canonical **5122 OK** (skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Canaries in the clone: decision replay **7 HELD** (wave-155), delegation stamping **12 HELD / 0 BREAK** (wave-157), manifest default-on **15 HELD / 0 BREAK** (wave-159), egress tiered wire **8 HELD / 0 BREAK / 5 EXPECTED** (wave-160), row-9 fold **5/5**, row-9 keyed **5/5**. Backward-compat: legacy unkeyed chains verify; mixed legacy+keyed chains verify per-record. Pushed `02473c5` → `13352a4` (verified via direct `git ls-remote`; no force-push; required trailer present).
+
+Row 9: the unverified-fold and unkeyed-chain residuals are closed — provisional baselines can no longer vote, and drift/framing/population chains are HMAC-bound to the deployment key with legacy chains still verifying. Row 9 stays PARTIAL for the documented ceilings: majority-poisoned trusted population / Sybil, threshold-shaped attackers, sub-threshold slow drift, semantic/content changes invisible to behavioral aggregates, key-rotation re-initialization (verification is active-key-only). A full-file rewrite to legacy unkeyed format remains indistinguishable from a genuine pre-upgrade chain (backward-compat cost).
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-162 — row-12 undeclared-path write binding merge
+
+**Merge.** Team tree `teams/row12-undeclared-paths/tree` merged into the shared tree (row-12 write-time hunks; the lane tree already carried all wave-155/157/159/160/161 hooks — executor diff was exactly the wave-162 hunks, verified line-by-line). Changed: `gov/executor.py` (`_normalize_declared_write_dirs` fail-closed constructor normalization; `declared_write_dirs` kwarg inherited by `spawn_sub_agent`; `check_write_declared_path` write-time seam — manifest-declared path or under a declared writable dir, else LOUD `write_undeclared_path` event + `require_approval`; `call()` hook after guards using the same check-time `path_resolved` the F147 machinery binds; fail-closed downgrade — allow→queued, deny untouched, existing require_approval untouched, applies after unrated-tool hold and before tiered-egress hold); `gov/artifacts.py` (`deployment_manifest_envelope` property — the binding follows the EFFECTIVE manifest, so post-construction attach binds and detach releases). New: `evals/row12_undeclared_path_probes.py` (15 probes), `tests/test_undeclared_path_write_binding.py` (21 tests). `evals/artifact_deployment_manifest_probes.py` m4 setup updated (the old silent undeclared write is now queued by design — the setup approves the MAC-bound record, preserving the probe's egress-time FP ceiling).
+
+Red-first on the merged tree: hook disabled → `write_file("evil.bin")` with manifest declaring only `a.bin` executed silently with no event (**BREAK** — the gap is real); restored byte-identical (md5sum) → loud `write_undeclared_path` event + queued `require_approval`, nothing on disk (**HELD**).
+
+**Push-clone gates (fresh clone of 13352a4 + rsync, workstream sibling symlinks, fresh unique TMPDIRs, serialized suites):** canonical **5143 OK** (5122 + 21 new; skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Canaries in the clone: decision replay 7/7 (wave-155), delegation stamping 12/0 (wave-157), manifest default-on 15/0 (wave-159), egress tiered wire 8/0/5 EXPECTED (wave-160), row-9 unverified-fold 5/5 + keyed-chain 5/5 (wave-161), new row-12 battery 15/15, egress manifest battery 6/6. Traversal bypass pins: `../`, absolute alias, symlink-dir alias, case variants all held/queued; declared + symlink-to-declared allowed; no-manifest silent-allow; detach releases.
+
+Row 12: the undeclared-path residual is CLOSED at the `write_file` seam — an executor can no longer write (and later exfiltrate) files to paths that were never declared without loud audit + human review. Row 12 stays PARTIAL for the documented ceilings: content-shape exfiltration without file references, undeclared paths via non-`write_file` tools, and same-process compromised-executor / dishonest-ceremony boundaries (outside the tamper-evidence model).
+
+**Log hygiene catch:** the wave-160 and wave-161 entries were written into the shared tree but never committed (remote 13352a4's BUILD_LOG ended at the wave-159 entry). This commit includes those two entries plus this one, bringing the log back in sync. No code changed by this catch.
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

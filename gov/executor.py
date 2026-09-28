@@ -216,6 +216,41 @@ class DeploymentManifestRequiredError(Exception):
     """
 
 
+def _normalize_declared_write_dirs(declared_write_dirs):
+    """Row-12 (wave-162): normalize deployment-declared writable dirs.
+
+    Returns a tuple of sandbox-relative directory prefixes (no
+    trailing slash, ``/``-separated). Fail-closed at construction: a
+    non-string entry, an empty entry, or an entry that escapes the
+    sandbox (``..``) raises ValueError -- a misdeclared writable dir
+    must be LOUD at setup, never a silent widening at consult.
+    """
+    import posixpath
+    if declared_write_dirs is None:
+        return ()
+    if isinstance(declared_write_dirs, str):
+        declared_write_dirs = (declared_write_dirs,)
+    normed = []
+    for entry in declared_write_dirs:
+        if not isinstance(entry, str):
+            raise ValueError(
+                "declared_write_dirs entries must be strings, got %r"
+                % (entry,))
+        key = _artifacts.normalize_path(entry).replace("\\", "/")
+        key = posixpath.normpath(key)
+        if not key or key == "." or key.startswith(".."):
+            raise ValueError(
+                "declared_write_dirs entry %r is empty or escapes the "
+                "sandbox" % (entry,))
+        key = key.strip("/")
+        if not key:
+            raise ValueError(
+                "declared_write_dirs entry %r normalizes to empty"
+                % (entry,))
+        normed.append(key)
+    return tuple(normed)
+
+
 def _deployment_manifest_construction_check(run_id, log_append, inventory,
                                             deployment_manifest,
                                             deployment_manifest_opt_out):
@@ -906,7 +941,19 @@ class ToolExecutor:
                  # elsewhere -- the artifact-integrity seam must never
                  # be silently absent.
                  deployment_manifest=None,
-                 deployment_manifest_opt_out=None):
+                 deployment_manifest_opt_out=None,
+                 # Row-12 undeclared-path write binding (wave-162):
+                 # sandbox-relative directory prefixes the deployment
+                 # declares as writable scratch/output space, in
+                 # ADDITION to the manifest's declared artifact paths.
+                 # A write_file whose resolved target is neither a
+                 # manifest-declared path nor under one of these dirs
+                 # is forced to human approval (never executes on a
+                 # policy allow alone). None/empty = manifest paths
+                 # only. Appended LAST so no existing positional caller
+                 # can misalign. Opt-in: zero behavior change when no
+                 # manifest is attached.
+                 declared_write_dirs=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -975,6 +1022,12 @@ class ToolExecutor:
                 self.run_id, log.append, self.artifacts,
                 deployment_manifest, deployment_manifest_opt_out))
         self._deployment_manifest_envelope = deployment_manifest
+        # Row-12 (wave-162): deployment-declared writable scratch/output
+        # dirs for the undeclared-path write binding. Normalized to
+        # sandbox-relative prefixes (same normalization as the manifest
+        # entries); a malformed entry fails closed at construction.
+        self._declared_write_dirs = _normalize_declared_write_dirs(
+            declared_write_dirs)
         # Wave-75 (governing the governors): the governed policy path.
         # Opt-in: None = pre-wave-75 behavior, zero behavior change.
         # When installed, call() snapshots the store's CURRENT engine
@@ -2181,7 +2234,12 @@ class ToolExecutor:
             # capability acknowledged-ungoverned precedent).
             deployment_manifest=self._deployment_manifest_envelope,
             deployment_manifest_opt_out=(
-                self._deployment_manifest_opt_out_reason))
+                self._deployment_manifest_opt_out_reason),
+            # Row-12 (wave-162): one deployment, one writable-space
+            # declaration -- the child inherits the parent's declared
+            # writable dirs so a spawn cannot widen the undeclared-path
+            # write binding by construction.
+            declared_write_dirs=self._declared_write_dirs)
         child._advisory_bom_chain = self._advisory_bom_chain
         # One sub-chain, one lock: the child shares the parent's BOM
         # head cell, so it must share the guard too.
@@ -3604,6 +3662,130 @@ class ToolExecutor:
                                % detail)
         self.log.append(event)
         return res
+
+    def check_write_declared_path(self, agent_id, path_resolved,
+                                  declared_path=None):
+        """Row-12 (wave-162): undeclared-path write binding.
+
+        The deployment manifest declares the deployment-critical
+        artifact paths, but the manifest consult only compared hashes
+        at egress time -- a path absent from the manifest consulted as
+        ``manifest_absent`` with NO flag, so an executor could write
+        (and later exfiltrate) files to paths that were never declared.
+        This method is the write-time seam: every ``write_file`` whose
+        check-time resolved target is inside the sandbox must be either
+        a manifest-declared artifact path or under one of the
+        deployment-declared writable dirs
+        (``declared_write_dirs``); anything else draws a LOUD
+        ``write_undeclared_path`` audit event (flag
+        ``undeclared_write_path``) and a ``require_approval`` verdict,
+        and the call() path forces the standard human-approval queue
+        on a policy allow (fail-closed direction only -- a deny stays
+        denied, an existing require_approval is untouched).
+
+        Queue (not deny) is the consistent choice: the manifest's own
+        documented fail-closed direction is require_approval ("the
+        fail-closed direction is require_approval until the operator
+        re-pins" -- attach_deployment_manifest), and the unrated-tool,
+        tiered-verdict, and deferred-effect seams all force approval
+        for suspicious-but-possibly-legitimate actions. An undeclared
+        write may be a legitimate new artifact the operator simply did
+        not pre-declare; the human reviewer sees the forcing on the
+        MAC-bound record and the write never executes without that
+        review. Deny is reserved for never-legitimate actions
+        (sandbox escape on read, unverifiable ledger, halted identity).
+
+        ``path_resolved`` is the check-time resolved target from
+        ``_context`` (``path_resolved`` -- the SAME value the F147
+        machinery binds the effect to), sandbox-relative when inside.
+        Resolve-then-compare: symlinks are evaluated at their target,
+        ``..`` is collapsed lexically, absolute in-sandbox paths are
+        compared by their sandbox-relative form, and case variants are
+        distinct paths (fail-closed on a case-sensitive filesystem).
+
+        Opt-in: with no manifest effectively attached this returns a
+        silent allow and records nothing (zero behavior change;
+        no-monitor deployments stay silent-allow by design, wave-160
+        precedent). The binding follows the EFFECTIVE manifest -- the
+        envelope on the shared artifact inventory, the same one the
+        egress consult reads -- so a post-construction attach binds
+        writes and a detach releases the binding, exactly matching the
+        egress seam (a constructor-attached envelope is on the
+        inventory from construction, so the normal path is
+        unchanged). Targets resolving outside the sandbox are also a
+        silent allow from THIS seam -- the existing
+        quarantine-outside-writes policy rule and the _simulate
+        quarantine already govern them; double-governing would only
+        fork the audit trail.
+
+        The approved sweep calls _simulate directly (never call()), so
+        a human-approved undeclared write executes exactly once with
+        no re-queue: the human reviewed the MAC-bound record (wave-160
+        precedent).
+
+        Returns a dict with ``verdict`` ("allow" | "require_approval"),
+        ``declared`` (bool), ``reason``, and the normalized ``path``.
+        """
+        import posixpath
+        silent = {"verdict": "allow", "declared": True,
+                  "reason": "no_manifest_binding",
+                  "path": (str(path_resolved)
+                           if path_resolved is not None else None)}
+        envelope = self.artifacts.deployment_manifest_envelope
+        if envelope is None:
+            return silent
+        if not path_resolved or not isinstance(path_resolved, str):
+            # No resolved target (non-executor caller, offline replay):
+            # no behavior change, matching the F147 discipline.
+            return dict(silent, reason="no_resolved_target")
+        if Path(path_resolved).is_absolute():
+            # Resolves outside the sandbox: the quarantine-outside-writes
+            # seam owns this write, not the manifest binding.
+            return dict(silent, reason="outside_sandbox")
+        rel = posixpath.normpath(
+            path_resolved.replace("\\", "/").strip())
+        rel = rel.lstrip("/")
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if not rel or rel == "." or rel.startswith(".."):
+            return dict(silent, reason="outside_sandbox")
+        entries = (envelope.get("manifest") or {})
+        declared = rel in entries
+        if not declared:
+            for prefix in self._declared_write_dirs:
+                if rel == prefix or rel.startswith(prefix + "/"):
+                    declared = True
+                    break
+        if declared:
+            return {"verdict": "allow", "declared": True,
+                    "reason": "declared_path", "path": rel}
+        try:
+            from . import artifact_inventory_manifest as _manifest
+            manifest_digest = _manifest.manifest_digest(envelope)
+        except Exception:
+            manifest_digest = "unavailable"
+        event = {
+            "event": "write_undeclared_path",
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "tool": "write_file",
+            "decision": "require_approval",
+            "policy_id": "manifest-write-binding",
+            "flag": "undeclared_write_path",
+            "path": rel,
+            "declared_path": (str(declared_path)
+                              if declared_path is not None else None),
+            "manifest_digest": manifest_digest,
+            "reason": ("UNDECLARED WRITE HOLD -- write_file target %r is "
+                       "not a manifest-declared artifact path and is not "
+                       "under a deployment-declared writable dir: a human "
+                       "must review this write before it executes "
+                       "(row-12 undeclared-path binding, wave-162)."
+                       % (rel,)),
+        }
+        self.log.append(event)
+        return {"verdict": "require_approval", "declared": False,
+                "reason": event["reason"], "path": rel}
 
     def check_run_framing(self, agent_id, fingerprint=None, record=True,
                           identity=None, window=8):
@@ -8264,6 +8446,31 @@ class ToolExecutor:
         # .to_policy_decision(), so this is the same computation with
         # the diagnostics retained for the replayable trace built
         # below. Capture only; no verdict-logic change.
+
+        # Row-12 (wave-162): undeclared-path write binding. The
+        # manifest declares the deployment-critical artifact paths;
+        # a write_file whose check-time resolved target is inside the
+        # sandbox but is neither manifest-declared nor under a
+        # deployment-declared writable dir is forced to human approval
+        # -- after the guards above (denied calls need no binding
+        # check), before policy evaluation. Uses ctx["path_resolved"],
+        # the SAME check-time resolved target the F147 machinery binds
+        # the effect to, so the binding cannot be split from the
+        # containment verdict. Graduated response: require_approval
+        # only (fail-closed direction -- a deny stays denied, an
+        # existing require_approval is untouched); the LOUD
+        # write_undeclared_path event is already in the log.
+        _undeclared_write_hold = None
+        if tool == "write_file":
+            _uw = self.check_write_declared_path(
+                identity.agent_id, ctx.get("path_resolved"),
+                declared_path=(kwargs or {}).get("path"))
+            if _uw.get("verdict") == "require_approval":
+                _undeclared_write_hold = PolicyDecision(
+                    "require_approval", _uw.get("reason", ""),
+                    policy_id="manifest-write-binding",
+                    flag="undeclared_write_path")
+
         _decision_full = policy.decide(Request.from_action(action, ctx))
         decision = _decision_full.to_policy_decision()
 
@@ -8403,6 +8610,25 @@ class ToolExecutor:
         if (_forced_require_approval is not None
                 and decision.effect == "allow"):
             decision = _forced_require_approval
+        # Row-12 (wave-162): undeclared-path write binding. A
+        # require_approval from the manifest-path binding downgrades
+        # an allow to queued human review -- fail-closed direction
+        # only: a deny stays denied, an existing require_approval is
+        # untouched (its record keeps the original policy_id/flag;
+        # the LOUD write_undeclared_path event is already in the log).
+        # The queued record carries policy_id
+        # "manifest-write-binding" + flag "undeclared_write_path" so
+        # the human reviewer sees the forcing. Precedence: this is an
+        # authorization boundary (the write is inside the declared
+        # deployment contract or it is not), so it applies AFTER the
+        # unrated-tool hold -- an undeclared write through an unrated
+        # tool is still queued, and the record shows the deeper
+        # manifest-write-binding forcing; it applies BEFORE the
+        # tiered-egress hold so the record shows the write's own
+        # binding rather than its egress risk when both fire.
+        if (_undeclared_write_hold is not None
+                and decision.effect == "allow"):
+            decision = _undeclared_write_hold
         # Wave-160 (row 13): tiered egress-verdict hold. A
         # require_approval from the T1->T2->T3 composition downgrades
         # an allow to queued human review -- fail-closed direction
