@@ -509,6 +509,65 @@ def _verify(packet, entries):
     if head != "GENESIS" and head not in hashes:
         return False, \
             "digest linkage: stated head digest not present in the chain"
+    # F196 (MATCH re-binding, close-when #1): re-derive decision_digest
+    # from the chained decision entry this packet answers. The decision
+    # entry is located by the packet's stated evidence.head_digest (the
+    # declared audit parent), never by head position, so the check
+    # survives the rebuild-once path. A GENESIS head means no audit
+    # parent exists; there is no decision entry to re-derive from (a
+    # GENESIS-head packet is visibly parentless) and this check skips.
+    if head != "GENESIS":
+        decision_entry = None
+        for e in entries:
+            if isinstance(e, dict) and e.get("hash") == head:
+                decision_entry = e
+                break
+        if decision_entry is None:
+            return False, \
+                "F196: no chained entry for evidence.head_digest; " \
+                "cannot re-derive decision_digest"
+        policy_decision = decision_entry.get("policy_decision")
+        if not isinstance(policy_decision, dict):
+            return False, \
+                "F196: chained decision entry carries no policy_decision; " \
+                "cannot re-derive decision_digest"
+        rebound = hashlib.sha256(
+            _canonical(policy_decision)).hexdigest()
+        claimed = packet["policy"]["value"].get("decision_digest")
+        if rebound != claimed:
+            return False, \
+                "F196: decision_digest does not re-derive from the " \
+                "chained decision entry (opaque pointer)"
+    # F196 (packet<->receipt pairing, close-when #2): an
+    # invocation_receipt entry answering this packet must carry the same
+    # approval_id/decision_seq, and the countersigned receipt inside must
+    # attribute the execution to the same approval_id. Absence of an
+    # answering receipt is legitimate (deny path, non-invoked allows)
+    # and skips the check; only a present-but-mismatched receipt fails
+    # closed.
+    packet_aid = packet["approval_id"]["value"]
+    packet_seq = packet["decision_seq"]["value"]
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        if e.get("event") != "invocation_receipt":
+            continue
+        if e.get("approval_id") != packet_aid:
+            continue
+        if e.get("decision_seq") != packet_seq:
+            continue
+        receipt = e.get("receipt")
+        if not isinstance(receipt, dict):
+            return False, \
+                "F196: answering invocation_receipt entry carries no receipt"
+        rpolicy = receipt.get("policy")
+        inner_aid = rpolicy.get("approval_id") \
+            if isinstance(rpolicy, dict) else None
+        if inner_aid != packet_aid:
+            return False, \
+                "F196: receipt attributes execution to approval %r, " \
+                "packet answers %r (misattribution)" % (inner_aid,
+                                                        packet_aid)
     return True, "ok"
 
 

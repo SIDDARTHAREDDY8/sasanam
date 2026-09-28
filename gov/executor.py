@@ -6627,7 +6627,7 @@ class ToolExecutor:
     def _countersign_invocation(self, *, tool, executed_args_sentinel,
                                 holder, challenge, approval_id, policy_id,
                                 canonical_target, preview_text, result,
-                                via):
+                                via, decision_seq=None):
         """Wave-175 lane 1: mint and chain a countersigned invocation receipt.
 
         Called AFTER the tool actually executed. ``executed_args_sentinel``
@@ -6636,6 +6636,11 @@ class ToolExecutor:
         failure is a loud ``invocation_receipt_failed`` event; the
         execution result stands (it cannot un-happen). Returns the chained
         log entry, or None when receipts are disabled.
+
+        ``decision_seq`` (F196) is the audit seq of the decision entry this
+        invocation answers; the receipt entry carries it so packet
+        verification can pair packet<->receipt on
+        (approval_id, decision_seq).
         """
         if self._receipt_key is None:
             return None
@@ -6680,6 +6685,10 @@ class ToolExecutor:
             "role": (holder or {}).get("role"),
             "tool": tool,
             "approval_id": approval_id,
+            # F196: the decision entry this invocation answers, so packet
+            # verification can pair packet<->receipt on
+            # (approval_id, decision_seq).
+            "decision_seq": decision_seq,
             "decision": "receipt_countersigned",
             "policy_id": "invocation-receipt-seam",
             "via": via,
@@ -9607,6 +9616,11 @@ class ToolExecutor:
                 # Decision-trace replay lane: the replayable trace for
                 # this verdict (see gov/decision_replay.py).
                 "decision_trace": _decision_trace(),
+                # F196 (MATCH re-binding): the exact policy-decision dict
+                # the decision packet's decision_digest commits to, so a
+                # verifier can re-derive the digest from this chained
+                # entry instead of trusting the packet's opaque pointer.
+                "policy_decision": decision.to_dict(),
             }))
             # Wave-176 (OpenShell steal #2): the constructive decision
             # packet for the FINAL allow verdict, chained immediately
@@ -9685,6 +9699,9 @@ class ToolExecutor:
                             "run_id": identity.run_id},
                     challenge="direct:%s" % (auth_entry.get("seq"),),
                     approval_id=None,
+                    # F196: pair this receipt with the decision packet
+                    # answering the same decision entry.
+                    decision_seq=auth_entry.get("seq"),
                     policy_id=decision.policy_id,
                     canonical_target=ctx.get("path_resolved"),
                     preview_text=None,
@@ -9847,6 +9864,9 @@ class ToolExecutor:
                 # Decision-trace replay lane: the replayable trace for
                 # this verdict (see gov/decision_replay.py).
                 "decision_trace": _decision_trace(),
+                # F196 (MATCH re-binding): the exact policy-decision dict
+                # the decision packet's decision_digest commits to.
+                "policy_decision": decision.to_dict(),
             }))
             # Wave-176 (OpenShell steal #2): the constructive decision
             # packet for the FINAL deny verdict, chained immediately
@@ -10004,6 +10024,9 @@ class ToolExecutor:
             # Decision-trace replay lane: the replayable trace for
             # this verdict (see gov/decision_replay.py).
             "decision_trace": _decision_trace(),
+            # F196 (MATCH re-binding): the exact policy-decision dict
+            # the decision packet's decision_digest commits to.
+            "policy_decision": decision.to_dict(),
         }))
         # Wave-176 (OpenShell steal #2): the constructive decision
         # packet for the FINAL queue verdict, chained immediately under

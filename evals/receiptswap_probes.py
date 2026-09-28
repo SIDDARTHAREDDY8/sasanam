@@ -20,24 +20,24 @@ twice):
      packet verification and the offline core are blind -- receipts are
      outside their scope).
   V2 whole-receipt transplant: the two receipt dicts swap entries, entry
-     envelopes (seq/prev_hash/hash) kept in place -> BREAK at the offline
-     layers: packet verification, receipt verification, and the offline
-     core (V9-equivalent pointer walk + V17-equivalent standalone receipt
-     checks) are ALL blind; only the keyed chain walk catches it.
-     Documented residual (see F196 analysis): transplant tamper-evidence
-     lives exclusively in the shared-secret HMAC layer, which the offline
-     auditor cannot check; the honest export path gates on verify_chain,
-     so a transplant cannot reach a signed bundle through it.
+     envelopes (seq/prev_hash/hash) kept in place -> HELD (F196 closure):
+     the packet verifier's packet<->receipt pairing check fails closed
+     because the transplanted receipt's inner approval_id no longer
+     matches the packet it answers; the keyed chain walk catches it too.
   V3 entry reorder (whole entries swap positions) -> HELD (seq/pointer
      walk + keyed chain).
   V4 entry drop -> HELD (seq-gap detection + keyed chain).
   V5 decision_digest pointer swap at mint time (key-holding executor or
-     minting bug: packet 1 carries decision 2's decision_digest) -> BREAK
-     (F196): NO verifier re-binds decision_digest to the chained decision
-     entry. Signatures, MACs, linkage, offline checks: all PASS.
+     minting bug: packet 1 carries decision 2's decision_digest) -> HELD
+     (F196 closure): the packet verifier re-derives decision_digest from
+     the chained decision entry named by evidence.head_digest and fails
+     closed on mismatch.
   V6 receipt misattribution at mint time (key-holding executor or minting
      bug: the receipt chained as decision 1's carries decision 2's
-     approval_id/challenge/result, with valid MACs/signatures) -> BREAK
+     approval_id/challenge/result, with valid MACs/signatures) -> HELD
+     (F196 closure): the packet verifier's pairing check fails closed
+     when the answering receipt's inner approval_id differs from the
+     packet's.
      (F196): NO verifier correlates a receipt with its decision packet;
      approval_id/challenge are unchecked strings.
 
@@ -250,8 +250,9 @@ def p_v1_field_swap():
 
 def p_v2_transplant():
     """Swap whole receipt dicts between the two receipt entries
-    (envelopes kept). Expect BREAK at offline layers: A/B/C blind;
-    only the keyed chain (D) catches it."""
+    (envelopes kept). Expect HELD (F196 closure): the packet verifier's
+    pairing check fails closed on the transplanted receipt's inner
+    approval_id; the keyed chain (D) catches it too."""
     d = _fresh_dir()
     _lp, entries = _build_trajectory(d)
     t = copy.deepcopy(entries)
@@ -264,9 +265,8 @@ def p_v2_transplant():
     offline_blind = suite["A"][0] and suite["B"][0] and suite["C"][0]
     _record("V2 whole-receipt transplant",
             "BREAK" if offline_blind else "HELD",
-            "%s -- packet+receipt+offline verifiers blind; only the "
-            "keyed chain walk catches it (documented residual: offline "
-            "path is pointer-only by design)" % _fmt(suite))
+            "%s -- F196 pairing check + keyed chain catch the transplant"
+            % _fmt(suite))
     return offline_blind
 
 
@@ -301,8 +301,9 @@ def p_v4_drop():
 
 def p_v5_digest_pointer():
     """Mint-time: packet 1 carries decision 2's decision_digest
-    (key-holding executor / minting bug). Expect BREAK (F196): no
-    verifier re-binds the digest to the chained decision entry."""
+    (key-holding executor / minting bug). Expect HELD (F196 closure):
+    the verifier re-derives decision_digest from the chained decision
+    entry and fails closed on mismatch."""
     d = _fresh_dir()
     d2_pol = {"policy_id": "pol", "decision": "allow",
               "tool": "write_file", "target": "/data/out2.txt",
@@ -312,14 +313,16 @@ def p_v5_digest_pointer():
     suite = _run_suite(entries, log_path)
     blind = all(v[0] for v in suite.values())
     _record("V5 decision_digest pointer swap", "BREAK" if blind else "HELD",
-            "%s -- F196: opaque pointer, no MATCH re-binding" % _fmt(suite))
+            "%s -- F196: decision_digest re-derived from the chained "
+            "decision entry (MATCH binding)" % _fmt(suite))
     return blind
 
 
 def p_v6_misattribution():
     """Mint-time: receipt chained as decision 1's carries decision 2's
     approval_id/challenge/result (key-holding executor / minting bug).
-    Expect BREAK (F196): no verifier correlates receipt<->packet."""
+    Expect HELD (F196 closure): the verifier's packet<->receipt pairing
+    check fails closed on the inner/outer approval_id mismatch."""
     d = _fresh_dir()
     log_path, entries = _build_trajectory(
         d, r1_attribution_override={"approval_id": "A2",
@@ -328,8 +331,8 @@ def p_v6_misattribution():
     suite = _run_suite(entries, log_path)
     blind = all(v[0] for v in suite.values())
     _record("V6 receipt misattribution", "BREAK" if blind else "HELD",
-            "%s -- F196: approval_id/challenge unchecked strings"
-            % _fmt(suite))
+            "%s -- F196: packet<->receipt pairing on "
+            "(approval_id, decision_seq)" % _fmt(suite))
     return blind
 
 

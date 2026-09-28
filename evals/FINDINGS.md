@@ -6083,7 +6083,7 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F196: decision-packet digest references are opaque pointers; no verified packet↔receipt correspondence (LOW)
 
-**Status: OPEN.**
+**Status: CLOSED 2026-09-28 (wave-179 fast-follow F196 closure), red-first verified at the public seams — see Closure below.**
 
 **Claim broken.** Decision packets "compose approvals, receipts, and audit by digest" (`gov/decision_packet.py`). Two composition edges are opaque pointers that no verifier re-binds — the in-toto MATCH semantics the wave-178 prospectus proposed are absent:
 
@@ -6104,7 +6104,14 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 2. A pairing check (in packet verification with entries, or a trajectory-level verifier) confirms the `invocation_receipt` entry answering a `decision_packet` entry carries the same `approval_id`/`decision_seq`, failing closed on mismatch; ideally the receipt entry records the `packet_digest` it answers so the binding is cryptographic rather than positional.
 3. Red-first: V5/V6 probes go BREAK→HELD; V1–V4 stay HELD; V2's offline-blindness is addressed or explicitly re-documented.
 
-**Honest residual:** transplant tamper-evidence lives exclusively in the shared-secret HMAC layer: the offline verifier (no key) checks `prev_hash` *pointers*, not entry MACs, so a content swap preserving pointers is invisible to it by design. The honest export path gates on the keyed walk, which is the actual defense. Also pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F196 is about the *correspondence* of recorded values, which was previously unexamined.
+**Honest residual (at filing):** transplant tamper-evidence lives exclusively in the shared-secret HMAC layer: the offline verifier (no key) checks `prev_hash` *pointers*, not entry MACs, so a content swap preserving pointers is invisible to it by design. The honest export path gates on the keyed walk, which is the actual defense. Also pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F196 is about the *correspondence* of recorded values, which was previously unexamined.
+
+**Closure (wave-179 F196 lane, 2026-09-28):**
+1. `gov/decision_packet.py::_verify` now re-derives `decision_digest`: it locates the chained decision entry by exact `hash == evidence.head_digest` (never by position), requires the entry to carry `policy_decision` (the exact dict the executor hashed — newly recorded on all three decision entries: `execution_authorized`, `denied`, `queued_pending`), recomputes `sha256(_canonical(policy_decision))`, and fails closed on absence or mismatch. GENESIS-head packets skip this check (no audit parent exists; such a packet is visibly parentless) — the pre-existing `test_round_trip_with_linkage` pin requires it.
+2. `_verify` now pairs packet↔receipt: for each `invocation_receipt` entry carrying the packet's `(approval_id, decision_seq)`, it requires the entry to carry a receipt and the receipt's inner `policy.approval_id` to equal the packet's `approval_id`, failing closed on mismatch. Absence of an answering receipt (deny path, non-invoked allows) skips the check; only a present-but-mismatched receipt fails. The executor now records `decision_seq` on direct-path receipt entries (approved-sweep receipts leave it unset — known gap, documented below).
+3. Red-first at the public seams (`evals/receiptswap_probes.py`, pristine red run vs fixed run, fresh `/var/tmp` TMPDIRs): pristine = **3 BREAK (V2/V5/V6) / 4 HELD / 0 errors**; fixed = **0 BREAK / 7 HELD / 0 errors** — V5 HELD via re-derivation (A=FAIL), V6 HELD via pairing (A=FAIL), V2 HELD via pairing (A=FAIL) plus the keyed chain, V0/V1/V3/V4 unchanged. The battery's green check (`evals/decision_packet_probes.py`, real-executor allow/deny/queue with `verify_decision_packet(packet, entries)`) passes, confirming the new `policy_decision`/`decision_seq` fields keep real chains verifiable.
+
+**Honest residual (post-closure):** (a) transplant tamper-evidence still lives exclusively in the shared-secret HMAC layer for the offline verifier — F196's pairing closes the misattribution class at the packet layer (A), but a content swap preserving pointers remains invisible to the keyless offline slice by design; the honest export path gates on the keyed walk. (b) The close-when's "ideally" (receipt entry records the `packet_digest` it answers) is NOT implemented — the binding is positional + attribution-checked, not cryptographic; future hardening. (c) Approved-sweep receipts do not yet carry `decision_seq` (no natural decision seq in scope at the sweep call site), so the pairing check skips them; they still carry `approval_id`. (d) Pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F196 closed the *correspondence* of recorded values.
 
 **Found by:** wave-179 lane B (receipt-swap probe), 2026-09-28, break-first pressure against the wave-178 tree (`fed2c44`).
 
@@ -6129,4 +6136,4 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 ---
 
 
-Next free finding: **F198**. **Open findings: F196.** (F197 filed and closed 2026-09-28, wave-179 lane E.)
+Next free finding: **F198**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E.)
