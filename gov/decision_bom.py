@@ -105,9 +105,13 @@ def build_bom(*, policy_id, policy_version, policy_digest,
         raise BomError("evidence_head_digest must be a non-empty string")
     if not isinstance(principal, dict):
         raise BomError("principal must be a dict")
+    # F201: the mapping guard must run BEFORE the dict() conversion --
+    # dict(["x"]) raises bare ValueError and dict(5) raises bare
+    # TypeError, which would escape as undocumented builtins instead of
+    # the documented BomError.
+    if pin_digests is not None and not isinstance(pin_digests, dict):
+        raise BomError("pin_digests must be a dict or None")
     pins = dict(pin_digests) if pin_digests is not None else {}
-    if not isinstance(pins, dict):
-        raise BomError("pin_digests must be a dict")
     for skill_id, digest in pins.items():
         if not isinstance(skill_id, str) or not skill_id:
             raise BomError("pin skill_id must be a non-empty string")

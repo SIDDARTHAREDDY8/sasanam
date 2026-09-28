@@ -108,6 +108,20 @@ class BuildBomTest(unittest.TestCase):
         with self.assertRaises(decision_bom.BomError):
             _bom(pin_digests={"skill:x": "not-hex"})
 
+    def test_build_bom_rejects_non_dict_pin_digests_with_bomerror(self):
+        # F201: dict(pin_digests) used to run before the isinstance
+        # guard, so ["x"]/"ab" raised bare ValueError and 5 raised bare
+        # TypeError. The documented contract is BomError for every
+        # malformed input -- a bare builtin must never escape.
+        for bad in (["x"], "ab", 5):
+            with self.assertRaises(decision_bom.BomError,
+                                   msg="pin_digests=%r" % (bad,)):
+                _bom(pin_digests=bad)
+        # None and a real dict still behave as before.
+        self.assertEqual(_bom(pin_digests=None)["inputs"]["pins"], {})
+        bom = _bom(pin_digests={"skill:x": "ef" * 32})
+        self.assertEqual(bom["inputs"]["pins"], {"skill:x": "ef" * 32})
+
     def test_build_bom_rejects_empty_policy_version(self):
         with self.assertRaises(decision_bom.BomError):
             _bom(policy_version="")

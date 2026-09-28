@@ -6196,7 +6196,9 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F201: build_bom raises bare ValueError/TypeError (not BomError) for non-dict pin_digests (LOW)
 
-**Status: OPEN (2026-09-28, wave-181 BOM red-team).**
+**Status: CLOSED (2026-09-28, wave-182 F201 closure lane).**
+
+**Closure (red-first, at the public seams).** On pristine `786101a`, probe P6e BREAKs exactly as filed: `pin_digests` of `["x"]`/`"ab"`/`5` raise bare `ValueError`/`ValueError`/`TypeError` (full battery: 2 BREAK / 26 HELD / 4 HELD* / 0 errors). Fix: `build_bom` now validates `isinstance(pin_digests, dict)` BEFORE the `dict(...)` conversion, with an F201 comment naming the trap (`gov/decision_bom.py`); the sibling audit found no other `dict(...)`-before-guard conversions in the module. Post-fix: P6e BREAK→HELD; full battery 1 BREAK (P5b = F200, still OPEN) / 27 HELD / 4 HELD* / 0 errors; `tests/test_decision_bom.py` 26/26 and `tests/test_decision_packet.py` 32/32 green; a new regression test pins all three shapes to `BomError`. Nothing else in the module's behavior changed: `None` still yields empty pins, real dicts still copy through.
 
 **Claim broken.** `build_bom`'s docstring: "Every required input is validated LOUD ... raises BomError." But `pins = dict(pin_digests)` executes BEFORE the `isinstance(pins, dict)` guard, so:
 - `pin_digests=["x"]` → `dict(["x"])` raises bare `ValueError: dictionary update sequence element #0 has length 1; 2 is required`
@@ -6215,4 +6217,4 @@ The documented `BomError("pin_digests must be a dict")` is unreachable for these
 
 ---
 
-Next free finding: **F202**. **Open findings: F201.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182.)
+Next free finding: **F202**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182.)
