@@ -284,6 +284,14 @@ class ApprovalWebApp:
         # principal, never as a form-supplied name.
         self.sessions = {}
         self._sessions_lock = threading.Lock()
+        # Wave-173: server-side review-open registry. When the decision
+        # detail page is rendered (GET /approvals/<id>), the server
+        # records time.time() here; the decide POST pops it and passes
+        # it as review_opened_at. Ephemeral and in-memory: a server
+        # restart between render and decide loses the stamp and the
+        # decision lands as unobserved (explicit nulls), never as a
+        # client-supplied timestamp. Guarded by _sessions_lock.
+        self._review_opened_at = {}
 
     # -- auth ---------------------------------------------------------
     def check_token(self, presented):
@@ -839,6 +847,18 @@ def _packet_panel(record):
         ("canonical target (bound)",
          "<code>%s</code>"
          % _esc(pkt.get("canonical_target") or "(n/a — no path arg)")),
+        # Wave-173 lane 1 (TMA-NM act-time gate): the queue-time
+        # memory-provenance disclosure — the run's un-elevated memory
+        # reads the action may depend on. The approver's grant with
+        # this disclosure is the informed authorization the sweep
+        # enforces.
+        ("memory provenance (un-elevated reads)",
+         _esc("; ".join(
+             "%s (%s)" % (d.get("mem_key"), d.get("detail"))
+             for d in (pkt.get("memory_provenance") or [])
+             if isinstance(d, dict))
+             or "(none disclosed — no un-elevated reads at queue "
+                "time)")),
         ("risk", "<strong class='risk-%s'>%s (%s)</strong>" % (
             _esc(pkt.get("risk_tier")), _esc(pkt.get("risk_score")),
             _esc(pkt.get("risk_tier")))),
@@ -1451,6 +1471,12 @@ def _make_handler(app):
                                           "<p>unknown approval id</p>",
                                           csrf=csrf))
                     return
+                # Wave-173: the decision detail page is the review
+                # instrument -- stamp the server-observed review-open
+                # time. The decide POST pops this stamp; only the
+                # server's clock is ever trusted, never a client field.
+                with app._sessions_lock:
+                    app._review_opened_at[aid] = time.time()
                 self._send(200, render_detail(app, record, sess["csrf"]))
                 return
             self._send(404, _page("Not found", "<p>unknown path</p>",
@@ -1801,12 +1827,20 @@ def _make_handler(app):
             #    decided_by label is the distinct web label so web
             #    decisions are forensically distinguishable from CLI
             #    decisions in the audit log and record digest.
+            #    Wave-173: the review-open stamp comes from the
+            #    server-side render registry (step 4's principle: never
+            #    a client field). A missing stamp (server restarted
+            #    between render and decide) lands as unobserved nulls.
+            with app._sessions_lock:
+                _review_opened_at = app._review_opened_at.pop(
+                    approval_id, None)
             try:
                 with app.queue.locked(
                         timeout=_QUEUE_LOCK_TIMEOUT_SECS):
                     _record, entry = app.queue.decide(
                         approval_id, decision == "approve", reason,
-                        decided_by=WEB_DECIDED_BY)
+                        decided_by=WEB_DECIDED_BY,
+                        review_opened_at=_review_opened_at)
             except QueueLockError as e:
                 app.audit("web_decision_refused", approval_id=approval_id,
                           reason="queue lock unavailable/corrupt: %s" % e)

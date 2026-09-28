@@ -983,7 +983,15 @@ class ToolExecutor:
                  # only. Appended LAST so no existing positional caller
                  # can misalign. Opt-in: zero behavior change when no
                  # manifest is attached.
-                 declared_write_dirs=None):
+                 declared_write_dirs=None,
+                 # Memory act-time gate (wave-173 lane 1, TMA-NM):
+                 # gov.memory_actgate.ActGate, constructed by the
+                 # deployment in the operator trust domain (it owns the
+                 # corroboration log path and the trusted-principal
+                 # set). Appended LAST so no existing positional caller
+                 # can misalign. Opt-in: None (default) = pre-wave-173
+                 # behavior, zero behavior change.
+                 memory_actgate=None):
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -1113,6 +1121,15 @@ class ToolExecutor:
         # ledger path); the executor only routes events through it.
         self._memory_firewall = memory_firewall
         self._mem_scanned_principals = set()
+        # Wave-173 lane 1 (TMA-NM act-time gate): the deployment's
+        # corroboration-gated memory elevation gate. Opt-in: None =
+        # pre-wave-173 behavior, zero behavior change. When attached,
+        # governed memory reads are provenance-classified per run
+        # (see _memory_firewall_hook), the queue-time snapshot discloses
+        # un-elevated reads on the approval record, and the approved
+        # sweep refuses executions whose un-elevated reads were never
+        # disclosed to the approver.
+        self._memory_actgate = memory_actgate
         # Wave-90 (S6, F137 — infection lineage): the lineage substrate
         # (gov.lineage.LineageTracker), constructed by the deployment in
         # the operator trust domain and shared across a spawn lineage by
@@ -4587,6 +4604,17 @@ class ToolExecutor:
 
     # -- S1-MEM: memory provenance firewall hooks (opt-in) ---------------
 
+    def _actgate_disclosure(self):
+        """Wave-173 lane 1 (TMA-NM act-time gate): the queue-time
+        disclosure snapshot -- the run's current un-elevated memory
+        reads, JSON-safe. None when the gate is not attached (zero
+        behavior change); the empty list when attached but the run has
+        no un-elevated reads."""
+        ag = self._memory_actgate
+        if ag is None:
+            return None
+        return ag.summarize(self.run_id)
+
     def _memory_session_scan(self, principal):
         """S1-MEM: once per (executor, principal), scan the memory ledger
         for untrusted, instruction-shaped entries recorded by earlier
@@ -4704,6 +4732,36 @@ class ToolExecutor:
                 raise MemoryQuarantineError(
                     "memory read quarantined: %s (%s)"
                     % (mem_key, reason))
+            # Wave-173 lane 1 (TMA-NM act-time gate): provenance-classify
+            # every allowed governed read while the gate is attached, so
+            # the run's un-elevated reads are known at queue time (the
+            # disclosure) and at the approved sweep (the enforcement).
+            # Uses the RAW content: the banner below is prepended to
+            # result["content"] but the ledger digest binds the raw
+            # bytes, and classification must bind the same bytes. A
+            # tampered provenance ledger classifies un_elevated
+            # (fail-closed toward the gate firing); the tamper itself
+            # is chained LOUD here.
+            if self._memory_actgate is not None:
+                _ag_detail = self._memory_actgate.note_read(
+                    self.run_id, principal, mem_key, content)[1]
+                if _ag_detail == "provenance_unverifiable":
+                    self.log.append({
+                        "event": "memory_actgate_unverifiable",
+                        "run_id": self.run_id,
+                        "agent_id": agent_id,
+                        "role": role,
+                        "principal": principal,
+                        "tool": tool,
+                        "mem_key": mem_key,
+                        "decision": "executed",
+                        "policy_id": "memory-actgate",
+                        "flag": "memory_actgate_unverifiable",
+                        "reason": ("Memory provenance ledger unverifiable "
+                                   "while classifying %s: treating the "
+                                   "read as un-elevated (fail-closed)."
+                                   % mem_key),
+                    })
             # F143-hardening (wave-131, p3 factual-poison layer): allowed
             # reads of untrusted/unknown-tier bytes are delivered WITH
             # their provenance, never silently. The banner names the tier
@@ -8602,6 +8660,14 @@ class ToolExecutor:
             # when the tool takes no path arg — the engine then matches
             # declared-only, the pre-F146 behavior).
             "path_resolved": ctx.get("path_resolved"),
+            # Wave-173 lane 1 (TMA-NM act-time gate): the run's
+            # un-elevated memory reads at queue time ride the snapshot
+            # so the human's decision record names the memory provenance
+            # the action may depend on (MAC-bound via policy_context,
+            # WYSINWYS-rendered in the packet). None when the gate is
+            # not attached -- the sweep treats a missing disclosure as
+            # "nothing disclosed" (fail-closed).
+            "memory_provenance": self._actgate_disclosure(),
             "counters": dict(ctx.get("counters") or {}),
         }
         # Decision-trace replay lane: capture the full typed Decision
@@ -10381,6 +10447,29 @@ class ToolExecutor:
                             % (aid, _f190_bound, _f190_sweep),
                             "canonical_target_mismatch",
                             policy_id="canonical-target-execution-refused")
+                    continue
+            # Wave-173 lane 1 (TMA-NM M1 act-time gate): memory-provenance
+            # continuity. The human granted this approval under a
+            # queue-time disclosure of the run's un-elevated memory reads
+            # (policy_context.memory_provenance, MAC-bound and packet-
+            # rendered). A run that read un-elevated memory AFTER the
+            # disclosure -- during the human-pending window -- would
+            # execute on provenance the approver never saw. Refuse
+            # fail-closed; re-approval required under the current memory
+            # state. A disclosed-then-granted read is informed human
+            # authorization and proceeds. Records without a
+            # policy_context (executor-internal synthetic approvals,
+            # never agent-driven tool calls) carry no disclosure surface
+            # and skip this check. Inert when the gate is not attached
+            # (zero behavior change).
+            if self._memory_actgate is not None:
+                _ag_ok, _ag_reason = self._memory_actgate.check_execution(
+                    self.run_id, rec)
+                if not _ag_ok:
+                    _refuse("Approval %s refused: %s"
+                            % (aid, _ag_reason),
+                            "memory_actgate_un_elevated",
+                            policy_id="memory-actgate-execution-refused")
                     continue
             # Row-7 (wave-131, revoke-after-approve): intent re-validation
             # at the execution boundary (TOCTOU guard). The human granted

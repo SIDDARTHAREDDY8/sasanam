@@ -405,7 +405,7 @@ MECHANISMS = [
         "description": (
             "Human-in-the-loop approval queue (gov/approvals.py): every "
             "approval produces a MAC-bound record with the machine-generated "
-            "decision packet (canonical_packet, packet_version 3), the "
+            "decision packet (canonical_packet, packet_version 4), the "
             "human's identity (decided_by), reason, risk tier, blast radius, "
             "and policy citations. The queue-time canonical target "
             "(policy_context.path_resolved) rides the MAC-bound snapshot. "
@@ -417,9 +417,14 @@ MECHANISMS = [
             "differs from the bound value. Demonstrated by "
             "evals/f190_target_binding_battery.py: p1/p4 TOCTOU probes "
             "FIXED (refused, nothing executed), p2/p3 controls HELD. "
-            "Fail-closed upgrade note: pre-upgrade queued records "
-            "(packet_version 2) fail decide() packet re-verification — "
-            "drain or decide queued items before upgrading."
+            "Fail-closed upgrade note (wave-171, F190): pre-upgrade "
+            "queued records (packet_version 2) failed decide() packet "
+            "re-verification. Wave-173 note: packet_version is now 4 "
+            "(TMA-NM act-time gate disclosure) and the decision record "
+            "MAC-binds the review-timing triple (gov/ceremony_integrity.py) "
+            "— pre-upgrade queued records (packet_version 3, no timing "
+            "triple) fail re-verification fail-closed. Drain or decide "
+            "queued items before upgrading."
         ),
         "implementation": ["gov/approvals.py", "gov/approval_web.py",
                            "gov/approver_shield.py"],

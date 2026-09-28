@@ -351,6 +351,16 @@ _SECURITY_PAYLOAD_FIELDS = (
     # automatically after the upgrade - queued items must be decided
     # or drained before upgrading.
     "delegation_receipt",
+    # Wave-173 (ceremony timing): the review-timing triple is
+    # integrity-bound at decision time. A doctored latency (or opened/
+    # resolved timestamps rewritten after the fact) breaks the MAC --
+    # tampered timing fails approval_digest_ok() and the F38 pending
+    # check fail-closed, never silently re-MACed. FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/F101/F103/H3): records queued
+    # or decided BEFORE this change do not carry these fields, so
+    # their digests fail verification automatically after the upgrade
+    # -- queued items must be decided or drained before upgrading.
+    "review_opened_at", "review_resolved_at", "review_latency_ms",
 )
 
 
@@ -1219,7 +1229,14 @@ def canonical_packet(record):
         # decide()'s packet re-verification fail-closed — drain or
         # decide queued items before upgrading (the F34/F38/R11/D1
         # fail-closed-upgrade precedent).
-        "packet_version": 3,
+        # Wave-173 lane 1 (TMA-NM act-time gate): packet_version 3 -> 4
+        # — the memory-provenance disclosure below is part of what the
+        # human saw (the un-elevated reads the action may depend on),
+        # so it joins the WYSINWYS digest. Pre-upgrade records
+        # (version-3 packets) fail decide()'s packet re-verification
+        # fail-closed — drain or decide queued items before upgrading
+        # (same precedent as F190).
+        "packet_version": 4,
         "action": record.get("tool"),
         "target": _packet_target(record.get("tool"), record.get("args")),
         # F190: the bound canonical target the receipt MAC-binds
@@ -1233,6 +1250,14 @@ def canonical_packet(record):
         # digest covers it.
         "canonical_target": (record.get("policy_context") or {}).get(
             "path_resolved"),
+        # Wave-173 lane 1: the queue-time memory-provenance disclosure
+        # (policy_context.memory_provenance) — the run's un-elevated
+        # memory reads the approver was shown. Pure function of the
+        # MAC-bound record, so the packet digest covers it; a UI that
+        # hid it from the human breaks the WYSINWYS digest at decide().
+        "memory_provenance": (
+            (record.get("policy_context") or {}).get("memory_provenance")
+            or []),
         "risk_tier": risk_level(score),
         "risk_score": score,
         "risk_factors": list(record.get("packet_risk_factors") or []),
@@ -3696,7 +3721,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
 
     def decide(self, approval_id, approved, reason,
                decided_by="human-operator", shield_ack=None,
-               challenge_answers=None, typed_scope=None):
+               challenge_answers=None, typed_scope=None,
+               review_opened_at=None):
+        # Wave-173: ``review_opened_at`` is epoch seconds observed by the
+        # decision instrument (web UI render time, CLI render time), or
+        # None when the instrument could not observe review start. The
+        # triple is stamped below via ceremony_integrity so every path
+        # -- human or not -- carries explicit timing or explicit nulls;
+        # non-human paths never impersonate human review time.
         """Record a human decision and log it. Returns (record, log_entry).
 
         Rejected decision *attempts* (unknown id, self-approval, or a
@@ -4195,6 +4227,17 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
         target["decision_reason"] = reason
+        # Wave-173: stamp the review-timing triple BEFORE the re-MAC so
+        # the MAC binds it (see _SECURITY_PAYLOAD_FIELDS). Unusable
+        # instrument input fails safe to explicit nulls -- unobserved,
+        # never impersonated. Non-human paths (auto-approve,
+        # break-glass, batch votes) pass no review_opened_at and land
+        # here as explicit nulls.
+        (_ro, _rr, _rl) = _ceremony_integrity.stamp_review_timing(
+            review_opened_at)
+        target["review_opened_at"] = _ro
+        target["review_resolved_at"] = _rr
+        target["review_latency_ms"] = _rl
         # D1-core T11: a decision recorded after the bridge wait expired
         # is labeled audit-only HERE and bound into the re-MAC below.
         # It can never execute (T12 sweep refusal keys off
@@ -4243,6 +4286,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "approval_id": target["id"],
             "reason": reason,
             "decided_by": decided_by,
+            # Wave-173: the observed review timing rides the decision
+            # audit entry (None on unobserved paths -- the audit trail
+            # says what the instrument saw, never an impersonation).
+            "review_opened_at": target.get("review_opened_at"),
+            "review_resolved_at": target.get("review_resolved_at"),
+            "review_latency_ms": target.get("review_latency_ms"),
             "related_agent": target["agent_id"],
             # S3 shield (wave-89): "what the human saw" rides the
             # decision record — the packet digest binds the displayed
@@ -6832,6 +6881,11 @@ def main(argv=None):
     # the decision is recorded — the decision is on the content below,
     # exactly as digested (a marker past the old 400-char cut is visible
     # in the full view).
+    # Wave-173: the CLI review instrument starts here -- the operator's
+    # review begins when the decision target is rendered. Captured
+    # before any prompt so the measured latency covers the human's
+    # actual review, not just the keystroke.
+    review_t0 = time.time()
     target = _find_record_by_id(queue, args.id)
     if target is not None:
         print("decision target:")
@@ -6867,7 +6921,8 @@ def main(argv=None):
         record, entry = queue.decide(args.id, args.cmd == "approve",
                                      args.reason, decided_by=args.by,
                                      shield_ack=shield_ack,
-                                     challenge_answers=challenge_answers)
+                                     challenge_answers=challenge_answers,
+                                     review_opened_at=review_t0)
     except ValueError as e:
         print("error: %s" % e, file=sys.stderr)
         return 1

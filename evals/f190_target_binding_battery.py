@@ -339,8 +339,13 @@ def p5_mechanism_binding_inventory():
     tamper_breaks = (approval_digest_ok(rec)
                      and not approval_digest_ok(tampered))
     packet = canonical_packet(rec)
+    # Wave-173 lane 1: packet_version 3 -> 4 (the memory-provenance
+    # disclosure joins the WYSINWYS packet). The version assertion
+    # tracks the current packet -- the F190 binding property itself
+    # (canonical_target rendered from the MAC-bound record) is
+    # unchanged.
     pkt_shows_bound = (packet.get("canonical_target") == r1
-                       and packet.get("packet_version") == 3)
+                       and packet.get("packet_version") == 4)
     detail = ("path_resolved in MAC-bound snapshot=%s (value=%r); "
               "policy_context in _SECURITY_PAYLOAD_FIELDS=%s; "
               "tampering the copy's path_resolved breaks the MAC=%s; "

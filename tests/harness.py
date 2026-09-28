@@ -306,7 +306,8 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
              break_glass_tickets=(), session_identity=None,
              credential_manifest=None, precommit_gate=None,
              trifecta_floor=False, memory_firewall=None,
-             lineage_tracker=None, erosion_monitor=None):
+             lineage_tracker=None, erosion_monitor=None,
+             memory_actgate=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -394,6 +395,11 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             memory_firewall=memory_firewall,
                             lineage_tracker=lineage_tracker,
                             erosion_monitor=erosion_monitor,
+                            # Wave-173 lane 1 (TMA-NM act-time gate): the
+                            # deployment's ActGate. Default None =
+                            # pre-wave-173 behavior, zero behavior
+                            # change.
+                            memory_actgate=memory_actgate,
                             # Wave-85: the harness deliberately exercises
                             # the raw (pre-wave-74/75) pipeline — no
                             # policy_store, no delegation_context — so
