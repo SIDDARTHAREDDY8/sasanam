@@ -6172,4 +6172,45 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F200**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane.)
+## F200: tampered BOM approval record_digest survives every verify seam — verify_bom has no approval-re-derivation leg (LOW)
+
+**Status: OPEN (2026-09-28, wave-181 BOM red-team).**
+
+**Claim broken.** The Decision BOM (`gov/decision_bom.py`) binds approval provenance as `inputs.approval.{approval_id, record_digest}` and advertises: "An auditor re-derives the digests ON DEMAND (verify_bom) from the actual artifacts ... with teeth: a swapped or missing input digest fails closed." For the policy leg (`policy_bundle_bytes`) and the pins leg (`pin_digests`) that is true (probes P1e, P4e). For the approval leg it is not: `verify_bom` accepts NO approval-record input, and no other verifier (`verify_decision_packet`, `check_bom_shape`, the offline evidence-bundle verifier) re-derives `record_digest` against the approval record store. A key-holding producer (F196's own threat model) can mint a well-formed BOM carrying a valid-hex but WRONG `record_digest` for a real approval, and it passes every seam: `build_bom` (shape-valid), `check_bom_shape`, `verify_decision_packet` (`True`), `verify_bom` (`True, "ok (shape + re-derived: policy,pins)"` — the approval leg is simply never compared). The approval id's PRESENCE is enforced at build (`BomError`, probe P5a), but its record digest's CORRECTNESS is attestation-only everywhere.
+
+**Demonstration (BREAK, probe P5b in `evals/w181_bom_redteam_probes.py`; deterministic x2, 0 errors).** Honest fixtures; BOM built with `approval_record_digest="00"*32` (valid hex, not the fixture record's digest); packet signed with the probe key. `verify_decision_packet` returns `(True, "ok (structure+signature; chain linkage not checked)")`; `verify_bom(bom, policy_bundle_bytes=..., pin_digests={})` returns `(True, "ok (shape + re-derived: policy,pins)")`. Run: `TMPDIR=/var/tmp/... GOV_SKIP_GREEN=1 python evals/w181_bom_redteam_probes.py` → `P5b BREAK`.
+
+**Severity rationale: LOW.** Requires a key-holding/buggy producer — a keyless attacker cannot touch the signature-covered BOM. The executor's honest path resolves the record digest itself (`_emit_decision_packet` raises `BomError` when the record cannot be resolved), so this bites only a compromised or buggy producer minting a packet that attributes the decision to the wrong approval record — undetectable by any auditor using the BOM API. No execution bypass: the packet never grants authority and the approval's own HMAC'd record is untouched.
+
+**Close-when:**
+1. `verify_bom` accepts an optional approval-record input (e.g. `approval_records={approval_id: record}` or `{approval_id: record_digest}`) and, when supplied, re-derives `inputs.approval.record_digest` against it, failing closed on mismatch — the MATCH rule for the BOM→approval edge, symmetric with the policy and pins legs. When not supplied, the approval leg is reported as UNVERIFIED in the reason (as policy/pins already are via "no artifacts supplied").
+2. Red-first: probe P5b goes BREAK→HELD (tampered record_digest fails `verify_bom` with records supplied); P5a/P5c stay HELD.
+
+**Honest residual (at filing):** even with the close-when, a producer that lies in `approval_id` itself (naming an approval the decision never answered) is caught only by the packet↔approval correspondence the caller establishes out-of-band — the BOM attests, it does not independently know which approval a decision answered. Also pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F200 is about the *re-derivability* of a recorded digest, which the module's own docstring promises.
+
+**Found by:** wave-181 BOM red-team lane, 2026-09-28, break-first pressure against `94c8f84`.
+
+---
+
+## F201: build_bom raises bare ValueError/TypeError (not BomError) for non-dict pin_digests (LOW)
+
+**Status: OPEN (2026-09-28, wave-181 BOM red-team).**
+
+**Claim broken.** `build_bom`'s docstring: "Every required input is validated LOUD ... raises BomError." But `pins = dict(pin_digests)` executes BEFORE the `isinstance(pins, dict)` guard, so:
+- `pin_digests=["x"]` → `dict(["x"])` raises bare `ValueError: dictionary update sequence element #0 has length 1; 2 is required`
+- `pin_digests="ab"` → bare `ValueError`
+- `pin_digests=5` → bare `TypeError: 'int' object is not iterable`
+
+The documented `BomError("pin_digests must be a dict")` is unreachable for these shapes. F198-shaped: the same class of error-type contract deviation was filed and fixed for non-mapping policy rules.
+
+**Demonstration (BREAK, probe P6e in `evals/w181_bom_redteam_probes.py`; deterministic x2, 0 errors).** `build_bom(..., pin_digests=X)` for X in `(["x"], "ab", 5)` → ValueError/ValueError/TypeError, never BomError. Run: `TMPDIR=/var/tmp/... GOV_SKIP_GREEN=1 python evals/w181_bom_redteam_probes.py` → `P6e BREAK`.
+
+**Severity rationale: LOW.** Fail-closed in every shape — the BOM is never built, so no weaker claim is ever recorded. The defect is contract quality: a caller catching `BomError` to convert build failures into their own fail-closed handling would miss these, and the module's own docstring promise is false for these inputs.
+
+**Close-when:** `build_bom` validates `isinstance(pin_digests, dict)` BEFORE the `dict(...)` conversion (or wraps the conversion), so every malformed `pin_digests` raises `BomError`. Red-first: probe P6e goes BREAK→HELD; P6b stays HELD.
+
+**Found by:** wave-181 BOM red-team lane, 2026-09-28, against `94c8f84`.
+
+---
+
+Next free finding: **F202**. **Open findings: F200, F201.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane.)
