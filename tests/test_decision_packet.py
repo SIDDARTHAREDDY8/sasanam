@@ -17,15 +17,36 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 from gov import decision_packet as dp  # noqa: E402
 from gov import authority_proof as ap  # noqa: E402
+from gov import decision_bom as bom_mod  # noqa: E402
 
 SEED = bytes.fromhex("11" * 32)
 
 
+def _minimal_bom(**over):
+    kw = dict(policy_id="default", policy_version="unversioned",
+              policy_digest="ab" * 32,
+              evidence_head_digest="GENESIS",
+              principal={"agent_id": None, "role": None,
+                         "principal": None, "run_id": None})
+    kw.update(over)
+    return bom_mod.build_bom(**kw)
+
+
 def _minimal_kwargs(**over):
+    # Wave-180: the BOM is mandatory and the verifier cross-checks it
+    # against the packet's own sections, so the fixture BOM is derived
+    # from the same kwargs (overrides to evidence_head_digest /
+    # policy_id / policy_version flow into both).
     kw = dict(decision="allow", boundary_declared=False,
               authority_proof=None, evidence_head_digest="GENESIS",
+              policy_id="default", policy_version="unversioned",
               issued_at="2026-09-28T00:00:00+00:00")
     kw.update(over)
+    if "bill_of_materials" not in over:
+        kw["bill_of_materials"] = _minimal_bom(
+            policy_id=kw["policy_id"],
+            policy_version=kw["policy_version"],
+            evidence_head_digest=kw["evidence_head_digest"])
     return kw
 
 

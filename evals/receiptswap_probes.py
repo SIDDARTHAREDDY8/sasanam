@@ -78,6 +78,7 @@ os.environ["GOV_RECEIPT_KEY"] = "cd" * 32
 
 from gov import log as _log
 from gov import decision_packet as _dp
+from gov import decision_bom as _bommod
 from gov import invocation_receipts as _rc
 
 _records = []
@@ -85,6 +86,25 @@ _records = []
 
 def _record(name, outcome, detail):
     _records.append((name, outcome, detail))
+
+
+def _bom_for(*, head_digest, approval_id):
+    """Decision BOM consistent with this battery's packets (wave-180:
+    the packet builder requires it). The approval record digest is a
+    deterministic fixture -- this battery tests packet<->receipt
+    attribution, not approval HMAC validity."""
+    record_digest = None
+    if approval_id is not None:
+        record_digest = hashlib.sha256(
+            ("approval-record:%s" % approval_id).encode()).hexdigest()
+    return _bommod.build_bom(
+        policy_id="pol", policy_version="1",
+        policy_digest="ab" * 32,
+        evidence_head_digest=head_digest,
+        principal={"agent_id": "ag", "role": "coder",
+                   "principal": "p", "run_id": "run1"},
+        approval_id=approval_id,
+        approval_record_digest=record_digest)
 
 
 def _sha(b: bytes) -> str:
@@ -127,7 +147,10 @@ def _build_trajectory(run_dir, *, p1_digest_override=None,
             approval_id=aid, decision_seq=i,
             evidence_head_digest=e_dec["hash"],
             identity={"agent_id": "ag", "role": "coder",
-                      "principal": "p", "run_id": "run1"})
+                      "principal": "p", "run_id": "run1"},
+            policy_bundle_digest="ab" * 32,
+            bill_of_materials=_bom_for(head_digest=e_dec["hash"],
+                                       approval_id=aid))
         packet = _dp.sign_packet(body, bytes.fromhex("ab" * 32))
         alog.append({"event": "decision_packet",
                      "approval_id": aid,

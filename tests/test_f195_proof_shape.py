@@ -15,6 +15,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import authority_proof as ap  # noqa: E402
 from gov import decision_packet as dp  # noqa: E402
+from gov import decision_bom as bom_mod  # noqa: E402
 
 SEED = bytes.fromhex("11" * 32)
 
@@ -46,8 +47,21 @@ def _genuine_unsupported_proof_dict():
 def _build(**over):
     kw = dict(decision="deny", boundary_declared=True,
               evidence_head_digest="GENESIS",
+              policy_id="default", policy_version="unversioned",
               issued_at="2026-09-28T00:00:00+00:00")
     kw.update(over)
+    # Wave-180: the packet builder requires a Decision BOM, kept
+    # consistent with the packet kwargs so the F195 shape tests keep
+    # testing proof shapes, not BOM wiring.
+    if "bill_of_materials" not in over:
+        kw["bill_of_materials"] = bom_mod.build_bom(
+            policy_id="default", policy_version="unversioned",
+            policy_digest="ab" * 32,
+            evidence_head_digest=kw["evidence_head_digest"],
+            principal={"agent_id": None, "role": None,
+                       "principal": None, "run_id": None})
+    if "policy_bundle_digest" not in over:
+        kw["policy_bundle_digest"] = "ab" * 32
     return dp.build_decision_packet(**kw)
 
 

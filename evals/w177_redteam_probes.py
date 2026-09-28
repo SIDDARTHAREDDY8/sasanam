@@ -78,6 +78,7 @@ for _p in (TREE, os.path.join(TREE, "tests")):
 
 from gov import authority_proof as ap  # noqa: E402
 from gov import decision_packet as dpmod  # noqa: E402
+from gov import decision_bom as _bommod  # noqa: E402
 from gov import ed25519 as _ed  # noqa: E402
 from gov.policy import PolicyDecision  # noqa: E402
 from harness import make_run  # noqa: E402
@@ -87,6 +88,19 @@ _records = []
 
 def _record(name, outcome, detail):
     _records.append((name, outcome, detail))
+
+
+def _bom(**over):
+    """A Decision BOM consistent with the w177 probe packets (GENESIS
+    head, default policy, no pins, no approval). Wave-180: the packet
+    builder requires it."""
+    kw = dict(policy_id="default", policy_version="unversioned",
+              policy_digest="ab" * 32,
+              evidence_head_digest="GENESIS",
+              principal={"agent_id": None, "role": None,
+                         "principal": None, "run_id": None})
+    kw.update(over)
+    return _bommod.build_bom(**kw)
 
 
 def _boundary(fs_read=(), fs_write=(), egress=()):
@@ -337,14 +351,18 @@ def p_break4_shape_validator_rejects_producer_shape():
     try:
         dpmod.build_decision_packet(
             decision="deny", boundary_declared=True, authority_proof=d,
-            policy_reason="w177")
+            policy_id="default", policy_version="unversioned",
+            policy_reason="w177", bill_of_materials=_bom(),
+            policy_bundle_digest="ab" * 32)
     except dpmod.PacketError:
         build_raised = True
     # Hand-sign a packet embedding the genuine proof and verify it.
     seed = secrets.token_bytes(32)
     body = dpmod.build_decision_packet(
         decision="deny", boundary_declared=False,
-        policy_reason="w177-shape")
+        policy_id="default", policy_version="unversioned",
+        policy_reason="w177-shape", bill_of_materials=_bom(),
+        policy_bundle_digest="ab" * 32)
     # splice the genuine proof in post-build (simulating a producer
     # that emits the true proof shape), then sign.
     body["authority_proof"] = {
@@ -413,12 +431,20 @@ def p_held_proofless_declared_refused():
     try:
         dpmod.build_decision_packet(decision="allow",
                                     boundary_declared=True,
-                                    authority_proof=None)
+                                    authority_proof=None,
+                                    policy_id="default",
+                                    policy_version="unversioned",
+                                    bill_of_materials=_bom(),
+                                    policy_bundle_digest="ab" * 32)
     except dpmod.PacketError:
         build_raised = True
     seed = secrets.token_bytes(32)
     body = dpmod.build_decision_packet(decision="allow",
-                                       boundary_declared=False)
+                                       boundary_declared=False,
+                                       policy_id="default",
+                                       policy_version="unversioned",
+                                       bill_of_materials=_bom(),
+                                    policy_bundle_digest="ab" * 32)
     body["boundary_declared"] = {
         "value": True, "producer": "gov/executor.py",
         "producer_version": "1"}
@@ -435,7 +461,11 @@ def p_held_tampered_packet_fails():
     name = "HELD_tampered_packet_fails_verify"
     seed = secrets.token_bytes(32)
     body = dpmod.build_decision_packet(decision="allow",
-                                       boundary_declared=False)
+                                       boundary_declared=False,
+                                       policy_id="default",
+                                       policy_version="unversioned",
+                                       bill_of_materials=_bom(),
+                                    policy_bundle_digest="ab" * 32)
     pkt = dpmod.sign_packet(body, seed)
     pkt["decision"]["value"] = "deny"  # tamper after signing
     ok_verify, vreason = dpmod.verify_decision_packet(pkt)

@@ -53,6 +53,18 @@ def _dp():
     return dp
 
 
+def _bom(**over):
+    """A Decision BOM consistent with the probe's minimal packets."""
+    from gov import decision_bom as bom_mod
+    kw = dict(policy_id="default", policy_version="unversioned",
+              policy_digest="ab" * 32,
+              evidence_head_digest="GENESIS",
+              principal={"agent_id": None, "role": None,
+                         "principal": None, "run_id": None})
+    kw.update(over)
+    return bom_mod.build_bom(**kw)
+
+
 def _set_packet_key():
     """Configure a fresh packet-signing key via the env backend. Returns
     (seed_hex, restore)."""
@@ -241,7 +253,9 @@ def probe_missing_proof_refused():
         try:
             dp.build_decision_packet(
                 decision="allow", boundary_declared=True,
-                authority_proof=None, evidence_head_digest="GENESIS")
+                authority_proof=None, evidence_head_digest="GENESIS",
+                policy_bundle_digest="ab" * 32,
+                bill_of_materials=_bom())
             return "FAIL", "build accepted proof-less packet with " \
                 "boundary declared"
         except dp.PacketError:
@@ -250,7 +264,9 @@ def probe_missing_proof_refused():
         # then verify must refuse on the proof rule (not just the sig).
         body = dp.build_decision_packet(
             decision="allow", boundary_declared=False,
-            authority_proof=None, evidence_head_digest="GENESIS")
+            authority_proof=None, evidence_head_digest="GENESIS",
+            policy_bundle_digest="ab" * 32,
+            bill_of_materials=_bom())
         body["boundary_declared"]["value"] = True
         forged = dp.sign_packet(body, bytes.fromhex(seed_hex))
         ok, reason = dp.verify_decision_packet(forged)
@@ -294,7 +310,9 @@ def probe_deterministic():
     seed = bytes.fromhex("22" * 32)
     kw = dict(decision="allow", boundary_declared=False,
               authority_proof=None, evidence_head_digest="GENESIS",
-              issued_at="2026-09-28T00:00:00+00:00")
+              issued_at="2026-09-28T00:00:00+00:00",
+              policy_bundle_digest="ab" * 32,
+              bill_of_materials=_bom())
     a = dp.sign_packet(dp.build_decision_packet(**kw), seed)
     b = dp.sign_packet(dp.build_decision_packet(**kw), seed)
     assert dp.canonical_bytes(a) == dp.canonical_bytes(b), \
@@ -313,7 +331,8 @@ def probe_fields_name_producers():
     wrapped = ("decision", "boundary_declared", "authority_proof", "policy",
                "canonical_target", "preview_digest",
                "capability_manifest", "memory_actgate", "carriers",
-               "evidence", "identity", "approval_id", "issued_at")
+               "evidence", "identity", "approval_id", "bill_of_materials",
+               "issued_at")
     for name in wrapped:
         section = packet.get(name)
         assert isinstance(section, dict), "missing section %s" % name
@@ -327,9 +346,9 @@ def probe_fields_name_producers():
 
 
 def probe_offline_verify():
-    """A subprocess that can see ONLY copies of decision_packet.py and
-    ed25519.py (stdlib) verifies a signed packet -- no engine, no gov
-    package. This is the true offline path."""
+    """A subprocess that can see ONLY copies of decision_packet.py,
+    decision_bom.py and ed25519.py (stdlib) verifies a signed packet --
+    no engine, no gov package. This is the true offline path."""
     try:
         dp = _dp()
     except ImportError:
@@ -337,7 +356,8 @@ def probe_offline_verify():
     packet, _ = _one_signed_packet()
     tmp = tempfile.mkdtemp(prefix="dpacket-offline-")
     try:
-        for leaf in ("decision_packet.py", "ed25519.py"):
+        for leaf in ("decision_packet.py", "decision_bom.py",
+                     "ed25519.py"):
             shutil.copy(os.path.join(TREE, "gov", leaf),
                         os.path.join(tmp, leaf))
         with open(os.path.join(tmp, "packet.json"), "w",

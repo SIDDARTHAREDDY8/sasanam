@@ -96,6 +96,7 @@ from . import audio_carrier as _audio_carrier
 from . import invocation_receipts as _receipts
 from . import authority_proof as _authority_proof
 from . import decision_packet as _decision_packet
+from . import decision_bom as _decision_bom
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
 from . import target_match as _target_match
@@ -8164,7 +8165,53 @@ class ToolExecutor:
             if isinstance(r, dict) and r.get("input_carrier")})
         _preview_text = self._preview(tool, redacted_args)
         _head = head_digest
+        # Wave-180 (Decision BOM): the digest-bound input list for this
+        # decision. Built INSIDE the rebuild loop: on a concurrent-
+        # writer rebuild the evidence head moves, and the BOM must name
+        # the head the packet was actually built under (a stale BOM
+        # head would trip the verifier's BOM<->packet consistency
+        # check). Policy digest is the engine's policy_hash -- sha256
+        # of the EXACT bytes parsed (F53 one-buffer rule), so an
+        # auditor re-hashes the bundle to reconstruct. The approval
+        # record digest is the HMAC the executor itself verified before
+        # consuming the approval; an approval whose record cannot be
+        # resolved FAILS CLOSED (BomError) -- the seam refuses to emit
+        # a packet that silently drops approval provenance, and the
+        # call fails rather than emitting weak evidence.
+        from .approvals import approval_record_digest as _ard
+        _policy_hash = getattr(policy, "policy_hash", None)
         for _attempt in (0, 1):
+            _approval_record_digest = None
+            if approval_id is not None:
+                _approval_rec = (self.approvals.get(approval_id)
+                                 if self.approvals is not None else None)
+                if _approval_rec is None:
+                    raise _decision_bom.BomError(
+                        "approval %r has no resolvable record; refusing "
+                        "to emit a decision packet without its digest"
+                        % (approval_id,))
+                try:
+                    _approval_record_digest = _ard(_approval_rec)
+                except Exception as e:
+                    raise _decision_bom.BomError(
+                        "approval record digest failed for %r: %s: %s"
+                        % (approval_id, type(e).__name__, e))
+            _bom_pins = {}
+            if skill_id and skill_attested_digest:
+                _bom_pins = {skill_id: skill_attested_digest}
+            _bom = _decision_bom.build_bom(
+                policy_id=policy_decision.policy_id,
+                policy_version=getattr(policy, "policy_version",
+                                       "unversioned"),
+                policy_digest=_policy_hash,
+                evidence_head_digest=_head,
+                principal={"agent_id": identity.agent_id,
+                           "role": identity.role,
+                           "principal": identity.principal,
+                           "run_id": identity.run_id},
+                pin_digests=_bom_pins,
+                approval_id=approval_id,
+                approval_record_digest=_approval_record_digest)
             _body = _dp.build_decision_packet(
                 decision=decision,
                 boundary_declared=_boundary_declared,
@@ -8196,7 +8243,9 @@ class ToolExecutor:
                           "run_id": identity.run_id},
                 approval_id=approval_id,
                 decision_seq=decision_seq,
-                policy_reason=policy_decision.reason)
+                policy_reason=policy_decision.reason,
+                bill_of_materials=_bom,
+                policy_bundle_digest=_policy_hash)
             _packet = _dp.sign_packet(_body, self._packet_key["seed"])
             _entry = self.log.append({
                 "event": "decision_packet",

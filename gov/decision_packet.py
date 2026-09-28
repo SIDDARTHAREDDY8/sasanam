@@ -15,7 +15,7 @@ configured, and says "no boundary configured" otherwise.
 Every field is wrapped as {"value", "producer", "producer_version"} so an
 offline auditor can see exactly which component produced each claim --
 the packet is verifiable WITHOUT the engine (see verify_decision_packet;
-the offline probe copies only this file + ed25519.py).
+the offline probe copies decision_packet.py + decision_bom.py + ed25519.py).
 
 Stdlib only. Deterministic: no clock (issued_at is injectable), no
 randomness (RFC 8032 deterministic nonces), no I/O, no env reads in the
@@ -47,6 +47,11 @@ try:
 except ImportError:  # standalone/offline: ed25519.py beside this file
     import ed25519 as _ed
 
+try:
+    from . import decision_bom as _bom
+except ImportError:  # standalone/offline: decision_bom.py beside this file
+    import decision_bom as _bom
+
 DECISION_PACKET_VERSION = 1
 
 DECISIONS = ("allow", "deny", "queue")
@@ -74,6 +79,7 @@ PRODUCER_VERSIONS = {
     "gov/invocation_receipts.py": "1",
     "gov/log.py": "1",
     "gov/decision_packet.py": "1",
+    "gov/decision_bom.py": "1",
 }
 
 _SIGN_DOMAIN = b"decision-packet-v1:"
@@ -261,7 +267,8 @@ def build_decision_packet(*, decision, boundary_declared,
                           evidence_head_digest="GENESIS",
                           identity=None, approval_id=None,
                           decision_seq=None, policy_reason=None,
-                          issued_at=None):
+                          issued_at=None, bill_of_materials=None,
+                          policy_bundle_digest=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -299,6 +306,18 @@ def build_decision_packet(*, decision, boundary_declared,
     if actgate_tier not in ("gate_not_attached", "no_un_elevated_reads",
                             "un_elevated_reads_present"):
         raise PacketError("unknown actgate_tier %r" % (actgate_tier,))
+    # Wave-180 (Decision BOM): every packet carries the bill of
+    # materials -- the digest-bound list of every input artifact that
+    # informed the decision. A packet without one does not meet the
+    # evidence bar and is refused at construction, not patched later.
+    if bill_of_materials is None:
+        raise PacketError(
+            "bill_of_materials is required: every decision packet "
+            "must carry a Decision BOM (gov/decision_bom.build_bom)")
+    bom_ok, bom_reason = _bom.check_bom_shape(bill_of_materials)
+    if not bom_ok:
+        raise PacketError(
+            "bill_of_materials malformed: %s" % bom_reason)
     ident = identity if isinstance(identity, dict) else {}
     body = {
         "decision_packet_version": DECISION_PACKET_VERSION,
@@ -308,6 +327,13 @@ def build_decision_packet(*, decision, boundary_declared,
         "policy": _wrap({
             "policy_id": policy_id,
             "policy_version": policy_version,
+            # The policy bundle itself, by digest: sha256 over the exact
+            # bytes the engine parsed (PolicyEngine.policy_hash). The
+            # verifier cross-checks the BOM's policy digest against this
+            # field, so a swapped BOM digest fails PACKET verification,
+            # not just the on-demand audit path. None when the caller
+            # has no bundle digest (the cross-check is then skipped).
+            "policy_bundle_digest": policy_bundle_digest,
             "matched_rules": list(matched_rules or []),
             "policy_flag": policy_flag,
             # The decision itself, by digest: the packet composes the
@@ -361,6 +387,12 @@ def build_decision_packet(*, decision, boundary_declared,
         # first and the invocation_receipt entry chains under it).
         # None here is honest ordering, not a gap.
         "receipt_digest": _wrap(None, "gov/invocation_receipts.py"),
+        # Wave-180 (Decision BOM): the digest-bound input list. The
+        # signature covers this section, so a swapped entry breaks
+        # the signature; the verifier additionally cross-checks the
+        # BOM against the packet's own sections (fail-closed).
+        "bill_of_materials": _wrap(bill_of_materials,
+                                   "gov/decision_bom.py"),
         "issued_at": _wrap(issued_at or _utcnow_iso(),
                            "gov/decision_packet.py"),
     }
@@ -439,7 +471,8 @@ def _verify(packet, entries):
                 "policy", "canonical_target", "preview_digest",
                 "capability_manifest", "memory_actgate", "carriers",
                 "evidence", "identity", "approval_id", "decision_seq",
-                "justification", "receipt_digest", "issued_at")
+                "justification", "receipt_digest", "bill_of_materials",
+                "issued_at")
     for name in required:
         section = packet.get(name)
         if not isinstance(section, dict):
@@ -487,6 +520,51 @@ def _verify(packet, entries):
     body = {k: v for k, v in packet.items() if k != "signature"}
     if not _ed.verify(pub, signing_input(body), sig):
         return False, "Ed25519 packet signature does not verify"
+    # Wave-180 (Decision BOM): the BOM section is signature-covered,
+    # so a tampered BOM already fails above; these checks catch a
+    # well-signed packet whose BOM disagrees with the packet's own
+    # sections (a producer that signed a lie must lie consistently
+    # everywhere, and any single disagreement fails closed).
+    bom = packet["bill_of_materials"]["value"]
+    bom_ok, bom_reason = _bom.check_bom_shape(bom)
+    if not bom_ok:
+        return False, "bill_of_materials malformed: %s" % bom_reason
+    bom_inputs = bom["inputs"]
+    bom_policy = bom_inputs["policy"]
+    pkt_policy = packet["policy"]["value"]
+    if bom_policy["policy_id"] != pkt_policy.get("policy_id"):
+        return False, "BOM policy_id disagrees with the packet's policy section"
+    if bom_policy["policy_version"] != pkt_policy.get("policy_version"):
+        return False, "BOM policy_version disagrees with the packet's " \
+            "policy section (tampered version)"
+    pkt_bundle_digest = pkt_policy.get("policy_bundle_digest")
+    if pkt_bundle_digest is not None and \
+            bom_policy["digest"] != pkt_bundle_digest:
+        return False, "BOM policy digest disagrees with the packet's " \
+            "policy_bundle_digest (swapped or tampered policy bundle)"
+    if bom_inputs["evidence"]["head_digest"] != \
+            packet["evidence"]["value"].get("head_digest"):
+        return False, "BOM head_digest disagrees with the packet's " \
+            "evidence section"
+    if bom_inputs["approval"]["approval_id"] != \
+            packet["approval_id"]["value"]:
+        return False, "BOM approval_id disagrees with the packet's approval_id"
+    bom_principal = bom_inputs["principal"]
+    pkt_identity = packet["identity"]["value"]
+    for field in ("agent_id", "role", "principal", "run_id"):
+        if bom_principal.get(field) != pkt_identity.get(field):
+            return False, "BOM principal.%s disagrees with the packet's " \
+                "identity section" % field
+    pkt_skill = packet["capability_manifest"]["value"].get("skill_id")
+    pkt_skill_digest = packet["capability_manifest"]["value"].get("digest")
+    bom_pins = bom_inputs["pins"]
+    if pkt_skill is None:
+        if bom_pins:
+            return False, "BOM names pins but the packet names no skill"
+    else:
+        if bom_pins.get(pkt_skill) != pkt_skill_digest:
+            return False, "BOM pin digest for %r disagrees with the " \
+                "packet's capability_manifest" % (pkt_skill,)
     head = packet["evidence"]["value"].get("head_digest")
     if not isinstance(head, str) or not head:
         return False, "evidence.head_digest missing"
