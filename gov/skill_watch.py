@@ -405,13 +405,22 @@ class SkillWatch:
     digests and provenance — never skill content.
     """
 
-    def __init__(self, emit=None, reference_resolver=None):
+    def __init__(self, emit=None, reference_resolver=None,
+                 manifest_store=None):
         self._skills = {}  # skill_id -> record dict
         self._quarantined = set()
         self._repin_requests = {}  # skill_id -> request record
         self._events = []
         self._using_default_sink = emit is None
         self._emit = emit if emit is not None else self._events.append
+        # Capability manifests (smithmark shape, R6 stream-2): an
+        # optional deployment-pinned ManifestStore
+        # (gov/capability_manifests.ManifestStore). When set, the
+        # use-time check additionally requires the skill's declared
+        # capabilities to be signed and bound to the verified bytes,
+        # and refuses the use fail-closed on any drift. None keeps
+        # today's behavior (no manifest check).
+        self._manifest_store = manifest_store
         # F142 Leg B: resolver for referenced-URL content binding.
         # Defaults to RefusingResolver (no network): references are
         # audited but unenforced unless the deployment supplies a
@@ -481,6 +490,21 @@ class SkillWatch:
         event.update(fields)
         self._emit(event)
         return event
+
+    def set_manifest_store(self, store):
+        """Attach/detach the deployment's capability-manifest store.
+
+        ``store`` is a ``gov.capability_manifests.ManifestStore`` or
+        None. Attaching enables the signed declared-capability check at
+        every use-time verification; detaching restores today's
+        behavior. The executor's deployment wiring calls this at
+        install when the deployment publishes manifests.
+        """
+        from . import capability_manifests as _cm
+        if store is not None and not isinstance(store, _cm.ManifestStore):
+            raise SkillWatchError(
+                "manifest store must be a ManifestStore or None")
+        self._manifest_store = store
 
     # -- registration (install time) ------------------------------------------
 
@@ -1139,6 +1163,31 @@ class SkillWatch:
         bok, bdetail = self._verify_bindings(skill_id)
         if not bok:
             return False, None, bdetail
+        # Capability manifests (smithmark shape, R6 stream-2): when the
+        # deployment pinned a manifest store, the skill's declared
+        # capabilities must be signed, bound to THESE exact bytes (the
+        # fetch-verified handoff — no second observation for the source
+        # to equivocate on), and the statically detected capability
+        # surface must not exceed the declaration. Fail-closed: any
+        # mismatch refuses the use here, at both the queue-time and
+        # execution-time call sites (the executor denies on any
+        # non-clean detail). No store, or no manifest for this id,
+        # keeps today's behavior; a missing manifest emits an advisory
+        # event (audit-only adoption path — enforcement begins when the
+        # deployment publishes a manifest for the skill).
+        if self._manifest_store is not None:
+            from . import capability_manifests as _cm
+            _cm_ok, _cm_detail = _cm.verify_skill_manifest(
+                skill_id, bytes(content), self._manifest_store)
+            if not _cm_ok:
+                return False, None, _cm_detail
+            if _cm_detail == "manifest-absent":
+                self._record_event(
+                    "capability_manifest_absent", skill_id,
+                    pinned_digest=rec["pinned_digest"],
+                    reason=("skill %r has no signed capability manifest: "
+                            "capability surface unchecked (advisory)" %
+                            (skill_id,)))
         return True, content, "clean"
 
     # -- governed re-pinning ----------------------------------------------------

@@ -574,6 +574,48 @@ MECHANISMS = [
         ],
     },
     {
+        "id": "capability-manifests",
+        "name": "Signed capability manifests bound to artifact digest",
+        "description": (
+            "smithmark-shaped (R6 stream-2) signed declared-capability "
+            "attestations (gov/capability_manifests.py): a manifest binds "
+            "declared capabilities (tools, egress, filesystem, exec, env, "
+            "secrets) to the artifact's sha256 digest under an Ed25519 "
+            "signature from the deployment-pinned ManifestStore (the "
+            "agent-card signature envelope; jku key discovery is refused "
+            "outright). At skill/MCP use time the watcher verifies the "
+            "signature, the digest binding, and that the statically "
+            "detected capability surface does not exceed the declaration; "
+            "any mismatch refuses the load fail-closed. Skills with no "
+            "published manifest keep today's behavior with an advisory "
+            "capability_manifest_absent event (audit-only adoption)."
+        ),
+        "implementation": ["gov/capability_manifests.py",
+                           "gov/skill_watch.py"],
+        "exports": ["chained_ledger"],
+        "deployment_status": "shipped",
+        "controls": [
+            ("NIST-AI-RMF-1.0", "MAP 4.1", _verified(
+                "Third-party software component risks are mapped as signed "
+                "declared-capability attestations bound to the component's "
+                "digest, and enforced at every use — drift beyond the "
+                "declared scope is refused, not merely observed.",
+                "The static capability lint is category-granular and "
+                "best-effort: obfuscated capability use evades it; the "
+                "digest binding and signature are the hard guarantees.")),
+            ("NIST-AI-RMF-1.0", "MANAGE 3.1", _verified(
+                "Third-party resource risk controls (manifest signature, "
+                "digest binding, capability-surface check) are applied at "
+                "skill/MCP load time; the 12-probe capability-manifest "
+                "battery is the documented evidence.",
+                "Manifest publication coverage is deployment policy.")),
+            ("ISO-IEC-42001-2023", "A.10.3", _unverified_iso(
+                "Supplier component assessment is enforced at runtime via "
+                "signed capability declarations bound to artifact digests.",
+                "Confirm control text against the licensed standard.")),
+        ],
+    },
+    {
         "id": "egress-ledger",
         "name": "Tiered egress ledger",
         "description": (

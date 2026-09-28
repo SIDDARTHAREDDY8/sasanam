@@ -9863,3 +9863,23 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 **Gates (fresh push-clone at base 05d4a63, serialized, fresh TMPDIRs):** canonical **5162 OK** (skipped=9, expected failures=5; +6 vs wave-170 = the new shadow-agent discovery tests) · registry **GREEN** · matrix **3216/3216 SHIP-GATE GREEN** · realistic **7/7**.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-172 — signed capability manifests (R6 stream-2 steal)
+
+**Scope.** Integration coordinator merged the completed signed-capability-manifests lane onto remote base `6666178` (verified remote HEAD via `git ls-remote` before merge; 4321 MB available — clear of the ~2 GB threshold). Design input: smithmark @ `23119fe` (Apache-2.0 VERIFIED per R6 prospectus §stream-2); no vendored code, no Fulcio/Rekor, no external services, $0.
+
+**Merge method.** Clean file-copy (pre-merge diff confirmed exactly the lane's five files; base hashes in the lane's `BASE_SHA256.txt` matched the shared tree — `gov/skill_watch.py` `79732e7f…`, `gov/agent_cards.py` `e411a65d…`): NEW `gov/capability_manifests.py` (manifest schema, `ManifestStore`, `verify_manifest`, `detect_capabilities`/`check_capabilities`, `verify_skill_manifest`; `jku` key-discovery headers refused outright — stricter than agent cards, zero SSRF surface), NEW `evals/capability_manifest_battery.py`, NEW `tests/test_capability_manifests.py` (23 tests), surgical `gov/skill_watch.py` (optional `manifest_store` param + `set_manifest_store()` + the check at the end of `_check_at_use_full`, covering both queue-time and execution-time call sites — zero `executor.py`/`approvals.py` changes), `gov/evidence/crosswalk.py` (new `capability-manifests` row, `shipped`, 2 verified NIST AI RMF 1.0 controls MAP 4.1 / MANAGE 3.1, 1 unverified ISO row with markings intact). Lane-local `workstreams/` scaffolding, `__pycache__`, and BUILD_LOG diffs excluded.
+
+**Behavior.** When a deployment pins a `ManifestStore`, every skill/MCP use verifies signature → skill-id binding → digest binding → capability surface; any mismatch refuses fail-closed (`capability-drift:*`, `manifest-digest-mismatch`, etc.) through the existing executor deny path. No store → today's behavior. Store set but no manifest for the id → advisory `capability_manifest_absent` event, use allowed (audit-only adoption).
+
+**Red-first on the merged tree: `evals/capability_manifest_battery.py` 13/13 PASS** — valid load, digest-mismatch refused, egress/tool/secret drift refused, signature forgery (wrong-key + unknown-kid) refused, cross-skill replay refused, post-signing tamper fails closed, `jku` refused, missing-manifest advisory, no-store behavior, determinism ×2, depth-1 green; also 13/13 under `env -u GOV_DEPLOYMENT_MODE`. The drift probes drive the full `SkillWatch.fetch_verified_at_use` seam (store attached), so the use-time enforcement is verified live, not just the module. The battery is RED (exit 1) on the unmodified tree (verified in the lane); the lane's `red_capability_drift.py` gap (socket-using skill verifies `clean` with no declared-capability seam) is closed on the merged tree.
+
+**Canaries (merged tree):** AMSB **90.00, uncapped A, ceiling C, FINAL C**, defense 90.0% (36/40), FP 0.0% (0/7), 1 critical breach (`a1-default-off`, documented) — byte-identical to wave-171, no regression. Scorecard `scorecard-20260928T100354Z.{json,txt}`.
+
+**Gates (fresh push-clone at base 6666178, serialized, fresh TMPDIRs):** canonical **5185 OK** (skipped=9, expected failures=5; +23 vs wave-171 = the new capability-manifests tests) · registry **GREEN** (wave23_b2 battery file restored post-gate, never committed rewritten) · matrix **3216/3216 SHIP-GATE GREEN** · realistic **7/7**.
+
+**Honest residuals (documented, not claimed away).** (1) The static lint is best-effort: obfuscated capability use (`getattr(os,"sy"+"stem")`, dynamic imports, encoded payloads) evades it by construction — the digest binding + Ed25519 signature are the hard guarantees. (2) Grant-level enforcement (WHICH hosts/paths) is future work; v1 lint is category-granular (+ name-level for env/tools). (3) Opaque/binary artifacts lint vacuously (still digest-bound + signature-checked). (4) Missing manifest = advisory, not refusal (audit-only adoption; manifests live in the deployment-controlled store, same trust level as pins). (5) The sweep (`verify_all`) does not run the manifest check — enforcement is at use time (queue + execution), the specified seam.
+
+**Findings:** none filed. Next free: F191. Open findings: none.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
