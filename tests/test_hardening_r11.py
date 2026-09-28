@@ -48,13 +48,17 @@ from gov.policy import PolicyEngine  # noqa: E402
 
 def _queued_send(q, caller, tool="read_file", args=None, policy_hash=None):
     """Queue a benign item with an explicit caller identity."""
+    # Wave-174 (display≡execution): the approved sweep re-derives the
+    # preview from the executor's renderer, so store a renderer-built
+    # preview (the single shared seam, not a second normalizer).
+    args = args or {"path": "notes.txt"}
     return q.queue(
-        {"tool": tool, "args": args or {"path": "notes.txt"},
+        {"tool": tool, "args": args,
          "identity": {"agent_id": "spoofed", "role": "admin",
                       "run_id": "spoofed-run", "principal": "spoofed-org"},
          "redactions": [], "agent_justification": "test"},
         SimpleNamespace(policy_id="p", reason="r", flag=None),
-        preview="test preview",
+        preview=ToolExecutor._preview(tool, args),
         policy_hash=policy_hash,
         caller_identity=caller)
 
@@ -439,7 +443,10 @@ class TestF47RoleAllowlistExecution(unittest.TestCase):
                                             "content": "hello"},
              "redactions": [], "agent_justification": "test"},
             SimpleNamespace(policy_id="p", reason="r", flag=None),
-            preview="write out.txt",
+            # Wave-174 (display≡execution): renderer-built preview so
+            # the sweep's re-derivation matches.
+            preview=ex._preview("write_file", {"path": "out.txt",
+                                               "content": "hello"}),
             policy_hash=ex.policy.policy_hash,
             caller_identity=caller)
         q.decide(aid, True, "approved", decided_by="human-operator")

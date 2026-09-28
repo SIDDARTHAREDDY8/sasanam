@@ -362,7 +362,11 @@ def _r13_demo_honesty():
         os.chdir(tmpd)
         buf = io.StringIO()
         with redirect_stdout(buf):
-            main()
+            # Wave-174: pass argv=[] explicitly — the demo's main()
+            # reads sys.argv by default, which carries the matrix
+            # harness's own flags (e.g. --matrix) and would print
+            # usage instead of running the scenario.
+            main([])
         out = buf.getvalue()
     finally:
         os.chdir(prev)

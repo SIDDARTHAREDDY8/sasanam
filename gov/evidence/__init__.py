@@ -37,6 +37,12 @@ from .crosswalk import (
     mechanisms_for_control,
 )
 from .index import generate_evidence_index, render_index_markdown
+from .oscal_export import (
+    OSCAL_VERSION,
+    component_definition_json,
+    crosswalk_content_digest,
+    generate_oscal_component_definition,
+)
 
 __all__ = [
     "CONTROL_REGISTRY",
@@ -49,4 +55,9 @@ __all__ = [
     "generate_evidence_index",
     "mechanisms_for_control",
     "render_index_markdown",
+    # OSCAL export (wave-174 lane 3): derived format over the crosswalk.
+    "OSCAL_VERSION",
+    "component_definition_json",
+    "crosswalk_content_digest",
+    "generate_oscal_component_definition",
 ]

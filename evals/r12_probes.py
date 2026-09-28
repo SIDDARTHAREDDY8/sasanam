@@ -50,13 +50,17 @@ from gov.policy import PolicyEngine  # noqa: E402
 
 
 def _queued(ctx, tool="read_file", args=None, caller=None):
+    from gov.executor import ToolExecutor
     q = ctx["approvals"]
     caller = caller or ctx["mint_identity"]("a1", "researcher", "org")
+    args = args or {"path": "notes.txt"}
     return q.queue(
-        {"tool": tool, "args": args or {"path": "notes.txt"},
+        {"tool": tool, "args": args,
          "redactions": [], "agent_justification": "test"},
         SimpleNamespace(policy_id="p", reason="r", flag=None),
-        preview="test",
+        # Wave-174 lane 2 (display=execution): renderer-built preview
+        # so benign control records pass the sweep's display check.
+        preview=ToolExecutor._preview(tool, args),
         policy_hash=ctx["executor"].policy.policy_hash,
         caller_identity=caller)
 

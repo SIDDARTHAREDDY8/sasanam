@@ -66,6 +66,11 @@ REASON_TAINTED_RUN = "tainted_run"
 REASON_LINEAGE_SHAPED = "lineage_shaped_source"
 REASON_LINEAGE_EXPIRED = "lineage_window_expired"
 REASON_JOURNAL_OVERFLOW = "journal_overflow"
+# F191 (wave-174): a carrier whose declared type disagrees with its
+# magic bytes (audio bytes declared as text/plain, or a declared audio
+# type whose bytes are not audio). Classification governs; the
+# mismatch is contained, never silently accepted as declared.
+REASON_CARRIER_MISMATCH = "carrier_mismatch"
 _REASON_CLASSES = (
     REASON_UNTRUSTED_TIER,
     REASON_INSTRUCTION_SHAPED,
@@ -73,6 +78,7 @@ _REASON_CLASSES = (
     REASON_LINEAGE_SHAPED,
     REASON_LINEAGE_EXPIRED,
     REASON_JOURNAL_OVERFLOW,
+    REASON_CARRIER_MISMATCH,
 )
 
 #: Review decisions. ``approved`` clears the pending flag; ``rejected``

@@ -97,11 +97,12 @@ def _r10_forge():
         forge_ident = ex.mint_identity("adv-x", "support", "adversary-org")
 
         def _qid():
+            _args = {"to": "ops@synthetic.local",
+                     "subject": "weekly summary",
+                     "body": "customer rows: Alice 555-0101"}
             return q.queue(
                 {"tool": "send_email",
-                 "args": {"to": "ops@synthetic.local",
-                          "subject": "weekly summary",
-                          "body": "customer rows: Alice 555-0101"},
+                 "args": _args,
                  "identity": {"agent_id": "adv-x", "role": "support",
                               "run_id": run_dir.name,
                               "principal": "adversary-org"},
@@ -111,6 +112,10 @@ def _r10_forge():
                                flag=None),
                 policy_hash=pol.policy_hash,
                 policy_context={"domain_allowlisted": True},
+                # Wave-174 lane 2 (display=execution): renderer-built
+                # preview so the benign control / documented-residual
+                # records pass the sweep's display check.
+                preview=ToolExecutor._preview("send_email", _args),
                 caller_identity=forge_ident)
 
         def _audit():
@@ -184,7 +189,10 @@ def _r10_forge():
             "redactions_applied": [],
             "agent_justification": "weekly summary",
             "provenance": "agent_direct",
-            "preview": "would send email",
+            # Wave-174 lane 2 (display=execution): the forger mints a
+            # COMPLETE valid record, so the preview is the renderer
+            # output — the residual (it executes) is preserved.
+            "preview": ToolExecutor._preview("send_email", args),
             "delegation_attempted": False,
             "policy_id": "approval-outbound-sends",
             "policy_reason": "forged", "policy_flag": None,

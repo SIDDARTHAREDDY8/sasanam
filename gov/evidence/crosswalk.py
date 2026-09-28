@@ -405,7 +405,7 @@ MECHANISMS = [
         "description": (
             "Human-in-the-loop approval queue (gov/approvals.py): every "
             "approval produces a MAC-bound record with the machine-generated "
-            "decision packet (canonical_packet, packet_version 4), the "
+            "decision packet (canonical_packet, packet_version 5), the "
             "human's identity (decided_by), reason, risk tier, blast radius, "
             "and policy citations. The queue-time canonical target "
             "(policy_context.path_resolved) rides the MAC-bound snapshot. "
@@ -424,7 +424,12 @@ MECHANISMS = [
             "MAC-binds the review-timing triple (gov/ceremony_integrity.py) "
             "— pre-upgrade queued records (packet_version 3, no timing "
             "triple) fail re-verification fail-closed. Drain or decide "
-            "queued items before upgrading."
+            "queued items before upgrading. Wave-174 (F191) note: "
+            "packet_version is now 5 (attachment-carrier disclosure "
+            "joins the WYSINWYS packet) — pre-upgrade queued records "
+            "(packet_version 4, no carrier disclosure) fail "
+            "re-verification fail-closed. Drain or decide queued items "
+            "before upgrading."
         ),
         "implementation": ["gov/approvals.py", "gov/approval_web.py",
                            "gov/approver_shield.py"],

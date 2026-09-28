@@ -81,13 +81,18 @@ _HARNESS_PRINCIPALS = {
 
 
 def _queued(ctx, tool="send_email", args=None, caller=None):
+    from gov.executor import ToolExecutor
     q = ctx["approvals"]
     caller = caller or ctx["mint_identity"]("a1", "researcher", "org")
+    args = args or {"to": "x@synthetic.local"}
     return q.queue(
-        {"tool": tool, "args": args or {"to": "x@synthetic.local"},
+        {"tool": tool, "args": args,
          "redactions": [], "agent_justification": "test"},
         SimpleNamespace(policy_id="p", reason="r", flag=None),
-        preview="test",
+        # Wave-174 lane 2 (display=execution): renderer-built preview
+        # so the record reaches the crash-simulation point in the sweep
+        # instead of being refused at the display check.
+        preview=ToolExecutor._preview(tool, args),
         policy_hash=ctx["executor"].policy.policy_hash,
         caller_identity=caller)
 

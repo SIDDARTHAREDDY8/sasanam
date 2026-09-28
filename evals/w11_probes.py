@@ -134,6 +134,10 @@ def _queue_allowlisted_send(q, pol, run_dir, agent_id="adv-x",
         policy_hash=pol.policy_hash,
         policy_context={"domain_allowlisted": True},
         egress_bytes=eb,
+        # Wave-174 lane 2 (display=execution): store the renderer-built
+        # preview so the approved sweep's display check passes for these
+        # benign control records.
+        preview=ToolExecutor._preview("send_email", args),
         caller_identity=caller_identity)
 
 

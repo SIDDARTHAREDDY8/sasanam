@@ -344,8 +344,10 @@ def p5_mechanism_binding_inventory():
     # tracks the current packet -- the F190 binding property itself
     # (canonical_target rendered from the MAC-bound record) is
     # unchanged.
+    # F191 (wave-174): packet_version 4 -> 5 (the attachment-carrier
+    # disclosure joins the WYSINWYS packet).
     pkt_shows_bound = (packet.get("canonical_target") == r1
-                       and packet.get("packet_version") == 4)
+                       and packet.get("packet_version") == 5)
     detail = ("path_resolved in MAC-bound snapshot=%s (value=%r); "
               "policy_context in _SECURITY_PAYLOAD_FIELDS=%s; "
               "tampering the copy's path_resolved breaks the MAC=%s; "

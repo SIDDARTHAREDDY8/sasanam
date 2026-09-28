@@ -45,6 +45,7 @@ from gov.approvals import (  # noqa: E402
     QueueLockError,
     QueueLockPathError,
 )
+from gov.executor import ToolExecutor  # noqa: E402  (wave-174: _preview seam)
 from gov.identity import (  # noqa: E402
     PrincipalRegistry,
     UnregisteredPrincipalError,
@@ -55,11 +56,14 @@ from gov.policy import PolicyEngine  # noqa: E402
 
 
 def _queued(q, caller, policy_hash, tool="read_file", args=None):
+    # Wave-174 (display≡execution): renderer-built preview via the
+    # single shared seam (ToolExecutor._preview is a staticmethod).
+    args = args or {"path": "notes.txt"}
     return q.queue(
-        {"tool": tool, "args": args or {"path": "notes.txt"},
+        {"tool": tool, "args": args,
          "redactions": [], "agent_justification": "test"},
         SimpleNamespace(policy_id="p", reason="r", flag=None),
-        preview="test preview",
+        preview=ToolExecutor._preview(tool, args),
         policy_hash=policy_hash,
         caller_identity=caller)
 

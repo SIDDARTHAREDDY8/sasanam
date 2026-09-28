@@ -322,7 +322,11 @@ def _run_demo_case(policy_text=None, preseed=None, pin_dt=None):
                         preseed, encoding="utf-8")
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
-                    rc = atk.main()
+                    # Wave-174: pass argv=[] explicitly — the demo's
+                    # main() reads sys.argv by default, which carries
+                    # the matrix harness's own flags (e.g. --matrix)
+                    # and would print usage instead of running.
+                    rc = atk.main([])
                 return {"crashed": False, "rc": rc, "out": buf.getvalue()}
         finally:
             os.chdir(old_cwd)

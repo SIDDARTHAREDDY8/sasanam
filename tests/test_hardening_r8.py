@@ -447,8 +447,12 @@ class TestF33EgressBytesIntegrityBound(unittest.TestCase):
                   "redactions": [], "agent_justification": None}
         # F42 (R11): queue() requires a minted caller identity; the
         # action["identity"] dict is ignored by the queue.
+        # Wave-174 (display≡execution): the sweep re-derives the preview
+        # from the executor's renderer — store a renderer-built preview.
         return q.queue(action,
                        _QueueDecision("approval-test", "test queue"),
+                       "agent_direct",
+                       ex._preview("send_email", action["args"]),
                        policy_hash=ex.policy.policy_hash,
                        egress_bytes=egress_bytes,
                        caller_identity=caller)

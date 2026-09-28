@@ -362,7 +362,10 @@ class TestF63MalformedLogLines(unittest.TestCase):
             {"tool": "read_file", "args": {"path": "notes.txt"},
              "redactions": [], "agent_justification": "t"},
             SimpleNamespace(policy_id="p", reason="r", flag=None),
-            preview="t", policy_hash=ex.policy.policy_hash,
+            # Wave-174 (display≡execution): renderer-built preview so
+            # the sweep reaches the _simulate crash path.
+            preview=ex._preview("read_file", {"path": "notes.txt"}),
+            policy_hash=ex.policy.policy_hash,
             caller_identity=ident)
         q.decide(aid, True, "ok", decided_by="human-op")
         with mock.patch.object(ex, "_simulate",

@@ -276,7 +276,12 @@ class ExecutorWiringTest(unittest.TestCase):
              "redactions": []},
             PolicyDecision("require_approval", "intent-ledger tests",
                            policy_id="test", flag="t"),
-            "agent_direct", "preview",
+            # Wave-174 (display≡execution): the sweep re-derives the
+            # preview from the executor's renderer — store a
+            # renderer-built preview.
+            "agent_direct",
+            ex._preview("delete_file",
+                        {"path": str(ex.sandbox / "x.txt")}),
             policy_hash=ex.policy.policy_hash, caller_identity=ident,
             intent_slice_verdict=verdict)
         q.decide(aid, True, "human says ok", decided_by="human-operator")
@@ -759,7 +764,9 @@ class SimilarityExecutorWiringTest(unittest.TestCase):
              "redactions": []},
             PolicyDecision("require_approval", "similarity tests",
                            policy_id="test", flag="t"),
-            "agent_direct", "preview",
+            # Wave-174 (display≡execution): renderer-built preview (see
+            # _approved above).
+            "agent_direct", ex._preview("send_email", args),
             policy_hash=ex.policy.policy_hash, caller_identity=ident,
             intent_slice_verdict=verdict)
         q.decide(aid, True, "human says ok", decided_by="human-operator")

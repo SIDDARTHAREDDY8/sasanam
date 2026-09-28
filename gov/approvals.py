@@ -965,6 +965,60 @@ def sanitize_preview_text(value):
     return "".join(parts)
 
 
+def verify_display_execution_preview(record, render_preview):
+    """Re-derive the approver-facing preview; compare to the stored one.
+
+    Wave-174 (display≡execution; OpenClaw CVE-2026-32065 class). The
+    approved sweep calls this with the MAC-bound record and the same
+    preview renderer the queue path used. It re-derives the expected
+    preview from the exact args about to execute, under the same
+    normalization, and compares it with the stored MAC-bound preview
+    using a constant-time comparison.
+
+    Returns ``(ok, expected, stored)``. ``ok`` is False when the
+    re-derivation fails (fail-closed: a renderer that cannot reproduce
+    the display surface proves nothing about what the approver saw) or
+    when the two texts differ. A mismatch means the human approved
+    different bytes than the executor would act on -- the trimmed
+    display vs raw execution shape -- and the sweep refuses as
+    ``display_execution_mismatch`` before any side effect.
+
+    Normalization contract (explicit, documented): the ONLY
+    normalization is :func:`sanitize_preview_text` -- control /
+    non-printable escaping. Printable whitespace is NOT trimmed or
+    collapsed: a preview that differs from the re-derived text by
+    whitespace alone is a MISMATCH, because the executor would act on
+    bytes the approver did not read. The deferred-effect banner is part
+    of the display surface and is re-applied identically here, so this
+    function and the queue path share one seam -- there is exactly one
+    normalizer, not two.
+    """
+    try:
+        rec = record if isinstance(record, dict) else {}
+        tool = rec.get("tool")
+        args = rec.get("args") or {}
+        if not isinstance(args, dict):
+            return False, "", ""
+        rendered = render_preview(tool, args)
+        if rec.get("deferred_effect") is not None:
+            from . import tool_continuity as _tool_continuity
+            rendered = (_tool_continuity.deferred_preview_banner(
+                rec.get("deferred_effect")) + " " + rendered)
+        expected = sanitize_preview_text(rendered)
+    except Exception:
+        # Fail closed: if the display surface cannot be re-derived, the
+        # sweep cannot prove the approver saw what would execute.
+        return False, "", ""
+    stored = rec.get("preview") or ""
+    if not isinstance(stored, str):
+        return False, expected, ""
+    try:
+        ok = hmac.compare_digest(expected, stored)
+    except TypeError:
+        ok = (expected == stored)
+    return ok, expected, stored
+
+
 # ---------------------------------------------------------------------------
 # Risk scoring, flood defense, batching, auto-approval, break-glass
 #
@@ -1236,7 +1290,13 @@ def canonical_packet(record):
         # (version-3 packets) fail decide()'s packet re-verification
         # fail-closed — drain or decide queued items before upgrading
         # (same precedent as F190).
-        "packet_version": 4,
+        # F191 (wave-174): packet_version 4 -> 5 — the
+        # attachment-carrier disclosure below is part of what the human
+        # saw (the perceptual channel the action touches), so it joins
+        # the WYSINWYS digest. Pre-upgrade records (version-4 packets)
+        # fail decide()'s packet re-verification fail-closed — drain or
+        # decide queued items before upgrading (same precedent).
+        "packet_version": 5,
         "action": record.get("tool"),
         "target": _packet_target(record.get("tool"), record.get("args")),
         # F190: the bound canonical target the receipt MAC-binds
@@ -1258,6 +1318,14 @@ def canonical_packet(record):
         "memory_provenance": (
             (record.get("policy_context") or {}).get("memory_provenance")
             or []),
+        # F191 (wave-174): audio carriers embedded in the tool args,
+        # disclosed at queue time. The approver sees the perceptual
+        # channel (e.g. a voice-memo attachment) alongside the action;
+        # [] for actions with no audio carrier. Pure function of the
+        # MAC-bound record, so the packet digest covers it.
+        "attachment_carriers": (
+            (record.get("policy_context") or {}).get(
+                "attachment_carriers") or []),
         "risk_tier": risk_level(score),
         "risk_score": score,
         "risk_factors": list(record.get("packet_risk_factors") or []),

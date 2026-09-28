@@ -24,13 +24,16 @@ from gov.policy import PolicyDecision  # noqa: E402
 def _queue_delete(q, ex, ident, justification="cleaning temp files"):
     """Queue a delete_file inside the run sandbox (policy-allowed)."""
     target = str(ex.sandbox / "x.txt")
+    # Wave-174 (display≡execution): the stored preview must re-derive
+    # from the executor's own renderer, so build it with the same seam
+    # the queue path and the approved sweep share.
     return q.queue(
         {"tool": "delete_file", "args": {"path": target},
          "identity": ident.as_dict(),
          "agent_justification": justification, "redactions": []},
         PolicyDecision("require_approval", "revoke tests",
                        policy_id="test", flag="test_revoke"),
-        "agent_direct", "delete preview",
+        "agent_direct", ex._preview("delete_file", {"path": target}),
         policy_hash=ex.policy.policy_hash,
         caller_identity=ident)
 
@@ -185,7 +188,10 @@ class IntentRevalidationTest(unittest.TestCase):
              "agent_justification": justification, "redactions": []},
             PolicyDecision("require_approval", "revoke tests",
                            policy_id="test", flag="test_revoke"),
-            "agent_direct", "delete preview",
+            # Wave-174 (display≡execution): renderer-built preview, as in
+            # _queue_delete above.
+            "agent_direct",
+            ex._preview("delete_file", {"path": str(ex.sandbox / "x.txt")}),
             policy_hash=ex.policy.policy_hash,
             caller_identity=ident,
             intent_slice_verdict=verdict)

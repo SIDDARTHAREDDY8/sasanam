@@ -593,13 +593,18 @@ def _w15_budget_double_send_accounting():
     q, ex = ctx["approvals"], ctx["executor"]
 
     def _queue_send(tag):
+        _args = {"to": "x@synthetic.local", "subject": tag,
+                 "body": "hello"}
         return q.queue(
             {"tool": "send_email",
-             "args": {"to": "x@synthetic.local", "subject": tag,
-                      "body": "hello"},
+             "args": _args,
              "redactions": [], "agent_justification": "t"},
             SimpleNamespace(policy_id="p", reason="r", flag=None),
-            preview="t", policy_hash=ex.policy.policy_hash,
+            # Wave-174 lane 2 (display=execution): renderer-built
+            # preview so the record reaches the crash-simulation point
+            # in the sweep instead of being refused at the display check.
+            preview=ToolExecutor._preview("send_email", _args),
+            policy_hash=ex.policy.policy_hash,
             caller_identity=ctx["mint_identity"]("support-1", "support",
                                                  "customer-org"))
 

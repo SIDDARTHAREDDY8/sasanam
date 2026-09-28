@@ -109,10 +109,14 @@ class _R9Case(unittest.TestCase):
                   "redactions": [], "agent_justification": None}
         # F42 (R11): queue() requires a minted caller identity; the
         # action["identity"] dict is ignored by the queue.
+        # Wave-174 (display≡execution): renderer-built preview (the
+        # sweep re-derives it from the executor's renderer).
         return q.queue(action,
                        PolicyDecision("require_approval", "t",
                                       policy_id="approval-outbound-sends",
                                       flag=None),
+                       "agent_direct",
+                       ex._preview("send_email", action["args"]),
                        policy_hash=ex.policy.policy_hash,
                        egress_bytes=egress_bytes,
                        caller_identity=ctx["mint_identity"](

@@ -90,6 +90,9 @@ from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
 from . import skill_watch as _skill_watch
+# F191 (wave-174): audio-carrier classification for the approval-path
+# binding (perceptual channels in tool args ride the queue packet).
+from . import audio_carrier as _audio_carrier
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
 from . import target_match as _target_match
@@ -99,7 +102,8 @@ from .approvals import (DelegationError, DelegationStore,
                         sanitize_preview_text, QueueLockError,
                         QueueLockInvalidatedError, QueueLockPathError,
                         SessionIdentityAlreadySetError,
-                        DecisionHookAlreadySetError)
+                        DecisionHookAlreadySetError,
+                        verify_display_execution_preview)
 # F33 (HARDENING-R8): tools whose execution moves bytes across the trust
 # boundary — the byte-budget guard applies to all of them, at every
 # execution boundary (direct allow path AND execute_approved).
@@ -8668,6 +8672,13 @@ class ToolExecutor:
             # not attached -- the sweep treats a missing disclosure as
             # "nothing disclosed" (fail-closed).
             "memory_provenance": self._actgate_disclosure(),
+            # F191 (wave-174): audio carriers embedded in the tool args
+            # ride the snapshot so the approval record names the
+            # perceptual channel the action touches (MAC-bound via
+            # policy_context, WYSINWYS-rendered in the packet). [] when
+            # none -- pure function of the args, safe to re-derive.
+            "attachment_carriers": (
+                _audio_carrier.attachment_carriers(kwargs)),
             "counters": dict(ctx.get("counters") or {}),
         }
         # Decision-trace replay lane: capture the full typed Decision
@@ -10448,6 +10459,32 @@ class ToolExecutor:
                             "canonical_target_mismatch",
                             policy_id="canonical-target-execution-refused")
                     continue
+            # Wave-174 lane 2 (display≡execution; OpenClaw CVE-2026-32065):
+            # the approver decided on the MAC-bound ``preview`` text. The
+            # queue path builds that text with the executor's preview
+            # renderer under ``sanitize_preview_text`` (plus the
+            # deferred-effect banner when present); re-derive it here from
+            # the exact args about to execute, under the same
+            # normalization, via the single shared seam
+            # (gov.approvals.verify_display_execution_preview). A mismatch
+            # means the human approved different bytes than the executor
+            # would act on -- trimmed display vs raw execution -- and the
+            # record is refused BEFORE any side effect. Records queued
+            # through the executor, canary, or sentinel paths all build
+            # their preview with the same renderer, so exact re-derivation
+            # holds for them; synthetic review records (custom previews,
+            # non-invocable tools) are already refused at the
+            # role-allowlist check above.
+            _disp_ok = verify_display_execution_preview(rec, self._preview)[0]
+            if not _disp_ok:
+                _refuse("Approval %s refused: the approved preview does "
+                        "not match the args about to execute under the "
+                        "same normalization (display/execution mismatch); "
+                        "the approver did not see what would execute."
+                        % (aid,),
+                        "display_execution_mismatch",
+                        policy_id="display-execution-execution-refused")
+                continue
             # Wave-173 lane 1 (TMA-NM M1 act-time gate): memory-provenance
             # continuity. The human granted this approval under a
             # queue-time disclosure of the run's un-elevated memory reads

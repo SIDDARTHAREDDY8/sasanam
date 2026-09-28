@@ -321,7 +321,14 @@ class ActGate:
         """Classify one governed read and track it when un-elevated.
         Returns ``(provenance_class, detail)``. Deduped per
         (run_id, mem_key, digest): re-reading the same bytes does not
-        grow the working set."""
+        grow the working set.
+
+        F191 (wave-174): the MAC-bound ``input_carrier`` of the read
+        bytes is captured on the tracked read, so the queue-time
+        disclosure names the perceptual channel the action may depend
+        on (a second ledger lookup, digest-matched; a tampered ledger
+        classifies un_elevated fail-closed via classify_read first).
+        """
         pclass, detail = self.classify_read(principal, mem_key, content)
         if pclass == PROVENANCE_UN_ELEVATED:
             digest = _sha256_hex(content)
@@ -336,9 +343,28 @@ class ActGate:
                     "content_sha256": digest,
                     "provenance_class": pclass,
                     "detail": detail,
+                    "input_carrier": self._carrier_of(
+                        principal, mem_key, digest),
                     "ts": time.time(),
                 })
         return pclass, detail
+
+    def _carrier_of(self, principal, mem_key, digest):
+        """MAC-bound ``input_carrier`` for digest-matched bytes, or None.
+
+        Never raises for ledger tamper -- an unverifiable ledger
+        reports no carrier (the gate already classifies the read
+        un_elevated with detail provenance_unverifiable; the carrier
+        is disclosure, not a gate input).
+        """
+        try:
+            entry = self.firewall.ledger.latest_entry(principal, mem_key)
+        except LedgerUnverifiableError:
+            return None
+        if entry is None or entry.get("content_sha256") != digest:
+            return None
+        carrier = entry.get("input_carrier")
+        return carrier if carrier else None
 
     def un_elevated_reads(self, run_id):
         """The run's current un-elevated reads (the gate's decision
@@ -349,7 +375,12 @@ class ActGate:
         """Queue-time disclosure snapshot: JSON-safe list of the run's
         un-elevated reads. Stamped into the approval record's
         policy_context (MAC-bound) and rendered in the WYSINWYS packet
-        so the human's grant is informed."""
+        so the human's grant is informed.
+
+        F191: each entry names the MAC-bound ``input_carrier`` when the
+        read bytes were carrier-derived (None otherwise) -- the
+        approver sees the perceptual channel, not just the tier.
+        """
         return [
             {
                 "principal": r["principal"],
@@ -357,6 +388,7 @@ class ActGate:
                 "content_sha256": r["content_sha256"],
                 "provenance_class": r["provenance_class"],
                 "detail": r["detail"],
+                "input_carrier": r.get("input_carrier"),
             }
             for r in self._reads if r["run_id"] == run_id
         ]

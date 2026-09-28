@@ -280,12 +280,17 @@ def _r11_privilege_smuggle():
     ctx2 = make_run()
     q2, ex2 = ctx2["approvals"], ctx2["executor"]
     coder = ctx2["mint_identity"]("dev", "coder", "org")
+    from gov.executor import ToolExecutor
     aid2 = q2.queue(
         {"tool": "write_file",
          "args": {"path": "out.txt", "content": "hello"},
          "redactions": [], "agent_justification": "t"},
         SimpleNamespace(policy_id="p", reason="r", flag=None),
-        preview="write", policy_hash=ex2.policy.policy_hash,
+        # Wave-174 lane 2 (display=execution): renderer-built preview
+        # so the benign control passes the sweep's display check.
+        preview=ToolExecutor._preview(
+            "write_file", {"path": "out.txt", "content": "hello"}),
+        policy_hash=ex2.policy.policy_hash,
         caller_identity=coder)
     q2.decide(aid2, True, "ok", decided_by="human-operator")
     done = ex2.execute_approved()

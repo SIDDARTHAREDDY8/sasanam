@@ -103,6 +103,11 @@ def _queue_send(ctx, q, ex, principal="org"):
               "redactions": [], "agent_justification": None}
     return q.queue(action,
                    _QueueDecision("approval-test", "test queue"),
+                   # Wave-174 (display≡execution): renderer-built preview
+                   # (the sweep re-derives it from the executor's
+                   # renderer).
+                   "agent_direct",
+                   ex._preview("send_email", action["args"]),
                    policy_hash=ex.policy.policy_hash,
                    egress_bytes=500,
                    caller_identity=ctx["mint_identity"](
