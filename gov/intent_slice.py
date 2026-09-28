@@ -194,8 +194,14 @@ _FRENCH_NE_PAIR_RE = re.compile(_FRENCH_NE_PAIR_SRC, re.IGNORECASE)
 # and "मतलब" ("meaning", contains "मत") do NOT cue.
 _DEVA_WORD_CHAR = r"[\w\u0900-\u0963\u0966-\u097F]"
 _DEVA_NEG_SRC = (r"(?<!" + _DEVA_WORD_CHAR + r")"
-                 r"(?:नहीं|न|मत)"
+                 r"(?:नहीं|ना|न|मत)"
                  r"(?!" + _DEVA_WORD_CHAR + r")")
+# Wave-165 (row 7): ना (the colloquial "don't" -- "रिपोर्ट ना भेजें")
+# joins the Devanagari cues. Alternation order matters: नहीं before
+# ना before न, so "नहीं" still matches the long form and "ना" is not
+# shadowed by न (the trailing guard would reject न inside ना since
+# ा U+093E is a _DEVA_WORD_CHAR). "मतलब"/"नाता"/"अपना" stay silent
+# via the guards (measured, pinned in evals/row7_native_cue_probes.py).
 # Wave-151 (row 7): Russian Cyrillic negation cues (pilot -- Russian
 # only; CJK and other non-romanized scripts remain untouched --
 # Arabic landed in wave-152).
@@ -245,6 +251,18 @@ _CYRILLIC_NEG_SRC = (
     r"(?:\bне(?!\s+так\s+ли\b)\b|\bнет\b|\bни\b|"
     r"\bнельзя(?!\s+ли\b)\b)"
 )
+# Wave-165 (row 7): Ukrainian Cyrillic negation cues. Ukrainian не
+# is already covered by the Russian не (identical spelling); new
+# here are ні (U+043D U+0456 -- distinct from Russian ни U+0438,
+# so the Russian cue does NOT match it) and заборонено
+# ("forbidden/prohibited"). Plain \b discipline: Cyrillic letters
+# are \w, so \bні\b does not match ніби/нічний and \bзаборонено\b
+# has no word-internal lookalike (measured, pinned in
+# evals/row7_native_cue_probes.py). "не можна" ("must not") is
+# covered via не.
+_UKRAINIAN_NEG_SRC = (
+    r"(?:\bні\b|\bзаборонено\b)"
+)
 # Wave-152 (row 7): Arabic negation cues (pilot -- Modern Standard
 # Arabic only; CJK and other non-romanized scripts remain untouched).
 # Like Cyrillic, Arabic letters ARE \w, so plain \b fires correctly
@@ -271,13 +289,17 @@ _CYRILLIC_NEG_SRC = (
 # precision boundary: negation-ما is always followed by a
 # past-tense verb, but the pilot carries no tense guard, so the
 # interrogative/relative uses fire too -- pinned EXPECTED in the
-# battery, follow-up work), ليس ("is not"; no inflection coverage
-# -- "ليست" does not cue, same closed-list discipline as Cyrillic).
+# battery, follow-up work), ليس ("is not"; wave-165 adds the ليست
+# feminine inflection -- the closed-list discipline the pilot left
+# out).
 # Dialectal forms (Egyptian ما...ش, Levantine ما عم, ...) are
 # deliberately untouched.
 _ARABIC_NEG_SRC = (
-    r"(?:\b[وبل]?لا\b|\bو?(?:لم|لن|ما|ليس)\b)"
+    r"(?:\b[وبل]?لا\b|\bو?(?:لم|لن|ما|ليس|ليست)\b)"
 )
+# Wave-165 (row 7): ليست (feminine "is not", the ليس inflection
+# the wave-152 pilot left out) joins the و?-prefixed group. Plain \b
+# discipline, same as ليس.
 # Wave-153 (row 7): CJK negation cues (pilot -- Mandarin, Japanese,
 # Korean; other CJK languages/scripts remain untouched).
 # CJK text has no word spaces, so \b-style boundary discipline does
@@ -300,9 +322,10 @@ _ARABIC_NEG_SRC = (
 # V-지 마 construction (보내지 마, 하지 마), matched as \S+지\s+마
 # (which covers 하지 마 -- 하지 ends in 지). 말고/취소/중지
 # parallel the English "instead-of / cancel / stop" cues.
-# Deliberately out of scope (documented residuals): Mandarin 没/请勿,
-# Japanese plain-form prohibitions (送るな/するな), Korean honorific
-# variants beyond the 마 prefix, dialectal forms.
+# Deliberately out of scope (documented residuals): Mandarin 没,
+# Korean honorific variants beyond the 마 prefix, dialectal forms.
+# (Wave-165 closed the other two wave-153 residuals: 请勿 and the
+# Japanese plain-form prohibitions 送るな/するな.)
 _CJK_CHAR_RE = re.compile(
     r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af\u1100-\u11ff"
     r"\u3130-\u318f]")
@@ -310,13 +333,31 @@ _CJK_NEG_SRC = (
     r"(?:"
     r"不行|不要(?!紧)|别(?!人|的|处|样|名)|"
     r"停止|取消"              # "stop" / "cancel"
+    r"|请勿"                  # "please do not" (formal prohibition)
     r"|止めて"                # "stop it" (te-form request)
     r"|キャンセル"            # "cancel" (katakana loanword)
     r"|しない"                # plain negative (covers しないで)
+    r"|るな(?![\u3040-\u30ff\u4e00-\u9fff])"  # Vるな plain prohibitive
+                            # (narrowed: not followed by kana/kanji --
+                            # see wave-165 note)
     r"|(?:\S+지\s+마)"         # V-지 마 prohibition (covers 하지 마)
     r"|말고|취소|중지"         # "instead-of" / "cancel" / "stop"
     r")"
 )
+# Wave-165 (row 7): 请勿 ("please do not", the formal written
+# prohibition -- 请勿发送 "please do not send") and the Japanese
+# plain-form prohibitive るな (送るな/するな): the two forms the
+# wave-153 pilot left as documented residuals. 请勿 is unambiguous
+# (no benign homograph). Bare るな as a substring was measured and
+# NARROWED (wave-142 "non"/"mat" precedent): "Q3レポートをはるなに
+# 送ってください" ("please send the Q3 report to Haruna") scores
+# 0.571 against the SEND grant with a bare-るな hit -- a REAL false
+# revocation. The narrowed form requires るな NOT followed by
+# kana/kanji, so はるなに/はるなが stay silent while 送るな/送るな。
+# fire. Residual of the narrowing: emphatic 送るなよ (な followed by
+# hiragana) still misses; the judge additionally anchors るな on the
+# verb form (see _cjk_token_negates) so a bare な particle after a
+# non-verb る cannot fire there.
 # F188 (row 7): a Latin negation cue glued to a non-Latin word char
 # with zero whitespace ("do not发送"). \b fails at the Latin->non-Latin
 # boundary because non-Latin letters are \w in Unicode regex, so the
@@ -342,6 +383,22 @@ _NONLATIN_WORD_SRC = (
 # word char (the class is a subset of \w, so plain-\b cases are
 # untouched); it only ADDS the script-transition case.
 _LATIN_CUE_END_SRC = r"(?:\b|(?=[" + _NONLATIN_WORD_SRC + r"]))"
+# Wave-165 (row 7): native negation cues for the remaining Latin-script
+# verb-form languages -- Spanish (nunca/jamás/tampoco), Portuguese
+# (não/nem/tampouco; nunca/jamás shared with Spanish), Italian
+# (niente/nessuno/né/nemmeno/neppure). They join the Latin alternation
+# so they inherit the F188 glued-cue end boundary ("nunca发送" cues).
+# Measured exclusions (wave-142 "non"/"mat" precedent -- each was a REAL
+# false revocation on a realistic benign sentence at/above the gate):
+#   - Italian "mai" DROPPED: "Mai sent the Q3 report to the vendor."
+#     scores 0.800 with a cue hit (Mai is a personal name; German
+#     "Mai" = May is the same shape).
+#   - "ni" DROPPED (Spanish/French "neither/nor"): "Ni from compliance
+#     approved" scores 0.842 (Ni is a romanized surname).
+#   - Italian "non" stays DROPPED (wave-142: "non-profit").
+#   - Unaccented "nao" DROPPED: the "NAO" robot reads as a cue.
+# Vocalized Arabic, dialectal forms, and paraphrase-level evasion
+# remain documented residuals (row 7 stays PARTIAL).
 _NEGATION_RE = re.compile(
     r"\b(don'?t|dont|do not|doesn'?t|doesnt|never|"
     r"not(?!\s+only" + _LATIN_CUE_END_SRC + r")|"
@@ -350,11 +407,14 @@ _NEGATION_RE = re.compile(
     r"(?<!n['\u2019]est-ce\s)(?<!\bun\s)pas|"
     r"nicht|kein(?!\s+probleme?" + _LATIN_CUE_END_SRC + r")|"
     r"keine(?!\s+probleme?" + _LATIN_CUE_END_SRC + r")|keinen|"
-    r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi)"
+    r"keinem|keiner|keines|keinerlei|keinesfalls|keineswegs|nahi|"
+    r"nunca|jamás|jamas|tampoco|tampouco|não|nem|"
+    r"niente|nessuno|né|nemmeno|neppure)"
     + _LATIN_CUE_END_SRC + r"|" + _FRENCH_NE_PAIR_SRC
     + r"|" + _DEVA_NEG_SRC
     + r"|" + _CYRILLIC_NI_PAIR_SRC
     + r"|" + _CYRILLIC_NEG_SRC
+    + r"|" + _UKRAINIAN_NEG_SRC
     + r"|" + _ARABIC_NEG_SRC
     + r"|" + _CJK_NEG_SRC,
     re.IGNORECASE,
@@ -1414,7 +1474,7 @@ _TOOL_VERB_CLASSES = {
 _CJK_CUE_GAP = 4
 _CJK_PRE_CUE_SRC = (
     r"(?:不行|不要(?!紧)|别(?!人|的|处|样|名)|"
-    r"停止|取消|止めて|キャンセル|취소|중지|말고)"
+    r"停止|取消|请勿|止めて|キャンセル|취소|중지|말고)"
 )
 _CJK_PRE_CUE_TAIL_RE = re.compile(
     r"(?:" + _CJK_PRE_CUE_SRC + r").{0," + str(_CJK_CUE_GAP) + r"}$")
@@ -1456,6 +1516,15 @@ def _cjk_token_negates(tok, cjk_forms, tokens, i):
         # Cue-after-form: 送信しない(で), 送信を止めて,
         # 삭제하지 마, 전송을 취소해.
         if _CJK_POST_CUE_RE.match(tail + " " + nxt):
+            return True
+        # Wave-165 (row 7): Japanese plain prohibitive Vるな
+        # (送るな/するな). The cue is postposed AND fused: a
+        # dictionary-form verb (ends in る) immediately followed by
+        # な at token end. Anchoring on the verb form keeps a bare な
+        # particle after a non-verb る from firing here; the
+        # search-path るな cue carries the kana/kanji lookahead guard
+        # (はるなに stays silent) so both disciplines agree.
+        if tail == "な" and form.endswith("る"):
             return True
     return False
 
