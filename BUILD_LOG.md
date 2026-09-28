@@ -1,3 +1,15 @@
+## 2026-09-28 — Wave-181 second fast-follow: Decision-BOM red-team battery landed (F200/F201 filed OPEN)
+
+**Scope.** Cherry-pick `5eeb879` (BOM red-team lane, based on `94c8f84`) onto the F199 fast-follow (`3125c50`). Artifacts only: `evals/w181_bom_redteam_probes.py` (new, 836 lines) + `evals/FINDINGS.md` (F200/F201 OPEN entries). NO product code changes (`git diff 3125c50 HEAD -- gov/ tests/` empty). Reasoning for reduced gates below.
+
+**Merge fix (coordinator).** Expected FINDINGS.md footer conflict: the lane's tree predates the F199 closure, so its footer read "Open findings: F199, F200, F201 / next free F202". Resolved by hand to "Open findings: F200, F201 / next free F202" with the F199-closure note added to the history parenthetical (F199 is CLOSED per `3125c50`). No quiet patch: F200/F201 entries are the lane's verbatim break-first filings.
+
+**Battery re-verified on merged tree.** `evals/w181_bom_redteam_probes.py` → 2 BREAK (P5b=F200, P6e=F201) / 26 HELD / 4 HELD* / 0 errors, deterministic, identical under `env -u GOV_DEPLOYMENT_MODE`. The only product delta `94c8f84`→`3125c50` (the F199 GENESIS verifier fix) does not move any verdict — confirmed, not assumed.
+
+**Gates (test-only + FINDINGS change; no product code).** Canonical: 5604 OK (skipped=9, expected failures=5 — unchanged from the F199 fast-follow, as expected with no product delta). Registry: GREEN. Rationale for skipping matrix/realistic/AMSB this round: zero product-code bytes changed; the two suites that exercise the touched surface (the new battery + registry) are green. Full gates resume on the next product-code wave.
+
+**Findings after this push:** F200 (LOW, OPEN — verify_bom has no approval-re-derivation leg), F201 (LOW, OPEN — build_bom raises bare ValueError/TypeError instead of BomError for non-dict pin_digests). Next free: F202.
+
 ## 2026-09-28 — Wave-181 fast-follow: F199 closure merged (GENESIS-head packets fail closed on decision-carrying chains)
 
 **Scope.** Cherry-pick `e902d7c` (F199 closure lane, based on `94c8f84`) onto wave-180. The closure lane finished after the wave-180 merge; this fast-follow integrates it. Product change: `gov/decision_packet.py` (+22/−4); verification: `evals/w180_redteam_probes.py` (D5 updated to expect HELD), `tests/test_decision_packet.py` (+48); `evals/FINDINGS.md` (F199 → CLOSED).
