@@ -9724,3 +9724,21 @@ Row 7: the multilingual-form residual is CLOSED — every documented verb class 
 **Findings:** none filed. Next free: F189. Open findings: NONE.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-165 — row-7 native negation-cue expansion merge
+
+**Merge.** Team tree `teams/row7-native-cues/tree` merged into the shared tree (base: wave-164 commit `99d1c51`, remote HEAD verified `99d1c51` via direct `git ls-remote` before merge; lane tree was copied from the wave-164 shared tree, so merge was a direct copy of 2 files). Changed: `gov/intent_slice.py` (7 narrow cue-table hunks; all other diff lines are comments) and new `evals/row7_native_cue_probes.py`.
+
+Direct attack on the documented "closed cue lists" residual. Cue additions: new `_UKRAINIAN_NEG_SRC` (`ні` U+0456 distinct from Russian `ни`, `заборонено`; `не` already covered via Russian); `_ARABIC_NEG_SRC` + feminine `ليست`; `_DEVA_NEG_SRC` + `ना` (alternation order `नहीं|ना|न|मत` preserved so long forms match first); `_CJK_NEG_SRC` + Mandarin `请勿` and Japanese `るな` narrowed to `るな(?![\u3040-\u30ff\u4e00-\u9fff])`; `_CJK_PRE_CUE_SRC` + `请勿`; Latin ES `nunca/jamás/jamas/tampoco`, PT `não/nem/tampouco` (nunca/jamás shared), IT `niente/nessuno/né/nemmeno/neppure` — inheriting the F188 glued-cue end boundary (`nunca发送` fires); `_cjk_token_negates` + form-anchored `るな` branch (`tail=="な"` and verb form ends in `る`, so `送るな`/`するな` negate in the judge without the Haruna FP).
+
+Measured exclusions (each a REAL false revocation at/above the gate, wave-142 `non`/`mat` precedent): Italian `mai` DROPPED (`Mai sent the Q3 report to the vendor.` 0.800 — Mai is a personal name); `ni` DROPPED (`Ni from compliance approved` 0.842 — romanized surname); Italian `non` stays DROPPED (wave-142 non-profit); unaccented `nao` DROPPED (NAO robot). Bare `るな` as a substring was measured and NARROWED: `はるなに送ってください` scores 0.571 with a bare-るな hit (real false revocation); the narrowed form requires るな NOT followed by kana/kanji.
+
+Red-first on the merged tree: pre-seam (wave-164 `intent_slice.py`, byte-exact per remote) → **11 HELD / 25 BREAK / 3 EXPECTED** (all 20 fire probes BREAK at score 0.000 — gate never opened; judge, glued, and genuine-lookalike probes BREAK). Restored byte-identical (md5 `f1638393176c2f1e6466330dd55330e2`) → **35 HELD / 0 BREAK / 3 EXPECTED / 0 ERROR** (staging ×2 + clean env `env -u GOV_DEPLOYMENT_MODE`, deterministic ×2).
+
+**Push-clone gates (fresh clone of 99d1c51 + rsync, workstream sibling symlinks verified, fresh unique TMPDIRs, serialized suites, 2.2GB free — no contention):** canonical **5143 OK** (skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Canaries in the merged tree: new native-cue battery **35/0/3 EXPECTED**; wave-158 f188 battery **23/23**; wave-163 verb-expansion **28/28**; wave-164 archive/redact **16/16**; decision replay **7/7** (wave-155), delegation stamping **12/0** (wave-157), manifest default-on **15/0** (wave-159), egress tiered wire **8/0/5 EXPECTED** (wave-160), row-9 fold **5/5** + keyed chain **5/5** (wave-161), row-12 undeclared-path **15/15** (wave-162). Benign guards 0 FP on 11 benign sentences (Mai-name, Ni-surname, Haruna×2, NAO robot, non-profit, no-problem/not-only). Excluded forms (mai/ni/non/nao) verified silent. Reverse glue (`неотправляйте`, `لاترسل`), emphatic `送るなよ`, vocalized/dialectal Arabic, Mandarin `没`, paraphrase evasion — documented as EXPECTED/open, not overstated. Pushed `99d1c51` → `462b18f` (verified via direct `git ls-remote`; no force-push; required trailer present).
+
+Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages' native cues added with measured precision guards, but reverse glue, emphatic forms, dialectal/vocalized variants, and paraphrase evasion remain open. Row 7 stays **PARTIAL**.
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
