@@ -9694,3 +9694,33 @@ Row 12: the undeclared-path residual is CLOSED at the `write_file` seam — an e
 **Findings:** none filed. Next free: F189. Open findings: NONE.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-163 — row-7 verb-list expansion merge
+
+**Merge.** Team tree `teams/row7-verb-expansion/tree` merged into the shared tree (base: wave-162 commit `e7ff6a4`, verified quiescent — the wave-162 coordinator's push landed before merge began; no contention). Changed: `gov/intent_slice.py` (+156/−5 — verb-table additions and comments only; the 5 removals are the rewritten documented-residual comment now that ARCHIVE/REDACT/etc. carry Cyrillic forms). Added PUBLISH/POST-family, FORWARD, UPLOAD native forms (Latin/German/French/Spanish/Cyrillic/Arabic/CJK/Korean) and new GRANT/REVOKE/LEAK classes in all five scripts. New: `evals/row7_verb_expansion_probes.py` (28 probes).
+
+Red-first on the merged tree: pre-seam (verb table reverted to `e7ff6a4`) → **4 HELD / 24 BREAK** (`do not发布Q3报告`, `do notопубликуйте Q3 отчёт`, `do notانشر Q3 التقرير` silent on the judge path; scope attribution `classes=[]` for new PUBLISH/UPLOAD/GRANT/REVOKE/LEAK forms). Restored byte-identical (md5-verified) → **28 HELD / 0 BREAK** (staging ×2 + clean env). Benign guards (`not only`, `no problem`, `cannot`, `donot`, `knot`) produce no cue on the new verb forms (10 cases); 6 judge-precision cases silent.
+
+**Push-clone gates (fresh clone of e7ff6a4 + rsync, workstream sibling symlinks, fresh unique TMPDIRs, serialized suites):** canonical **5143 OK** (skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Canaries in the clone tree: decision replay **7/7** (wave-155), delegation stamping **12/0** (wave-157), manifest default-on **15/0** (wave-159), egress tiered wire **8/0/5 EXPECTED** (wave-160), row-9 fold **5/5** + keyed chain **5/5** (wave-161), row-12 undeclared-path **15/15** (wave-162), wave-158 f188 battery **23/0/0/0**. Adjacent units (`test_intent_slice`, `test_intent_ledger`) 176 OK. Pushed `e7ff6a4` → `f5bc4bd` (verified via direct `git ls-remote`; no force-push; required trailer present).
+
+Row 7: the closed-list residual shrinks — PUBLISH/POST/UPLOAD/FORWARD/GRANT/REVOKE/LEAK now carry native multilingual forms with red-first break evidence at the judge and scope paths. Row 7 stays **PARTIAL** for the documented ceilings: ARCHIVE/REDACT non-Latin forms, paraphrase evasion, vocalized Arabic, and closed cue lists remain out of scope.
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-164 — row-7 ARCHIVE/REDACT multilingual forms merge
+
+**Merge.** Team tree `teams/row7-archive-redact/tree` merged into the shared tree (base: wave-163 commit `f5bc4bd`, remote HEAD verified `f5bc4bd` via direct `git ls-remote` before merge; lane tree already carried the wave-163 GRANT/REVOKE/LEAK forms, so merge was a direct copy of 2 files). Changed: `gov/intent_slice.py` (+76/−5 — ARCHIVE + REDACT native-form verb-table additions and comment updates only; the 5 removals are the rewritten documented-residual comment). Added ARCHIVE forms: ES `archivar` family, DE `zensieren` family, Cyrillic `архивировать/заархивировать` families (+й→и fold duals), Arabic `أرشف/ترشف/يرشف/إرشاف/أرشفت` (+bare-alef duals), CJK `归档/存档/封存/アーカイブ/보관/아카이브`. Added REDACT forms: Cyrillic `цензурировать/вымарать/вымарывать/замазать/замазывать` families, Arabic `أخفى/احجب/اشطب` families, CJK `涂黑/遮蔽/隐去/黒塗り/가리다/가려`. Deliberate exclusions: single-char `归` (FP shape), Russian `редактировать` ("to edit" — overbroad). New: `evals/row7_archive_redact_probes.py` (16 probes).
+
+Red-first on the merged tree: pre-seam (ARCHIVE/REDACT forms reverted to `f5bc4bd`, byte-exact per remote) → **2 HELD / 14 BREAK** (new ARCHIVE/REDACT forms attribute to `[]` on scope; `do not архивируйте отчёт` / `do not أرشف التقرير` / `do not归档Q3报告` silent). Restored byte-identical (md5-verified) → **16 HELD / 0 BREAK** (staging + clean env).
+
+**Push-clone gates (fresh clone of f5bc4bd + rsync, workstream sibling symlinks, fresh unique TMPDIRs, serialized suites):** canonical **5143 OK** (skipped=9, expected failures=5); registry **GREEN**; matrix **3216/3216 SHIP-GATE GREEN**; realistic **7/7**. Canaries in the merged tree: new archive/redact battery **16/16**; wave-158 f188 battery **23/23**; wave-163 verb-expansion **28/28**; decision replay **7/7** (wave-155), delegation stamping **12/0** (wave-157), manifest default-on **15/0** (wave-159), egress tiered wire **8/0/5 EXPECTED** (wave-160), row-9 fold **5/5** + keyed chain **5/5** (wave-161), row-12 undeclared-path **15/15** (wave-162). Benign guards clean on new forms; anchors attribute to exactly the right class, no cross-class leakage. Pushed `f5bc4bd` → `<hash>` (verified via direct `git ls-remote`; no force-push; required trailer present).
+
+Log hygiene: the wave-163 entry was in the shared tree but never committed (same pattern as wave-160/161) — this commit includes the wave-163 entry plus the wave-164 entry, log back in sync.
+
+Row 7: the multilingual-form residual is CLOSED — every documented verb class (SEND/DELETE/SHARE/ARCHIVE/REDACT/PUBLISH/FORWARD/UPLOAD/GRANT/REVOKE/LEAK) now carries native Cyrillic/Arabic/CJK forms with red-first break evidence. Row 7 stays **PARTIAL** for the documented ceilings: paraphrase-level evasion, semantic rewording of the verb itself, vocalized Arabic, and closed cue lists remain out of scope.
+
+**Findings:** none filed. Next free: F189. Open findings: NONE.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>

@@ -557,10 +557,37 @@ _VERB_CLASSES = {
         "archive", "archives", "archiving", "archived",
         "archivieren", "archiviert", "archiviere",
         "archiver", "archivez",
+        "archivar", "archiva", "archive", "archivado", "archivan",
         # Wave-149: Devanagari ARCHIVE forms (pilot): संग्रहित/
         # संग्रहीत are the native equivalents; आर्काइव is the
         # common tech loanword.
         "संग्रहित", "संग्रहीत", "आर्काइव",
+        # Row-7 archive/redact multilingual: Cyrillic (Russian)
+        # ARCHIVE forms. архивировать/заархивировать ("to archive")
+        # families, with the й->и fold duals (same discipline as
+        # SEND/PUBLISH: the scope path folds while the judge does
+        # not; ARCHIVE has no tool mapping, but the duals keep the
+        # table consistent across both paths).
+        "архивировать", "архивируйте", "архивируите",
+        "архивируй", "архивируи", "архивирует", "архивировал",
+        "заархивировать", "заархивируйте", "заархивируите",
+        "заархивировал",
+        # Row-7 archive/redact multilingual: Arabic (MSA) ARCHIVE
+        # forms. أرشف (imperative "archive!"), ترشف (2nd-person
+        # imperfect -- "لا ترشف"), يرشف (3rd-person imperfect),
+        # إرشاف (verbal noun "archiving"), أرشفت (1st/2nd-person
+        # past). Bare-alef spellings (ارشف/ارشاف) are the common
+        # un-hamza'd colloquial orthography, carried deliberately
+        # (wave-152 أرسل/ارسل precedent).
+        "أرشف", "ارشف", "ترشف", "يرشف", "إرشاف", "ارشاف", "أرشفت",
+        # Row-7 archive/redact multilingual: CJK ARCHIVE forms.
+        # Mandarin 归档 ("file/archive"), 存档 ("archive/store"),
+        # 封存 ("seal up/archive"); Japanese アーカイブ (katakana
+        # loanword); Korean 보관 (보관하다 "keep/store"), 아카이브
+        # (loanword). No fold duals needed (verbatim CJK fold).
+        # The single-char 归 is deliberately absent (it would
+        # substring-match unrelated words -- the 发/发现 FP shape).
+        "归档", "存档", "封存", "アーカイブ", "보관", "아카이브",
     )),
     "DELETE": frozenset((
         "delete", "deletes", "deleting", "deleted",
@@ -616,17 +643,21 @@ _VERB_CLASSES = {
     #   ("hochladen", "weiterzuleiten") ARE single tokens and live
     #   here.
     # - Wave-151 (row 7): Cyrillic (Russian) pilot covers
-    #   SEND/DELETE/SHARE only. ARCHIVE/REDACT carry no Cyrillic,
-    #   Arabic, or CJK forms -- real verbs for these
-    #   (архивировать, цензурировать) exist but are deliberately
-    #   out of scope (documented residual; row 7 stays PARTIAL).
-    #   The row-7 verb-expansion work extended the Cyrillic,
-    #   Arabic, and CJK pilots to PUBLISH/FORWARD/UPLOAD and added
-    #   the GRANT/REVOKE/LEAK classes in all five scripts.
+    #   SEND/DELETE/SHARE only. The row-7 verb-expansion work
+    #   extended the Cyrillic, Arabic, and CJK pilots to
+    #   PUBLISH/FORWARD/UPLOAD and added the GRANT/REVOKE/LEAK
+    #   classes in all five scripts; the archive/redact
+    #   multilingual work then gave ARCHIVE and REDACT their
+    #   Cyrillic, Arabic, and CJK forms (plus ES archive and DE
+    #   zensieren families). ARCHIVE/REDACT, like SHARE/FORWARD/
+    #   GRANT/REVOKE/LEAK, have no product-tool mapping, so they
+    #   live in the similarity-countermand scope path and the cue
+    #   path only.
     "REDACT": frozenset((
         "redact", "redacts", "redacting", "redacted",
         "schwaerzen", "schwaerzt", "schwaerze", "geschwaerzt",
         "schwarzen", "schwarzt", "schwarze", "geschwarzt",
+        "zensieren", "zensiert", "zensiere", "zensierst",
         "caviarder", "caviardez", "caviarde", "caviardent",
         "censurar", "censura", "censure", "censurado",
         "hatao", "hataana", "hataaya", "hataate",
@@ -636,6 +667,36 @@ _VERB_CLASSES = {
         "छिपाना", "छिपाएँ", "छिपाओ", "छिपाए", "छिपा",
         "ढकना", "ढकें", "ढको",
         "सेंसर",
+        # Row-7 archive/redact multilingual: Cyrillic (Russian)
+        # REDACT forms. цензурировать ("to censor") family;
+        # вымарать/вымарывать ("to strike out/delete text") family;
+        # замазать/замазывать ("to daub over / black out") family.
+        # й->и fold duals carried where the form has й (same
+        # discipline as SEND/PUBLISH). Russian "редактировать"
+        # is deliberately absent: it means "to edit" (overbroad --
+        # "do not edit" must not read as a redact countermand).
+        "цензурировать", "цензурируйте", "цензурируите",
+        "цензурирует", "цензурировал",
+        "вымарать", "вымарай", "вымараи", "вымарайте",
+        "вымараите", "вымарал", "вымаран",
+        "вымарывать", "вымарывайте", "вымарываите",
+        "замазать", "замажьте", "замазал",
+        "замазывать", "замазывайте", "замазываите",
+        # Row-7 archive/redact multilingual: Arabic (MSA) REDACT
+        # forms. أخفى ("conceal!"), تحفي/يخفي imperfects, إخفاء
+        # (verbal noun); احجب ("withhold!") family (حجب المعلومات
+        # "withhold information"); اشطب ("strike through!") family.
+        # Bare-alef duals carried (wave-152 precedent).
+        "أخفى", "اخفى", "تخفي", "يخفي", "إخفاء", "اخفاء", "أخفيت",
+        "احجب", "تحجب", "يحجب", "حجب", "حجبت",
+        "اشطب", "تشطب", "يشطب", "شطب", "شطبت",
+        # Row-7 archive/redact multilingual: CJK REDACT forms.
+        # Mandarin 涂黑 ("black out"), 遮蔽 ("cover/shield" --
+        # also "shield", an acknowledged precision boundary like
+        # 共有), 隐去 ("conceal/remove"); Japanese 黒塗り
+        # ("blacking out"); Korean 가리다/가려 ("cover/hide").
+        # No fold duals needed (verbatim CJK fold).
+        "涂黑", "遮蔽", "隐去", "黒塗り", "가리다", "가려",
     )),
     "SHARE": frozenset((
         "share", "shares", "sharing", "shared",
