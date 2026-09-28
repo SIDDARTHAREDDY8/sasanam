@@ -270,7 +270,8 @@ class Decision:
                    else [DEFAULT_DENY_ID])
         return PolicyDecision(self.effect, self.reason,
                               policy_id=self.policy_id, flag=self.flag,
-                              matched_rules=matched)
+                              matched_rules=matched,
+                              diagnostics=self.diagnostics)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"effect": self.effect, "allowed": self.allowed,

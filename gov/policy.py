@@ -166,7 +166,7 @@ def default_policy_path():
 
 class PolicyDecision:
     def __init__(self, effect, reason, policy_id=None, flag=None,
-                 matched_rules=None):
+                 matched_rules=None, diagnostics=None):
         self.effect = effect          # "allow" | "require_approval" | "deny"
         self.reason = reason
         self.policy_id = policy_id
@@ -180,11 +180,20 @@ class PolicyDecision:
         if matched_rules is None:
             matched_rules = [policy_id] if policy_id else ["default_deny"]
         self.matched_rules = list(matched_rules)
+        # Wave-180 lane B (Cedar contract): the full structured
+        # diagnostics ride along so the why is never dropped at the
+        # enforcement seam. None only for hand-built decisions that
+        # never went through PolicyEngine.decide(); evaluate() always
+        # sets it. Additive for key-access readers (a new to_dict()
+        # key appears; no existing key changes shape).
+        self.diagnostics = diagnostics
 
     def to_dict(self):
         return {"effect": self.effect, "reason": self.reason,
                 "policy_id": self.policy_id, "flag": self.flag,
-                "matched_rules": list(self.matched_rules)}
+                "matched_rules": list(self.matched_rules),
+                "diagnostics": (self.diagnostics.to_dict()
+                                if self.diagnostics is not None else None)}
 
 
 def _resolve(path, context):
@@ -690,14 +699,17 @@ class PolicyEngine:
 
 
     def _validate_rule(self, rule, index):
+        # The mapping check comes first: rule.get() below would raise
+        # a bare AttributeError on a non-mapping rule instead of the
+        # intended fail-closed ValueError (wave-180 lane B red test).
+        if not isinstance(rule, dict):
+            raise ValueError("policy rule %d: rule must be a mapping, got %r"
+                             % (index, rule))
         rule_id = rule.get("id", "rule-%d" % index)
         # F90: unknown rule-level fields are refused loudly. The AGT
         # scope-typo shape — ``macht:`` for ``match:`` on an allow rule —
         # previously loaded silently with ``match`` defaulting to {},
         # i.e. the rule matched EVERY action (deny->allow flip).
-        if not isinstance(rule, dict):
-            raise ValueError("policy rule %d: rule must be a mapping, got %r"
-                             % (index, rule))
         unknown_fields = sorted(
             k for k in rule if k not in KNOWN_RULE_FIELDS)
         if unknown_fields:

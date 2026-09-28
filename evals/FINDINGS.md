@@ -6134,6 +6134,22 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 **Found by:** wave-179 lane E (differential discovery), 2026-09-28, osquery-pattern ADAPT from the wave-179 prospecting lane, against `fed2c44`.
 
 ---
+---
 
+## F198: non-mapping policy rule raises bare AttributeError instead of fail-closed ValueError (LOW)
 
-Next free finding: **F198**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E.)
+**Status: CLOSED (2026-09-28, wave-180 lane B; red-first, fixed in the same diff).**
+
+**Claim broken.** `PolicyEngine._validate_rule` computed `rule_id = rule.get("id", "rule-%d" % index)` BEFORE the `isinstance(rule, dict)` guard. A policy file containing a non-mapping rule (e.g. a bare string in the `policies:` list) crashed with `AttributeError: 'str' object has no attribute 'get'` instead of the intended fail-closed `ValueError("policy rule N: rule must be a mapping, ...")`.
+
+**Severity rationale: LOW.** Fail-closed in both shapes — the policy load refused either way; no rule could load silently and no verdict could be produced. The defect was error-reporting quality only: an operator debugging a malformed policy file would see a bare `AttributeError` traceback instead of the actionable refusal message. No bypass, no silent accept, no verdict-behavior change.
+
+**Close-when:** non-mapping policy rules are refused at load with `ValueError` naming the rule index. Red-first: `tests/test_decision_contract.py::TestFailClosed::test_non_mapping_rule_refused_at_load` errors pre-fix (bare `AttributeError`) and passes post-fix.
+
+**Closure (wave-180 lane B, 2026-09-28):** moved the `isinstance` guard above the `rule.get("id", ...)` line in `gov/policy.py::_validate_rule`; the dead ordering is removed, not duplicated. Red-first evidence: the test errored pre-fix for the right reason and passes post-fix. 24/24 tests green incl. `env -u GOV_DEPLOYMENT_MODE`; cedar probe battery 12/12 HELD; adjacent policy suites 229 OK (5 pre-existing xfails).
+
+**Found by:** wave-180 lane B red-first test, 2026-09-28, against `88261a9`.
+
+---
+
+Next free finding: **F199**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B.)
