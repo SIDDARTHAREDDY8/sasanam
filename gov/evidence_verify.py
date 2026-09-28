@@ -394,11 +394,15 @@ def _entry_sig_body(entry):
 
 
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
-                         threshold, roster_hash):
+                         threshold, roster_hash, ts):
+    # F202: ts is bound into the signed body (mirrors gov/log.py).
+    if not isinstance(ts, str) or not ts:
+        raise TypeError(
+            "checkpoint ts must be a non-empty string for the sig body")
     return (_CHECKPOINT_SIG_DOMAIN
-            + ("%d|%s|%s|%s|%d|%s"
+            + ("%d|%s|%s|%s|%d|%s|%s"
                % (seq, entry_hash, merkle_root_hex, key_epoch,
-                  threshold, roster_hash)).encode("utf-8"))
+                  threshold, roster_hash, ts)).encode("utf-8"))
 
 
 # --- end vendored gov/log.py ---
@@ -874,14 +878,17 @@ def _verify_one_head(head, cp_keys, roster=None, pinned_cp_key_ids=None):
     ``keys/checkpoint_roster.json``); required for threshold heads.
     """
     for f in ("seq", "hash", "merkle_root", "key_epoch", "threshold",
-              "roster_hash", "sigs"):
+              "roster_hash", "sigs", "ts"):
         if f not in head:
             return "checkpoint head missing field %r" % f, None
     threshold = head["threshold"]
     roster_hash = head["roster_hash"]
-    body = _checkpoint_sig_body(head["seq"], head["hash"],
-                                head["merkle_root"], head["key_epoch"],
-                                threshold, roster_hash)
+    try:
+        body = _checkpoint_sig_body(head["seq"], head["hash"],
+                                    head["merkle_root"], head["key_epoch"],
+                                    threshold, roster_hash, head["ts"])
+    except (KeyError, TypeError, ValueError):
+        return "checkpoint sig body malformed (ts binding)", None
     if threshold == 1 and roster_hash.startswith(_SINGLE_ROSTER_MARK):
         # Single-key branch.
         expect_kid = roster_hash[len(_SINGLE_ROSTER_MARK):]

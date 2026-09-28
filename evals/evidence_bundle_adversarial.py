@@ -583,7 +583,7 @@ def a2_wrong_signer_key():
     body = _EVV._checkpoint_sig_body(head["seq"], head["hash"],
                                      head["merkle_root"],
                                      head["key_epoch"], head["threshold"],
-                                     head["roster_hash"])
+                                     head["roster_hash"], head["ts"])
     # Genuine CK2 signature over the real body — but CK2 is not the
     # roster-bound signer.
     head["sigs"] = [{"key_id": CK2.key_id,
@@ -627,7 +627,7 @@ def a3_roster_keyid_alias():
     body = _EVV._checkpoint_sig_body(head["seq"], head["hash"],
                                      head["merkle_root"],
                                      head["key_epoch"], head["threshold"],
-                                     rh)
+                                     rh, head["ts"])
     head["sigs"] = fx["tsigner"].sign_all(body)
     with open(os.path.join(fx["dir"], "checkpoints.jsonl"), "w",
               encoding="utf-8") as f:

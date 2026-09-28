@@ -376,7 +376,12 @@ class TestEvidenceBundleAssemble(_EBTestBase):
         fixed = Ed25519Signer(bytes.fromhex("22" * 32))
         ts = "2026-09-26T00:00:00+00:00"
         real_utcnow = _logmod._utcnow
-        _logmod._utcnow = lambda: datetime(2026, 9, 26, tzinfo=timezone.utc)
+        # F202: the mock must honor _utcnow's string contract -- the
+        # checkpoint ts is now bound into the signature body, which
+        # requires a real string (the old datetime mock was only masked
+        # by json.dumps(default=str)).
+        _logmod._utcnow = lambda: datetime(
+            2026, 9, 26, tzinfo=timezone.utc).isoformat()
         try:
             out1, info1, _ = self._assembled("d1", signer=fixed,
                                              exported_at=ts)

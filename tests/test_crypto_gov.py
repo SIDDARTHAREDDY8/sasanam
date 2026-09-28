@@ -384,17 +384,19 @@ class SignedLogTests(CryptoGovBase):
         self.assertFalse(strict["ok"])
 
     def test_sig_stripping_downgrade_documented(self):
-        # Stripping the v2 fields turns the checkpoint into v1: the
-        # HMAC path still verifies (documented residual), but a third
-        # party with require_signed=True rejects the log.
+        # Stripping the v2 SIGNATURE fields turns the checkpoint into
+        # v1: the HMAC path still verifies (documented residual), but a
+        # third party with require_signed=True rejects the log. F202:
+        # ts is now bound into the HMAC mac, so ts itself cannot be
+        # stripped without the key -- only the signature envelope
+        # (merkle_root/threshold/sigs/roster_hash) is removable.
         lg, path, signer = self.signed_log(n=3)
         cp_path = Path(path).parent / "checkpoints.jsonl"
         lines = cp_path.read_text(encoding="utf-8").splitlines()
         stripped = []
         for line in lines:
             cp = json.loads(line)
-            for f in ("merkle_root", "threshold", "sigs", "roster_hash",
-                      "ts"):
+            for f in ("merkle_root", "threshold", "sigs", "roster_hash"):
                 cp.pop(f, None)
             cp["format_version"] = 1
             stripped.append(json.dumps(cp))
@@ -489,14 +491,16 @@ class ProofTests(CryptoGovBase):
                       for e in entries) + "\n", encoding="utf-8")
         # The attacker re-MACs the checkpoints too (they hold the
         # configured HMAC key); the signed Merkle roots and sigs stay
-        # as-was.
+        # as-was. F202: the re-minted mac must bind ts like the original
+        # or the HMAC seam is not actually fooled.
         cp_path = Path(path).parent / "checkpoints.jsonl"
         cps = []
         for line in cp_path.read_text(encoding="utf-8").splitlines():
             cp = json.loads(line)
             cp["hash"] = new_hash[cp["seq"]]
             cp["mac"] = _checkpoint_mac(
-                self._forge_key, "dev", cp["seq"], cp["hash"])
+                self._forge_key, "dev", cp["seq"], cp["hash"],
+                ts=cp.get("ts"))
             cps.append(json.dumps(cp, ensure_ascii=True, default=str))
         cp_path.write_text("\n".join(cps) + "\n", encoding="utf-8")
         self.assertTrue(verify_chain(path)[0])  # HMAC fully fooled
@@ -674,6 +678,112 @@ class ThresholdLogTests(CryptoGovBase):
         verdict = _log.verify_checkpoint_signatures(
             p, trusted_keys=self.trust_single(s))
         self.assertTrue(verdict["ok"], verdict)
+
+
+class F202CheckpointTsTests(CryptoGovBase):
+    """F202: the signed checkpoint timestamp (ts) is authenticated.
+
+    Regression for the wave-183 witness-spike finding: ts was covered
+    by NEITHER the threshold-signature body NOR the HMAC checkpoint
+    mac, so any checkpoint holder could rewrite it (probe W12:
+    rewritten to year 2999, threshold sigs still verified). ts is now
+    bound into both layers.
+    """
+
+    def _threshold_log(self, k=2, n=3, entries=3):
+        signers, root, roster, ts = self.threshold_setup(k=k, n=n)
+        d = self.fresh_dir()
+        p = str(d / "actions.jsonl")
+        lg = ActionLog(p, signer=ts, roster=roster)
+        for i in range(entries):
+            lg.append({"event": "t", "i": i})
+        ctx = {"signers": signers, "root": root, "roster": roster,
+               "signer": ts, "dir": d, "path": p, "log": lg}
+        return ctx
+
+    def test_ts_rewrite_breaks_threshold_verification(self):
+        # W12 red: a third party rewrites ts on a threshold-signed
+        # checkpoint -> the operator signatures must stop verifying.
+        ctx = self._threshold_log()
+        cp = _log.signed_checkpoint(ctx["path"], 3)
+        rewritten = dict(cp)
+        rewritten["ts"] = "2999-01-01T00:00:00+00:00"
+        ok, err = _log._verify_one_checkpoint_sig(
+            rewritten, {}, roster=ctx["roster"],
+            root_pub=ctx["root"].public_key)
+        self.assertFalse(ok, "ts-rewritten checkpoint verified (F202 open)")
+        # The honest checkpoint still verifies at the same seam.
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {}, roster=ctx["roster"],
+            root_pub=ctx["root"].public_key)
+        self.assertTrue(ok, err)
+
+    def test_ts_rewrite_breaks_hmac_verification(self):
+        # Same attack at the HMAC seam: rewrite ts in the sidecar ->
+        # operator-side _verify must fail closed.
+        ctx = self._threshold_log()
+        cp_path = Path(ctx["path"]).parent / "checkpoints.jsonl"
+        lines = [l for l in cp_path.read_text(encoding="utf-8").splitlines()
+                 if l.strip()]
+        latest = json.loads(lines[-1])
+        self.assertEqual(latest["format_version"],
+                         _log.CHECKPOINT_SIG_VERSION)
+        latest["ts"] = "2999-01-01T00:00:00+00:00"
+        lines[-1] = json.dumps(latest)
+        cp_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        v = _log._verify(ctx["path"])
+        self.assertFalse(v["ok"], "ts-rewritten sidecar verified (F202 open)")
+        self.assertIn("MAC", v["error"])
+
+    def test_honest_checkpoint_verifies_both_seams(self):
+        # No regression for honest checkpoints: threshold sigs verify
+        # AND the HMAC layer verifies with ts bound in.
+        ctx = self._threshold_log()
+        cp = _log.signed_checkpoint(ctx["path"], 3)
+        self.assertIsInstance(cp["ts"], str)
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {}, roster=ctx["roster"],
+            root_pub=ctx["root"].public_key)
+        self.assertTrue(ok, err)
+        v = _log._verify(ctx["path"])
+        self.assertTrue(v["ok"], v["error"])
+        # The mac on disk really does bind ts: recomputing without ts
+        # must NOT match (i.e. ts is not decorative). self._forge_key is
+        # the provisioned test key (epoch "dev").
+        legacy = _log._checkpoint_mac(self._forge_key, "dev",
+                                      cp["seq"], cp["hash"])
+        self.assertNotEqual(cp["mac"], legacy)
+        bound = _log._checkpoint_mac(self._forge_key, "dev",
+                                     cp["seq"], cp["hash"], ts=cp["ts"])
+        self.assertEqual(cp["mac"], bound)
+
+    def test_v2_checkpoint_without_ts_is_malformed(self):
+        # A v2 checkpoint dict with no ts cannot be verified -- the
+        # pre-F202 shape is rejected fail-closed, never silently
+        # accepted.
+        ctx = self._threshold_log()
+        cp = dict(_log.signed_checkpoint(ctx["path"], 3))
+        del cp["ts"]
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {}, roster=ctx["roster"],
+            root_pub=ctx["root"].public_key)
+        self.assertFalse(ok)
+        self.assertIn("malformed", err)
+
+    def test_single_key_ts_rewrite_breaks_verification(self):
+        # The single-key (threshold == 1) shape binds ts the same way.
+        s = _signing.Ed25519Signer(_seed(5))
+        d = self.fresh_dir()
+        p = str(d / "actions.jsonl")
+        ActionLog(p, signer=s).append({"event": "t"})
+        cp = _log.signed_checkpoint(p, 1)
+        rewritten = dict(cp)
+        rewritten["ts"] = "2999-01-01T00:00:00+00:00"
+        ok, _ = _log._verify_one_checkpoint_sig(
+            rewritten, self.trust_single(s))
+        self.assertFalse(ok, "single-key ts-rewritten checkpoint verified")
+        ok, err = _log._verify_one_checkpoint_sig(cp, self.trust_single(s))
+        self.assertTrue(ok, err)
 
 
 class AttestationTests(CryptoGovBase):

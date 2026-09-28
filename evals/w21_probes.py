@@ -658,7 +658,10 @@ def _thr_checkpoint(seq, roster, sig_signers, entry_hash="ab" * 32):
     cp = {"format_version": log_mod.CHECKPOINT_SIG_VERSION,
           "seq": seq, "hash": entry_hash, "merkle_root": "cd" * 32,
           "key_epoch": "epoch-1", "threshold": roster["threshold"],
-          "roster_hash": signing_mod.roster_hash(roster)}
+          "roster_hash": signing_mod.roster_hash(roster),
+          # F202: ts is part of the signed body; a v2 checkpoint without
+          # it is malformed.
+          "ts": "2026-01-01T00:00:00+00:00"}
     body = log_mod._sig_body_for_checkpoint(cp)
     cp["sigs"] = _thr_sigs(sig_signers, body)
     return cp

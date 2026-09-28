@@ -385,12 +385,23 @@ def _leaf_input(entry):
 
 
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
-                         threshold, roster_hash):
-    """Bytes checkpoint Ed25519 signature(s) cover (the STH body)."""
+                         threshold, roster_hash, ts):
+    """Bytes checkpoint Ed25519 signature(s) cover (the STH body).
+
+    F202: ``ts`` (the operator's claimed checkpoint wall-clock time) is
+    bound into the body -- a checkpoint whose ``ts`` was rewritten after
+    signing fails verification. Pre-F202 signatures never covered ``ts``
+    and no longer verify (intended format consequence: signed
+    checkpoints are new -- no deployed legacy population -- and a
+    pre-F202 head is unfixable by construction).
+    """
+    if not isinstance(ts, str) or not ts:
+        raise TypeError(
+            "checkpoint ts must be a non-empty string for the sig body")
     return (_CHECKPOINT_SIG_DOMAIN
-            + ("%d|%s|%s|%s|%d|%s"
+            + ("%d|%s|%s|%s|%d|%s|%s"
                % (seq, entry_hash, merkle_root_hex, key_epoch,
-                  threshold, roster_hash)).encode("utf-8"))
+                  threshold, roster_hash, ts)).encode("utf-8"))
 
 
 def _entry_hash(prev_hash, canonical):
@@ -408,7 +419,8 @@ def _compute_mac(key, key_epoch, prev_mac, canonical):
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def _checkpoint_mac(key, key_epoch, seq, entry_hash, tip_gen=None):
+def _checkpoint_mac(key, key_epoch, seq, entry_hash, tip_gen=None,
+                    ts=None):
     """Domain-separated MAC over a checkpoint anchor.
 
     With ``tip_gen`` None (the default) this is the legacy
@@ -418,10 +430,20 @@ def _checkpoint_mac(key, key_epoch, seq, entry_hash, tip_gen=None):
     generation ``tip_gen`` was written over exactly the sidecar prefix
     ending at this line, so a replayed older tip is recognized as
     stale. The two domains never collide.
+
+    F202: when ``ts`` is given (v2 signed checkpoints), it is bound
+    into the MAC -- rewriting ``ts`` breaks the MAC, so the
+    operator-side ``_verify``/``verify_chain_tip`` seams detect the
+    tamper. Format-1 checkpoints and tip-generation pins carry no
+    ``ts`` and keep the legacy domain.
     """
     if tip_gen is None:
-        msg = ("checkpoint|%s|%d|%s"
-               % (key_epoch, seq, entry_hash)).encode("utf-8")
+        if ts is None:
+            msg = ("checkpoint|%s|%d|%s"
+                   % (key_epoch, seq, entry_hash)).encode("utf-8")
+        else:
+            msg = ("checkpoint|%s|%d|%s|%s"
+                   % (key_epoch, seq, entry_hash, ts)).encode("utf-8")
     else:
         msg = ("checkpoint-tipgen|%s|%d|%s|%d"
                % (key_epoch, seq, entry_hash, tip_gen)).encode("utf-8")
@@ -818,12 +840,17 @@ class ActionLog:
                 "explicit (seq, entry_hash) is not supported with signer=")
         seq = self._seq if seq is None else seq
         entry_hash = self._prev if entry_hash is None else entry_hash
+        # F202: the checkpoint timestamp is bound into BOTH the HMAC mac
+        # and (below) the threshold-signature body, so rewriting it after
+        # signing breaks verification at both seams. Unsigned
+        # (format-1) checkpoints carry no ts and keep the legacy mac.
+        ts = _utcnow() if self._signer is not None else None
         cp = {
             "seq": seq,
             "hash": entry_hash,
             "key_epoch": epoch,
             "format_version": FORMAT_VERSION,
-            "mac": _checkpoint_mac(key, epoch, seq, entry_hash),
+            "mac": _checkpoint_mac(key, epoch, seq, entry_hash, ts=ts),
         }
         if self._signer is not None:
             root_hex = self._merkle.root().hex()
@@ -838,19 +865,19 @@ class ActionLog:
                 roster_hash = _signing.roster_hash(self._roster)
                 body = _checkpoint_sig_body(
                     seq, entry_hash, root_hex, epoch, threshold,
-                    roster_hash)
+                    roster_hash, ts)
                 sigs = self._signer.sign_all(body)
             else:
                 threshold = 1
                 roster_hash = _SINGLE_ROSTER_MARK + self._signer.key_id
                 body = _checkpoint_sig_body(
                     seq, entry_hash, root_hex, epoch, threshold,
-                    roster_hash)
+                    roster_hash, ts)
                 sigs = [{"key_id": self._signer.key_id,
                          "sig": self._signer.sign(body).hex()}]
             cp.update({
                 "format_version": CHECKPOINT_SIG_VERSION,
-                "ts": _utcnow(),
+                "ts": ts,
                 "merkle_root": root_hex,
                 "threshold": threshold,
                 "sigs": sigs,
@@ -1214,9 +1241,14 @@ def _verify(path, _skip_malformed=False):
                          "claims %r but the configured key epoch is %r — "
                          "refusing to verify (failing closed)"
                          % (cp_label, epoch), checked=checked)
+        # F202: v2 signed checkpoints bind ts into the mac; only
+        # format-1 checkpoints and tip-gen pins (which carry no ts) use
+        # the legacy domain. A pre-F202 v2 head fails here: its mac was
+        # minted without ts.
         expect = _checkpoint_mac(key, cp_label,
                                  latest["seq"], latest["hash"],
-                                 _pin_gen_of(latest))
+                                 _pin_gen_of(latest),
+                                 ts=latest.get("ts"))
         if not hmac.compare_digest(latest.get("mac", ""), expect):
             return _fail(entries,
                          "checkpoint MAC invalid (checkpoint tampered "
@@ -1348,10 +1380,16 @@ def signed_checkpoint(path, seq):
 
 
 def _sig_body_for_checkpoint(cp):
-    """Rebuild the signed STH body from a v2 checkpoint dict."""
+    """Rebuild the signed STH body from a v2 checkpoint dict.
+
+    F202: ``ts`` is part of the signed body. A v2 checkpoint without a
+    string ``ts`` is malformed -- the KeyError/TypeError is caught by
+    ``_verify_one_checkpoint_sig`` and fails closed. Pre-F202 heads
+    (whose signatures never covered ``ts``) no longer verify.
+    """
     return _checkpoint_sig_body(cp["seq"], cp["hash"], cp["merkle_root"],
                                 cp["key_epoch"], cp["threshold"],
-                                cp["roster_hash"])
+                                cp["roster_hash"], cp["ts"])
 
 
 def _normalize_pubkey(pub):
@@ -2333,9 +2371,11 @@ def verify_chain_tip(path, flags=()):
             return None
         # A tip-generation pin line carries its generation in a
         # separate MAC domain; dispatch so pins verify under it.
+        # F202: v2 heads bind ts into the mac (see _verify above).
         expect_cp = _checkpoint_mac(key, cp_label, newest["seq"],
                                     newest["hash"],
-                                    _pin_gen_of(newest))
+                                    _pin_gen_of(newest),
+                                    ts=newest.get("ts"))
         if not hmac.compare_digest(newest.get("mac", ""), expect_cp):
             return None
         if count < newest["seq"]:
