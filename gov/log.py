@@ -237,6 +237,103 @@ def _active_key(deployment_mode=None):
     return _kp.resolve_active_key(deployment_mode)
 
 
+class NoAuditSigningKeyError(Exception):
+    """The audit-signing key configuration is malformed.
+
+    Raised by :func:`resolve_audit_signer` when a signing key IS
+    configured but unusable (bad hex, wrong length, unreadable or
+    group/world-accessible key file). An ABSENT configuration is not
+    an error -- it resolves to ``None`` (HMAC-only log) -- but a
+    misconfigured one must be loud at log open, never a silent
+    downgrade to unsigned entries.
+    """
+
+
+_AUDIT_KEY_ENV = "GOV_AUDIT_SIGNING_KEY"
+_AUDIT_KEY_FILE_ENV = "GOV_AUDIT_SIGNING_KEY_FILE"
+
+
+def resolve_audit_signer(explicit=None):
+    """Resolve the audit-log entry-signing key (P2), or ``None``.
+
+    Precedence mirrors ``gov.anchorer.resolve_anchor_key`` (the
+    established operator-held Ed25519 seed idiom): explicit hex seed >
+    ``GOV_AUDIT_SIGNING_KEY`` (hex) > ``GOV_AUDIT_SIGNING_KEY_FILE``
+    (0600 file holding hex). Returns a ``gov.signing.Ed25519Signer``,
+    or ``None`` when nothing is configured (the log stays HMAC-only,
+    byte-identical to today).
+
+    A dedicated key, not the anchor key: per-entry signing is a hot
+    path with the seed resident in process memory for the run's
+    lifetime, while the anchor key signs occasional anchoring
+    statements. Domain separation (``gov-entry-sig/v1``) already makes
+    cross-artifact signature reuse cryptographically impossible; the
+    separate variable additionally decouples "signed audit entries"
+    from "anchoring enabled" operationally.
+
+    Fail-closed: malformed configuration raises
+    :class:`NoAuditSigningKeyError` -- a malformed configured value must
+    break loudly at :func:`open_audit_log`, never produce silently
+    unsigned entries an operator believed were signed. (An entirely
+    ABSENT configuration is not an error: it resolves to ``None``,
+    HMAC-only.)
+    """
+    source = "explicit seed" if explicit is not None else _AUDIT_KEY_ENV
+    seed_hex = (explicit or os.environ.get(_AUDIT_KEY_ENV, "")).strip()
+    if seed_hex:
+        try:
+            seed = bytes.fromhex(seed_hex)
+        except ValueError:
+            raise NoAuditSigningKeyError(
+                "%s is not hex" % source)
+        if len(seed) != 32:
+            raise NoAuditSigningKeyError(
+                "%s must be 32 bytes" % source)
+        return _signing.Ed25519Signer(seed)
+    key_file = os.environ.get(_AUDIT_KEY_FILE_ENV, "").strip()
+    if not key_file:
+        return None
+    # Wave-91 (G1) posture, same as the anchor key: the permission
+    # gate runs BEFORE any key bytes are read; a group/world-accessible
+    # file is refused, not warned about. Lazy import mirrors anchorer.
+    from .keyfiles import require_private_key_file
+    try:
+        require_private_key_file(key_file)
+    except (FileNotFoundError, PermissionError) as e:
+        raise NoAuditSigningKeyError(
+            "refusing %s %s: %s" % (_AUDIT_KEY_FILE_ENV, key_file, e))
+    try:
+        seed = bytes.fromhex(Path(key_file).read_text(
+            encoding="utf-8").strip())
+    except (OSError, ValueError) as e:
+        raise NoAuditSigningKeyError(
+            "%s unreadable or not hex: %s" % (_AUDIT_KEY_FILE_ENV, e))
+    if len(seed) != 32:
+        raise NoAuditSigningKeyError(
+            "%s must hold a 32-byte hex seed" % _AUDIT_KEY_FILE_ENV)
+    return _signing.Ed25519Signer(seed)
+
+
+def open_audit_log(path, **kwargs):
+    """Open the production audit log at ``path``.
+
+    ``ActionLog(path, signer=resolve_audit_signer(), **kwargs)``: when
+    an audit-signing key is configured the log's entries carry Ed25519
+    ``ed_sig``/``sig_key_id`` and checkpoints are written format-2
+    (signed tree heads); when absent the log is HMAC-only,
+    byte-identical to ``ActionLog(path)``. An explicit ``signer=``
+    kwarg (including ``None``) is respected as-is -- explicit always
+    wins over the environment.
+
+    This is the seam the production constructions go through so the
+    P2 signature layer is actually live on real logs instead of
+    test-only.
+    """
+    if "signer" not in kwargs:
+        kwargs["signer"] = resolve_audit_signer()
+    return ActionLog(path, **kwargs)
+
+
 def _utcnow():
     return datetime.now().astimezone().isoformat(timespec="seconds")
 

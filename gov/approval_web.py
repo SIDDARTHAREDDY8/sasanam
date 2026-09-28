@@ -231,7 +231,7 @@ from gov.approvals import (  # noqa: E402
 )
 from gov import approver_shield as _shield  # noqa: E402  (H19: shield brief)
 from gov import packet_display as _packet_display  # noqa: E402  (F192: one shared carrier-display schema)
-from gov.log import ActionLog, read_entries_with_stats  # noqa: E402
+from gov.log import ActionLog, open_audit_log, read_entries_with_stats  # noqa: E402
 
 # Route used by tests (overridable per module for the naive shim).
 DECIDE_PATH = "/approvals/{id}/decide"
@@ -258,7 +258,7 @@ class ApprovalWebApp:
 
     def __init__(self, run_dir, token=None, policy_path=None, queue=None):
         self.run_dir = Path(run_dir)
-        self.log = ActionLog(self.run_dir / "actions.jsonl")
+        self.log = open_audit_log(self.run_dir / "actions.jsonl")
         # D1 PLUGGABILITY SEAM: the presentation layer talks to the
         # queue ONLY through the QueuePort surface documented in this
         # module's docstring. ``queue`` lets an external driver (e.g.

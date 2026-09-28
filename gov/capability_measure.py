@@ -403,7 +403,7 @@ class CapabilityHarness:
                 # must not claim one. The emission failure itself is
                 # audited, then the error propagates (fail-closed: the
                 # caller never gets a proceed=True it didn't earn).
-                _log.ActionLog(self.log_path).append({
+                _log.open_audit_log(self.log_path).append({
                     "event": "capability_gate_ticket_failed",
                     "delta_score": score,
                     "human_review_threshold": limit,
@@ -414,7 +414,7 @@ class CapabilityHarness:
             ticket_spec["approval_id"] = approval_id
         # Queue-first: the refusal audit always references a real
         # ticket (approval_id None only when no queue was supplied).
-        _log.ActionLog(self.log_path).append({
+        _log.open_audit_log(self.log_path).append({
             "event": "capability_gate_refused",
             "delta_score": score,
             "human_review_threshold": limit,

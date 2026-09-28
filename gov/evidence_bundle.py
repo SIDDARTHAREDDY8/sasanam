@@ -765,18 +765,24 @@ class EvidenceBundle:
 
         Domain-separated: ``evidence-bundle/v2`` || export_sha256 ||
         canonical({window, chain_verified, checkpoints_digest,
-        inclusion, receipt}).
+        inclusion, receipt, audit_entry_signing}).
 
         The F173 extension binds the per-entry inclusion-bundle
         presence vector, the inclusion_coverage counts, and the
         receipt's bundle-presence/reason into the claim: any unsigned
         alteration of those fields fails the signature (V7) instead of
-        sailing through to a VERIFIED verdict. Binding the claim into
+        sailing through to a VERIFIED verdict. Wave-179 lane A extends
+        the same binding to audit_entry_signing (the window's
+        per-entry Ed25519 key ids and signed/total counts), so a
+        signature-stripped slice cannot pass V7. Binding the claim into
         the signature means a signature over the payload digest alone
         cannot be re-presented with a swapped chain-verification,
-        coverage, or receipt claim. Mirrored by the standalone
-        verifier's ``_signed_claim`` (gov/evidence_verify.py) — the
-        two must construct byte-identical claims.
+        coverage, entry-signing, or receipt claim. Mirrored by the
+        standalone verifier's ``_signed_claim`` (gov/evidence_verify.py) — the
+        two must construct byte-identical claims, and do: the block is
+        included in the claim if and only if the manifest carries it
+        (seal() always sets it; manifests sealed before the block
+        existed keep the old claim shape on both sides).
         """
         claim = {
             "window": manifest["window"],
@@ -785,6 +791,8 @@ class EvidenceBundle:
             "inclusion": _inclusion_claim(manifest),
             "receipt": _receipt_claim(manifest),
         }
+        if "audit_entry_signing" in manifest:
+            claim["audit_entry_signing"] = manifest["audit_entry_signing"]
         return (SIGN_DOMAIN
                 + bytes.fromhex(manifest["export_sha256"])
                 + canonical(claim))
@@ -865,6 +873,29 @@ class EvidenceBundle:
             canonical(heads)).hexdigest()
 
         w = payload["bundle_meta"]["window"]
+        # Wave-179 lane A: bind the window's per-entry Ed25519 signing
+        # state into the manifest. Entries are signed iff the producing
+        # ActionLog had a signer (gov.log.open_audit_log resolves
+        # GOV_AUDIT_SIGNING_KEY); HMAC-only windows bind an honest
+        # zero-signed block. The block rides inside the operator-signed
+        # claim (see signed_body), so stripping ed_sig from the slice
+        # breaks the signature even though Merkle leaves deliberately
+        # exclude the sig envelope (re-signing must not change roots).
+        window_entries = [e for e in (self._entries or [])
+                          if w["from_seq"] <= e.get("seq", -1)
+                          <= w["to_seq"]]
+        entry_key_ids = sorted(
+            {e["sig_key_id"] for e in window_entries
+             if isinstance(e.get("ed_sig"), str)
+             and isinstance(e.get("sig_key_id"), str)})
+        audit_entry_signing = {
+            "key_ids": entry_key_ids,
+            "signed_entries": sum(
+                1 for e in window_entries
+                if isinstance(e.get("ed_sig"), str)
+                and isinstance(e.get("sig_key_id"), str)),
+            "total_entries": len(window_entries),
+        }
         manifest = {
             "kind": "evidence_bundle_manifest",
             "generator": GENERATOR,
@@ -890,6 +921,7 @@ class EvidenceBundle:
             "inclusion_bundles": bundles,
             "checkpoints": heads,
             "checkpoints_digest": checkpoints_digest,
+            "audit_entry_signing": audit_entry_signing,
             "signing": None,  # filled below
             "receipt": None,  # attached by log_evidence_bundle_receipt
         }
@@ -982,6 +1014,24 @@ class EvidenceBundle:
             raise EvidenceBundleError(
                 "checkpoint_keys envelope does not cover the checkpoint "
                 "signers %s" % sorted(sig_kids - env_kids))
+
+        # Wave-179 lane A: the envelope must also cover every per-entry
+        # signer in the sealed window -- ed_sig is only verifiable
+        # offline against the shipped keys, so a bundle whose entries
+        # name an unshipped key could never pass the verifier's entry
+        # signature check.
+        w = manifest["window"]
+        entry_kids = set()
+        for e in (self._entries or []):
+            if not (w["from_seq"] <= e.get("seq", -1) <= w["to_seq"]):
+                continue
+            if isinstance(e.get("ed_sig"), str) and isinstance(
+                    e.get("sig_key_id"), str):
+                entry_kids.add(e["sig_key_id"])
+        if not entry_kids.issubset(env_kids):
+            raise EvidenceBundleError(
+                "checkpoint_keys envelope does not cover the entry "
+                "signers %s" % sorted(entry_kids - env_kids))
 
         out_dir = str(out_dir)
         if os.path.isdir(out_dir) and os.listdir(out_dir):

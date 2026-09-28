@@ -53,7 +53,7 @@ from pathlib import Path
 from .identity import AgentIdentity, UnregisteredPrincipalError
 from .log import (ActionLog, _active_key, _approval_record_mac,
                   _break_glass_ticket_mac, _canonical, _marker_sets,
-                  _read_tip_cache, _verify,
+                  _read_tip_cache, _verify, open_audit_log,
                   read_entries, read_entries_with_stats,
                   verify_chain_tip, write_chain_tip_from_tail)
 from .egress_ledger import _ledger_keyring
@@ -6681,7 +6681,7 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
     run_dir = _resolve_rundir(args)
-    log = ActionLog(run_dir / "actions.jsonl")
+    log = open_audit_log(run_dir / "actions.jsonl")
     queue = ApprovalQueue(run_dir, log)
 
     if args.cmd == "list":

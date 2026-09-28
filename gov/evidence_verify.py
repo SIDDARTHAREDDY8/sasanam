@@ -377,6 +377,22 @@ def _leaf_input(entry):
             + str(entry["hash"]).encode("utf-8"))
 
 
+_ENTRY_SIG_DOMAIN = b"gov-entry-sig/v1\x00"
+
+
+def _entry_sig_body(entry):
+    """Bytes a per-entry Ed25519 signature covers: canonical content
+    (sig fields excluded) plus the chain hash, domain-separated.
+    Vendored from gov/log.py::_entry_sig_body (wave-179 lane A): the
+    offline entry-signature check (V9d) recomputes byte-identical
+    bodies from the transported slice. NOTE: this module's
+    _canonical_entry returns bytes (unlike gov.log._canonical's str),
+    so no .encode() here."""
+    return (_ENTRY_SIG_DOMAIN
+            + _canonical_entry(entry) + b"\x00"
+            + str(entry["hash"]).encode("utf-8"))
+
+
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
                          threshold, roster_hash):
     return (_CHECKPOINT_SIG_DOMAIN
@@ -771,6 +787,11 @@ def _signed_claim(manifest):
     binds the per-entry inclusion-bundle presence vector, the
     inclusion_coverage counts, and the receipt's bundle-presence/reason
     — so unsigned alteration of any of those fails V7.
+    Wave-179 lane A: the claim additionally binds audit_entry_signing
+    (the window's per-entry Ed25519 key ids and signed/total counts)
+    when the manifest carries it. Manifests sealed before that block
+    existed keep the old claim shape (backward compatible: the field
+    is included iff present).
     """
     ic = manifest.get("inclusion_coverage") or {}
     presence = []
@@ -784,7 +805,7 @@ def _signed_claim(manifest):
     receipt = (None if r is None else
                {"bundle_present": r.get("bundle") is not None,
                 "unavailable_reason": r.get("unavailable_reason")})
-    return {
+    claim = {
         "window": manifest["window"],
         "chain_verified": manifest["chain_verified"],
         "checkpoints_digest": manifest["checkpoints_digest"],
@@ -795,6 +816,9 @@ def _signed_claim(manifest):
         },
         "receipt": receipt,
     }
+    if "audit_entry_signing" in manifest:
+        claim["audit_entry_signing"] = manifest["audit_entry_signing"]
+    return claim
 
 
 def v7_operator_signature(ctx):
@@ -1175,6 +1199,73 @@ def v9_slice_integrity(ctx):
                 "inclusion bundles verified, %d reduced-coverage "
                 "entries with explicit reasons"
                 % (len(entries), anchor, verified, len(missing)))
+
+
+def v9d_entry_signatures(ctx):
+    """V9d: per-entry Ed25519 audit signatures (wave-179 lane A).
+
+    The manifest's audit_entry_signing block (bound into the
+    operator-signed claim, so V7 already pins it) names the window's
+    entry-signing key ids and the signed/total counts. Every slice
+    entry carrying ed_sig/sig_key_id is verified here against the
+    shipped checkpoint_keys envelope -- offline, with the auditor's
+    pinned keys only, no shared HMAC secret.
+
+    Fail-closed notes: stripping ed_sig from entries does NOT break
+    Merkle inclusion (the leaf deliberately excludes the sig envelope
+    so re-signing never changes tree roots) -- the bound
+    signed_entries count is what catches a strip. A forged ed_sig, an
+    entry signed by a key the manifest does not bind, or a key missing
+    from the envelope all fail loudly. HMAC-only windows (no block /
+    zero signed) pass as not-applicable: absence of signatures is
+    honest, not a failure.
+    """
+    c = Check("V9d", "V9d per-entry Ed25519 audit signatures")
+    bound = ctx.manifest.get("audit_entry_signing") or {}
+    entries = ctx.slice_entries
+    signed = [e for e in entries
+              if isinstance(e.get("ed_sig"), str)
+              and isinstance(e.get("sig_key_id"), str)]
+    if len(signed) != bound.get("signed_entries", 0):
+        return c.fail("manifest audit_entry_signing.signed_entries=%r "
+                      "!= slice entries carrying ed_sig (%d): signatures "
+                      "stripped or injected"
+                      % (bound.get("signed_entries"), len(signed)))
+    if not signed:
+        return c.na("no per-entry ed_sig in slice (HMAC-only window): "
+                    "absence of signatures is honest, not a failure")
+    bound_kids = bound.get("key_ids") or []
+    if not bound_kids:
+        return c.fail("slice carries entry signatures but the manifest "
+                      "binds no audit_entry_signing key_ids")
+    pubs = {}
+    for kenv in ctx.cp_envelope or []:
+        try:
+            pubs[kenv["key_id"]] = bytes.fromhex(
+                kenv["public_key_hex"])
+        except (KeyError, ValueError, TypeError):
+            continue  # V5 already validated the envelope itself
+    for e in signed:
+        kid = e["sig_key_id"]
+        if kid not in bound_kids:
+            return c.fail("entry seq %d signed by key %r not bound in "
+                          "manifest audit_entry_signing"
+                          % (e.get("seq"), kid))
+        pub = pubs.get(kid)
+        if pub is None:
+            return c.fail("entry seq %d: signing key %r not in the "
+                          "checkpoint_keys envelope"
+                          % (e.get("seq"), kid))
+        try:
+            sig = bytes.fromhex(e["ed_sig"])
+        except ValueError:
+            return c.fail("entry seq %d: ed_sig is not hex"
+                          % e.get("seq"))
+        if len(sig) != 64 or not verify(pub, _entry_sig_body(e), sig):
+            return c.fail("entry seq %d: ed_sig does not verify"
+                          % e.get("seq"))
+    return c.ok("%d entry signatures verified against manifest-bound "
+                "keys (no shared secret needed)" % len(signed))
 
 
 def v10_manifest_completeness(ctx):
@@ -1655,6 +1746,7 @@ def _run_checks_v4_v17(ctx, run, checks):
     run(v7_operator_signature)
     run(v8_checkpoint_signatures)
     run(v9_slice_integrity)
+    run(v9d_entry_signatures)
     run(v10_manifest_completeness)
     run(v11_policy_consistency)
     run(v12_receipt)

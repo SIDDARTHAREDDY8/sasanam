@@ -574,7 +574,7 @@ def _append_retirement_marker(log_path, policy, prefix_entries,
         "truncation_hash": prefix_entries[-1]["hash"],
         "evaluated_at": now.isoformat(),
     }
-    return _log.ActionLog(str(_hot_path(log_path))).append(marker)
+    return _log.open_audit_log(str(_hot_path(log_path))).append(marker)
 
 
 def _append_warm_retire_marker(log_path, policy, prefix_entries,

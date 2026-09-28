@@ -466,6 +466,16 @@ noted):
   Entries without bundles are tolerated only where the manifest names an
   `unavailable_reason`, and then the final verdict notes reduced coverage
   explicitly.
+- **V9d — per-entry Ed25519 audit signatures.** (wave-179) The
+  manifest's `audit_entry_signing` block (key ids + signed/total
+  counts, bound into the operator-signed claim) pins the window's
+  entry-signing state: the actual count of slice entries carrying
+  `ed_sig`/`sig_key_id` must equal the bound count, and each claimed
+  signature verifies against the shipped checkpoint-keys envelope —
+  offline, with the auditor's pinned keys only. Stripped signatures,
+  forged signatures, unbound key ids, and envelope-missing keys all
+  fail; HMAC-only windows (zero signed) are reported as not-applicable,
+  not failures.
 - **V10 — manifest completeness.** Every payload section named in
   `evidence.json` is accounted in the manifest's coverage records;
   `entry_count` matches the slice; inclusion coverage math is consistent
