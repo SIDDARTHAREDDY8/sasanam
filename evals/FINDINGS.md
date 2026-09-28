@@ -6174,7 +6174,7 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F200: tampered BOM approval record_digest survives every verify seam — verify_bom has no approval-re-derivation leg (LOW)
 
-**Status: OPEN (2026-09-28, wave-181 BOM red-team).**
+**Status: CLOSED (2026-09-28, wave-182 F200 closure lane, red-first verified).**
 
 **Claim broken.** The Decision BOM (`gov/decision_bom.py`) binds approval provenance as `inputs.approval.{approval_id, record_digest}` and advertises: "An auditor re-derives the digests ON DEMAND (verify_bom) from the actual artifacts ... with teeth: a swapped or missing input digest fails closed." For the policy leg (`policy_bundle_bytes`) and the pins leg (`pin_digests`) that is true (probes P1e, P4e). For the approval leg it is not: `verify_bom` accepts NO approval-record input, and no other verifier (`verify_decision_packet`, `check_bom_shape`, the offline evidence-bundle verifier) re-derives `record_digest` against the approval record store. A key-holding producer (F196's own threat model) can mint a well-formed BOM carrying a valid-hex but WRONG `record_digest` for a real approval, and it passes every seam: `build_bom` (shape-valid), `check_bom_shape`, `verify_decision_packet` (`True`), `verify_bom` (`True, "ok (shape + re-derived: policy,pins)"` — the approval leg is simply never compared). The approval id's PRESENCE is enforced at build (`BomError`, probe P5a), but its record digest's CORRECTNESS is attestation-only everywhere.
 
@@ -6185,6 +6185,8 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 **Close-when:**
 1. `verify_bom` accepts an optional approval-record input (e.g. `approval_records={approval_id: record}` or `{approval_id: record_digest}`) and, when supplied, re-derives `inputs.approval.record_digest` against it, failing closed on mismatch — the MATCH rule for the BOM→approval edge, symmetric with the policy and pins legs. When not supplied, the approval leg is reported as UNVERIFIED in the reason (as policy/pins already are via "no artifacts supplied").
 2. Red-first: probe P5b goes BREAK→HELD (tampered record_digest fails `verify_bom` with records supplied); P5a/P5c stay HELD.
+
+**Closure (2026-09-28, wave-182).** `verify_bom` gained `approval_records={approval_id: record_digest}` (optional, backward-compatible). When supplied: the BOM's `record_digest` must MATCH the auditor's resolution — mismatch, unknown approval_id, non-dict input, or non-hex value all fail closed; a match appends "approval" to the re-derived legs. When not supplied and the BOM names an approval, the reason reports "; unverified: approval" — never silently passed. The digest-map form is deliberate: the record digest is HMAC-keyed (`gov/approvals.approval_record_digest`), so the auditor re-resolves through their trusted store/key, symmetric with the pins leg's registry-digest comparison. Red-first: pristine `786101a` → P5b BREAK (2 BREAK/26 HELD/4 HELD*/0 errors); fixed tree → P5b HELD, new probe P5d (UNVERIFIED reporting) HELD, full battery 1 BREAK (P6e=F201, still open)/28 HELD/4 HELD*/0 errors, deterministic x2 and under `env -u GOV_DEPLOYMENT_MODE`. Regression tests: `VerifyBomApprovalLegTest` (6 tests) in `tests/test_decision_bom.py`; `tests.test_decision_bom` 31 OK, `tests.test_decision_packet` 32 OK. P5a/P5c stayed HELD. Out of scope by the close-when (unchanged): `verify_decision_packet` still does not re-derive the approval digest — the packet seam stays attestation-only.
 
 **Honest residual (at filing):** even with the close-when, a producer that lies in `approval_id` itself (naming an approval the decision never answered) is caught only by the packet↔approval correspondence the caller establishes out-of-band — the BOM attests, it does not independently know which approval a decision answered. Also pre-existing: signatures attest the *recorded* values ("integrity is not truth"); F200 is about the *re-derivability* of a recorded digest, which the module's own docstring promises.
 
@@ -6213,4 +6215,4 @@ The documented `BomError("pin_digests must be a dict")` is unreachable for these
 
 ---
 
-Next free finding: **F202**. **Open findings: F200, F201.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane.)
+Next free finding: **F202**. **Open findings: F201.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182.)

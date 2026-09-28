@@ -21,6 +21,10 @@ artifact that informed the decision:
                decision answered an approval. An approval id whose
                record digest cannot be resolved fails CLOSED at build
                time -- the BOM never silently drops approval provenance.
+               On the audit path, verify_bom re-derives the digest
+               against auditor-supplied approval_records (F200); when
+               the auditor supplies none, the approval leg is reported
+               UNVERIFIED rather than silently passed.
 
 An auditor re-derives the digests ON DEMAND (verify_bom) from the
 actual artifacts instead of trusting the packet's pointers -- the same
@@ -201,7 +205,8 @@ def check_bom_shape(bom):
     return True, "ok"
 
 
-def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None):
+def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
+               approval_records=None):
     """On-demand reconstruction check (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -215,26 +220,42 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None):
     ``policy_bundle_bytes``: the exact policy-bundle bytes; sha256 must
     equal the BOM's policy digest. ``pin_digests``: {skill_id: attested
     digest} from the pin registry; each BOM pin entry must match.
+    ``approval_records``: {approval_id: record_digest} resolved by the
+    auditor from the approval store; the BOM's
+    ``inputs.approval.record_digest`` must match the supplied digest
+    for the BOM's approval_id, failing closed on mismatch -- the MATCH
+    rule for the BOM->approval edge, symmetric with the policy and pins
+    legs. The digest map (rather than raw records) is deliberate: the
+    approval record digest is HMAC-keyed under the log key (see
+    gov/approvals.approval_record_digest), so the auditor re-resolves
+    it through their trusted store/key instead of re-hashing bytes --
+    exactly as the pins leg compares registry digests rather than
+    re-attesting skills.
+
     A BOM checked with NO artifacts supplied returns (False, ...): its
     shape is valid but its provenance is UNVERIFIED, and no caller may
-    mistake that for a verified BOM. Pass the artifacts for the full
-    check.
+    mistake that for a verified BOM. When approval_records is not
+    supplied but the BOM names an approval, the approval leg is
+    reported as UNVERIFIED in the reason -- never silently passed.
+    Pass the artifacts for the full check.
     """
     try:
         return _verify(bom,
                        policy_bundle_bytes=policy_bundle_bytes,
-                       pin_digests=pin_digests)
+                       pin_digests=pin_digests,
+                       approval_records=approval_records)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
 
 
-def _verify(bom, *, policy_bundle_bytes, pin_digests):
+def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records):
     ok, reason = check_bom_shape(bom)
     if not ok:
         return False, reason
     inputs = bom["inputs"]
     checked = []
+    unverified = []
     if policy_bundle_bytes is not None:
         if not isinstance(policy_bundle_bytes, (bytes, bytearray)):
             return False, "policy_bundle_bytes is not bytes"
@@ -255,7 +276,39 @@ def _verify(bom, *, policy_bundle_bytes, pin_digests):
                     "pin digest for %r does not match the registry "
                     "(swapped or tampered pin)" % (skill_id,))
         checked.append("pins")
+    # F200: the approval leg. The record digest is HMAC-keyed, so the
+    # auditor supplies their own resolution ({approval_id:
+    # record_digest}); the BOM's digest must MATCH it. Without the
+    # auditor's input the leg is UNVERIFIED -- reported, never passed
+    # silently.
+    approval_id = inputs["approval"]["approval_id"]
+    if approval_records is not None:
+        if not isinstance(approval_records, dict):
+            return False, "approval_records is not a dict"
+        if approval_id is not None:
+            if approval_id not in approval_records:
+                return False, (
+                    "approval_id %r not present in the supplied "
+                    "approval_records; cannot re-derive record_digest "
+                    "(fail-closed)" % (approval_id,))
+            expected = approval_records[approval_id]
+            if not _is_hex64(expected):
+                return False, (
+                    "approval_records[%r] is not 64-char hex"
+                    % (approval_id,))
+            claimed = inputs["approval"]["record_digest"]
+            if expected != claimed:
+                return False, (
+                    "approval record_digest for %r does not match the "
+                    "supplied approval records (swapped or tampered "
+                    "approval provenance)" % (approval_id,))
+            checked.append("approval")
+    elif approval_id is not None:
+        unverified.append("approval")
     if not checked:
         return False, ("no artifacts supplied for re-derivation: BOM "
                        "shape ok, provenance UNVERIFIED")
-    return True, "ok (shape + re-derived: %s)" % ",".join(checked)
+    reason = "ok (shape + re-derived: %s)" % ",".join(checked)
+    if unverified:
+        reason += "; unverified: %s" % ",".join(unverified)
+    return True, reason

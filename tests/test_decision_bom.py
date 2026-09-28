@@ -171,6 +171,63 @@ class VerifyBomTest(unittest.TestCase):
         self.assertTrue(reason)
 
 
+class VerifyBomApprovalLegTest(unittest.TestCase):
+    # F200: the approval leg of verify_bom. The record digest is
+    # HMAC-keyed (gov/approvals.approval_record_digest), so the
+    # auditor supplies their own resolution {approval_id:
+    # record_digest}; the BOM's digest must MATCH it.
+
+    def test_tampered_record_digest_fails_closed_with_records(self):
+        bom = _bom(approval_record_digest="00" * 32)
+        ok, reason = decision_bom.verify_bom(
+            bom, policy_bundle_bytes=_policy_bytes("7"),
+            approval_records={"appr-1": "12" * 32})
+        self.assertFalse(ok)
+        self.assertIn("approval", reason.lower())
+
+    def test_honest_record_digest_verifies_with_records(self):
+        ok, reason = decision_bom.verify_bom(
+            _bom(), policy_bundle_bytes=_policy_bytes("7"),
+            approval_records={"appr-1": "12" * 32})
+        self.assertTrue(ok, reason)
+        self.assertIn("approval", reason)
+
+    def test_approval_leg_unverified_without_records(self):
+        # Without the auditor's records the approval leg must be
+        # REPORTED unverified -- never silently passed.
+        ok, reason = decision_bom.verify_bom(
+            _bom(), policy_bundle_bytes=_policy_bytes("7"))
+        self.assertTrue(ok, reason)
+        self.assertIn("unverified", reason.lower())
+        self.assertIn("approval", reason.lower())
+
+    def test_unknown_approval_id_in_records_fails_closed(self):
+        ok, reason = decision_bom.verify_bom(
+            _bom(), policy_bundle_bytes=_policy_bytes("7"),
+            approval_records={"other-id": "12" * 32})
+        self.assertFalse(ok)
+        self.assertIn("appr-1", reason)
+
+    def test_malformed_approval_records_fail_closed_never_raise(self):
+        for bad in ("not-a-dict", {"appr-1": "zz"},
+                    {"appr-1": None}, ["appr-1"]):
+            ok, reason = decision_bom.verify_bom(
+                _bom(), policy_bundle_bytes=_policy_bytes("7"),
+                approval_records=bad)
+            self.assertFalse(ok, bad)
+            self.assertTrue(reason, bad)
+
+    def test_no_approval_bom_ignores_supplied_records(self):
+        # A BOM that honestly attests no approval has no approval leg
+        # to check; supplied records are vacuous, not an error.
+        bom = _bom(approval_id=None, approval_record_digest=None)
+        ok, reason = decision_bom.verify_bom(
+            bom, policy_bundle_bytes=_policy_bytes("7"),
+            approval_records={"appr-1": "12" * 32})
+        self.assertTrue(ok, reason)
+        self.assertNotIn("unverified", reason.lower())
+
+
 class PacketBomSectionTest(unittest.TestCase):
     def test_packet_with_complete_bom_verifies(self):
         packet = _signed_packet()

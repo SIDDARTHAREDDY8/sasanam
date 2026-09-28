@@ -346,28 +346,26 @@ def _p5a():
     return "BREAK", "build_bom accepted an approval_id with no record digest"
 
 
-@probe("P5b", "tampered record_digest survives EVERY seam")
+@probe("P5b", "tampered record_digest fails verify_bom when the auditor supplies approval records (F200)")
 def _p5b():
-    # The approval leg of the BOM is attestation-only: no verifier
-    # re-derives record_digest against the approval record store, so a
-    # key-holding producer's swapped digest is undetectable at
-    # build_bom (shape), check_bom_shape, verify_decision_packet, and
-    # verify_bom. Contrast policy (P1e) and pins (P4e), which both
-    # re-derive on demand. Filed as F200.
+    # F200 close-when: verify_bom accepts approval_records and
+    # re-derives the BOM's approval record_digest against them, failing
+    # closed on mismatch -- the MATCH rule for the BOM->approval edge.
+    # A key-holding producer's swapped digest now fails on the
+    # on-demand audit path. (verify_decision_packet still does not
+    # re-derive: the finding's close-when scopes the fix to
+    # verify_bom; the packet seam stays attestation-only by design.)
     tampered = "00" * 32
     assert tampered != _RECORD_DIGEST
     bom = _honest_bom(approval_record_digest=tampered)
-    pkt = _sign(bom)
-    ok1, r1 = _dp.verify_decision_packet(pkt)
-    ok2, r2 = _bom.verify_bom(bom, policy_bundle_bytes=_POLICY_BYTES,
-                              pin_digests={})
-    if ok1 and ok2:
-        return ("BREAK",
-                "tampered record_digest passes verify_decision_packet "
-                "(%s) AND verify_bom (%s): approval provenance has no "
-                "re-derivation leg" % (r1, r2))
-    return "HELD", "a seam caught it: packet=%r bom=%r" % ((ok1, r1),
-                                                          (ok2, r2))
+    ok, reason = _bom.verify_bom(
+        bom, policy_bundle_bytes=_POLICY_BYTES, pin_digests={},
+        approval_records={_APPROVAL_ID: _RECORD_DIGEST})
+    if not ok and "approval" in reason.lower():
+        return "HELD", "tampered record_digest refused: %s" % reason
+    return ("BREAK",
+            "tampered record_digest survived verify_bom with records "
+            "supplied: %r" % ((ok, reason),))
 
 
 @probe("P5c", "no-approval decisions build honestly (approval None/None)")
@@ -378,6 +376,21 @@ def _p5c():
     if ok:
         return "HELD", "honest no-approval packet verifies"
     return "BREAK", "honest no-approval packet failed: %s" % reason
+
+
+@probe("P5d", "approval leg reported UNVERIFIED when records not supplied")
+def _p5d():
+    # F200 close-when, second half: a BOM naming an approval, verified
+    # WITHOUT approval_records, must not present its approval leg as
+    # verified. Honest reporting, not a pass.
+    bom = _honest_bom()
+    ok, reason = _bom.verify_bom(bom, policy_bundle_bytes=_POLICY_BYTES,
+                                 pin_digests={})
+    if ok and "unverified" in reason.lower() \
+            and "approval" in reason.lower():
+        return "HELD", "approval leg honestly UNVERIFIED: %s" % reason
+    return ("BREAK",
+            "approval leg not reported UNVERIFIED: %r" % ((ok, reason),))
 
 
 # ---------------------------------------------------------------------------
