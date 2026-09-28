@@ -165,7 +165,8 @@ class TestCheckVerdicts(unittest.TestCase):
         self.assertEqual(p.verdict, ap.INCONCLUSIVE)
         self.assertEqual(p.covered_domains, ())
         self.assertEqual(set(p.uncovered_domains),
-                         {"filesystem", "egress", "process_identity"})
+                         {"filesystem", "egress", "mcp_tools", "graphql",
+                          "process_identity"})
         self.assertIsNone(p.counterexample)
 
     def test_budget_inconclusive(self):

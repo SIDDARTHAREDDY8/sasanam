@@ -21,6 +21,21 @@ Scope is what THIS policy engine actually models:
   * ``process_identity`` -- NOT modeled by this engine (real sandboxing
     is a documented honest v1 boundary). The domain exists in every
     proof's ``uncovered_domains`` so the gap is legible, never silent.
+  * ``mcp_tools`` -- MCP server tool calls declared as
+    ``{"tool": "mcp_call", "args": {"server": <id>, "name": <tool>,
+    "arguments": {...}}}`` (the MCP tools/call wire shape, plus the
+    server identity). The checker verifies the server identity and the
+    exact ``server::tool`` pair against the operator allowlists, and
+    the canonical-JSON byte size of ``arguments`` against the declared
+    budget. Exact pair matching (never prefixes) is what defeats
+    cross-server tool-name confusion.
+  * ``graphql`` -- GraphQL operations declared as
+    ``{"tool": "graphql", "args": {"endpoint": <url>, "query": <doc>}}``.
+    The checker statically parses the single operation document
+    (stdlib-only): operation type, maximum field-selection depth with
+    same-document fragments inlined, mutation root-field names against
+    the allowlist, and introspection fields (``__*``). The endpoint
+    host is covered by the ``egress`` domain as usual.
 
 Verdicts
   ``within_boundary``  every declared access in the covered domains is
@@ -54,8 +69,16 @@ prospectus):
     the check and the side effect can invalidate it. The approved
     sweep re-checks (same fail-closed direction) to narrow the
     approval-to-execution window, not to close it.
-  * It does not cover process identity, GraphQL/MCP-style structured
-    egress, or any tool whose accesses are not declared in its args.
+  * It does not cover process identity, non-declared tool shapes, or
+    any tool whose accesses are not declared in its args. The
+    ``mcp_tools``/``graphql`` domains only model the declared
+    ``mcp_call``/``graphql`` shapes above.
+  * The GraphQL analysis is static document analysis, not a full
+    GraphQL engine: same-document fragments are inlined (cycles fail
+    closed), but the checker cannot see runtime schema changes, and a
+    malicious MCP server that lies about its tool schema defeats the
+    proof -- server attestation is out of scope. Persisted-query
+    allowlists are the operator's job to write correctly.
 
 Enforcing vs advisory (explicit decision, not ambiguous):
 
@@ -86,9 +109,11 @@ auditor).
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
+import json
 import posixpath
+import re
 
 # The four proof verdicts. Only ``within_boundary`` is a passing
 # result; every other verdict fails closed at an enforcing seam.
@@ -99,17 +124,23 @@ INCONCLUSIVE = "inconclusive"
 VERDICTS = (WITHIN, EXCEEDS, UNSUPPORTED, INCONCLUSIVE)
 
 # Domains the checker actually evaluates.
-COVERED_DOMAINS = ("filesystem", "egress")
+COVERED_DOMAINS = ("filesystem", "egress", "mcp_tools", "graphql")
 # Domains named in every proof. process_identity is carried as an
 # explicit uncovered domain: the engine does not model it, and the
 # contract refuses to pretend otherwise.
-ALL_DOMAINS = ("filesystem", "egress", "process_identity")
+ALL_DOMAINS = ("filesystem", "egress", "mcp_tools", "graphql",
+               "process_identity")
 
 # Tool -> (domain, access-kind) mapping over what the engine models.
 _WRITE_TOOLS = ("write_file", "delete_file")
 _READ_TOOLS = ("read_file",)
-_URL_EGRESS_TOOLS = ("http_post", "api_call")
+_URL_EGRESS_TOOLS = ("http_post", "api_call", "graphql")
 _MAIL_EGRESS_TOOLS = ("send_email",)
+# Declared structured-tool shapes (wave-177): the engine has no native
+# MCP/GraphQL tools, so these domains model the declared action shapes
+# documented in the module docstring.
+_MCP_TOOLS = ("mcp_call",)
+_GRAPHQL_TOOLS = ("graphql",)
 
 # Default bound on declared accesses per check: evaluation is linear,
 # the cap exists so a hostile action dict cannot turn the seam into a
@@ -132,9 +163,18 @@ class AuthorityBoundary:
 
     ``fs_read_prefixes`` / ``fs_write_prefixes`` are absolute,
     normalized POSIX path prefixes. ``egress_hosts`` are exact host
-    names (lowercased, IDNA-normalized at load). There is deliberately
-    no process-identity field: the engine cannot verify it, so the
-    schema refuses to accept a declaration it cannot check.
+    names (lowercased, IDNA-normalized at load). ``mcp_servers`` are
+    exact MCP server identities; ``mcp_tools`` are exact
+    ``server::tool`` pairs (both sides must name a listed server, and
+    neither side may contain the ``::`` separator itself).
+    ``mcp_max_arg_bytes`` bounds the canonical-JSON byte size of a
+    call's ``arguments`` object. ``graphql_max_depth`` bounds field
+    selection depth; ``graphql_allow_mutations`` gates mutations at
+    all; ``graphql_mutation_allowlist`` names the permitted mutation
+    root fields; ``graphql_allow_introspection`` gates ``__*`` fields.
+    There is deliberately no process-identity field: the engine cannot
+    verify it, so the schema refuses to accept a declaration it cannot
+    check.
     """
 
     boundary_id: str
@@ -142,6 +182,13 @@ class AuthorityBoundary:
     fs_read_prefixes: Tuple[str, ...] = ()
     fs_write_prefixes: Tuple[str, ...] = ()
     egress_hosts: Tuple[str, ...] = ()
+    mcp_servers: Tuple[str, ...] = ()
+    mcp_tools: Tuple[str, ...] = ()
+    mcp_max_arg_bytes: int = 0
+    graphql_max_depth: int = 0
+    graphql_allow_mutations: bool = False
+    graphql_mutation_allowlist: Tuple[str, ...] = ()
+    graphql_allow_introspection: bool = False
 
 
 def _normalize_prefix(raw: Any, field: str) -> str:
@@ -194,6 +241,73 @@ def _normalize_host(raw: Any) -> str:
     return host
 
 
+def _normalize_server_id(raw: Any, field: str) -> str:
+    """Validate an MCP server identity or tool name (exact match)."""
+    if not isinstance(raw, str) or not raw:
+        raise BoundaryError(
+            "%s entries must be non-empty strings, got %r" % (field, raw))
+    if "\x00" in raw:
+        raise BoundaryError("%s entry %r contains NUL" % (field, raw))
+    if any(c.isspace() for c in raw):
+        raise BoundaryError(
+            "%s entry %r contains whitespace" % (field, raw))
+    if "*" in raw:
+        raise BoundaryError(
+            "%s entry %r is a wildcard -- declare exact identities only"
+            % (field, raw))
+    if "::" in raw:
+        raise BoundaryError(
+            "%s entry %r contains '::' -- that is the pair separator; "
+            "an id containing it would let one pair masquerade as "
+            "another" % (field, raw))
+    return raw
+
+
+def _normalize_mcp_pair(raw: Any, servers: Tuple[str, ...]) -> str:
+    """Validate an exact ``server::tool`` allowlist pair."""
+    if not isinstance(raw, str) or not raw:
+        raise BoundaryError(
+            "mcp_tools entries must be non-empty strings, got %r" % (raw,))
+    parts = raw.split("::")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise BoundaryError(
+            "mcp_tools entry %r must be exactly 'server::tool'" % (raw,))
+    server = _normalize_server_id(parts[0], "mcp_tools server part")
+    _normalize_server_id(parts[1], "mcp_tools tool part")
+    if server not in servers:
+        raise BoundaryError(
+            "mcp_tools entry %r names server %r which is not in "
+            "mcp_servers -- list the server first" % (raw, server))
+    return server + "::" + parts[1]
+
+
+def _normalize_nonneg_int(raw: Any, field: str) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        raise BoundaryError(
+            "%s must be an integer, got %r" % (field, raw))
+    if raw < 0:
+        raise BoundaryError(
+            "%s must be non-negative, got %r" % (field, raw))
+    return raw
+
+
+def _normalize_bool(raw: Any, field: str) -> bool:
+    if not isinstance(raw, bool):
+        raise BoundaryError(
+            "%s must be a boolean, got %r" % (field, raw))
+    return raw
+
+
+_GQL_NAME_RE = re.compile(r"[_A-Za-z][_0-9A-Za-z]*\Z")
+
+
+def _normalize_gql_name(raw: Any, field: str) -> str:
+    if not isinstance(raw, str) or not _GQL_NAME_RE.match(raw):
+        raise BoundaryError(
+            "%s entries must be GraphQL names, got %r" % (field, raw))
+    return raw
+
+
 def boundary_from_dict(d: Mapping[str, Any]) -> AuthorityBoundary:
     """Build a validated AuthorityBoundary from an operator dict.
 
@@ -204,7 +318,10 @@ def boundary_from_dict(d: Mapping[str, Any]) -> AuthorityBoundary:
         raise BoundaryError(
             "boundary must be a mapping, got %r" % type(d).__name__)
     known = {"boundary_id", "version", "fs_read_prefixes",
-             "fs_write_prefixes", "egress_hosts"}
+             "fs_write_prefixes", "egress_hosts",
+             "mcp_servers", "mcp_tools", "mcp_max_arg_bytes",
+             "graphql_max_depth", "graphql_allow_mutations",
+             "graphql_mutation_allowlist", "graphql_allow_introspection"}
     unknown = set(d) - known
     if unknown:
         raise BoundaryError(
@@ -223,15 +340,45 @@ def boundary_from_dict(d: Mapping[str, Any]) -> AuthorityBoundary:
             raise BoundaryError("%s must be a list, got %r" % (key, vals))
         return tuple(sorted(_normalize_prefix(v, key) for v in vals))
 
+    def _ids(key):
+        vals = d.get(key, ())
+        if not isinstance(vals, (tuple, list)):
+            raise BoundaryError("%s must be a list, got %r" % (key, vals))
+        return tuple(sorted(_normalize_server_id(v, key) for v in vals))
+
     hosts = d.get("egress_hosts", ())
     if not isinstance(hosts, (tuple, list)):
         raise BoundaryError("egress_hosts must be a list, got %r" % (hosts,))
+    servers = _ids("mcp_servers")
+    pairs = d.get("mcp_tools", ())
+    if not isinstance(pairs, (tuple, list)):
+        raise BoundaryError("mcp_tools must be a list, got %r" % (pairs,))
+    muts = d.get("graphql_mutation_allowlist", ())
+    if not isinstance(muts, (tuple, list)):
+        raise BoundaryError(
+            "graphql_mutation_allowlist must be a list, got %r" % (muts,))
     return AuthorityBoundary(
         boundary_id=bid,
         version=ver,
         fs_read_prefixes=_prefixes("fs_read_prefixes"),
         fs_write_prefixes=_prefixes("fs_write_prefixes"),
         egress_hosts=tuple(sorted(_normalize_host(h) for h in hosts)),
+        mcp_servers=servers,
+        mcp_tools=tuple(sorted(_normalize_mcp_pair(p, servers)
+                               for p in pairs)),
+        mcp_max_arg_bytes=_normalize_nonneg_int(
+            d.get("mcp_max_arg_bytes", 0), "mcp_max_arg_bytes"),
+        graphql_max_depth=_normalize_nonneg_int(
+            d.get("graphql_max_depth", 0), "graphql_max_depth"),
+        graphql_allow_mutations=_normalize_bool(
+            d.get("graphql_allow_mutations", False),
+            "graphql_allow_mutations"),
+        graphql_mutation_allowlist=tuple(
+            sorted(_normalize_gql_name(m, "graphql_mutation_allowlist")
+                   for m in muts)),
+        graphql_allow_introspection=_normalize_bool(
+            d.get("graphql_allow_introspection", False),
+            "graphql_allow_introspection"),
     )
 
 
@@ -426,6 +573,402 @@ def _derive_egress_accesses(tool: str, args: Mapping[str, Any]):
     return sorted(set(hosts)), unsupported
 
 
+def _derive_mcp_accesses(tool: str, args: Mapping[str, Any]):
+    """Derive MCP tool-call accesses and unmodelable shapes.
+
+    Returns (accesses, unsupported): accesses are
+    ``(server, name, arg_bytes)`` with ``arg_bytes`` the canonical-JSON
+    byte size of the ``arguments`` object; unsupported are (raw, reason)
+    pairs. The declared shape mirrors the MCP tools/call wire shape:
+    ``{"server": <id>, "name": <tool>, "arguments": {...}}``.
+    """
+    accesses = []
+    unsupported = []
+    if tool not in _MCP_TOOLS:
+        return accesses, unsupported
+    server = args.get("server")
+    name = args.get("name")
+    arguments = args.get("arguments", {})
+    if not isinstance(server, str) or not server:
+        unsupported.append(
+            (repr(server), "mcp_call 'server' must be a non-empty string "
+                           "server identity"))
+        return accesses, unsupported
+    for bad, why in (("\x00", "NUL"), ("::", "the pair separator")):
+        if bad in server:
+            unsupported.append(
+                (server, "mcp_call 'server' contains %s" % why))
+            return accesses, unsupported
+    if any(c.isspace() for c in server):
+        unsupported.append(
+            (server, "mcp_call 'server' contains whitespace"))
+        return accesses, unsupported
+    if not isinstance(name, str) or not name:
+        unsupported.append(
+            (repr(name), "mcp_call 'name' must be a non-empty string "
+                         "tool name"))
+        return accesses, unsupported
+    for bad, why in (("\x00", "NUL"), ("::", "the pair separator")):
+        if bad in name:
+            unsupported.append(
+                (name, "mcp_call 'name' contains %s" % why))
+            return accesses, unsupported
+    if any(c.isspace() for c in name):
+        unsupported.append(
+            (name, "mcp_call 'name' contains whitespace"))
+        return accesses, unsupported
+    if not isinstance(arguments, Mapping):
+        unsupported.append(
+            (repr(arguments)[:128], "mcp_call 'arguments' must be a JSON "
+                                    "object"))
+        return accesses, unsupported
+    try:
+        blob = json.dumps(arguments, sort_keys=True,
+                          separators=(",", ":"), ensure_ascii=True)
+        arg_bytes = len(blob.encode("utf-8"))
+    except Exception:
+        unsupported.append(
+            ("arguments", "mcp_call 'arguments' are not JSON-serializable"))
+        return accesses, unsupported
+    accesses.append((server, name, arg_bytes))
+    return accesses, unsupported
+
+
+class _GraphQLShapeError(Exception):
+    """A GraphQL document the checker cannot model (fail-closed input)."""
+
+
+_GQL_NAME_PREFIX = re.compile(r"[_A-Za-z][_0-9A-Za-z]*")
+_GQL_PUNCT = set("{}()[]:!=$@|&")
+
+
+def _gql_tokenize(src: str):
+    """Tokenize a GraphQL document. Kinds: NAME STRING NUMBER PUNCT
+    ELLIPSIS EOF. Strings/numbers carry no text (their content never
+    affects the proof); comments are stripped. Raises
+    _GraphQLShapeError on any lexical malformation."""
+    toks = []
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        if c == "#":
+            j = src.find("\n", i)
+            i = n if j < 0 else j + 1
+            continue
+        if c in " \t\r\n,":
+            i += 1
+            continue
+        if c == '"':
+            if src.startswith('"""', i):
+                j = src.find('"""', i + 3)
+                if j < 0:
+                    raise _GraphQLShapeError("unterminated block string")
+                i = j + 3
+            else:
+                j = i + 1
+                while True:
+                    if j >= n:
+                        raise _GraphQLShapeError("unterminated string")
+                    if src[j] == "\\":
+                        j += 2
+                        continue
+                    if src[j] == '"':
+                        break
+                    j += 1
+                i = j + 1
+            toks.append(("STRING", ""))
+            continue
+        if c.isdigit() or (c == "-" and i + 1 < n
+                           and (src[i + 1].isdigit()
+                                or src[i + 1] == ".")):
+            j = i + 1
+            while j < n and (src[j].isalnum() or src[j] in "._+-"):
+                j += 1
+            toks.append(("NUMBER", ""))
+            i = j
+            continue
+        if c == "_" or c.isalpha():
+            m = _GQL_NAME_PREFIX.match(src, i)
+            toks.append(("NAME", m.group(0)))
+            i = m.end()
+            continue
+        if src.startswith("...", i):
+            toks.append(("ELLIPSIS", "..."))
+            i += 3
+            continue
+        if c in _GQL_PUNCT:
+            toks.append(("PUNCT", c))
+            i += 1
+            continue
+        raise _GraphQLShapeError(
+            "unexpected character %r at offset %d" % (c, i))
+    toks.append(("EOF", ""))
+    return toks
+
+
+def _gql_balanced_inner(toks, open_idx):
+    """Tokens between a balanced opener and its closer.
+
+    Returns (inner_tokens, index_past_closer). Any imbalance raises
+    _GraphQLShapeError (fail-closed, never a guessed structure).
+    """
+    opener = toks[open_idx][1]
+    closer = {"{": "}", "(": ")", "[": "]"}[opener]
+    depth = 0
+    i, n = open_idx, len(toks)
+    while i < n:
+        k, t = toks[i]
+        if k == "PUNCT":
+            if t == opener:
+                depth += 1
+            elif t == closer:
+                depth -= 1
+                if depth == 0:
+                    return toks[open_idx + 1:i], i + 1
+        i += 1
+    raise _GraphQLShapeError("unbalanced %r" % opener)
+
+
+def _gql_skip_directives(toks, i):
+    """Skip @directive[(...)] groups; returns the new index."""
+    n = len(toks)
+    while i < n and toks[i] == ("PUNCT", "@"):
+        i += 1
+        if i >= n or toks[i][0] != "NAME":
+            raise _GraphQLShapeError("malformed directive")
+        i += 1
+        if i < n and toks[i] == ("PUNCT", "("):
+            _, i = _gql_balanced_inner(toks, i)
+    return i
+
+
+def _gql_extract_fragments(toks):
+    """Split fragment definitions out of the token stream.
+
+    Returns (op_tokens, {name: inner_tokens}). Duplicate or malformed
+    definitions raise _GraphQLShapeError.
+    """
+    frags = {}
+    out = []
+    i, n = 0, len(toks)
+    while i < n:
+        k, t = toks[i]
+        if k == "NAME" and t == "fragment":
+            if not (i + 2 < n and toks[i + 1][0] == "NAME"
+                    and toks[i + 2] == ("NAME", "on")):
+                raise _GraphQLShapeError("malformed fragment definition")
+            fname = toks[i + 1][1]
+            j = i + 3
+            if j >= n or toks[j][0] != "NAME":
+                raise _GraphQLShapeError("malformed fragment definition")
+            j += 1
+            j = _gql_skip_directives(toks, j)
+            if j >= n or toks[j] != ("PUNCT", "{"):
+                raise _GraphQLShapeError("malformed fragment definition")
+            inner, j = _gql_balanced_inner(toks, j)
+            if fname in frags:
+                raise _GraphQLShapeError(
+                    "duplicate fragment %r" % fname)
+            frags[fname] = inner
+            i = j
+        else:
+            out.append(toks[i])
+            i += 1
+    return out, frags
+
+
+def _gql_inline_fragments(toks, frags):
+    """Splice named spreads with their fragment bodies.
+
+    Same-document fragments are inlined so depth and field analysis
+    see through them. Cyclic spreads and spreads of unknown fragments
+    raise _GraphQLShapeError (fail-closed: no hang, no guess).
+    """
+
+    def _inline(seq, stack):
+        out = []
+        i, n = 0, len(seq)
+        while i < n:
+            k, t = seq[i]
+            if k == "ELLIPSIS" and i + 1 < n \
+                    and seq[i + 1][0] == "NAME" \
+                    and seq[i + 1][1] != "on":
+                fname = seq[i + 1][1]
+                if fname not in frags:
+                    raise _GraphQLShapeError(
+                        "spread of unknown fragment %r" % fname)
+                if fname in stack:
+                    raise _GraphQLShapeError(
+                        "cyclic fragment spread %r" % fname)
+                out.extend(_inline(frags[fname], stack | {fname}))
+                i += 2
+                continue
+            out.append(seq[i])
+            i += 1
+        return out
+
+    return _inline(toks, frozenset())
+
+
+class _GqlSelectionParser:
+    """Recursive-descent over the inlined token stream.
+
+    Collects maximum selection-set depth, mutation root-field names,
+    and whether any __-prefixed (introspection) field appears.
+    Directives that could conditionally exclude fields (@include /
+    @skip) are NOT evaluated: the static document is measured as
+    written, which can only over-count -- the fail-closed direction.
+    """
+
+    def __init__(self, toks):
+        self.toks = toks
+        self.pos = 0
+
+    def peek(self):
+        return self.toks[self.pos]
+
+    def next(self):
+        t = self.toks[self.pos]
+        self.pos += 1
+        return t
+
+    def skip_directives(self):
+        self.pos = _gql_skip_directives(self.toks, self.pos)
+
+    def parse_selection_set(self, depth, op_type):
+        k, t = self.next()
+        if (k, t) != ("PUNCT", "{"):
+            raise _GraphQLShapeError("expected '{'")
+        max_depth = depth
+        mut_roots = []
+        has_intro = False
+        while True:
+            k, t = self.peek()
+            if (k, t) == ("PUNCT", "}"):
+                self.next()
+                return max_depth, mut_roots, has_intro
+            if k == "EOF":
+                raise _GraphQLShapeError("unterminated selection set")
+            if k == "ELLIPSIS":
+                # Inline fragment ('... on Type { }' / '... { }');
+                # named spreads were inlined away already.
+                self.next()
+                if self.peek()[0] == "NAME" \
+                        and self.peek()[1] == "on":
+                    self.next()
+                    on_k, _ = self.next()
+                    if on_k != "NAME":
+                        raise _GraphQLShapeError(
+                            "expected type name after 'on'")
+                self.skip_directives()
+                if self.peek() == ("PUNCT", "{"):
+                    d, m, h = self.parse_selection_set(depth + 1,
+                                                       op_type)
+                    max_depth = max(max_depth, d)
+                    mut_roots.extend(m)
+                    has_intro = has_intro or h
+                continue
+            if k != "NAME":
+                raise _GraphQLShapeError(
+                    "expected field name, got %r" % (t,))
+            self.next()
+            fname = t
+            if self.peek() == ("PUNCT", ":"):
+                # alias: the real field name follows the colon.
+                self.next()
+                k2, t2 = self.next()
+                if k2 != "NAME":
+                    raise _GraphQLShapeError(
+                        "expected field name after alias ':'")
+                fname = t2
+            if fname.startswith("__"):
+                has_intro = True
+            if depth == 1 and op_type == "mutation":
+                mut_roots.append(fname)
+            if self.peek() == ("PUNCT", "("):
+                _, self.pos = _gql_balanced_inner(self.toks, self.pos)
+            self.skip_directives()
+            if self.peek() == ("PUNCT", "{"):
+                d, m, h = self.parse_selection_set(depth + 1, op_type)
+                max_depth = max(max_depth, d)
+                mut_roots.extend(m)
+                has_intro = has_intro or h
+
+
+def _parse_graphql(src: str):
+    """Statically analyze one GraphQL operation document.
+
+    Returns (op_type, max_depth, mutation_roots, has_introspection).
+    Raises _GraphQLShapeError when the document cannot be modeled:
+    zero or multiple operations (the checker cannot attribute which
+    operation the caller will run), non-operation definitions,
+    fragment cycles, or any lexical/structural malformation.
+    """
+    toks = _gql_tokenize(src)
+    ops_toks, frags = _gql_extract_fragments(toks)
+    inlined = _gql_inline_fragments(ops_toks, frags)
+    p = _GqlSelectionParser(inlined)
+    ops = []
+    while p.peek()[0] != "EOF":
+        k, t = p.peek()
+        if (k, t) == ("PUNCT", "{"):
+            ops.append(("query", p.parse_selection_set(1, "query")))
+        elif k == "NAME" and t in ("query", "mutation", "subscription"):
+            op_type = t
+            p.next()
+            if p.peek()[0] == "NAME":
+                p.next()  # operation name
+            if p.peek() == ("PUNCT", "("):
+                _, p.pos = _gql_balanced_inner(p.toks, p.pos)
+            p.skip_directives()
+            if p.peek() != ("PUNCT", "{"):
+                raise _GraphQLShapeError("expected selection set")
+            ops.append((op_type, p.parse_selection_set(1, op_type)))
+        else:
+            raise _GraphQLShapeError(
+                "not an executable operation document (got %r)" % (t,))
+    if len(ops) != 1:
+        raise _GraphQLShapeError(
+            "expected exactly one operation, found %d: the checker "
+            "cannot attribute which operation the caller will run"
+            % len(ops))
+    op_type, (max_depth, mut_roots, has_intro) = ops[0]
+    return op_type, max_depth, tuple(sorted(set(mut_roots))), has_intro
+
+
+def _derive_graphql_accesses(tool: str, args: Mapping[str, Any]):
+    """Derive GraphQL operation accesses and unmodelable shapes.
+
+    Returns (accesses, unsupported): accesses are
+    ``(op_type, max_depth, mutation_roots, has_introspection)``;
+    unsupported are (raw, reason) pairs. The declared shape is
+    ``{"tool": "graphql", "args": {"endpoint": <url>, "query": <doc>}}``;
+    the endpoint host is additionally covered by the ``egress`` domain.
+    """
+    accesses = []
+    unsupported = []
+    if tool not in _GRAPHQL_TOOLS:
+        return accesses, unsupported
+    query = args.get("query")
+    if not isinstance(query, str) or not query:
+        unsupported.append(
+            (repr(query)[:128], "graphql 'query' must be a non-empty "
+                                "string document"))
+        return accesses, unsupported
+    if "\x00" in query:
+        unsupported.append(
+            (query[:128], "graphql query contains NUL"))
+        return accesses, unsupported
+    try:
+        op = _parse_graphql(query)
+    except _GraphQLShapeError as e:
+        unsupported.append(
+            (query[:256], "graphql document unmodelable: %s" % e))
+        return accesses, unsupported
+    accesses.append(op)
+    return accesses, unsupported
+
+
 def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
           boundary: Optional[AuthorityBoundary],
           max_accesses: int = DEFAULT_MAX_ACCESSES) -> AuthorityProof:
@@ -479,8 +1022,12 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
     fs_accesses, fs_unsupported, resolution_source = _derive_fs_accesses(
         tool, args, ctx)
     egress_hosts, egress_unsupported = _derive_egress_accesses(tool, args)
+    mcp_accesses, mcp_unsupported = _derive_mcp_accesses(tool, args)
+    graphql_accesses, graphql_unsupported = _derive_graphql_accesses(
+        tool, args)
 
-    total = len(fs_accesses) + len(egress_hosts)
+    total = (len(fs_accesses) + len(egress_hosts) + len(mcp_accesses)
+             + len(graphql_accesses))
     if total > max_accesses:
         return AuthorityProof(
             verdict=INCONCLUSIVE,
@@ -497,7 +1044,11 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
     unsupported = ([("filesystem", raw, reason)
                     for raw, reason in fs_unsupported]
                    + [("egress", raw, reason)
-                      for raw, reason in egress_unsupported])
+                      for raw, reason in egress_unsupported]
+                   + [("mcp_tools", raw, reason)
+                      for raw, reason in mcp_unsupported]
+                   + [("graphql", raw, reason)
+                      for raw, reason in graphql_unsupported])
     if unsupported:
         # Deterministic first offender; str() on the raw access keeps
         # the sort total even for non-string hostile inputs.
@@ -550,6 +1101,153 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
                 boundary_version=boundary.version,
                 resolution_source=resolution_source,
                 detail="egress host outside the declared boundary",
+            )
+    for server, name, arg_bytes in mcp_accesses:
+        # Exact pair matching, never prefixes: "files-backup::read" is
+        # not "files::read", and the '::' separator cannot appear inside
+        # either side (rejected at boundary load and at derive time),
+        # so one pair can never masquerade as another.
+        pair = server + "::" + name
+        if server not in boundary.mcp_servers:
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="mcp_tools", access=pair,
+                    nearest_rule=_nearest_rule(
+                        server, boundary.mcp_servers),
+                    reason=("MCP server %r is not in the declared "
+                            "server allowlist" % (server,))),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="MCP server outside the declared boundary",
+            )
+        if pair not in boundary.mcp_tools:
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="mcp_tools", access=pair,
+                    nearest_rule=_nearest_rule(
+                        pair, boundary.mcp_tools),
+                    reason=("MCP tool pair %r is not in the declared "
+                            "tool allowlist" % (pair,))),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="MCP tool pair outside the declared boundary",
+            )
+        if arg_bytes > boundary.mcp_max_arg_bytes:
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="mcp_tools", access=pair,
+                    nearest_rule=None,
+                    reason=("MCP arguments for %r are %d bytes, over "
+                            "the declared max of %d bytes"
+                            % (pair, arg_bytes,
+                               boundary.mcp_max_arg_bytes))),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="MCP argument budget outside the declared boundary",
+            )
+    for op_type, max_depth, mut_roots, has_intro in graphql_accesses:
+        op_access = "%s depth=%d" % (op_type, max_depth)
+        if has_intro and not boundary.graphql_allow_introspection:
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="graphql", access=op_access,
+                    nearest_rule=None,
+                    reason=("GraphQL introspection fields (__schema / "
+                            "__type / __typename) are not allowed by "
+                            "this boundary")),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="GraphQL introspection outside the declared boundary",
+            )
+        if max_depth > boundary.graphql_max_depth:
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="graphql", access=op_access,
+                    nearest_rule=None,
+                    reason=("GraphQL selection depth %d exceeds the "
+                            "declared max of %d"
+                            % (max_depth, boundary.graphql_max_depth))),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="GraphQL selection depth outside the declared "
+                       "boundary",
+            )
+        if op_type == "mutation":
+            if not boundary.graphql_allow_mutations:
+                return AuthorityProof(
+                    verdict=EXCEEDS,
+                    covered_domains=COVERED_DOMAINS,
+                    uncovered_domains=("process_identity",),
+                    counterexample=Counterexample(
+                        domain="graphql",
+                        access="mutation:%s" % ",".join(mut_roots),
+                        nearest_rule=None,
+                        reason=("GraphQL mutations are not allowed by "
+                                "this boundary")),
+                    boundary_id=boundary.boundary_id,
+                    boundary_version=boundary.version,
+                    resolution_source=resolution_source,
+                    detail="GraphQL mutation outside the declared boundary",
+                )
+            for root in mut_roots:
+                if root not in boundary.graphql_mutation_allowlist:
+                    return AuthorityProof(
+                        verdict=EXCEEDS,
+                        covered_domains=COVERED_DOMAINS,
+                        uncovered_domains=("process_identity",),
+                        counterexample=Counterexample(
+                            domain="graphql",
+                            access="mutation:%s" % root,
+                            nearest_rule=_nearest_rule(
+                                root,
+                                boundary.graphql_mutation_allowlist),
+                            reason=("GraphQL mutation root field %r is "
+                                    "not in the declared mutation "
+                                    "allowlist" % (root,))),
+                        boundary_id=boundary.boundary_id,
+                        boundary_version=boundary.version,
+                        resolution_source=resolution_source,
+                        detail=("GraphQL mutation root outside the "
+                                "declared boundary"),
+                    )
+        elif op_type == "subscription":
+            # The boundary schema models query/mutation only; a
+            # subscription is a standing channel the operator never
+            # declared -- exceeds, never silently allowed.
+            return AuthorityProof(
+                verdict=EXCEEDS,
+                covered_domains=COVERED_DOMAINS,
+                uncovered_domains=("process_identity",),
+                counterexample=Counterexample(
+                    domain="graphql", access=op_access,
+                    nearest_rule=None,
+                    reason=("GraphQL subscriptions are outside this "
+                            "boundary's schema: only query and mutation "
+                            "operations are modeled")),
+                boundary_id=boundary.boundary_id,
+                boundary_version=boundary.version,
+                resolution_source=resolution_source,
+                detail="GraphQL subscription outside the declared boundary",
             )
     return AuthorityProof(
         verdict=WITHIN,

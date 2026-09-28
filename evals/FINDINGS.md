@@ -6019,4 +6019,56 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 **Adjacent issues flagged, NOT filed:** (a) the web panel also omits `memory_provenance[].principal` and `content_sha256` — same drift class, covered by the shared-schema close-when; (b) M4A/AAC/AIFF/OPUS have no magic-byte classification (only wav/mp3- ID3/ogg/flac are magic-classified) so undeclared attachments in those formats are invisible to the `attachment_carriers` backstop — the declarative path (`record_audio_derived_write`) is the primary signal and a *declared* mismatch is forced untrusted fail-closed; filed as an honest residual of the F191 backstop, not a new break; (c) the read-time `[MEMORY PROVENANCE — AUDIO CARRIER]` banner reaches the agent, not the approver — same disclosure-asymmetry class.
 
-Next free finding: **F193**. **Open findings: none.**
+---
+
+## F193: install_package gets a vacuous within_boundary authority proof (MEDIUM)
+
+**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+
+**Claim broken.** A `within_boundary` proof with `covered_domains=(filesystem, egress)` means the action's filesystem and egress effects were checked against the operator boundary. `gov/authority_proof._derive_fs_accesses` / `_derive_egress_accesses` only model six tools (`read_file`, `write_file`, `delete_file`, `http_post`, `api_call`, `send_email`). `install_package` — which fetches from a package registry over the network (egress), writes files, and installs executable code — is in `KNOWN_TOOLS` and policy-allowed when allowlisted, but derives **zero** accesses. `check()` returns `within_boundary`, `covered_domains=('filesystem','egress')`, detail "all 0 declared access(es) inside the declared boundary".
+
+**Demonstration (BREAK-1 pure, BREAK-2 end-to-end, `evals/w177_redteam_probes.py`).** With a declared boundary whose `egress_hosts` names a host that is NOT any package registry (`registry.internal.example.com` vs the real `pypi.org` / `files.pythonhosted.org` / `registry.npmjs.org` / `registry.synthetic.local`): `install_package requests==2.32.3` executes, a signed decision packet is emitted, standalone `verify_decision_packet` returns ok, and the embedded proof claims filesystem+egress coverage of effects it never examined. An auditor querying "executions whose egress was proof-covered" gets a false positive — the packet, the evidence product, misstates coverage.
+
+**Severity rationale: MEDIUM.** The proof never upgrades a policy deny (held probes: non-allowlisted installs still denied `install_not_allowlisted`; `within_boundary` never turns a deny into an allow). P7's allowlist+exact-pin+integrity gates still decide whether the install happens. The harm is evidence integrity, not an execution bypass — but evidence integrity is the product thesis.
+
+**Close-when:** `check()` derives `install_package`'s accesses — the registry host (from `gov/supplychain_install.REGISTRY_HOSTS` via ctx) as an egress access and the install target prefix as a filesystem write — or, failing that, marks `filesystem`/`egress` uncovered for tools with no derived accesses instead of claiming coverage. Red-first: `install_package` against a boundary whose egress allowlist excludes all registry hosts -> `exceeds_boundary` (or uncovered domains named); the packet's `covered_domains` no longer claims unexamined domains.
+
+**Honest residual:** even with derived accesses, the proof attests the declared install (right package, right registry), not the runtime behavior of the installed code — supply-chain integrity stays P7's pin, not the proof's.
+
+**Found by:** wave-177 lane A red-team (`teams/wave177-redteam/`), 2026-09-28, break-first pressure against the wave-176 tree (`e3a1e45`).
+
+---
+
+## F194: the sweep's execution-time re-proof verdict is never recorded (LOW)
+
+**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+
+**Claim broken.** The decision packet + audit log let an auditor reconstruct that an approved execution was within the operator boundary at execution time. Queue a `write_file` through `call()` (outside-sandbox write -> policy `require_approval`; boundary covers it -> queue packet emitted with the queue-time proof), approve, tighten the boundary (still covering), sweep -> executes. Post-sweep audit log contains: the queue packet (queue-time proof), the execution receipt — but **no entry recording the execution-time re-proof verdict**, and no packet describing the execution (packets are emitted at the `call()` seam only). The re-proof ran (a tightening that excluded the target refuses — the lane battery's `sweep_refuses_exceeds` proves the check exists), but its success is unwritten. An auditor sees the queue-time proof and must take on faith that the sweep re-checked.
+
+**Severity rationale: LOW.** The fail-closed direction holds — this is evidence completeness, not a bypass.
+
+**Close-when:** the sweep appends a chained entry recording the execution-time proof verdict on success (or the invocation receipt / a follow-up packet references it). Red-first: after an approved sweep, the audit log contains the execution-time proof verdict.
+
+**Honest residual:** none — the check itself is sound.
+
+**Found by:** wave-177 lane A red-team (`teams/wave177-redteam/`), 2026-09-28, break-first pressure against the wave-176 tree (`e3a1e45`).
+
+---
+
+## F195: packet validator rejects the producer's own proof shape (LOW)
+
+**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+
+**Claim broken.** `decision_packet`'s proof validator accepts every proof shape `authority_proof` legitimately emits. `AuthorityProof.to_dict()` emits `counterexample.nearest_rule = None` for `unsupported` verdicts (and for `exceeds` when no boundary entry is close). `decision_packet._check_proof_shape` requires `nearest_rule` to be `str`. Consequence: `build_decision_packet(boundary_declared=True, authority_proof=<genuine unsupported proof>)` raises `PacketError`, and `verify_decision_packet` returns `False` ("no valid authority proof") on a correctly signed packet embedding one.
+
+**Severity rationale: LOW.** Latent today — the executor's pre-decision gate refuses exceeds/unsupported/inconclusive before the packet seam, so no live path embeds a non-within proof. But the producer/validator contract is inconsistent, and any future caller (or offline tooling) embedding a real exceeds/unsupported proof gets a spurious refusal/invalid.
+
+**Close-when:** `_check_proof_shape` accepts `nearest_rule=None` (matching `Counterexample.to_dict`). Red-first: build+sign+verify round-trip on a genuine `unsupported` proof -> ok.
+
+**Honest residual:** none significant.
+
+**Found by:** wave-177 lane A red-team (`teams/wave177-redteam/`), 2026-09-28, break-first pressure against the wave-176 tree (`e3a1e45`).
+
+---
+
+Next free finding: **F196**. **Open findings: F193, F194, F195.**

@@ -225,7 +225,8 @@ def p_inconclusive_no_boundary():
     ok = (proof.verdict == "inconclusive"
           and proof.covered_domains == ()
           and set(proof.uncovered_domains)
-          == {"filesystem", "egress", "process_identity"}
+          == {"filesystem", "egress", "mcp_tools", "graphql",
+              "process_identity"}
           and proof.counterexample is None)
     return ("PASS" if ok else "FAIL",
             "verdict=%s uncovered=%s" % (
