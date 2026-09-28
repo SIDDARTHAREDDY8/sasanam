@@ -330,7 +330,7 @@ def issue_agent_token(authority_signer, agent_id, role, principal,
 def issue_delegation(human_signer, delegator_user_id, user_token,
                      agent_token, scope, session_id,
                      revocation_endpoint, audit_urls=None,
-                     ttl_s=None, now=None, audience=None):
+                     ttl_s=None, now=None, audience=None, card_kid=None):
     """Issue the human-signed delegation token (depth 0).
 
     ``human_signer``: the HUMAN DELEGATOR's key (``gov.signing.Signer``).
@@ -345,6 +345,14 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
 
     ``audience``: optional deployment id bound into the signed envelope
     (wave-86, F132) — the verifier refuses the token outside it.
+
+    ``card_kid``: optional A2A Agent Card key id binding this delegation
+    to a card-verified foreign-agent identity. The deployment sets this
+    ONLY after ``gov.agent_cards.register_agent_card`` verified the
+    card; ``verify_delegation_chain`` then enforces that the token's
+    subject equals the card identity registered for this kid (the
+    identity-proof layer). Local (non-card) delegations leave it None.
+    The kid sits in the SIGNED claims, so no re-signing can swap it.
     """
     if not isinstance(delegator_user_id, str) or not delegator_user_id:
         raise ValueError("delegator_user_id must be a non-empty string")
@@ -361,6 +369,10 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
     audit_urls = list(audit_urls or [])
     if any(not isinstance(u, str) or not u for u in audit_urls):
         raise ValueError("audit_urls must be strings")
+    if card_kid is not None and (
+            not isinstance(card_kid, str) or not card_kid):
+        raise ValueError("card_kid must be a non-empty key-id string "
+                         "or None")
     claims = {
         "delegator": delegator_user_id,
         "user_token_hash": token_ref(user_token),
@@ -370,6 +382,10 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
         "audit_urls": audit_urls,
         "delegation_depth": 0,
         "parent_token_hash": None,
+        # A2A card identity binding (additive; None for local issuers).
+        # Set by the deployment only after the card verified; the chain
+        # verifier enforces subject == registered card identity.
+        "card_kid": card_kid,
     }
     return _base_token("delegation", human_signer, agent_token["subject"],
                        session_id, claims, ttl_s, now, audience=audience)
@@ -393,6 +409,16 @@ class DelegationTrust:
     * ``agent_keys``: ``{agent_id: pub}`` — the session's agent key
       roster, for parent signatures on sub-delegation tokens (depth ≥ 1).
       Registered at session open, chained into the log with the session.
+      A2A card-verified foreign agents are registered here by
+      ``gov.agent_cards.register_agent_card`` keyed by the card's
+      ``name`` (their Ed25519 card key doubles as their parent-signing
+      key for their spawn lineage).
+    * ``card_identities``: ``{identity: {"kids": {kid: {"pubkey",
+      "alg"}}}}`` — the card-identity registry (the identity-PROOF
+      layer). Populated ONLY by ``gov.agent_cards.register_agent_card``
+      after full card verification; ``verify_delegation_chain``
+      enforces the ``card_kid`` claim binding against this registry.
+      Local (non-card) issuers never appear here.
     * ``audience`` (wave-86, F132): this deployment's id. When set,
       verification refuses any token whose signed ``aud`` claim is
       missing or different — the cross-deployment confused-deputy
@@ -402,7 +428,7 @@ class DelegationTrust:
     """
 
     def __init__(self, *, human_keys, authority_keys, user_issuer_keys,
-                 agent_keys=None, audience=None):
+                 agent_keys=None, card_identities=None, audience=None):
         self.human_keys = _clean_keymap(human_keys, "human_keys")
         self.authority_keys = _clean_keymap(authority_keys,
                                             "authority_keys")
@@ -415,11 +441,64 @@ class DelegationTrust:
                                  "agent_id strings")
             self.agent_keys[agent_id] = _clean_pub(pub, "agent_keys[%r]"
                                                    % agent_id)
+        self.card_identities = {}
+        for identity, rec in (card_identities or {}).items():
+            if not isinstance(identity, str) or not identity:
+                raise ValueError("card_identities keys must be non-empty "
+                                 "identity strings")
+            if not isinstance(rec, dict):
+                raise ValueError("card_identities[%r]: must be a record "
+                                 "dict" % identity)
+            kids = rec.get("kids")
+            if not isinstance(kids, dict) or not kids:
+                raise ValueError("card_identities[%r]: kids must be a "
+                                 "non-empty {kid: record} mapping"
+                                 % identity)
+            clean = {}
+            for kid, krec in kids.items():
+                if not isinstance(kid, str) or not kid:
+                    raise ValueError("card_identities[%r]: kids must be "
+                                     "non-empty strings" % identity)
+                if not isinstance(krec, dict):
+                    raise ValueError("card_identities[%r][%r]: must be a "
+                                     "record dict" % (identity, kid))
+                clean[kid] = {
+                    "pubkey": _clean_pub(krec.get("pubkey"),
+                                         "card_identities[%r][%r].pubkey"
+                                         % (identity, kid)),
+                    "alg": krec.get("alg") or "EdDSA",
+                }
+            self.card_identities[identity] = {"kids": clean}
         if audience is not None and (
                 not isinstance(audience, str) or not audience):
             raise ValueError("audience must be a non-empty string (the "
                              "deployment id) or None")
         self.audience = audience
+
+    def register_card_identity(self, identity, kid, pubkey, alg="EdDSA"):
+        """Admit one verified card key into the identity-proof registry.
+
+        Called ONLY by ``gov.agent_cards.register_agent_card`` after
+        full card verification — never by agent-reachable code. ``pub``
+        validation is fail-fast (ValueError); verification failures
+        never reach here.
+        """
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("identity must be a non-empty string")
+        if not isinstance(kid, str) or not kid:
+            raise ValueError("kid must be a non-empty string")
+        pub = _clean_pub(pubkey, "card_identities[%r][%r].pubkey"
+                         % (identity, kid))
+        rec = self.card_identities.setdefault(identity, {"kids": {}})
+        rec["kids"][kid] = {"pubkey": pub, "alg": alg}
+
+    def card_identity_for_kid(self, kid):
+        """Reverse lookup: the verified identity bound to ``kid``, or
+        None. Used by the chain verifier's card_kid binding check."""
+        for identity, rec in self.card_identities.items():
+            if kid in rec["kids"]:
+                return identity
+        return None
 
     def describe(self):
         """Safe public description — key ids only, never key material."""
@@ -428,6 +507,10 @@ class DelegationTrust:
             "authority_keys": sorted(self.authority_keys),
             "user_issuer_keys": sorted(self.user_issuer_keys),
             "agent_keys": sorted(self.agent_keys),
+            "card_identities": {
+                identity: sorted(rec["kids"])
+                for identity, rec in self.card_identities.items()
+            },
             "audience": self.audience,
         }
 
@@ -609,6 +692,28 @@ def verify_delegation_chain(delegation_token, parent_chain, trust,
                 "hop %d claims delegation_depth %d exceeding the cap %d "
                 "(swarm control enforced at verification, not just "
                 "issuance)" % (i, depth, MAX_DELEGATION_DEPTH))
+        # A2A card-identity binding: a hop carrying card_kid must name
+        # the card-verified identity as its subject. The kid must
+        # resolve in the deployment's card-identity registry (populated
+        # ONLY by gov.agent_cards.register_agent_card after full card
+        # verification) and the registered identity must equal this
+        # hop's subject. A swapped kid (another identity's key) or a
+        # subject that is not the verified identity fails closed here.
+        # Hand-crafted pre-card tokens simply lack the claim (.get →
+        # None) and are unaffected.
+        card_kid = claims.get("card_kid")
+        if card_kid is not None:
+            card_identity = trust.card_identity_for_kid(card_kid)
+            if card_identity is None:
+                raise DelegationBindingError(
+                    "hop %d carries card_kid %r which is not in the "
+                    "card-identity registry (unverified card identity "
+                    "refused)" % (i, card_kid))
+            if card_identity != tok.get("subject"):
+                raise DelegationBindingError(
+                    "hop %d card_kid %r binds verified identity %r but "
+                    "the token subject is %r (identity swap refused)"
+                    % (i, card_kid, card_identity, tok.get("subject")))
         if i == 0:
             if claims.get("parent_token_hash") is not None:
                 raise DelegationSignatureError(
@@ -959,6 +1064,12 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
         "audit_urls": list(parent_claims["audit_urls"]),
         "delegation_depth": depth,
         "parent_token_hash": token_ref(parent_ctx.delegation_token),
+        # Strict card-identity semantics: the card_kid binding lives
+        # ONLY on the token whose subject IS the card-verified identity
+        # (the depth-0 delegation issued to the foreign agent). A spawn
+        # is a different subject, so it never inherits the binding —
+        # the parent hop's claims still carry it for lineage auditors.
+        "card_kid": None,
     }
     # Wave-86 (F132): the audience is inherited from the parent's
     # token — never a parameter. A spawn that could set aud would let a
@@ -1104,6 +1215,10 @@ def delegation_receipt(ctx):
     * ``session_id``, ``audience`` (when the deployment binds one),
       and the three token refs (hashes only — no bodies, no
       signatures, no key material).
+    * ``card_kid`` — the A2A Agent Card key id this receipt's ``act``
+      was identity-proven under (None for local, non-card issuers).
+      Additive key; the chain verifier enforces that a non-None kid
+      resolves to the card identity equal to ``act``.
 
     Fail-closed: ``None``/non-context, unbound context, or a context
     with no delegation token raises :class:`DelegationRequiredError`;
@@ -1148,6 +1263,7 @@ def delegation_receipt(ctx):
         "scope": list(ctx._leaf_claims["scope"]),
         "session_id": ctx.session_id,
         "audience": leaf.get("aud"),
+        "card_kid": ctx._leaf_claims.get("card_kid"),
         "user_token_ref": token_ref(ctx.user_token),
         "agent_token_ref": token_ref(ctx.agent_token),
         "delegation_token_ref": token_ref(leaf),
