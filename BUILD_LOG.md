@@ -1,3 +1,21 @@
+## 2026-09-28 — Wave-181 fast-follow: F199 closure merged (GENESIS-head packets fail closed on decision-carrying chains)
+
+**Scope.** Cherry-pick `e902d7c` (F199 closure lane, based on `94c8f84`) onto wave-180. The closure lane finished after the wave-180 merge; this fast-follow integrates it. Product change: `gov/decision_packet.py` (+22/−4); verification: `evals/w180_redteam_probes.py` (D5 updated to expect HELD), `tests/test_decision_packet.py` (+48); `evals/FINDINGS.md` (F199 → CLOSED).
+
+**The fix.** `_verify` no longer skips the F196 re-derivation for a GENESIS head. A GENESIS-head packet now **fails closed whenever the supplied chain carries decision entries** (F199's key-holding-producer shape) and verifies only when the chain carries none — the honest first-decision case (e.g. the round-trip pin where the chain holds only the packet's own entry). `build_decision_packet()`'s `"GENESIS"` default is untouched; the fix is verifier-side, so honest producers that pass an explicit head are unaffected.
+
+**Merge fix (coordinator).** The lane's FINDINGS footer read "Next free: **F201**" — off by one; no F200 exists anywhere in the file (verified by grep). Corrected to **F200** and amended into the cherry-pick before gates.
+
+**Red-first audit (fast-follow coordinator, independent): F199 1/1 genuine.** (a) Pristine `94c8f84` worktree: `evals/w180_redteam_probes.py` → **1 BREAK / 21 HELD / 5 HELD* / 0 errors** — D5 BREAK reproduces exactly as filed (GENESIS-head packet with bogus `decision_digest` VERIFIES against a chain carrying the real decision entry). (b) Merged tree: **0 BREAK / 22 HELD / 5 HELD* / 0 errors** — D5 now HELD via the F199 fail-closed (`"F199: GENESIS-head packet presented on a chain that carries decision entries; decision_digest cannot be re-derived (opaque pointer)"`). (c) Independent honest-first-decision probe at the public seam: GENESIS-head packet on a chain with NO decision entries → VERIFIES (good); the same packet on a chain WITH decision entries → REFUSED via F199 (good); forged bogus-digest GENESIS packet on a decision chain → REFUSED via F199 (good). Lane's new tests: `tests/test_decision_packet.py` **32/32**.
+
+**No overstatement; no new findings.** F199's close-when (GENESIS-head verifies only when the chain has no decision entries; `test_round_trip_with_linkage` still passes — covered by the 32/32) is met at the public seam.
+
+**Gates (merged tree, serialized, fresh unique `/var/tmp/g181fN` TMPDIRs):** canonical **5604 OK** (skipped=9, expected failures=5; +51 vs wave-180 = the lane's new regression tests) · registry **GREEN** (wave23_b2 battery file restored post-gate, never committed rewritten) · matrix **3216/3216 SHIP-GATE GREEN** · realistic **7/7** (`GOV_RUN_ROOT` set explicitly) · AMSB **90.00** (FINAL C), FP 0.0%, sole critical the documented `a1-default-off` — identical to wave-180. Interaction batteries: receiptswap **0 breaks / 7 held** (F196 intact after the `_verify` change), decision_packet_probes **10/10**, w180 redteam **0 breaks / 22 held**. Two-axis review: Standards PASS (`git diff --check` clean), Spec PASS (close-when verified at the seam).
+
+**Findings:** F199 CLOSED (red-first verified). Next free: F200. Open findings: none.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-28 — Wave-180: Decision BOM + cedar diagnostics contract + advisory verification + wave-179 red-team battery
 
 **Scope.** Cherry-pick four wave-180 lane commits (all based on `88261a9`) onto wave-179 fast-follow. Product changes: lane A (Decision BOM), lane B (diagnostics threading); verification-only: lane C (advisory properties), lane D (red-team battery). Merge-integration fix by the coordinator: `evals/w180_redteam_probes.py` adapted to lane A's mandatory BOM (probe packets now carry a consistent BOM via `_d_bom()`; D4 rebuilds the BOM after re-pointing the head). Lane D's root `REPORT.md` excluded from the tree (lane reports live in team dirs).
