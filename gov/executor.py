@@ -10948,6 +10948,35 @@ class ToolExecutor:
                             policy_id=
                             "authority-boundary-execution-refused")
                     continue
+                # Wave-178 (F194 closure): record the execution-time
+                # re-proof verdict in the chained audit log on success.
+                # The re-proof ran fail-closed above (a non-within proof
+                # refuses); without this entry an auditor sees only the
+                # queue-time proof and must take the sweep-time re-check
+                # on faith. Evidence-only: enforcement behavior is
+                # unchanged, and advisory mode (no declared boundary)
+                # records nothing because no re-proof ran there.
+                self.log.append({
+                    "event": "authority_proof_execution_reproof",
+                    "run_id": self.run_id,
+                    "agent_id": rec.get("agent_id"),
+                    "role": rec.get("role"),
+                    "principal": (rec.get("identity") or {}).get(
+                        "principal"),
+                    "tool": rec.get("tool"),
+                    "approval_id": aid,
+                    "decision": "reproof_within",
+                    "policy_id": "authority-boundary-execution",
+                    "proof": _ap_proof.to_dict(),
+                    "reason": ("Execution-time authority re-proof for "
+                               "approval %s: verdict %r against the "
+                               "current operator boundary (%s v%s) -- the "
+                               "boundary still covers this action at "
+                               "sweep time."
+                               % (aid, _ap_proof.verdict,
+                                  _ap_proof.boundary_id,
+                                  _ap_proof.boundary_version)),
+                })
             # Wave-173 lane 1 (TMA-NM M1 act-time gate): memory-provenance
             # continuity. The human granted this approval under a
             # queue-time disclosure of the run's un-elevated memory reads

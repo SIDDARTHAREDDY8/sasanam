@@ -22,13 +22,16 @@ Probe plan (ranked falsifiable hypotheses):
           ok. The packet -- the auditor's evidence -- claims
           filesystem+egress coverage of an action whose effects were
           never examined.
-  BREAK-3 sweep re-proof unrecorded: queue write_file under boundary B1,
-          approve, tighten to B2 (still covering), sweep executes. The
-          queue-time proof rides the packet; the execution-time re-proof
-          verdict is computed but NEVER written to the audit log on
-          success, and no execution packet is emitted. An auditor cannot
-          reconstruct that the execution was within the boundary AT
-          EXECUTION TIME from the evidence alone.
+  BREAK-3 sweep re-proof recording (F194: filed by this probe in
+          wave-177, closed by the wave-178 f194 lane): queue write_file
+          under boundary B1, approve, re-issue the boundary as B2 (new
+          version, still covering), sweep executes. The probe now
+          verifies the sweep's execution-time re-proof verdict IS
+          recorded in the chained audit log carrying the CURRENT
+          boundary version -- HELD when present, BREAK on regression.
+          (Pre-closure, this probe demonstrated the verdict was never
+          written; the detector was rewritten at closure, not quietly
+          patched: see the probe docstring.)
   BREAK-4 proof-shape validator rejects the producer's own shape:
           check() emits Counterexample with nearest_rule=None for
           `unsupported` verdicts; decision_packet._check_proof_shape
@@ -45,7 +48,9 @@ Held probes (documented, no finding):
   pre-decision seam; proof-less declared boundary refused at build AND
   verify; tampered packets fail verification; the no-key path is loud
   (decision_packet_disabled) and cannot be forced by the agent after
-  construction; within_boundary never upgrades a policy deny.
+  construction; within_boundary never upgrades a policy deny;
+  F194 closure guard: the approved sweep's execution-time re-proof
+  verdict is recorded in the chained audit log on success.
 
 Deterministic; synthetic/local only; $0.
 """
@@ -228,20 +233,24 @@ def p_break2_install_package_vacuous_e2e():
 
 
 def p_break3_sweep_reproof_unrecorded():
-    """The sweep's execution-time re-proof verdict is never logged on
-    success, and no execution packet is emitted.
+    """F194 (filed by this probe in wave-177; CLOSED by the wave-178
+    f194 lane): the sweep's execution-time re-proof verdict is now
+    recorded in the chained audit log on success.
 
     Queue through call(): an outside-sandbox write is require_approval
     by policy (quarantine-outside-writes) while the declared boundary
     still covers it, so the queue packet carries the queue-time proof.
-    Then tighten the boundary (still covering) and sweep.
+    Then re-issue the boundary with a NEW version (still covering) and
+    sweep. The sweep's re-proof runs against the CURRENT boundary, so
+    the recorded re-proof must carry the new version -- the queue-time
+    proof (old version) must NOT satisfy this probe.
 
-    BREAK if: after approve -> tighten -> sweep executes, there is
-    (a) a decision_packet entry for the queue decision, (b) NO audit
-    entry recording the execution-time re-proof verdict, and (c) no
-    packet describing the execution.
+    HELD if: after approve -> re-issue -> sweep executes, a chained
+    audit entry records the execution-time re-proof verdict
+    (within_boundary, current boundary version) for the approval.
+    BREAK if the entry is missing (F194 regression).
     """
-    name = "BREAK-3_sweep_reproof_unrecorded"
+    name = "HELD-3_sweep_reproof_recorded_f194"
     seed, restore = _set_packet_key()
     try:
         ctx, ident = _setup("sweepgap")
@@ -249,7 +258,7 @@ def p_break3_sweep_reproof_unrecorded():
         tmp = os.environ.get("TMPDIR") or "/tmp"
         target = str(Path(tmp) / "w177-sweep-outside.txt")
         args = {"path": target, "content": "sweep-bytes"}
-        # Boundary covers the outside target: pre-decision proof is
+        # Boundary v1 covers the outside target: pre-decision proof is
         # within; policy routes outside writes to require_approval.
         ex.set_authority_boundary(_boundary(fs_write=(tmp,)))
         r = ex.call(ident, "write_file", **args)
@@ -260,33 +269,48 @@ def p_break3_sweep_reproof_unrecorded():
         aid = r.get("approval_id")
         ctx["approvals"].decide(aid, True, reason="looks fine",
                                 decided_by="human-operator")
-        # Operator tightens the boundary before the sweep; the new
-        # boundary still covers the target, so the sweep executes.
-        ex.set_authority_boundary(_boundary(fs_write=(str(Path(tmp)),)))
+        # Operator re-issues the boundary before the sweep (still
+        # covering, new version): the sweep's re-proof must run
+        # against v2, and the recorded verdict must say so.
+        ex.set_authority_boundary(ap.boundary_from_dict({
+            "boundary_id": "w177-boundary",
+            "version": "2",
+            "fs_read_prefixes": [],
+            "fs_write_prefixes": [tmp],
+            "egress_hosts": [],
+        }))
         done = ex.execute_approved()
         executed = [d for d in done if isinstance(d, dict)]
         entries = ctx["read_log"]()
-        packets = [e for e in entries
-                   if e.get("event") == "decision_packet"]
-        reproof_records = [
+
+        def _proofs(obj):
+            if isinstance(obj, dict):
+                if (obj.get("verdict") in ("within_boundary",
+                                           "exceeds_boundary",
+                                           "unsupported", "inconclusive")
+                        and "covered_domains" in obj):
+                    yield obj
+                for v in obj.values():
+                    yield from _proofs(v)
+            elif isinstance(obj, (list, tuple)):
+                for v in obj:
+                    yield from _proofs(v)
+
+        reproof_hits = [
             e for e in entries
             if isinstance(e, dict)
-            and "authority_proof" in e
-            and e.get("event") == "approval_execution_refused"]
-        queue_packets = [e for e in packets
-                         if e.get("decision") == "queue"]
-        exec_packets = [e for e in packets
-                        if e.get("decision") not in ("queue",)]
-        broke = (len(executed) == 1
-                 and len(queue_packets) == 1
-                 and len(reproof_records) == 0
-                 and len(exec_packets) == 0)
-        _record(name, "BREAK" if broke else "HELD",
-                "executed=%d queue_packets=%d reproof_records=%d "
-                "exec_packets=%d" % (len(executed), len(queue_packets),
-                                     len(reproof_records),
-                                     len(exec_packets)))
-        return broke
+            and e.get("event") == "authority_proof_execution_reproof"
+            and e.get("approval_id") == aid
+            and isinstance(e.get("seq"), int) and e.get("prev_hash")
+            and any(p.get("verdict") == "within_boundary"
+                    and p.get("boundary_version") == "2"
+                    for p in _proofs(e))]
+        held = (len(executed) == 1 and len(reproof_hits) == 1)
+        _record(name, "HELD" if held else "BREAK",
+                "executed=%d reproof_hits=%d "
+                "(F194 closure guard: re-proof verdict recorded)"
+                % (len(executed), len(reproof_hits)))
+        return not held
     finally:
         restore()
 
