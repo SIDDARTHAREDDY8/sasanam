@@ -6047,7 +6047,9 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F194: the sweep's execution-time re-proof verdict is never recorded (LOW)
 
-**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+**Status: CLOSED (2026-09-28, wave-178 merge coordinator; red-first verified on the merged tree, gates green).**
+
+**Closure.** `gov/executor.py::_execute_approved_locked` now appends a chained `authority_proof_execution_reproof` audit entry on re-proof success, carrying `approval_id` and the full execution-time proof dict (verdict, domains, counterexample, boundary id/version). Evidence-only: enforcement is untouched, and advisory mode (no declared boundary) records nothing because no re-proof runs there. Red-first probe `teams/wave178-f194/probe_f194_red.py` (re-run by the merge coordinator against the merged tree and pristine `a236315`): FAIL pre-fix (`proof versions seen: [('1', 'within_boundary')]` — only the queue-time proof), PASS post-fix with the v1/v2 version distinction proving the entry is the *execution-time* re-proof, deterministic; the still-fail-closed refusal path and advisory mode are pinned by `tests/test_f194_sweep_reproof_recorded.py` (3/3). The wave-177 red-team BREAK-3 probe was honestly converted into a closure guard (it now re-issues the boundary as v2 and asserts the chained re-proof entry IS present — documented in the probe docstring, not a quiet patch). **Honest residual:** none — the check itself was already sound; this was evidence completeness only.
 
 **Claim broken.** The decision packet + audit log let an auditor reconstruct that an approved execution was within the operator boundary at execution time. Queue a `write_file` through `call()` (outside-sandbox write -> policy `require_approval`; boundary covers it -> queue packet emitted with the queue-time proof), approve, tighten the boundary (still covering), sweep -> executes. Post-sweep audit log contains: the queue packet (queue-time proof), the execution receipt — but **no entry recording the execution-time re-proof verdict**, and no packet describing the execution (packets are emitted at the `call()` seam only). The re-proof ran (a tightening that excluded the target refuses — the lane battery's `sweep_refuses_exceeds` proves the check exists), but its success is unwritten. An auditor sees the queue-time proof and must take on faith that the sweep re-checked.
 
@@ -6063,7 +6065,9 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ## F195: packet validator rejects the producer's own proof shape (LOW)
 
-**Status: OPEN (filed 2026-09-28, wave-177 red-team).**
+**Status: CLOSED (2026-09-28, wave-178 merge coordinator; red-first verified on the merged tree, gates green).**
+
+**Closure.** `gov/decision_packet.py::_check_proof_shape` now accepts `counterexample.nearest_rule` as str-or-null (matching `Counterexample.to_dict()`, which emits None when no boundary entry is close or the shape was unmodelable — every `unsupported` verdict); `domain`, `access`, and `reason` remain required strings, and any other malformed shape still fails closed. Red-first probe `teams/wave178-f195/f195_red_probe.py` (re-run by the merge coordinator against the merged tree and pristine `a236315`): pre-fix `PacketError: ...counterexample.nearest_rule must be str` on a genuine producer-emitted `unsupported` proof (multi-operation GraphQL document), post-fix full build+sign+verify round-trip ok. Regression: `tests/test_f195_proof_shape.py` (10/10, incl. malformed shapes still refused). **Honest residual:** none significant — latent today (the pre-decision gate refuses non-within proofs before the packet seam), now consistent for future callers and offline tooling.
 
 **Claim broken.** `decision_packet`'s proof validator accepts every proof shape `authority_proof` legitimately emits. `AuthorityProof.to_dict()` emits `counterexample.nearest_rule = None` for `unsupported` verdicts (and for `exceeds` when no boundary entry is close). `decision_packet._check_proof_shape` requires `nearest_rule` to be `str`. Consequence: `build_decision_packet(boundary_declared=True, authority_proof=<genuine unsupported proof>)` raises `PacketError`, and `verify_decision_packet` returns `False` ("no valid authority proof") on a correctly signed packet embedding one.
 
@@ -6077,4 +6081,4 @@ This is the governance-plane twin of the attack shape MemGhost names in its titl
 
 ---
 
-Next free finding: **F196**. **Open findings: F194, F195.** (F193 closed 2026-09-28, wave-178.)
+Next free finding: **F196**. **Open findings: none.** (F193, F194, F195 closed 2026-09-28, wave-178.)
