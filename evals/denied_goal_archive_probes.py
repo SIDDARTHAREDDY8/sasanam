@@ -258,6 +258,13 @@ def d1_genuinely_new_allowed():
 def e1_wave139_battery_unchanged():
     """The wave-139 fresh-ID battery still reports 0 BREAK / 5 HELD
     (the registry-prior path is untouched by the archive leg)."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 nesting discipline (2026-09-28): skip our own adjacency
+        # pin when running as a nested child; the parent already ran our
+        # red probes. Standalone runs still execute the full check.
+        return ("e1_wave139_battery_unchanged", "HELD",
+                "nested adjacency skipped (GOV_SKIP_GREEN=1); "
+                "run standalone for full depth-1 adjacency")
     if not _HAVE:
         return _no_feature("e1_wave139_battery_unchanged")
     batt = os.path.join(REPO_ROOT, "evals", "goal_fresh_id_probes.py")
@@ -265,7 +272,11 @@ def e1_wave139_battery_unchanged():
     try:
         proc = subprocess.run(
             [sys.executable, batt], capture_output=True, text=True,
-            env={**os.environ, "TMPDIR": tdir}, timeout=300)
+            env={**os.environ, "TMPDIR": tdir,
+                 # Depth-1 nesting discipline (2026-09-28): children run
+                 # their red probes but skip their own green checks.
+                 "GOV_SKIP_GREEN": "1"},
+            timeout=300)
     except Exception as e:  # noqa: BLE001
         return ("e1_wave139_battery_unchanged", "ERROR", "%r" % (e,))
     line = next((ln for ln in proc.stdout.splitlines()

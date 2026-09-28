@@ -175,6 +175,36 @@ _VELOCITY_RESUME_TOOL = "velocity_resume"
 _MAX_READ_STORE = 256 * 1024  # cap on stored read fingerprints per run
 
 
+def _fingerprint_source_key(tool, args):
+    """F189: source key for per-source fingerprint quotas.
+
+    The quota rule ("a flood evicts its own oldest entries first; one
+    source cannot evict another source's poison link") needs to know
+    which origin each fingerprint came from. The key is (tool,
+    locator): the locator is the read path for read_file, the
+    endpoint for api_call, the url for http_post, the recipient for
+    send_email, and "" when unknown (e.g. foreign-result ingestion,
+    which carries no args). Two reads of the same path/endpoint share
+    a source; distinct paths/endpoints are distinct sources.
+    """
+    args = args or {}
+    if tool == "read_file":
+        loc = args.get("path", "")
+    elif tool == "api_call":
+        loc = args.get("endpoint", "")
+    elif tool == "http_post":
+        loc = args.get("url", "")
+    elif tool == "send_email":
+        loc = args.get("to", "")
+    else:
+        loc = ""
+    try:
+        loc = str(loc)
+    except Exception:
+        loc = ""
+    return (tool, loc)
+
+
 # F164 (HIGH): entry count for the exchange-ledger after-phase on the
 # agent read_file path. Non-blank lines of the FULL file text — the
 # .jsonl analog of the gov.log seam's parsed-entry count — computed
@@ -1756,6 +1786,10 @@ class ToolExecutor:
         self._tainted = False  # True once tool output entered this run
         self._taint_sources = []
         self._read_contents = []  # fingerprints of executed read results
+        # F189: parallel source keys for _read_contents, kept in
+        # lockstep (same indices). _sync_fingerprint_sources() tolerates
+        # direct external appends (tests) by padding unknown sources.
+        self._read_content_sources = []
         self._read_sensitive = False  # F9: a read returned DLP-sensitive
         # content this run; api_call afterwards is taint-gated.
         # Row-13 closure: classification-labeled provenance taint. When
@@ -1785,16 +1819,69 @@ class ToolExecutor:
         # LOUD to the log and the approval queue in register_goal().
         self._goal_registry = _goals.GoalRegistry(audit=self.log.append)
 
+    def _sync_fingerprint_sources(self):
+        """F189: keep _read_content_sources aligned with _read_contents.
+
+        Direct external appends to _read_contents (white-box tests)
+        bypass _ingest_result; pad the missing source keys with
+        ("unknown", "") so eviction indexing can never desync. Never
+        shrinks _read_contents.
+        """
+        sources = getattr(self, "_read_content_sources", None)
+        if sources is None:
+            sources = []
+            self._read_content_sources = sources
+        want = len(self._read_contents)
+        if len(sources) < want:
+            sources.extend([("unknown", "")] * (want - len(sources)))
+        elif len(sources) > want:
+            del sources[want:]
+
     def _eviction_index(self):
-        """H26: index into ``_read_contents`` of the oldest
-        NON-instruction-shaped fingerprint (the preferred eviction
-        victim under store pressure), or 0 when every fingerprint is
-        instruction-shaped (FIFO fallback). Instruction-shaped
-        fingerprints are the poison links; they survive junk floods."""
-        for i, c in enumerate(self._read_contents):
+        """F189: (index, degenerate) of the eviction victim in
+        ``_read_contents`` under store pressure.
+
+        Per-source quotas: the victim comes from the source holding
+        the most bytes (first-seen wins ties, deterministic), so a
+        flood evicts its own oldest entries first and one source's
+        flood can never evict another source's poison link. Within
+        the victim source the H26 priority holds: the oldest
+        NON-instruction-shaped fingerprint first. Only when every
+        entry of the victim source is instruction-shaped does the
+        per-source FIFO fallback fire -- that fallback may drop a
+        poison link, so it is the degenerate case and the caller
+        emits ``memory_pressure_degenerate`` loudly for it.
+
+        This corrects the H26 docstring's unconditional guarantee
+        ("instruction-shaped fingerprints survive junk floods"): they
+        survive OTHER sources' floods; a source that overfills the
+        store with its own shaped bytes evicts its own oldest shaped
+        entries, loudly.
+        """
+        self._sync_fingerprint_sources()
+        order = []
+        sizes = {}
+        for s in self._read_content_sources:
+            if s not in sizes:
+                sizes[s] = 0
+                order.append(s)
+        for s, c in zip(self._read_content_sources, self._read_contents):
+            sizes[s] += len(c)
+        if not order:
+            return 0, True
+        # max() returns the first maximal element: ties resolve to the
+        # first-seen source -- deterministic.
+        victim_source = max(order, key=lambda s: sizes[s])
+        fallback = None
+        for i, (s, c) in enumerate(zip(self._read_content_sources,
+                                       self._read_contents)):
+            if s != victim_source:
+                continue
+            if fallback is None:
+                fallback = i
             if instruction_shaping_reason(c) is None:
-                return i
-        return 0
+                return i, False
+        return fallback, True
 
     # -- identity ---------------------------------------------------------
 
@@ -2471,7 +2558,12 @@ class ToolExecutor:
 
     # -- provenance / egress ----------------------------------------------
 
-    def _ingest_result(self, tool, result, principal=None):
+    def _ingest_result(self, tool, result, principal=None, source_key=None):
+        # F189: source_key is the _fingerprint_source_key(tool, args)
+        # tuple naming the content's origin; None (foreign-result
+        # ingestion, which carries no args) defaults to (tool, "").
+        if source_key is None:
+            source_key = _fingerprint_source_key(tool, None)
         # F144: http_post joins the fingerprinted set. read_file/api_call
         # results were fingerprinted into the run's verbatim-overlap
         # store, but http_post response bodies were not -- the identical
@@ -2496,18 +2588,37 @@ class ToolExecutor:
             content = result.get("content")
             if content:
                 self._read_contents.append(content[:65536])
+                self._read_content_sources.append(source_key)
                 total = sum(len(c) for c in self._read_contents)
                 while total > _MAX_READ_STORE and self._read_contents:
-                    # H26: priority eviction. Drop the oldest
-                    # NON-instruction-shaped fingerprint first, so
-                    # instruction-shaped fingerprints (poison links)
-                    # survive junk pressure. If every fingerprint is
-                    # instruction-shaped, fall back to FIFO. Shaping is
-                    # computed at eviction time (infrequent; bounded by
-                    # the 256 KiB store) so no parallel structure can
-                    # desync from _read_contents.
-                    total -= len(self._read_contents.pop(
-                        self._eviction_index()))
+                    # F189: per-source quotas. The victim comes from
+                    # the source holding the most bytes, so a flood
+                    # evicts its own oldest entries first and can never
+                    # evict another source's poison link. The
+                    # degenerate case (per-source FIFO fallback evicting
+                    # an instruction-shaped fingerprint -- a possible
+                    # poison link) is chained loudly, never silently.
+                    idx, degenerate = self._eviction_index()
+                    victim_source = self._read_content_sources.pop(idx)
+                    victim = self._read_contents.pop(idx)
+                    total -= len(victim)
+                    if degenerate:
+                        self.log.append({
+                            "event": "memory_pressure_degenerate",
+                            "run_id": self.run_id,
+                            "tool": tool,
+                            "principal": principal,
+                            "decision": "executed",
+                            "policy_id": "memory-fingerprint-store",
+                            "flag": "memory_pressure_degenerate",
+                            "reason": (
+                                "F189: fingerprint store under pressure; "
+                                "per-source FIFO fallback evicted an "
+                                "instruction-shaped fingerprint from source "
+                                "%r -- a poison link may have been dropped; "
+                                "provenance for that source's bytes is no "
+                                "longer verifiable." % (victim_source,)),
+                        })
                 if self._content_is_sensitive(content):
                     # F9/F15a: taint, not similarity. Content tripping DLP
                     # sensitive patterns (credential regexes or PII) marks
@@ -9082,7 +9193,9 @@ class ToolExecutor:
             # taint — the file channel carries lineage like the bus.
             self._lineage_file_hook(tool, kwargs, result,
                                     identity.agent_id)
-            self._ingest_result(tool, result, identity.principal)
+            self._ingest_result(tool, result, identity.principal,
+                                source_key=_fingerprint_source_key(
+                                    tool, kwargs))
             # Row-13 closure: classification label taint on successful
             # read_file (provenance-based; paraphrase cannot shed it).
             self._classification_taint_on_read(tool, kwargs, result)
@@ -10624,7 +10737,9 @@ class ToolExecutor:
             self._lineage_file_hook(
                 rec["tool"], rec["args"], result, rec.get("agent_id"))
             self._ingest_result(rec["tool"], result,
-                                (rec.get("identity") or {}).get("principal"))
+                                (rec.get("identity") or {}).get("principal"),
+                                source_key=_fingerprint_source_key(
+                                    rec["tool"], rec.get("args")))
             # Row-13 closure: classification label taint on successful
             # read_file, mirroring the direct-call path above.
             self._classification_taint_on_read(rec["tool"], rec["args"],

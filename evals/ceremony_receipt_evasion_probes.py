@@ -468,6 +468,9 @@ def r8_null_act_receipt():
 def _run_adjacent(path, want_summary):
     tmp = tempfile.mkdtemp(prefix="evas-adj-", dir=os.environ["TMPDIR"])
     env = dict(os.environ, TMPDIR=tmp)
+    # Depth-1 nesting discipline (2026-09-28): children run their red
+    # probes but skip their own green checks.
+    env["GOV_SKIP_GREEN"] = "1"
     proc = subprocess.run(
         [sys.executable, os.path.join(REPO_ROOT, path)],
         env=env, capture_output=True, text=True, timeout=600)
@@ -482,6 +485,14 @@ def _run_adjacent(path, want_summary):
 
 def e19_existing_batteries_exact():
     name = "e19_existing_batteries_exact"
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 nesting discipline (2026-09-28): skip our own adjacency
+        # pins when running as a nested child; the parent already ran our
+        # red probes. Standalone runs still execute the full check.
+        _record(name, "HELD",
+                "nested adjacency skipped (GOV_SKIP_GREEN=1); "
+                "run standalone for full depth-1 adjacency")
+        return
     pins = [
         ("evals/type_discriminator_probes.py",
          "type_discriminator_probes: 10 HELD / 0 BREAK / 0 EXPECTED / 0 ERROR"),

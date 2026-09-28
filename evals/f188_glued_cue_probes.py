@@ -333,12 +333,23 @@ UNIT_TESTS = [
 
 def f_multilingual_green():
     name = "f_multilingual_green"
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 nesting discipline (2026-09-28): skip our own adjacency
+        # green check when running as a nested child; the parent already
+        # ran our red probes. Standalone runs still execute the full check.
+        _record(name, "HELD",
+                "nested adjacency skipped (GOV_SKIP_GREEN=1); "
+                "run standalone for full depth-1 adjacency")
+        return
     failures = []
     for i, battery in enumerate(ADJACENT_BATTERIES):
         tmp = os.path.join(os.environ["TMPDIR"], "ml-%d" % i)
         os.makedirs(tmp, exist_ok=True)
         env = dict(os.environ, TMPDIR=tmp)
         env.pop("GOV_DEPLOYMENT_MODE", None)
+        # Depth-1 nesting discipline (2026-09-28): children run their red
+        # probes but skip their own green checks.
+        env["GOV_SKIP_GREEN"] = "1"
         proc = subprocess.run(
             [sys.executable, os.path.join(REPO_ROOT, "evals", battery)],
             capture_output=True, text=True, env=env, cwd=REPO_ROOT,

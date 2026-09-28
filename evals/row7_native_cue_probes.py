@@ -381,6 +381,15 @@ def n_reverse_glue_expected():
 
 # ------------------------------------------------- multilingual green
 def n_multilingual_green():
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        # Depth-1 nesting discipline (2026-09-28): when this battery runs
+        # as a nested child, skip our own adjacency green check -- the
+        # parent already ran our red probes. Standalone runs (var unset)
+        # still execute the full check below.
+        _record("n_multilingual_green", "HELD",
+                "nested adjacency skipped (GOV_SKIP_GREEN=1); "
+                "run standalone for full depth-1 adjacency")
+        return
     batteries = [
         "evals/countermand_multilingual_negation_probes.py",
         "evals/cyrillic_negation_probes.py",
@@ -407,7 +416,10 @@ def n_multilingual_green():
         p = subprocess.run(
             [sys.executable, os.path.join(REPO_ROOT, b)],
             capture_output=True, text=True,
-            env={**os.environ, "TMPDIR": child_tmp},
+            env={**os.environ, "TMPDIR": child_tmp,
+                 # Depth-1 nesting discipline (2026-09-28): children run
+                 # their red probes but skip their own green checks.
+                 "GOV_SKIP_GREEN": "1"},
             cwd=REPO_ROOT, timeout=600)
         if p.returncode != 0:
             tail = (p.stdout.strip().splitlines() or [""])[-1]
