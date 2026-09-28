@@ -43,6 +43,7 @@ os.environ["GOV_LOG_KEY_EPOCH"] = "w180-battery"
 
 from gov import log as _log
 from gov import decision_packet as _dp
+from gov import decision_bom as _bom
 from gov import invocation_receipts as _rc
 from gov import skill_watch as _sw
 from gov import discovery_diff as _dd
@@ -540,6 +541,38 @@ def _c7():
 # D. F196 packet<->receipt pairing (gov/decision_packet.py)
 # ---------------------------------------------------------------------------
 
+_PROBE_POLICY_DIGEST = hashlib.sha256(
+    b"w180-probe-policy-bundle-v1").hexdigest()
+
+
+def _d_bom(*, head_digest, approval_id, identity):
+    """Consistent Decision BOM for probe-built packets (merge fix).
+
+    Wave-180 lane A made ``bill_of_materials`` a mandatory,
+    signature-covered packet section. The D-probes build packets
+    directly, so each probe packet gets a BOM that agrees with the
+    packet's own sections (policy id/version/digest, evidence head,
+    approval id, principal). The BOM does not bind
+    ``decision_digest``, so the F196 adversarial shapes (D1/D5) are
+    preserved.
+
+    The probe trajectory uses synthetic approval ids ("A1"/"A2") with
+    no real approval records; the record digest is therefore a
+    deterministic synthetic fixture (documented here, not a real
+    record binding -- these probes do not test approval-record
+    provenance).
+    """
+    record_digest = hashlib.sha256(
+        b"w180-probe-approval-record-" + approval_id.encode()).hexdigest()
+    return _bom.build_bom(
+        policy_id="pol", policy_version="1",
+        policy_digest=_PROBE_POLICY_DIGEST,
+        evidence_head_digest=head_digest,
+        principal=dict(identity),
+        approval_id=approval_id,
+        approval_record_digest=record_digest)
+
+
 def _d_trajectory(run_dir, *, p1_digest_override=None,
                   r1_attribution_override=None):
     """Two-decision trajectory (mirrors evals/receiptswap_probes.py)."""
@@ -560,6 +593,10 @@ def _d_trajectory(run_dir, *, p1_digest_override=None,
             ).hexdigest()
         if i == 1 and p1_digest_override is not None:
             dd = p1_digest_override
+        ident = {"agent_id": "ag", "role": "coder",
+                 "principal": "p", "run_id": "run1"}
+        bom = _d_bom(head_digest=e_dec["hash"], approval_id=aid,
+                     identity=ident)
         body = _dp.build_decision_packet(
             decision="allow", boundary_declared=False,
             policy_id="pol", policy_version="1",
@@ -570,8 +607,9 @@ def _d_trajectory(run_dir, *, p1_digest_override=None,
                 ("preview%d" % i).encode()).hexdigest(),
             approval_id=aid, decision_seq=i,
             evidence_head_digest=e_dec["hash"],
-            identity={"agent_id": "ag", "role": "coder",
-                      "principal": "p", "run_id": "run1"})
+            identity=ident,
+            bill_of_materials=bom,
+            policy_bundle_digest=_PROBE_POLICY_DIGEST)
         packet = _dp.sign_packet(body, bytes.fromhex("ab" * 32))
         alog.append({"event": "decision_packet", "approval_id": aid,
                      "decision_seq": i,
@@ -661,6 +699,15 @@ def _d4():
             if e.get("event") == "invocation_receipt"][0]
     pkt2 = copy.deepcopy(pkt)
     pkt2["evidence"]["value"]["head_digest"] = rcpt["hash"]
+    # Rebuild the BOM so it agrees with the re-pointed head: the probe
+    # must exercise the non-decision-head check, not the BOM-agreement
+    # check (merge fix for lane A's mandatory BOM).
+    pkt_ident = pkt2["identity"]["value"]
+    pkt2["bill_of_materials"]["value"] = _d_bom(
+        head_digest=rcpt["hash"],
+        approval_id=pkt2["approval_id"]["value"],
+        identity={k: pkt_ident.get(k) for k in
+                  ("agent_id", "role", "principal", "run_id")})
     pkt2 = _dp.sign_packet(
         {k: v for k, v in pkt2.items() if k != "signature"},
         bytes.fromhex("ab" * 32))
@@ -678,6 +725,9 @@ def _d5():
     # can therefore mint a verifying packet carrying an arbitrary
     # decision_digest.
     bogus = "ff" * 32
+    ident = {"agent_id": "ag", "role": "coder",
+             "principal": "p", "run_id": "r"}
+    bom = _d_bom(head_digest="GENESIS", approval_id="A1", identity=ident)
     body = _dp.build_decision_packet(
         decision="allow", boundary_declared=False,
         policy_id="pol", policy_version="1",
@@ -686,8 +736,9 @@ def _d5():
         preview_digest=hashlib.sha256(b"p").hexdigest(),
         approval_id="A1", decision_seq=1,
         evidence_head_digest="GENESIS",
-        identity={"agent_id": "ag", "role": "coder",
-                  "principal": "p", "run_id": "r"})
+        identity=ident,
+        bill_of_materials=bom,
+        policy_bundle_digest=_PROBE_POLICY_DIGEST)
     pkt = _dp.sign_packet(body, bytes.fromhex("ab" * 32))
     digest = _dp.packet_digest(pkt)
     entries = [
