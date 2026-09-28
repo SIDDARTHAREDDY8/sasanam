@@ -46,6 +46,7 @@ from gov import signing as _signing  # noqa: E402
 from gov import anchor as _anchor  # noqa: E402
 from gov import identity as _identity  # noqa: E402
 from gov import log as _log  # noqa: E402
+from gov import keyset as _keyset  # noqa: E402
 from gov.egress_ledger import (  # noqa: E402
     EgressLedger, LedgerUnverifiableError,
 )
@@ -677,6 +678,141 @@ class ThresholdLogTests(CryptoGovBase):
         ActionLog(p, signer=ts, roster=None).append({"event": "t"})
         verdict = _log.verify_checkpoint_signatures(
             p, trusted_keys=self.trust_single(s))
+        self.assertTrue(verdict["ok"], verdict)
+
+
+class KeysetCheckpointBindingTests(CryptoGovBase):
+    """Wave-186: checkpoint/STH signatures bind signing-key versions.
+
+    A KeysetSigner (single-key shape) writes ``key_version`` into the
+    checkpoint and binds it into the STH body alongside ts (F202);
+    threshold members sign member-specific bodies and each entry
+    carries its ``key_version``. Keyset-aware verification refuses
+    revoked versions and version/key_id confusion, while rotated
+    verify-only versions keep verifying.
+    """
+
+    def _keyset_log(self, tag, entries=2):
+        kset, signer = _keyset.new_keyset(_seed(tag))
+        d = self.fresh_dir()
+        p = str(d / "actions.jsonl")
+        lg = ActionLog(p, signer=signer)
+        for i in range(entries):
+            lg.append({"event": "k", "i": i})
+        return kset, signer, p
+
+    def _threshold_keyset_log(self, tags, k=2, entries=2,
+                              root_tag=900):
+        pairs = [_keyset.new_keyset(_seed(t)) for t in tags]
+        signers = [s for _, s in pairs]
+        root = _signing.Ed25519Signer(_seed(root_tag))
+        roster = _signing.make_roster(signers, k, root)
+        ts = _signing.ThresholdSigner(signers, k)
+        d = self.fresh_dir()
+        p = str(d / "actions.jsonl")
+        lg = ActionLog(p, signer=ts, roster=roster)
+        for i in range(entries):
+            lg.append({"event": "k", "i": i})
+        cp = _log.signed_checkpoint(p, entries)
+        return pairs, root, roster, cp, p
+
+    def test_single_key_checkpoint_binds_key_version(self):
+        kset, signer, p = self._keyset_log(801)
+        cp = _log.signed_checkpoint(p, 2)
+        self.assertEqual(cp.get("key_version"), 1)
+        v1 = kset.version(1)
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {v1.key_id: v1.public_key})
+        self.assertTrue(ok, err)
+        # Rewriting the version breaks the STH signature (bound into
+        # the body alongside ts).
+        tampered = dict(cp)
+        tampered["key_version"] = 2
+        ok, _ = _log._verify_one_checkpoint_sig(
+            tampered, {v1.key_id: v1.public_key})
+        self.assertFalse(ok)
+
+    def test_single_key_revoked_version_refused_with_keyset(self):
+        kset, signer, p = self._keyset_log(802)
+        cp = _log.signed_checkpoint(p, 2)
+        k2, _ = _keyset.rotate_keyset(kset, _seed(812), _seed(802))
+        k3 = _keyset.revoke_version(k2, 1, "key compromise", _seed(812))
+        v1 = k3.version(1)
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {v1.key_id: v1.public_key},
+            keysets={v1.key_id: k3})
+        self.assertFalse(ok)
+        self.assertIn("revoked", err)
+
+    def test_single_key_verify_only_version_still_verifies(self):
+        kset, signer, p = self._keyset_log(803)
+        cp = _log.signed_checkpoint(p, 2)
+        k2, _ = _keyset.rotate_keyset(kset, _seed(813), _seed(803))
+        v1 = k2.version(1)
+        self.assertEqual(v1.status, _keyset.STATUS_VERIFY_ONLY)
+        ok, err = _log._verify_one_checkpoint_sig(
+            cp, {v1.key_id: v1.public_key},
+            keysets={v1.key_id: k2})
+        self.assertTrue(ok, err)
+
+    def test_single_key_ts_tamper_still_rejected_with_version(self):
+        # F202 and wave-186 compose: ts and key_version are both in
+        # the STH body.
+        kset, signer, p = self._keyset_log(804)
+        cp = _log.signed_checkpoint(p, 2)
+        tampered = dict(cp)
+        tampered["ts"] = "2999-01-01T00:00:00+00:00"
+        v1 = kset.version(1)
+        ok, _ = _log._verify_one_checkpoint_sig(
+            tampered, {v1.key_id: v1.public_key})
+        self.assertFalse(ok)
+
+    def test_threshold_keyset_checkpoint_end_to_end(self):
+        pairs, root, roster, cp, p = self._threshold_keyset_log(
+            [821, 822, 823])
+        self.assertEqual(
+            [e.get("key_version") for e in cp["sigs"]], [1, 1, 1])
+        # No single global version: members rotate independently.
+        self.assertNotIn("key_version", cp)
+        keysets = {s.key_id: k for k, s in pairs}
+        verdict = _log.verify_checkpoint_signatures(
+            p, trusted_keys={}, roster=roster,
+            root_pub=root.public_key, keysets=keysets)
+        self.assertTrue(verdict["ok"], verdict)
+
+    def test_threshold_revoked_members_refused_at_checkpoint(self):
+        pairs, root, roster, cp, p = self._threshold_keyset_log(
+            [831, 832, 833])
+        keysets = {}
+        for i, (kset, signer) in enumerate(pairs):
+            k2, _ = _keyset.rotate_keyset(kset, _seed(840 + i),
+                                          _seed(831 + i))
+            if i < 2:
+                k2 = _keyset.revoke_version(k2, 1, "key compromise",
+                                            _seed(840 + i))
+            keysets[signer.key_id] = k2
+        verdict = _log.verify_checkpoint_signatures(
+            p, trusted_keys={}, roster=roster,
+            root_pub=root.public_key, keysets=keysets)
+        self.assertFalse(verdict["ok"])
+        self.assertIn("1/2", verdict["error"])
+
+    def test_unversioned_threshold_checkpoint_shape_unchanged(self):
+        # Plain (non-keyset) members: legacy entry shape, no version
+        # anywhere, still verifies -- wave-186 changes nothing for
+        # unversioned signers.
+        signers, root, roster, ts = self.threshold_setup(k=2, n=3)
+        d = self.fresh_dir()
+        p = str(d / "actions.jsonl")
+        lg = ActionLog(p, signer=ts, roster=roster)
+        lg.append({"event": "t"})
+        cp = _log.signed_checkpoint(p, 1)
+        self.assertNotIn("key_version", cp)
+        for e in cp["sigs"]:
+            self.assertNotIn("key_version", e)
+        verdict = _log.verify_checkpoint_signatures(
+            p, trusted_keys={}, roster=roster,
+            root_pub=root.public_key)
         self.assertTrue(verdict["ok"], verdict)
 
 

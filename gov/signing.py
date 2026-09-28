@@ -142,6 +142,36 @@ class Ed25519Verifier(Verifier):
             return False
 
 
+#: Domain separation for the per-member threshold signature body
+#: (wave-186). A keyset-aware threshold member does not sign the common
+#: checkpoint body directly; it signs ``_member_sig_body(common, kid,
+#: version)``, cryptographically binding its keyset version (and key
+#: id) to the checkpoint. Unversioned members sign the common body
+#: unchanged, so pre-keyset signatures keep verifying.
+_THRESHOLD_MEMBER_SIG_DOMAIN = b"sasanam-threshold-member/v1\x00"
+
+
+def _member_sig_body(common_body, key_id, key_version):
+    """Build the member-specific body one threshold member signs.
+
+    Binds ``(key_id, key_version)`` to ``common_body`` under a distinct
+    domain. Raises TypeError on malformed inputs (fail closed); the
+    ``\\x00`` separates the version claim from the common body so no
+    ``(key_id, version, body)`` triple is ambiguous.
+    """
+    if not isinstance(common_body, (bytes, bytearray)):
+        raise TypeError("common_body must be bytes")
+    if not isinstance(key_id, str) or not key_id:
+        raise TypeError("key_id must be a non-empty string")
+    if isinstance(key_version, bool) or not isinstance(
+            key_version, int) or key_version < 1:
+        raise TypeError("key_version must be an integer >= 1")
+    return (_THRESHOLD_MEMBER_SIG_DOMAIN
+            + key_id.encode("utf-8") + b"|kv"
+            + str(key_version).encode("ascii") + b"\x00"
+            + bytes(common_body))
+
+
 class ThresholdSigner:
     """k-of-n checkpoint signer (A5).
 
@@ -194,9 +224,38 @@ class ThresholdSigner:
         return self._entry_signer.sign(data)
 
     def sign_all(self, data):
-        """One signature per key: [{"key_id", "sig" (hex)}]."""
-        return [{"key_id": s.key_id, "sig": s.sign(data).hex()}
-                for s in self._signers]
+        """One signature per key: [{"key_id", "sig" (hex)} (, "key_version")].
+
+        Wave-186: when a member signer exposes a ``key_version``
+        (``gov.keyset.KeysetSigner`` does), the member signs a
+        member-specific body binding ``(key_id, key_version)`` to
+        ``data`` (see ``_member_sig_body``), and the entry carries
+        ``"key_version"``. The version claim is therefore
+        cryptographically bound, not merely asserted: rewriting or
+        stripping it breaks that member's signature, and the entry
+        cannot be transplanted onto the common body. Members without
+        a version sign ``data`` unchanged (legacy entry shape
+        preserved). A malformed version is a programming error in
+        the operator's signer set: fail fast (ValueError) rather
+        than minting a mis-attested entry.
+        """
+        out = []
+        for s in self._signers:
+            kv = getattr(s, "key_version", None)
+            entry = {"key_id": s.key_id}
+            if kv is None:
+                entry["sig"] = s.sign(data).hex()
+            else:
+                if isinstance(kv, bool) or not isinstance(kv, int) \
+                        or kv < 1:
+                    raise ValueError(
+                        "threshold member %r exposes a malformed "
+                        "key_version %r" % (s.key_id, kv))
+                entry["sig"] = s.sign(
+                    _member_sig_body(data, s.key_id, kv)).hex()
+                entry["key_version"] = kv
+            out.append(entry)
+        return out
 
 
 def make_roster(signers, threshold, root_signer, prev_roster_hash=None):
@@ -284,23 +343,57 @@ def verify_roster(roster, trusted_root_pub):
         return False, "malformed roster: %s" % (e,)
 
 
-def verify_threshold(data, sig_entries, roster, trusted_root_pub):
+def verify_threshold(data, sig_entries, roster, trusted_root_pub,
+                     keysets=None):
     """Verify k-of-n checkpoint signatures (A5).
 
-    ``sig_entries``: [{"key_id", "sig" (hex)}] from the checkpoint.
-    Returns (ok, error). Steps: (1) the roster must verify under the
-    trusted offline root; (2) at least ``threshold`` DISTINCT roster key
-    ids must carry valid Ed25519 signatures over ``data``. Unknown key
-    ids are ignored (forward compatibility); duplicates never
-    double-count. A single compromised checkpoint key contributes at
-    most one valid signature -- below threshold the checkpoint is
-    rejected, which is the A5 security property.
+    ``sig_entries``: [{"key_id", "sig" (hex)} (, "key_version")] from
+    the checkpoint. Returns (ok, error). Steps: (1) the roster must
+    verify under the trusted offline root; (2) at least ``threshold``
+    DISTINCT roster key ids must carry valid Ed25519 signatures.
+    Unknown key ids are ignored (forward compatibility); duplicates
+    never double-count. A single compromised checkpoint key
+    contributes at most one valid signature -- below threshold the
+    checkpoint is rejected, which is the A5 security property.
+
+    Wave-186 version binding: each entry is verified over the body its
+    signer actually signed -- a keyset-aware member's member-specific
+    body ``_member_sig_body(data, key_id, key_version)`` reconstructed
+    from the entry's own ``key_version`` claim, or ``data`` itself for
+    unversioned entries. Rewriting or stripping a version claim
+    therefore breaks that member's signature cryptographically; the
+    claim is self-authenticating and needs no trust. Malformed claims
+    contribute nothing (fail closed).
+
+    Wave-186 ``keysets`` (optional): a mapping ``key_id -> Keyset``
+    (``gov.keyset.Keyset``) binding each threshold member key to its
+    version/status authority. For every entry whose key has a keyset:
+
+    * the entry's ``key_version`` claim (when present) must equal the
+      keyset's version for that key id -- version/key_id confusion
+      contributes nothing (fail closed);
+    * a version whose keyset status is ``revoked`` contributes nothing
+      -- a checkpoint signed under a later-revoked version is refused
+      even though the key id is still roster-authorized, and stripping
+      the claim cannot smuggle it past because revocation is resolved
+      from the key id alone;
+    * ``verify-only`` (retired, not revoked) versions keep counting --
+      rotation never invalidates already-signed checkpoints.
+
+    Entries whose key has no keyset verify exactly as before (no
+    version concept; revocation unchecked -- the keyset is public
+    trust material the verifier is expected to fetch current, exactly
+    like the trusted root key). The status literal ``"revoked"`` is
+    written out (not imported) because ``gov.keyset`` imports this
+    module -- the cycle forbids a top-level import here.
     """
     ok, err = verify_roster(roster, trusted_root_pub)
     if not ok:
         return False, "roster rejected: %s" % (err,)
     if not isinstance(data, (bytes, bytearray)):
         return False, "data must be bytes"
+    if keysets is not None and not isinstance(keysets, dict):
+        return False, "keysets must be a mapping key_id -> Keyset"
     data = bytes(data)
     roster_keys = roster["keys"]
     threshold = roster["threshold"]
@@ -315,12 +408,62 @@ def verify_threshold(data, sig_entries, roster, trusted_root_pub):
             sig = bytes.fromhex(entry["sig"])
         except (KeyError, TypeError, ValueError):
             continue  # malformed entry: contributes nothing
-        if kid in good or kid not in roster_keys:
-            continue  # duplicate or unknown: no double-count
+        if not isinstance(kid, str) or kid in good \
+                or kid not in roster_keys:
+            continue  # malformed / duplicate / unknown: no count
+        claimed = entry.get("key_version") if isinstance(
+            entry, dict) else None
+        if claimed is None:
+            body = data
+        else:
+            try:
+                body = _member_sig_body(data, kid, claimed)
+            except TypeError:
+                continue  # malformed version claim: contributes nothing
+        if keysets is not None:
+            ks = keysets.get(kid)
+            if ks is not None and not _keyset_entry_counts(
+                    ks, kid, claimed):
+                continue  # revoked / confused / malformed: no count
         pub = bytes.fromhex(roster_keys[kid])
-        if ed25519.verify(pub, data, sig):
+        if ed25519.verify(pub, body, sig):
             good.add(kid)
     if len(good) >= threshold:
         return True, None
     return False, "only %d/%d valid distinct signatures" % (
         len(good), threshold)
+
+
+def _keyset_entry_counts(keyset, key_id, claimed_version):
+    """Whether one threshold sig entry may count, per its keyset.
+
+    Duck-typed against ``gov.keyset.Keyset`` (``by_key_id`` ->
+    KeyVersion with ``.version`` / ``.status``); never raises. The
+    keyset is the authority: the entry's ``key_version`` claim is
+    cross-checked, and revocation is resolved from the key id alone
+    so stripping the claim cannot smuggle a revoked version past.
+    """
+    try:
+        by_key_id = getattr(keyset, "by_key_id", None)
+        kv = by_key_id(key_id) if callable(by_key_id) else None
+    except Exception:
+        return False
+    if kv is None:
+        return False  # keyset does not know this key id
+    if claimed_version is not None:
+        if isinstance(claimed_version, bool) \
+                or not isinstance(claimed_version, int) \
+                or claimed_version < 1:
+            return False  # malformed claim: contributes nothing
+        try:
+            kv_version = kv.version
+        except Exception:
+            return False
+        if claimed_version != kv_version:
+            return False  # version/key_id confusion: fail closed
+    try:
+        status = kv.status
+    except Exception:
+        return False
+    # "revoked" == gov.keyset.STATUS_REVOKED (literal: import cycle).
+    return status != "revoked"

@@ -39,6 +39,7 @@ from gov import keyset as ks
 from gov import log as _log
 from gov import evidence_verify as _ev
 from gov.signing import Signer, Ed25519Signer, ed25519_key_id
+from gov import signing as _signing
 
 from tests.keyfixture import provision_test_key, scrub_key_env
 
@@ -441,6 +442,147 @@ class TestKeysetSigner(_KeysetTestBase):
         # Happy path.
         s2 = ks.keyset_signer_for_version(k2, 2, _seed("gate-v2"))
         self.assertEqual(s2.key_version, 2)
+
+
+# ---------------------------------------------------------------------------
+# Wave-186: ThresholdSigner x keyset composition
+# ---------------------------------------------------------------------------
+
+class TestKeysetThresholdComposition(_KeysetTestBase):
+    """Red-first composition tests: ThresholdSigner with KeysetSigner
+    members binds each member's keyset version into its signature
+    (gov.signing._member_sig_body), and verify_threshold cross-checks
+    versions/revocation against the member keysets."""
+
+    def _three(self):
+        pairs = [ks.new_keyset(_seed("w186-t%d|v1" % i))
+                 for i in range(3)]
+        return pairs  # [(keyset, signer)]
+
+    def _parts(self, pairs, k=2, root_tag="w186-troot"):
+        signers = [s for _, s in pairs]
+        root = Ed25519Signer(_seed(root_tag))
+        roster = _signing.make_roster(signers, k, root)
+        ts = _signing.ThresholdSigner(signers, k)
+        return ts, roster, root.public_key
+
+    def test_versioned_entries_verify_with_keysets(self):
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs)
+        body = b"w186 composition body"
+        sigs = ts.sign_all(body)
+        self.assertEqual([e["key_version"] for e in sigs], [1, 1, 1])
+        keysets = {s.key_id: k for k, s in pairs}
+        ok, err = _signing.verify_threshold(body, sigs, roster, root_pub,
+                                            keysets=keysets)
+        self.assertTrue(ok, err)
+
+    def test_entries_verify_without_keysets_too(self):
+        # No keyset supplied: version claims are self-authenticating
+        # (reconstructed from the claim); revocation unchecked.
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs)
+        body = b"w186 composition body"
+        sigs = ts.sign_all(body)
+        ok, err = _signing.verify_threshold(body, sigs, roster, root_pub)
+        self.assertTrue(ok, err)
+
+    def test_revoked_member_signatures_do_not_count(self):
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs)
+        body = b"w186 revoked body"
+        sigs = ts.sign_all(body)
+        keysets = {}
+        for i, (kset, signer) in enumerate(pairs):
+            v2seed = _seed("w186-t%d|v2" % i)
+            k2, _ = ks.rotate_keyset(kset, v2seed, _seed("w186-t%d|v1" % i))
+            if i < 2:
+                k2 = ks.revoke_version(k2, 1, "key compromise", v2seed)
+            keysets[signer.key_id] = k2
+        ok, err = _signing.verify_threshold(body, sigs, roster, root_pub,
+                                            keysets=keysets)
+        self.assertFalse(ok)
+        self.assertIn("1/2", err)
+
+    def test_stripped_version_claim_fails_cryptographically(self):
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs, k=2)
+        body = b"w186 stripped body"
+        sigs = ts.sign_all(body)
+        stripped = [dict(e) for e in sigs]
+        for e in stripped:
+            e.pop("key_version", None)
+        # 2-of-3 with every claim stripped: nothing verifies, even
+        # without keysets -- the signatures bind the version.
+        ok, err = _signing.verify_threshold(body, stripped, roster,
+                                            root_pub)
+        self.assertFalse(ok)
+        self.assertIn("0/2", err)
+
+    def test_confused_version_claim_does_not_count(self):
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs, k=3)
+        body = b"w186 confused body"
+        sigs = ts.sign_all(body)
+        confused = [dict(e) for e in sigs]
+        confused[0]["key_version"] = 2  # keyset says v1 for this key id
+        keysets = {s.key_id: k for k, s in pairs}
+        ok, err = _signing.verify_threshold(body, confused, roster,
+                                            root_pub, keysets=keysets)
+        self.assertFalse(ok)
+        self.assertIn("2/3", err)
+
+    def test_verify_only_versions_keep_counting(self):
+        # Sign while v1 active; rotate (v1 -> verify-only, NOT revoked);
+        # the old signatures still verify against the rotated keysets.
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs)
+        body = b"w186 verify-only body"
+        sigs = ts.sign_all(body)
+        keysets = {}
+        for i, (kset, signer) in enumerate(pairs):
+            k2, _ = ks.rotate_keyset(kset, _seed("w186-t%d|v2" % i),
+                                     _seed("w186-t%d|v1" % i))
+            keysets[signer.key_id] = k2
+        ok, err = _signing.verify_threshold(body, sigs, roster, root_pub,
+                                            keysets=keysets)
+        self.assertTrue(ok, err)
+
+    def test_malformed_version_claim_contributes_nothing(self):
+        pairs = self._three()
+        ts, roster, root_pub = self._parts(pairs, k=3)
+        body = b"w186 malformed body"
+        sigs = ts.sign_all(body)
+        bad = [dict(e) for e in sigs]
+        bad[0]["key_version"] = "not-an-int"
+        keysets = {s.key_id: k for k, s in pairs}
+        ok, err = _signing.verify_threshold(body, bad, roster, root_pub,
+                                            keysets=keysets)
+        self.assertFalse(ok)
+        self.assertIn("2/3", err)
+
+    def test_mixed_versioned_and_unversioned_members(self):
+        kset, ksigner = ks.new_keyset(_seed("w186-mixed|v1"))
+        plain = Ed25519Signer(_seed("w186-mixed|plain"))
+        root = Ed25519Signer(_seed("w186-mixed|root"))
+        roster = _signing.make_roster([ksigner, plain], 2, root)
+        ts = _signing.ThresholdSigner([ksigner, plain], 2)
+        body = b"w186 mixed body"
+        sigs = ts.sign_all(body)
+        self.assertEqual(sigs[0]["key_version"], 1)
+        self.assertNotIn("key_version", sigs[1])
+        keysets = {ksigner.key_id: kset}
+        ok, err = _signing.verify_threshold(body, sigs, roster,
+                                            root.public_key,
+                                            keysets=keysets)
+        self.assertTrue(ok, err)
+
+    def test_malformed_member_version_fails_fast_at_sign(self):
+        kset, ksigner = ks.new_keyset(_seed("w186-badmember|v1"))
+        ksigner._version = 0  # corrupt the version behind the API
+        ts = _signing.ThresholdSigner([ksigner], 1)
+        with self.assertRaises(ValueError):
+            ts.sign_all(b"w186 bad member body")
 
 
 # ---------------------------------------------------------------------------

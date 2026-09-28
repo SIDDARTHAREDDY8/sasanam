@@ -466,7 +466,7 @@ def _leaf_input(entry):
 
 
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
-                         threshold, roster_hash, ts):
+                         threshold, roster_hash, ts, key_version=None):
     """Bytes checkpoint Ed25519 signature(s) cover (the STH body).
 
     F202: ``ts`` (the operator's claimed checkpoint wall-clock time) is
@@ -475,14 +475,31 @@ def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
     and no longer verify (intended format consequence: signed
     checkpoints are new -- no deployed legacy population -- and a
     pre-F202 head is unfixable by construction).
+
+    Wave-186: ``key_version`` (the keyset version the signing key spoke
+    for) is bound alongside ``ts`` when the signer is keyset-aware, so
+    rewriting or stripping the version breaks the signature exactly
+    like ``ts`` tampering does. ``None`` (plain unversioned signers)
+    keeps the exact F202 body shape -- post-F202 checkpoints without a
+    version keep verifying.
     """
     if not isinstance(ts, str) or not ts:
         raise TypeError(
             "checkpoint ts must be a non-empty string for the sig body")
-    return (_CHECKPOINT_SIG_DOMAIN
-            + ("%d|%s|%s|%s|%d|%s|%s"
-               % (seq, entry_hash, merkle_root_hex, key_epoch,
-                  threshold, roster_hash, ts)).encode("utf-8"))
+    if key_version is None:
+        fields = ("%d|%s|%s|%s|%d|%s|%s"
+                  % (seq, entry_hash, merkle_root_hex, key_epoch,
+                     threshold, roster_hash, ts))
+    else:
+        if isinstance(key_version, bool) or not isinstance(
+                key_version, int) or key_version < 1:
+            raise TypeError(
+                "checkpoint key_version must be an integer >= 1 for "
+                "the sig body")
+        fields = ("%d|%s|%s|%s|%d|%s|%s|kv%d"
+                  % (seq, entry_hash, merkle_root_hex, key_epoch,
+                     threshold, roster_hash, ts, key_version))
+    return _CHECKPOINT_SIG_DOMAIN + fields.encode("utf-8")
 
 
 def _entry_hash(prev_hash, canonical):
@@ -947,23 +964,47 @@ class ActionLog:
                 body = _checkpoint_sig_body(
                     seq, entry_hash, root_hex, epoch, threshold,
                     roster_hash, ts)
+                # Wave-186: sign_all binds each keyset-aware member's
+                # key_version into its own member-specific signature
+                # body; entries carry per-member "key_version". There
+                # is deliberately NO single top-level "key_version":
+                # members rotate independently and may be at different
+                # versions, so one global version would mis-attribute.
+                key_version = None
                 sigs = self._signer.sign_all(body)
             else:
                 threshold = 1
                 roster_hash = _SINGLE_ROSTER_MARK + self._signer.key_id
+                # Wave-186: a keyset-aware signer (KeysetSigner) binds
+                # its keyset version into the STH body alongside ts, so
+                # a checkpoint signed under a later-revoked version is
+                # distinguishable and version tampering breaks the
+                # signature. Unversioned signers keep the F202 body.
+                # Malformed versions sanitize to None (same convention
+                # as append's sig_key_version handling): the checkpoint
+                # is honestly unversioned rather than mis-versioned.
+                key_version = getattr(
+                    self._signer, "key_version", None)
+                if isinstance(key_version, bool) \
+                        or not isinstance(key_version, int) \
+                        or key_version < 1:
+                    key_version = None
                 body = _checkpoint_sig_body(
                     seq, entry_hash, root_hex, epoch, threshold,
-                    roster_hash, ts)
+                    roster_hash, ts, key_version=key_version)
                 sigs = [{"key_id": self._signer.key_id,
                          "sig": self._signer.sign(body).hex()}]
-            cp.update({
+            cp_update = {
                 "format_version": CHECKPOINT_SIG_VERSION,
                 "ts": ts,
                 "merkle_root": root_hex,
                 "threshold": threshold,
                 "sigs": sigs,
                 "roster_hash": roster_hash,
-            })
+            }
+            if key_version is not None:
+                cp_update["key_version"] = key_version
+            cp.update(cp_update)
         self.checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.checkpoint_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(cp, ensure_ascii=True, default=str) + "\n")
@@ -1482,10 +1523,56 @@ def _sig_body_for_checkpoint(cp):
     string ``ts`` is malformed -- the KeyError/TypeError is caught by
     ``_verify_one_checkpoint_sig`` and fails closed. Pre-F202 heads
     (whose signatures never covered ``ts``) no longer verify.
+
+    Wave-186: ``key_version`` (when the checkpoint carries one) is part
+    of the signed body too. A checkpoint without ``key_version``
+    rebuilds the F202 body -- post-F202 unversioned checkpoints keep
+    verifying. A malformed ``key_version`` fails closed.
     """
+    key_version = cp.get("key_version")
+    if key_version is not None and (
+            isinstance(key_version, bool)
+            or not isinstance(key_version, int) or key_version < 1):
+        raise TypeError("malformed v2 checkpoint key_version")
     return _checkpoint_sig_body(cp["seq"], cp["hash"], cp["merkle_root"],
                                 cp["key_epoch"], cp["threshold"],
-                                cp["roster_hash"], cp["ts"])
+                                cp["roster_hash"], cp["ts"],
+                                key_version=key_version)
+
+
+def _check_checkpoint_key_against_keyset(keysets, key_id, claimed_version):
+    """Keyset cross-check for one checkpoint signing key.
+
+    ``keysets``: mapping ``key_id -> gov.keyset.Keyset`` (the
+    verifier's trust directory of checkpoint-signer keysets).
+    ``claimed_version``: the checkpoint's version claim for this key
+    (None when the checkpoint carries none).
+
+    Returns (ok, error); never raises. The keyset is the authority:
+    the claim is cross-checked (confusion fails closed) and revocation
+    is resolved from the key id alone, so stripping the version claim
+    cannot smuggle a revoked version past. A key with no keyset in the
+    mapping is out of scope here (the caller treats it as unversioned).
+    """
+    ks = keysets.get(key_id)
+    if ks is None:
+        return True, None  # no keyset for this key: not our check
+    by_key_id = getattr(ks, "by_key_id", None)
+    kv = by_key_id(key_id) if callable(by_key_id) else None
+    if kv is None:
+        return False, "key id %r not in its keyset" % (key_id,)
+    try:
+        kv_version, kv_status = kv.version, kv.status
+    except Exception:
+        return False, "keyset version record malformed for %r" % (key_id,)
+    if claimed_version is not None and claimed_version != kv_version:
+        return False, ("checkpoint key_version %r does not match keyset "
+                       "version %r for key %r"
+                       % (claimed_version, kv_version, key_id))
+    if kv_status == _keyset.STATUS_REVOKED:
+        return False, ("checkpoint signing key version %d is revoked"
+                       % (kv_version,))
+    return True, None
 
 
 def _normalize_pubkey(pub):
@@ -1503,7 +1590,7 @@ def _normalize_pubkey(pub):
 
 
 def _verify_one_checkpoint_sig(cp, trusted_keys, roster=None,
-                               root_pub=None):
+                               root_pub=None, keysets=None):
     """Verify one v2 checkpoint's Ed25519 signature set.
 
     Single-key checkpoints (``threshold == 1`` with the single-key
@@ -1512,6 +1599,15 @@ def _verify_one_checkpoint_sig(cp, trusted_keys, roster=None,
     ``roster`` (whose content hash must equal the checkpoint's
     ``roster_hash``) under ``root_pub``. Returns (ok, error); never
     raises on malformed input.
+
+    Wave-186 ``keysets`` (optional): mapping ``key_id ->
+    gov.keyset.Keyset``. When a checkpoint signing key has a keyset,
+    the checkpoint's version claim is cross-checked and revoked
+    versions are refused -- in the single-key branch a checkpoint
+    signed under a revoked version fails here; in the threshold branch
+    a revoked member's signature simply does not count (see
+    ``gov.signing.verify_threshold``). Keys with no keyset verify
+    exactly as before.
     """
     try:
         if not isinstance(cp, dict) or cp.get(
@@ -1526,12 +1622,19 @@ def _verify_one_checkpoint_sig(cp, trusted_keys, roster=None,
     if (not isinstance(threshold, int) or isinstance(threshold, bool)
             or threshold < 1):
         return False, "bad threshold %r" % (threshold,)
+    if keysets is not None and not isinstance(keysets, dict):
+        return False, "keysets must be a mapping key_id -> Keyset"
     if (threshold == 1 and isinstance(rhash, str)
             and rhash.startswith(_SINGLE_ROSTER_MARK)):
         if not isinstance(sigs, list) or len(sigs) != 1:
             return False, "single-key checkpoint must carry one sig"
         kid = sigs[0].get("key_id") if isinstance(
             sigs[0], dict) else None
+        if keysets is not None and isinstance(kid, str):
+            ok, err = _check_checkpoint_key_against_keyset(
+                keysets, kid, cp.get("key_version"))
+            if not ok:
+                return False, err
         pub = _normalize_pubkey((trusted_keys or {}).get(kid))
         if pub is None:
             return False, "unknown signing key %r" % (kid,)
@@ -1549,11 +1652,13 @@ def _verify_one_checkpoint_sig(cp, trusted_keys, roster=None,
     if _signing.roster_hash(roster) != rhash:
         return False, ("roster_hash mismatch: this checkpoint was signed "
                        "under a different signer roster")
-    return _signing.verify_threshold(body, sigs, roster, root_pub)
+    return _signing.verify_threshold(body, sigs, roster, root_pub,
+                                     keysets=keysets)
 
 
 def verify_checkpoint_signatures(path, trusted_keys=None, roster=None,
-                                 root_pub=None, require_signed=False):
+                                 root_pub=None, require_signed=False,
+                                 keysets=None):
     """Third-party verification of signed checkpoints (P2/A5).
 
     No HMAC key needed: verifies every v2 checkpoint's signature set
@@ -1568,6 +1673,13 @@ def verify_checkpoint_signatures(path, trusted_keys=None, roster=None,
     still verifies it, but a third party with ``require_signed=True``
     rejects the log. Signature stripping is tamper-evident to anyone
     who requires signatures, invisible to anyone who does not.
+
+    Wave-186 ``keysets``: optional mapping ``key_id ->
+    gov.keyset.Keyset``; when supplied, revoked signing-key versions
+    are refused (single-key branch) or not counted (threshold branch).
+    Without it, version revocation is unchecked -- the keyset is public
+    material the verifier is expected to fetch current, exactly like
+    the trusted root key.
     """
     cps, n_bad = _read_checkpoints_all(path)
     if n_bad:
@@ -1586,7 +1698,7 @@ def verify_checkpoint_signatures(path, trusted_keys=None, roster=None,
             continue
         checked += 1
         ok, err = _verify_one_checkpoint_sig(cp, trusted_keys, roster,
-                                             root_pub)
+                                             root_pub, keysets=keysets)
         if not ok:
             return {"ok": False, "checked": checked, "valid": valid,
                     "unsigned": unsigned,

@@ -318,14 +318,15 @@ def _make_weakened_verifier():
         src = f.read()
     edits = [
         # 1. drop the duplicate-key skip ...
-        ("        if kid in good or kid not in roster_pubs:\n",
-         "        if kid not in roster_pubs:\n"),
+        ("        if not isinstance(kid, str) or kid in good \\\n"
+         "                or kid not in roster_pubs:\n",
+         "        if not isinstance(kid, str) or kid not in roster_pubs:\n"),
         # 2. ... and count every valid signature (list, not set).
         ("    roster_pubs = roster[\"keys\"]\n    good = set()\n",
          "    roster_pubs = roster[\"keys\"]\n    good = []\n"),
-        ("        if verify(bytes.fromhex(roster_pubs[kid]), body, sig):\n"
+        ("        if verify(bytes.fromhex(roster_pubs[kid]), entry_body, sig):\n"
          "            good.add(kid)\n",
-         "        if verify(bytes.fromhex(roster_pubs[kid]), body, sig):\n"
+         "        if verify(bytes.fromhex(roster_pubs[kid]), entry_body, sig):\n"
          "            good.append(kid)\n"),
     ]
     for old, new in edits:

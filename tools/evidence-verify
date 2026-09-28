@@ -408,15 +408,31 @@ def _entry_sig_body(entry):
 
 
 def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
-                         threshold, roster_hash, ts):
+                         threshold, roster_hash, ts, key_version=None):
     # F202: ts is bound into the signed body (mirrors gov/log.py).
+    # Wave-186: key_version is bound alongside ts when the checkpoint
+    # carries one (mirrors gov/log.py). The standalone verifier checks
+    # the signature -- including the version binding -- but does NOT
+    # check keyset revocation: keysets are online-auditor trust
+    # material (same split as V9d's "keyset authorization is the online
+    # auditor's job"). A malformed key_version fails closed here.
     if not isinstance(ts, str) or not ts:
         raise TypeError(
             "checkpoint ts must be a non-empty string for the sig body")
-    return (_CHECKPOINT_SIG_DOMAIN
-            + ("%d|%s|%s|%s|%d|%s|%s"
-               % (seq, entry_hash, merkle_root_hex, key_epoch,
-                  threshold, roster_hash, ts)).encode("utf-8"))
+    if key_version is None:
+        fields = ("%d|%s|%s|%s|%d|%s|%s"
+                  % (seq, entry_hash, merkle_root_hex, key_epoch,
+                     threshold, roster_hash, ts))
+    else:
+        if isinstance(key_version, bool) or not isinstance(
+                key_version, int) or key_version < 1:
+            raise TypeError(
+                "checkpoint key_version must be an integer >= 1 for "
+                "the sig body")
+        fields = ("%d|%s|%s|%s|%d|%s|%s|kv%d"
+                  % (seq, entry_hash, merkle_root_hex, key_epoch,
+                     threshold, roster_hash, ts, key_version))
+    return _CHECKPOINT_SIG_DOMAIN + fields.encode("utf-8")
 
 
 # --- end vendored gov/log.py ---
@@ -430,6 +446,31 @@ def _checkpoint_sig_body(seq, entry_hash, merkle_root_hex, key_epoch,
 # for threshold rosters is noted explicitly (see _verify_threshold_head).
 _ROSTER_VERSION = 1
 _ROSTER_ROLE = "checkpoint-signer"
+
+
+# Vendored from gov/signing.py::_member_sig_body (wave-186). A
+# keyset-aware threshold member signs this member-specific body --
+# binding (key_id, key_version) to the common checkpoint body -- not
+# the common body itself. The standalone verifier reconstructs it
+# from each entry's own key_version claim; unversioned entries verify
+# over the common body exactly as before. Keyset REVOCATION is not
+# checked here: keysets are online-auditor trust material, not bundle
+# content (see _checkpoint_sig_body's note).
+_THRESHOLD_MEMBER_SIG_DOMAIN = b"sasanam-threshold-member/v1\x00"
+
+
+def _member_sig_body(common_body, key_id, key_version):
+    if not isinstance(common_body, (bytes, bytearray)):
+        raise TypeError("common_body must be bytes")
+    if not isinstance(key_id, str) or not key_id:
+        raise TypeError("key_id must be a non-empty string")
+    if isinstance(key_version, bool) or not isinstance(
+            key_version, int) or key_version < 1:
+        raise TypeError("key_version must be an integer >= 1")
+    return (_THRESHOLD_MEMBER_SIG_DOMAIN
+            + key_id.encode("utf-8") + b"|kv"
+            + str(key_version).encode("ascii") + b"\x00"
+            + bytes(common_body))
 
 
 def _roster_hash(roster):
@@ -488,7 +529,13 @@ def _verify_threshold(data, sig_entries, roster, trusted_root_pub):
 
     Returns (ok, error). Steps: (1) the roster must verify under the
     trusted offline root; (2) at least ``threshold`` DISTINCT roster key
-    ids must carry valid Ed25519 signatures over ``data``.
+    ids must carry valid Ed25519 signatures. Wave-186: each entry is
+    verified over the body its signer actually signed -- the
+    member-specific body reconstructed from the entry's own
+    ``key_version`` claim, or ``data`` for unversioned entries.
+    (Vendored from gov/signing.py::verify_threshold; the keyset
+    cross-check lives in gov/ -- revocation is the online auditor's
+    job, not the bundle's.)
     """
     ok, err = _verify_roster(roster, trusted_root_pub)
     if not ok:
@@ -509,10 +556,19 @@ def _verify_threshold(data, sig_entries, roster, trusted_root_pub):
             sig = bytes.fromhex(entry["sig"])
         except (KeyError, TypeError, ValueError):
             continue  # malformed entry: contributes nothing
-        if kid in good or kid not in roster_keys:
-            continue  # duplicate or unknown: no double-count
+        if not isinstance(kid, str) or kid in good \
+                or kid not in roster_keys:
+            continue  # malformed / duplicate / unknown: no count
+        body = data
+        if isinstance(entry, dict):
+            claimed = entry.get("key_version")
+            if claimed is not None:
+                try:
+                    body = _member_sig_body(data, kid, claimed)
+                except TypeError:
+                    continue  # malformed claim: contributes nothing
         pub = bytes.fromhex(roster_keys[kid])
-        if verify(pub, data, sig):
+        if verify(pub, body, sig):
             good.add(kid)
     if len(good) >= threshold:
         return True, None
@@ -898,11 +954,17 @@ def _verify_one_head(head, cp_keys, roster=None, pinned_cp_key_ids=None):
     threshold = head["threshold"]
     roster_hash = head["roster_hash"]
     try:
+        # Wave-186: head.get("key_version") is None for pre-keyset
+        # checkpoints (F202 body); a malformed key_version fails
+        # closed via the TypeError. Revocation is NOT checked here --
+        # see _checkpoint_sig_body's note: the keyset is online-auditor
+        # trust material, not bundle content.
         body = _checkpoint_sig_body(head["seq"], head["hash"],
                                     head["merkle_root"], head["key_epoch"],
-                                    threshold, roster_hash, head["ts"])
+                                    threshold, roster_hash, head["ts"],
+                                    head.get("key_version"))
     except (KeyError, TypeError, ValueError):
-        return "checkpoint sig body malformed (ts binding)", None
+        return "checkpoint sig body malformed (ts/version binding)", None
     if threshold == 1 and roster_hash.startswith(_SINGLE_ROSTER_MARK):
         # Single-key branch.
         expect_kid = roster_hash[len(_SINGLE_ROSTER_MARK):]
@@ -952,9 +1014,24 @@ def _verify_one_head(head, cp_keys, roster=None, pinned_cp_key_ids=None):
             sig = bytes.fromhex(entry["sig"])
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
-        if kid in good or kid not in roster_pubs:
+        if not isinstance(kid, str) or kid in good \
+                or kid not in roster_pubs:
             continue
-        if verify(bytes.fromhex(roster_pubs[kid]), body, sig):
+        # Wave-186: reconstruct the body this member actually signed --
+        # the member-specific body for keyset-aware entries (claim is
+        # self-authenticating: rewriting/stripping it breaks the
+        # signature), the common body for unversioned entries.
+        # Revocation is NOT checked: the keyset is online-auditor
+        # trust material, not bundle content.
+        entry_body = body
+        if isinstance(entry, dict):
+            claimed = entry.get("key_version")
+            if claimed is not None:
+                try:
+                    entry_body = _member_sig_body(body, kid, claimed)
+                except TypeError:
+                    continue  # malformed claim: contributes nothing
+        if verify(bytes.fromhex(roster_pubs[kid]), entry_body, sig):
             good.add(kid)
     if len(good) < threshold:
         return ("threshold checkpoint seq %d: only %d/%d valid distinct "
