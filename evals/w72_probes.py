@@ -766,10 +766,20 @@ def sit_rekor_backend_two_leaf_proof_verifies():
     # Ed25519ph verifier accepts.
     dh1 = hashlib.sha512(bytes.fromhex(ah1)).hexdigest()
     dh2 = hashlib.sha512(bytes.fromhex(ah2)).hexdigest()
-    body1 = json.dumps({"spec": {"data": {"hash": {
-        "algorithm": "sha512", "value": dh1}}}}).encode()
-    body2 = json.dumps({"spec": {"data": {"hash": {
-        "algorithm": "sha512", "value": dh2}}}}).encode()
+    def _body(ah, dh):
+        # Realistic hashedrekord body: a real Rekor v1.5.x entry always
+        # carries spec.signature.content (Ed25519ph over the 32-byte
+        # anchor hash); verify_receipt re-checks it so the receipt is
+        # self-contained (F203 Spec-review hardening). A synthetic
+        # entry without it is unrealistic and must not verify.
+        sig = ed_mod.sign_ph(seed, bytes.fromhex(ah))
+        return json.dumps({"spec": {
+            "signature": {"content":
+                          base64.b64encode(sig).decode("ascii")},
+            "data": {"hash": {"algorithm": "sha512", "value": dh}},
+        }}).encode()
+    body1 = _body(ah1, dh1)
+    body2 = _body(ah2, dh2)
     leaf1 = hashlib.sha256(b"\x00" + body1).digest()
     leaf2 = hashlib.sha256(b"\x00" + body2).digest()
     root = hashlib.sha256(b"\x01" + leaf1 + leaf2).digest()
@@ -814,10 +824,19 @@ def sit_rekor_backend_two_leaf_proof_verifies():
     swapped = dict(r2)
     swapped["inclusion_proof"] = dict(
         r2["inclusion_proof"], hashes=[leaf2.hex()])
+    # The F203 Spec-review hardening: verify_receipt re-checks the
+    # envelope signature so the receipt is self-contained. A body
+    # with the signature stripped must be refused.
+    no_sig_body = json.loads(base64.b64decode(r1["body"]).decode())
+    del no_sig_body["spec"]["signature"]
+    no_sig = dict(r1)
+    no_sig["body"] = base64.b64encode(
+        json.dumps(no_sig_body).encode()).decode()
     tampers = [
         (bad_sib, ah1, "tampered sibling"),
         (bad_root, ah2, "wrong root_hash"),
         (swapped, ah2, "swapped sibling"),
+        (no_sig, ah1, "missing envelope signature"),
     ]
     for receipt, ah, what in tampers:
         ok, reason = rb.verify_receipt(receipt, anchor_hash=ah)
@@ -826,7 +845,8 @@ def sit_rekor_backend_two_leaf_proof_verifies():
                     "note": "%s accepted by verify_receipt" % what}
     return {"verdict": "stopped",
             "note": "2-leaf proofs verify; tampered sibling, wrong "
-                    "root, and swapped sibling all rejected"}
+                    "root, swapped sibling, and missing envelope "
+                    "signature all rejected"}
 
 
 def main():
