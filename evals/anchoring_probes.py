@@ -190,8 +190,11 @@ def a6_custom_backend_plugs_in():
             self.calendar_head = "0" * 64
 
         def submit(self, anchor_hash):
-            from gov.anchor_backend import _check_anchor_hash
-            ahash = _check_anchor_hash(anchor_hash)
+            # Wave-199: the abstract contract is DigestRef|str; a
+            # third-party backend written against the new contract
+            # coerces at its boundary.
+            from gov.anchor_backend import _coerce_anchor_hash
+            ahash = _coerce_anchor_hash(anchor_hash, where="gist submit")
             self.calendar_head = hashlib.sha256(
                 b"gist-calendar/v1\x00"
                 + bytes.fromhex(self.calendar_head)
@@ -207,9 +210,15 @@ def a6_custom_backend_plugs_in():
 
         def verify_receipt(self, receipt, *, anchor_hash):
             try:
+                from gov.anchor_backend import _coerce_anchor_hash
+                ahash = _coerce_anchor_hash(anchor_hash,
+                                           where="gist verify")
+            except Exception as e:
+                return False, "malformed anchor_hash: %s" % (e,)
+            try:
                 if receipt.get("backend") != "gist-calendar":
                     return False, "wrong backend"
-                if receipt.get("anchor_hash") != anchor_hash:
+                if receipt.get("anchor_hash") != ahash:
                     return False, "different anchor"
                 if not receipt.get("gist_id") or \
                         not receipt.get("gist_rev"):

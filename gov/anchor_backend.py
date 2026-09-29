@@ -46,6 +46,7 @@ from datetime import datetime, timezone
 
 from . import ed25519 as _ed
 from . import merkle as _merkle
+from .digest_ref import DigestRef
 
 ANCHOR_STATEMENT_VERSION = 2
 GENESIS_ANCHOR = "GENESIS"
@@ -253,7 +254,13 @@ class AnchorBackend(abc.ABC):
 
     @abc.abstractmethod
     def submit(self, anchor_hash):
-        """Submit an anchor hash; return the receipt dict."""
+        """Submit an anchor hash; return the receipt dict.
+
+        ``anchor_hash`` is a :class:`gov.digest_ref.DigestRef`
+        (preferred -- a tag is unrepresentable as one) or a bare-hex
+        ``str`` (strictly validated). Implementations must accept
+        both.
+        """
 
     @abc.abstractmethod
     def verify_receipt(self, receipt, *, anchor_hash):
@@ -270,6 +277,39 @@ def _check_anchor_hash(value):
     if len(raw) != 32:
         raise WitnessError("anchor_hash must be 32 bytes (64 hex chars)")
     return value.lower()
+
+
+def _coerce_anchor_hash(value, *, where):
+    """Accept a :class:`DigestRef` or a bare-hex ``str`` anchor hash.
+
+    Wave-199: DigestRef is the preferred (structural) form -- a tag is
+    unrepresentable as one. The ``str`` form is kept for the abstract
+    ``AnchorBackend`` contract (fake/file test doubles and existing
+    callers); it goes through the same strict 32-byte-hex validation
+    as before, so no new string shape is admitted. Returns the
+    lowercase 64-hex string.
+    """
+    if isinstance(value, DigestRef):
+        return value.hex
+    if not isinstance(value, str):
+        raise WitnessError(
+            "%s: anchor_hash must be a DigestRef or hex str, got %s"
+            % (where, type(value).__name__))
+    return _check_anchor_hash(value)
+
+
+def _verify_anchor_hash(value, *, where):
+    """Coerce an anchor hash for the ``verify_receipt`` (auditor) path.
+
+    Same :class:`DigestRef` | ``str`` contract as
+    :func:`_coerce_anchor_hash`, but never raises: returns
+    ``(True, hex)`` on success, ``(False, reason)`` on malformed
+    input. The auditor path must stay fail-closed, not exceptional.
+    """
+    try:
+        return True, _coerce_anchor_hash(value, where=where)
+    except WitnessError as e:
+        return False, "malformed anchor_hash: %s" % (e,)
 
 
 def _witness_leaf(anchor_hash_hex):
@@ -316,7 +356,8 @@ class FakeWitness(AnchorBackend):
     def submit(self, anchor_hash):
         if self.down:
             raise WitnessDownError("fake witness is down")
-        ahash = _check_anchor_hash(anchor_hash)
+        # Wave-199: same DigestRef|str contract as RekorBackend.
+        ahash = _coerce_anchor_hash(anchor_hash, where="fake submit")
         if ahash in self._by_hash:  # idempotent re-submission FIRST
             return self._by_hash[ahash]
         self._leaves.append(_witness_leaf(ahash))
@@ -342,6 +383,11 @@ class FakeWitness(AnchorBackend):
         # a test double, so this proves the receipt FORMAT and the
         # verification PATH, not third-party attestation. The real
         # witness binding (pinned log id + TLS) lives in RekorBackend.
+        # Wave-199: same DigestRef|str contract as submit; the
+        # verify path never raises (auditor path).
+        ok, ahash = _verify_anchor_hash(anchor_hash, where="fake verify")
+        if not ok:
+            return False, ahash
         try:
             if not isinstance(receipt, dict):
                 return False, "receipt is not an object"
@@ -349,13 +395,13 @@ class FakeWitness(AnchorBackend):
                 return False, "receipt is not from the fake witness"
             if receipt.get("backend_id") != self.backend_id:
                 return False, "receipt is from a different witness"
-            if receipt.get("anchor_hash") != anchor_hash:
+            if receipt.get("anchor_hash") != ahash:
                 return False, "receipt is for a different anchor"
             proof = [bytes.fromhex(p)
                      for p in receipt["inclusion_proof"]]
             root = bytes.fromhex(receipt["log_root"])
             if not _merkle.verify_inclusion(
-                    _witness_leaf(anchor_hash), receipt["log_index"],
+                    _witness_leaf(ahash), receipt["log_index"],
                     proof, root, receipt["tree_size"]):
                 return False, "inclusion proof does not verify"
             # Witness-time sanity: parseable, not absurdly in the future.
@@ -394,7 +440,8 @@ class LocalAnchorLog(AnchorBackend):
         return out
 
     def submit(self, anchor_hash):
-        ahash = _check_anchor_hash(anchor_hash)
+        # Wave-199: same DigestRef|str contract as RekorBackend.
+        ahash = _coerce_anchor_hash(anchor_hash, where="file submit")
         entries = self._chain()
         for e in entries:  # idempotent re-submission
             if e["anchor_hash"] == ahash:
@@ -426,12 +473,17 @@ class LocalAnchorLog(AnchorBackend):
         return receipt
 
     def verify_receipt(self, receipt, *, anchor_hash):
+        # Wave-199: same DigestRef|str contract as submit; the
+        # verify path never raises (auditor path).
+        ok, ahash = _verify_anchor_hash(anchor_hash, where="file verify")
+        if not ok:
+            return False, ahash
         try:
             if not isinstance(receipt, dict):
                 return False, "receipt is not an object"
             if receipt.get("backend") != "local-anchor-log":
                 return False, "not a local-anchor-log receipt"
-            if receipt.get("anchor_hash") != anchor_hash:
+            if receipt.get("anchor_hash") != ahash:
                 return False, "receipt is for a different anchor"
             prev = GENESIS_ANCHOR
             found = False
@@ -448,7 +500,7 @@ class LocalAnchorLog(AnchorBackend):
                     return False, "local anchor chain broken at index %r" % (
                         e["receipt"].get("index"),)
                 prev = e["chain_hash"]
-                if e["anchor_hash"] == anchor_hash:
+                if e["anchor_hash"] == ahash:
                     found = True
                     if e["receipt"] != receipt:
                         return False, "receipt does not match the log entry"
@@ -592,7 +644,11 @@ class RekorBackend(AnchorBackend):
         # the construction-time key material. The statement (epoch
         # metadata, wall times) is never in scope here -- it stays local,
         # chained in the HMAC log's receipt record.
-        ahash = _check_anchor_hash(anchor_hash)
+        #
+        # Wave-199: anchor_hash is a DigestRef (preferred -- a tag is
+        # unrepresentable as one) or a bare-hex str (kept for the
+        # abstract contract; strictly validated, no new shape admitted).
+        ahash = _coerce_anchor_hash(anchor_hash, where="rekor submit")
         if self._anchor_seed is None or self._anchor_pubkey is None:
             raise WitnessError(
                 "rekor submit needs anchor_seed + anchor_pubkey "
@@ -688,12 +744,18 @@ class RekorBackend(AnchorBackend):
         }
 
     def verify_receipt(self, receipt, *, anchor_hash):
+        # Wave-199: accept DigestRef or bare-hex str (same coercion
+        # as submit); the receipt stores the lowercase hex form. The
+        # verify path never raises (auditor path).
+        ok, ahash = _verify_anchor_hash(anchor_hash, where="rekor verify")
+        if not ok:
+            return False, ahash
         try:
             if not isinstance(receipt, dict):
                 return False, "receipt is not an object"
             if receipt.get("backend") != "rekor-v1":
                 return False, "not a rekor-v1 receipt"
-            if receipt.get("anchor_hash") != anchor_hash:
+            if receipt.get("anchor_hash") != ahash:
                 return False, "receipt is for a different anchor"
             if receipt.get("log_id") != self.log_id:
                 return False, "receipt is from a different transparency log"
@@ -721,7 +783,7 @@ class RekorBackend(AnchorBackend):
             if halg != "sha512":
                 return False, "entry body hash algorithm != sha512"
             if value != hashlib.sha512(
-                    bytes.fromhex(anchor_hash)).hexdigest():
+                    bytes.fromhex(ahash)).hexdigest():
                 return False, "entry body hash != sha512(anchor_hash)"
             # The envelope signature binds the anchor key to the entry:
             # Ed25519ph over the 32-byte anchor hash (the shape Rekor
@@ -734,7 +796,7 @@ class RekorBackend(AnchorBackend):
             except (KeyError, TypeError, ValueError):
                 return False, "entry body has no signature"
             if not _ed.verify_ph(self._anchor_pubkey,
-                                 bytes.fromhex(anchor_hash), sig):
+                                 bytes.fromhex(ahash), sig):
                 return False, "anchor signature does not verify"
             proof = receipt["inclusion_proof"]
             root = _rfc6962_root(

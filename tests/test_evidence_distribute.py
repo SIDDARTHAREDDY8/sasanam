@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tests.keyfixture import provision_test_key
 
 from gov import evidence_distribute as ed
+from gov.digest_ref import DigestRef
 from gov.evidence_bundle import EvidenceBundle, log_evidence_bundle_receipt
 from gov.log import ActionLog
 from gov.signing import Ed25519Signer
@@ -44,6 +45,15 @@ class FakeRegistry(object):
         self.registered = set()
         self.tags = {}
         self.referrers = {}
+
+    @staticmethod
+    def _ref_to_key(ref):
+        # The client protocol is string-keyed (the registry wire speaks
+        # strings); the product seams pass DigestRef. The fake -- like a
+        # real adapter -- converts explicitly at its boundary.
+        if isinstance(ref, DigestRef):
+            return ref.digest
+        return ref
 
     def push_blob(self, repo, data, media_type):
         digest = "sha256:" + hashlib.sha256(data).hexdigest()
@@ -70,18 +80,21 @@ class FakeRegistry(object):
         return digest
 
     def get_manifest(self, repo, reference):
+        reference = self._ref_to_key(reference)
         if (repo, reference) not in self.registered:
             raise KeyError("manifest unknown: %s" % reference)
         raw = self.manifests[(repo, reference)]
         return json.loads(raw.decode("utf-8")), reference
 
     def pull_blob(self, repo, digest):
+        digest = self._ref_to_key(digest)
         try:
             return self.blobs[(repo, digest)]
         except KeyError:
             raise KeyError("blob unknown: %s" % digest)
 
     def list_referrers(self, repo, digest):
+        digest = self._ref_to_key(digest)
         out = []
         for md in self.referrers.get((repo, digest), []):
             m, _ = self.get_manifest(repo, md)
@@ -97,12 +110,13 @@ class FakeRegistry(object):
             raise KeyError("tag unknown: %s" % tag)
 
     def strip_referrers(self, repo, digest):
+        digest = self._ref_to_key(digest)
         for md in self.referrers.pop((repo, digest), []):
             self.manifests.pop((repo, md), None)
             self.registered.discard((repo, md))
 
     def tamper_blob(self, repo, digest, data):
-        self.blobs[(repo, digest)] = data
+        self.blobs[(repo, self._ref_to_key(digest))] = data
 
 
 def _build_bundle(tmp, name):
@@ -163,9 +177,12 @@ class DistributeTests(unittest.TestCase):
     def test_push_and_resolve(self):
         d = _build_bundle(self.tmp, "push")
         digest = ed.push_bundle(d, self.fake, self.repo, tag="evidence:v1")
-        self.assertTrue(digest.startswith("sha256:"))
+        self.assertIsInstance(digest, DigestRef)
+        self.assertTrue(digest.digest.startswith("sha256:"))
+        self.assertEqual(digest.reference,
+                         self.repo + "@" + digest.digest)
         self.assertEqual(self.fake.resolve_tag(self.repo, "evidence:v1"),
-                         digest)
+                         digest.digest)
 
     def test_push_tag_clobber_refused(self):
         a = _build_bundle(self.tmp, "clobber-a")
@@ -174,7 +191,7 @@ class DistributeTests(unittest.TestCase):
         with self.assertRaises(ed.DistributionError):
             ed.push_bundle(b, self.fake, self.repo, tag="evidence:shared")
         self.assertEqual(
-            self.fake.resolve_tag(self.repo, "evidence:shared"), da)
+            self.fake.resolve_tag(self.repo, "evidence:shared"), da.digest)
 
     def test_push_idempotent_same_bytes(self):
         d = _build_bundle(self.tmp, "idem")
@@ -186,7 +203,7 @@ class DistributeTests(unittest.TestCase):
         d = _build_bundle(self.tmp, "notag")
         digest = ed.push_bundle(d, self.fake, self.repo)
         manifest, resolved = self.fake.get_manifest(self.repo, digest)
-        self.assertEqual(resolved, digest)
+        self.assertEqual(resolved, digest.digest)
         self.assertEqual(manifest["layers"][0]["mediaType"],
                          ed.MT_BUNDLE_TAR)
 
@@ -205,7 +222,7 @@ class DistributeTests(unittest.TestCase):
     def test_attach_requires_digest_pin(self):
         d = _build_bundle(self.tmp, "pin")
         subject = ed.push_bundle(d, self.fake, self.repo, tag="evidence:pin")
-        with self.assertRaises(ed.DistributionError):
+        with self.assertRaises(TypeError):
             ed.attach_signature(self.fake, self.repo, "evidence:pin",
                                 b'{"sig": 1}')
 
@@ -225,7 +242,7 @@ class DistributeTests(unittest.TestCase):
     def test_pull_bundle_rejects_tag(self):
         d = _build_bundle(self.tmp, "pulltag")
         ed.push_bundle(d, self.fake, self.repo, tag="evidence:t")
-        with self.assertRaises(ed.DistributionError):
+        with self.assertRaises(TypeError):
             ed.pull_bundle(self.fake, self.repo, "evidence:t",
                            os.path.join(self.tmp, "o"))
 
@@ -243,7 +260,8 @@ class DistributeTests(unittest.TestCase):
 
     def test_pull_bundle_unknown_digest(self):
         with self.assertRaises(ed.DistributionError):
-            ed.pull_bundle(self.fake, self.repo, "sha256:" + "0" * 64,
+            ed.pull_bundle(self.fake, self.repo,
+                           DigestRef.from_hex("0" * 64),
                            os.path.join(self.tmp, "o"))
 
     def test_pull_bundle_hostile_tar_member(self):
@@ -282,9 +300,9 @@ class DistributeTests(unittest.TestCase):
         subject = self._audited("audit-ok")
         outdir = os.path.join(self.tmp, "audit-out")
         verdict = ed.audit_bundle(
-            self.fake, self.repo, digest=subject, outdir=outdir,
+            self.fake, self.repo, ref=subject, outdir=outdir,
             operator_pins=(OPERATOR_PUB_HEX,))
-        self.assertEqual(verdict["digest"], subject)
+        self.assertEqual(verdict["digest"], subject.digest)
         self.assertEqual(verdict["verify_code"], 0)
         self.assertTrue(verdict["signature"].startswith("sha256:"))
         self.assertTrue(verdict["bom"].startswith("sha256:"))
@@ -293,14 +311,14 @@ class DistributeTests(unittest.TestCase):
         subject = self._audited("audit-strip")
         self.fake.strip_referrers(self.repo, subject)
         with self.assertRaises(ed.DistributionError):
-            ed.audit_bundle(self.fake, self.repo, digest=subject,
+            ed.audit_bundle(self.fake, self.repo, ref=subject,
                             outdir=os.path.join(self.tmp, "o"),
                             operator_pins=(OPERATOR_PUB_HEX,))
 
     def test_audit_bundle_requires_pins(self):
         subject = self._audited("audit-nopins")
         with self.assertRaises(ed.DistributionError):
-            ed.audit_bundle(self.fake, self.repo, digest=subject,
+            ed.audit_bundle(self.fake, self.repo, ref=subject,
                             outdir=os.path.join(self.tmp, "o"),
                             operator_pins=())
 
@@ -310,7 +328,7 @@ class DistributeTests(unittest.TestCase):
         lying = [dict(r, digest="sha256:" + "f" * 64) for r in real_refs]
         self.fake.list_referrers = lambda repo, digest: lying
         with self.assertRaises(ed.DistributionError):
-            ed.audit_bundle(self.fake, self.repo, digest=subject,
+            ed.audit_bundle(self.fake, self.repo, ref=subject,
                             outdir=os.path.join(self.tmp, "o"),
                             operator_pins=(OPERATOR_PUB_HEX,))
 
@@ -322,7 +340,7 @@ class DistributeTests(unittest.TestCase):
         subject = ed.push_bundle(junk, self.fake, self.repo)
         self._push_sig(subject)
         with self.assertRaises(ed.DistributionError):
-            ed.audit_bundle(self.fake, self.repo, digest=subject,
+            ed.audit_bundle(self.fake, self.repo, ref=subject,
                             outdir=os.path.join(self.tmp, "o"),
                             operator_pins=(OPERATOR_PUB_HEX,))
 
@@ -338,7 +356,8 @@ class DistributeTests(unittest.TestCase):
         with self.assertRaises(ed.DistributionError):
             ed.resolve_and_pin(Broken(), self.repo, "x")
         with self.assertRaises(ed.DistributionError):
-            ed.pull_bundle(Broken(), self.repo, "sha256:" + "0" * 64,
+            ed.pull_bundle(Broken(), self.repo,
+                           DigestRef.from_hex("0" * 64),
                            os.path.join(self.tmp, "o"))
 
 

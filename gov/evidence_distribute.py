@@ -52,6 +52,7 @@ import os
 import tarfile
 
 from . import evidence_verify as _evidence_verify
+from .digest_ref import DigestRef
 
 
 class DistributionError(Exception):
@@ -174,6 +175,24 @@ def _subject_manifest(tar_digest, tar_size, config_digest, config_size):
     }
 
 
+def _require_ref(ref, *, where):
+    """Identity positions take :class:`DigestRef`, never ``str``.
+
+    A tag is unrepresentable here by construction: the only way to
+    build a DigestRef from a tag-shaped value is
+    ``DigestRef.parse``, which refuses it loudly. Accepting ``str``
+    would re-admit the tag/digest confusion this module exists to
+    kill, so the wrong *kind* of value is a TypeError at the seam,
+    not a runtime DistributionError deep inside.
+    """
+    if not isinstance(ref, DigestRef):
+        raise TypeError(
+            "%s requires a gov.digest_ref.DigestRef, got %s -- "
+            "tags and bare strings are not artifact identity"
+            % (where, type(ref).__name__))
+    return ref
+
+
 def push_bundle(bundle_dir, client, repo, tag=None):
     """Push an assembled bundle directory as an OCI subject manifest.
 
@@ -181,6 +200,11 @@ def push_bundle(bundle_dir, client, repo, tag=None):
     is refused loudly -- tags are mutable pointers, never overwrite
     targets. Re-pushing identical bytes to the same tag is idempotent
     and allowed.
+
+    Returns a :class:`DigestRef` (``repo@sha256:<hex>``) -- the pin
+    for every later step. The return type is structural: a tag cannot
+    be smuggled through the push-then-audit path because the auditor
+    seams only accept DigestRef.
     """
     tar_bytes = pack_bundle(bundle_dir)
     config_bytes = _canonical_bytes({"bundle": "evidence-bundle/1.1"})
@@ -218,14 +242,23 @@ def push_bundle(bundle_dir, client, repo, tag=None):
             raise DistributionError(
                 "tag %r does not resolve to the pushed bundle %s (got "
                 "%s)" % (tag, new_digest, bound))
-    return got
+    # Structural pin: the caller gets a DigestRef, not a string. The
+    # auditor path below only accepts DigestRef, so a tag can never
+    # flow from push into audit -- it is unrepresentable, not merely
+    # checked.
+    return DigestRef(repo, new_digest[len("sha256:"):])
 
 
-def _attach(client, repo, subject_digest, blob_bytes, media_type,
+def _attach(client, repo, subject, blob_bytes, media_type,
             artifact_type, tag=None):
-    if not _is_digest(subject_digest):
-        raise DistributionError(
-            "attach requires a digest pin, not %r" % (subject_digest,))
+    """Attach a referrer manifest to a subject digest pin.
+
+    ``subject`` is a :class:`DigestRef` (TypeError otherwise) -- the
+    subject of a referrer edge is identity, and a tag there would let
+    the edge drift when the tag moves.
+    """
+    _require_ref(subject, where="attach")
+    subject_digest = subject.digest
     blob_digest = _digest_of(blob_bytes)
     config_bytes = _canonical_bytes({"referrer": artifact_type})
     manifest = {
@@ -249,15 +282,21 @@ def _attach(client, repo, subject_digest, blob_bytes, media_type,
                        client.put_manifest, repo, manifest_bytes, tag=tag)
 
 
-def attach_bom(client, repo, subject_digest, bom_bytes, tag=None):
-    """Attach a Decision BOM as a referrer of the subject manifest."""
-    return _attach(client, repo, subject_digest, bom_bytes,
+def attach_bom(client, repo, subject, bom_bytes, tag=None):
+    """Attach a Decision BOM as a referrer of the subject manifest.
+
+    ``subject`` is a :class:`DigestRef`; a tag is unrepresentable.
+    """
+    return _attach(client, repo, subject, bom_bytes,
                    MT_BOM, AT_BOM, tag=tag)
 
 
-def attach_signature(client, repo, subject_digest, sig_bytes, tag=None):
-    """Attach a manifest signature as a referrer of the subject manifest."""
-    return _attach(client, repo, subject_digest, sig_bytes,
+def attach_signature(client, repo, subject, sig_bytes, tag=None):
+    """Attach a manifest signature as a referrer of the subject manifest.
+
+    ``subject`` is a :class:`DigestRef`; a tag is unrepresentable.
+    """
+    return _attach(client, repo, subject, sig_bytes,
                    MT_SIG, AT_SIG, tag=tag)
 
 
@@ -267,20 +306,27 @@ def attach_signature(client, repo, subject_digest, sig_bytes, tag=None):
 def resolve_and_pin(client, repo, tag):
     """Resolve a tag to its digest exactly once.
 
-    The returned digest is the pin: every later step of the audit takes
-    the digest, never the tag, so a tag that moves mid-audit (D4) cannot
-    silently switch the bundle under the auditor.
+    The returned :class:`DigestRef` is the pin: every later step of
+    the audit takes the DigestRef, never the tag, so a tag that moves
+    mid-audit (D4) cannot silently switch the bundle under the
+    auditor. The tag itself never crosses into the auditor path --
+    only the pinned DigestRef does.
     """
     digest = _client_call("resolve tag %r" % (tag,),
                          client.resolve_tag, repo, tag)
     if not _is_digest(digest):
         raise DistributionError(
             "tag %r resolved to a non-digest reference %r" % (tag, digest))
-    return digest
+    return DigestRef(repo, digest[len("sha256:"):])
 
 
-def pull_bundle(client, repo, digest, outdir):
+def pull_bundle(client, repo, ref, outdir):
     """Pull a bundle by digest pin into ``outdir``.
+
+    ``ref`` is a :class:`DigestRef` (TypeError otherwise) -- the
+    auditor's identity input is structural, not a string that happens
+    to look like a digest. A tag is unrepresentable here: there is no
+    ``DigestRef`` value for one.
 
     D2: the registry is not trusted -- every fetched blob is
     byte-compared against the digest recorded in the manifest, and the
@@ -288,9 +334,8 @@ def pull_bundle(client, repo, digest, outdir):
     Tags are never accepted here; resolve with :func:`resolve_and_pin`
     first.
     """
-    if not _is_digest(digest):
-        raise DistributionError(
-            "pull requires a digest pin, not %r" % (digest,))
+    _require_ref(ref, where="pull_bundle")
+    digest = ref.digest
     manifest, resolved = _client_call(
         "fetch subject manifest", client.get_manifest, repo, digest)
     if resolved != digest:
@@ -320,9 +365,13 @@ def pull_bundle(client, repo, digest, outdir):
     return _safe_untar(blob, outdir)
 
 
-def audit_bundle(client, repo, digest=None, outdir=None,
+def audit_bundle(client, repo, ref=None, outdir=None,
                  operator_pins=()):
     """Full auditor workflow for one pinned bundle digest.
+
+    ``ref`` is a :class:`DigestRef` (TypeError otherwise) -- the audit
+    is anchored to a structural digest identity, never to a string the
+    caller claims is a digest.
 
     1. Pull by digest pin with byte-compare (:func:`pull_bundle`).
     2. Require the signature referrer in the referrer graph (D1: a
@@ -334,15 +383,14 @@ def audit_bundle(client, repo, digest=None, outdir=None,
     Anything missing, mismatched, or unverifiable raises
     :class:`DistributionError`. Returns a verdict dict on success.
     """
-    if not _is_digest(digest):
-        raise DistributionError(
-            "audit requires a digest pin, not %r" % (digest,))
+    _require_ref(ref, where="audit_bundle")
+    digest = ref.digest
     if not outdir:
         raise DistributionError("audit requires an output directory")
     if not operator_pins:
         raise DistributionError("audit requires operator pins")
 
-    pull_bundle(client, repo, digest, outdir)
+    pull_bundle(client, repo, ref, outdir)
 
     referrers = _client_call("list referrers",
                             client.list_referrers, repo, digest)

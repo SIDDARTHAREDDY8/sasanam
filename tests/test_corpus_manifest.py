@@ -24,6 +24,7 @@ for _p in (_TESTS_DIR, _REPO_MAIN):
 from gov import corpus_manifest as cm  # noqa: E402
 from gov import load_gate as lg  # noqa: E402
 from gov import capability_manifests as capm  # noqa: E402
+from gov.digest_ref import DigestRef  # noqa: E402
 from gov import ed25519 as ed  # noqa: E402
 from gov.delegation_tokens import DelegationTrust  # noqa: E402
 from gov.keyset import (  # noqa: E402
@@ -95,7 +96,9 @@ class TestCorpusManifestMintVerify(unittest.TestCase):
         m = cm.verify_corpus_manifest(doc, keyset)
         self.assertEqual(m.version, 1)
         self.assertEqual(m.threshold, 1)
-        self.assertEqual(m.digest_for("skill:a"), _digest(b"a"))
+        self.assertEqual(m.digest_for("skill:a"),
+                         DigestRef.from_hex(_digest(b"a").split(":", 1)[1]))
+        self.assertEqual(m.digest_for("skill:a").digest, _digest(b"a"))
         self.assertIsNone(m.digest_for("skill:nope"))
         self.assertEqual(len(m.signing_kids), 1)
 

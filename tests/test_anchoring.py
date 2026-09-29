@@ -107,5 +107,102 @@ class AnchorBundleTests(unittest.TestCase):
         self.assertIs(_anch.RekorBackend, RekorBackend)
 
 
+class DigestRefContractTests(unittest.TestCase):
+    """Wave-199: the abstract AnchorBackend contract is DigestRef|str.
+
+    Every in-tree backend must accept both forms at submit and
+    verify_receipt; a tag-shaped string is refused loudly; the verify
+    path never raises. This pins the contract the docstring promises
+    so out-of-tree backends have a conformance target.
+    """
+
+    HEX = "ab" * 32
+
+    def _backends(self):
+        from gov import anchor_backend as _ab
+        from gov import ed25519 as _ed
+        import base64
+        import hashlib
+        import json
+        d = tempfile.mkdtemp(prefix="govanchor-contract-")
+        seed = hashlib.sha256(b"wave199-contract").digest()
+        log_id = "contract-log"
+
+        def rekor_transport(request):
+            # Hermetic Rekor: echo the proposed entry into a canned
+            # single-leaf tree with a real inclusion root, so
+            # verify_receipt can pass end-to-end.
+            proposed = json.loads(request["body"])
+            body = json.dumps(
+                {"kind": proposed["kind"],
+                 "apiVersion": proposed["apiVersion"],
+                 "spec": proposed["spec"]},
+                separators=(",", ":")).encode("utf-8")
+            root = hashlib.sha256(b"\x00" + body).digest()
+            entry = {
+                "logID": log_id,
+                "logIndex": 0,
+                "integratedTime": 1700000000,
+                "verification": {
+                    "inclusionProof": {
+                        "hashes": [],
+                        "rootHash": root.hex(),
+                        "treeSize": 1,
+                        "logIndex": 0,
+                    },
+                    "signedEntryTimestamp": "fake-set-0",
+                    "body": base64.b64encode(body).decode("ascii"),
+                },
+            }
+            return {"status": 201,
+                    "body": json.dumps({"fakeuuid000000": entry})}
+
+        return [
+            ("fake", _ab.FakeWitness()),
+            ("file", _ab.LocalAnchorLog(str(Path(d) / "a.jsonl"))),
+            ("rekor", _ab.RekorBackend(
+                url="http://fake:3000", log_id=log_id,
+                transport=rekor_transport,
+                anchor_seed=seed, anchor_pubkey=_ed.publickey(seed))),
+        ]
+
+    def test_submit_accepts_digest_ref_and_str(self):
+        from gov.digest_ref import DigestRef
+        for label, be in self._backends():
+            ref = DigestRef.from_hex(self.HEX)
+            r1 = be.submit(ref)
+            self.assertIsInstance(r1, dict, label)
+            self.assertEqual(r1.get("anchor_hash"), self.HEX, label)
+            r2 = be.submit(self.HEX)
+            self.assertEqual(r2.get("anchor_hash"), self.HEX, label)
+
+    def test_verify_accepts_both_forms_cross(self):
+        from gov.digest_ref import DigestRef
+        for label, be in self._backends():
+            ref = DigestRef.from_hex(self.HEX)
+            receipt = be.submit(ref)
+            ok, reason = be.verify_receipt(receipt, anchor_hash=ref)
+            self.assertTrue(ok, "%s: %s" % (label, reason))
+            ok, reason = be.verify_receipt(receipt,
+                                           anchor_hash=self.HEX)
+            self.assertTrue(ok, "%s: %s" % (label, reason))
+
+    def test_submit_refuses_tag_shaped_string(self):
+        from gov.anchor_backend import WitnessError
+        for label, be in self._backends():
+            with self.assertRaises(WitnessError, msg=label):
+                be.submit("evidence:latest")
+
+    def test_verify_never_raises_on_malformed_hash(self):
+        from gov.digest_ref import DigestRef
+        for label, be in self._backends():
+            receipt = be.submit(DigestRef.from_hex(self.HEX))
+            for bad in ("evidence:latest", "zz" * 32, None, 123):
+                ok, reason = be.verify_receipt(receipt,
+                                               anchor_hash=bad)
+                self.assertFalse(ok, label)
+                self.assertTrue(reason, label)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -59,10 +59,12 @@ _SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 try:
     from gov import evidence_distribute as _ed
+    from gov.digest_ref import DigestRef as _DigestRef
     HAVE_MODULE = True
 except ImportError:
     HAVE_MODULE = False
     _ed = None
+    _DigestRef = None
 
 from gov.log import ActionLog
 from gov.evidence_bundle import (
@@ -157,7 +159,16 @@ class FakeRegistry(object):
                 self.registered.discard((repo, old))
         return digest
 
+    @staticmethod
+    def _ref_to_key(ref):
+        # The client protocol is string-keyed; the product seams pass
+        # DigestRef. The fake converts explicitly, like a real adapter.
+        if _DigestRef is not None and isinstance(ref, _DigestRef):
+            return ref.digest
+        return ref
+
     def get_manifest(self, repo, reference):
+        reference = self._ref_to_key(reference)
         if not reference.startswith("sha256:"):
             reference = self.resolve_tag(repo, reference)
         if (repo, reference) not in self.registered:
@@ -166,12 +177,14 @@ class FakeRegistry(object):
         return json.loads(raw.decode("utf-8")), reference
 
     def pull_blob(self, repo, digest):
+        digest = self._ref_to_key(digest)
         try:
             return self.blobs[(repo, digest)]
         except KeyError:
             raise RegistryError("blob unknown: %s" % digest)
 
     def list_referrers(self, repo, digest):
+        digest = self._ref_to_key(digest)
         out = []
         for md in self.referrers.get((repo, digest), []):
             m, _ = self.get_manifest(repo, md)
@@ -192,12 +205,14 @@ class FakeRegistry(object):
 
     # -- attacker affordances --
     def strip_referrers(self, repo, digest):
+        digest = self._ref_to_key(digest)
         for md in self.referrers.pop((repo, digest), []):
             self.manifests.pop((repo, md), None)
             self.registered.discard((repo, md))
 
     def tamper_blob(self, repo, digest, data):
         """Lying registry: serve attacker bytes for a pinned digest."""
+        digest = self._ref_to_key(digest)
         self.blobs[(repo, digest)] = data
 
 
@@ -368,7 +383,9 @@ def probe_d1_referrer_strip(c):
     outdir = os.path.join(c["workdir"], "out-d1")
     if HAVE_MODULE:
         try:
-            _ed.audit_bundle(fake, repo, digest=subject, outdir=outdir,
+            _ed.audit_bundle(fake, repo,
+                             ref=_DigestRef.from_hex(subject),
+                             outdir=outdir,
                              operator_pins=(OPERATOR_PUB_HEX,))
         except _ed.DistributionError:
             return True
@@ -389,7 +406,8 @@ def probe_d2_lying_registry(c):
     outdir = os.path.join(c["workdir"], "out-d2")
     if HAVE_MODULE:
         try:
-            _ed.pull_bundle(fake, repo, subject, outdir)
+            _ed.pull_bundle(fake, repo,
+                              _DigestRef.from_hex(subject), outdir)
         except _ed.DistributionError:
             return True
         return False
@@ -402,7 +420,7 @@ def probe_d3_tag_collision(c):
     fake, repo, bundle_dir = c["fake"], c["repo"], c["bundle_dir"]
     tag = "evidence:shared"
     subject_a = raw_push_bundle(fake, repo, bundle_dir, tag=tag)
-    pinned = subject_a  # auditor pins here
+    pinned = _DigestRef.from_hex(subject_a)  # auditor pins here
     other_dir, _ = build_bundle(c["workdir"], c["run_tag"] + "-b")
     raw_push_bundle(fake, repo, other_dir, tag=tag)  # the attack
     outdir = os.path.join(c["workdir"], "out-d3")
@@ -431,7 +449,7 @@ def probe_d4_tag_toctou(c):
     outdir = os.path.join(c["workdir"], "out-d4")
     if HAVE_MODULE:
         pinned = _ed.resolve_and_pin(fake, repo, tag)
-        assert pinned == subject_a
+        assert pinned.digest == subject_a
         other_dir, _ = build_bundle(c["workdir"], c["run_tag"] + "-b")
         raw_push_bundle(fake, repo, other_dir, tag=tag)  # the attack
         try:

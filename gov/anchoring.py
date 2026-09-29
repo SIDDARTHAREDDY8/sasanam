@@ -105,6 +105,7 @@ import json
 
 from .anchor_backend import (AnchorBackend, FakeWitness, LocalAnchorLog,
                              RekorBackend)
+from .digest_ref import DigestRef
 
 __all__ = [
     "AnchorBackend",
@@ -218,7 +219,9 @@ def anchor_bundle(bundle, backend):
         raise TypeError("backend must be a gov.anchor_backend.AnchorBackend"
                         ", got %r" % type(backend))
     digest = bundle_head_digest(bundle)
-    receipt = backend.submit(digest)
+    # Wave-199: the anchor hash crosses the backend seam as a
+    # DigestRef -- a tag is unrepresentable as one.
+    receipt = backend.submit(DigestRef.from_hex(digest))
     if not isinstance(receipt, dict):
         raise ValueError("backend returned a non-dict receipt")
     return receipt

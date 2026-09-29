@@ -64,6 +64,19 @@ import urllib.error
 from . import anchor_backend as _ab
 from . import ed25519 as _ed
 from . import evidence_bundle as _eb
+from .digest_ref import DigestRef
+
+
+def _anchor_hash_hex(anchor_hash):
+    """Wave-199: the wire speaks lowercase hex; DigestRef converts here.
+
+    The raw client is string-keyed (Rekor's HTTP API takes hex), so a
+    DigestRef is converted explicitly at this boundary -- never
+    implicitly.
+    """
+    if isinstance(anchor_hash, DigestRef):
+        return anchor_hash.hex
+    return anchor_hash
 
 # ---------------------------------------------------------------------------
 # RFC 6962 Merkle tree (the transparency log's hash domain)
@@ -352,7 +365,10 @@ class SelfHostedRekor:
                algorithm="ecdsa-p256-sha256"):
         """Submit a digest-existence entry. Returns the receipt dict.
 
-        ``anchor_hash``: sha256 hex of the canonical artifact bytes.
+        ``anchor_hash``: sha256 hex of the canonical artifact bytes, or
+        a :class:`gov.digest_ref.DigestRef` (wave-199: the structural
+        form -- a tag is unrepresentable as one; converted to hex at
+        the wire boundary).
         ``signature_b64`` / ``pubkey_pem``: operator-supplied anchor
         signature over the 32-byte digest and its public key (the
         anchor-key ceremony is documented in docs/REKOR_RUNBOOK.md).
@@ -363,7 +379,7 @@ class SelfHostedRekor:
         ``algorithm`` must be in ``SUPPORTED_ANCHOR_ALGORITHMS``;
         raw ``"ed25519"`` is refused fail-closed (F203).
         """
-        ahash = _check_anchor_hash(anchor_hash)
+        ahash = _check_anchor_hash(_anchor_hash_hex(anchor_hash))
         if algorithm not in SUPPORTED_ANCHOR_ALGORITHMS:
             if algorithm == "ed25519":
                 raise RekorConfigError(
@@ -567,7 +583,7 @@ def verify_inclusion(receipt, anchor_hash, *, client):
             return False, "receipt lacks the digest-existence grade"
         if receipt.get("authority_proof"):
             return False, "receipt claims authority (layering violation)"
-        ahash = _check_anchor_hash(anchor_hash)
+        ahash = _check_anchor_hash(_anchor_hash_hex(anchor_hash))
         if receipt.get("anchor_hash") != ahash:
             return False, "receipt is for a different anchor"
         if receipt.get("log_id") != client.log_id:

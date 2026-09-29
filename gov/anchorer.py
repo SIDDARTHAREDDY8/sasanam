@@ -30,6 +30,7 @@ from pathlib import Path
 
 from . import anchor_backend as _ab
 from . import log as _log
+from .digest_ref import DigestRef
 
 ANCHOR_RECEIPT_EVENT = "anchor_receipt"
 ANCHOR_UNANCHORED_EVENT = "anchor_epoch_unanchored"
@@ -440,9 +441,12 @@ class Anchorer:
         # Privacy pin: the backend receives ONLY the anchor hash. The
         # signed statement (epoch metadata, wall times) stays local,
         # chained in the receipt record below.
-        receipt = self._backend.submit(anchor_hash)
+        # Wave-199: the anchor hash crosses the backend seam as a
+        # DigestRef -- a tag is unrepresentable as one.
+        anchor_ref = DigestRef.from_hex(anchor_hash)
+        receipt = self._backend.submit(anchor_ref)
         ok, reason = self._backend.verify_receipt(
-            receipt, anchor_hash=anchor_hash)
+            receipt, anchor_hash=anchor_ref)
         if not ok:
             raise AnchorerError(
                 "backend returned an unverifiable receipt: %s" % (reason,))

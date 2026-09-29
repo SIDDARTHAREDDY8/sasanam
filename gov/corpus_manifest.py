@@ -62,6 +62,7 @@ from datetime import datetime, timezone
 from . import ed25519 as _ed
 from .keyset import Keyset, KeysetError
 from .load_gate import is_digest_pin
+from .digest_ref import DigestRef
 from .signing import ThresholdSigner
 
 __all__ = [
@@ -179,15 +180,27 @@ class CorpusManifest:
 
     def __init__(self, version, expires_at, threshold, artifacts,
                  signing_kids):
-        """Store the verified manifest fields (plain value object)."""
+        """Store the verified manifest fields (plain value object).
+
+        Artifact pins are normalized to :class:`DigestRef` here, so the
+        ``{artifact_id -> digest}`` binding is structural: every
+        consumer of :meth:`digest_for` gets a digest-only identity
+        that cannot be a tag, not a string that happens to be one.
+        """
         self.version = version
         self.expires_at = expires_at
         self.threshold = threshold
-        self.artifacts = dict(artifacts)
+        self.artifacts = {aid: DigestRef.from_hex(d)
+                          for aid, d in artifacts.items()}
         self.signing_kids = list(signing_kids)
 
     def digest_for(self, artifact_id):
-        """The manifest-bound digest for ``artifact_id``, or None."""
+        """The manifest-bound digest for ``artifact_id``, or None.
+
+        Returns a digest-only :class:`DigestRef` (never a ``str``):
+        the corpus binding is artifact identity, and identity is
+        structural since wave-199.
+        """
         return self.artifacts.get(artifact_id)
 
 

@@ -712,6 +712,8 @@ class CorpusManifestTracker:
     def digest_for(self, artifact_id):
         """The manifest-bound digest for *artifact_id*.
 
+        Returns a digest-only :class:`gov.digest_ref.DigestRef`.
+
         Raises :class:`ArtifactRefused` ``corpus_manifest_unpresented``
         when no manifest was presented, ``corpus_manifest_unbound``
         when the artifact id is not in the manifest.
@@ -800,7 +802,11 @@ class SkillLoader:
         if corpus_doc is not None:
             self._corpus.present(corpus_doc)
         bound = self._corpus.digest_for(artifact_id)
-        if bound != pin_digest:
+        # bound is a DigestRef (structural identity); pin_digest is the
+        # loader-computed "sha256:<hex>" string. Compare canonical
+        # digest strings -- never DigestRef == str, which is
+        # deliberately NotImplemented.
+        if bound.digest != pin_digest:
             _refused(self._log, artifact_id, "corpus_manifest_mismatch",
                       "pin digest %s != corpus-bound digest %s "
                       "(corpus version %d)"
