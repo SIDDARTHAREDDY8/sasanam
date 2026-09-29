@@ -62,6 +62,18 @@ class IdentityMintLimitError(Exception):
     """Raised when a run exhausts its identity issuance budget."""
 
 
+class IdentityTokenError(Exception):
+    """A presented identity token failed validation (loud, fail-closed).
+
+    Raised by ``ToolExecutor.mint_identity`` when ``token_claims`` are
+    supplied but the claim set is malformed, expired, mis-audienced, or
+    disagrees with the requested identity fields. The JWT signature
+    itself is the deployment dex client's job (verified against the
+    pinned issuer JWKS before the claim set reaches this seam); this
+    enforces the claim policy on what was presented.
+    """
+
+
 # F50: one-time loud disclosure that identity is self-asserted when no
 # registry is configured (same pattern as the dev-key warnings in
 # gov/log.py). Per-process, resettable by tests.

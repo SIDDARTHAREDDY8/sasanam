@@ -130,6 +130,7 @@ from .egress_ledger import (
 from .identity import (
     AgentIdentity,
     IdentityMintLimitError,
+    IdentityTokenError,
     UnmintedIdentityError,
     UnregisteredPrincipalError,
     warn_self_asserted_identity_once,
@@ -2165,7 +2166,7 @@ class ToolExecutor:
         self._delegation_receipt_cache = (ctx, receipt)
         return receipt
 
-    def mint_identity(self, agent_id, role, principal):
+    def mint_identity(self, agent_id, role, principal, token_claims=None):
         """Issue the only kind of identity this executor will honor.
 
         F17b: issuance is rate-limited (per-run cap,
@@ -2183,6 +2184,18 @@ class ToolExecutor:
         default) any principal/role/agent_id string still mints — an
         explicit deployment-trust residual, now disclosed by a loud
         one-time stderr warning that identity is self-asserted.
+
+        Wave-191 (identity token): ``token_claims`` is the OPTIONAL
+        verified OIDC claim set the identity is minted from (the dex
+        client checked the JWT signature against the deployment's
+        pinned issuer JWKS). When supplied, the claim set is strictly
+        validated (required claims, types, audience, expiry with 60s
+        skew) and must agree with the requested fields
+        (sub -> agent_id, role, principal); any failure raises
+        ``IdentityTokenError`` and -- like the F50 registry refusal --
+        never consumes mint budget and never issues. This is the
+        defense-in-depth twin of the packet verifier's token check:
+        issuance refuses a bad token even before any packet exists.
         """
         if self._mint_count >= _MAX_IDENTITY_MINTS_PER_RUN:
             raise IdentityMintLimitError(
@@ -2211,6 +2224,32 @@ class ToolExecutor:
             # loudly, once per process (same disclosure pattern as the
             # dev-key warnings).
             warn_self_asserted_identity_once()
+        if token_claims is not None:
+            # Wave-191 (identity token): the defense-in-depth twin of
+            # the packet verifier's token check. The caller presents
+            # the VERIFIED claim set (the dex client checked the JWT
+            # signature against the deployment's pinned issuer JWKS);
+            # this seam enforces claim well-formedness/expiry/audience
+            # and requires the claims to agree with the requested
+            # identity fields -- a token minted for a different
+            # agent/role/principal cannot mint this identity. A refused
+            # mint never consumes budget and never issues (same as the
+            # F50 registry refusal above).
+            tok_ok, tok_reason = _decision_packet.check_token_claims(
+                token_claims)
+            if not tok_ok:
+                raise IdentityTokenError(
+                    "identity token rejected: %s" % tok_reason)
+            for _claim, _want, _field in (
+                    ("sub", agent_id, "agent_id"),
+                    ("role", role, "role"),
+                    ("principal", principal, "principal")):
+                if token_claims.get(_claim) != _want:
+                    raise IdentityTokenError(
+                        "identity token claim %r is %r, refusing to mint "
+                        "identity with %s %r (token-identity mismatch)"
+                        % (_claim, token_claims.get(_claim), _field,
+                           _want))
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal,

@@ -80,6 +80,10 @@ PRODUCER_VERSIONS = {
     "gov/log.py": "1",
     "gov/decision_packet.py": "1",
     "gov/decision_bom.py": "1",
+    # Wave-191 (identity token): the identity_token section is produced
+    # by gov/identity.py at producer_version "2", leaving room for a
+    # sibling identity_cert section without revving the packet.
+    "gov/identity.py": "2",
 }
 
 _SIGN_DOMAIN = b"decision-packet-v1:"
@@ -91,6 +95,220 @@ class PacketError(Exception):
 
 class NoPacketKeyError(Exception):
     """No packet-signing key configured (loud, no dev-key fallback)."""
+
+
+# ---------------------------------------------------------------------------
+# Agent identity tokens (wave-191, dexidp/dex ADAPT follow-through).
+#
+# The decision packet can carry an OPTIONAL identity_token section --
+# the digest-bound record of the OIDC claim set the identity was
+# minted from: {token_digest, iss, aud, exp, jti}, producer
+# gov/identity.py, producer_version "2". The raw bearer token NEVER
+# lands in the evidence chain; token_digest (sha256 of the raw JWT)
+# binds the recorded claims to the presented token, and the packet's
+# Ed25519 signature binds the record to the decision.
+#
+# verify_decision_packet takes an optional token_claims dict: the
+# VERIFIED claim set -- the caller checked the JWT signature against
+# the deployment's pinned issuer JWKS. The verifier enforces claim
+# well-formedness, expiry (60s skew), audience, and consistency with
+# the signed section and the packet's identity section. None means "no
+# token presented": legacy acceptance, byte-identical to the pre-token
+# verifier.
+# ---------------------------------------------------------------------------
+
+#: The audience every identity token must name (the governance layer).
+TOKEN_AUDIENCE = "sasanam-policy-engine"
+
+#: Clock-skew allowance for the exp check: a token is refused only
+#: when exp is more than this many seconds in the past.
+TOKEN_SKEW_SECONDS = 60
+
+TOKEN_IDENTITY_PRODUCER = "gov/identity.py"
+TOKEN_IDENTITY_PRODUCER_VERSION = "2"
+
+#: Required claims on a presented identity-token claim set.
+TOKEN_REQUIRED_CLAIMS = ("iss", "sub", "aud", "iat", "exp", "jti",
+                         "principal", "role", "agent_scope")
+
+#: The packet's identity_token section carries exactly these fields.
+IDENTITY_TOKEN_FIELDS = ("token_digest", "iss", "aud", "exp", "jti")
+
+
+def _now_epoch():
+    import time
+    return time.time()
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _is_hex64(value):
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _norm_aud(aud):
+    """Normalize an aud claim to a set of strings, or None if malformed."""
+    if isinstance(aud, str):
+        return {aud} if aud else None
+    if (isinstance(aud, (list, tuple)) and aud
+            and all(isinstance(x, str) and x for x in aud)):
+        return set(aud)
+    return None
+
+
+def check_token_claims(claims):
+    """Validate a presented identity-token claim set.
+
+    Returns ``(True, "ok")`` or ``(False, reason)``. Never raises.
+
+    This is the shared strict validation used by
+    :func:`verify_decision_packet` (``token_claims``) and
+    ``ToolExecutor.mint_identity``: every required claim present with
+    the right type, a non-empty issuer string, an audience naming this
+    governance layer, and an ``exp`` no more than
+    :data:`TOKEN_SKEW_SECONDS` in the past. Extra claims are ignored.
+
+    It does NOT check the JWT signature -- the caller presents the
+    VERIFIED claim set (signature checked against the deployment's
+    pinned issuer JWKS by the dex client). This enforces the claim
+    policy on what was presented. Issuer *pinning* (claims.iss ==
+    the deployment's issuer) is enforced by the packet verifier's
+    consistency check against the signed identity_token section, and
+    by the dex client's signature check at issuance.
+    """
+    if not isinstance(claims, dict):
+        return False, "token_claims is not a dict"
+    for name in TOKEN_REQUIRED_CLAIMS:
+        if claims.get(name) is None:
+            return False, "token claim %r missing" % (name,)
+    iss = claims.get("iss")
+    if not isinstance(iss, str) or not iss:
+        return False, "token claim 'iss' must be a non-empty string"
+    for name in ("sub", "jti", "principal", "role", "agent_scope"):
+        val = claims.get(name)
+        if not isinstance(val, str) or not val:
+            return False, \
+                "token claim %r must be a non-empty string" % (name,)
+    aud = _norm_aud(claims.get("aud"))
+    if aud is None:
+        return False, "token claim 'aud' must be a non-empty string " \
+            "or a list of non-empty strings"
+    if TOKEN_AUDIENCE not in aud:
+        return False, "token audience %r does not include %r" % (
+            sorted(aud), TOKEN_AUDIENCE)
+    if not _is_number(claims.get("iat")):
+        return False, "token claim 'iat' must be a number"
+    exp = claims.get("exp")
+    if not _is_number(exp):
+        return False, "token claim 'exp' must be a number"
+    if exp < _now_epoch() - TOKEN_SKEW_SECONDS:
+        return False, "token expired (exp %r is more than %ds in the " \
+            "past)" % (exp, TOKEN_SKEW_SECONDS)
+    iat = claims.get("iat")
+    if iat > exp + TOKEN_SKEW_SECONDS:
+        return False, "token claim 'iat' is after 'exp' (issued after " \
+            "expiry)"
+    return True, "ok"
+
+
+def _check_identity_token_value(value):
+    """Validate the 5-field identity_token section value.
+
+    Returns ``(ok, reason)``. Shared by the builder (which raises
+    :class:`PacketError` on failure) and the verifier (which fails
+    closed) so the two can never disagree on the shape.
+    """
+    if not isinstance(value, dict):
+        return False, "identity_token value is not a dict"
+    if set(value.keys()) != set(IDENTITY_TOKEN_FIELDS):
+        return False, "identity_token must carry exactly %r" % (
+            IDENTITY_TOKEN_FIELDS,)
+    if not _is_hex64(value.get("token_digest")):
+        return False, "identity_token.token_digest must be 64-char " \
+            "lowercase hex"
+    if not isinstance(value.get("iss"), str) or not value.get("iss"):
+        return False, "identity_token.iss must be a non-empty string"
+    if _norm_aud(value.get("aud")) is None:
+        return False, "identity_token.aud must be a non-empty string " \
+            "or a list of non-empty strings"
+    if not _is_number(value.get("exp")):
+        return False, "identity_token.exp must be a number"
+    if not isinstance(value.get("jti"), str) or not value.get("jti"):
+        return False, "identity_token.jti must be a non-empty string"
+    return True, "ok"
+
+
+def _get_identity_token_section(packet):
+    """Fetch and shape-check the packet's identity_token section.
+
+    Returns ``(ok, value, reason)``. The section is optional: absence
+    is reported (not an exception) so the caller can decide -- the
+    legacy path skips token checks entirely, while a presented
+    token_claims set with no section fails closed.
+    """
+    section = packet.get("identity_token")
+    if section is None:
+        return False, None, "packet carries no identity_token section"
+    if not isinstance(section, dict):
+        return False, None, "identity_token section is not a dict"
+    if section.get("producer") != TOKEN_IDENTITY_PRODUCER:
+        return False, "identity_token section producer must be %r" % (
+            TOKEN_IDENTITY_PRODUCER,)
+    if section.get("producer_version") != TOKEN_IDENTITY_PRODUCER_VERSION:
+        return False, None, \
+            "identity_token section producer_version must be %r" % (
+                TOKEN_IDENTITY_PRODUCER_VERSION,)
+    value = section.get("value")
+    ok, reason = _check_identity_token_value(value)
+    if not ok:
+        return False, None, reason
+    return True, value, "ok"
+
+
+def _check_token_presentation(packet, claims):
+    """Validate presented token_claims against the signed packet.
+
+    Returns ``(ok, reason)``. Enforces: the claim set is well-formed
+    and unexpired (:func:`check_token_claims`); the packet carries a
+    well-formed identity_token section; the presented claims match the
+    signature-bound section (iss/aud/exp/jti); and the claims agree
+    with the packet's identity section (sub -> agent_id, role,
+    principal). A forged claim set -- one that does not match what the
+    packet key signed -- is refused here: the section values are
+    covered by the packet's Ed25519 signature, so only the claims the
+    packet was built under can pass.
+    """
+    ok, reason = check_token_claims(claims)
+    if not ok:
+        return False, "token_claims invalid: %s" % (reason,)
+    ok, section, reason = _get_identity_token_section(packet)
+    if not ok:
+        return False, "token_claims presented but %s" % (reason,)
+    if claims["iss"] != section["iss"]:
+        return False, "token iss %r does not match the packet's " \
+            "identity_token.iss %r (foreign issuer)" % (
+                claims["iss"], section["iss"])
+    if _norm_aud(claims["aud"]) != _norm_aud(section["aud"]):
+        return False, "token aud does not match the packet's " \
+            "identity_token.aud"
+    if claims["exp"] != section["exp"]:
+        return False, "token exp does not match the packet's " \
+            "identity_token.exp"
+    if claims["jti"] != section["jti"]:
+        return False, "token jti does not match the packet's " \
+            "identity_token.jti"
+    identity = packet["identity"]["value"]
+    for claim_name, field in (("sub", "agent_id"), ("role", "role"),
+                              ("principal", "principal")):
+        if claims[claim_name] != identity.get(field):
+            return False, "token claim %r (%r) disagrees with the " \
+                "packet's identity.%s (%r)" % (
+                    claim_name, claims[claim_name], field,
+                    identity.get(field))
+    return True, "ok (token claims valid and consistent)"
 
 
 def _canonical(obj):
@@ -268,7 +486,7 @@ def build_decision_packet(*, decision, boundary_declared,
                           identity=None, approval_id=None,
                           decision_seq=None, policy_reason=None,
                           issued_at=None, bill_of_materials=None,
-                          policy_bundle_digest=None):
+                          policy_bundle_digest=None, identity_token=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -284,6 +502,12 @@ def build_decision_packet(*, decision, boundary_declared,
     proof, or when a proof rides an undeclared boundary -- a packet
     that misstates the boundary posture is refused at construction,
     not patched at verify time.
+
+    ``identity_token`` is the OPTIONAL digest-bound record of the OIDC
+    claim set the identity was minted from: exactly
+    ``{token_digest, iss, aud, exp, jti}`` -- the claims, never the raw
+    bearer token. ``None`` builds a legacy packet: the 17 existing
+    sections are byte-identical to a build without the kwarg.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -318,6 +542,11 @@ def build_decision_packet(*, decision, boundary_declared,
     if not bom_ok:
         raise PacketError(
             "bill_of_materials malformed: %s" % bom_reason)
+    if identity_token is not None:
+        tok_ok, tok_reason = _check_identity_token_value(identity_token)
+        if not tok_ok:
+            raise PacketError(
+                "identity_token invalid: %s" % tok_reason)
     ident = identity if isinstance(identity, dict) else {}
     body = {
         "decision_packet_version": DECISION_PACKET_VERSION,
@@ -396,6 +625,15 @@ def build_decision_packet(*, decision, boundary_declared,
         "issued_at": _wrap(issued_at or _utcnow_iso(),
                            "gov/decision_packet.py"),
     }
+    if identity_token is not None:
+        # Wave-191 (identity token): the optional digest-bound record
+        # of the OIDC claim set. Signature-covered like every other
+        # section (it is part of the body before sign_packet runs), so
+        # a swapped record breaks the packet signature; the verifier
+        # additionally cross-checks presented token claims against it.
+        # A copy is stored so the caller's dict is never aliased.
+        body["identity_token"] = _wrap(dict(identity_token),
+                                       TOKEN_IDENTITY_PRODUCER)
     return body
 
 
@@ -436,7 +674,7 @@ def _find_packet_entries(entries, digest):
     return out
 
 
-def verify_decision_packet(packet, entries=None):
+def verify_decision_packet(packet, entries=None, token_claims=None):
     """Offline verification of a signed decision packet (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -446,22 +684,36 @@ def verify_decision_packet(packet, entries=None):
     boundary/proof consistency rule (a declared boundary MUST carry a
     proof; an undeclared boundary MUST NOT), authority well-formedness
     (32-byte pubkey, kid == sha256(pub)[:16]), the Ed25519 signature over
-    the domain-separated canonical body, and -- when ``entries`` (audit
-    entries) are supplied -- the digest linkage: some decision_packet
-    entry references this packet's digest AND its prev_hash equals the
-    packet's stated head digest AND that head exists in the chain.
+    the domain-separated canonical body, the BOM cross-checks (including
+    the wave-191 token_digest agreement when both sides record one),
+    the optional token-consistency check (see ``token_claims``), and --
+    when ``entries`` (audit entries) are supplied -- the digest linkage:
+    some decision_packet entry references this packet's digest AND its
+    prev_hash equals the packet's stated head digest AND that head
+    exists in the chain.
+
+    ``token_claims`` is the OPTIONAL verified OIDC claim set the
+    identity was minted from (the caller checked the JWT signature
+    against the deployment's pinned issuer JWKS). ``None`` -- the
+    default -- is the legacy path: token checks are skipped entirely
+    and acceptance is byte-identical to the pre-token verifier. A dict
+    is strictly validated (required claims, types, audience, expiry
+    with 60s skew) and must be consistent with the packet's signed
+    identity_token section (iss/aud/exp/jti) and its identity section
+    (sub -> agent_id, role, principal); any failure returns
+    ``(False, reason)``.
 
     ``entries=None`` skips the linkage check (reported in the reason);
     pass the chain for the full check.
     """
     try:
-        return _verify(packet, entries)
+        return _verify(packet, entries, token_claims)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
 
 
-def _verify(packet, entries):
+def _verify(packet, entries, token_claims):
     if not isinstance(packet, dict):
         return False, "packet is not a dict"
     if packet.get("decision_packet_version") != DECISION_PACKET_VERSION:
@@ -565,6 +817,34 @@ def _verify(packet, entries):
         if bom_pins.get(pkt_skill) != pkt_skill_digest:
             return False, "BOM pin digest for %r disagrees with the " \
                 "packet's capability_manifest" % (pkt_skill,)
+    # Wave-191 (identity token): when the BOM records a token_digest
+    # AND the packet carries an identity_token section, the two must
+    # agree -- a well-signed packet whose token digest disagrees with
+    # its BOM fails closed (same pattern as the checks above). Either
+    # side absent skips the check (additive: legacy packets predate
+    # both, and a token-carrying packet whose BOM predates the binding
+    # is not punished for the BOM's age).
+    bom_token_digest = bom_inputs["principal"].get("token_digest")
+    if bom_token_digest is not None:
+        _tok_section = packet.get("identity_token")
+        _sec_value = _tok_section.get("value") \
+            if isinstance(_tok_section, dict) else None
+        _sec_digest = _sec_value.get("token_digest") \
+            if isinstance(_sec_value, dict) else None
+        if _sec_digest != bom_token_digest:
+            return False, "BOM principal.token_digest disagrees with " \
+                "the packet's identity_token section (swapped or " \
+                "misbound token)"
+    # Wave-191: the optional token-consistency check. token_claims=None
+    # is the legacy path -- acceptance is byte-identical to the
+    # pre-token verifier. A presented claim set must be well-formed,
+    # unexpired, and consistent with the signed identity_token section
+    # and the packet's identity section, or verification fails closed.
+    if token_claims is not None:
+        tok_ok, tok_reason = _check_token_presentation(packet,
+                                                       token_claims)
+        if not tok_ok:
+            return False, tok_reason
     head = packet["evidence"]["value"].get("head_digest")
     if not isinstance(head, str) or not head:
         return False, "evidence.head_digest missing"

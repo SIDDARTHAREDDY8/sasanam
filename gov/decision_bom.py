@@ -16,6 +16,10 @@ artifact that informed the decision:
                this the enforced bytes, not a re-read).
   evidence  -- the audit-chain head digest the packet was built under.
   principal -- the agent identity the decision was rendered for.
+               Optionally carries token_digest (sha256 of the raw OIDC
+               identity token the identity was minted from, wave-191);
+               the packet verifier cross-checks it against the packet's
+               identity_token section when both record one.
   pins      -- skill/MCP pin digests {skill_id: attested digest}.
   approval  -- the approval id + approval-record digest, when the
                decision answered an approval. An approval id whose
@@ -81,7 +85,10 @@ def build_bom(*, policy_id, policy_version, policy_digest,
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
     the engine parsed (``PolicyEngine.policy_hash``). ``principal`` is
-    the identity dict (agent_id/role/principal/run_id). ``pin_digests``
+    the identity dict (agent_id/role/principal/run_id), optionally
+    carrying ``token_digest`` -- the sha256 of the raw OIDC identity
+    token the identity was minted from (wave-191), recorded only when
+    supplied. ``pin_digests``
     maps skill/MCP ids to their attested digests; empty when the
     decision used no pinned skills. ``approval_id`` /
     ``approval_record_digest`` are None when the decision answered no
@@ -105,6 +112,12 @@ def build_bom(*, policy_id, policy_version, policy_digest,
         raise BomError("evidence_head_digest must be a non-empty string")
     if not isinstance(principal, dict):
         raise BomError("principal must be a dict")
+    # Wave-191: the optional identity-token binding. Recorded only when
+    # supplied, so BOMs built without it are byte-identical to before.
+    token_digest = principal.get("token_digest")
+    if token_digest is not None and not _is_hex64(token_digest):
+        raise BomError(
+            "principal token_digest must be 64-char lowercase hex or None")
     # F201: the mapping guard must run BEFORE the dict() conversion --
     # dict(["x"]) raises bare ValueError and dict(5) raises bare
     # TypeError, which would escape as undocumented builtins instead of
@@ -133,6 +146,14 @@ def build_bom(*, policy_id, policy_version, policy_digest,
         raise BomError(
             "approval_id %r has no record digest; refusing to build a "
             "BOM that drops approval provenance" % (approval_id,))
+    principal_inputs = {
+        "agent_id": principal.get("agent_id"),
+        "role": principal.get("role"),
+        "principal": principal.get("principal"),
+        "run_id": principal.get("run_id"),
+    }
+    if token_digest is not None:
+        principal_inputs["token_digest"] = token_digest
     return {
         "bom_version": BOM_VERSION,
         "inputs": {
@@ -144,12 +165,7 @@ def build_bom(*, policy_id, policy_version, policy_digest,
             "evidence": {
                 "head_digest": evidence_head_digest,
             },
-            "principal": {
-                "agent_id": principal.get("agent_id"),
-                "role": principal.get("role"),
-                "principal": principal.get("principal"),
-                "run_id": principal.get("run_id"),
-            },
+            "principal": principal_inputs,
             "pins": pins,
             "approval": {
                 "approval_id": approval_id,
@@ -191,6 +207,11 @@ def check_bom_shape(bom):
     principal = inputs.get("principal")
     if not isinstance(principal, dict):
         return False, "bom.inputs.principal is not a dict"
+    # Wave-191: the optional token_digest, when present, must be a
+    # well-formed sha256 hex digest.
+    _ptd = principal.get("token_digest")
+    if _ptd is not None and not _is_hex64(_ptd):
+        return False, "bom.inputs.principal.token_digest is not 64-char hex"
     pins = inputs.get("pins")
     if not isinstance(pins, dict):
         return False, "bom.inputs.pins is not a dict"
