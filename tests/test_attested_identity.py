@@ -18,6 +18,7 @@ from gov import decision_bom as bom  # noqa: E402
 from gov import ed25519 as _ed25519  # noqa: E402
 from gov import mode_ledger as ml  # noqa: E402
 from gov import policy_report as pr  # noqa: E402
+from gov import tee_attest as ta  # noqa: E402
 from gov.signing import Ed25519Signer  # noqa: E402
 
 
@@ -336,6 +337,107 @@ class CeremonyTest(unittest.TestCase):
         a = _attester()
         self.assertFalse(a.verify_credential(None))
         self.assertFalse(a.verify_credential("not-an-identity"))
+
+
+def _tee_snp_setup():
+    """Fresh SNP fixture + verifier pinned to its ARK + bundle builder."""
+    fx = ta.make_snp_fixture(policy=0x30000, measurement=b"m" * 48,
+                             tcb=b"\x01\x02\x03\x04\x05\x06\x07\x08",
+                             chip_id=b"c" * 64, salt=os.urandom(32))
+
+    def bundle_for(salt):
+        fx2 = ta.make_snp_fixture(
+            policy=fx["policy"], measurement=fx["measurement"],
+            tcb=fx["tcb"], chip_id=b"d" * 64, salt=salt,
+            ark_priv=fx["ark_priv"], ark_point=fx["ark_pubkey"])
+        return {"report": fx2["report"],
+                "ask_cert": fx2["ask_cert"],
+                "vcek_cert": fx2["vcek_cert"],
+                "expected_policy": fx2["policy"],
+                "expected_measurement": fx2["measurement"],
+                "tcb_allowlist": [fx2["tcb"]],
+                "tee_pubkey": fx2["tee_pubkey"],
+                "salt": fx2["salt"]}
+
+    verifier = ta.SevSnpVerifier(ark_pubkey=fx["ark_pubkey"], enabled=True)
+    return fx, verifier, bundle_for
+
+
+class TeeBootstrapTest(unittest.TestCase):
+    def test_tee_bootstrap_mints_tier1_with_ceremony_kind(self):
+        _fx, verifier, bundle_for = _tee_snp_setup()
+        a = ai.Attester(Ed25519Signer(os.urandom(32)),
+                        tee_verifier=verifier)
+        cid, nonce = a.issue_challenge("agent-tee")
+        ident = a.bootstrap_with_tee_report(
+            challenge_id=cid, bundle=bundle_for(nonce))
+        self.assertEqual(ident.tier, ai.TIER_ATTESTED)
+        self.assertEqual(ident.claims["kind"], "tee_attested")
+        self.assertEqual(ident.claims["platform"], "sev-snp")
+        self.assertTrue(a.verify_credential(ident))
+        self.assertEqual(a.audit[0]["kind"], "tee_attested")
+
+    def test_tee_verifier_defaults_to_none(self):
+        a = _attester()
+        self.assertIsNone(a.tee_verifier)
+
+    def test_tee_bootstrap_without_verifier_refuses(self):
+        a = _attester()  # no tee_verifier configured
+        cid, _nonce = a.issue_challenge("agent-tee")
+        with self.assertRaises(ai.IdentityError):
+            a.bootstrap_with_tee_report(challenge_id=cid, bundle={})
+
+    def test_tee_bootstrap_wrong_salt_refuses(self):
+        _fx, verifier, bundle_for = _tee_snp_setup()
+        a = ai.Attester(Ed25519Signer(os.urandom(32)),
+                        tee_verifier=verifier)
+        cid, _nonce = a.issue_challenge("agent-tee")
+        with self.assertRaises(ai.IdentityError):
+            a.bootstrap_with_tee_report(
+                challenge_id=cid, bundle=bundle_for(os.urandom(32)))
+
+    def test_tee_bootstrap_stale_report_refuses(self):
+        _fx, verifier, bundle_for = _tee_snp_setup()
+        a = ai.Attester(Ed25519Signer(os.urandom(32)),
+                        tee_verifier=verifier)
+        cid1, nonce1 = a.issue_challenge("agent-tee-1")
+        stale = bundle_for(nonce1)
+        cid2, nonce2 = a.issue_challenge("agent-tee-2")
+        a.bootstrap_with_tee_report(
+            challenge_id=cid2, bundle=bundle_for(nonce2))
+        # The report built for the first challenge cannot bootstrap
+        # against a fresh challenge: the REPORT_DATA salt no longer
+        # matches the single-use nonce.
+        cid3, _nonce3 = a.issue_challenge("agent-tee-3")
+        with self.assertRaises(ai.IdentityError):
+            a.bootstrap_with_tee_report(
+                challenge_id=cid3, bundle=stale)
+
+    def test_tee_evidence_cannot_mint_twice(self):
+        _fx, verifier, bundle_for = _tee_snp_setup()
+        a = ai.Attester(Ed25519Signer(os.urandom(32)),
+                        tee_verifier=verifier)
+        cid, nonce = a.issue_challenge("agent-tee")
+        bundle = bundle_for(nonce)
+        a.bootstrap_with_tee_report(challenge_id=cid, bundle=bundle)
+        digests = [e["evidence_digest"] for e in a.audit
+                   if e["event"] == "tier1_issued"]
+        self.assertEqual(len(digests), 1)
+
+    def test_existing_paths_unchanged_by_tee_verifier(self):
+        # Passing a tee_verifier must not disturb the TPM bootstrap.
+        _fx, verifier, _bundle_for = _tee_snp_setup()
+        keys = _keys()
+        a = _attester(tee_verifier=verifier)
+        cid, nonce = a.issue_challenge("s")
+        q = ai.make_quote(nonce=nonce, pcr_digest=b"pcr-policy",
+                          pcr_selections=[(ai.TPM_ALG_SHA256, b"\xff")],
+                          signer=keys["aik"]["sign"])
+        end = ai.endorse_aik(keys["aik"]["der"], keys["ek"]["sign"])
+        ident = a.bootstrap_with_tpm_quote(
+            challenge_id=cid, quote=q,
+            aik_pubkey_der=keys["aik"]["der"], endorsement=end)
+        self.assertEqual(ident.claims["kind"], "tpm_attested")
 
 
 class CredentialEncodingTest(unittest.TestCase):

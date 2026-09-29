@@ -49,6 +49,7 @@ Honest residuals (do not silently rely on more than this):
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets
 import struct
@@ -911,7 +912,7 @@ class Attester(object):
     """
 
     def __init__(self, issuer_signer, *, quote_verifier=None,
-                 aws_verifier=None, gcp_verifier=None,
+                 aws_verifier=None, gcp_verifier=None, tee_verifier=None,
                  credential_ttl_s=600):
         self._sign, self._issuer_pubkey, self._issuer_key_id = \
             _require_issuer_signer(issuer_signer)
@@ -924,6 +925,7 @@ class Attester(object):
         self.quote_verifier = quote_verifier
         self.aws_verifier = aws_verifier
         self.gcp_verifier = gcp_verifier
+        self.tee_verifier = tee_verifier
         self._challenges = {}
         self._consumed_evidence = set()
         self.audit = []
@@ -1046,6 +1048,35 @@ class Attester(object):
             "gcp_jwt", token.encode("utf-8")
             if isinstance(token, str) else bytes(token))
         return self._mint_tier1(kind="gcp_attested",
+                                evidence_digest=evidence_digest,
+                                claims=claims)
+
+    def bootstrap_with_tee_report(self, *, challenge_id, bundle):
+        """Verify a TEE (SEV-SNP/TDX) attestation bundle and mint tier-1.
+
+        The bundle is the tee verifier's bundle (report/quote, certs,
+        expectations, tee_pubkey, salt). Freshness is cryptographic: the
+        REPORT_DATA salt must equal the single-use challenge nonce, so
+        the report was generated inside the attested guest after the
+        challenge was issued. The same evidence can never mint twice.
+        """
+        if self.tee_verifier is None:
+            raise IdentityError(
+                "no TEE verifier configured: tier-1 bootstrap is "
+                "unavailable on this attester (degraded to tier-2 only)")
+        nonce = self._consume_challenge(challenge_id)
+        salt = bundle.get("salt") if isinstance(bundle, dict) else None
+        if not isinstance(salt, (bytes, bytearray)) \
+                or not hmac.compare_digest(bytes(salt), nonce):
+            raise IdentityError(
+                "tee bundle salt must equal the single-use challenge "
+                "nonce (freshness binding): stale or foreign reports "
+                "cannot bootstrap")
+        claims = self.tee_verifier.verify(bundle)
+        raw = bytes(bundle["report"]) if "report" in bundle \
+            else bytes(bundle["quote"])
+        evidence_digest = self._record_evidence("tee_report", raw)
+        return self._mint_tier1(kind="tee_attested",
                                 evidence_digest=evidence_digest,
                                 claims=claims)
 
