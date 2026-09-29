@@ -10473,6 +10473,13 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 
 **Independent F203 red-first audit (merged tree, live Rekor v1.5.4 stack).** RED: full pristine `d933dd1` gov/ tree against the live stack → `WitnessDownError: rekor HTTP 400 ... unsupported hash algorithm: "SHA-256" not in [SHA-512]` (reproduced; an earlier attempt that mixed pristine modules with the merged tree falsely showed acceptance — path-priority bug in my harness, discarded, re-run with a clean pristine extraction). GREEN: merged tree `evals/rekor_f203_probes.py::p_live_roundtrip` → HELD (submit → real entry → verify OK). Close-when satisfied on the merged tree; FINDINGS.md "F203 CLOSED 2026-09-29 (wave-198 lane A)" stands — no re-filing. Open findings: none. Next free: F204.
 
-**Gates.** (To be filled by the gate run below.)
+**Gates (merged tree, serialized, fresh unique /var/tmp/g198m* TMPDIRs, GOV_SKIP_GREEN=1).**
+- Canonical: **6339 OK, exit 0** (6077 baseline + 262 new lane tests; ~1.4GB available, no concurrent suites, no F186 signature)
+- Registry: **GREEN** (`evals/run_evals.py --registry-gate`; `battery_100_results.json` restored, never committed)
+- Matrix: **3216/3216 SHIP-GATE GREEN** (provisional 1608/1608, real 1608/1608)
+- Realistic: **7/7** (explicit `GOV_RUN_ROOT`)
+- AMSB: **90.00 / FINAL C / FP 0.0%** (scorecards deleted post-run)
+
+**Merge-integration break found by the registry gate — FIXED.** Lane A's Spec-review hardening (envelope-signature re-verification in `verify_receipt`) broke `redteam.anchor_w72.rekor_backend_two_leaf_proof_verifies` (registry MISMATCH: observed=break, expected ['flagged','stopped']): the probe's synthetic entries carried no `spec.signature`, and the lane's "13/13 HOLD" claim was measured before the hardening landed (12/1 on the lane tree — stale claim, not a product regression). Probe-only fix in the close-out: synthetic bodies now carry a real Ed25519ph signature (the shape a real Rekor v1.5.x server always returns) plus a new negative case pinning that a signature-stripped body is refused. `evals/w72_probes.py` 13/13 HOLD; registry re-run GREEN.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
