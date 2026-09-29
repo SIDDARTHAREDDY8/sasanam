@@ -6348,4 +6348,20 @@ unaffected. HIGH rejected: nothing is bypassed and no data leaves.
 
 ---
 
-Next free finding: **F206**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A.)
+---
+
+## F206: EAT-shaped tokens carry no machine-enforced claim bounds — the narrow-claims discipline has an EAT-shaped hole (LOW)
+
+**Cells:** wave-211 lane B (red-team), `gov/eat_claims.py`, 2026-09-29. Standing regression pin: `evals/w211_redteam_probes.py` probes `eat_bounds_absent_on_wire` + `eat_superior_proves_smuggle` (both BREAK on 33922d1, 0 errors).
+
+**Defect:** the narrow-claims discipline ("one primitive across every evidence shape") is machine-enforced for evidence bundles (V18), VC credentials (`claimBounds` validated at `verify_credential`), C2PA manifests (`verify_manifest_shape` + hard content binding), and SCITT receipts (`narrow_claim` + `evidentiary_grade` on the returned report) — but NOT for EAT-shaped tokens. `eat_claim_bounds()` returns a canonical bounds record validated under `gov/claim_bounds.py`, and `token_evidence_record()` exists for evidence-bundle consumers, yet (a) `emit_eat` writes no bounds field onto the token wire, and (b) `verify_eat` never consults `eat_claim_bounds()` (its body contains no bounds check). A token re-signed (through the module's own `_sign_claims` seam, i.e. by the key holder) with a superior-level `proves: ["the enclosed content is factually correct", "the workload behaved safely"]` verifies cleanly — the one evidence shape whose consumer gets no machine-readable bound on what the token proves. The module's internal no-inheritance rule DOES hold (superior-level attester facts are refused), so this is a wire-bounds gap, not a claim-inheritance bug.
+
+**Severity rationale:** LOW. Exploitation requires the issuer's signing key (the overreach is issuer-asserted, under the same trust assumption as the measurements themselves); no verifier is tricked into accepting a forged token. The harm is honest-consumer confusion: an EAT token consumed through the evidence path carries none of the machine-enforced bounds every sibling evidence shape carries, while the wave-210 lane-A spec required EAT claims to be "consumable as evidence with claim bounds declared". Not a forgery primitive.
+
+**Status: OPEN.**
+
+**Close-when:** either (a) `emit_eat` embeds the canonical bounds record (or its digest-identity) in the token and `verify_eat` validates it through `gov/claim_bounds.py` (disjoint proves/does_not_prove, non-empty does_not_prove), with the two w211 probes updated to expect the fixed behavior; or (b) the module docstring and the wave-210 lane-A report explicitly downgrade the claim to "bounds available via `eat_claim_bounds()` but not wire-enforced — accepted residual", with the residual recorded in this finding and the probes re-pinned to assert the documented residual. No product fix may be made by the red-team lane.
+
+---
+
+Next free finding: **F207**. **Open findings: F206.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-29, wave-183 witness spike, closed 2026-09-29 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A; F204 filed and closed 2026-09-29, wave-206 lane F; F205 filed and closed 2026-09-29, wave-208 lane B.)
