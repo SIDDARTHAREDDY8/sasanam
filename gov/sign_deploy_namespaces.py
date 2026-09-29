@@ -32,7 +32,13 @@ Model
   valid signature chain over the bundle (DSSE envelope binding
   ``{name, digest}`` with the payload type inside the signed PAE bytes)
   **plus two distinct operator identities** (the repo's standing
-  two-operator discipline).
+  two-operator discipline). An optional in-toto-style artifact ruleset
+  (``gov.promotion_artifact_gate``) may be pinned at registry
+  construction: when configured, promotion additionally requires
+  caller-supplied (materials, products) maps to verify against the
+  ruleset -- a tighten-only gate that can only deny, and whose
+  denials are written to the audit log. Without a ruleset the legacy
+  ceremony is byte-identical.
 * Every mutation is a hash-chained audit entry (``prev`` links).
 
 The enforced namespace records provenance: which key ids signed
@@ -51,6 +57,11 @@ from .dsse_envelope import (
     open_envelope,
     parse_envelope,
     seal,
+)
+from .promotion_artifact_gate import (
+    ArtifactRuleError,
+    check_promotion_artifacts,
+    load_promotion_rules,
 )
 
 __all__ = [
@@ -152,9 +163,41 @@ class NamespaceRegistry(object):
     verifiers are pinned at construction and re-checked at every
     promotion and every admission -- trust is never cached from an
     earlier check.
+
+    An optional artifact ruleset may be pinned at construction via
+    ``artifact_ruleset`` (in-toto-style CREATE/MODIFY/DELETE/REQUIRE/
+    MATCH/terminal-DISALLOW, validated fail-closed by
+    ``gov.promotion_artifact_gate.load_promotion_rules``). When
+    configured, :meth:`promote` additionally requires
+    caller-supplied (materials, products) maps and denies the
+    promotion when the maps fail the ruleset -- a tighten-only gate:
+    it can only deny what the legacy path would admit, never admit
+    what the legacy path denies. Without a ruleset the legacy path
+    is byte-identical.
     """
 
-    def __init__(self, *, verifiers, threshold=1):
+    def __init__(self, *, verifiers, threshold=1, artifact_ruleset=None):
+        verifiers = list(verifiers or [])
+        if not verifiers:
+            raise NamespaceError("bad-format",
+                                 "at least one pinned verifier is required")
+        for v in verifiers:
+            if not (hasattr(v, "key_id") and hasattr(v, "verify")):
+                raise NamespaceError("bad-format",
+                                     "verifiers must expose key_id + verify")
+        if isinstance(threshold, bool) or not isinstance(threshold, int) \
+                or not 1 <= threshold <= len(verifiers):
+            raise NamespaceError("bad-format",
+                                 "threshold must satisfy 1 <= k <= %d"
+                                 % len(verifiers))
+        if artifact_ruleset is not None:
+            try:
+                artifact_ruleset = load_promotion_rules(artifact_ruleset)
+            except ArtifactRuleError as exc:
+                raise NamespaceError("bad-ruleset",
+                                     "artifact ruleset refused at load: %s"
+                                     % exc)
+        self._artifact_rules = artifact_ruleset
         verifiers = list(verifiers or [])
         if not verifiers:
             raise NamespaceError("bad-format",
@@ -297,13 +340,21 @@ class NamespaceRegistry(object):
         return result["key_ids"]
 
     # -- promotion ceremony ----------------------------------------------
-    def promote(self, name, *, operator_ids):
+    def promote(self, name, *, operator_ids, materials=None, products=None):
         """Promote a signed staged bundle into the enforced namespace.
 
         Requires the two-operator ceremony AND a fresh signature
         verification at threshold. Records provenance: which key ids
         signed (``signed_by``) and which operators promoted
         (``promoted_by``).
+
+        When an artifact ruleset was pinned at construction, the
+        caller must also supply ``materials`` / ``products`` maps and
+        the maps must verify against the ruleset -- a violation
+        DENIES the promotion (``artifact-gate-refused``) and the
+        reason is written to the audit log as ``promotion-denied``.
+        The gate runs AFTER the legacy checks, so it is strictly
+        tighten-only.
         """
         _check_name(name)
         record = self._staging.get(name)
@@ -312,6 +363,17 @@ class NamespaceRegistry(object):
                                  "no staged bundle named %r" % (name,))
         operators = _check_operators(operator_ids)
         key_ids = self._verify_envelope(record)
+        gate_suffix = ""
+        if self._artifact_rules is not None:
+            try:
+                gate_report = check_promotion_artifacts(
+                    name, materials, products, self._artifact_rules)
+            except ArtifactRuleError as exc:
+                self._log("promotion-denied", "artifact-gate: %s" % exc,
+                          name=name, digest=record["digest"])
+                raise NamespaceError("artifact-gate-refused", str(exc))
+            gate_suffix = ("; artifact_rules=%s"
+                           % gate_report["rule_set_digest"])
         promoted = dict(record, content=bytes(record["content"]))
         promoted["status"] = "promoted"
         promoted["signed_by"] = list(key_ids)
@@ -319,8 +381,8 @@ class NamespaceRegistry(object):
         promoted["label"] = "PROMOTED -- admitted to the enforced namespace"
         self._enforced[record["digest"]] = promoted
         self._log("promoted",
-                  "signed_by=%s promoted_by=%s"
-                  % (",".join(key_ids), ",".join(operators)),
+                  "signed_by=%s promoted_by=%s%s"
+                  % (",".join(key_ids), ",".join(operators), gate_suffix),
                   name=name, digest=record["digest"])
         return dict(promoted, content=bytes(promoted["content"]))
 
