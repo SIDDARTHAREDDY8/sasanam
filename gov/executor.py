@@ -2576,7 +2576,14 @@ class ToolExecutor:
                     % (_prov.name, agent_id, role, principal,
                        _prov_ttl, justification),
                     file=sys.stderr)
-            self.log.append({
+            # Wave-199: when the provisioner carries a keyset (the JWK
+            # attestation method's trust anchor), the mint-budget
+            # envelope's trust anchor rides the event as the
+            # material-free keyset_info() projection -- key ids +
+            # statuses, zero key bytes. Absent when no keyset is
+            # attached, so the event stays byte-identical to before.
+            _keyset_projection = _prov.keyset_info_projection()
+            _minted_event = {
                 "event": "identity_minted",
                 "run_id": self.run_id,
                 "agent_id": agent_id,
@@ -2608,7 +2615,10 @@ class ToolExecutor:
                 "renewable": _renewable,
                 "renew_after": _renew_after,
                 "revocation": _prov.claims.revocation,
-            })
+            }
+            if _keyset_projection is not None:
+                _minted_event["keyset"] = _keyset_projection
+            self.log.append(_minted_event)
             if isinstance(_prov, _provisioner.BreakGlassProvisioner):
                 # The dedicated loud event: justification on the chain,
                 # separate from the standard issuance event, so a

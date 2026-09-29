@@ -60,6 +60,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 from pathlib import Path
 
@@ -93,19 +94,40 @@ class KmsError(Exception):
 
 
 class KeyDescription:
-    """Safe KMS key metadata — never key material."""
+    """Safe KMS key metadata — never key material.
+
+    ``status`` is the key-registry lifecycle vocabulary (wave-199,
+    Tink-inspired): ``"enabled"`` / ``"disabled"`` / ``"destroyed"``.
+    The ``enabled`` boolean is kept for backward compatibility; when
+    ``status`` is omitted it is derived from ``enabled``. Providers that
+    cannot express a state (e.g. Vault transit) report ``"enabled"``
+    for any key whose describe succeeds.
+    """
+
+    #: The only valid ``status`` values. Enforced fail-closed: a typo'd
+    #: status would otherwise flow silently into describe() dicts and
+    #: the rotation audit event.
+    STATUSES = frozenset(("enabled", "disabled", "destroyed"))
 
     def __init__(self, key_id, provider_name, enabled=True,
-                 created_utc=None, arn_or_name=None):
+                 created_utc=None, arn_or_name=None, status=None):
         self.key_id = key_id
         self.provider_name = provider_name
         self.enabled = bool(enabled)
         self.created_utc = created_utc or _utcnow()
         self.arn_or_name = arn_or_name
+        if status is None:
+            status = "enabled" if self.enabled else "disabled"
+        if status not in KeyDescription.STATUSES:
+            raise ValueError("KeyDescription status must be one of %s, "
+                             "got %r" % (sorted(KeyDescription.STATUSES),
+                                         status))
+        self.status = status
 
     def describe(self):
         return {"key_id": self.key_id, "provider": self.provider_name,
-                "enabled": self.enabled, "created_utc": self.created_utc,
+                "enabled": self.enabled, "status": self.status,
+                "created_utc": self.created_utc,
                 "arn_or_name": self.arn_or_name}
 
 
@@ -183,9 +205,12 @@ class FakeKmsProvider(KmsProvider):
 
     Unwrap authenticates the tag AND binds the embedded key id to the
     requested one (the Attack-2 hardening). Failure injection for
-    fail-closed tests: ``outage = True`` (every op raises ``KmsError``)
-    and ``disable_key(key_id)`` (describe shows disabled; wrap/unwrap
-    reject). ``calls`` records an audit trail of (op, key_id, utc).
+    fail-closed tests: ``outage = True`` (every op raises ``KmsError``),
+    ``disable_key(key_id)`` (describe shows disabled; wrap/unwrap
+    reject), and ``destroy_key(key_id)`` (the Tink DESTROYED analogue:
+    every op -- including describe -- raises ``KmsError``; a destroyed
+    key is fully dead). ``calls`` records an audit trail of
+    (op, key_id, utc).
     """
 
     provider_name = "fake"
@@ -204,6 +229,7 @@ class FakeKmsProvider(KmsProvider):
         self.calls = []
         self.outage = False
         self.disabled = set()
+        self.destroyed = set()
 
     # -- test controls ---------------------------------------------------
 
@@ -212,6 +238,15 @@ class FakeKmsProvider(KmsProvider):
         self.disabled.add(key_id)
 
     def enable_key(self, key_id):
+        self.disabled.discard(key_id)
+
+    def destroy_key(self, key_id):
+        """Terminally destroy ``key_id`` (test double for the Tink
+        DESTROYED state). After this, every operation -- wrap, unwrap,
+        AND describe -- raises ``KmsError``: the key is fully dead, not
+        merely disabled."""
+        self._validate_key_id(key_id)
+        self.destroyed.add(key_id)
         self.disabled.discard(key_id)
 
     # -- internals ---------------------------------------------------------
@@ -239,6 +274,11 @@ class FakeKmsProvider(KmsProvider):
         self._validate_key_id(key_id)
         if key_id not in self._key_ids:
             raise KmsError("FakeKMS: unknown key id %r" % (key_id,))
+        # DESTROYED is terminal: it refuses even describe_key (the key
+        # is fully dead, unlike a disabled key whose metadata stays
+        # readable like AWS DescribeKey on a disabled key).
+        if key_id in self.destroyed:
+            raise KmsError("FakeKMS: key id %r is destroyed" % (key_id,))
         # describe_key is metadata (like AWS DescribeKey on a disabled key)
         # and stays available; wrap/unwrap require an enabled key.
         if not allow_disabled and key_id in self.disabled:
@@ -623,7 +663,7 @@ class EnvelopeKeyRing:
 
 
 def rotate_envelope_keyring(path, provider, kms_key_id=None, new_epoch=None,
-                            log_path=None):
+                            log_path=None, lifecycle_audit=None):
     """The KMS rotation ceremony (mirrors ``keys.rotate_keyring``).
 
     1. Load the envelope ring (wrapped only).
@@ -635,6 +675,14 @@ def rotate_envelope_keyring(path, provider, kms_key_id=None, new_epoch=None,
     3. Rotate: fresh data key, KMS-wrapped, new epoch; old wrapped key
        retained as retired.
     4. Atomic backup ``<path>.bak``; atomic persist (0600).
+    5. If ``lifecycle_audit`` is given (a callable taking one event
+       dict), it is invoked with the material-free key-rotation audit
+       event (wave-199 keyset-lifecycle wiring): epoch ids, statuses,
+       and the KMS ``KeyDescription.describe()`` of the wrapping key —
+       zero key bytes by construction. Audit-hook failures never fail
+       the rotation itself; they are announced with a loud stderr
+       warning and annotated on the event dict (``audit_error``) so a
+       hook that captured the event can see it.
 
     Serialized via the public rotation lock. Returns ``(ring, new_epoch)``.
     Call ``ring.activate(provider)`` afterwards to put the new epoch under
@@ -654,7 +702,44 @@ def rotate_envelope_keyring(path, provider, kms_key_id=None, new_epoch=None,
         if p.exists():
             _atomic_write_bytes(Path(str(p) + ".bak"), p.read_bytes())
         ring.save(path)
+        if lifecycle_audit is not None:
+            event = _key_rotation_audit_event(ring, provider, new_epoch)
+            try:
+                lifecycle_audit(event)
+            except Exception as e:  # audit must not fail the ceremony
+                event["audit_error"] = "lifecycle_audit hook failed: %s" % e
+                print("GOVERNANCE WARNING: key-rotation lifecycle_audit "
+                      "hook failed (rotation itself succeeded): %s" % e,
+                      file=sys.stderr)
         return ring, new_epoch
+
+
+def _key_rotation_audit_event(ring, provider, new_epoch):
+    """Build the material-free audit event for a keyring rotation.
+
+    Mirrors ``gov.keyset.keyset_status_changed_event`` for the KMS
+    layer: epoch ids + statuses (a ``KeysetInfo``-style projection)
+    plus the wrapping KMS key's ``KeyDescription.describe()``. Wrapped
+    blobs are metadata-adjacent ciphertext, not key bytes, and the
+    wrapping key id is an identifier, not material -- but neither is
+    needed here, so neither is included: ids and statuses only.
+    """
+    epochs = [{"epoch": ep, "key_id": wd.key_id, "status": wd.status}
+              for ep, wd in sorted(ring._wrapped.items())]
+    active = ring._wrapped.get(ring._active_epoch)
+    try:
+        wrapping = provider.describe_key(
+            active.kms_key_id).describe() if active is not None else None
+    except KmsError:
+        wrapping = None
+    return {
+        "event": "key_rotation",
+        "at": _utcnow(),
+        "new_epoch": new_epoch,
+        "active_epoch": ring._active_epoch,
+        "epochs": epochs,
+        "wrapping_key": wrapping,
+    }
 
 
 # ---------------------------------------------------------------------------

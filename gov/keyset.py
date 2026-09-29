@@ -8,6 +8,32 @@ reimplements it in stdlib Python. **No Tink code is vendored here** --
 only the pattern: versioned keys, a single primary, verify-only
 retirement, and fail-closed status checks.
 
+Wave-199 extends the status vocabulary with Tink's full lifecycle
+(``tink.proto``: each ``Key`` carries ``status`` ENABLED/DISABLED/
+DESTROYED; ``KeysetInfo`` is the material-free safe view "for logging or
+monitoring"). Mapping onto this module's existing vocabulary:
+
+* ``active``      ~= Tink ENABLED: exactly one, the primary; the only
+  status that can mint a signing handle.
+* ``disabled``    ~= Tink DISABLED: verify-only, but EVERY verification
+  emits a LOUD warn-and-rotate warning naming the key (stderr, once per
+  keyset+version per process, plus the warning rides the returned
+  reason so the audit path can record it). A winding-down key: still
+  trusted for history, never for new signatures, and the operator is
+  told to rotate.
+* ``verify-only``: the pre-wave-199 retirement state -- verifies
+  silently, never mints. (Kept: rotation still demotes here.)
+* ``revoked``: refused on the standard verification path; the forensics
+  path still returns it for attribution (never authorization).
+* ``destroyed``  ~= Tink DESTROYED: terminal. Refused on EVERY path
+  including forensics -- the key is fully dead.
+
+``Keyset.keyset_info()`` is the ``KeysetInfo`` analogue: which key ids
+exist and their status, the primary, and the keyset hash that binds the
+projection to the full document -- with zero key material (no public
+keys, no authorization signatures), so audit snapshots and chained
+audit events can carry it by construction, not by convention.
+
 It is ALSO adapted to this repo's own idiom: like the A5 threshold
 roster's ``prev_roster_hash`` chaining, every rotation is authorized by a
 signature from the *previous primary*, so a keyset carries its own
@@ -21,7 +47,8 @@ Layout of a keyset document (``sasanam-keyset/v1``)::
      "purpose": "audit-entry-signing",
      "versions": [{"version": 1, "key_id": "<sha256(pub)[:16] hex>",
                    "public_key_hex": "<32-byte ed25519 pub>",
-                   "status": "active|verify-only|revoked"}, ...],
+                   "status": "active|disabled|verify-only|revoked|destroyed"},
+                  ...],
      "primary_version": 2,
      "rotation_lineage": [  # one record per version >= 2, signed by the
                             # previous primary
@@ -29,6 +56,12 @@ Layout of a keyset document (``sasanam-keyset/v1``)::
          "to_key_id": ..., "to_public_key_hex": ...,
          "prev_keyset_hash": "<sha256 of the keyset before rotation>",
          "at": <unix ts>, "sig": "<hex ed25519 sig>"}],
+     "status_changes": [  # disable/destroy ceremonies, signed by the
+                          # primary in office (or another live key)
+        {"version": 1, "key_id": ..., "from_status": "verify-only",
+         "to_status": "disabled", "reason": ...,
+         "changed_by_version": 2, "changed_by_key_id": ...,
+         "keyset_hash": ..., "at": <unix ts>, "sig": "<hex ed25519 sig>"}],
      "revocations": [  # signed by the primary in office at revoke time
         {"version": 1, "key_id": ..., "reason": ...,
          "at": <unix ts>, "revoked_by_version": 2,
@@ -37,24 +70,31 @@ Layout of a keyset document (``sasanam-keyset/v1``)::
 
 Rules (all fail closed):
   * exactly one version is ``active`` and it is the ``primary_version``;
+  * ``disabled`` versions verify (with a loud warning) but never mint;
   * every other version is ``verify-only`` (historical signatures still
     verify) or ``revoked`` (historical signatures verify only when the
     verifier explicitly opts into forensics -- the standard
-    ``find_verifying_key`` path refuses revoked versions);
+    ``find_verifying_key`` path refuses revoked versions) or
+    ``destroyed`` (refused on every path, including forensics);
   * a signing handle (``KeysetSigner``) can only be minted for the
     *active* version, and only by presenting that version's seed;
-  * the primary can never be revoked directly -- rotate first, then
-    revoke the retired version (so there is always exactly one key
-    allowed to sign);
+  * the primary can never be disabled/destroyed/revoked directly --
+    rotate first, then wind down the retired version (so there is always
+    exactly one key allowed to sign);
   * rotation is authorized by the previous primary's seed; the lineage
     record's signature is checked by ``Keyset.verify``;
+  * disable/destroy transitions are authorized by the primary in office
+    (a revoked or destroyed key can never authorize); each record's
+    signature is checked by ``Keyset.verify``;
   * a key's public material never changes across its lifetime, and key
     ids are never reused across versions (rotation always introduces
     fresh key material).
 
 The keyset document itself is PUBLIC (it carries only public keys plus
 authorization records). The seeds stay in process memory / the KMS
-envelope exactly like ``gov.signing.Ed25519Signer`` today.
+envelope exactly like ``gov.signing.Ed25519Signer`` today. The
+*material-free projection* (``keyset_info()``) is what audit snapshots
+carry -- see its docstring.
 
 Stdlib only. $0 spend. Synthetic/local testing.
 """
@@ -63,6 +103,7 @@ import copy
 import hashlib
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 
@@ -71,39 +112,56 @@ from .signing import Signer, Ed25519Signer, ed25519_key_id
 
 __all__ = [
     "KEYSET_FORMAT",
+    "KEYSET_INFO_FORMAT",
     "KEYSET_PURPOSE_AUDIT_ENTRY_SIGNING",
     "STATUS_ACTIVE",
+    "STATUS_DISABLED",
     "STATUS_VERIFY_ONLY",
     "STATUS_REVOKED",
+    "STATUS_DESTROYED",
     "STATUSES",
     "ROTATION_DOMAIN",
     "REVOKE_DOMAIN",
+    "STATUS_CHANGE_DOMAIN",
     "KeysetError",
     "KeyVersion",
     "Keyset",
     "KeysetSigner",
     "new_keyset",
     "rotate_keyset",
+    "disable_version",
+    "destroy_version",
     "revoke_version",
     "keyset_signer_for_version",
     "keyset_signer_from_config",
     "rotation_statement",
     "revocation_statement",
+    "status_change_statement",
+    "keyset_status_changed_event",
 ]
 
 KEYSET_FORMAT = "sasanam-keyset/v1"
+#: Format tag of the material-free audit projection (Tink KeysetInfo
+#: analogue). Versioned independently of the keyset document format.
+KEYSET_INFO_FORMAT = "sasanam-keyset-info/v1"
 KEYSET_PURPOSE_AUDIT_ENTRY_SIGNING = "audit-entry-signing"
 
 STATUS_ACTIVE = "active"
+#: Tink DISABLED analogue: verify-only + loud warn-and-rotate.
+STATUS_DISABLED = "disabled"
 STATUS_VERIFY_ONLY = "verify-only"
 STATUS_REVOKED = "revoked"
-STATUSES = frozenset({STATUS_ACTIVE, STATUS_VERIFY_ONLY, STATUS_REVOKED})
+#: Tink DESTROYED analogue: terminal; refused on every path.
+STATUS_DESTROYED = "destroyed"
+STATUSES = frozenset({STATUS_ACTIVE, STATUS_DISABLED, STATUS_VERIFY_ONLY,
+                      STATUS_REVOKED, STATUS_DESTROYED})
 
 # Domain separators for the authorization records. The trailing NUL keeps
 # them unambiguous against any future domain that merely extends the
 # prefix (same idiom as gov/log.py's _ENTRY_SIG_DOMAIN).
 ROTATION_DOMAIN = b"sasanam-keyset-rotation/v1\x00"
 REVOKE_DOMAIN = b"sasanam-keyset-revoke/v1\x00"
+STATUS_CHANGE_DOMAIN = b"sasanam-keyset-status-change/v1\x00"
 
 _KEYSET_FILE_VAR = "GOV_AUDIT_KEYSET_FILE"
 _SEED_VAR = "GOV_AUDIT_SIGNING_KEY"
@@ -115,6 +173,10 @@ _ROTATION_STMT_FIELDS = ("from_version", "to_version", "from_key_id",
 _REVOKE_STMT_FIELDS = ("version", "key_id", "reason", "at",
                        "revoked_by_version", "revoked_by_key_id",
                        "keyset_hash")
+_STATUS_CHANGE_STMT_FIELDS = ("version", "key_id", "from_status",
+                              "to_status", "reason", "at",
+                              "changed_by_version", "changed_by_key_id",
+                              "keyset_hash")
 
 
 class KeysetError(Exception):
@@ -179,6 +241,49 @@ def revocation_statement(version, key_id, reason, revoked_by_version,
         "keyset_hash": keyset_hash,
         "at": _now() if at is None else at,
     }).encode("utf-8")
+
+
+def status_change_statement(version, key_id, from_status, to_status,
+                            reason, changed_by_version, changed_by_key_id,
+                            keyset_hash, at=None):
+    """Canonical bytes of a disable/destroy authorization statement (the
+    part of a status-change record covered by the authorizing key's
+    signature). The from/to statuses are inside the signed body, so a
+    record cannot be reinterpreted as a different transition."""
+    return _canonical_json({
+        "version": version,
+        "key_id": key_id,
+        "from_status": from_status,
+        "to_status": to_status,
+        "reason": reason,
+        "at": _now() if at is None else at,
+        "changed_by_version": changed_by_version,
+        "changed_by_key_id": changed_by_key_id,
+        "keyset_hash": keyset_hash,
+    }).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Warn-and-rotate: DISABLED keys verify, but loudly.
+# ---------------------------------------------------------------------------
+
+#: (keyset_hash, version) pairs already warned about this process. A
+#: disabled key in the verify path is an operator-action-required
+#: condition, so the warning is loud -- but once per key per process,
+#: not once per entry (historical verification can touch thousands of
+#: entries). The DISABLED note ALSO rides every returned reason string,
+#: so the audit path records it regardless of this dedup.
+_warned_disabled = set()
+
+
+def _warn_disabled_once(keyset_hash, version, key_id):
+    key = (keyset_hash, version)
+    if key in _warned_disabled:
+        return
+    _warned_disabled.add(key)
+    print("GOVERNANCE WARNING: keyset key version %d (key_id %s) is "
+          "DISABLED: verify-only; rotate the keyset to retire it"
+          % (version, key_id), file=sys.stderr)
 
 
 @dataclass(frozen=True)
@@ -261,12 +366,15 @@ class Keyset:
         self._primary_version = primary
         self._purpose = doc.get("purpose")
         self._lineage = [dict(r) for r in doc.get("rotation_lineage", [])]
+        self._status_changes = [dict(r)
+                                for r in doc.get("status_changes", [])]
         self._revocations = [dict(r) for r in doc.get("revocations", [])]
         self._doc = {"format": KEYSET_FORMAT,
                      "purpose": self._purpose,
                      "versions": [kv.to_dict() for kv in versions],
                      "primary_version": primary,
                      "rotation_lineage": copy.deepcopy(self._lineage),
+                     "status_changes": copy.deepcopy(self._status_changes),
                      "revocations": copy.deepcopy(self._revocations)}
 
     @classmethod
@@ -276,7 +384,7 @@ class Keyset:
             raise KeysetError("keyset document must be a mapping")
         unknown = set(doc) - {"format", "purpose", "versions",
                               "primary_version", "rotation_lineage",
-                              "revocations"}
+                              "status_changes", "revocations"}
         if unknown:
             raise KeysetError("keyset carries unknown top-level fields: %s"
                               % sorted(unknown))
@@ -286,7 +394,8 @@ class Keyset:
         purpose = doc.get("purpose")
         if not isinstance(purpose, str) or not purpose:
             raise KeysetError("keyset purpose must be a non-empty string")
-        for field in ("versions", "rotation_lineage", "revocations"):
+        for field in ("versions", "rotation_lineage", "status_changes",
+                      "revocations"):
             if not isinstance(doc.get(field), list):
                 raise KeysetError("keyset.%s must be a list" % field)
         return cls(doc)
@@ -322,16 +431,68 @@ class Keyset:
         return hashlib.sha256(
             _canonical_json(self._doc).encode("utf-8")).hexdigest()
 
+    def keyset_info(self):
+        """The material-free audit projection (Tink KeysetInfo analogue).
+
+        Describes which key ids exist and their lifecycle status, the
+        primary, and the ``keyset_hash`` that binds this projection to
+        the full keyset document -- with ZERO key bytes: no public keys,
+        no authorization signatures, no wrapped blobs. Safe to embed in
+        chained audit events, monitoring snapshots, and logs, even if an
+        adversary captures the whole snapshot: all it learns is key ids
+        (truncated public-key hashes, already public in every signed
+        envelope) and statuses.
+
+        DO NOT use this where a verifier needs trust material. Evidence
+        bundles and the audit verifier's trust directory still call
+        ``to_dict()`` -- a verifier cannot check a signature against a
+        key id alone. This projection is for logging/monitoring/audit
+        events, never for key distribution.
+        """
+        return {
+            "format": KEYSET_INFO_FORMAT,
+            "keyset_format": KEYSET_FORMAT,
+            "purpose": self._purpose,
+            "primary_version": self._primary_version,
+            "primary_key_id": self._by_version[
+                self._primary_version].key_id,
+            "keyset_hash": self.keyset_hash(),
+            "versions": [{"version": kv.version,
+                          "key_id": kv.key_id,
+                          "status": kv.status}
+                         for kv in self._versions],
+            "rotation_count": len(self._lineage),
+            "status_change_count": len(self._status_changes),
+            "revocation_count": len(self._revocations),
+        }
+
+    def latest_status_change(self, version):
+        """Return the latest signed status-change record for ``version``,
+        or ``None`` when the version never changed status.
+
+        The record's ``from_status``/``to_status`` are signature-covered
+        (see ``status_change_statement``), so audit code can derive a
+        transition's prior status from this record instead of trusting a
+        caller-supplied value.
+        """
+        latest = None
+        for rec in self._status_changes:
+            if rec.get("version") == version:
+                latest = rec
+        return dict(latest) if latest is not None else None
+
     # ------------------------------------------------------------------
     # Verification
     # ------------------------------------------------------------------
 
     def verify(self):
-        """Full verification: structure, rotation lineage, revocations.
+        """Full verification: structure, rotation lineage, status
+        changes, revocations.
 
         Returns ``(True, "")`` or ``(False, reason)``; never raises."""
         try:
             self._verify_lineage()
+            self._verify_status_changes()
             self._verify_revocations()
         except KeysetError as e:
             return False, str(e)
@@ -396,6 +557,103 @@ class Keyset:
                                   "verify under the previous primary"
                                   % kv.version)
 
+    def _verify_status_changes(self):
+        """Verify the disable/destroy authorization chain.
+
+        Every record must be structurally sound, name a known version,
+        carry the from/to statuses inside the signed body, and carry a
+        valid signature from a key other than the version itself.
+        Per-version records must chain: each record's ``from_status``
+        equals the previous record's ``to_status``, and the last
+        record's ``to_status`` equals the version's current status (the
+        primary's own status may only change via rotation, never via a
+        status-change record).
+
+        NOTE: the verifier deliberately does NOT check whether the
+        authorizing key is still live. Authorization is proven by the
+        signature; liveness is enforced at ceremony time -- only the
+        current primary's seed can mint a status-change record, and a
+        revoked/destroyed key is never primary, so no new record can
+        ever be minted in a dead key's name. History must survive the
+        authorizer's later death: destroying retired keys is the normal
+        end-of-life, and refusing their old records would brick the
+        whole keyset (the same reason ``_verify_lineage`` trusts
+        signatures alone, and why revoking a revoker must not un-ban
+        the keys it revoked).
+        """
+        chains = {}
+        for i, rec in enumerate(self._status_changes):
+            where = "status_changes[%d]" % i
+            if not isinstance(rec, dict):
+                raise KeysetError("%s must be a mapping" % where)
+            unknown = set(rec) - set(_STATUS_CHANGE_STMT_FIELDS) - {"sig"}
+            if unknown:
+                raise KeysetError("%s carries unknown fields: %s"
+                                  % (where, sorted(unknown)))
+            for f in _STATUS_CHANGE_STMT_FIELDS:
+                if f not in rec:
+                    raise KeysetError("%s missing %r" % (where, f))
+            v = rec["version"]
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise KeysetError("%s.version must be an integer" % where)
+            kv = self._by_version.get(v)
+            if kv is None:
+                raise KeysetError("%s names unknown version %r"
+                                  % (where, v))
+            if v == self._primary_version:
+                raise KeysetError("the primary's status may only change "
+                                  "via rotation, not status_changes")
+            fs = rec["from_status"]
+            ts = rec["to_status"]
+            if fs not in STATUSES or ts not in STATUSES:
+                raise KeysetError("%s carries an unknown status "
+                                  "transition %r -> %r" % (where, fs, ts))
+            if fs == ts:
+                raise KeysetError("%s is a no-op status transition" % where)
+            if rec["key_id"] != kv.key_id:
+                raise KeysetError("%s.key_id does not match version %d"
+                                  % (where, v))
+            cb = rec["changed_by_version"]
+            if isinstance(cb, bool) or not isinstance(cb, int):
+                raise KeysetError("%s.changed_by_version must be an "
+                                  "integer" % where)
+            cbv = self._by_version.get(cb)
+            if cbv is None:
+                raise KeysetError("%s names unknown authorizer %r"
+                                  % (where, cb))
+            # No liveness check on the authorizer: the signature is the
+            # authorization (see the docstring). A dead key can never
+            # mint a new record -- only the current primary's seed can.
+            if cb == v:
+                raise KeysetError("a version cannot change its own status")
+            if rec["changed_by_key_id"] != cbv.key_id:
+                raise KeysetError("%s.changed_by_key_id mismatch" % where)
+            reason = rec["reason"]
+            if not isinstance(reason, str) or not reason.strip():
+                raise KeysetError("%s needs a non-empty reason" % where)
+            at = rec["at"]
+            if isinstance(at, bool) or not isinstance(at, int) or at < 0:
+                raise KeysetError("%s has a bad 'at'" % where)
+            sig = _require_hex(rec.get("sig"), 64, "status-change sig")
+            body = STATUS_CHANGE_DOMAIN + status_change_statement(
+                v, rec["key_id"], fs, ts, reason, cb,
+                rec["changed_by_key_id"], rec["keyset_hash"], at=at)
+            if not _ed.verify(cbv.public_key, body, sig):
+                raise KeysetError("status-change record for version %d "
+                                  "does not verify under the authorizing "
+                                  "key" % v)
+            prev = chains.get(v)
+            if prev is not None and fs != prev["to_status"]:
+                raise KeysetError("status_changes chain break for version "
+                                  "%d: %r -> %r" % (v, prev["to_status"], fs))
+            chains[v] = rec
+        for v, rec in chains.items():
+            kv = self._by_version[v]
+            if kv.status != rec["to_status"]:
+                raise KeysetError("version %d ends status_changes at %r "
+                                  "but its status is %r"
+                                  % (v, rec["to_status"], kv.status))
+
     def _verify_revocations(self):
         for i, rec in enumerate(self._revocations):
             where = "revocations[%d]" % i
@@ -415,9 +673,9 @@ class Keyset:
             if kv is None:
                 raise KeysetError("%s names unknown version %r"
                                   % (where, v))
-            if kv.status != STATUS_REVOKED:
+            if kv.status not in (STATUS_REVOKED, STATUS_DESTROYED):
                 raise KeysetError("version %d has a revocation record but "
-                                  "is not revoked" % v)
+                                  "is neither revoked nor destroyed" % v)
             if rec["key_id"] != kv.key_id:
                 raise KeysetError("%s.key_id does not match version %d"
                                   % (where, v))
@@ -431,8 +689,12 @@ class Keyset:
             if rbv is None:
                 raise KeysetError("%s names unknown revoker %r" % (where,
                                                                    rb))
-            if rbv.status == STATUS_REVOKED:
-                raise KeysetError("revocation authorized by a revoked key")
+            # No liveness check on the revoker: the signature is the
+            # authorization (see _verify_status_changes' docstring).
+            # History must survive the revoker's later death --
+            # otherwise destroying a retired revoker, or revoking a
+            # compromised one, would un-ban the keys it revoked and
+            # brick the keyset.
             if rb == v:
                 raise KeysetError("a version cannot revoke itself")
             if rec["revoked_by_key_id"] != rbv.key_id:
@@ -463,8 +725,12 @@ class Keyset:
           * when ``sig_key_version`` is present it is an integer naming a
             version whose key id matches the envelope's (confusion fails
             closed);
-          * revoked versions never verify here (historical forensics must
-            opt in explicitly);
+          * revoked and destroyed versions never verify here
+            (historical forensics must opt in explicitly -- and even
+            forensics refuses destroyed versions);
+          * disabled versions verify, but EVERY hit emits a loud
+            warn-and-rotate warning and the reason says so (the warning
+            is what Tink's DISABLED exists for);
           * envelopes with no version take the legacy path (v1 signature
             body) so pre-keyset entries keep verifying.
         """
@@ -478,8 +744,15 @@ class Keyset:
             kv = self._by_key_id.get(kid)
             if kv is None:
                 return None, "unknown key id (legacy entry)"
+            if kv.status == STATUS_DESTROYED:
+                return None, "signing key destroyed (legacy entry)"
             if kv.status == STATUS_REVOKED:
                 return None, "signing key revoked (legacy entry)"
+            if kv.status == STATUS_DISABLED:
+                _warn_disabled_once(self.keyset_hash(), kv.version,
+                                    kv.key_id)
+                return kv, ("legacy (no version bound; DISABLED: "
+                            "verify-only; rotate the keyset to retire it)")
             return kv, "legacy (no version bound)"
         if isinstance(ver, bool) or not isinstance(ver, int):
             return None, "sig_key_version is not an integer"
@@ -491,13 +764,25 @@ class Keyset:
         if kv.key_id != kid:
             return None, ("version/key_id mismatch: envelope names version "
                            "%d but a different key id" % ver)
+        if kv.status == STATUS_DESTROYED:
+            return None, "key version %d is destroyed" % ver
         if kv.status == STATUS_REVOKED:
             return None, "key version %d is revoked" % ver
+        if kv.status == STATUS_DISABLED:
+            _warn_disabled_once(self.keyset_hash(), kv.version, kv.key_id)
+            return kv, ("ok (DISABLED: verify-only; rotate the keyset to "
+                        "retire key version %d)" % ver)
         return kv, "ok"
 
     def find_verifying_key_for_forensics(self, entry):
         """Like :meth:`find_verifying_key`, but revoked versions are
         returned instead of refused.
+
+        DESTROYED versions are still refused -- a destroyed key is fully
+        dead, not even for attribution. (Tink: DESTROYED keys are
+        removed from the keyset entirely; we keep the tombstone entry
+        so the dead key id can never be confused with a live one, and
+        the forensics path refuses it.)
 
         FORENSICS ONLY -- for attributing historical signatures after
         a compromise ("was this old entry signed by the now-revoked
@@ -515,6 +800,8 @@ class Keyset:
             kv = self._by_key_id.get(kid)
             if kv is None:
                 return None, "unknown key id (legacy entry)"
+            if kv.status == STATUS_DESTROYED:
+                return None, "signing key destroyed (forensics refuses)"
             return kv, "legacy (no version bound, forensics)"
         if isinstance(ver, bool) or not isinstance(ver, int):
             return None, "sig_key_version is not an integer"
@@ -526,6 +813,13 @@ class Keyset:
         if kv.key_id != kid:
             return None, ("version/key_id mismatch: envelope names version "
                            "%d but a different key id" % ver)
+        if kv.status == STATUS_DESTROYED:
+            return None, ("key version %d is destroyed "
+                          "(forensics refuses)" % ver)
+        if kv.status == STATUS_DISABLED:
+            _warn_disabled_once(self.keyset_hash(), kv.version, kv.key_id)
+            return kv, ("ok (forensics: DISABLED; rotate the keyset to "
+                        "retire key version %d)" % ver)
         return kv, "ok (forensics: revoked versions included)"
 
 
@@ -588,6 +882,7 @@ def new_keyset(seed, *, purpose=KEYSET_PURPOSE_AUDIT_ENTRY_SIGNING):
         "versions": [kv.to_dict()],
         "primary_version": 1,
         "rotation_lineage": [],
+        "status_changes": [],
         "revocations": [],
     })
     return ks, KeysetSigner(seed, 1)
@@ -705,11 +1000,156 @@ def revoke_version(keyset, version, reason, primary_seed):
     return new_ks
 
 
+def _authorize_status_change(keyset, version, reason, primary_seed,
+                             to_status, from_statuses):
+    """Shared ceremony for disable/destroy: fail-closed prechecks, the
+    primary in office signs the authorization record, the new keyset
+    self-verifies before it is returned."""
+    ok, err = keyset.verify()
+    if not ok:
+        raise KeysetError("cannot change status in an invalid keyset: %s"
+                          % err)
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise KeysetError("version must be an integer")
+    kv = keyset.version(version)  # KeysetError when unknown
+    if version == keyset.primary_version:
+        raise KeysetError("cannot move the primary version (v%d) to %s "
+                          "-- rotate first" % (version, to_status))
+    if kv.status == to_status:
+        raise KeysetError("version %d is already %s" % (version, to_status))
+    if kv.status not in from_statuses:
+        raise KeysetError("cannot move version %d from %s to %s"
+                          % (version, kv.status, to_status))
+    if not isinstance(reason, str) or not reason.strip():
+        raise KeysetError("a status change needs a non-empty reason")
+    reason = reason.strip()
+    pv = keyset.primary_version
+    pkv = keyset.version(pv)
+    auth = KeysetSigner(_require_seed(primary_seed, "primary_seed"), pv)
+    if auth.key_id != pkv.key_id:
+        raise KeysetError("primary_seed does not authenticate as the "
+                          "current primary (version %d)" % pv)
+    from_status = kv.status
+    stmt = {"version": version, "key_id": kv.key_id,
+            "from_status": from_status, "to_status": to_status,
+            "reason": reason, "at": _now(), "changed_by_version": pv,
+            "changed_by_key_id": pkv.key_id,
+            "keyset_hash": keyset.keyset_hash()}
+    record = dict(stmt)
+    record["sig"] = _ed.sign(primary_seed,
+                             STATUS_CHANGE_DOMAIN
+                             + status_change_statement(
+                                 version, kv.key_id, from_status, to_status,
+                                 reason, pv, pkv.key_id,
+                                 stmt["keyset_hash"],
+                                 at=stmt["at"])).hex()
+    doc = keyset.to_dict()
+    for v in doc["versions"]:
+        if v["version"] == version:
+            v["status"] = to_status
+    doc["status_changes"].append(record)
+    new_ks = Keyset.from_dict(doc)
+    ok, err = new_ks.verify()
+    if not ok:  # pragma: no cover -- defensive; construction is canonical
+        raise KeysetError("%s keyset failed self-verification: %s"
+                          % (to_status, err))
+    return new_ks
+
+
+def disable_version(keyset, version, reason, primary_seed):
+    """Disable a non-primary version (the winding-down story, Tink
+    DISABLED).
+
+    The disabled version keeps verifying historical signatures but EVERY
+    verification emits a loud warn-and-rotate warning (stderr, once per
+    keyset+version per process, plus the note rides the returned reason)
+    -- the operator is told to rotate the keyset and retire the key.
+    No signing handle can ever be minted for a disabled version. The
+    transition is recorded in ``status_changes``, signed by the primary
+    in office.
+
+    A revoked (compromised) version can NEVER be disabled: revocation
+    refuses standard verification outright, and moving it to
+    warn-and-verify would downgrade that refusal. The compromised path
+    is revoked -> destroyed.
+    """
+    return _authorize_status_change(keyset, version, reason, primary_seed,
+                                    STATUS_DISABLED,
+                                    {STATUS_VERIFY_ONLY})
+
+
+def destroy_version(keyset, version, reason, primary_seed):
+    """Destroy a non-primary version (the terminal state, Tink
+    DESTROYED).
+
+    The destroyed version is refused on EVERY verification path,
+    including forensics -- the key is fully dead. No signing handle can
+    be minted. The transition is recorded in ``status_changes``, signed
+    by the primary in office. A destroyed version's status never
+    changes again.
+    """
+    return _authorize_status_change(keyset, version, reason, primary_seed,
+                                    STATUS_DESTROYED,
+                                    {STATUS_VERIFY_ONLY, STATUS_DISABLED,
+                                     STATUS_REVOKED})
+
+
+def keyset_status_changed_event(keyset, version, reason,
+                                *, actor="keyset-ceremony"):
+    """Build the chained-audit-ready event for a disable/destroy.
+
+    Carries ONLY the material-free projection (``keyset_info()``) plus
+    the transition -- zero key bytes by construction, so the audit path
+    can append it without special handling.
+
+    The transition's ``from_status`` is derived from the keyset's latest
+    SIGNED ``status_changes`` record for the version, not from a
+    caller-supplied value: an audit caller cannot misstate the prior
+    status, because the signed chain is the authority. ``to_status`` is
+    read from the keyset itself and cross-checked against that same
+    record. When the version has no recorded status change there is no
+    transition to describe, so this fails closed.
+    """
+    if not isinstance(keyset, Keyset):
+        raise KeysetError("keyset must be a Keyset")
+    if not isinstance(reason, str) or not reason.strip():
+        raise KeysetError("a status-change event needs a non-empty reason")
+    rec = keyset.latest_status_change(version)  # signed chain is authority
+    if rec is None:
+        raise KeysetError("version %d has no recorded status change -- "
+                          "nothing to describe" % (version,))
+    from_status = rec.get("from_status")
+    if from_status not in STATUSES:
+        raise KeysetError("signed status-change record for version %d "
+                          "carries an unknown from_status %r"
+                          % (version, from_status))
+    kv = keyset.version(version)  # KeysetError when unknown
+    if kv.status != rec.get("to_status"):
+        raise KeysetError("keyset status %r for version %d disagrees with "
+                          "the signed status-change chain (%r)"
+                          % (kv.status, version, rec.get("to_status")))
+    return {
+        "event": "keyset_status_changed",
+        "actor": actor,
+        "at": _now(),
+        "keyset": keyset.keyset_info(),
+        "transition": {
+            "version": kv.version,
+            "key_id": kv.key_id,
+            "from_status": from_status,
+            "to_status": kv.status,
+            "reason": reason.strip(),
+        },
+    }
+
+
 def keyset_signer_for_version(keyset, version, seed):
     """Mint a ``KeysetSigner`` for ``version`` -- only when that version
     is the active primary, and only when ``seed`` actually corresponds
     to the version's key. Anything else raises ``KeysetError`` (this is
-    what makes verify-only and revoked keys unable to sign)."""
+    what makes disabled, verify-only, revoked, and destroyed versions
+    unable to sign -- and why a disabled key can never sign again even
+    though it still verifies)."""
     ok, err = keyset.verify()
     if not ok:
         raise KeysetError("cannot mint a signer from an invalid keyset: "

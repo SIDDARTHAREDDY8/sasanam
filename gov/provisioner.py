@@ -307,10 +307,17 @@ class Provisioner:
     ``name`` is the deployment-scoped instance id (e.g. "dex-prod").
     ``provisioner_type`` is one of ``ProvisionerType.ALL``. ``claims``
     is the ``LifetimeClaims`` envelope enforced on every mint through
-    this provisioner.
+    this provisioner. ``keyset`` is an optional ``gov.keyset.Keyset``
+    (duck-typed: any object exposing ``keyset_info()``) whose lifecycle
+    governs this provisioner's keys -- the JWK attestation method's
+    trust anchor. When present, the executor's ``identity_minted``
+    audit event carries the keyset's material-free projection
+    (``keyset_info()``), so the mint-budget envelope's trust anchor is
+    reconstructible from the chain alone. When absent the event is
+    byte-identical to before.
     """
 
-    def __init__(self, name, provisioner_type, claims):
+    def __init__(self, name, provisioner_type, claims, keyset=None):
         if not isinstance(name, str) or not name.strip():
             raise ValueError("provisioner name must be a non-empty "
                              "string, got %r" % (name,))
@@ -321,9 +328,14 @@ class Provisioner:
         if not isinstance(claims, LifetimeClaims):
             raise TypeError("provisioner claims must be LifetimeClaims, "
                             "got %r" % (claims,))
+        if keyset is not None and not callable(
+                getattr(keyset, "keyset_info", None)):
+            raise TypeError("provisioner keyset must expose keyset_info(), "
+                            "got %r" % (keyset,))
         self.name = name.strip()
         self.provisioner_type = provisioner_type
         self.claims = claims
+        self.keyset = keyset
         if claims.allowed_scopes is None:
             # Unrestricted scope grants are a deployment decision that
             # must never be silent: None means "every scope", and a
@@ -338,6 +350,16 @@ class Provisioner:
 
     def __repr__(self):
         return "Provisioner(%r, %r)" % (self.name, self.provisioner_type)
+
+    def keyset_info_projection(self):
+        """The material-free keyset-lifecycle projection for the mint
+        audit envelope (wave-199), or ``None`` when this provisioner
+        carries no keyset. Carries key ids + statuses only -- zero key
+        bytes -- so the ``identity_minted`` chain event can embed it
+        directly."""
+        if self.keyset is None:
+            return None
+        return self.keyset.keyset_info()
 
     def requires_presented_token(self):
         """Whether this attestation method needs a presented token.

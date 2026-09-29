@@ -323,8 +323,12 @@ class VaultKmsProvider(KmsProvider):
                 "vault kms describe_key: malformed response from server")
         _log.debug("vault kms describe_key: key_id=%r", key_id)
         # Vault transit keys expose no enabled/disabled flag; a key whose
-        # read succeeds is usable. Metadata only — never key material.
+        # read succeeds is usable. The wave-199 lifecycle vocabulary is
+        # still declared explicitly ("enabled") so downstream key-registry
+        # consumers see a uniform status field across providers.
+        # Metadata only — never key material.
         return KeyDescription(key_id, self.provider_name, enabled=True,
+                              status="enabled",
                               arn_or_name="vault:%s:%s"
                               % (self._mount, name))
 
