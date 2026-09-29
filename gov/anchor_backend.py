@@ -113,6 +113,30 @@ class WitnessDownError(WitnessError):
     """The witness is unreachable (drives the async failure semantics)."""
 
 
+#: Fail-closed bound on any single HTTP response body read from the
+#: witness transport (F204, wave-206 lane F). Rekor v1 JSON responses
+#: (entry receipts, checkpoints) are a few KB; 1 MiB is generous
+#: headroom. Anything larger is refused LOUDLY -- never silently
+#: truncated, because a truncated receipt must never be able to
+#: verify.
+MAX_RESPONSE_BODY_BYTES = 1_048_576
+
+
+def _read_capped(resp, limit=MAX_RESPONSE_BODY_BYTES):
+    """Read at most ``limit`` bytes from an HTTP response object.
+
+    Fail-closed: a body longer than ``limit`` raises
+    :class:`WitnessDownError` instead of returning a prefix. Callers
+    must never truncate-then-verify.
+    """
+    body = resp.read(limit + 1)
+    if len(body) > limit:
+        raise WitnessDownError(
+            "response body exceeded %d bytes: refusing unbounded "
+            "download" % (limit,))
+    return body
+
+
 def _utcnow():
     return datetime.now(timezone.utc).isoformat()
 
@@ -625,10 +649,15 @@ class RekorBackend(AnchorBackend):
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 return {"status": resp.status,
-                        "body": resp.read().decode("utf-8")}
+                        "body": _read_capped(resp).decode("utf-8")}
         except urllib.error.HTTPError as e:
             try:
-                detail = e.read().decode("utf-8", "replace")[:500]
+                # Capped too: read the error body through the same bound
+                # (F204) -- the [:500] slice below only truncates the
+                # *decoded detail string*, it does not bound the read.
+                detail = e.read(
+                    MAX_RESPONSE_BODY_BYTES + 1).decode(
+                        "utf-8", "replace")[:500]
             except Exception:
                 detail = ""
             raise WitnessDownError(
