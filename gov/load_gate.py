@@ -761,10 +761,29 @@ class SkillLoader:
     ``skill:<name>`` -- the TUF mix-and-match binding at the refresh
     layer: a pin rotated without a refreshed bundle, or a bundle
     presented against another version's bytes, refuses. Without it
-    the pinset-only behavior is unchanged (documented adoption path)."""
+    the pinset-only behavior is unchanged (documented adoption path).
+
+    ``namespace_registry`` (wave-209) is an optional
+    :class:`gov.sign_deploy_namespaces.NamespaceRegistry`. When given,
+    :meth:`load_skill` additionally requires the pin's digest to be
+    admittable to the ENFORCED namespace via
+    :meth:`NamespaceRegistry.admit_deploy` -- the signed-only
+    deployment admission (the Harbor signed-only pattern, wave-205
+    prospecting §4): unsigned content and name-only references refuse
+    here, while the staging / signing / promotion path never passes
+    through the loader (the goharbor#22650 lesson -- enforcement lives
+    only at this admission seam and cannot brick signing). The
+    registry's pinned verifiers, threshold, and two-operator promotion
+    ceremony stay caller-owned; the loader calls the admission seam
+    and records the ``signed_by`` / ``promoted_by`` provenance in the
+    log. Without it the pinset-only behavior is unchanged (documented
+    adoption path). Recommended production setting: wire the registry
+    that governs the enforced namespace; the default ``None``
+    preserves legacy behavior for callers that have not adopted
+    signed-only deployment yet."""
 
     def __init__(self, pinset, store, log=None, corpus=None,
-                 bundle_refresh=None):
+                 bundle_refresh=None, namespace_registry=None):
         if not isinstance(pinset, ArtifactPinset):
             raise TypeError("pinset must be an ArtifactPinset")
         if corpus is not None and not isinstance(
@@ -776,11 +795,16 @@ class SkillLoader:
                 and hasattr(bundle_refresh, "target_digest")):
             raise TypeError("bundle_refresh must expose state and "
                             "target_digest (a BundleRefresher) or None")
+        if namespace_registry is not None and not hasattr(
+                namespace_registry, "admit_deploy"):
+            raise TypeError("namespace_registry must expose admit_deploy "
+                            "(a NamespaceRegistry) or None")
         self._pinset = pinset
         self._store = store
         self._log = log
         self._corpus = corpus
         self._bundle_refresh = bundle_refresh
+        self._namespace_registry = namespace_registry
 
     def load_skill(self, skill_name, *, corpus_doc=None):
         artifact_id = "skill:" + str(skill_name)
@@ -805,6 +829,15 @@ class SkillLoader:
         # refuses, and a suspended refresher refuses every load.
         if self._bundle_refresh is not None:
             self._check_bundle_refresh(artifact_id, verified.digest)
+        # Signed-only deployment admission (wave-209 Harbor steal):
+        # when the deployment wires a namespace registry, the pin's
+        # digest must be admittable to the ENFORCED namespace --
+        # unsigned content and name-only references refuse here.
+        # Enforcement lives only at this admission seam (the
+        # goharbor#22650 lesson): staging, signing, and promotion never
+        # pass through the loader, so enforcement cannot brick signing.
+        if self._namespace_registry is not None:
+            self._check_namespace_admission(artifact_id, verified.digest)
         if self._log is not None:
             self._log.append({
                 "event": "skill_loaded",
@@ -880,9 +913,45 @@ class SkillLoader:
                 "with the refresh-bound digest (sha256:%s)"
                 % (artifact_id, pin_digest, bound_hex))
 
+    def _check_namespace_admission(self, artifact_id, pin_digest):
+        """Signed-only deployment admission (wave-209).
+
+        The pin's digest must be admittable to the ENFORCED namespace
+        by the wired :class:`gov.sign_deploy_namespaces.NamespaceRegistry`.
+        Unsigned content, unpromoted bundles, and name-only references
+        refuse here as ``namespace_admission_refused``. The import is
+        lazy so legacy import behavior is unchanged when no registry
+        is wired.
+        """
+        from .sign_deploy_namespaces import NamespaceError
+        try:
+            admitted = self._namespace_registry.admit_deploy(pin_digest)
+        except NamespaceError as exc:
+            _refused(self._log, artifact_id, "namespace_admission_refused",
+                      "enforced-namespace admission refused %s: %s (%s)"
+                      % (pin_digest, exc.code, exc.detail))
+            raise ArtifactRefused(
+                "namespace_admission_refused: %r is not admittable to the "
+                "enforced namespace (%s)" % (artifact_id, exc.code))
+        # Provenance for the audit trail: which keys signed and which
+        # operators promoted the admitted bundle. The loader hands out
+        # the pinset-verified bytes (the TOCTOU binding documented in
+        # verify_and_load); admission guarantees the registry's record
+        # hashes to the same pin, so the two byte strings are the same
+        # bundle up to a SHA-256 collision.
+        if self._log is not None:
+            self._log.append({
+                "event": "namespace_admitted",
+                "artifact_id": artifact_id,
+                "digest": pin_digest,
+                "signed_by": list(admitted.get("signed_by", [])),
+                "promoted_by": list(admitted.get("promoted_by", [])),
+            })
+
 
 def load_skill_content(pinset, store, skill_name, *, log=None,
-                       corpus=None, corpus_doc=None, bundle_refresh=None):
+                       corpus=None, corpus_doc=None, bundle_refresh=None,
+                       namespace_registry=None):
     """The FORCED entry point for skill content into the sterile
     ``skill_content`` channel (wave-80).
 
@@ -908,6 +977,13 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     :class:`SkillLoader` (same binding semantics; see there).
     Without it the pinset-only behavior is unchanged.
 
+    ``namespace_registry`` (wave-209): an optional
+    :class:`gov.sign_deploy_namespaces.NamespaceRegistry` wired through
+    to :class:`SkillLoader` (signed-only deployment admission at the
+    enforced namespace; see there). Without it the pinset-only
+    behavior is unchanged. Recommended production setting: wire the
+    registry that governs the enforced namespace.
+
     There is no raw-bytes return path on purpose: callers that want
     the bytes must unwrap the marker via ``acknowledge()`` (the
     channel's only documented read), so every consumption is an
@@ -919,7 +995,8 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     """
     from .sterile import Unvetted
     loader = SkillLoader(pinset, store, log=log, corpus=corpus,
-                         bundle_refresh=bundle_refresh)
+                         bundle_refresh=bundle_refresh,
+                         namespace_registry=namespace_registry)
     verified = loader.load_skill(skill_name, corpus_doc=corpus_doc)
     return Unvetted(
         verified.data,
