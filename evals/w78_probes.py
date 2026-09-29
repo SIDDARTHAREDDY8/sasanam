@@ -201,12 +201,18 @@ def _keys():
     return trust, human_seed, human2_seed, auth_seed
 
 
+def _pin_na(ts):
+    return lg_mod._resolve_pin_not_after(ts, None)
+
+
 def _pin(pinset, artifact_id, digest, human_seed, key_id="op:alice",
          tier="production", second_seed=None, second_key_id="op:bob"):
     ts = "2026-09-22T00:00:00+00:00"
-    body = lg_mod._canonical_pin_body(tier, artifact_id, digest, ts)
+    na = _pin_na(ts)
+    body = lg_mod._canonical_pin_body(tier, artifact_id, digest, ts,
+                                      version=1, not_after=na)
     sig = _edsign(human_seed, body).hex()
-    kw = {"ts": ts, "tier": tier}
+    kw = {"ts": ts, "tier": tier, "version": 1, "not_after": na}
     if second_seed is not None:
         kw["second_author_key_id"] = second_key_id
         kw["second_authorship_sig_hex"] = _edsign(second_seed, body).hex()
@@ -391,11 +397,13 @@ def sit_mutable_ref_pin_refused():
         refs = ["main", "v1.2.3", "latest", "refs/heads/main",
                 "da" * 20, "FETCH_HEAD"]
         for ref in refs:
-            body = lg_mod._canonical_pin_body("dev", "skill:x", ref, ts)
+            na = _pin_na(ts)
+            body = lg_mod._canonical_pin_body("dev", "skill:x", ref, ts,
+                                              version=1, not_after=na)
             sig = _edsign(human_seed, body).hex()
             try:
                 pinset.pin("skill:x", ref, "op:alice", sig, ts=ts,
-                           tier="dev")
+                           tier="dev", version=1, not_after=na)
                 return {"verdict": "break",
                         "note": "reference %r was PINNED" % (ref,)}
             except lg_mod.ArtifactRefused as e:
@@ -441,11 +449,14 @@ def sit_unpinned_artifact_never_loads():
         evil_seed = secrets.token_bytes(32)
         evil_digest = "sha256:" + hashlib.sha256(b"evil").hexdigest()
         ts = "2026-09-22T00:00:00+00:00"
+        na = _pin_na(ts)
         body = lg_mod._canonical_pin_body("dev", "skill:brand-new",
-                                          evil_digest, ts)
+                                          evil_digest, ts,
+                                          version=1, not_after=na)
         try:
             pinset.pin("skill:brand-new", evil_digest, "op:mallory",
-                       _edsign(evil_seed, body).hex(), ts=ts, tier="dev")
+                       _edsign(evil_seed, body).hex(), ts=ts, tier="dev",
+                       version=1, not_after=na)
             return {"verdict": "break",
                     "note": "attacker pinned their own digest"}
         except lg_mod.ArtifactRefused as e:
@@ -751,16 +762,21 @@ def sit_production_pin_needs_two_humans():
         trust, human_seed, human2_seed, _auth = _keys()
         pinset = lg_mod.ArtifactPinset(trust, log=lg)
         ts = "2026-09-22T00:00:00+00:00"
+        na = _pin_na(ts)
         d = "sha256:" + hashlib.sha256(b"skill bytes").hexdigest()
 
         def body_for(tier):
-            return lg_mod._canonical_pin_body(tier, "skill:x", d, ts)
+            return lg_mod._canonical_pin_body(tier, "skill:x", d, ts,
+                                              version=1, not_after=na)
+
+        def pin_kw():
+            return {"ts": ts, "tier": "production",
+                    "version": 1, "not_after": na}
 
         alice_prod = _edsign(human_seed, body_for("production")).hex()
         # (1) Single approval at production tier: refused.
         try:
-            pinset.pin("skill:x", d, "op:alice", alice_prod, ts=ts,
-                       tier="production")
+            pinset.pin("skill:x", d, "op:alice", alice_prod, **pin_kw())
             return {"verdict": "break",
                     "note": "production pin accepted with ONE approval"}
         except lg_mod.ArtifactRefused as e:
@@ -769,8 +785,7 @@ def sit_production_pin_needs_two_humans():
                         "note": "wrong refusal: %s" % e}
         # (2) Same key twice: refused.
         try:
-            pinset.pin("skill:x", d, "op:alice", alice_prod, ts=ts,
-                       tier="production",
+            pinset.pin("skill:x", d, "op:alice", alice_prod, **pin_kw(),
                        second_author_key_id="op:alice",
                        second_authorship_sig_hex=alice_prod)
             return {"verdict": "break",
@@ -784,8 +799,7 @@ def sit_production_pin_needs_two_humans():
         alice_dev = _edsign(human_seed, body_for("dev")).hex()
         bob_dev = _edsign(human2_seed, body_for("dev")).hex()
         try:
-            pinset.pin("skill:x", d, "op:alice", alice_dev, ts=ts,
-                       tier="production",
+            pinset.pin("skill:x", d, "op:alice", alice_dev, **pin_kw(),
                        second_author_key_id="op:bob",
                        second_authorship_sig_hex=bob_dev)
             return {"verdict": "break",
@@ -794,8 +808,7 @@ def sit_production_pin_needs_two_humans():
             pass
         # (4) Two distinct roster humans: accepted, both recorded.
         bob_prod = _edsign(human2_seed, body_for("production")).hex()
-        rec = pinset.pin("skill:x", d, "op:alice", alice_prod, ts=ts,
-                         tier="production",
+        rec = pinset.pin("skill:x", d, "op:alice", alice_prod, **pin_kw(),
                          second_author_key_id="op:bob",
                          second_authorship_sig_hex=bob_prod)
         if rec["approvals"] != ["op:alice", "op:bob"]:

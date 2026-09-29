@@ -67,13 +67,20 @@ def _make_world():
     return trust, human_seed, human2_seed, auth_seed
 
 
+def _na(ts):
+    """Default not_after bound for a pin statement ts (90-day TTL)."""
+    return _lg._resolve_pin_not_after(ts, None)
+
+
 def _pin_with_seed(pinset, artifact_id, digest, human_seed,
                    key_id="op:alice", ts="2026-09-22T00:00:00+00:00",
                    tier="dev", second_seed=None, second_key_id="op:bob"):
     from gov.ed25519 import sign as _s
-    body = _lg._canonical_pin_body(tier, artifact_id, digest, ts)
+    na = _na(ts)
+    body = _lg._canonical_pin_body(tier, artifact_id, digest, ts,
+                                   version=1, not_after=na)
     sig = _s(human_seed, body).hex()
-    kw = {"ts": ts, "tier": tier}
+    kw = {"ts": ts, "tier": tier, "version": 1, "not_after": na}
     if second_seed is not None:
         kw["second_author_key_id"] = second_key_id
         kw["second_authorship_sig_hex"] = _s(second_seed, body).hex()
@@ -92,13 +99,24 @@ class TestPinHygiene(unittest.TestCase):
     def _sig(self, artifact_id, digest, key_id="op:alice",
              ts="2026-09-22T00:00:00+00:00", seed=None, tier="dev"):
         from gov.ed25519 import sign as _s
-        body = _lg._canonical_pin_body(tier, artifact_id, digest, ts)
+        body = _lg._canonical_pin_body(tier, artifact_id, digest, ts,
+                                       version=1, not_after=_na(ts))
+        return _s(seed or self.human_seed, body).hex()
+
+    def _unpin_sig(self, key_id="op:alice",
+                   ts="2026-09-22T00:00:00+00:00", seed=None, tier="dev",
+                   version=2):
+        # Unpins must name a version strictly above the pin's (the pin
+        # under test is at version 1).
+        from gov.ed25519 import sign as _s
+        body = _lg._canonical_unpin_body(tier, "skill:x", ts, version=version)
         return _s(seed or self.human_seed, body).hex()
 
     def _pin_dev(self, artifact_id, digest):
         return self.pinset.pin(
             "skill:x", digest, "op:alice", self._sig("skill:x", digest),
-            ts="2026-09-22T00:00:00+00:00", tier="dev")
+            ts="2026-09-22T00:00:00+00:00", tier="dev", version=1,
+            not_after=_na("2026-09-22T00:00:00+00:00"))
 
     def test_good_digest_pin_accepted(self):
         d = "sha256:" + "ab" * 32
@@ -154,13 +172,11 @@ class TestPinHygiene(unittest.TestCase):
         d = "sha256:" + "ab" * 32
         self._pin_dev("skill:x", d)
         evil_seed = __import__("secrets").token_bytes(32)
-        from gov.ed25519 import sign as _s
-        body = _lg._canonical_pin_body("dev", "skill:x", "UNPIN",
-                                       "2026-09-22T00:00:00+00:00")
         with self.assertRaises(_lg.ArtifactRefused):
             self.pinset.unpin("skill:x", "op:alice",
-                              _s(evil_seed, body).hex(),
-                              ts="2026-09-22T00:00:00+00:00", tier="dev")
+                              self._unpin_sig(seed=evil_seed),
+                              ts="2026-09-22T00:00:00+00:00", tier="dev",
+                              version=2)
         # The pin survived the attack.
         self.assertIsNotNone(self.pinset.pin_for("skill:x"))
 
@@ -180,11 +196,14 @@ class TestPinTierRule(unittest.TestCase):
                      seed2=None, key2="op:bob"):
         from gov.ed25519 import sign as _s
         digest = digest or ("sha256:" + "ab" * 32)
-        body = _lg._canonical_pin_body(tier, artifact_id, digest, self.ts)
+        na = _na(self.ts)
+        body = _lg._canonical_pin_body(tier, artifact_id, digest, self.ts,
+                                       version=1, not_after=na)
         return self.pinset.pin(
             artifact_id, digest, key1, _s(seed1 or self.human_seed,
                                           body).hex(),
-            ts=self.ts, tier=tier, second_author_key_id=key2,
+            ts=self.ts, tier=tier, version=1, not_after=na,
+            second_author_key_id=key2,
             second_authorship_sig_hex=_s(seed2 or self.human2_seed,
                                          body).hex())
 
@@ -196,22 +215,28 @@ class TestPinTierRule(unittest.TestCase):
     def test_production_single_approval_refused(self):
         from gov.ed25519 import sign as _s
         d = "sha256:" + "ab" * 32
-        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts)
+        na = _na(self.ts)
+        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts,
+                                       version=1, not_after=na)
         with self.assertRaises(_lg.ArtifactRefused) as c:
             self.pinset.pin("skill:x", d, "op:alice",
                             _s(self.human_seed, body).hex(),
-                            ts=self.ts, tier="production")
+                            ts=self.ts, tier="production",
+                            version=1, not_after=na)
         self.assertIn("two distinct human approvals", str(c.exception))
         self.assertIsNone(self.pinset.pin_for("skill:x"))
 
     def test_production_same_key_twice_refused(self):
         from gov.ed25519 import sign as _s
         d = "sha256:" + "ab" * 32
-        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts)
+        na = _na(self.ts)
+        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts,
+                                       version=1, not_after=na)
         sig = _s(self.human_seed, body).hex()
         with self.assertRaises(_lg.ArtifactRefused) as c:
             self.pinset.pin("skill:x", d, "op:alice", sig,
                             ts=self.ts, tier="production",
+                            version=1, not_after=na,
                             second_author_key_id="op:alice",
                             second_authorship_sig_hex=sig)
         self.assertIn("two DISTINCT keys", str(c.exception))
@@ -219,12 +244,15 @@ class TestPinTierRule(unittest.TestCase):
     def test_production_second_key_unknown_refused(self):
         from gov.ed25519 import sign as _s
         d = "sha256:" + "ab" * 32
-        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts)
+        na = _na(self.ts)
+        body = _lg._canonical_pin_body("production", "skill:x", d, self.ts,
+                                       version=1, not_after=na)
         evil_seed = __import__("secrets").token_bytes(32)
         with self.assertRaises(_lg.ArtifactRefused) as c:
             self.pinset.pin("skill:x", d, "op:alice",
                             _s(self.human_seed, body).hex(),
                             ts=self.ts, tier="production",
+                            version=1, not_after=na,
                             second_author_key_id="op:mallory",
                             second_authorship_sig_hex=_s(evil_seed,
                                                          body).hex())
@@ -242,12 +270,15 @@ class TestPinTierRule(unittest.TestCase):
         # production approval: the tier is inside the signed body.
         from gov.ed25519 import sign as _s
         d = "sha256:" + "ab" * 32
-        dev_body = _lg._canonical_pin_body("dev", "skill:x", d, self.ts)
+        na = _na(self.ts)
+        dev_body = _lg._canonical_pin_body("dev", "skill:x", d, self.ts,
+                                           version=1, not_after=na)
         alice_dev = _s(self.human_seed, dev_body).hex()
         bob_dev = _s(self.human2_seed, dev_body).hex()
         with self.assertRaises(_lg.ArtifactRefused):
             self.pinset.pin("skill:x", d, "op:alice", alice_dev,
                             ts=self.ts, tier="production",
+                            version=1, not_after=na,
                             second_author_key_id="op:bob",
                             second_authorship_sig_hex=bob_dev)
 
@@ -255,16 +286,17 @@ class TestPinTierRule(unittest.TestCase):
         d = "sha256:" + "ab" * 32
         self._two_sig_pin(digest=d)
         from gov.ed25519 import sign as _s
-        body = _lg._canonical_pin_body("production", "skill:x", "UNPIN",
-                                       self.ts)
+        body = _lg._canonical_unpin_body("production", "skill:x", self.ts,
+                                         version=2)
         with self.assertRaises(_lg.ArtifactRefused):
             self.pinset.unpin("skill:x", "op:alice",
                               _s(self.human_seed, body).hex(),
-                              ts=self.ts, tier="production")
+                              ts=self.ts, tier="production", version=2)
         self.assertIsNotNone(self.pinset.pin_for("skill:x"))
         self.pinset.unpin(
             "skill:x", "op:alice", _s(self.human_seed, body).hex(),
-            ts=self.ts, tier="production", second_author_key_id="op:bob",
+            ts=self.ts, tier="production", version=2,
+            second_author_key_id="op:bob",
             second_authorship_sig_hex=_s(self.human2_seed, body).hex())
         self.assertIsNone(self.pinset.pin_for("skill:x"))
 

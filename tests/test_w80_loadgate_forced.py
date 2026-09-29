@@ -84,10 +84,19 @@ def _world():
     return trust, h1, h2
 
 
-def _pin(pinset, artifact_id, digest, signer, tier="dev"):
-    body = _lg._canonical_pin_body(tier, artifact_id, digest, _TS)
+def _na(ts=_TS):
+    """Default not_after bound for a pin statement ts (90-day TTL)."""
+    return _lg._resolve_pin_not_after(ts, None)
+
+
+def _pin(pinset, artifact_id, digest, signer, tier="dev", version=1,
+         not_after=None):
+    na = not_after or _na()
+    body = _lg._canonical_pin_body(tier, artifact_id, digest, _TS,
+                                   version=version, not_after=na)
     return pinset.pin(artifact_id, digest, signer.key_id,
-                      signer.sign(body).hex(), ts=_TS, tier=tier)
+                      signer.sign(body).hex(), ts=_TS, tier=tier,
+                      version=version, not_after=na)
 
 
 def _policy_file(raw=None):
@@ -253,24 +262,29 @@ class TestGenesisPinning(unittest.TestCase):
         # An attacker key (not on the roster) cannot pin the genesis
         # digest — the forgery dies at pin time, before any bootstrap.
         attacker = _human()
+        na = _na()
         body = _lg._canonical_pin_body("dev", "policy:evil",
-                                       self.digest, _TS)
+                                       self.digest, _TS,
+                                       version=1, not_after=na)
         with self.assertRaises(_lg.ArtifactRefused) as c:
             self.pinset.pin("policy:evil", self.digest,
                             attacker.key_id,
                             attacker.sign(body).hex(),
-                            ts=_TS, tier="dev")
+                            ts=_TS, tier="dev", version=1, not_after=na)
         self.assertIn("pin_authorship_invalid", str(c.exception))
 
     def test_production_genesis_pin_needs_two_humans(self):
         # The wave-75 nuclear rule applies to the genesis pin too: a
         # production genesis pin with one human is refused.
+        na = _na()
         body = _lg._canonical_pin_body("production", "policy:prod",
-                                       self.digest, _TS)
+                                       self.digest, _TS,
+                                       version=1, not_after=na)
         with self.assertRaises(_lg.ArtifactRefused) as c:
             self.pinset.pin("policy:prod", self.digest, self.h1.key_id,
                             self.h1.sign(body).hex(),
-                            ts=_TS, tier="production")
+                            ts=_TS, tier="production",
+                            version=1, not_after=na)
         self.assertIn("two distinct human", str(c.exception).lower())
 
     def test_tampered_bootstrap_file_refused(self):
@@ -369,10 +383,13 @@ class TestSkillChannelForced(unittest.TestCase):
         self.assertIn("artifact_unpinned", str(c2.exception))
 
     def test_tag_pin_downgrade_refused_at_skill_seam(self):
-        body = _lg._canonical_pin_body("dev", "skill:x", "v2.0", _TS)
+        na = _na()
+        body = _lg._canonical_pin_body("dev", "skill:x", "v2.0", _TS,
+                                       version=1, not_after=na)
         with self.assertRaises(_lg.ArtifactRefused):
             self.pinset.pin("skill:x", "v2.0", self.h1.key_id,
-                            self.h1.sign(body).hex(), ts=_TS, tier="dev")
+                            self.h1.sign(body).hex(), ts=_TS, tier="dev",
+                            version=1, not_after=na)
 
 
 # ---------------------------------------------------------------------------
@@ -385,11 +402,13 @@ class TestPinDowngradeRefused(unittest.TestCase):
         self.pinset = _lg.ArtifactPinset(self.trust)
 
     def _try_pin(self, value):
+        na = _na()
         body = _lg._canonical_pin_body("dev", "policy:genesis", value,
-                                       _TS)
+                                       _TS, version=1, not_after=na)
         with self.assertRaises(_lg.ArtifactRefused, msg=value):
             self.pinset.pin("policy:genesis", value, self.h1.key_id,
-                            self.h1.sign(body).hex(), ts=_TS, tier="dev")
+                            self.h1.sign(body).hex(), ts=_TS, tier="dev",
+                            version=1, not_after=na)
 
     def test_tag_pin_refused(self):
         self._try_pin("v1.2.3")

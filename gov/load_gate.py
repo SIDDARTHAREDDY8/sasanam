@@ -54,7 +54,7 @@ real filesystem mutation beyond the caller's own temp files.
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .delegation_tokens import DelegationTrust
 from .ed25519 import sign as _ed_sign
@@ -216,7 +216,73 @@ class VerifiedArtifact:
 # ArtifactPinset: the governed pin registry.
 # ---------------------------------------------------------------------------
 
-_PIN_DOMAIN = b"gov-artifact-pin/v1\x00"
+# Wave-194 lane A (TUF-steal): the pin protocol is now v2. Version and
+# expiry are bound INSIDE the authorship-signed body (TUF signs expires in
+# the metadata for the same reason): a replayed old pin statement cannot
+# have its expiry rewritten without breaking authorship, and the domain
+# bump keeps v1 (freshness-less) statements from verifying under the new
+# parser at all.
+_PIN_DOMAIN = b"gov-artifact-pin/v2\x00"
+
+# TUF-steal freshness constants — deliberately the same values as the
+# watch layer's wave-179 steal (gov/skill_watch.py: _PIN_NOT_AFTER_TTL_SECONDS,
+# _PIN_MANIFEST_VERSION_START) so the two registries tell one freshness
+# story. The parse rules are duplicated here (not imported) to keep the
+# load gate free of a skill_watch import; semantics are identical: strict
+# ISO-8601, timezone required, naive refused, fail closed.
+_PIN_NOT_AFTER_TTL_SECONDS = 90 * 24 * 3600  # default pin lifetime: 90 days
+_PIN_VERSION_START = 1
+
+
+def _check_pin_version(value, *, field="pin version"):
+    """Validate a monotonic pin version. Fail closed."""
+    if (isinstance(value, bool) or not isinstance(value, int)
+            or value < _PIN_VERSION_START):
+        raise ArtifactRefused(
+            "%s must be an integer >= %d, got %r"
+            % (field, _PIN_VERSION_START, value))
+    return value
+
+
+def _parse_pin_not_after(value, *, context):
+    """Strictly parse a pin ``not_after`` bound. Fail closed.
+
+    Must be a non-empty ISO-8601 string with explicit timezone info.
+    Naive datetimes are refused outright — never silently assumed UTC.
+    Returns the parsed tz-aware datetime.
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ArtifactRefused(
+            "%s: pin not_after must be a non-empty ISO-8601 string "
+            "with timezone, got %r" % (context, value))
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise ArtifactRefused(
+            "%s: pin not_after %r is not valid ISO-8601"
+            % (context, value))
+    if parsed.tzinfo is None:
+        raise ArtifactRefused(
+            "%s: pin not_after %r has no timezone (naive datetimes "
+            "refused: never assume UTC)" % (context, value))
+    return parsed
+
+
+def _resolve_pin_not_after(ts, not_after):
+    """Resolve the effective not_after for a pin statement.
+
+    An explicit bound is strictly parsed (fail closed); when absent, the
+    pin lives 90 days from its pinned_at (mirrors the watch layer's
+    ``_default_not_after``). Returns the NORMALIZED ISO-8601 string —
+    normalization keeps the signed body canonical (``Z`` vs ``+00:00``
+    spellings sign identically).
+    """
+    if not_after is None:
+        base = _parse_pin_not_after(ts, context="pin ts")
+        return (base + timedelta(seconds=_PIN_NOT_AFTER_TTL_SECONDS)
+                ).isoformat(timespec="seconds")
+    return _parse_pin_not_after(
+        not_after, context="pin not_after").isoformat(timespec="seconds")
 
 # Deployment tiers for pin mutations. The wave-75 nuclear rule applies:
 # production pin changes need TWO distinct roster human keys; dev/test/
@@ -226,13 +292,41 @@ _PIN_DOMAIN = b"gov-artifact-pin/v1\x00"
 _PIN_TIERS = ("dev", "test", "staging", "production")
 
 
-def _canonical_pin_body(tier, artifact_id, digest, ts):
+def _canonical_pin_body(tier, artifact_id, digest, ts, *, version,
+                        not_after):
+    """Canonical bytes the pin authorship signs.
+
+    ``version`` and ``not_after`` are REQUIRED keywords — there is no
+    silent default inside the signed body; callers resolve via
+    :func:`_resolve_pin_not_after` first, so what the human signed is
+    exactly what the pinset enforces.
+    """
+    _check_pin_version(version)
     return b"|".join([
         _PIN_DOMAIN,
         tier.encode("utf-8"),
         artifact_id.encode("utf-8"),
         digest.encode("utf-8"),
         ts.encode("utf-8"),
+        str(version).encode("utf-8"),
+        not_after.encode("utf-8"),
+    ])
+
+
+def _canonical_unpin_body(tier, artifact_id, ts, *, version):
+    """Canonical bytes the unpin authorship signs.
+
+    The unpin carries the pin version it removes: a replayed older unpin
+    statement cannot delete a newer pin (``unpin_version_not_monotonic``).
+    """
+    _check_pin_version(version, field="unpin version")
+    return b"|".join([
+        _PIN_DOMAIN,
+        tier.encode("utf-8"),
+        artifact_id.encode("utf-8"),
+        b"UNPIN",
+        ts.encode("utf-8"),
+        str(version).encode("utf-8"),
     ])
 
 
@@ -240,14 +334,23 @@ class ArtifactPinset:
     """The governed digest-pin registry.
 
     Pins are ``{artifact_id: {digest, pinned_by, approvals, tier,
-    pinned_at}}``. The ONLY mutation path is :meth:`pin` /
-    :meth:`unpin`, which require Ed25519 authorship from roster human
-    keys (``DelegationTrust.human_keys``) — the wave-75 construction
-    applied to digest pins, including the nuclear tier rule:
+    pinned_at, version, not_after}}``. The ONLY mutation path is
+    :meth:`pin` / :meth:`unpin`, which require Ed25519 authorship from
+    roster human keys (``DelegationTrust.human_keys``) — the wave-75
+    construction applied to digest pins, including the nuclear tier rule:
     production needs two DISTINCT human keys, dev/test/staging take
     single-human. Mutations are appended as chained log records
     (``artifact_pinned`` / ``artifact_unpinned``) when a log is
     provided.
+
+    Wave-194 lane A (TUF-steal): every pin carries a monotonic
+    ``version`` (integer >= 1) and a ``not_after`` expiry bound, both
+    covered by the pin authorship signature. Re-pinning at a
+    non-increasing version is refused (``pin_version_not_monotonic``) —
+    a replayed older pin statement, however legitimately signed, can
+    never displace a newer pin. :func:`verify_and_load` refuses pins
+    whose ``not_after`` has passed (``pin_expired``) before checking
+    the digest, mirroring the watch layer's stale-pin refusal.
 
     A 40-hex git SHA is refused as a pin value: it is a *reference*,
     not a digest (the exact confusion Plugin4Shell exploited). Only
@@ -264,18 +367,30 @@ class ArtifactPinset:
 
     def pin(self, artifact_id, digest, author_key_id, authorship_sig_hex,
             *, ts=None, tier="production", second_author_key_id=None,
-            second_authorship_sig_hex=None):
+            second_authorship_sig_hex=None, version=_PIN_VERSION_START,
+            not_after=None):
         """Pin *digest* for *artifact_id* under human authorship.
 
         ``authorship_sig_hex`` is the Ed25519 signature (by the private
         key for ``author_key_id``) over the canonical pin body
-        (tier|artifact_id|digest|ts). The wave-75 tier rule applies:
-        ``tier="production"`` (the default) requires a SECOND approval
-        from a DISTINCT roster human key over the identical body —
-        the same key twice is refused; dev/test/staging take
-        single-human. Raises :class:`ArtifactRefused`
-        (``pin_authorship_invalid``) on any authorship failure, and
-        refuses non-digest pin values at once.
+        (tier|artifact_id|digest|ts|version|not_after). The wave-75 tier
+        rule applies: ``tier="production"`` (the default) requires a
+        SECOND approval from a DISTINCT roster human key over the
+        identical body — the same key twice is refused;
+        dev/test/staging take single-human.
+
+        ``version`` (default 1) must move strictly upward per artifact:
+        re-pinning at a non-increasing version is refused
+        (``pin_version_not_monotonic``) — the TUF rollback floor, so a
+        replayed older pin statement can never displace a newer pin.
+        ``not_after`` is the pin's expiry bound (strict ISO-8601 with
+        timezone; naive/malformed refused); when omitted the pin lives
+        90 days from ``ts`` (mirrors the watch layer). Renewal is a
+        re-pin at a HIGHER version with fresh authorship.
+
+        Raises :class:`ArtifactRefused` (``pin_authorship_invalid``) on
+        any authorship failure, and refuses non-digest pin values at
+        once.
         """
         if not artifact_id or not isinstance(artifact_id, str):
             raise ArtifactRefused("pin refused: bad artifact_id")
@@ -289,16 +404,32 @@ class ArtifactPinset:
                 "pin refused: %r is not a sha256 digest pin "
                 "(references are never pinned)" % (digest,))
         ts = ts or _utcnow_iso()
-        body = _canonical_pin_body(tier, artifact_id, digest, ts)
+        version = _check_pin_version(version)
+        not_after = _resolve_pin_not_after(ts, not_after)
+        body = _canonical_pin_body(tier, artifact_id, digest, ts,
+                                   version=version, not_after=not_after)
+        # Authorship is verified BEFORE the version floor (TUF order:
+        # signature first, then freshness): a forged statement reports
+        # pin_authorship_invalid precisely, and only a genuinely-signed
+        # older statement reaches the rollback floor below.
         approvals = self._require_approvals(
             body, tier, author_key_id, authorship_sig_hex,
             second_author_key_id, second_authorship_sig_hex)
+        existing = self._pins.get(artifact_id)
+        if existing is not None and version <= existing["version"]:
+            raise ArtifactRefused(
+                "pin_version_not_monotonic: pin for %r is at version %d; "
+                "re-pin at version %d refused (versions move strictly "
+                "upward; a replayed older pin statement cannot displace "
+                "a newer pin)" % (artifact_id, existing["version"], version))
         self._pins[artifact_id] = {
             "digest": digest,
             "pinned_by": author_key_id,
             "approvals": approvals,
             "tier": tier,
             "pinned_at": ts,
+            "version": version,
+            "not_after": not_after,
         }
         if self._log is not None:
             self._log.append({
@@ -308,6 +439,8 @@ class ArtifactPinset:
                 "pinned_by": author_key_id,
                 "approvals": approvals,
                 "tier": tier,
+                "version": version,
+                "not_after": not_after,
             })
         return dict(self._pins[artifact_id])
 
@@ -350,18 +483,34 @@ class ArtifactPinset:
 
     def unpin(self, artifact_id, author_key_id, authorship_sig_hex, *,
               ts=None, tier="production", second_author_key_id=None,
-              second_authorship_sig_hex=None):
-        """Remove a pin (same tier/authorship rule as pin)."""
+              second_authorship_sig_hex=None, version=_PIN_VERSION_START):
+        """Remove a pin (same tier/authorship rule as pin).
+
+        ``version`` must be strictly greater than the pin's current
+        version: a replayed older unpin statement cannot delete a newer
+        pin (``unpin_version_not_monotonic``). The unpin authorship
+        signs the version it removes.
+        """
         if artifact_id not in self._pins:
             raise ArtifactRefused(
                 "unpin refused: no pin for %r" % (artifact_id,))
         if tier not in _PIN_TIERS:
             raise ArtifactRefused("unpin refused: unknown tier %r" % (tier,))
         ts = ts or _utcnow_iso()
-        body = _canonical_pin_body(tier, artifact_id, "UNPIN", ts)
+        version = _check_pin_version(version, field="unpin version")
+        body = _canonical_unpin_body(tier, artifact_id, ts, version=version)
+        # Authorship before the version floor (same TUF order as pin):
+        # a forged unpin reports pin_authorship_invalid precisely.
         approvals = self._require_approvals(
             body, tier, author_key_id, authorship_sig_hex,
             second_author_key_id, second_authorship_sig_hex)
+        current = self._pins[artifact_id]["version"]
+        if version <= current:
+            raise ArtifactRefused(
+                "unpin_version_not_monotonic: pin for %r is at version "
+                "%d; unpin at version %d refused (a replayed older unpin "
+                "statement cannot delete a newer pin)"
+                % (artifact_id, current, version))
         del self._pins[artifact_id]
         if self._log is not None:
             self._log.append({
@@ -370,6 +519,7 @@ class ArtifactPinset:
                 "unpinned_by": author_key_id,
                 "approvals": approvals,
                 "tier": tier,
+                "version": version,
             })
         return True
 
@@ -379,10 +529,32 @@ class ArtifactPinset:
         return dict(pin) if pin else None
 
     def sign_pin_statement(self, seed, artifact_id, digest, author_key_id,
-                           ts):
+                           ts, *, tier="production",
+                           version=_PIN_VERSION_START, not_after=None):
         """Operator-side helper: sign a pin statement with a human seed.
-        (The private seed never crosses into agent-reachable code.)"""
-        body = _canonical_pin_body(artifact_id, digest, author_key_id, ts)
+
+        (The private seed never crosses into agent-reachable code.)
+        Mirrors :meth:`pin`: the signature covers tier, version, and the
+        resolved not_after — pass the returned signature together with
+        the same ``tier``/``version``/resolved ``not_after`` to
+        :meth:`pin`. Use :func:`_resolve_pin_not_after` to see the
+        effective bound that was signed.
+        """
+        resolved = _resolve_pin_not_after(ts, not_after)
+        body = _canonical_pin_body(tier, artifact_id, digest, ts,
+                                   version=version, not_after=resolved)
+        return _ed_sign(seed, body).hex()
+
+    def sign_unpin_statement(self, seed, artifact_id, author_key_id, ts,
+                             *, tier="production",
+                             version=_PIN_VERSION_START):
+        """Operator-side helper: sign an unpin statement with a human seed.
+
+        (The private seed never crosses into agent-reachable code.)
+        Mirrors :meth:`unpin`: the signature covers the version being
+        removed, which must exceed the pin's current version.
+        """
+        body = _canonical_unpin_body(tier, artifact_id, ts, version=version)
         return _ed_sign(seed, body).hex()
 
 
@@ -397,6 +569,9 @@ def verify_and_load(pinset, artifact_id, fetched_bytes, *, log=None):
     were hashed (the TOCTOU binding). Raises :class:`ArtifactRefused`:
 
     * ``artifact_unpinned`` — no pin exists; there is no TOFU.
+    * ``pin_expired`` — the pin's ``not_after`` has passed; stale pins
+      are refused BEFORE any content is attested (watch-layer parity:
+      expiry is staleness, not compromise).
     * ``digest_mismatch`` — bytes do not match the pin; refused loudly
       and chained when a log is provided.
 
@@ -414,6 +589,20 @@ def verify_and_load(pinset, artifact_id, fetched_bytes, *, log=None):
                   "(no trust-on-first-use)" % (artifact_id,))
         raise ArtifactRefused(
             "artifact_unpinned: no digest pin for %r" % (artifact_id,))
+    # TUF-steal (wave-194 lane A): freshness before content. The pin is
+    # the trust anchor for the digest check below, so its expiry is
+    # verified first — a stale pin refuses the load even when the bytes
+    # would match.
+    expiry = _parse_pin_not_after(
+        pin.get("not_after"), context="pin not_after for %r" % (artifact_id,))
+    if datetime.now(timezone.utc) > expiry:
+        _refused(log, artifact_id, "pin_expired",
+                  "pin for %r expired at %s" % (artifact_id,
+                                                pin.get("not_after")))
+        raise ArtifactRefused(
+            "pin_expired: pin for %r expired at %s (stale pins are not "
+            "loaded; renew via a higher-version re-pin)"
+            % (artifact_id, pin.get("not_after")))
     data = bytes(fetched_bytes)
     digest = "sha256:" + hashlib.sha256(data).hexdigest()
     if digest != pin["digest"]:

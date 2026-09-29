@@ -208,11 +208,17 @@ def _keys():
     return trust, human_seed, human2_seed, auth_seed
 
 
+def _pin_na(ts=_TS):
+    return lg_mod._resolve_pin_not_after(ts, None)
+
+
 def _pin(pinset, artifact_id, digest, human_seed, key_id="op:alice",
-         tier="dev", second_seed=None, second_key_id="op:bob"):
-    body = lg_mod._canonical_pin_body(tier, artifact_id, digest, _TS)
+         tier="dev", second_seed=None, second_key_id="op:bob", version=1):
+    na = _pin_na()
+    body = lg_mod._canonical_pin_body(tier, artifact_id, digest, _TS,
+                                      version=version, not_after=na)
     sig = _edsign(human_seed, body).hex()
-    kw = {"ts": _TS, "tier": tier}
+    kw = {"ts": _TS, "tier": tier, "version": version, "not_after": na}
     if second_seed is not None:
         kw["second_author_key_id"] = second_key_id
         kw["second_authorship_sig_hex"] = _edsign(second_seed, body).hex()
@@ -472,12 +478,14 @@ def sit_pin_downgrade_digest_to_tag():
 
         for ref in ("v1.2.3", "latest", "main", "refs/heads/main",
                     "cf" * 20):  # 40-hex git SHA: a reference, not a digest
+            na = _pin_na()
             body = lg_mod._canonical_pin_body("dev", "policy:genesis",
-                                              ref, _TS)
+                                              ref, _TS,
+                                              version=1, not_after=na)
             try:
                 pinset.pin("policy:genesis", ref, "op:alice",
                            _edsign(human_seed, body).hex(),
-                           ts=_TS, tier="dev")
+                           ts=_TS, tier="dev", version=1, not_after=na)
                 return {"verdict": "break",
                         "note": "pin DOWNGRADED to reference %r" % ref}
             except lg_mod.ArtifactRefused:
@@ -540,10 +548,13 @@ def sit_genesis_digest_forgery():
         pinset = lg_mod.ArtifactPinset(trust, log=lg)
 
         def _pin_local(artifact_id, digest):
+            na = _pin_na()
             body = lg_mod._canonical_pin_body("dev", artifact_id,
-                                              digest, _TS)
+                                              digest, _TS,
+                                              version=1, not_after=na)
             return pinset.pin(artifact_id, digest, s1.key_id,
-                              s1.sign(body).hex(), ts=_TS, tier="dev")
+                              s1.sign(body).hex(), ts=_TS, tier="dev",
+                              version=1, not_after=na)
 
         reviewed = _BASE_POLICY
         pin_digest = _digest(reviewed)
@@ -571,12 +582,14 @@ def sit_genesis_digest_forgery():
         # (b) Attacker-keyed pin for the genesis artifact id.
         evil_seed = _secrets.token_bytes(32)
         evil_digest = _digest(b"evil policy")
+        na = _pin_na()
         body = lg_mod._canonical_pin_body("dev", "policy:genesis",
-                                          evil_digest, _TS)
+                                          evil_digest, _TS,
+                                          version=1, not_after=na)
         try:
             pinset.pin("policy:genesis", evil_digest, "op:mallory",
                        _edsign(evil_seed, body).hex(),
-                       ts=_TS, tier="dev")
+                       ts=_TS, tier="dev", version=1, not_after=na)
             return {"verdict": "break",
                     "note": "attacker-keyed genesis pin accepted"}
         except lg_mod.ArtifactRefused as e:
@@ -733,15 +746,22 @@ def sit_mcp_artifact_pinset_enforced():
         def pin_manifest(session):
             manifest_bytes, _sig = asyncio.run(
                 session.get_server_manifest())
+            # The deployer renews at a strictly higher version (the
+            # wave-194 monotonic floor); re-pinning the same bytes is
+            # a renewal, not a rollback.
+            cur = pinset.pin_for(aid("manifest", "server"))
+            version = 1 if cur is None else cur["version"] + 1
             _pin(pinset, aid("manifest", "server"),
-                 _digest(manifest_bytes), human_seed)
+                 _digest(manifest_bytes), human_seed, version=version)
             return manifest_bytes
 
         def pin_tool(desc=orig_desc):
             entry_bytes = _canonical_metadata(
                 "read_file", desc, {"type": "object"}).encode("utf-8")
+            cur = pinset.pin_for(aid("tool", "read_file"))
+            version = 1 if cur is None else cur["version"] + 1
             _pin(pinset, aid("tool", "read_file"),
-                 _digest(entry_bytes), human_seed)
+                 _digest(entry_bytes), human_seed, version=version)
 
         def client_for(session):
             ctx = make_run()
