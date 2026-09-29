@@ -102,7 +102,8 @@ def build_bom(*, policy_id, policy_version, policy_digest,
               approval_id=None, approval_record_digest=None,
               decision_mode=None, nominal_effect=None,
               decision_warnings=None, rule_mode_history=None,
-              perm_model=None, decision_event_v2=None, tool_grants=None):
+              perm_model=None, decision_event_v2=None, tool_grants=None,
+              attested_identity=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -165,6 +166,19 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     ``audit`` chain bookkeeping so an auditor holding only the chained
     log entry can re-derive it. Omitted when the decision carries no v2
     event, and BOMs built without it are byte-identical to before.
+
+    Wave-204 (attested identity): ``attested_identity`` is an optional
+    all-or-none dict ``{"tier": 1, "credential_digest": hex64,
+    "evidence_digest": hex64}`` -- the attested identity the deciding
+    agent bootstrapped under (``gov.attested_identity.
+    bom_identity_section()``). The credential digest binds the exact
+    issued credential; the evidence digest binds the consumed
+    attestation evidence. Tier-1 only: tier-2 carries no attested
+    evidence, and binding an empty digest would be a vacuous proof, so
+    ``bom_identity_section()`` refuses tier-2 loudly. Omitted when the
+    decision did not run under an attested identity, and BOMs built
+    without it are byte-identical to before (the wave-191
+    token_digest precedent). A partial dict raises BomError.
     """
     if not isinstance(policy_id, str) or not policy_id:
         raise BomError("policy_id must be a non-empty string")
@@ -349,6 +363,38 @@ def build_bom(*, policy_id, policy_version, policy_digest,
         }
     if grant_inputs is not None:
         inputs["grants"] = grant_inputs
+    # Wave-204 (attested identity): the optional attested_identity
+    # section. All-or-none: a partial dict is refused loud, and absence
+    # keeps the BOM byte-identical to before.
+    if attested_identity is not None:
+        if not isinstance(attested_identity, dict):
+            raise BomError("attested_identity must be a dict or None")
+        ident_tier = attested_identity.get("tier")
+        # bool rejected explicitly: True == 1 in Python, so a bare
+        # ``!= 1`` check would silently accept tier=True as tier-1.
+        if isinstance(ident_tier, bool) or ident_tier != 1:
+            raise BomError(
+                "attested_identity tier must be 1 (tier-1 attested); "
+                "tier-2 carries no attested evidence to bind, got %r"
+                % (ident_tier,))
+        ident_cred = attested_identity.get("credential_digest")
+        if not _is_hex64(ident_cred):
+            raise BomError("attested_identity credential_digest must be "
+                           "64-char lowercase hex")
+        ident_ev = attested_identity.get("evidence_digest")
+        if not _is_hex64(ident_ev):
+            raise BomError("attested_identity evidence_digest must be "
+                           "64-char lowercase hex")
+        unknown_ident = set(attested_identity) - {
+            "tier", "credential_digest", "evidence_digest"}
+        if unknown_ident:
+            raise BomError("attested_identity carries unknown keys: %s"
+                           % sorted(unknown_ident))
+        inputs["attested_identity"] = {
+            "tier": ident_tier,
+            "credential_digest": ident_cred,
+            "evidence_digest": ident_ev,
+        }
     return {
         "bom_version": BOM_VERSION,
         "inputs": inputs,
@@ -476,12 +522,36 @@ def check_bom_shape(bom):
         if set(grants) - {"grant_digest", "decision_id",
                            "capability_count"}:
             return False, "bom.inputs.grants carries unknown keys"
+    # Wave-204 (attested identity): the optional attested_identity
+    # section, when present, must bind a tier-1 credential and its
+    # evidence by digest. Absent is fine (decisions that did not run
+    # under an attested identity omit it).
+    ident = inputs.get("attested_identity")
+    if ident is not None:
+        if not isinstance(ident, dict):
+            return False, "bom.inputs.attested_identity is not a dict"
+        # bool rejected explicitly: True == 1 in Python, so a bare
+        # ``!= 1`` check would silently accept tier=True as tier-1.
+        ident_tier = ident.get("tier")
+        if isinstance(ident_tier, bool) or ident_tier != 1:
+            return False, ("bom.inputs.attested_identity.tier must be 1 "
+                           "(tier-1 attested)")
+        if not _is_hex64(ident.get("credential_digest")):
+            return False, ("bom.inputs.attested_identity.credential_digest "
+                           "is not 64-char hex")
+        if not _is_hex64(ident.get("evidence_digest")):
+            return False, ("bom.inputs.attested_identity.evidence_digest "
+                           "is not 64-char hex")
+        if set(ident) - {"tier", "credential_digest", "evidence_digest"}:
+            return False, ("bom.inputs.attested_identity carries unknown "
+                           "keys")
     return True, "ok"
 
 
 def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                approval_records=None, perm_model_bytes=None,
-               perm_policy_bytes=None, grant_capability_specs=None):
+               perm_policy_bytes=None, grant_capability_specs=None,
+               identity_credential_body=None):
     """On-demand reconstruction check (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -529,6 +599,14 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
     dispatch records. The BOM's ``inputs.grants.grant_digest`` and
     ``capability_count`` re-derive from it; without it the grants leg
     is reported UNVERIFIED, never silently passed.
+    Wave-204 (attested identity): ``identity_credential_body`` is the
+    presented attested-identity credential body dict (the unsigned
+    ``{"domain", "tier", "claims", "expires_at"}`` the attester signed).
+    The BOM's ``inputs.attested_identity.credential_digest`` must
+    re-derive from it via ``gov.attested_identity.credential_digest_of``,
+    and the body's tier must match the section's tier -- a relabelled
+    credential is caught here. Without the body the leg is UNVERIFIED,
+    named, never silently passed -- exactly like the approval leg.
     """
     try:
         return _verify(bom,
@@ -537,7 +615,8 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                        approval_records=approval_records,
                        perm_model_bytes=perm_model_bytes,
                        perm_policy_bytes=perm_policy_bytes,
-                       grant_capability_specs=grant_capability_specs)
+                       grant_capability_specs=grant_capability_specs,
+                       identity_credential_body=identity_credential_body)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
@@ -545,7 +624,7 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
 
 def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
             perm_model_bytes, perm_policy_bytes,
-            grant_capability_specs):
+            grant_capability_specs, identity_credential_body):
     ok, reason = check_bom_shape(bom)
     if not ok:
         return False, reason
@@ -656,6 +735,30 @@ def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
                     "grant capability_count does not match the supplied "
                     "capability specs")
             checked.append("grants")
+    # Wave-204 (attested identity): the auditor re-derives the
+    # credential digest from the presented credential body. Without the
+    # body the leg is UNVERIFIED -- named, never silently passed --
+    # exactly like the approval leg above. A swapped or relabelled
+    # credential fails closed here.
+    ident = inputs.get("attested_identity")
+    if ident is not None:
+        if identity_credential_body is None:
+            unverified.append("attested-identity")
+        else:
+            from gov import attested_identity as _ai
+            if not isinstance(identity_credential_body, dict):
+                return False, "identity_credential_body is not a dict"
+            rederived = _ai.credential_digest_of(identity_credential_body)
+            if rederived != ident["credential_digest"]:
+                return False, (
+                    "attested_identity credential_digest does not "
+                    "re-derive from the supplied credential body "
+                    "(swapped or tampered identity)")
+            if identity_credential_body.get("tier") != ident["tier"]:
+                return False, (
+                    "attested_identity tier in the credential body does "
+                    "not match the BOM section (relabelled identity)")
+            checked.append("attested-identity")
     if not checked:
         return False, ("no artifacts supplied for re-derivation: BOM "
                        "shape ok, provenance UNVERIFIED")

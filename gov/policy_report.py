@@ -59,6 +59,7 @@ import hashlib
 import json
 
 from . import ed25519 as _ed25519
+from . import attested_identity as _attested_identity
 
 #: Version of the report schema this module emits.
 REPORT_VERSION = "sasanam-policy-report/1.0"
@@ -140,8 +141,32 @@ def _check_ledger(ledger):
     return chain
 
 
+def _check_identity_tier(identity_tier):
+    """Validate the optional wave-204 attested-identity tier.
+
+    Returns the tier label (``"tier-1-attested"`` / ``"tier-2-kernel-fact"``)
+    or None when omitted. Raises PolicyReportError on anything else --
+    a report must never silently record a weaker claim than the decision
+    actually rested on.
+    """
+    if identity_tier is None:
+        return None
+    # bool rejected explicitly: True == 1 in Python, so a bare dict
+    # lookup would silently label tier=True as "tier-1-attested".
+    if isinstance(identity_tier, bool):
+        raise PolicyReportError(
+            "identity_tier must be 1 (tier-1-attested) or 2 "
+            "(tier-2-kernel-fact), got %r" % (identity_tier,))
+    label = _attested_identity.TIER_LABELS.get(identity_tier)
+    if label is None:
+        raise PolicyReportError(
+            "identity_tier must be 1 (tier-1-attested) or 2 "
+            "(tier-2-kernel-fact), got %r" % (identity_tier,))
+    return label
+
+
 def project_result(record, *, policy_name, source=DEFAULT_SOURCE,
-                   policy_version=None):
+                   policy_version=None, identity_tier=None):
     """Project one ModeLedger record into a PolicyReportResult dict.
 
     Only ``violation`` records and mode-transition records (any
@@ -149,9 +174,15 @@ def project_result(record, *, policy_name, source=DEFAULT_SOURCE,
     ``new_mode``) project; anything else raises
     :class:`PolicyReportError` (the caller, not this function,
     filters -- a programming error must be loud).
+
+    Wave-204: ``identity_tier`` (1 or 2) records the attested-identity
+    tier the deciding agent bootstrapped under; it rides
+    ``properties.identity_tier``. Omitted by default (no behavior
+    change).
     """
     if not isinstance(record, dict):
         raise PolicyReportError("record must be a dict")
+    _check_identity_tier(identity_tier)
     role = _record_role(record)
     if not policy_name or not isinstance(policy_name, str):
         raise PolicyReportError("policy_name must be a non-empty str")
@@ -165,6 +196,8 @@ def project_result(record, *, policy_name, source=DEFAULT_SOURCE,
     }
     if policy_version is not None:
         properties["policy_version"] = policy_version
+    if identity_tier is not None:
+        properties["identity_tier"] = identity_tier
 
     resources = []
     request_digest = record.get("request_digest")
@@ -222,7 +255,7 @@ def project_result(record, *, policy_name, source=DEFAULT_SOURCE,
 
 def build_report(ledger, *, policy_name, source=DEFAULT_SOURCE,
                  policy_version=None, window_start=None, window_end=None,
-                 rule_ids=None):
+                 rule_ids=None, identity_tier=None):
     """Build a PolicyReport dict from a ModeLedger for an audit window.
 
     ``window_start``/``window_end`` are epoch seconds bounding
@@ -232,8 +265,14 @@ def build_report(ledger, *, policy_name, source=DEFAULT_SOURCE,
     with evaluations but zero violations have no chain records, yet
     the auditor needs their evaluated counts). The ledger is never
     mutated. Deterministic for a fixed ledger and window.
+
+    Wave-204: ``identity_tier`` (1 or 2) records the attested-identity
+    tier the deciding agent bootstrapped under; it rides
+    ``metadata.identityTier`` as the tier label. Omitted by default
+    (no behavior change).
     """
     chain = _check_ledger(ledger)
+    identity_tier_label = _check_identity_tier(identity_tier)
     if rule_ids is not None:
         rule_ids = frozenset(rule_ids)
 
@@ -302,6 +341,8 @@ def build_report(ledger, *, policy_name, source=DEFAULT_SOURCE,
             "window": {"start": window_start, "end": window_end},
             **({"policyVersion": policy_version}
                if policy_version is not None else {}),
+            **({"identityTier": identity_tier_label}
+               if identity_tier_label is not None else {}),
         },
         "summary": summary,
         "results": results,
