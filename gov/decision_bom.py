@@ -102,7 +102,7 @@ def build_bom(*, policy_id, policy_version, policy_digest,
               approval_id=None, approval_record_digest=None,
               decision_mode=None, nominal_effect=None,
               decision_warnings=None, rule_mode_history=None,
-              perm_model=None, decision_event_v2=None):
+              perm_model=None, decision_event_v2=None, tool_grants=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -144,6 +144,13 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     ladder precedents). A partial dict raises BomError: the BOM never
     silently records a weaker claim than the decision actually rested
     on.
+
+    Wave-202 (capability grants): ``tool_grants`` is an optional
+    all-or-none dict ``{"grant_digest": hex64, "decision_id": str,
+    "capability_count": int}`` -- the grant set a tool call ran under
+    (``gov.capability_grants.bom_grants_section()``). Omitted when the
+    decision dispatched no tool call, and BOMs built without it are
+    byte-identical to before. A partial dict raises BomError.
 
     Every required input is validated LOUD: a missing or malformed
     digest, an empty policy id/version, or a non-dict principal raises
@@ -273,6 +280,37 @@ def build_bom(*, policy_id, policy_version, policy_digest,
             "composition_digest": perm_model["composition_digest"],
             "function_set_digest": perm_model["function_set_digest"],
         }
+    # Wave-202 (capability grants): the optional grants section.
+    # All-or-none: a partial dict is refused loud, and absence keeps
+    # the BOM byte-identical to before.
+    grant_inputs = None
+    if tool_grants is not None:
+        if not isinstance(tool_grants, dict):
+            raise BomError("tool_grants must be a dict or None")
+        grant_digest = tool_grants.get("grant_digest")
+        if not _is_hex64(grant_digest):
+            raise BomError(
+                "tool_grants grant_digest must be 64-char lowercase hex")
+        decision_id = tool_grants.get("decision_id")
+        if not isinstance(decision_id, str) or not decision_id:
+            raise BomError(
+                "tool_grants decision_id must be a non-empty string")
+        capability_count = tool_grants.get("capability_count")
+        if (not isinstance(capability_count, int)
+                or capability_count < 0):
+            raise BomError(
+                "tool_grants capability_count must be a non-negative int")
+        unknown_grants = set(tool_grants) - {
+            "grant_digest", "decision_id", "capability_count"}
+        if unknown_grants:
+            raise BomError(
+                "tool_grants carries unknown keys: %s"
+                % sorted(unknown_grants))
+        grant_inputs = {
+            "grant_digest": grant_digest,
+            "decision_id": decision_id,
+            "capability_count": capability_count,
+        }
     inputs = {
         "policy": {
             "policy_id": policy_id,
@@ -309,6 +347,8 @@ def build_bom(*, policy_id, policy_version, policy_digest,
             "decision_id": decision_event_v2["decision_id"],
             "event_digest": _dlv.event_digest(decision_event_v2),
         }
+    if grant_inputs is not None:
+        inputs["grants"] = grant_inputs
     return {
         "bom_version": BOM_VERSION,
         "inputs": inputs,
@@ -418,12 +458,30 @@ def check_bom_shape(bom):
                            "64-char hex")
         if set(devt) - {"decision_id", "event_digest"}:
             return False, "bom.inputs.decision_event carries unknown keys"
+    # Wave-202 (capability grants): the optional grants section, when
+    # present, must be well-formed. Absent is fine (decisions that
+    # dispatched no tool call omit it).
+    grants = inputs.get("grants")
+    if grants is not None:
+        if not isinstance(grants, dict):
+            return False, "bom.inputs.grants is not a dict"
+        if not _is_hex64(grants.get("grant_digest")):
+            return False, "bom.inputs.grants.grant_digest is not 64-char hex"
+        did = grants.get("decision_id")
+        if not isinstance(did, str) or not did:
+            return False, "bom.inputs.grants.decision_id malformed"
+        cc = grants.get("capability_count")
+        if not isinstance(cc, int) or cc < 0:
+            return False, "bom.inputs.grants.capability_count malformed"
+        if set(grants) - {"grant_digest", "decision_id",
+                           "capability_count"}:
+            return False, "bom.inputs.grants carries unknown keys"
     return True, "ok"
 
 
 def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                approval_records=None, perm_model_bytes=None,
-               perm_policy_bytes=None):
+               perm_policy_bytes=None, grant_capability_specs=None):
     """On-demand reconstruction check (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -464,6 +522,13 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
     which the standalone offline verifier deliberately does not
     import; an auditor with the engine re-derives them via
     ``PermModel.composition_digest`` / ``function_set_digest``.
+    Wave-202 (capability grants): ``grant_capability_specs`` is the
+    auditor's canonical capability description list for the dispatched
+    grant set (the ``describe()`` shape: [{kind, resource,
+    rights:[...]}, ...], any order) resolved from the parent's
+    dispatch records. The BOM's ``inputs.grants.grant_digest`` and
+    ``capability_count`` re-derive from it; without it the grants leg
+    is reported UNVERIFIED, never silently passed.
     """
     try:
         return _verify(bom,
@@ -471,14 +536,16 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                        pin_digests=pin_digests,
                        approval_records=approval_records,
                        perm_model_bytes=perm_model_bytes,
-                       perm_policy_bytes=perm_policy_bytes)
+                       perm_policy_bytes=perm_policy_bytes,
+                       grant_capability_specs=grant_capability_specs)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
 
 
 def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
-            perm_model_bytes, perm_policy_bytes):
+            perm_model_bytes, perm_policy_bytes,
+            grant_capability_specs):
     ok, reason = check_bom_shape(bom)
     if not ok:
         return False, reason
@@ -567,6 +634,28 @@ def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
                     "supplied policy bytes (swapped or tampered "
                     "policy)")
             checked.append("perm-policy")
+    # Wave-202 (capability grants): the auditor re-derives the grant
+    # digest from their own dispatch records. Without the specs the
+    # leg is UNVERIFIED -- named, never silently passed -- exactly
+    # like the approval leg above.
+    grants = inputs.get("grants")
+    if grants is not None:
+        if grant_capability_specs is None:
+            unverified.append("grants")
+        else:
+            from gov import capability_grants as _cg
+            if not isinstance(grant_capability_specs, (list, tuple)):
+                return False, "grant_capability_specs is not a list"
+            if not _cg.verify_grant_digest(grants["grant_digest"],
+                                           grant_capability_specs):
+                return False, (
+                    "grant digest does not re-derive from the supplied "
+                    "capability specs (swapped or tampered grants)")
+            if len(grant_capability_specs) != grants["capability_count"]:
+                return False, (
+                    "grant capability_count does not match the supplied "
+                    "capability specs")
+            checked.append("grants")
     if not checked:
         return False, ("no artifacts supplied for re-derivation: BOM "
                        "shape ok, provenance UNVERIFIED")

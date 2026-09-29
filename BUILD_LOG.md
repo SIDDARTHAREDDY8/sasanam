@@ -10691,3 +10691,79 @@ exempt from the floor; (3) Rekor pin is digest-existence evidence only; (4)
 racing approvals idempotent; hung KMS wrap holds the rotation lock.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-29 — Wave-202 lane E: capability grants at the tool-call boundary BUILD
+
+**Lane brief:** build the tool-call boundary for capability grants
+(`gov/capability_grants.py`): the value layer (Capability, Handle,
+immutable GrantSet, structural attenuation, deterministic digests),
+GrantPolicy (deployment-owned bindings), manifest+approval derivation,
+parent-owned GrantRegistry (mint/consume/single-use/delegation/audit),
+a sealed child payload running under `gov/sandbox.py`, and the
+GrantDispatcher seam (source validation, staged jails, commit-time
+revalidation, parent-mediated delegation), plus decision-BOM wiring
+(build + shape + verify_bom re-derivation leg).
+
+**Security posture (from the wave-202 spike):** in-process facades are a
+correctness discipline only; the boundary is the sandbox/process
+boundary. Opaque token possession alone grants nothing without dispatch
+membership. Network grants currently stage deployment-owned canned
+responses (live mediation not implemented).
+
+**Deliverables:**
+- New: `gov/capability_grants.py` (~1500 lines)
+- Modified: `gov/decision_bom.py` (optional `inputs.grants`, shape
+  checks, new `verify_bom(..., grant_capability_specs=...)` re-derivation
+  leg)
+- New: `tests/test_capability_grants.py` (27 tests)
+- New: `evals/capability_grant_probes.py` (16-probe red-team battery,
+  depth-1 green check honoring `GOV_SKIP_GREEN`)
+
+**Red-first evidence:**
+- Pristine `8d8ad47` (clone at /tmp/pristine-g202e, current 16-probe
+  battery copied in): **0/16 HELD, all GAP**
+  ("gov.capability_grants absent on this tree").
+- Fixed tree: **16/16 HELD** across three full battery runs (two with
+  `GOV_SKIP_GREEN=1` for speed, one with the depth-1 green check
+  enabled: tests.test_capability_grants 27/27 + tests.test_decision_bom
+  32/32), plus one clean-env run under `env -u GOV_DEPLOYMENT_MODE`.
+- The battery caught two real product bugs during development: (1) a
+  stale `_ordered` cache in `GrantSet.with_id` (token/digest mismatch
+  after mint); (2) `GrantSet.is_subset_of` using frozenset inclusion,
+  which refused every narrowed attenuation-delegation -- fixed to the
+  attenuation ordering (every sub-cap narrower than some parent cap)
+  plus `Capability` value equality. Both are regression-tested.
+
+**Adjacent suites (fresh unique /var/tmp/g202e-* each, staging mode):**
+- tests.test_sandbox: 59 OK
+- tests.test_sandbox_hardened: 44 OK (3 skipped)
+- tests.test_decision_bom + tests.test_capability_manifests: 55 OK
+- tests.test_log_integrity: 6 OK
+- tests.test_delegation_executor_wiring: 13 OK
+
+**Two-axis review:** Standards -- repo conventions followed, no debug
+leftovers, `git diff --check` clean, deterministic ordering documented,
+fail-closed refusals named and audit-logged. Spec -- every task bullet
+holds at the public seam: value layer, policy binding, derivation
+(incl. unknown-category and approval-packet refusal), registry
+lifecycle, sealed child payload, dispatcher (source/closure/gov-import
+refusal, consume-before-stage, commit revalidation, failed-child no
+commit, missing-sandbox-layer refusal before exec), parent-mediated
+delegation, BOM section + re-derivation, the 8 spike criteria (G1-G8),
+and the additional probes (G9-G16).
+
+**Findings:** none filed. Next free: F204. Open findings: none.
+
+**Honest residuals:** (1) covert channels between tool and parent are
+out of scope; (2) live network mediation is not implemented -- network
+grants stage deployment-owned canned responses; (3) grant
+expiry/revocation beyond single-use consume is not modeled; (4)
+cross-domain provenance of capability bindings is deployment-owned and
+unaudited here; (5) policy->grant derivation can over-grant if the
+manifest policy is loose (usability risk); (6) `gov/executor.py` is not
+yet rewired to this boundary -- this lane supplies the boundary and
+derivation seam only; (7) seccomp is unavailable on this VM, so the
+production-default sandbox runs without it here (G16 proves the
+missing-layer path refuses fail-closed).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
