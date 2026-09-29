@@ -1,0 +1,37 @@
+title: Sasanam Impossible Travel of Agent Identity
+id: 7c4a1d02-3f8e-4b6a-9c1d-5e6f7a8b9c0d
+status: experimental
+description: "Detects the same agent_id presenting identity from two cities more than 5000 km apart within 60 minutes. Consecutive identity events per agent are compared by the correlator (see spike notes: pairwise temporal correlation is beyond the Sigma selection subset -- neither Sigma selections nor Falco conditions express it; the rule YAML carries the parameters, a small stateful correlator enforces them)."
+author: Sasanam (wave-198 rule pack v1)
+date: 2026-09-29
+tags:
+    - attack.t1078  # Valid Accounts -- adapted to agent identity
+logsource:
+    product: sasanam
+    service: audit
+detection:
+    identity_event:
+        type: identity
+    condition: identity_event
+# Correlator parameters. Pairwise temporal correlation is beyond the Sigma
+# selection subset (Sigma has a separate, limited correlation spec; Falco
+# conditions cannot express it either) -- the YAML carries the parameters,
+# a small stateful correlator enforces them. See spike notes.
+correlation:
+    type: impossible_travel
+    max_km: 5000
+    max_minutes: 60
+falsepositives:
+    - Legitimate travel with stale session tokens (VPN egress in another city).
+    - Shared agent_id across a fleet (should be separate identities).
+level: high
+# World-model assumptions (wave-198): if these break, the correlator is
+# blind and the auditor must say so loudly instead of passing silently.
+assumptions:
+    - desc: the stream carries identity events at all
+      event_type: identity
+      min_count: 1
+    - desc: identity events carry geo for the correlator
+      event_type: identity
+      requires_field: geo
+      min_fraction: 0.5

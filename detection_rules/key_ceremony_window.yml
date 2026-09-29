@@ -1,0 +1,39 @@
+title: Sasanam Key Use Outside Ceremony Window
+id: 9e6c3f24-5b0a-4d8c-9e3f-7a8b9c0d1e2f
+status: experimental
+description: "Detects audit entries signed (key_use operation or any signed entry) with a timestamp after the key's ceremony window closed. Uses the spike's $gtf field-to-field comparison: ts is compared against the event's own ceremony_window_end, so per-key windows need no per-key rule."
+author: Sasanam (wave-198 rule pack v1)
+date: 2026-09-29
+logsource:
+    product: sasanam
+    service: audit
+detection:
+    keyed_entry:
+        type:
+            - key_use
+            - checkpoint
+            - decision
+    outside_window:
+        ts|gtf: ceremony_window_end
+    condition: keyed_entry and outside_window
+falsepositives:
+    - Clock skew between the signer host and the ceremony ledger (tune with a small grace selection if observed).
+level: critical
+# World-model assumptions (wave-198): the spike's x30 false-fire lesson.
+# Ceremony windows must be enforced at signing time AND present on the
+# events the rule reasons about; if a large fraction of signed entries
+# lack ceremony_window_end, the rule cannot see violations and the
+# auditor must say so loudly instead of passing silently.
+assumptions:
+    - desc: key_use entries carry ceremony_window_end
+      event_type: key_use
+      requires_field: ceremony_window_end
+      min_fraction: 0.5
+    - desc: checkpoint entries carry ceremony_window_end
+      event_type: checkpoint
+      requires_field: ceremony_window_end
+      min_fraction: 0.5
+    - desc: decision entries carry ceremony_window_end
+      event_type: decision
+      requires_field: ceremony_window_end
+      min_fraction: 0.5

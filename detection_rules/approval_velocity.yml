@@ -1,0 +1,40 @@
+title: Sasanam Approval Velocity Anomaly
+id: 8d5b2e13-4a9f-4c7b-8d2e-6f7a8b9c0d1e
+status: experimental
+description: "Detects an agent accumulating more than 25 require_approval decisions in a 10-minute sliding window -- the shape of approval-queue flooding or a compromised agent spraying high-risk actions hoping one slips through. Break-glass identities are carved out via exceptions (Falco-style), not by editing the rule."
+author: Sasanam (wave-198 rule pack v1)
+date: 2026-09-29
+tags:
+    - attack.t1204  # User Execution -- adapted: approval-queue pressure
+logsource:
+    product: sasanam
+    service: audit
+detection:
+    approval_seek:
+        type: decision
+        verdict: require_approval
+    timeframe: 10m
+    condition: approval_seek | count() by agent_id > 25
+macros:
+    high_risk_tool:
+        tool|startswith: 'egress::'
+lists:
+    monitored_verdicts: [require_approval]
+exceptions:
+    - name: break-glass identities may burst during incidents
+      desc: on-call break-glass agent is expected to seek many approvals
+      agent_id: agent-breakglass-01
+falsepositives:
+    - Incident response bursts from non-break-glass identities.
+    - Batch jobs legitimately fanning out approvals.
+level: high
+# World-model assumptions (wave-198): if these break, the rule is blind
+# and the auditor must say so loudly instead of passing silently.
+assumptions:
+    - desc: the stream carries decision events at all
+      event_type: decision
+      min_count: 1
+    - desc: decision events carry verdict for the selection
+      event_type: decision
+      requires_field: verdict
+      min_fraction: 0.5

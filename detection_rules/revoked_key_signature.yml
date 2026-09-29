@@ -1,0 +1,24 @@
+title: Sasanam Revoked Key Signature Appearance
+id: af7d4025-6c1b-4e9d-af40-8b9c0d1e2f30
+status: experimental
+description: "Detects audit entries carrying a signature from a revoked keyset version AFTER the revocation timestamp. One selection per revoked version (pure Sigma shape; the verbosity is the honest cost of version-scoped revocation times -- a production engine would take a revocation map). Entries signed BEFORE revocation must not fire."
+author: Sasanam (wave-198 rule pack v1)
+date: 2026-09-29
+logsource:
+    product: sasanam
+    service: audit
+detection:
+    revoked_v2:
+        sig_key_version: 2
+        ts|gt: '2026-09-20T00:00:00Z'
+    condition: 1 of revoked_*
+falsepositives:
+    - Late-arriving entries legitimately signed before revocation but timestamped after (backfill); correlate with chain position.
+level: critical
+# World-model assumptions (wave-198): if entries stop carrying
+# sig_key_version, the rule is blind and the auditor must say so loudly
+# instead of passing silently.
+assumptions:
+    - desc: entries carry sig_key_version for the selection
+      requires_field: sig_key_version
+      min_fraction: 0.5
