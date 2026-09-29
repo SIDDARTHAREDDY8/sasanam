@@ -47,6 +47,12 @@ Ranked falsifiable hypotheses (diagnosing-bugs loop):
      over-assigned payload. Expected: HELD (exact four-field shape,
      exact section set, exact section assignment, token membership).
 
+Wave-212 note: H1's finding F206 is CLOSED (EAT claim bounds now ride
+the wire as the pinned superior claim `eat_bounds`, enforced by
+verify_eat). The two F206 probes above were re-pinned to assert the
+fixed behavior; the H1-H6 hypotheses below are the historical record
+of the wave-211 red-team run.
+
 $0 spend. No network. stdlib only.
 """
 
@@ -198,35 +204,46 @@ def _scitt_setup():
 
 @_probe("eat_bounds_absent_on_wire")
 def p_eat_bounds_wire():
-    """H1: no claim bounds ride the EAT wire; verify never checks them."""
+    """F206 CLOSED (wave-212): the canonical claim bounds ride the EAT
+    wire as the superior claim 'eat_bounds', and verify_eat enforces
+    them. Re-pinned from BREAK to assert the fixed behavior."""
     import gov.eat_claims as eat
     import gov.claim_bounds as cb
     pub, signer = _eat_keys()
     tok = _good_token(eat, signer)
     claims = _payload_claims(tok)
-    # The token claims set: bounds must not be smuggled in silently,
-    # and there is no bounds field at all.
-    boundish = [k for k in claims
-                if "bound" in k.lower() or "prove" in k.lower()]
-    if boundish:
-        return ("HELD", "bounds present on wire: %s" % boundish)
-    # The canonical bounds record exists but no verify path consumes it.
-    bounds = eat.eat_claim_bounds()
-    cb.validate_bounds(bounds)
+    wire = claims.get("eat_bounds")
+    if not isinstance(wire, dict):
+        return ("BREAK", "F206 REGRESSION: no 'eat_bounds' on the wire")
+    try:
+        normalized = cb.validate_bounds(wire, where="eat_claim_bounds")
+    except cb.ClaimBoundsError as e:
+        return ("BREAK",
+                "F206 REGRESSION: wire bounds fail claim_bounds.py: %s"
+                % e)
+    if normalized != eat.eat_claim_bounds():
+        return ("BREAK",
+                "F206 REGRESSION: wire bounds are not the canonical "
+                "record")
     src = open(os.path.join(REPO, "gov", "eat_claims.py")).read()
     body = src.split("def verify_eat", 1)[1]
     body = body.split("\ndef ", 1)[0]  # verify_eat's own body only
-    if "eat_claim_bounds" in body or "claim_bounds" in body:
-        return ("HELD", "verify_eat consults claim bounds")
-    return ("BREAK",
-            "F206: token carries no claim bounds; verify_eat never "
-            "consults eat_claim_bounds(); the narrow-claims discipline "
-            "is unenforced for EAT on the wire")
+    if "_check_wire_bounds" not in body:
+        return ("BREAK", "F206 REGRESSION: verify_eat does not call "
+                "_check_wire_bounds")
+    try:
+        eat.verify_eat(tok, **_eat_verifier_cfg(pub))
+    except eat.EATError as e:
+        return ("BREAK", "F206 REGRESSION: legit token refused: %s" % e)
+    return ("HELD", "F206 closed: canonical bounds on wire, validated "
+            "and pinned at verify")
 
 
 @_probe("eat_superior_proves_smuggle")
 def p_eat_proves_smuggle():
-    """H1: a superior-level 'proves' overreach claim verifies fine."""
+    """F206 CLOSED (wave-212): a superior-level 'proves' overreach
+    claim is refused. Re-pinned from BREAK to assert the fixed
+    behavior."""
     import gov.eat_claims as eat
     pub, signer = _eat_keys()
     claims = _payload_claims(_good_token(eat, signer))
@@ -234,13 +251,13 @@ def p_eat_proves_smuggle():
                         "the workload behaved safely"]
     claims["does_not_prove"] = []
     forged = eat._sign_claims(claims, signer)
-    out = eat.verify_eat(forged, **_eat_verifier_cfg(pub))
-    assert out["claims"]["proves"] not in (None, []), \
-        "expected smuggled claim back"
-    return ("BREAK",
-            "F206: superior-level proves=['the enclosed content is "
-            "factually correct', ...] verified OK; no bounds check "
-            "stopped the overreach")
+    try:
+        eat.verify_eat(forged, **_eat_verifier_cfg(pub))
+    except eat.EATError:
+        return ("HELD", "F206 closed: superior-level proves overreach "
+                "refused (bounds-smuggle)")
+    return ("BREAK", "F206 REGRESSION: superior-level proves overreach "
+            "verified OK")
 
 
 @_probe("eat_no_inheritance_holds")

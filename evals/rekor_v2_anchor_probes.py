@@ -12,8 +12,12 @@ on receipts, no dual-write path, no tile-framed inclusion field,
 no TSA-separated timestamp field, no v2 local index.
 
 What is green post-fix: ``gov/rekor_v2_anchor.py`` -- a hermetic
-(offline, fixture-driven) v2-shaped backend accepting ONLY
-``hashedrekord`` + ``dsse`` entry types; receipts carrying
+(offline, fixture-driven) v2-shaped backend accepting ONLY the
+``hashedrekord`` entry type (wave-212/F207 correction: the v2.0.1-era
+``dsse`` entry type is gone upstream -- sigstore/rekor-tiles
+CLIENTS.md at commit 5e6ebbad supports only
+HashedRekordLogEntryV002; DSSE envelopes are committed as their PAE
+hash inside a hashedrekord entry); receipts carrying
 ``verification.source`` (``rekor-v1`` / ``rekor-v2-hermetic`` /
 ``dual-write``); client-computed tile-framed inclusion proofs (no
 online proof API in v2 -- this is the documented v2 model);
@@ -29,11 +33,15 @@ Probe map:
                       verification.source == "rekor-v2-hermetic",
                       entry_type pinned, uuid/log_index present,
                       tile-framed inclusion, separate tsa field.
-  p_dsse_receipt:     v2-shaped receipt for a DSSE envelope entry
-                      (sealed with a real Ed25519 signer).
-  p_bad_type_refused: "rekord" (a v1-only type, REMOVED in v2) and
-                      "intoto" are refused loudly -- v2 takes only
-                      hashedrekord + dsse.
+  p_dsse_receipt:     a DSSE envelope committed as its PAE hash
+                      inside a hashedrekord entry (F207: DSSE is NOT a
+                      v2 entry type upstream; the receipt is
+                      kind:hashedrekord, apiVersion 0.0.2, carrying
+                      payload_type / payload_sha256 / pae_sha256).
+  p_bad_type_refused: "rekord" (a v1-only type, REMOVED in v2),
+                      "intoto", "cose", and the superseded native
+                      "dsse" entry kind are refused loudly -- v2 takes
+                      only hashedrekord.
   p_dual_write:       DualWriteAnchor with dual_write=True writes
                       BOTH logs; combined receipt carries both entries
                       with DISTINCT verification.source values.
@@ -144,9 +152,9 @@ def p_import_seam():
     ok = (m.SOURCE_V1 == "rekor-v1"
           and m.SOURCE_V2 == "rekor-v2-hermetic"
           and m.SOURCE_DUAL == "dual-write"
-          and m.V2_ENTRY_TYPES == frozenset({"hashedrekord", "dsse"}))
+          and m.V2_ENTRY_TYPES == frozenset({"hashedrekord"}))
     _record(name, "HELD" if ok else "BREAK",
-            "source constants + v2 entry-type allowlist pinned")
+            "source constants + hashedrekord-only allowlist pinned")
 
 
 def p_hashedrekord_receipt():
@@ -196,15 +204,38 @@ def p_dsse_receipt():
         signer = Ed25519Signer(bytes([78]) * 32)
         env = dsse.seal(b"release-artifact", "application/vnd.in-toto+json",
                         [signer])
-        r = _client().submit_dsse(env)
+        # F207: DSSE is not a v2 entry type -- committed as its PAE
+        # hash inside a hashedrekord entry. One client: the hermetic
+        # log is in-memory per client.
+        client = _client()
+        r = client.submit_dsse_as_hashedrekord(env)
     except Exception as e:  # noqa: BLE001
-        _record(name, "BREAK", "dsse submit raised: %r" % (e,))
+        _record(name, "BREAK", "dsse pae-hash submit raised: %r" % (e,))
+        return
+    import base64 as _b64mod
+    import hashlib as _hl
+    tb = b"application/vnd.in-toto+json"
+    payload = _b64mod.b64decode(env["payload"].encode("ascii"),
+                                validate=True)
+    pae = (b"DSSEv1 " + str(len(tb)).encode() + b" " + tb + b" "
+           + str(len(payload)).encode() + b" " + payload)
+    pae_sha = _hl.sha256(pae).hexdigest()
+    try:
+        body = json.loads(
+            client.entry_bytes_for_receipt(r).decode("utf-8"))
+    except Exception as e:  # noqa: BLE001
+        _record(name, "BREAK", "entry bytes unreadable: %r" % (e,))
         return
     ok = (r.get("verification.source") == "rekor-v2-hermetic"
-          and r.get("entry_type") == "dsse"
-          and r.get("payload_type") == "application/vnd.in-toto+json")
+          and r.get("entry_type") == "hashedrekord"
+          and r.get("payload_type") == "application/vnd.in-toto+json"
+          and r.get("pae_sha256") == pae_sha
+          and r.get("dsse_routing") == "pae-hash-in-hashedrekord"
+          and body.get("kind") == "hashedrekord"
+          and body.get("apiVersion") == "0.0.2"
+          and body["spec"]["data"]["hash"]["value"] == pae_sha)
     _record(name, "HELD" if ok else "BREAK",
-            "v2 dsse receipt; payloadType carried")
+            "dsse->pae-hash->hashedrekord receipt; kind pinned")
 
 
 def p_bad_type_refused():
@@ -214,7 +245,9 @@ def p_bad_type_refused():
         return
     client = _client()
     refused = 0
-    for bad in ("rekord", "intoto", "cose", ""):
+    # F207: the superseded native "dsse" entry kind is refused exactly
+    # like every other removed type -- v2 takes only hashedrekord.
+    for bad in ("rekord", "intoto", "cose", "dsse", ""):
         try:
             client.submit(bad, b"whatever")
         except (m.V2ConfigError, ValueError):
@@ -223,8 +256,8 @@ def p_bad_type_refused():
             _record(name, "BREAK",
                     "wrong exception for %r: %r" % (bad, e))
             return
-    _record(name, "HELD" if refused == 4 else "BREAK",
-            "%d/4 non-v2 types refused" % refused)
+    _record(name, "HELD" if refused == 5 else "BREAK",
+            "%d/5 non-v2 types refused" % refused)
 
 
 def p_dual_write():

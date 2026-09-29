@@ -5,22 +5,32 @@ prospecting §5): **dual-write anchors with a ``verification.source``
 field on receipts, behind a flag**. Rekor v1 stays the default
 anchor -- nothing about the v1 path changes.
 
-Rekor v2 facts this module is built against (September 2026, primary
-sources in the wave-205 prospectus):
+Rekor v2 facts this module is built against (current contract,
+primary source: ``sigstore/rekor-tiles`` ``CLIENTS.md`` at commit
+``5e6ebbad``, read in full for wave-211 prospecting; this supersedes
+the v2.0.1-era contract the wave-207 build encoded):
 
 * v2 is GA (October 2025), tile-backed (C2SP ``tlog-tiles``) via
   Trillian-Tessera; v1 is in maintenance mode. The sigstore.dev
   public-good instance stays on v1 "for the foreseeable future"
   (Sigstore blog, 2026-06-28), so **v1 remains our default anchor**.
-* v2 accepts **only ``hashedrekord`` and ``dsse``** entry types
-  (intoto, rekord, helm, tuf, rfc3161, jar, rpm, cose, alpine are
-  removed). Any other type is refused fail-closed here.
+* v2 accepts **only ``hashedrekord``**
+  (``HashedRekordLogEntryV002``). The older types ``rekord``,
+  ``intoto``, ``jar``, ``alpine``, ``rpm``, ``cose`` -- and
+  **``dsse``** -- are dropped. **DSSE attestations are NOT a v2 entry
+  type.** The upstream-prescribed pattern: extract the DSSE
+  Pre-Authentication Encoding (PAE) and signature from the envelope
+  and include the PAE hash and the signature in a ``hashedrekord``
+  request. Any native ``dsse`` entry kind is refused fail-closed here
+  (F207, closed wave-212).
 * Write API: single endpoint ``POST /api/v2/log/entries`` returning
   a protobuf ``TransparencyLogEntry``. The inclusion proof is
   **computed client-side from tiles at write time** -- there is **no
   online proof API**; reads are tile fetches per the tlog-tiles
   spec. This module's ``verify_inclusion`` recomputes the root from
-  the receipt's proof: that IS the v2 verification story.
+  the receipt's proof: that IS the v2 verification story. Clients
+  MUST parse ``spec`` by kind/version and gracefully fail on unknown
+  kind/version.
 * **Signed timestamps are removed from Rekor** -- they come from a
   separate TSA. This module carries a ``tsa`` field on every receipt
   that is **never folded into the transparency proof**
@@ -90,9 +100,12 @@ SOURCE_V1 = "rekor-v1"
 SOURCE_V2 = "rekor-v2-hermetic"
 SOURCE_DUAL = "dual-write"
 
-#: Rekor v2 accepts ONLY these entry types. Everything else (rekord,
-#: intoto, cose, ...) was removed in v2 and is refused here.
-V2_ENTRY_TYPES = frozenset({"hashedrekord", "dsse"})
+#: Rekor v2 accepts ONLY these entry types. Everything else
+#: (rekord, intoto, cose, dsse, ...) was removed in v2 and is refused
+#: here. DSSE attestations are NOT a v2 entry type: the
+#: upstream-prescribed pattern is to commit the DSSE PAE hash inside a
+#: hashedrekord entry (see submit_dsse_as_hashedrekord). F207.
+V2_ENTRY_TYPES = frozenset({"hashedrekord"})
 
 #: tlog-tiles tile size. The real tlog-tiles spec uses 256-entry
 #: tiles; the hermetic log uses the same framing so the receipt's
@@ -101,7 +114,6 @@ TILE_SIZE = 256
 
 #: v2 hashedrekord apiVersion (distinct from v1's 0.0.1).
 _V2_HASHEDREKORD_VERSION = "0.0.2"
-_V2_DSSE_VERSION = "0.0.1"
 
 #: Anchor algorithms this module accepts on the hashedrekord path.
 #: Raw "ed25519" is refused (F203: real hashedrekord rejects it).
@@ -525,14 +537,25 @@ class HermeticRekorV2:
                              extra={"anchor_hash": ahash,
                                     "anchor_algorithm": algorithm})
 
-    def submit_dsse(self, envelope):
-        """Submit a DSSE envelope (v2 ``dsse`` entry type).
+    def submit_dsse_as_hashedrekord(self, envelope):
+        """Commit a DSSE envelope as its PAE hash inside a hashedrekord
+        entry (F207: the upstream-prescribed v2 pattern -- DSSE is NOT
+        a v2 entry type).
 
         The envelope is strict-parsed (unknown fields refused); the
-        leaf commits to the PAE bytes -- the signed bytes that bind
-        the payload type. Signature *verification* is the auditor's
-        job against the pinned keyset, not the log's: the log is
-        digest-existence evidence only.
+        entry's ``spec.data.hash`` is ``sha256(PAE)`` -- the PAE is the
+        signed bytes that bind the payload type -- and
+        ``spec.signature`` carries the envelope's own first signature
+        (the log is digest-existence evidence only; signature
+        verification is the auditor's job against the pinned keyset,
+        not the log's). The leaf commits to the canonicalized
+        hashedrekord body, exactly as on the plain hashedrekord path:
+        there is exactly ONE v2 entry shape in this module.
+
+        The receipt carries ``payload_type``, ``payload_sha256`` and
+        ``pae_sha256`` so an auditor can recompute the commitment, plus
+        ``dsse_routing="pae-hash-in-hashedrekord"`` naming the routing
+        explicitly.
         """
         if not isinstance(envelope, dict):
             raise V2ConfigError("envelope must be a dict")
@@ -558,51 +581,67 @@ class HermeticRekorV2:
         if not isinstance(sigs, list) or not sigs:
             raise V2ConfigError("envelope needs a non-empty signatures "
                                 "list")
-        # The leaf commits to the PAE (signed) bytes -- the payload
-        # type rides inside the signed bytes by construction.
+        if not all(isinstance(s, dict) for s in sigs):
+            raise V2ConfigError("envelope signatures must be objects")
+        # The committed digest is the PAE hash -- the payload type rides
+        # inside the signed bytes by construction.
         type_b = payload_type.encode("utf-8")
         pae = (b"DSSEv1 " + str(len(type_b)).encode("ascii") + b" "
                + type_b + b" " + str(len(payload)).encode("ascii")
                + b" " + payload)
+        pae_sha256 = hashlib.sha256(pae).hexdigest()
+        first = sigs[0]
         entry = {
-            "kind": "dsse",
-            "apiVersion": _V2_DSSE_VERSION,
+            "kind": "hashedrekord",
+            "apiVersion": _V2_HASHEDREKORD_VERSION,
             "spec": {
-                "payloadType": payload_type,
-                "payload_sha256": hashlib.sha256(payload).hexdigest(),
-                "signatures": [
-                    {"keyid": s.get("keyid"), "sig": s.get("sig")}
-                    for s in sigs
-                    if isinstance(s, dict)
-                ],
+                "data": {
+                    "hash": {
+                        "algorithm": "sha256",
+                        "value": pae_sha256,
+                    },
+                },
+                "signature": {
+                    "content": first.get("sig"),
+                    "keyid": first.get("keyid"),
+                },
             },
         }
-        uuid, log_index = self._submit_to_log(entry, pae)
-        receipt = self._receipt("dsse", uuid, log_index, entry,
-                                extra={"payload_type": payload_type,
-                                       "payload_sha256": hashlib.sha256(
-                                           payload).hexdigest()})
-        return receipt
+        uuid, log_index = self._submit_to_log(entry,
+                                              _canonical(entry))
+        # The exact bytes the leaf was computed over, carried so an
+        # offline auditor (e.g. the SCITT receipt check, which has no
+        # live log) can recompute the leaf identically. The receipt is
+        # the TS's signed statement about what it committed.
+        committed_body_b64 = base64.b64encode(
+            _canonical(entry)).decode("ascii")
+        return self._receipt(
+            "hashedrekord", uuid, log_index, entry,
+            extra={"payload_type": payload_type,
+                   "payload_sha256": hashlib.sha256(payload).hexdigest(),
+                   "pae_sha256": pae_sha256,
+                   "dsse_routing": "pae-hash-in-hashedrekord",
+                   "committed_body_b64": committed_body_b64})
 
     def submit(self, entry_type, entry):
         """Generic submit. ``entry_type`` MUST be in
         :data:`V2_ENTRY_TYPES` -- v2 removed every other type and so
-        does this seam (fail-closed)."""
+        does this seam (fail-closed). In particular a native ``dsse``
+        entry kind is refused: route DSSE envelopes through
+        :meth:`submit_dsse_as_hashedrekord` (F207)."""
         if entry_type not in V2_ENTRY_TYPES:
             raise V2ConfigError(
                 "rekor v2 accepts only %s; %r refused"
                 % (sorted(V2_ENTRY_TYPES), entry_type))
-        if entry_type == "hashedrekord":
-            if not isinstance(entry, dict):
-                raise V2ConfigError(
-                    "hashedrekord entry must be a mapping of "
-                    "anchor_hash/signature_b64/pubkey_pem[/algorithm]")
-            return self.submit_hashedrekord(
-                entry.get("anchor_hash"),
-                signature_b64=entry.get("signature_b64"),
-                pubkey_pem=entry.get("pubkey_pem"),
-                algorithm=entry.get("algorithm", "ed25519ph-sha512"))
-        return self.submit_dsse(entry)
+        if not isinstance(entry, dict):
+            raise V2ConfigError(
+                "hashedrekord entry must be a mapping of "
+                "anchor_hash/signature_b64/pubkey_pem[/algorithm]")
+        return self.submit_hashedrekord(
+            entry.get("anchor_hash"),
+            signature_b64=entry.get("signature_b64"),
+            pubkey_pem=entry.get("pubkey_pem"),
+            algorithm=entry.get("algorithm", "ed25519ph-sha512"))
 
     # -- verification ---------------------------------------------------
 
@@ -634,9 +673,11 @@ class HermeticRekorV2:
         if receipt.get("verification.source") != SOURCE_V2:
             raise V2AnchorError(
                 "not a %s receipt" % (SOURCE_V2,))
-        # For dsse entries the committed bytes are the PAE (signed)
-        # bytes -- the caller supplies them (e.g. via
-        # entry_bytes_for_receipt); the leaf rule is uniform.
+        # Every v2 entry is hashedrekord-kind (F207): the committed
+        # bytes are the canonicalized entry body -- DSSE submissions
+        # commit sha256(PAE) as spec.data.hash.value, so the leaf rule
+        # is uniform. The caller supplies the bytes (e.g. via
+        # entry_bytes_for_receipt).
         leaf = _leaf(bytes(entry_bytes))
         inclusion = receipt.get("inclusion") or {}
         try:
@@ -784,7 +825,10 @@ class DualWriteAnchor:
         if not self._dual:
             return v1_receipt
         if dsse_envelope is not None:
-            v2_receipt = self._v2.submit_dsse(dsse_envelope)
+            # F207: DSSE is not a v2 entry type -- the envelope's PAE
+            # hash is committed inside a hashedrekord entry.
+            v2_receipt = self._v2.submit_dsse_as_hashedrekord(
+                dsse_envelope)
         else:
             v2_receipt = self._v2.submit_hashedrekord(
                 anchor_hash, signature_b64=signature_b64,

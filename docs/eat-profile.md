@@ -12,6 +12,11 @@ the honesty instrument: what is not pinned here is not promised.
 JSON/JWT path only. No CBOR/COSE emission is defined for v1. Do not claim
 EAT conformance or interoperability for tokens under this profile.
 
+**RFC 9711 pin, 2026-09-29 (wave-212 drift pass):** RFC 9711 + 7 verified
+errata (EID 8528/8771/8776/8782/8783/8777/9152) as current; no 9711-bis
+work active; EID 9193 reported but not yet verified (monitor). None of the
+7 verified errata touches the claim families this profile emits.
+
 ## 1. Encoding and envelope
 
 | Option | Pinned value |
@@ -46,11 +51,21 @@ valid only while `iat <= now < exp`.
 
 ### 4.1 Superior claims set (mandatory)
 
-`iss`, `iat`, `exp`, `cti`, `eat_nonce`, `eat_profile`, `intuse`, `submods`.
+`iss`, `iat`, `exp`, `cti`, `eat_nonce`, `eat_profile`, `intuse`,
+`eat_bounds`, `submods`.
 
 * `eat_profile` MUST equal this profile's URI. Any other value is refused:
   profile confusion is token confusion.
 * `intuse` is pinned to `workload-bound key issuance for agent identity`.
+* `eat_bounds` is a profile-local claim (NOT an RFC 9711 standard claim;
+  JSON-path only, no CWT number assigned) carrying the canonical
+  claim-bounds record from `gov.eat_claim_bounds()`, valid under
+  `gov/claim_bounds.py`. It MUST be present; the verifier pins it to the
+  module's canonical record exactly as it pins `eat_profile`. Bounds
+  vocabulary (`proves`, `does_not_prove`, `verifier_assumptions`,
+  `scope_limits`) MUST NOT appear at the superior level outside
+  `eat_bounds`: a superior-level copy is refused as a bounds-smuggle
+  (F206, closed wave-212).
 * Attester facts (ueid, oemid, hwmodel, measurements, dbgstat, swname, ...)
   MUST NOT appear in the superior claims set. This is the no-inheritance
   rule as a wire constraint, enforced at emit and at verify.

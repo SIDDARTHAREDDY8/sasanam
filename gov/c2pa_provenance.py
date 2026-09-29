@@ -11,6 +11,15 @@ conformance claim, no "Content Credentials" branding. A real C2PA
 validator will reject these manifests; the value is vocabulary alignment
 and the ingredient-chain discipline, not validator interop.
 
+Spec-drift note 2026-09-29 (wave-212): the published C2PA spec is now 2.4
+(we pin 2.2 vocabulary: ``c2pa.actions`` v1 and ``c2pa.ingredient`` v1 are
+deprecated in 2.4 toward v2/v3; new section 18.28 ``c2pa.ai-disclosure``
+assertion). Our ``c2pa.ai_generated`` action label is PRODUCT-LOCAL --
+it appears nowhere in the 2.4 spec -- and stays honest only while this
+module is explicitly C2PA-shaped, not conformant. Consider vocabulary
+alignment (``c2pa.actions.v2``, ``c2pa.ingredient.v3``,
+``c2pa.ai-disclosure``) in a future lane; this note records no gap.
+
 The narrow claim is adopted verbatim from C2PA section 1.2 (guiding
 principles): specifications "SHOULD NOT provide value judgments about
 whether a given set of provenance data is 'good' or 'bad,' merely

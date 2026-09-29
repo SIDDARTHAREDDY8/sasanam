@@ -743,6 +743,11 @@ def _derive_mcp_accesses(tool: str, args: Mapping[str, Any]):
     byte size of the ``arguments`` object; unsupported are (raw, reason)
     pairs. The declared shape mirrors the MCP tools/call wire shape:
     ``{"server": <id>, "name": <tool>, "arguments": {...}}``.
+    Spec pin 2026-09-29 (wave-212 drift pass): MCP spec revision
+    2026-07-28 -- ``tools/call`` shape, ``Tool`` schema, and
+    ``ToolAnnotations`` unchanged, so this declared-shape model survives
+    the stateless-core breaking revisions. Future client/server lanes
+    must target the 2026-07-28 core (no ``sampling/createMessage``).
     """
     accesses = []
     unsupported = []

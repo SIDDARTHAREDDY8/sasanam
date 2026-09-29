@@ -27,13 +27,22 @@ Design rules (adopted verbatim from RFC 9711):
   closed to {alg, typ, kid} so the signature cannot be re-targeted.
 * **Freshness is mandatory.** Every token and every submod binds a
   single-use nonce (eat_nonce), compared with hmac.compare_digest.
-* **Narrow claims.** Emitting an EAT standardizes the *vocabulary* of
-  the claim, never its strength. `eat_claim_bounds()` returns a
-  claim-bounds record (valid under gov/claim_bounds.py) stating what an
-  emitted token proves and what it explicitly does not: attester
-  strength, workload behavior, and ongoing validity beyond `exp` are
-  disavowed. A token whose measurements do not match the verifier's
-  reference values is refused.
+* **Narrow claims, machine-enforced on the wire.** Emitting an EAT
+  standardizes the *vocabulary* of the claim, never its strength.
+  `eat_claim_bounds()` returns a claim-bounds record (valid under
+  gov/claim_bounds.py) stating what an emitted token proves and what
+  it explicitly does not: attester strength, workload behavior, and
+  ongoing validity beyond `exp` are disavowed. The canonical record
+  rides the wire as the superior claim `eat_bounds` (a profile-local
+  claim, JSON-path only, no CWT number assigned -- it is not an
+  RFC 9711 standard claim). `verify_eat` requires it, validates it
+  through gov/claim_bounds.py, and pins it to the module's canonical
+  record -- the verifier's local bounds are the trust anchor, exactly
+  as the pinned eat_profile is. Bounds vocabulary (`proves`,
+  `does_not_prove`, `verifier_assumptions`, `scope_limits`) may appear
+  ONLY inside `eat_bounds`: a superior-level copy is refused as a
+  bounds-smuggle (F206). A token whose measurements do not match the
+  verifier's reference values is refused.
 
 stdlib only. $0 spend. No network.
 """
@@ -88,9 +97,21 @@ _SUBMOD_ONLY_CLAIMS = frozenset((
     "swversion", "manifests", "measurements", "measres",
 ))
 
+#: Bounds vocabulary that may appear ONLY inside the superior
+#: `eat_bounds` claim. A superior-level copy of any of these keys is
+#: refused at verify time as a bounds-smuggle (F206): the narrow-claims
+#: discipline is machine-enforced, so the vocabulary that declares it
+#: cannot be re-declared loosely beside the pinned record.
+_BOUNDS_VOCABULARY = frozenset((
+    "proves", "does_not_prove", "verifier_assumptions", "scope_limits",
+))
+
 #: EAT claim name -> CWT key number (RFC 9711, section 5 CDDL). The
 #: JSON names are emitted; the numbers are documented so a future
 #: CBOR/CWT lane has the mapping pinned here, not re-derived.
+#: `eat_bounds` is intentionally ABSENT: it is a Sasanam-profile-local
+#: claim (the canonical claim-bounds record on the wire, F206), not an
+#: RFC 9711 standard claim, so no CWT number is assigned to it.
 EAT_CLAIM_KEYS = {
     "iss": 1, "sub": 2, "aud": 3, "exp": 4, "nbf": 5, "iat": 6,
     "cti": 7,
@@ -263,6 +284,11 @@ def emit_eat(*, evidence, nonce, issuer, signer, now=None, ttl_s=300,
         "eat_nonce": _b64u(bytes(nonce)),
         "eat_profile": EAT_PROFILE_V1,
         "intuse": EAT_INTUSE,
+        # F206: the canonical narrow-claims record rides the wire as a
+        # profile-local superior claim, so every consumer gets the
+        # machine-readable bound on what this token proves. The record
+        # is the module's fixed honesty contract -- verify_eat pins it.
+        "eat_bounds": eat_claim_bounds(),
         "submods": {},
     }
     # No-inheritance, emit side: attester facts are built only inside
@@ -297,14 +323,59 @@ def _check_header(header):
             "JWS typ must be %r (token-type confusion refused)" % _JWS_TYP)
 
 
+def _check_wire_bounds(claims):
+    """F206: machine-enforce the narrow-claims discipline on the wire.
+
+    * Bounds vocabulary (`proves` / `does_not_prove` /
+      `verifier_assumptions` / `scope_limits`) may appear ONLY inside
+      the superior `eat_bounds` claim. A superior-level copy is a
+      bounds-smuggle and is refused.
+    * `eat_bounds` itself is mandatory: a token without it (including
+      any token emitted before the F206 closure) is refused
+      fail-closed -- bounds are not optional decoration.
+    * The wire record is validated through gov/claim_bounds.py
+      (disjoint proves/does_not_prove, non-empty does_not_prove,
+      exact four keys) AND pinned to the module's canonical record:
+      the verifier's local bounds are the trust anchor, exactly as
+      the pinned eat_profile is. A key holder who rewrites the bounds
+      and re-signs gets refused -- bounds confusion is a
+      token-confusion attack.
+    """
+    smuggled = _BOUNDS_VOCABULARY & set(claims)
+    if smuggled:
+        raise EATVerifyError(
+            "bounds-smuggle refused: %s at the superior level; bounds "
+            "vocabulary may appear only inside 'eat_bounds'"
+            % sorted(smuggled))
+    wire = claims.get("eat_bounds")
+    if not isinstance(wire, dict):
+        raise EATVerifyError(
+            "eat_bounds is required on the wire (F206): a token with no "
+            "machine-readable claim bounds is refused fail-closed")
+    from . import claim_bounds as _cb
+    try:
+        normalized = _cb.validate_bounds(wire, where="eat_claim_bounds")
+    except _cb.ClaimBoundsError as e:
+        raise EATVerifyError(
+            "eat_bounds fails claim_bounds.py validation: %s" % (e,))
+    canonical = eat_claim_bounds()
+    if normalized != canonical:
+        raise EATVerifyError(
+            "eat_bounds is not the canonical bounds record: bounds "
+            "confusion refused (the verifier pins the module's "
+            "canonical record, as with eat_profile)")
+
+
 def verify_eat(token, *, issuer_pubkey, expected_issuer, expected_nonce,
                expected_submod_nonces, expectations=None, now=None,
                allow_unassessed=False):
     """Verify an EAT-shaped token. Returns {"claims":..., "header":...}.
 
     Raises EATVerifyError on any refusal. Unknown *payload* claims are
-    tolerated (RFC 6.3 posture); known claims violating policy fail
-    closed. The envelope header is closed; the profile is pinned.
+    tolerated (RFC 6.3 posture) EXCEPT bounds vocabulary, which may
+    appear only inside the mandatory, pinned `eat_bounds` claim (F206);
+    known claims violating policy fail closed. The envelope header is
+    closed; the profile is pinned.
     """
     if not isinstance(token, str) or token.count(".") != 2:
         raise EATVerifyError("token must be a compact JWS string")
@@ -381,6 +452,7 @@ def verify_eat(token, *, issuer_pubkey, expected_issuer, expected_nonce,
         raise EATVerifyError(
             "no-claim-inheritance violation: attester facts %s appear in "
             "the superior claims set" % sorted(leaked))
+    _check_wire_bounds(claims)
 
     # -- submods ----------------------------------------------------------
     submods = claims.get("submods")

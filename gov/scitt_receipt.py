@@ -40,6 +40,7 @@ Layering:
 $0 spend, stdlib only, deterministic (injectable clock).
 """
 
+import base64
 import hashlib
 import json
 
@@ -470,7 +471,10 @@ class TransparencyService:
         self._policy.check(body, statement_bytes)
         # Append to the verifiable record (idempotent on re-submit:
         # same bytes return the existing index -- no duplicate leaf).
-        v2_receipt = self._log.submit_dsse(statement_envelope)
+        # F207: DSSE is not a Rekor v2 entry type -- the statement
+        # envelope's PAE hash is committed inside a hashedrekord entry.
+        v2_receipt = self._log.submit_dsse_as_hashedrekord(
+            statement_envelope)
         inclusion = v2_receipt["inclusion"]
         receipt_body = {
             "statement_sha256": hashlib.sha256(
@@ -557,10 +561,20 @@ def _parse_json_body(payload, where):
 def _verify_inclusion_offline(statement_envelope, receipt_body):
     """Client-computed inclusion check, offline.
 
-    Recomputes the leaf from the statement envelope's PAE (signed)
-    bytes and the root from the receipt's own inclusion proof, and
-    requires them to agree. This is the Rekor v2 client verification
-    story (no online proof API) applied to the SCITT receipt.
+    Binds the statement to the committed v2 entry and recomputes the
+    leaf and root from the receipt's own proof:
+
+    1. the statement envelope's PAE (signed) bytes hash to the
+       receipt's ``pae_sha256`` -- the statement is the one committed;
+    2. the receipt's ``committed_body_b64`` parses as a
+       kind:``hashedrekord`` entry whose ``spec.data.hash.value`` is
+       that same ``pae_sha256`` -- the entry commits the PAE hash
+       (F207: DSSE is not a v2 entry type);
+    3. the leaf over the committed body plus the receipt's proof
+       recomputes to the receipt's claimed root.
+
+    This is the Rekor v2 client verification story (no online proof
+    API) applied to the SCITT receipt.
 
     Honest residual: this checks the proof against the receipt's OWN
     claimed root (self-consistency). Freshness against the CURRENT
@@ -572,10 +586,32 @@ def _verify_inclusion_offline(statement_envelope, receipt_body):
         payload, payload_type, _ = _de.parse_envelope(statement_envelope)
     except _de.EnvelopeError as exc:
         raise VerificationFailed("statement envelope: %s" % exc)
-    leaf_input = _de.pae(payload_type, payload)
+    pae = _de.pae(payload_type, payload)
+    pae_sha256 = hashlib.sha256(pae).hexdigest()
     anchor = receipt_body.get("anchor_receipt")
     if not isinstance(anchor, dict):
         raise VerificationFailed("receipt has no anchor_receipt")
+    if anchor.get("pae_sha256") != pae_sha256:
+        raise VerificationFailed(
+            "statement PAE does not match the receipt's committed "
+            "pae_sha256")
+    try:
+        entry_body = base64.b64decode(
+            anchor["committed_body_b64"].encode("ascii"), validate=True)
+        entry = json.loads(entry_body.decode("utf-8"))
+    except (KeyError, ValueError, TypeError) as exc:
+        raise VerificationFailed(
+            "receipt has no usable committed entry body: %s" % exc)
+    if not isinstance(entry, dict) or entry.get("kind") != "hashedrekord":
+        raise VerificationFailed(
+            "committed entry is not kind:hashedrekord")
+    try:
+        committed = entry["spec"]["data"]["hash"]["value"]
+    except (KeyError, TypeError):
+        committed = None
+    if committed != pae_sha256:
+        raise VerificationFailed(
+            "committed entry does not commit the statement PAE hash")
     inclusion = anchor.get("inclusion")
     if not isinstance(inclusion, dict):
         raise VerificationFailed("receipt anchor has no inclusion proof")
@@ -587,7 +623,7 @@ def _verify_inclusion_offline(statement_envelope, receipt_body):
     except (KeyError, ValueError, TypeError) as exc:
         raise VerificationFailed("malformed inclusion proof: %s" % exc)
     try:
-        recomputed = _v2_verify_proof(_v2_leaf(leaf_input), leaf_index,
+        recomputed = _v2_verify_proof(_v2_leaf(entry_body), leaf_index,
                                       proof, tree_size)
     except ValueError as exc:
         raise VerificationFailed("inclusion proof rejected: %s" % exc)

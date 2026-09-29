@@ -237,6 +237,62 @@ class TestEatClaims(unittest.TestCase):
         self.assertFalse(set(bounds["proves"]) &
                          set(bounds["does_not_prove"]))
 
+    # --- F206: claim bounds machine-enforced on the wire (wave-212) ---
+
+    def test_bounds_on_wire_and_pinned(self):
+        import gov.claim_bounds as cb
+        tok = _emit()
+        claims = _payload(tok)
+        wire = claims.get("eat_bounds")
+        self.assertIsInstance(wire, dict)
+        normalized = cb.validate_bounds(wire, where="eat_claim_bounds")
+        self.assertEqual(normalized, eat.eat_claim_bounds())
+        # The legit token still verifies with bounds on the wire.
+        out = eat.verify_eat(tok, **_cfg())
+        self.assertEqual(out["claims"]["eat_bounds"], normalized)
+
+    def test_bounds_mandatory_fail_closed(self):
+        tok = _emit()
+        claims = _payload(tok)
+        del claims["eat_bounds"]  # pre-F206 token shape
+        retok = eat._sign_claims(claims, _signer)
+        with self.assertRaises(eat.EATVerifyError) as cm:
+            eat.verify_eat(retok, **_cfg())
+        self.assertIn("eat_bounds", str(cm.exception))
+
+    def test_superior_proves_smuggle_refused(self):
+        tok = _emit()
+        claims = _payload(tok)
+        claims["proves"] = ["the enclosed content is factually correct"]
+        claims["does_not_prove"] = []
+        retok = eat._sign_claims(claims, _signer)
+        with self.assertRaises(eat.EATVerifyError) as cm:
+            eat.verify_eat(retok, **_cfg())
+        self.assertIn("bounds-smuggle", str(cm.exception))
+
+    def test_edited_bounds_refused(self):
+        tok = _emit()
+        claims = _payload(tok)
+        claims["eat_bounds"] = copy.deepcopy(claims["eat_bounds"])
+        claims["eat_bounds"]["proves"] = (
+            list(claims["eat_bounds"]["proves"]) + ["content is correct"])
+        retok = eat._sign_claims(claims, _signer)
+        with self.assertRaises(eat.EATVerifyError) as cm:
+            eat.verify_eat(retok, **_cfg())
+        self.assertIn("canonical", str(cm.exception))
+
+    def test_incoherent_bounds_refused(self):
+        tok = _emit()
+        claims = _payload(tok)
+        claims["eat_bounds"] = copy.deepcopy(claims["eat_bounds"])
+        # Schema violation through claim_bounds.py: proves and
+        # does_not_prove overlap, does_not_prove non-empty.
+        tok0 = claims["eat_bounds"]["proves"][0]
+        claims["eat_bounds"]["does_not_prove"] = [tok0]
+        retok = eat._sign_claims(claims, _signer)
+        with self.assertRaises(eat.EATVerifyError):
+            eat.verify_eat(retok, **_cfg())
+
     def test_determinism_with_fixed_cti(self):
         a = _emit(cti="fixed-cti-0001")
         b = _emit(cti="fixed-cti-0001")

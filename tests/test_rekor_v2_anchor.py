@@ -43,8 +43,10 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(v2.SOURCE_DUAL, "dual-write")
 
     def test_entry_type_allowlist(self):
+        # F207: hashedrekord-only (sigstore/rekor-tiles CLIENTS.md at
+        # commit 5e6ebbad); the v2.0.1-era native dsse kind is gone.
         self.assertEqual(v2.V2_ENTRY_TYPES,
-                         frozenset({"hashedrekord", "dsse"}))
+                         frozenset({"hashedrekord"}))
         self.assertEqual(v2.TILE_SIZE, 256)
 
 
@@ -143,33 +145,61 @@ class TestHashedrekordSubmit(unittest.TestCase):
         self.assertEqual(r1["log_index"], r2["log_index"])
 
 
-class TestDsseSubmit(unittest.TestCase):
+class TestDssePaeHashSubmit(unittest.TestCase):
+    """F207: DSSE envelopes are committed as their PAE hash inside a
+    hashedrekord entry -- there is no native dsse entry kind."""
+
     def _envelope(self):
         from gov import dsse_envelope as dsse
         from gov.signing import Ed25519Signer
         return dsse.seal(b"payload", "application/vnd.in-toto+json",
                          [Ed25519Signer(bytes([9]) * 32)])
 
-    def test_dsse_receipt(self):
+    def test_native_dsse_kind_refused(self):
         c = _client()
-        r = c.submit_dsse(self._envelope())
+        with self.assertRaises(v2.V2ConfigError):
+            c.submit("dsse", self._envelope())
+        self.assertFalse(hasattr(c, "submit_dsse"),
+                         "the native-dsse seam must be gone")
+
+    def test_dsse_pae_hash_receipt(self):
+        c = _client()
+        env = self._envelope()
+        r = c.submit_dsse_as_hashedrekord(env)
         self.assertEqual(r["verification.source"], "rekor-v2-hermetic")
-        self.assertEqual(r["entry_type"], "dsse")
+        self.assertEqual(r["entry_type"], "hashedrekord")
         self.assertEqual(r["payload_type"],
                          "application/vnd.in-toto+json")
         self.assertEqual(r["payload_sha256"],
                          hashlib.sha256(b"payload").hexdigest())
+        # PAE hash: the committed digest binds the payload type by
+        # construction.
+        import base64 as _b64mod
+        tb = b"application/vnd.in-toto+json"
+        payload = _b64mod.b64decode(env["payload"].encode("ascii"),
+                                    validate=True)
+        pae = (b"DSSEv1 " + str(len(tb)).encode() + b" " + tb + b" "
+               + str(len(payload)).encode() + b" " + payload)
+        self.assertEqual(r["pae_sha256"],
+                         hashlib.sha256(pae).hexdigest())
+        self.assertEqual(r["dsse_routing"], "pae-hash-in-hashedrekord")
+        body = json.loads(c.entry_bytes_for_receipt(r).decode("utf-8"))
+        self.assertEqual(body["kind"], "hashedrekord")
+        self.assertEqual(body["apiVersion"], "0.0.2")
+        self.assertEqual(body["spec"]["data"]["hash"]["value"],
+                         r["pae_sha256"])
 
     def test_malformed_envelope_refused(self):
         c = _client()
         for bad in (None, "x", {"payload": "eA=="},
-                    dict(self._envelope(), extra_field=1)):
+                    dict(self._envelope(), extra_field=1),
+                    dict(self._envelope(), payload="!!!not-b64!!!")):
             with self.assertRaises(v2.V2ConfigError):
-                c.submit_dsse(bad)
+                c.submit_dsse_as_hashedrekord(bad)
 
-    def test_dsse_roundtrip_verifies(self):
+    def test_dsse_pae_hash_roundtrip_verifies(self):
         c = _client()
-        r = c.submit_dsse(self._envelope())
+        r = c.submit_dsse_as_hashedrekord(self._envelope())
         entry_bytes = c.entry_bytes_for_receipt(r)
         self.assertTrue(c.verify_inclusion(r, entry_bytes))
 
@@ -408,8 +438,13 @@ class TestDualWriteAnchor(unittest.TestCase):
         a = self._anchor(dual_write=True)
         r = a.anchor(self.digest, signature_b64=self.sig,
                      pubkey_pem=self.pem, dsse_envelope=env)
+        # F207: the DSSE envelope rides as a PAE-hash hashedrekord
+        # entry -- kind:hashedrekord on the v2 side.
         self.assertEqual(
-            r["entries"]["rekor-v2-hermetic"]["entry_type"], "dsse")
+            r["entries"]["rekor-v2-hermetic"]["entry_type"], "hashedrekord")
+        self.assertEqual(
+            r["entries"]["rekor-v2-hermetic"]["dsse_routing"],
+            "pae-hash-in-hashedrekord")
 
 
 if __name__ == "__main__":
