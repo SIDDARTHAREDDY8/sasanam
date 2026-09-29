@@ -99,8 +99,15 @@ def _session(with_sentinel=True):
     kwargs = dict(ledger_path=run_dir / "egress_ledger.jsonl",
                   ungoverned_ack=_UNGOVERNED_ACK)
     if with_sentinel:
-        vault.register("vendor-key", REAL_VENDOR, [VENDOR_HOST])
-        vault.register("multi-key", REAL_MULTI, [MULTI_A, MULTI_B])
+        # Wave-198: these pre-attestation credentials migrate via the
+        # explicit legacy path (per-credential, loud, sunset-bound) --
+        # the old silent host-only default is gone by design.
+        vault.register("vendor-key", REAL_VENDOR, [VENDOR_HOST],
+                       credential_class="vendor-api",
+                       release_policy="legacy-host-only")
+        vault.register("multi-key", REAL_MULTI, [MULTI_A, MULTI_B],
+                       credential_class="vendor-api",
+                       release_policy="legacy-host-only")
         vault.register_decoy("plant-0")
         _sentinel.register_decoys_in_canary_registry(
             vault, canary_reg,

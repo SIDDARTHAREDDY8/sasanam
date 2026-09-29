@@ -76,6 +76,7 @@ from . import advisory as _advisory
 from . import canary as _canary
 from . import goals as _goals
 from . import sentinel_substitution as _sentinel
+from . import attestation_release as _attestation_release
 from . import classification as _classification
 from . import artifacts as _artifacts
 from . import intent_slice as _intent_slice
@@ -1031,7 +1032,18 @@ class ToolExecutor:
                  # renewal, per-provisioner budget, break-glass
                  # justification). Built from deployment config, never
                  # from agent input.
-                 provisioner_registry=None):
+                 provisioner_registry=None,
+                 # Attestation-conditioned credential release (wave-198,
+                 # Trustee KBS mechanism steal): a
+                 # gov.attestation_release.AttestationReleaseConfig
+                 # holding the trusted issuer keyset, pinned issuers,
+                 # live attestation registry, and jti replay cache.
+                 # Appended LAST so no existing positional caller can
+                 # misalign. Opt-in: None (default) = pre-wave-198
+                 # behavior for host-only credentials; attestation-
+                 # mandatory credentials REFUSE without one (no silent
+                 # fallback to host-only).
+                 attestation_config=None):
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -1424,6 +1436,20 @@ class ToolExecutor:
         # sweep), into an ephemeral copy — the secret never enters the
         # audit path.
         self.sentinel_registry = sentinel_registry
+        # Wave-198: attestation-conditioned release trust anchor
+        # (gov.attestation_release.AttestationReleaseConfig or None).
+        # Fail fast on a misconfigured value: a non-config would
+        # otherwise explode with AttributeError at release time --
+        # and a missing anchor must refuse LOUDLY, never silently.
+        if (attestation_config is not None
+                and not isinstance(
+                    attestation_config,
+                    _attestation_release.AttestationReleaseConfig)):
+            raise ValueError(
+                "attestation_config must be a "
+                "gov.attestation_release.AttestationReleaseConfig "
+                "or None, got %r" % (attestation_config,))
+        self.attestation_config = attestation_config
         # Monotonic advisory layer (opt-in). The composer enforces the
         # allow < require_approval < deny lattice: advisors can only
         # tighten the deterministic verdict, never loosen it.
@@ -2000,6 +2026,36 @@ class ToolExecutor:
         # the registry's own sub-chain; the executor routes conflicts
         # LOUD to the log and the approval queue in register_goal().
         self._goal_registry = _goals.GoalRegistry(audit=self.log.append)
+
+    # Wave-198: attestation-conditioned credential release (Trustee
+    # KBS mechanism steal). The attestation service / operator
+    # registers the agent's current attestation token here; the
+    # execution seam resolves it FRESH per release (never cached from
+    # run start -- revocation between attempt and execution is caught
+    # at the boundary).
+
+    def register_attestation(self, agent_id, token):
+        """Register the current attestation token for an agent id.
+
+        Called by the attestation service / operator in the operator
+        trust domain (never by the agent). Requires
+        ``attestation_config``; raises
+        ``attestation_release.AttestationReleaseError`` without one.
+        The token is verified per release at the execution boundary,
+        not here.
+        """
+        if self.attestation_config is None:
+            raise _attestation_release.AttestationReleaseError(
+                "register_attestation requires attestation_config "
+                "(no silent no-op: an unregistered token would fail "
+                "closed at release anyway)")
+        self.attestation_config.register_attestation(agent_id, token)
+
+    def _resolve_attestation(self, agent_id):
+        """The current attestation token for an agent id, or None."""
+        if self.attestation_config is None or not agent_id:
+            return None
+        return self.attestation_config.attestation_for(agent_id)
 
     def _sync_fingerprint_sources(self):
         """F189: keep _read_content_sources aligned with _read_contents.
@@ -10027,8 +10083,20 @@ class ToolExecutor:
             # afterwards — same model as the upstream design.)
             _exec_kwargs = kwargs
             if getattr(self, "sentinel_registry", None) is not None:
+                # Wave-198: thread (identity, attestation) through the
+                # execution seam -- the release predicate is evaluated
+                # here, authoritatively, per release (the attempt-path
+                # pre-check never consumes the token's jti). The
+                # attestation is resolved FRESH (TOCTOU guard); every
+                # decision is audit-logged without secrets.
                 _exec_kwargs = _sentinel.substitute_for_execution(
-                    self.sentinel_registry, tool, kwargs)[0]
+                    self.sentinel_registry, tool, kwargs,
+                    identity=identity,
+                    attestation=self._resolve_attestation(
+                        identity.agent_id),
+                    release_config=self.attestation_config,
+                    audit_log=self.log,
+                    run_id=self.run_id)[0]
             with _exchange_ledger.bind_reader(
                     identity.principal, identity.run_id,
                     action_log=self.log):
@@ -11815,9 +11883,21 @@ class ToolExecutor:
                 # rec["args"] — the secret never enters the audit path.
                 _exec_args = rec["args"]
                 if getattr(self, "sentinel_registry", None) is not None:
+                    # Wave-198: approved path threads (identity,
+                    # attestation) too -- the attested session is
+                    # re-derived from the approval record (agent id +
+                    # run id) and the token resolved FRESH, so an
+                    # attestation revoked while the approval was
+                    # pending is caught at this boundary.
                     _exec_args = _sentinel.substitute_for_execution(
-                        self.sentinel_registry, rec["tool"],
-                        rec["args"])[0]
+                        self.sentinel_registry, rec["tool"], rec["args"],
+                        identity=_approved_identity,
+                        attestation=self._resolve_attestation(
+                            _approved_identity.get("agent_id")),
+                        release_config=self.attestation_config,
+                        audit_log=self.log,
+                        run_id=_approved_identity.get(
+                            "run_id", self.run_id))[0]
                 result = self._invoke_simulate(rec["tool"], _exec_args, ctx,
                                               _approved_identity)
             # Wave-175 lane 1 (countersigned invocation receipts, R7 #7

@@ -79,6 +79,32 @@ spirit): "Throwing or rejecting denies the request." Concretely here:
   ``[credential-redacted]`` marker exists only as a defense-in-depth
   primitive (:func:`redact_substituted`) for integrators.
 
+Wave-198: attestation-conditioned release (Trustee KBS mechanism steal)
+---------------------------------------------------------------------------
+The host binding above is now one conjunct of the release predicate,
+not the whole predicate. Every credential carries a
+``release_policy`` (see :meth:`SentinelVault.register`):
+
+* ``"attested"`` (default for new credentials): release requires a
+  live, verified attestation (``gov.attestation_release``) covering
+  the credential's class, bound to the requesting agent and the
+  current run, with status ``affirming`` -- AND the host binding.
+  Evaluated per release at the execution boundary
+  (:func:`substitute_for_execution`, authoritative, consumes the
+  token's ``jti``), with a fail-closed pre-check on the attempt path
+  (:func:`validate_sentinel_binding`, never consumes).
+* ``"legacy-host-only"``: the pre-wave-198 host-binding path.
+  Migration bridge only: explicitly selected per credential, LOUDLY
+  audited on every use, and sunset on
+  ``attestation_release.LEGACY_RELEASE_SUNSET`` (2026-12-31).
+* ``"deny_all"``: incident hold -- refused at both seams.
+
+There is NO silent downgrade: an attestation-mandatory credential
+whose attestation is missing, malformed, expired, replayed, or bound
+to another agent/run -- or for which no issuer trust anchor is
+configured -- is LOUDLY refused. Host allowlisting is never a
+fallback.
+
 Honest boundaries (prototype)
 -----------------------------
 - The pre-commit gate (wave-79) binds its digest to the
@@ -111,6 +137,27 @@ $0, stdlib only, no network calls. Deterministic given the vault.
 import re
 import uuid
 from urllib.parse import urlparse
+
+try:
+    from .attestation_release import (
+        RELEASE_POLICIES,
+        LEGACY_RELEASE_SUNSET,
+        REASON_OPERATOR_OVERRIDE,
+        AttestationReleaseConfig,
+        evaluate_release,
+        release_event,
+        legacy_release_event,
+    )
+except ImportError:  # pragma: no cover - direct module use
+    from attestation_release import (
+        RELEASE_POLICIES,
+        LEGACY_RELEASE_SUNSET,
+        REASON_OPERATOR_OVERRIDE,
+        AttestationReleaseConfig,
+        evaluate_release,
+        release_event,
+        legacy_release_event,
+    )
 
 __all__ = [
     "SENTINEL_RE",
@@ -393,9 +440,30 @@ class SentinelVault(object):
     def _mint(self):
         return "fake_value_%s" % uuid.uuid4()
 
-    def register(self, credential_id, real_value, inject_hosts):
+    def register(self, credential_id, real_value, inject_hosts,
+                 credential_class, release_policy="attested"):
         """Bind a real credential to its authorized hosts. Returns the
-        sentinel the agent sees."""
+        sentinel the agent sees.
+
+        Wave-198: every credential is classified and carries a release
+        policy:
+
+        * ``credential_class`` (required, non-empty string): the class
+          the release attestation must cover (e.g. ``"db-password"``).
+        * ``release_policy``: ``"attested"`` (default -- the credential
+          is attestation-mandatory from day one: release requires a
+          live, verified attestation at the execution boundary AND the
+          host binding); ``"legacy-host-only"`` (the pre-wave-198
+          host-binding path -- migration bridge ONLY, must be selected
+          explicitly per credential, LOUD-audited on every use, sunsets
+          on ``attestation_release.LEGACY_RELEASE_SUNSET``);
+          ``"deny_all"`` (incident hold -- refused at both seams).
+
+        There is no silent default: a credential registered without an
+        explicit ``release_policy`` is attestation-mandatory, so a
+        caller that has not migrated fails closed at release instead
+        of silently falling back to host-only.
+        """
         if not isinstance(credential_id, str) or not credential_id.strip():
             raise SentinelError("credential_id must be a non-empty string")
         if credential_id in self._by_cred:
@@ -406,6 +474,15 @@ class SentinelVault(object):
         if SENTINEL_RE.search(real_value):
             raise SentinelError(
                 "real_value must not itself be sentinel-shaped")
+        if not isinstance(credential_class, str) or not credential_class:
+            raise SentinelError(
+                "credential_class must be a non-empty string "
+                "(classify every credential; attestations bind to the "
+                "class)")
+        if release_policy not in RELEASE_POLICIES:
+            raise SentinelError(
+                "release_policy %r is not one of %s"
+                % (release_policy, RELEASE_POLICIES))
         hosts = frozenset(_check_host(h) for h in inject_hosts)
         if not hosts:
             raise SentinelError(
@@ -426,7 +503,9 @@ class SentinelVault(object):
             pass
         sentinel = self._mint()
         rec = {"credential_id": credential_id, "real": real_value,
-               "hosts": hosts, "decoy": False, "sentinel": sentinel}
+               "hosts": hosts, "decoy": False, "sentinel": sentinel,
+               "credential_class": credential_class,
+               "release_policy": release_policy}
         self._entries[sentinel] = rec
         self._by_cred[credential_id] = sentinel
         return sentinel
@@ -523,15 +602,165 @@ def _binding_map(vault, tool, args):
     return dest, bound
 
 
-def validate_sentinel_binding(executor, identity, tool, args):
+def _identity_agent_id(identity):
+    """Agent id from an identity object, a mapping, or None."""
+    if identity is None:
+        return None
+    if isinstance(identity, dict):
+        aid = identity.get("agent_id")
+    else:
+        aid = getattr(identity, "agent_id", None)
+    return aid if isinstance(aid, str) and aid else None
+
+
+def _identity_run_id(identity):
+    """Run id from an identity object, a mapping, or None."""
+    if identity is None:
+        return None
+    if isinstance(identity, dict):
+        rid = identity.get("run_id")
+    else:
+        rid = getattr(identity, "run_id", None)
+    return rid if isinstance(rid, str) and rid else None
+
+
+def _attested_decision(release_config, credential_id, credential_class,
+                       identity, run_id, *, attestation=None,
+                       policy_override=None, policy_override_keyset=None,
+                       now=None, consume=False):
+    """Evaluate the attestation conjunct for one credential.
+
+    Returns ``(ok, reason, via_override, jti)``; never raises. Shared by
+    the attempt-path pre-check (``consume=False``) and the
+    execution-boundary evaluation (``consume=True`` -- the single jti
+    consumer).
+    """
+    agent_id = _identity_agent_id(identity)
+    if not isinstance(release_config, AttestationReleaseConfig):
+        return (False,
+                "credential %r is attestation-mandatory but no attestation "
+                "trust anchor is configured on this executor: refused "
+                "(no silent fallback to host-only)" % (credential_id,),
+                False, None)
+    if not agent_id:
+        return (False,
+                "credential %r is attestation-mandatory but the requesting "
+                "agent identity is unknown: refused" % (credential_id,),
+                False, None)
+    token = attestation
+    if token is None:
+        # Fresh lookup at every evaluation -- never cached from run
+        # start (per-release evaluation; revocation between attempt and
+        # execution is caught here).
+        token = release_config.attestation_for(agent_id)
+    ovr, ovr_ks = policy_override, policy_override_keyset
+    if ovr is None:
+        stored = getattr(release_config, "policy_override", None)
+        if stored is not None:
+            ovr, ovr_ks = stored
+    ok, reason, jti = evaluate_release(
+        credential_id, credential_class, token, config=release_config,
+        agent_id=agent_id, run_id=run_id, policy="attested",
+        override=ovr, override_keyset_doc=ovr_ks, now=now, consume=consume)
+    # The via-override flag is recovered from the module's reason
+    # constant, never a re-typed literal (no magic strings).
+    return ok, reason, (reason == REASON_OPERATOR_OVERRIDE), jti
+
+
+def _attestation_trip(executor, identity, tool, args, credential_id,
+                      reason):
+    """LOUD attestation trip: audit event + approval-queue escalation,
+    then halt. The attestation analog of :func:`_trip` -- the release
+    predicate failed closed on the attempt path."""
+    run_id = getattr(executor, "run_id", "?")
+    agent_id = _identity_agent_id(identity) or "?"
+    if isinstance(identity, dict):
+        principal = identity.get("principal", "?")
+        role = identity.get("role", "?")
+        id_dict = dict(identity)
+    else:
+        principal = getattr(identity, "principal", "?")
+        role = getattr(identity, "role", "?")
+        try:
+            id_dict = identity.as_dict()
+        except Exception:
+            id_dict = {"agent_id": agent_id}
+    full_reason = (
+        "Attestation-release trip: agent %s attempted egress via %s "
+        "carrying the sentinel for attestation-mandatory credential %r. "
+        "%s. The credential is unusable without a live, verified "
+        "attestation bound to this agent and run; this is a refused "
+        "release with a trip signal. Run halted fail-closed; escalated "
+        "for human review."
+        % (agent_id, tool, credential_id, reason))
+    try:
+        cfg = getattr(executor, "attestation_config", None)
+        counters = (cfg.counters_snapshot()
+                    if isinstance(cfg, AttestationReleaseConfig) else None)
+        executor.log.append({
+            "event": "attestation_release_trip",
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "tool": tool,
+            "credential_id": credential_id,
+            "decision": "halted",
+            "policy_id": "attestation-release-trip",
+            "flag": "attestation_release_trip",
+            "reason": full_reason,
+            "counters": counters,
+        })
+    except Exception:
+        pass  # the halt below is the control; audit is best-effort
+
+    try:
+        from .policy import PolicyDecision
+        decision = PolicyDecision(
+            "require_approval", full_reason,
+            policy_id="attestation-release-trip",
+            flag="attestation_release_trip")
+        action = {"tool": tool, "args": args,
+                  "identity": id_dict,
+                  "agent_justification": None, "redactions": []}
+        preview = executor._preview(tool, args)
+        egress_bytes = 0
+        _ebf = getattr(executor, "_egress_bytes_for", None)
+        if callable(_ebf):
+            try:
+                egress_bytes = _ebf(tool, args)
+            except Exception:
+                egress_bytes = 0
+        executor.approvals.queue(
+            action, decision, "agent_direct", preview,
+            policy_hash=executor.policy.policy_hash,
+            policy_flag="attestation_release_trip",
+            egress_bytes=egress_bytes,
+            caller_identity=identity)
+    except Exception:
+        pass  # fail-closed: queue failure must not un-halt
+
+    raise SentinelTripHalt(full_reason)
+
+
+def validate_sentinel_binding(executor, identity, tool, args, *, now=None):
     """ATTEMPT-PATH seam: verify every known sentinel's host binding,
     BEFORE the policy decision. Args pass through UNCHANGED
     (sentinel-bearing) — DLP, policy, approval, previews, and all
     audit-bound snapshots see only the sentinel form.
 
+    Wave-198: after the host binding, the attestation conjunct is
+    PRE-CHECKED fail-closed for attestation-mandatory credentials
+    (``consume=False`` -- the pre-check never consumes the token's
+    ``jti``; the execution-boundary evaluation is authoritative).
+    Credentials under incident hold (``deny_all``) trip here too.
+    ``now`` is the evaluation instant (default: real time).
+
     Returns the list of validated credential ids (no secrets). On a
     host mismatch (or unresolvable destination): LOUD ``sentinel_trip``
     audit event, approval-queue escalation, then
+    :class:`SentinelTripHalt`. On an attestation refusal: LOUD
+    ``attestation_release_trip``, escalation, then
     :class:`SentinelTripHalt`. Best-effort audit/queue like
     ``gov/canary.py`` — the halt is not best-effort.
     """
@@ -559,19 +788,60 @@ def validate_sentinel_binding(executor, identity, tool, args):
         # _trip always raises; the line below is unreachable but keeps
         # the fail-closed intent explicit if the trip path ever changes.
         raise SentinelTripHalt("unreachable")
+    # Wave-198 attestation pre-check (fail-closed, never consumes jti).
+    run_id = getattr(executor, "run_id", "?")
+    release_config = getattr(executor, "attestation_config", None)
+    for rec in bound.values():
+        # No silent downgrade (R6): a record missing release_policy is
+        # attestation-mandatory, never host-only.
+        policy = rec.get("release_policy", "attested")
+        cid = rec["credential_id"]
+        if policy == "deny_all":
+            _attestation_trip(
+                executor, identity, tool, args, cid,
+                "credential %r is under incident hold (deny_all): the "
+                "attempt is refused and the run halts" % (cid,))
+            raise SentinelTripHalt("unreachable")  # _attestation_trip raises
+        if policy == "attested":
+            ok, reason, _via, _jti = _attested_decision(
+                release_config, cid, rec.get("credential_class"),
+                identity, run_id, consume=False, now=now)
+            if not ok:
+                _attestation_trip(executor, identity, tool, args, cid,
+                                  reason)
+                raise SentinelTripHalt("unreachable")  # raises above
+        # "legacy-host-only": host binding only, LOUD-audited at the
+        # execution seam; "deny_all" handled above.
     return [rec["credential_id"] for rec in bound.values()]
 
 
-def substitute_for_execution(vault, tool, args):
+def substitute_for_execution(vault, tool, args, *, identity=None,
+                             attestation=None, release_config=None,
+                             audit_log=None, run_id=None, now=None,
+                             policy_override=None,
+                             policy_override_keyset=None):
     """EXECUTION-BOUNDARY seam: substitute known sentinels into an
     EPHEMERAL copy of ``args`` immediately before the tool is invoked.
     The host binding is RE-VALIDATED here fail-closed (the vault may
     have changed between attempt and execution).
 
+    Wave-198: for attestation-mandatory credentials the release
+    predicate (``gov.attestation_release.evaluate_release``) is
+    evaluated HERE, authoritatively, per release -- the TOCTOU guard.
+    The attempt-path pre-check never consumes the token's ``jti``; this
+    evaluation is the single consumer. The host binding is still ANDed
+    (re-validated above). ``identity`` is the requesting agent identity
+    (object or mapping); ``attestation`` an explicitly resolved token
+    (else looked up fresh from ``release_config``);
+    ``policy_override``/``policy_override_keyset`` carry an optional
+    operator-signed override. Every attested/legacy/deny_all decision
+    is audit-logged via ``audit_log`` (no secrets, no token material).
+
     Returns ``(new_args, substituted_real_values)``. Appends to
     ``vault.substitution_log`` (operator-side, in-memory only). Raises
     :class:`SentinelError` (fail-closed, no trip — the attempt path
-    already had its chance to trip) on a binding mismatch.
+    already had its chance to trip) on a binding mismatch or an
+    attestation refusal.
     """
     if vault is None or tool not in EGRESS_TOOLS:
         return args, ()
@@ -592,9 +862,75 @@ def substitute_for_execution(vault, tool, args):
     if not bound:
         return args, ()
     import time as _time
+    ts = _time.time() if now is None else now
+    # The run id binds the attestation session: explicit kwarg wins,
+    # else the identity's own run id (object or mapping). Unknown
+    # stays "?" and fails the session check fail-closed below.
+    rid = run_id if run_id is not None else _identity_run_id(identity)
+    if not rid:
+        rid = "?"
+    aid = _identity_agent_id(identity) or "?"
+    decisions = []  # (tok, rec, ok, reason, via_override, jti)
+    for tok, rec in bound.items():
+        # No silent downgrade (R6): a record missing release_policy is
+        # attestation-mandatory, never host-only.
+        policy = rec.get("release_policy", "attested")
+        cid = rec["credential_id"]
+        if policy == "legacy-host-only":
+            decisions.append((tok, rec, True,
+                              "legacy host-only release (migration path; "
+                              "sunsets %s)" % (LEGACY_RELEASE_SUNSET,),
+                              False, None))
+        elif policy == "deny_all":
+            decisions.append((tok, rec, False,
+                              "credential %r is under incident hold "
+                              "(deny_all): refused" % (cid,), False, None))
+        elif policy == "attested":
+            ok, reason, via, jti = _attested_decision(
+                release_config, cid, rec.get("credential_class"),
+                identity, rid, attestation=attestation,
+                policy_override=policy_override,
+                policy_override_keyset=policy_override_keyset,
+                now=ts, consume=False)
+            decisions.append((tok, rec, ok, reason, via, jti))
+        else:
+            decisions.append((tok, rec, False,
+                              "unknown release policy %r for credential "
+                              "%r: refused fail-closed" % (policy, cid),
+                              False, None))
+    # Audit every decision (no secrets, no token material), then fail
+    # closed on ANY refusal BEFORE consuming a jti or substituting
+    # anything -- no partial release.
+    if audit_log is not None:
+        counters = (release_config.counters_snapshot()
+                    if isinstance(release_config, AttestationReleaseConfig)
+                    else None)
+        for tok, rec, ok, reason, via, jti in decisions:
+            policy = rec.get("release_policy", "attested")
+            if policy == "legacy-host-only" and ok:
+                audit_log.append(legacy_release_event(
+                    credential_id=rec["credential_id"], agent_id=aid,
+                    run_id=rid, dest=dest, counters=counters))
+            else:
+                audit_log.append(release_event(
+                    credential_id=rec["credential_id"], agent_id=aid,
+                    run_id=rid, verdict="allowed" if ok else "denied",
+                    reason=reason, policy=policy, via_override=via,
+                    counters=counters))
+    refused = [d for d in decisions if not d[2]]
+    if refused:
+        _tok, rec, _ok, reason, _via, _jti = refused[0]
+        raise SentinelError(
+            "execution refused: attestation-conditioned release failed "
+            "for credential %r: %s" % (rec["credential_id"], reason))
+    # All decisions allow: consume the jtis (single consumption point),
+    # then substitute.
+    for tok, rec, ok, reason, via, jti in decisions:
+        if jti is not None and release_config is not None:
+            release_config.mark_jti(jti)
     mapping = {}
     reals = []
-    for tok, rec in bound.items():
+    for tok, rec, ok, reason, via, jti in decisions:
         mapping[tok] = rec["real"]
         reals.append(rec["real"])
         vault.substitution_log.append(
