@@ -15,17 +15,20 @@ always raises), stale-proof refusing ``verify_inclusion``, an
 independent Merkle-recomputing ``RekorWitness``, and offline
 proof bundles that verify with the server down.
 
-F203 is NOT closed by this battery: the existing ``RekorBackend``
-is untouched, so the live pin (p_f203_live_pin) stays EXPECTED
-until the backend itself is repaired and live-tested.
+F203 was closed by wave-198 (2026-09-29): ``RekorBackend.submit``
+now emits the Ed25519ph/sha512 hashedrekord shape that real Rekor
+v1.5.4 accepts, and the live pin (p_f203_live_pin) pins the FIXED
+behavior -- submit succeeds and the entry verifies via inclusion
+proof (BREAK on any 400/SHA-512 regression).
 
 Probe map:
   p_import_seam: gov.rekor_anchor imports; grade constant pinned.
   p_f203_live_pin: live-conditional. If a Rekor v1 answers on
-    localhost:3000, submit via the EXISTING backend and expect the
-    documented 400/SHA-512 rejection (EXPECTED while F203 is open;
-    BREAK if reality contradicts the finding either way). If no
-    live server, EXPECTED/skipped.
+    localhost:3000, submit via the EXISTING backend and expect SUCCESS
+    (F203 closed 2026-09-29, wave-198: Ed25519ph/sha512 envelope) plus
+    verify_receipt OK -- BREAK if reality contradicts the fix either
+    way (400/SHA-512 rejection = F203 regressed). If no live server,
+    EXPECTED/skipped.
   p_prod_pins_refused: Sigstore prod URL / prod log_id refused.
   p_raw_ed25519_refused: algorithm="ed25519" refused fail-closed.
   p_layering: receipt grade is digest-existence-only; presenting it
@@ -236,23 +239,25 @@ def p_f203_live_pin():
         s.close()
     except OSError:
         _record(name, "EXPECTED",
-                "no live Rekor on localhost:3000; F203 pinned by the "
-                "2026-09-29 live run (400 unsupported hash algorithm)")
+                "no live Rekor on localhost:3000; F203 closed by the "
+                "2026-09-29 live run (Ed25519ph/sha512 accepted, entry "
+                "verified)")
         return
     from gov import anchor_backend as ab
     from gov import ed25519 as ed
     seed = ed.generate_seed()
     be = ab.RekorBackend(
-        url="http://localhost:3000", log_id="battery-f203",
+        url="http://localhost:3000", log_id="discovery",
         anchor_seed=seed, anchor_pubkey=ed.publickey(seed))
+    ahash = "ab" * 32
     try:
-        be.submit("ab" * 32)
+        discovery = be.submit(ahash)
     except ab.WitnessDownError as e:
         msg = str(e)
         if "400" in msg and "SHA-512" in msg:
-            _record(name, "EXPECTED",
-                    "F203 still open: live Rekor v1.5.4 rejects raw "
-                    "Ed25519 (400/SHA-512)")
+            _record(name, "BREAK",
+                    "F203 REGRESSED: live Rekor v1.5.4 rejects the "
+                    "Ed25519ph envelope (%s)" % (msg[:100],))
         else:
             _record(name, "BREAK",
                     "live rejection, unexpected shape: %s" % (msg[:120],))
@@ -261,8 +266,30 @@ def p_f203_live_pin():
         _record(name, "BREAK",
                 "unexpected exception type: %r" % (e,))
         return
-    _record(name, "BREAK",
-            "submit SUCCEEDED: F203's claim is stale, re-examine")
+    # Pin the real log id from the server's own response, then run the
+    # close-when end to end: submit -> entry -> inclusion verification.
+    be = ab.RekorBackend(
+        url="http://localhost:3000", log_id=discovery["log_id"],
+        anchor_seed=seed, anchor_pubkey=ed.publickey(seed))
+    try:
+        receipt = be.submit("cd" * 32)
+    except Exception as e:  # noqa: BLE001
+        _record(name, "BREAK",
+                "pinned-log_id submit failed: %r" % (e,))
+        return
+    ok, why = be.verify_receipt(receipt, anchor_hash="cd" * 32)
+    if not ok:
+        _record(name, "BREAK",
+                "live entry did not verify: %s" % (why,))
+        return
+    if receipt.get("anchor_algorithm") != "ed25519ph-sha512":
+        _record(name, "BREAK",
+                "receipt anchor_algorithm not ed25519ph-sha512")
+        return
+    _record(name, "HELD",
+            "F203 closed: live Rekor v1.5.4 accepts the Ed25519ph/sha512 "
+            "envelope; entry %s verifies via inclusion proof"
+            % (receipt["uuid"][:12],))
 
 
 def p_prod_pins_refused():

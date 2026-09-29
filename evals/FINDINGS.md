@@ -6243,7 +6243,43 @@ The documented `BomError("pin_digests must be a dict")` is unreachable for these
 Rekor v1.5.4 + Trillian v1.8.0 stack (binaries from the wave-193 spike).
 Standing regression pin: `evals/rekor_anchor_probes.py::p_f203_live_pin`.
 
-**Status: OPEN (filed 2026-09-29, wave-194 lane D).**
+**Status: CLOSED 2026-09-29 (wave-198 lane A).** Raw Ed25519 was
+repaired throughout as Ed25519ph/SHA-512 per the close-when's first
+option.
+
+**Closure evidence (all live-tested, not fake-transport only):**
+
+- Pristine RED (d933dd1, local Rekor v1.5.4 + Trillian v1.8.0 + MySQL +
+  Redis): `RekorBackend.submit` -> `WitnessDownError: rekor HTTP 400:
+  ... unsupported hash algorithm: "SHA-256" not in [SHA-512]`.
+- Fixed GREEN: `RekorBackend.submit` now emits
+  Ed25519ph(`sign_ph`, RFC 8032 5.1, SHA-512 prehash, empty context)
+  over the 32-byte anchor hash with envelope
+  `data.hash = {"algorithm": "sha512", "value": hex(sha512(anchor_hash))}`
+  -- the exact shape hashedrekord's `WithED25519ph()` verifier accepts
+  (measured live; a double-hashed variant was rejected server-side as
+  `ed25519: invalid signature`, confirming the server treats the
+  declared digest as the already-computed PH(M)).
+- Live round trip, log id
+  `a65b745425ca5dd6875b116cbb0754e013485fc092308535da75ca9e59eae340`:
+  submit -> real entry (log indexes 24-27 observed) -> `verify_receipt`
+  OK (`True, None`); wrong anchor hash -> `(False, "receipt is for a
+  different anchor")`.
+- Red-first battery: `evals/rekor_f203_probes.py` (9/9 HELD, includes
+  live round-trip and proof/tree-size stale guard) and
+  `evals/rekor_anchor_probes.py::p_f203_live_pin` (now HELD against
+  the fixed seam). Unit suite `tests/test_rekor_f203.py` (10/10).
+
+**Residual (honest):** the raw-Ed25519 path is repaired, not removed --
+`verify_receipt` accepts only the `ed25519ph-sha512` shape (sha512
+declaration + matching value + valid Ed25519ph anchor signature +
+inclusion proof). Genuine pre-F203 receipts (sha256-declared bodies)
+are therefore REFUSED, not grandfathered in; an unlabeled receipt is
+accepted only if its body already carries the F203 shape. The
+inclusion proof binds the entry to the log; the re-checked envelope
+signature binds the anchor key to the entry, so the receipt is
+self-contained and does not rely transitively on the server's past
+signature verification.
 
 **Reproduction:** `RekorBackend(url="http://localhost:3000", ...).submit(anchor_hash)`
 signs the 32-byte digest with raw Ed25519 (`gov.ed25519.sign`, SHA-512
@@ -6286,4 +6322,4 @@ unaffected. HIGH rejected: nothing is bypassed and no data leaves.
 
 ---
 
-Next free finding: **F204**. **Open findings: F203.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, OPEN.)
+Next free finding: **F204**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A.)

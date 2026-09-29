@@ -69,6 +69,12 @@ _STATEMENT_REQUIRED = frozenset(_STATEMENT_FIELDS - {"merkle_root", "sig"})
 # the shard key this constant must be re-captured; a mismatch fails closed
 # (receipts rejected, the local chain unaffected).
 REKOR_URL = "https://rekor.sigstore.dev"
+# F203: the anchor signature shape RekorBackend emits and the only
+# shape verify_receipt accepts -- Ed25519ph (RFC 8032 5.1, SHA-512
+# prehash, empty context) over the 32-byte anchor hash, with the
+# envelope declaring data.hash = sha512(anchor_hash). One constant so
+# the emit label and the refuse-pin can never skew apart.
+ANCHOR_ALGORITHM_ED25519PH_SHA512 = "ed25519ph-sha512"
 REKOR_PUBKEY_PEM = (
     "-----BEGIN PUBLIC KEY-----\n"
     "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2G2Y+2tabdTV5BcGiBIx0a9fAFwr\n"
@@ -512,12 +518,20 @@ class RekorBackend(AnchorBackend):
     """Sigstore Rekor v1 backend (``hashedrekord`` 0.0.1), stdlib only.
 
     Submits the anchor hash (never the statement, never record contents)
-    with the anchor key's Ed25519 signature over the 32-byte digest --
+    with the anchor key's Ed25519ph signature over the 32-byte digest --
     hashedrekord exists for exactly this shape -- and the anchor pubkey as
     PEM SPKI. ``transport`` is an injectable
     ``fn({"method","url","headers","body"}) -> {"status","body"}`` for the
     deterministic suite (which never touches the network); the default
     transport is real ``urllib`` HTTPS.
+
+    Anchor signature shape (F203, closed 2026-09-29, wave-198): Ed25519ph
+    (RFC 8032 section 5.1) with SHA-512 as the prehash, empty context --
+    the ONLY Ed25519 shape real Rekor v1.5.x's hashedrekord accepts
+    (its verifier is built with sigstore's WithED25519ph()). Raw
+    Ed25519 is dead against the real service (HTTP 400
+    ``unsupported hash algorithm: "SHA-256" not in [SHA-512]``) and is
+    no longer emitted anywhere on this path.
     """
 
     def __init__(self, url=REKOR_URL, transport=None, clock=None,
@@ -583,10 +597,29 @@ class RekorBackend(AnchorBackend):
             raise WitnessError(
                 "rekor submit needs anchor_seed + anchor_pubkey "
                 "(executor-side custody)")
-        # The hashedrekord signature is over the 32-byte digest (the type
-        # exists for digest-only artifacts) -- a protocol-minimum
-        # envelope field, not statement content.
-        digest_sig = _ed.sign(self._anchor_seed, bytes.fromhex(ahash))
+        # The hashedrekord signature is over the 32-byte anchor hash (the
+        # type exists for digest-only artifacts) -- a protocol-minimum
+        # envelope field, not statement content. Ed25519ph (prehashed,
+        # SHA-512, empty context): the only Ed25519 shape Rekor v1.5.x
+        # accepts for hashedrekord (F203 -- raw Ed25519 is rejected
+        # with HTTP 400).
+        #
+        # Envelope-hash subtlety (measured live against Rekor v1.5.4,
+        # 2026-09-29): the entry's verifier is built with sigstore's
+        # WithED25519ph() and called with WithDigest(decoded) +
+        # WithCryptoSignerOpts(artifactAlg). The ph verifier allow-lists
+        # ONLY SHA-512 as the hash, so the envelope MUST declare
+        # data.hash.algorithm = "sha512" (a "sha256" declaration dies
+        # with `unsupported hash algorithm: "SHA-256" not in [SHA-512]`
+        # before any signature math). The declared digest is
+        # SHA-512(anchor_hash); the SIGNATURE is Ed25519ph over the
+        # 32-byte anchor hash itself -- the verifier treats the passed
+        # digest as the already-computed PH(M) (no double hash), so
+        # sign_ph(seed, anchor_hash) is the shape that verifies
+        # (sign_ph(seed, sha512(anchor_hash)) is rejected as invalid).
+        digest = bytes.fromhex(ahash)
+        d512 = hashlib.sha512(digest).hexdigest()
+        digest_sig = _ed.sign_ph(self._anchor_seed, digest)
         proposed = {
             "kind": "hashedrekord",
             "apiVersion": "0.0.1",
@@ -601,7 +634,7 @@ class RekorBackend(AnchorBackend):
                     },
                 },
                 "data": {
-                    "hash": {"algorithm": "sha256", "value": ahash},
+                    "hash": {"algorithm": "sha512", "value": d512},
                 },
             },
         }
@@ -632,6 +665,10 @@ class RekorBackend(AnchorBackend):
             "log_index": entry.get("logIndex"),
             "log_id": entry.get("logID"),
             "anchor_hash": ahash,
+            # The anchor signature shape that produced this entry.
+            # Descriptive (the inclusion proof is the verified core);
+            # verify_receipt refuses receipts claiming an unknown shape.
+            "anchor_algorithm": ANCHOR_ALGORITHM_ED25519PH_SHA512,
             "integrated_time": entry.get("integratedTime"),
             "inclusion_proof": {
                 "hashes": list(proof.get("hashes", [])),
@@ -660,14 +697,45 @@ class RekorBackend(AnchorBackend):
                 return False, "receipt is for a different anchor"
             if receipt.get("log_id") != self.log_id:
                 return False, "receipt is from a different transparency log"
+            # Anchor-shape pin: a receipt with no label is accepted iff
+            # its body carries the F203 shape (sha512 declaration
+            # below); a receipt CLAIMING an unknown shape is refused
+            # (fail-closed on what we don't understand). Pre-F203
+            # receipts (sha256-declared bodies) are refused by the
+            # shape check below -- the raw-Ed25519 path is repaired
+            # throughout, not kept alive for old receipts.
+            algo = receipt.get("anchor_algorithm")
+            if algo is not None and \
+                    algo != ANCHOR_ALGORITHM_ED25519PH_SHA512:
+                return False, "receipt claims unknown anchor algorithm"
             body = base64.b64decode(receipt["body"])
             entry = json.loads(body.decode("utf-8"))
             try:
+                halg = entry["spec"]["data"]["hash"]["algorithm"]
                 value = entry["spec"]["data"]["hash"]["value"]
             except (KeyError, TypeError):
-                return False, "entry body has no data.hash.value"
-            if value != anchor_hash:
-                return False, "entry body hash != anchor_hash"
+                return False, "entry body has no data.hash"
+            # F203 shape: the envelope declares the SHA-512 of the
+            # 32-byte anchor hash (the only declaration Rekor v1.5.x's
+            # Ed25519ph verifier accepts).
+            if halg != "sha512":
+                return False, "entry body hash algorithm != sha512"
+            if value != hashlib.sha512(
+                    bytes.fromhex(anchor_hash)).hexdigest():
+                return False, "entry body hash != sha512(anchor_hash)"
+            # The envelope signature binds the anchor key to the entry:
+            # Ed25519ph over the 32-byte anchor hash (the shape Rekor
+            # itself verified at submission; re-checked here so the
+            # receipt is self-contained and does not rely transitively
+            # on the server's past verification).
+            try:
+                sig = base64.b64decode(
+                    entry["spec"]["signature"]["content"])
+            except (KeyError, TypeError, ValueError):
+                return False, "entry body has no signature"
+            if not _ed.verify_ph(self._anchor_pubkey,
+                                 bytes.fromhex(anchor_hash), sig):
+                return False, "anchor signature does not verify"
             proof = receipt["inclusion_proof"]
             root = _rfc6962_root(
                 body, proof["log_index"], proof["hashes"],

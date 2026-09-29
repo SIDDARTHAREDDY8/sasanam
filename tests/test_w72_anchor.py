@@ -474,7 +474,9 @@ class TestPrivacyPin(W72Base):
             entry = {
                 "body": base64.b64encode(json.dumps(
                     {"spec": {"data": {"hash": {
-                        "algorithm": "sha256", "value": ahash}}}})
+                        "algorithm": "sha512",
+                        "value": hashlib.sha512(
+                            bytes.fromhex(ahash)).hexdigest()}}}})
                     .encode()).decode(),
                 "integratedTime": 1780000000,
                 "logIndex": 41,
@@ -501,10 +503,18 @@ class TestPrivacyPin(W72Base):
                              "outbound bytes leak %r" % forbidden)
         parsed = json.loads(body)
         self.assertEqual(parsed["kind"], "hashedrekord")
-        self.assertEqual(parsed["spec"]["data"]["hash"]["value"], ahash)
-        # The envelope signature is over the DIGEST ONLY (protocol min).
+        # F203 shape: the envelope declares SHA-512(anchor_hash) --
+        # the only declaration Rekor v1.5.x's Ed25519ph verifier
+        # accepts -- and the signature is Ed25519ph over the 32-byte
+        # anchor hash (never raw Ed25519).
+        self.assertEqual(parsed["spec"]["data"]["hash"]["algorithm"],
+                         "sha512")
+        self.assertEqual(parsed["spec"]["data"]["hash"]["value"],
+                         hashlib.sha512(bytes.fromhex(ahash)).hexdigest())
         sig = base64.b64decode(parsed["spec"]["signature"]["content"])
-        self.assertTrue(_ed.verify(pub, bytes.fromhex(ahash), sig))
+        self.assertTrue(_ed.verify_ph(pub, bytes.fromhex(ahash), sig))
+        self.assertFalse(_ed.verify(pub, bytes.fromhex(ahash), sig),
+                         "raw-Ed25519 shape must never be emitted")
         self.assertTrue(seen["url"].endswith("/api/v1/log/entries"))
 
     def test_local_anchor_log_stores_no_statement(self):

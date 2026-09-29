@@ -557,7 +557,9 @@ def sit_privacy_bytes_pinned():
             entry = {
                 "body": base64.b64encode(json.dumps(
                     {"spec": {"data": {"hash": {
-                        "algorithm": "sha256", "value": ahash}}}})
+                        "algorithm": "sha512",
+                        "value": hashlib.sha512(
+                            bytes.fromhex(ahash)).hexdigest()}}}})
                     .encode()).decode(),
                 "integratedTime": 1780000000,
                 "logIndex": 41,
@@ -584,9 +586,12 @@ def sit_privacy_bytes_pinned():
                         "note": "outbound bytes leak %r" % forbidden}
         parsed = json.loads(seen["body"])
         sig = base64.b64decode(parsed["spec"]["signature"]["content"])
-        if not ed_mod.verify(pub, bytes.fromhex(ahash), sig):
+        # F203 shape: Ed25519ph over the 32-byte anchor hash (raw
+        # Ed25519 is rejected by real Rekor v1.5.x).
+        if not ed_mod.verify_ph(pub, bytes.fromhex(ahash), sig):
             return {"verdict": "break",
-                    "note": "envelope signature is not over the digest"}
+                    "note": "envelope signature is not Ed25519ph over "
+                            "the digest"}
         return {"verdict": "stopped",
                 "note": "witness boundary is hash-only on all three "
                         "backends"}
@@ -756,17 +761,22 @@ def sit_rekor_backend_two_leaf_proof_verifies():
     pub = ab_mod.anchor_pubkey(seed)
     ah1 = hashlib.sha256(b"epoch-one").hexdigest()
     ah2 = hashlib.sha256(b"epoch-two").hexdigest()
+    # F203 envelope shape: the entry body declares
+    # SHA-512(anchor_hash) -- the only declaration Rekor v1.5.x's
+    # Ed25519ph verifier accepts.
+    dh1 = hashlib.sha512(bytes.fromhex(ah1)).hexdigest()
+    dh2 = hashlib.sha512(bytes.fromhex(ah2)).hexdigest()
     body1 = json.dumps({"spec": {"data": {"hash": {
-        "algorithm": "sha256", "value": ah1}}}}).encode()
+        "algorithm": "sha512", "value": dh1}}}}).encode()
     body2 = json.dumps({"spec": {"data": {"hash": {
-        "algorithm": "sha256", "value": ah2}}}}).encode()
+        "algorithm": "sha512", "value": dh2}}}}).encode()
     leaf1 = hashlib.sha256(b"\x00" + body1).digest()
     leaf2 = hashlib.sha256(b"\x00" + body2).digest()
     root = hashlib.sha256(b"\x01" + leaf1 + leaf2).digest()
 
     def transport(req):
         ah = json.loads(req["body"])["spec"]["data"]["hash"]["value"]
-        idx = 0 if ah == ah1 else 1
+        idx = 0 if ah == dh1 else 1
         sib = leaf2.hex() if idx == 0 else leaf1.hex()
         body = body1 if idx == 0 else body2
         entry = {

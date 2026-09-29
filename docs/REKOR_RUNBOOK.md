@@ -106,9 +106,10 @@ of the following; each is a launch blocker, not a nice-to-have:
   input, enforced structurally in `submit`).
 - Rotate on a schedule; the old public key stays published for
   auditors verifying old entries.
-- The existing `gov.anchor_backend.RekorBackend` still submits RAW
-  Ed25519 and is broken against real Rekor (F203, OPEN) — do not
-  use it until F203 is closed.
+- The existing `gov.anchor_backend.RekorBackend` was repaired in
+  wave-198 (2026-09-29, F203 CLOSED): it now submits the
+  `ed25519ph-sha512` shape that real Rekor v1.5.4 accepts. Both the
+  self-hosted client and this seam are supported.
 
 ## 5. Auditor verification procedure
 
@@ -156,9 +157,11 @@ of the following; each is a launch blocker, not a nice-to-have:
   as wave-72's SET handling; carried, not verified).
 - No log-bloat protection in the client (server-side rate
   limiting, §3.8).
-- `gov.anchor_backend.RekorBackend` remains broken against real
-  Rekor (F203 OPEN) — the self-hosted client in
-  `gov/rekor_anchor.py` is the supported path.
+- `gov.anchor_backend.RekorBackend` is repaired (F203 closed
+  2026-09-29, wave-198): it submits `ed25519ph-sha512` hashedrekord
+  entries that real Rekor v1.5.4 accepts, with receipt inclusion-proof
+  verification. The self-hosted client in `gov/rekor_anchor.py`
+  remains the supported path for ECDSA-P256 anchors.
 - STALE-refusal race (known, fail-closed direction): `verify_inclusion`
   fetches the checkpoint *after* the entry, so on a live growing log a
   legitimately fresh proof is refused whenever the tree grows between

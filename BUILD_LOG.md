@@ -1,3 +1,33 @@
+## 2026-09-29 — Wave-198 lane A: F203 closure (RekorBackend Ed25519ph/SHA-512, live-tested)
+
+**Scope.** Close F203 (MEDIUM, filed 2026-09-29 wave-194 lane D): `gov.anchor_backend.RekorBackend.submit` emitted raw-Ed25519/SHA-256 hashedrekord envelopes, rejected by real Rekor v1.5.4 with HTTP 400 `unsupported hash algorithm: "SHA-256" not in [SHA-512]`. Repaired at the same public seam per the close-when's first option: Ed25519ph/SHA-512 throughout.
+
+**The shape (measured live, not assumed).** Against the local Rekor v1.5.4 + Trillian v1.8.0 + MySQL + Redis stack: declaring `data.hash.algorithm="sha256"` while signing Ed25519ph still 400s; declaring `sha512` with `value=hex(sha512(anchor_hash))` and `sign_ph(seed, anchor_hash)` accepts; signing `sign_ph(seed, sha512(anchor_hash))` is rejected server-side as `ed25519: invalid signature` (double hash). So the verifier (sigstore `WithED25519ph()`) treats the declared digest as the already-computed PH(M) — no double hash. Code: `gov/ed25519.py` gains RFC 8032 Ed25519ph (`sign_ph`/`verify_ph`, correct `"SigEd25519 no Ed25519 collisions"\x01` domain, §7.3 vector byte-exact); `gov/anchor_backend.py::RekorBackend.submit` signs the 32-byte anchor hash with `sign_ph` and declares sha512-of-anchor-hash; receipts carry `anchor_algorithm="ed25519ph-sha512"`; `verify_receipt` refuses explicitly unknown algorithm labels (legacy unlabeled receipts still verify), requires sha512 declaration + matching value in the entry body, and keeps RFC 6962 inclusion-proof verification + pinned log-ID check.
+
+**Red-first.** Pristine d933dd1, live stack: submit -> `WitnessDownError: rekor HTTP 400 ... not in [SHA-512]` (recorded). Fixed, live stack (log id `a65b7454...9eae340`): submit -> real entries (indexes 24-27 observed) -> `verify_receipt` `True, None`; wrong anchor -> `(False, "receipt is for a different anchor")`. Batteries: new `evals/rekor_f203_probes.py` 9/9 HELD (incl. live round-trip, fake-transport tamper/wrong-key/stale-proof probes, deterministic x2, identical under `env -u GOV_DEPLOYMENT_MODE`); `evals/rekor_anchor_probes.py` 11/11 HELD with `p_f203_live_pin` now pinning the FIXED live behavior; `evals/w72_probes.py` 13/13 HOLD; unit suite `tests/test_rekor_f203.py` 10/10 new; adjacent units `test_w72_anchor`+`test_anchoring`+`test_rekor_anchor`+`test_crypto_gov` 160 OK. `evals/FINDINGS.md`: F203 CLOSED 2026-09-29; open findings: none; next free F204. `docs/REKOR_RUNBOOK.md` stale F203-OPEN notes updated.
+
+**Two-axis review (post-fix).** Standards: CLEAN, no hard violations
+(setenv, depth-1/GOV_SKIP_GREEN green check, TMPDIR run instructions,
+verdict vocabulary all held); two non-blocking smells noted
+(duplicated fake-transport helpers between battery and unit file —
+accepted as deliberate hermeticity; bare `"ed25519ph-sha512"` label —
+fixed by extracting `ANCHOR_ALGORITHM_ED25519PH_SHA512` in
+`gov.anchor_backend`). Spec: (a) one REAL catch — the closure
+residual overstated legacy compatibility: genuine pre-F203
+(sha256-declared) receipts are REFUSED by the shape check, not
+grandfathered; residual + code comment corrected to the honest
+posture ("repaired throughout"). (b) Added envelope-signature
+re-verification to `verify_receipt` (Ed25519ph over the anchor hash,
+fail-closed "anchor signature does not verify") so receipts are
+self-contained rather than relying transitively on the server's past
+verification; unit-tested with a forged-signature case. (c)
+Stale-proof guard was task-required, not creep. Live evidence is a
+recorded one-time operator run (log id + indexes above);
+live-conditional probes pin the shape deterministically in gates —
+documented as the evidence basis.
+
+**Residuals (honest).** (1) Rekor receipts remain digest-existence evidence only — never authority; equivocation enforcement stays in the witness layer. (2) The stale-proof guard for THIS seam is proof/claimed-tree-size consistency (root recomputation); the fresh-checkpoint STALE race documented in the runbook for `gov/rekor_anchor.py` is unchanged. (3) No consistency-proof path; checkpoint operator ECDSA signature carried, not verified.
+
 ## 2026-09-29 — Wave-195: merge tufload + typedctx + rekorprod (red-first audited, gates green)
 
 **Scope.** Merge-coordinator integration of three finished wave-194 lanes onto remote base `9bac4af7` (wave-197): `d1e2477` TUF load-seam freshness (pin protocol v2, signature-covered monotonic version + `not_after`, expiry before digest verification, non-increasing repin/unpin refused, authorship before version floor), `bab0b2f` typed context-attribute schema (explicit refusal/diagnostic for mistyped attributes; silent `bool()`/`int()` coercion removed at the Request boundary), `0ad3605` self-hosted Rekor product anchoring (checkpoint STHs + sealed evidence-manifest anchoring; digest-existence evidence only; fresh verify semantics; witness equivocation enforcement). `evals/FINDINGS.md`: F203 stays OPEN (next free F204).
