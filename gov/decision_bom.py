@@ -103,7 +103,7 @@ def build_bom(*, policy_id, policy_version, policy_digest,
               decision_mode=None, nominal_effect=None,
               decision_warnings=None, rule_mode_history=None,
               perm_model=None, decision_event_v2=None, tool_grants=None,
-              attested_identity=None):
+              attested_identity=None, c2pa_provenance=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -179,6 +179,19 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     decision did not run under an attested identity, and BOMs built
     without it are byte-identical to before (the wave-191
     token_digest precedent). A partial dict raises BomError.
+
+    Wave-210 (C2PA-shaped provenance): ``c2pa_provenance`` is an
+    optional all-or-none dict ``{"manifest_digest": hex64,
+    "chain_length": int >= 1, "root_ingredient_digests": [hex64]}`` --
+    the C2PA-shaped provenance manifest the decision's receipt was
+    sealed under (``gov.c2pa_provenance.bom_c2pa_section()``). The
+    manifest digest binds the exact assertion set; the chain length and
+    the direct parents' content digests let an auditor trace a
+    generated artifact back to the model version and the prompt digest
+    without parsing prose. The manifest is C2PA-*shaped*, not
+    C2PA-conformant (no JUMBF, no COSE/X.509). Omitted when the
+    decision carries no provenance manifest, and BOMs built without it
+    are byte-identical to before. A partial dict raises BomError.
     """
     if not isinstance(policy_id, str) or not policy_id:
         raise BomError("policy_id must be a non-empty string")
@@ -395,6 +408,37 @@ def build_bom(*, policy_id, policy_version, policy_digest,
             "credential_digest": ident_cred,
             "evidence_digest": ident_ev,
         }
+    # Wave-210 (C2PA-shaped provenance): the optional c2pa_provenance
+    # section. All-or-none: a partial dict is refused loud, and absence
+    # keeps the BOM byte-identical to before.
+    if c2pa_provenance is not None:
+        if not isinstance(c2pa_provenance, dict):
+            raise BomError("c2pa_provenance must be a dict or None")
+        c2pa_md = c2pa_provenance.get("manifest_digest")
+        if not _is_hex64(c2pa_md):
+            raise BomError("c2pa_provenance manifest_digest must be "
+                           "64-char lowercase hex")
+        c2pa_clen = c2pa_provenance.get("chain_length")
+        if (isinstance(c2pa_clen, bool) or not isinstance(c2pa_clen, int)
+                or c2pa_clen < 1):
+            raise BomError("c2pa_provenance chain_length must be a "
+                           "positive int")
+        c2pa_rids = c2pa_provenance.get("root_ingredient_digests")
+        if (not isinstance(c2pa_rids, list)
+                or not all(_is_hex64(d) for d in c2pa_rids)):
+            raise BomError("c2pa_provenance root_ingredient_digests must "
+                           "be a list of 64-char lowercase hex")
+        unknown_c2pa = (set(c2pa_provenance)
+                        - {"manifest_digest", "chain_length",
+                           "root_ingredient_digests"})
+        if unknown_c2pa:
+            raise BomError("c2pa_provenance carries unknown keys: %s"
+                           % sorted(unknown_c2pa))
+        inputs["c2pa_provenance"] = {
+            "manifest_digest": c2pa_md,
+            "chain_length": c2pa_clen,
+            "root_ingredient_digests": list(c2pa_rids),
+        }
     return {
         "bom_version": BOM_VERSION,
         "inputs": inputs,
@@ -545,13 +589,37 @@ def check_bom_shape(bom):
         if set(ident) - {"tier", "credential_digest", "evidence_digest"}:
             return False, ("bom.inputs.attested_identity carries unknown "
                            "keys")
+    # Wave-210 (C2PA-shaped provenance): the optional c2pa_provenance
+    # section, when present, must bind a manifest digest, a positive
+    # chain length, and the direct parents' content digests. Absent is
+    # fine (decisions without a provenance manifest omit it).
+    c2pa = inputs.get("c2pa_provenance")
+    if c2pa is not None:
+        if not isinstance(c2pa, dict):
+            return False, "bom.inputs.c2pa_provenance is not a dict"
+        if not _is_hex64(c2pa.get("manifest_digest")):
+            return False, ("bom.inputs.c2pa_provenance.manifest_digest "
+                           "is not 64-char hex")
+        clen = c2pa.get("chain_length")
+        if isinstance(clen, bool) or not isinstance(clen, int) or clen < 1:
+            return False, ("bom.inputs.c2pa_provenance.chain_length is not "
+                           "a positive int")
+        rids = c2pa.get("root_ingredient_digests")
+        if not isinstance(rids, list) or not all(_is_hex64(d)
+                                                 for d in rids):
+            return False, ("bom.inputs.c2pa_provenance.root_ingredient_"
+                           "digests malformed")
+        if set(c2pa) - {"manifest_digest", "chain_length",
+                        "root_ingredient_digests"}:
+            return False, ("bom.inputs.c2pa_provenance carries unknown "
+                           "keys")
     return True, "ok"
 
 
 def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                approval_records=None, perm_model_bytes=None,
                perm_policy_bytes=None, grant_capability_specs=None,
-               identity_credential_body=None):
+               identity_credential_body=None, c2pa_manifest_body=None):
     """On-demand reconstruction check (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -607,6 +675,14 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
     and the body's tier must match the section's tier -- a relabelled
     credential is caught here. Without the body the leg is UNVERIFIED,
     named, never silently passed -- exactly like the approval leg.
+    Wave-210 (C2PA-shaped provenance): ``c2pa_manifest_body`` is the
+    presented C2PA-shaped manifest dict. The BOM's
+    ``inputs.c2pa_provenance.manifest_digest`` must re-derive from it
+    via ``gov.c2pa_provenance.manifest_digest``, and the body must pass
+    ``verify_manifest_shape`` (including the no-value-judgment lint and
+    mandatory claim bounds). Without the body the leg is UNVERIFIED,
+    named, never silently passed. Chain-walking is the auditor's job
+    (``verify_chain`` against their resolved store), not this leg's.
     """
     try:
         return _verify(bom,
@@ -616,7 +692,8 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
                        perm_model_bytes=perm_model_bytes,
                        perm_policy_bytes=perm_policy_bytes,
                        grant_capability_specs=grant_capability_specs,
-                       identity_credential_body=identity_credential_body)
+                       identity_credential_body=identity_credential_body,
+                       c2pa_manifest_body=c2pa_manifest_body)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
@@ -624,7 +701,8 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
 
 def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
             perm_model_bytes, perm_policy_bytes,
-            grant_capability_specs, identity_credential_body):
+            grant_capability_specs, identity_credential_body,
+            c2pa_manifest_body):
     ok, reason = check_bom_shape(bom)
     if not ok:
         return False, reason
@@ -759,6 +837,34 @@ def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
                     "attested_identity tier in the credential body does "
                     "not match the BOM section (relabelled identity)")
             checked.append("attested-identity")
+    # Wave-210 (C2PA-shaped provenance): the auditor re-derives the
+    # manifest digest from the presented manifest body. Without the
+    # body the leg is UNVERIFIED -- named, never silently passed --
+    # exactly like the approval leg above. A swapped or relabelled
+    # manifest fails closed here. The manifest body is shape-checked
+    # but the chain is NOT walked: the auditor walks the chain with
+    # gov.c2pa_provenance.verify_chain against their own resolved
+    # store.
+    c2pa = inputs.get("c2pa_provenance")
+    if c2pa is not None:
+        if c2pa_manifest_body is None:
+            unverified.append("c2pa-provenance")
+        else:
+            from gov import c2pa_provenance as _c2pa
+            if not isinstance(c2pa_manifest_body, dict):
+                return False, "c2pa_manifest_body is not a dict"
+            try:
+                _c2pa.verify_manifest_shape(c2pa_manifest_body)
+            except _c2pa.C2PAManifestError as exc:
+                return False, (
+                    "c2pa manifest body fails shape check: %s" % (exc,))
+            rederived = _c2pa.manifest_digest(c2pa_manifest_body)
+            if rederived != c2pa["manifest_digest"]:
+                return False, (
+                    "c2pa_provenance manifest_digest does not re-derive "
+                    "from the supplied manifest body (swapped or "
+                    "tampered manifest)")
+            checked.append("c2pa-provenance")
     if not checked:
         return False, ("no artifacts supplied for re-derivation: BOM "
                        "shape ok, provenance UNVERIFIED")
