@@ -1316,6 +1316,24 @@ class ToolExecutor:
         # boundary object is immutable and validated at load, so the
         # seam never mutates operator authority mid-flight.
         self._authority_boundary = None
+        # Wave-198 lane E: keyset-attested MCP ToolAnnotations registry
+        # (gov.mcp_annotations). Default None = legacy MCP behavior,
+        # zero behavior change: without a registry the authority
+        # proof's MCP scope seam is skipped exactly as before. Set
+        # post-construction via set_mcp_tool_registry(); the registry
+        # is operator authority (built by
+        # gov.mcp_annotations.build_tool_registry over keyset-attested
+        # statements), so the agent-facing paths never call it.
+        self._mcp_tool_registry = None
+        # Wave-198 lane E: verified identity-token claim sets, keyed by
+        # agent_id, recorded at mint_identity time. The claims were
+        # signature-verified by the dex client and claim-policy-checked
+        # (iss/aud/exp, sub/role/principal binding) at the mint seam;
+        # the authority proof's MCP scope seam reads these at check
+        # time and re-validates expiry on every check, so a stale token
+        # fails closed. No token presented at mint -> no entry ->
+        # scope-required tools fail closed for that agent.
+        self._mcp_token_claims = {}
         # Wave-90 (S6, F137 — infection lineage): the lineage substrate
         # (gov.lineage.LineageTracker), constructed by the deployment in
         # the operator trust domain and shared across a spawn lineage by
@@ -2509,6 +2527,23 @@ class ToolExecutor:
                             % (_tok_lifetime, _prov.name,
                                _prov.claims.max_ttl_seconds))
                 _prov_expires = token_claims["exp"]
+        if token_claims is not None:
+            # Wave-198 lane E: record the VERIFIED claim set for the
+            # MCP scope seam, keyed by the minted agent_id. The claims
+            # passed check_token_claims above and are bound to this
+            # identity (sub/role/principal matched); any refusal
+            # raised before this line, so reaching here means valid.
+            # Defensive copy: later caller-side mutation of the
+            # presented dict cannot alter enforcement.
+            self._mcp_token_claims[agent_id] = dict(token_claims)
+        else:
+            # A re-mint of the same agent_id WITHOUT a token must not
+            # inherit a previous mint's claims: drop any stale entry
+            # so scope-required tools fail closed for the new
+            # tokenless identity (spec review: stale claims surviving
+            # a tokenless re-mint would silently violate the "no
+            # entry -> fail closed" invariant).
+            self._mcp_token_claims.pop(agent_id, None)
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal,
@@ -8666,6 +8701,41 @@ class ToolExecutor:
             "note": ("operator-attested warning acknowledgement; "
                      "counts toward warn->deny graduation bar"),
         })
+    def set_mcp_tool_registry(self, registry):
+        """Install the keyset-attested MCP tool-annotation registry
+        (wave-198 lane E).
+
+        ``registry`` must be a mapping built by
+        ``gov.mcp_annotations.build_tool_registry`` (exact
+        ``server::tool`` keys over keyset-attested statements), or None
+        to return to legacy MCP behavior. With a registry installed,
+        the authority proof's MCP scope seam enforces each pair's
+        attested ``required_scopes`` against the calling agent's
+        verified identity-token claims (recorded at ``mint_identity``
+        time); a scope miss fails closed as ``exceeds_boundary`` at
+        both the pre-decision seam and the approved-sweep re-proof.
+        The registry is operator authority: the agent-facing paths
+        never call this.
+        """
+        if registry is not None and not isinstance(
+                registry, collections.abc.Mapping):
+            raise TypeError(
+                "set_mcp_tool_registry expects a mapping built by "
+                "gov.mcp_annotations.build_tool_registry or None, got "
+                "%r" % type(registry).__name__)
+        self._mcp_tool_registry = registry
+
+    def _mcp_token_claims_for(self, agent_id):
+        """Return the recorded verified token claims for ``agent_id``.
+
+        A defensive copy, or None when the agent minted no token (or
+        the agent_id is unknown): scope-required MCP tools then fail
+        closed at the authority seam. Never raises.
+        """
+        claims = self._mcp_token_claims.get(agent_id)
+        if isinstance(claims, dict):
+            return dict(claims)
+        return None
 
     def _emit_decision_packet(self, *, decision, decision_seq, head_digest,
                               tool, redacted_args, policy_decision, policy,
@@ -9719,7 +9789,13 @@ class ToolExecutor:
         _ap_ctx = dict(ctx)
         _ap_ctx["sandbox_root"] = str(self._sandbox_resolved)
         _ap_proof = _authority_proof.check(
-            action, _ap_ctx, self._authority_boundary)
+            action, _ap_ctx, self._authority_boundary,
+            # Wave-198 lane E: enforce attested MCP required scopes
+            # against the calling agent's verified token claims. With
+            # no registry configured the kwargs are ignored by the
+            # legacy MCP path (byte-identical behavior).
+            mcp_tool_registry=self._mcp_tool_registry,
+            token_claims=self._mcp_token_claims_for(identity.agent_id))
         policy_ctx_snapshot["authority_proof"] = _ap_proof.to_dict()
         if (self._authority_boundary is not None
                 and _ap_proof.verdict != _authority_proof.WITHIN):
@@ -11643,7 +11719,14 @@ class ToolExecutor:
                     {"tool": rec.get("tool"), "args": _ap_args,
                      "agent_id": rec.get("agent_id"),
                      "role": rec.get("role")},
-                    _ap_ctx, self._authority_boundary)
+                    _ap_ctx, self._authority_boundary,
+                    # Wave-198 lane E: the sweep re-proof re-enforces
+                    # attested MCP required scopes (TOCTOU continuity:
+                    # the registry may have been installed and the
+                    # token may have expired since approval).
+                    mcp_tool_registry=self._mcp_tool_registry,
+                    token_claims=self._mcp_token_claims_for(
+                        rec.get("agent_id")))
                 if _ap_proof.verdict != _authority_proof.WITHIN:
                     _refuse("Approval %s refused: authority proof %r at "
                             "execution time (%s); the operator-declared "
