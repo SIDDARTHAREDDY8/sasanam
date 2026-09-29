@@ -6237,4 +6237,53 @@ The documented `BomError("pin_digests must be a dict")` is unreachable for these
 
 ---
 
-Next free finding: **F203**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane.)
+## F203: `gov.anchor_backend.RekorBackend.submit` is incompatible with real Rekor v1.5.4 — raw Ed25519/SHA-256 submissions are rejected (MEDIUM)
+
+**Cells:** wave-194 lane D live break, 2026-09-29, against a locally-run
+Rekor v1.5.4 + Trillian v1.8.0 stack (binaries from the wave-193 spike).
+Standing regression pin: `evals/rekor_anchor_probes.py::p_f203_live_pin`.
+
+**Status: OPEN (filed 2026-09-29, wave-194 lane D).**
+
+**Reproduction:** `RekorBackend(url="http://localhost:3000", ...).submit(anchor_hash)`
+signs the 32-byte digest with raw Ed25519 (`gov.ed25519.sign`, SHA-512
+internal but the hashedrekord envelope declares the key as plain
+`ed25519`) and POSTs a `hashedrekord:0.0.1` entry. The live server
+rejects it:
+
+```
+WitnessDownError: rekor HTTP 400: error processing entry:
+verifying signature: unsupported hash algorithm: "SHA-256" not in [SHA-512]
+```
+
+Rekor source (`pkg/types/hashedrekord/v0.0.1/entry.go`) confirms:
+the entry's signature verifier is constructed with
+`signature.LoadVerifier(... WithED25519ph())` — hashedrekord only
+accepts Ed25519ph (prehashed, SHA-512) for Ed25519 keys, never raw
+Ed25519/SHA-256. The backend's entire submit path is therefore dead
+against any real Rekor v1.5.x: transparency anchoring through this
+seam cannot produce a single entry.
+
+**Scope note (honest):** the new `gov/rekor_anchor.py` (wave-194 lane D)
+does NOT close this finding — it is a separate self-hosted client that
+refuses the known-incompatible `"ed25519"` label fail-closed and takes
+operator-supplied signatures (`ecdsa-p256-sha256`, spike-proven live;
+`ed25519ph-sha512`, the shape hashedrekord actually accepts). F203 is
+about the EXISTING public seam `gov.anchor_backend.RekorBackend`, which
+is unchanged.
+
+**Close-when:** `RekorBackend.submit` (or its documented replacement at
+the same public seam) successfully anchors against a real Rekor v1.5.4+
+and the entry verifies via inclusion proof; the raw-Ed25519 path is
+either repaired (Ed25519ph/SHA-512 throughout) or removed and loudly
+refused. Live-tested, not fake-transport only.
+
+**Severity rationale:** MEDIUM. The transparency-anchoring control is
+non-functional against the real service — no anchor evidence can be
+produced through this seam — but the failure is loud
+(`WitnessDownError`), never silent, and the approval gate is
+unaffected. HIGH rejected: nothing is bypassed and no data leaves.
+
+---
+
+Next free finding: **F204**. **Open findings: F203.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, OPEN.)
