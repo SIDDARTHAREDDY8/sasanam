@@ -46,6 +46,13 @@ Cedar mapping notes (honest deltas from upstream):
 from dataclasses import dataclass
 from typing import Any, Dict, Mapping, Optional, Tuple
 
+# Wave-194 R1 (Cedar D1 steal): the Request carries a typed context
+# schema. validate_context raises ContextTypeError (a TypeError) on a
+# mistyped KNOWN attribute -- loud at the contract boundary, never
+# silently coerced at match time. None stays the absence sentinel;
+# unknown keys pass through for forward compatibility.
+from .context_schema import ContextTypeError, validate_context
+
 
 class ContractError(TypeError):
     """Raised when a Request is constructed with an invalid shape.
@@ -108,6 +115,13 @@ class Request:
             raise ContractError(
                 "Request.context must be a mapping, got %r"
                 % (self.context,))
+        # Wave-194 R1: typed context attributes. A KNOWN signal with
+        # the wrong type (domain_allowlisted="false", counters as
+        # strings, ints for bools) is refused HERE -- the contract
+        # boundary -- instead of being silently bool()/int()-coerced
+        # in _matches. ContextTypeError is a TypeError, so existing
+        # guards keep working; the message names the offending key.
+        validate_context(self.context)
 
     @classmethod
     def from_action(cls, action: Mapping[str, Any],

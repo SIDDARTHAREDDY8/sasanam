@@ -57,6 +57,15 @@ from .decision_contract import (
     TraceEntry,
     DEFAULT_DENY_ID,
 )
+# Wave-194 R1 (Cedar D1 steal): typed context-attribute schema. The
+# strict accessors replace bare bool()/int() coercion in _matches;
+# validate_match_types closes the same bug on the policy-authoring
+# side at load time.
+from .context_schema import (
+    checked_bool,
+    checked_counter,
+    validate_match_types,
+)
 
 KNOWN_TOOLS = {"read_file", "write_file", "delete_file",
                "api_call", "http_post", "send_email",
@@ -733,6 +742,12 @@ class PolicyEngine:
             if tool not in KNOWN_TOOLS:
                 raise ValueError("policy %s: unknown tool %r (known: %s)"
                                  % (rule_id, tool, sorted(KNOWN_TOOLS)))
+        # Wave-194 R1 (Cedar D1 steal): mistyped match VALUES are the
+        # authoring-side twin of mistyped context attributes -- a YAML
+        # domain_allowlisted: "false" (string) would silently coerce
+        # through bool() at match time. Refused loudly at load, F90
+        # convention.
+        validate_match_types(rule_id, match)
         self._validate_when(rule_id, match.get("when"))
 
     @staticmethod
@@ -933,37 +948,37 @@ class PolicyEngine:
             if not any(sub in path or sub in resolved for sub in subs):
                 return False
         if "path_outside_sandbox" in match:
-            if bool(context.get("path_outside_sandbox")) != bool(match["path_outside_sandbox"]):
+            if checked_bool(context, "path_outside_sandbox") != bool(match["path_outside_sandbox"]):
                 return False
         counters = context.get("counters") or {}
         if "min_external_calls" in match:
-            if int(counters.get("api_call", 0)) < int(match["min_external_calls"]):
+            if checked_counter(counters, "api_call") < int(match["min_external_calls"]):
                 return False
         if "min_sends" in match:
-            sends = int(counters.get("send_email", 0)) + int(counters.get("http_post", 0))
+            sends = checked_counter(counters, "send_email") + checked_counter(counters, "http_post")
             if sends < int(match["min_sends"]):
                 return False
         if "min_writes" in match:
-            if int(counters.get("write_file", 0)) < int(match["min_writes"]):
+            if checked_counter(counters, "write_file") < int(match["min_writes"]):
                 return False
         if "min_deletes" in match:
-            if int(counters.get("delete_file", 0)) < int(match["min_deletes"]):
+            if checked_counter(counters, "delete_file") < int(match["min_deletes"]):
                 return False
         if "domain_allowlisted" in match:
-            if bool(context.get("domain_allowlisted")) != bool(match["domain_allowlisted"]):
+            if checked_bool(context, "domain_allowlisted") != bool(match["domain_allowlisted"]):
                 return False
         if "carries_read_content" in match:
-            if bool(context.get("carries_read_content")) != bool(match["carries_read_content"]):
+            if checked_bool(context, "carries_read_content") != bool(match["carries_read_content"]):
                 return False
         if "source_untrusted" in match:
-            if bool(context.get("source_untrusted")) != bool(match["source_untrusted"]):
+            if checked_bool(context, "source_untrusted") != bool(match["source_untrusted"]):
                 return False
         if "read_sensitive" in match:
-            if bool(context.get("read_sensitive")) != bool(match["read_sensitive"]):
+            if checked_bool(context, "read_sensitive") != bool(match["read_sensitive"]):
                 return False
         # Row-13 closure: classification-labeled provenance taint.
         if "read_classified" in match:
-            if bool(context.get("read_classified")) != bool(match["read_classified"]):
+            if checked_bool(context, "read_classified") != bool(match["read_classified"]):
                 return False
         # Row-12: artifact-inventory egress signals (unknown = file
         # referenced at egress was never registered; tampered = bytes
@@ -971,45 +986,45 @@ class PolicyEngine:
         # restricted label). Loudest-first ordering is by rule
         # declaration order in the policy file, not here.
         if "artifact_unknown" in match:
-            if bool(context.get("artifact_unknown")) != bool(match["artifact_unknown"]):
+            if checked_bool(context, "artifact_unknown") != bool(match["artifact_unknown"]):
                 return False
         if "artifact_tampered" in match:
-            if bool(context.get("artifact_tampered")) != bool(match["artifact_tampered"]):
+            if checked_bool(context, "artifact_tampered") != bool(match["artifact_tampered"]):
                 return False
         if "artifact_restricted" in match:
-            if bool(context.get("artifact_restricted")) != bool(match["artifact_restricted"]):
+            if checked_bool(context, "artifact_restricted") != bool(match["artifact_restricted"]):
                 return False
         if "cross_run_campaign" in match:
-            if bool(context.get("cross_run_campaign")) != bool(match["cross_run_campaign"]):
+            if checked_bool(context, "cross_run_campaign") != bool(match["cross_run_campaign"]):
                 return False
         if "velocity_exceeded" in match:
-            if bool(context.get("velocity_exceeded")) != bool(match["velocity_exceeded"]):
+            if checked_bool(context, "velocity_exceeded") != bool(match["velocity_exceeded"]):
                 return False
         # F110 (wave-34): harness-initiated platform egress. Same
         # bool-compare convention as the other signals; set by
         # gov/platform_egress.py, never by ToolExecutor._context.
         if "platform_egress" in match:
-            if bool(context.get("platform_egress")) != bool(match["platform_egress"]):
+            if checked_bool(context, "platform_egress") != bool(match["platform_egress"]):
                 return False
         # F111 (wave-34): identity-bound egress. Same bool-compare
         # convention; set by ToolExecutor._context for send/api_call
         # tools via the run's CredentialManifest.
         if "credential_identity_mismatch" in match:
-            if bool(context.get("credential_identity_mismatch")) != bool(match["credential_identity_mismatch"]):
+            if checked_bool(context, "credential_identity_mismatch") != bool(match["credential_identity_mismatch"]):
                 return False
         # P7 (wave-27): raw registry fetch, and the governed-install
         # gates. Same bool-compare convention as the other signals.
         if "package_fetch" in match:
-            if bool(context.get("package_fetch")) != bool(match["package_fetch"]):
+            if checked_bool(context, "package_fetch") != bool(match["package_fetch"]):
                 return False
         if "install_allowlisted" in match:
-            if bool(context.get("install_allowlisted")) != bool(match["install_allowlisted"]):
+            if checked_bool(context, "install_allowlisted") != bool(match["install_allowlisted"]):
                 return False
         if "install_integrity_verified" in match:
-            if bool(context.get("install_integrity_verified")) != bool(match["install_integrity_verified"]):
+            if checked_bool(context, "install_integrity_verified") != bool(match["install_integrity_verified"]):
                 return False
         if "high_entropy_payload" in match:
-            if bool(context.get("high_entropy_payload")) != bool(match["high_entropy_payload"]):
+            if checked_bool(context, "high_entropy_payload") != bool(match["high_entropy_payload"]):
                 return False
         if "when" in match:
             if not _check_conditions(match["when"], context):
