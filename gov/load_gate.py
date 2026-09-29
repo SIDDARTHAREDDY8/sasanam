@@ -750,19 +750,37 @@ class SkillLoader:
     for the artifact id — the TUF mix-and-match binding: a pin rotated
     without the corpus, or a corpus presented against another
     version's bytes, refuses. Without a corpus doc the pinset-only
-    behavior is unchanged (documented adoption path)."""
+    behavior is unchanged (documented adoption path).
 
-    def __init__(self, pinset, store, log=None, corpus=None):
+    ``bundle_refresh`` (wave-206) is an optional
+    :class:`gov.bundle_refresh.BundleRefresher`. When given,
+    :meth:`load_skill` additionally requires the refresher to be
+    servable (``"trusted"`` or ``"stale"`` -- a ``"suspended"``
+    refresher refuses every load until a clean refresh recovers) and
+    requires the pin's digest to equal the refresh-bound digest for
+    ``skill:<name>`` -- the TUF mix-and-match binding at the refresh
+    layer: a pin rotated without a refreshed bundle, or a bundle
+    presented against another version's bytes, refuses. Without it
+    the pinset-only behavior is unchanged (documented adoption path)."""
+
+    def __init__(self, pinset, store, log=None, corpus=None,
+                 bundle_refresh=None):
         if not isinstance(pinset, ArtifactPinset):
             raise TypeError("pinset must be an ArtifactPinset")
         if corpus is not None and not isinstance(
                 corpus, CorpusManifestTracker):
             raise TypeError("corpus must be a CorpusManifestTracker "
                             "or None")
+        if bundle_refresh is not None and not (
+                hasattr(bundle_refresh, "state")
+                and hasattr(bundle_refresh, "target_digest")):
+            raise TypeError("bundle_refresh must expose state and "
+                            "target_digest (a BundleRefresher) or None")
         self._pinset = pinset
         self._store = store
         self._log = log
         self._corpus = corpus
+        self._bundle_refresh = bundle_refresh
 
     def load_skill(self, skill_name, *, corpus_doc=None):
         artifact_id = "skill:" + str(skill_name)
@@ -781,6 +799,12 @@ class SkillLoader:
         # disagree (mix-and-match across versions) refuse here.
         if corpus_doc is not None or self._corpus is not None:
             self._check_corpus(artifact_id, verified.digest, corpus_doc)
+        # Bundle-refresh binding (wave-206 TUF steal): when the
+        # deployment wires a refresher, the pin's digest must equal the
+        # refresh-bound digest -- mix-and-match across bundle versions
+        # refuses, and a suspended refresher refuses every load.
+        if self._bundle_refresh is not None:
+            self._check_bundle_refresh(artifact_id, verified.digest)
         if self._log is not None:
             self._log.append({
                 "event": "skill_loaded",
@@ -819,8 +843,46 @@ class SkillLoader:
                 % (artifact_id, pin_digest, bound))
 
 
+    def _check_bundle_refresh(self, artifact_id, pin_digest):
+        from .bundle_refresh import SuspendedError
+        refresher = self._bundle_refresh
+        state = refresher.state
+        if state not in ("trusted", "stale"):
+            _refused(self._log, artifact_id, "bundle_refresh_suspended",
+                      "bundle refresher is %s (%s); skill loads refused "
+                      "until a clean refresh recovers"
+                      % (state, refresher.reason))
+            raise ArtifactRefused(
+                "bundle_refresh_suspended: refresher is %s (%s)"
+                % (state, refresher.reason))
+        try:
+            bound_hex, _length = refresher.target_digest(artifact_id)
+        except SuspendedError as exc:
+            _refused(self._log, artifact_id, "bundle_refresh_suspended",
+                      "refresher refused to serve digests: %s" % (exc,))
+            raise ArtifactRefused(
+                "bundle_refresh_suspended: %s" % (exc,))
+        except KeyError:
+            _refused(self._log, artifact_id, "bundle_refresh_unbound",
+                      "no refresh-bound digest for %r" % (artifact_id,))
+            raise ArtifactRefused(
+                "bundle_refresh_unbound: no refresh-bound digest for %r"
+                % (artifact_id,))
+        # bound_hex is bare hex; pin_digest is the loader-computed
+        # "sha256:<hex>" string. Compare canonical digest strings.
+        if pin_digest != "sha256:" + bound_hex:
+            _refused(self._log, artifact_id, "bundle_refresh_mismatch",
+                      "pin digest %s != refresh-bound digest sha256:%s "
+                      "-- mix-and-match across bundle versions refused"
+                      % (pin_digest, bound_hex))
+            raise ArtifactRefused(
+                "bundle_refresh_mismatch: pin for %r (%s) disagrees "
+                "with the refresh-bound digest (sha256:%s)"
+                % (artifact_id, pin_digest, bound_hex))
+
+
 def load_skill_content(pinset, store, skill_name, *, log=None,
-                       corpus=None, corpus_doc=None):
+                       corpus=None, corpus_doc=None, bundle_refresh=None):
     """The FORCED entry point for skill content into the sterile
     ``skill_content`` channel (wave-80).
 
@@ -841,6 +903,11 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     corpus versions refuses. Without them the pinset-only behavior is
     unchanged (adoption path).
 
+    ``bundle_refresh`` (wave-206): an optional
+    :class:`gov.bundle_refresh.BundleRefresher` wired through to
+    :class:`SkillLoader` (same binding semantics; see there).
+    Without it the pinset-only behavior is unchanged.
+
     There is no raw-bytes return path on purpose: callers that want
     the bytes must unwrap the marker via ``acknowledge()`` (the
     channel's only documented read), so every consumption is an
@@ -851,7 +918,8 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     downstream contract expects.
     """
     from .sterile import Unvetted
-    loader = SkillLoader(pinset, store, log=log, corpus=corpus)
+    loader = SkillLoader(pinset, store, log=log, corpus=corpus,
+                         bundle_refresh=bundle_refresh)
     verified = loader.load_skill(skill_name, corpus_doc=corpus_doc)
     return Unvetted(
         verified.data,

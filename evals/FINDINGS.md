@@ -6322,4 +6322,44 @@ unaffected. HIGH rejected: nothing is bypassed and no data leaves.
 
 ---
 
-Next free finding: **F204**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A.)
+## F204: unbounded HTTP response reads in the Rekor anchoring transports (LOW)
+
+**Cells:** `gov/rekor_anchor.py:344`, `gov/anchor_backend.py:628`
+(`_urllib_transport`, success path).
+
+**Reproduction:** both modules' default urllib transport reads the
+full response body with a bare `resp.read()` before decoding:
+
+```python
+with urllib.request.urlopen(req, timeout=30) as resp:
+    return {"status": resp.status,
+            "body": resp.read().decode("utf-8")}
+```
+
+A malicious or compromised transparency log (or any party able to
+spoof the HTTP response on this path -- TLS to the log is a documented
+honest v1 boundary, not a guarantee) can stream an arbitrarily large
+body; the client buffers it all into memory. The error path in both
+modules is already capped (`e.read()...[:500]`), so only the success
+path is exposed.
+
+**Status: OPEN (filed 2026-09-29, wave-206 lane B).** Discovered while
+implementing per-role byte caps for the new `gov/bundle_refresh.py`
+refresh seam (wave-206 lane B); filed as a separate finding rather
+than silently patched, because these are unrelated modules with their
+own public seams and their own tests. This lane did NOT change them.
+
+**Close-when:** both `_urllib_transport` success paths enforce a
+byte cap on the response body (read incrementally or
+`resp.read(CAP)`) and refuse loudly above it; a break-first probe
+demonstrates a multi-megabyte response body is refused without
+unbounded buffering, and the existing anchor test suites stay green.
+
+**Severity rationale:** LOW. Client-side memory-exhaustion DoS
+against the operator's own transparency-anchoring path only; no trust
+bypass, no silent acceptance -- an oversized body today is buffered,
+not misinterpreted. The error path is already capped.
+
+---
+
+Next free finding: **F205**. **Open findings: F204.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A; F204 filed 2026-09-29, wave-206 lane B, OPEN.)
