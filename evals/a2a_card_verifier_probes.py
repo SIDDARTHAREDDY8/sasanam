@@ -21,7 +21,9 @@ Probe map (verdicts HELD / BREAK / ERROR):
   c_duplicate_kid / c_unknown_kid -> kid-ambiguity
   c_stale_trust -> stale-trust
   c_identity_mismatch -> identity-mismatch
-  c_card_not_object / c_nonserializable -> canonicalization-failure
+  c_card_not_object -> canonicalization-failure
+  c_nonserializable -> malformed-card (wave-214: shape check precedes
+      canonicalization; still fail-closed with a distinct code)
   c_rfc8032_selftest — the Ed25519 primitive's own RFC 8032 vectors
   r_forged_card_refused — THE red-first closure: attacker-signed card
       claiming the victim's name is refused at register_agent_card
@@ -95,12 +97,23 @@ def _record(name, verdict, detail=""):
 
 
 def _base_card():
+    # Wave-214 shape: the inventory record fields (agent_id, endpoints,
+    # keys) plus the pinned a2a_version and a live expires. "version"
+    # remains the AGENT's version (1.0.0) -- the A2A spec pin is the
+    # separate a2a_version field.
     return {
+        "a2a_version": "1.0",
+        "agent_id": "agent-acme-support-001",
         "name": "acme-support-agent",
         "description": "Customer support agent",
         "url": "https://agents.example.com/acme-support",
         "version": "1.0.0",
-        "capabilities": {"streaming": True},
+        "capabilities": ["answer-questions"],
+        "endpoints": {"jsonrpc": "https://agents.example.com/acme-support"},
+        "keys": [{"kid": "victim-key-1", "alg": "EdDSA",
+                  "use": "card-signing"}],
+        "issued_at": _NOW - 60,
+        "expires": _NOW + 86400,
     }
 
 
@@ -291,8 +304,10 @@ def c_nonserializable():
     card = _base_card()
     card["capabilities"] = {"weird": object()}
     card["signatures"] = [{"protected": "e30", "signature": "e30"}]
-    _expect_fail("c_nonserializable", "canonicalization-failure", card,
-                 _store())
+    # Wave-214: the shape check now runs before canonicalization, so a
+    # non-list capabilities is malformed-card (more specific than the
+    # old canonicalization-failure). Still fail-closed, still distinct.
+    _expect_fail("c_nonserializable", "malformed-card", card, _store())
 
 
 def c_rfc8032_selftest():

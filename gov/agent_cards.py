@@ -36,7 +36,7 @@ non-support.
 Trust model (fail-closed):
 
   - Keys come ONLY from a pinned deployment ``CardTrustStore``:
-    ``{kid: {pubkey, alg, jku, fetched_at}}``. The verifier NEVER
+    ``{kid: {pubkey, alg, jku, fetched_at, owner}}``. The verifier NEVER
     fetches. There is no network path in this module at all —
     key-substitution via jku is structurally impossible.
   - A ``jku`` in the protected header is policy-checked, never
@@ -47,6 +47,29 @@ Trust model (fail-closed):
   - Trust records carry ``fetched_at``; records older than
     ``max_key_age_s`` are refused (``stale-trust``) — rotation is a
     deployment act, not silent acceptance.
+  - The A2A spec version is pinned to exactly ``"1.0"``
+    (``PINNED_A2A_VERSIONS``): 0.2->0.3->1.0 broke inside a year, and
+    most online guidance is v0.x. Anything else is ``card-version``.
+  - The card record must carry the inventory shape (``agent_id``,
+    ``name``, ``version``, ``capabilities``, ``endpoints``, ``keys``)
+    or it is ``malformed-card`` — a well-formed record is checked
+    before any signature is examined.
+  - ``expires`` is required; past expiry is ``expired-card`` and a
+    future ``issued_at`` is ``not-yet-valid``. Stale cards never
+    verify.
+  - A trust record MAY pin an ``owner`` (the agent_id the kid belongs
+    to); the card's ``agent_id`` must equal it or the card is
+    ``identity-mismatch``. This is the kid-swap refusal: an attacker
+    re-signing a victim's card under their own pinned kid cannot
+    launder the victim's identity.
+
+A2A divergence, documented (a2a-go issue #445): the Go SDK skips
+§8.4.1 rule-1 proto projection, so SDK-signed cards do not
+cross-verify with the JS SDK. We implement NEITHER projection: we JCS
+the whole card body minus ``signatures``, so unknown/extra fields ARE
+covered by our signature (whereas under rule-1-conformant verifiers
+they are not). Our cards never leave this canonical form, and any
+A2A SDK output is treated as untrusted input.
 
 ``register_agent_card`` bridges verification and the delegation
 roster: on success the verified ``(identity, kid, pubkey)`` is
@@ -61,7 +84,8 @@ attribution — not a single generic "no valid signatures"):
 ``missing-signatures`` / ``malformed-signature-entry`` /
 ``unsupported-alg`` / ``kid-ambiguity`` / ``untrusted-jku`` /
 ``stale-trust`` / ``invalid-signature`` / ``canonicalization-failure``
-/ ``identity-mismatch``.
+/ ``identity-mismatch`` / ``malformed-card`` / ``card-version`` /
+``expired-card`` / ``not-yet-valid``.
 
 $0 spend, synthetic/local only. No credentials, no network.
 """
@@ -76,6 +100,18 @@ from . import ed25519 as _ed
 # vetted ECDSA implementation is available — see the module docstring.
 ALLOWED_ALGS = frozenset({"EdDSA"})
 REQUIRED_TYP = "JOSE"
+
+# A2A spec version pin. The spec churned 0.2 -> 0.3 -> 1.0 breaking
+# inside a year and most online guidance is v0.x; cards are accepted
+# ONLY with a2a_version exactly "1.0" (wave-214 lane A ADAPT).
+A2A_SPEC_VERSION = "1.0"
+PINNED_A2A_VERSIONS = frozenset({A2A_SPEC_VERSION})
+
+# The inventory card record shape (wave-214 ADAPT): a signed card must
+# carry ``agent_id``, ``name``, ``version``, ``capabilities``,
+# ``endpoints``, and ``keys`` (enforced by _check_card_shape).
+# ``signatures`` is handled separately; ``a2a_version`` and
+# ``issued_at``/``expires`` are checked by dedicated rules below.
 
 # Trust records older than this are refused (rotation = deployment act).
 DEFAULT_MAX_KEY_AGE_S = 86400
@@ -182,9 +218,16 @@ class CardTrustStore(object):
         self.jku_allowlist = frozenset(allow)
 
     def register_key(self, kid, pubkey, alg="EdDSA", jku=None,
-                     fetched_at=0):
+                     fetched_at=0, owner=None):
         """Pin (or rotate) a card verification key. Rotation =
-        re-registration, an audited deployment act."""
+        re-registration, an audited deployment act.
+
+        ``owner`` (optional): the ``agent_id`` this kid is pinned to.
+        When set, verify_card refuses any card whose ``agent_id`` does
+        not equal it (``identity-mismatch``) — this is the kid-swap
+        refusal: an attacker re-signing a victim's card under their own
+        kid cannot launder the victim's identity.
+        """
         if not isinstance(kid, str) or not kid:
             raise ValueError("kid must be a non-empty string")
         if isinstance(pubkey, str):
@@ -206,13 +249,97 @@ class CardTrustStore(object):
                 or not isinstance(fetched_at, (int, float))
                 or fetched_at < 0):
             raise ValueError("fetched_at must be a non-negative epoch")
+        if owner is not None and (not isinstance(owner, str) or not owner):
+            raise ValueError("owner must be a non-empty string or None")
         self.keys[kid] = {"pubkey": bytes(pubkey), "alg": alg, "jku": jku,
-                          "fetched_at": float(fetched_at)}
+                          "fetched_at": float(fetched_at), "owner": owner}
 
     def describe(self):
         """Safe public description — kids only, never key material."""
         return {"kids": sorted(self.keys),
                 "jku_allowlist": sorted(self.jku_allowlist)}
+
+
+# ---------------------------------------------------------------------------
+# Inventory card shape, version pin, and lifetime (wave-214 ADAPT)
+# ---------------------------------------------------------------------------
+
+def _check_card_shape(card):
+    """Enforce the inventory card record shape.
+
+    Required: agent_id, name, version (non-empty strings);
+    capabilities (list), keys (list of {kid,...} dicts);
+    endpoints (dict or list). Fail-closed: ``malformed-card``.
+    """
+    for field in ("agent_id", "name", "version"):
+        value = card.get(field)
+        if not isinstance(value, str) or not value:
+            raise CardVerificationError(
+                "malformed-card",
+                "card field %r must be a non-empty string" % (field,))
+    capabilities = card.get("capabilities")
+    if not isinstance(capabilities, list):
+        raise CardVerificationError(
+            "malformed-card",
+            "card field 'capabilities' must be a list")
+    endpoints = card.get("endpoints")
+    if not isinstance(endpoints, (dict, list)):
+        raise CardVerificationError(
+            "malformed-card",
+            "card field 'endpoints' must be a dict or list")
+    keys = card.get("keys")
+    if not isinstance(keys, list) or not keys:
+        raise CardVerificationError(
+            "malformed-card",
+            "card field 'keys' must be a non-empty list")
+    for entry in keys:
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("kid"), str)
+                or not entry.get("kid")):
+            raise CardVerificationError(
+                "malformed-card",
+                "card keys[] entries must carry a non-empty kid")
+
+
+def _check_card_version(card):
+    """The A2A spec version is pinned to exactly "1.0" — no negotiation,
+    no range matching. Fail-closed: ``card-version``."""
+    version = card.get("a2a_version")
+    if version not in PINNED_A2A_VERSIONS:
+        raise CardVerificationError(
+            "card-version",
+            "a2a_version %r not in the pinned set %s "
+            "(spec churn 0.2->0.3->1.0; only 1.0 accepted)"
+            % (version, sorted(PINNED_A2A_VERSIONS)))
+
+
+def _check_card_lifetime(card, now):
+    """``expires`` is REQUIRED and numeric; past expiry refuses
+    (``expired-card``). A future ``issued_at`` refuses (``not-yet-valid``)
+    — a card must not verify before it exists. Fail-closed on
+    non-numeric values (``malformed-card``)."""
+    expires = card.get("expires")
+    if (isinstance(expires, bool)
+            or not isinstance(expires, (int, float))):
+        raise CardVerificationError(
+            "malformed-card",
+            "card field 'expires' must be a numeric epoch")
+    if now > expires:
+        raise CardVerificationError(
+            "expired-card",
+            "card expired %ds ago (stale cards never verify)"
+            % (now - expires,))
+    issued_at = card.get("issued_at")
+    if issued_at is not None:
+        if (isinstance(issued_at, bool)
+                or not isinstance(issued_at, (int, float))):
+            raise CardVerificationError(
+                "malformed-card",
+                "card field 'issued_at' must be a numeric epoch or absent")
+        if now < issued_at:
+            raise CardVerificationError(
+                "not-yet-valid",
+                "card not valid until %ds in the future" % (issued_at - now,))
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +394,13 @@ def verify_card(card, store, *, expected_identity=None,
                                     "card body is not a JSON object")
     if not isinstance(store, CardTrustStore):
         raise TypeError("store must be a CardTrustStore")
+
+    # The card record must be a well-formed, pinned-version, live
+    # inventory record BEFORE any signature is examined: shape, version,
+    # and lifetime failures are distinct from signature failures.
+    _check_card_shape(card)
+    _check_card_version(card)
+    _check_card_lifetime(card, now)
 
     sigs = card.get("signatures")
     if not sigs or not isinstance(sigs, list):
@@ -323,6 +457,17 @@ def verify_card(card, store, *, expected_identity=None,
                 "kid-ambiguity",
                 "kid %r not in the pinned trust store" % (kid,))
 
+        # Kid-pinned identity binding: when the deployment pinned this
+        # kid to an owner agent_id, the card's agent_id must equal it.
+        # An attacker re-signing a victim's card under their own kid
+        # cannot launder the victim's identity (identity-mismatch).
+        owner = keyrec.get("owner")
+        if owner is not None and card.get("agent_id") != owner:
+            raise CardVerificationError(
+                "identity-mismatch",
+                "kid %r is pinned to agent %r; card claims %r "
+                "(kid-swap refused)" % (kid, owner, card.get("agent_id")))
+
         jku = header.get("jku")
         if jku is not None:
             _check_jku(jku, kid, store)
@@ -378,6 +523,39 @@ def sign_card(card, kid, seed, *, jku=None, alg="EdDSA"):
                      _b64u_encode(canonical).encode("ascii"))
     sig = _ed.sign(bytes(seed), signing_input)
     return {"protected": protected_b64, "signature": _b64u_encode(sig)}
+
+
+def emit_card(card_fields, kid, seed, *, jku=None, alg="EdDSA",
+              issued_at=None, expires_in_s=86400, now=None):
+    """Production card emission: build the inventory card record, pin the
+    A2A spec version, stamp the lifetime, validate the shape, and sign.
+
+    ``card_fields`` must carry the record shape: ``agent_id``, ``name``,
+    ``version`` (the AGENT's version — the A2A spec version is pinned
+    separately), ``capabilities`` (list), ``endpoints`` (dict or list),
+    ``keys`` (non-empty list of {kid,...}). ``seed`` is the issuer's
+    32-byte Ed25519 seed — production callers hold it in the deployment
+    trust domain (never agent-supplied, never logged).
+
+    Returns the full card dict including ``signatures``. Deterministic:
+    identical inputs yield byte-identical output (Ed25519 is
+    deterministic; JCS canonicalization is fixed).
+
+    Fail-fast: shape violations raise CardVerificationError BEFORE any
+    signing (an unsigned malformed card must never exist either).
+    """
+    now = time.time() if now is None else now
+    card = dict(card_fields)
+    # Defaults only: a caller-supplied value (including an attacker's in
+    # tests) is preserved so the verifier's checks stay meaningful.
+    card.setdefault("a2a_version", A2A_SPEC_VERSION)
+    card.setdefault("issued_at", now if issued_at is None else issued_at)
+    card.setdefault("expires", now + expires_in_s)
+    _check_card_shape(card)
+    _check_card_version(card)
+    _check_card_lifetime(card, now)
+    card["signatures"] = [sign_card(card, kid, seed, jku=jku, alg=alg)]
+    return card
 
 
 def register_agent_card(delegation_trust, card, store, *, now=None):
