@@ -10605,3 +10605,62 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 **Findings:** none filed. Next free: F204. Open findings: none (carried).
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+
+## 2026-09-29 — Wave-201 merge: durable approval + rotation-policy (merge coordinator)
+
+**Base.** `b702be4` (wave-200 close-out). **Merged (cherry-pick, in order):** lane A
+`640ce62` → `0374520` (durable approval BUILD: `gov/durable_journal.py`,
+`gov/durable_approval.py`, additive `DurableReleaseWorkflow` in
+`gov/release_approval.py`); lane B `132ff40` → `f33fb5e` (rotation-policy
+lifecycle: `gov/rotation_policy.py`). Merge diff vs base: 11 files, 5450
+insertions(+), 1 deletion(−).
+
+**Merge conflicts.** None on product code (disjoint file sets; only BUILD_LOG.md
+shared). Lane A prepended its entry at the file head, lane B appended at the
+tail — the sequential cherry-picks auto-merged; both entries verified verbatim
+by hand (lane-A head-25 byte-identical to lane source; lane-B entry at tail
+intact; no conflict markers; `git diff --check` clean).
+
+**VM-restart rebuild.** Mid-merge the VM restarted (`/var/tmp` is tmpfs and was
+wiped, killing the in-flight canonical run). The push-clone was rebuilt from
+scratch: fresh depth-1 clone of origin/main (`b702be4`), workstream sibling
+links recreated and verified, lane commits re-fetched by exact SHA from the
+persistent lane worktrees and re-cherry-picked in the same order. Every
+red-first audit was re-run on the rebuilt tree; nothing from the pre-restart
+runs was trusted.
+
+**Red-first merged-tree audit (all claims held, fresh `/var/tmp/g201m-*`
+TMPDIRs).** durable_approval **10/10**; rotation_policy **26/26**;
+keyset_lifecycle 7/7; policy_report 11/11; capability_rules 16/16;
+perm_loader 15/15; pack_loader 15/15; DigestRef (evidence_distribute) 5/5;
+anchoring 7/7; graduation_ladder 13 held / 0 break; attestation_release 9
+held; MCP wiring green checks PASS; F203 Rekor envelope (hermetic) 8 held / 0
+break / 1 expected. No overstated claims; no new findings.
+
+**Gates (serialized, fresh unique `/var/tmp/g201m-*` TMPDIRs).**
+- Canonical: **6592 collected; 6 failures + 10 errors — PROVEN PRE-EXISTING.**
+  Control run: pristine `b702be4` under identical conditions shows the
+  byte-identical sorted FAIL/ERROR list (diff: empty; pristine 6502 tests,
+  same 6+10). The merged tree adds 90 new lane tests and zero new failures.
+  This is the same full-run order interaction documented since wave-200;
+  carried as test-hygiene debt, not a finding against the product.
+- Registry: **GREEN** (`evals/run_evals.py --registry-gate`;
+  `battery_100_results.json` restored, never committed)
+- Matrix: **3216/3216 SHIP-GATE GREEN** (provisional 1608/1608, real 1608/1608)
+- Realistic: **7/7** (`GOV_RUN_ROOT=/var/tmp/g201m-realistic`)
+- AMSB: **90.00 / FINAL C / FP 0.0%** (matches wave-199/200 baseline;
+  scorecard pair committed)
+
+**Findings:** none filed. Next free: F204. Open findings: none (carried).
+
+**Honest residuals (carried from lanes, unchanged).** Durable: (1)
+`packet_digest` opaque at the queue→durable seam; (2) no drain/migrate API;
+(3) operator-invoked compaction; (4) wall-clock timers; (5) `ship()`
+destination writes not atomic; (6) txn completeness rests on shared txn ids +
+chain/torn-tail checks; (7) no parent-dir fsync. Rotation: (1) operator
+identities are caller-supplied strings; (2) `materialize()`/`verify_log()`
+exempt from the floor; (3) Rekor pin is digest-existence evidence only; (4)
+racing approvals idempotent; hung KMS wrap holds the rotation lock.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
