@@ -2064,9 +2064,68 @@ def _discovery_snapshot(ctx):
     return payload.get("discovery")
 
 
+# Wave-215: optional identity-policy check (v1 extension, V19).
+#
+# The standalone verifier must stay stdlib-only and importable without the
+# repository installed, so this check duck-types the policy: any object
+# with a callable ``verify(claims)`` returning a verdict with ``verdict``
+# / ``code`` attributes works (``gov.identity_policy.Policy`` satisfies
+# it). The identity claims ride in an optional top-level ``identity.json``,
+# which is bound to the bundle by the transport digest (V3 runs first);
+# V19 only runs when V4 passed, like the other content checks.
+#
+# HONESTY: identity.json is auditor-supplied (or operator-supplied) and
+# V3-bound, NOT independently verified authorship -- the check gates
+# which *claimed* identities count, exactly the sigstore-python
+# verify/policy.py granularity (per-certificate, not per-artifact).
+
+
+def v19_identity_policy(ctx):
+    c = Check("V19", "V19 identity policy (v1 extension)")
+    policy = ctx.identity_policy
+    path = os.path.join(ctx.dir, "identity.json")
+    try:
+        with open(path, "rb") as f:
+            claims = json.loads(f.read().decode("utf-8"))
+    except FileNotFoundError:
+        return c.fail(
+            "no identity claims in bundle: identity.json absent while an "
+            "identity policy is configured")
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        return c.fail("identity.json unreadable: %s" % (e,))
+    try:
+        verdict = policy.verify(claims)
+    except Exception as e:  # hostile policy object: fail, don't crash
+        return c.fail("identity policy evaluation raised: %r" % (e,))
+    v = getattr(verdict, "verdict", None)
+    code = getattr(verdict, "code", "?")
+    if v == "pass":
+        return c.ok("identity policy pass (%s)" % (code,))
+    if v in ("fail", "error"):
+        return c.fail("identity policy %s: %s" % (v, code))
+    return c.fail("identity policy returned malformed verdict: %r"
+                  % (verdict,))
+
+
+def _check_identity_policy_arg(identity_policy):
+    """Fail-closed config validation for the optional identity_policy."""
+    if identity_policy is None:
+        return None
+    if not callable(getattr(identity_policy, "verify", None)):
+        c = Check("V0", "identity policy config")
+        c.fail("identity_policy must expose verify(claims); got %r"
+               % (type(identity_policy).__name__,))
+        return c
+    return None
+
+
 def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
-                   source_log=None, receipt_pins=()):
-    """Run V1–V18. Returns (exit_code, checks, summary_dict)."""
+                   source_log=None, receipt_pins=(), identity_policy=None):
+    """Run V1-V18 (plus V19 when ``identity_policy`` is configured).
+
+    Returns (exit_code, checks, summary_dict). Without an identity
+    policy the check list is byte-identical to the legacy contract.
+    """
     ctx = Ctx()
     ctx.dir = bundle_dir
     ctx.pins = list(pins)
@@ -2075,6 +2134,7 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
     ctx.source_log = source_log
     ctx.receipt_pins = list(receipt_pins)
     ctx.pin_failed = False
+    ctx.identity_policy = identity_policy
     checks = []
 
     def run(fn):
@@ -2126,7 +2186,16 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
     # V4-V16 run under one outer guard: hostile bundle data must FAIL
     # cleanly (a named check, exit 1), never crash with a traceback.
     try:
-        _run_checks_v4_v18(ctx, run, checks)
+        v4_ok = _run_checks_v4_v18(ctx, run, checks)
+        # V19 (v1 extension): only with a configured policy, and only
+        # when V4 passed -- without the payload, identity claims are
+        # meaningless. Without a policy no check is appended, so the
+        # legacy check list is byte-identical.
+        bad_policy = _check_identity_policy_arg(ctx.identity_policy)
+        if bad_policy is not None:
+            checks.append(bad_policy)
+        elif ctx.identity_policy is not None and v4_ok:
+            run(v19_identity_policy)
     except Exception as e:  # hostile/malformed bundle: fail, don't crash
         c = Check("V0", "bundle fatal")
         c.fail("unexpected error while verifying bundle: %r" % (e,))

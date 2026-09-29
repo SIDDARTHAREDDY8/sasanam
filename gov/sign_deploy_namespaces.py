@@ -340,7 +340,8 @@ class NamespaceRegistry(object):
         return result["key_ids"]
 
     # -- promotion ceremony ----------------------------------------------
-    def promote(self, name, *, operator_ids, materials=None, products=None):
+    def promote(self, name, *, operator_ids, materials=None, products=None,
+                identity_policy=None, identity_claims=None):
         """Promote a signed staged bundle into the enforced namespace.
 
         Requires the two-operator ceremony AND a fresh signature
@@ -355,6 +356,14 @@ class NamespaceRegistry(object):
         reason is written to the audit log as ``promotion-denied``.
         The gate runs AFTER the legacy checks, so it is strictly
         tighten-only.
+
+        When ``identity_policy`` (a ``gov.identity_policy.Policy``) is
+        supplied, the caller's ``identity_claims`` document must also
+        satisfy it -- a second tighten-only gate that runs after the
+        artifact gate. A violation DENIES the promotion
+        (``identity-policy-refused``), audited as ``promotion-denied``.
+        A configured policy with absent claims fails closed; without a
+        policy the legacy path is byte-identical.
         """
         _check_name(name)
         record = self._staging.get(name)
@@ -374,6 +383,29 @@ class NamespaceRegistry(object):
                 raise NamespaceError("artifact-gate-refused", str(exc))
             gate_suffix = ("; artifact_rules=%s"
                            % gate_report["rule_set_digest"])
+        if identity_policy is not None:
+            from gov import identity_policy as _identity_policy
+            if not isinstance(identity_policy,
+                              _identity_policy.Policy):
+                raise NamespaceError(
+                    "bad-identity-policy",
+                    "identity_policy must be a gov.identity_policy.Policy")
+            if not isinstance(identity_claims, dict):
+                self._log("promotion-denied",
+                          "identity-policy: policy configured but no "
+                          "identity claims supplied",
+                          name=name, digest=record["digest"])
+                raise NamespaceError(
+                    "identity-policy-refused",
+                    "identity policy configured but identity_claims absent")
+            try:
+                admission = _identity_policy.check_admission(
+                    identity_claims, identity_policy)
+            except _identity_policy.PolicyError as exc:
+                self._log("promotion-denied", "identity-policy: %s" % exc,
+                          name=name, digest=record["digest"])
+                raise NamespaceError("identity-policy-refused", str(exc))
+            gate_suffix += ("; identity_policy=%s" % admission["code"])
         promoted = dict(record, content=bytes(record["content"]))
         promoted["status"] = "promoted"
         promoted["signed_by"] = list(key_ids)
