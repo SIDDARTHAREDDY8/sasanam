@@ -10465,3 +10465,14 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 **Findings:** none filed. Next free: F203. Open findings: none (carried).
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+## 2026-09-29 — Wave-198: merge f203 + attestrel + gradladder + sigma + mcpwiring (red-first audited, gates green)
+
+**Merge.** Five local lane commits cherry-picked onto `d933dd1` (`-x`): `565fb63` (A F203), `97805b3` (B attestrel), `66d5334` (C gradladder), `961fd07` (D sigma), `dc422f4` (E mcpwiring). Two conflict classes, both resolved by union: (1) BUILD_LOG.md top-appends (A+B+D) — resolved DETERMINISTICALLY by concatenating each lane's byte-exact section (extracted from the lane repo, asserted to end with the base content) ahead of the base file; (2) gov/executor.py (B+C vs E) — one hunk, both sides purely additive new methods after `set_authority_boundary` (C: warn-digest/escalation methods; E: `set_mcp_tool_registry`/`_mcp_token_claims_for`), spliced by exact line-index, no regex. Comprehensive union check: every single-owner file byte-identical to its lane repo; multi-owner files verified to carry both lanes' markers (attestrel 7/7, mcpwiring 7/7, gradladder 12 hits in executor.py).
+
+**Process incident (honest).** My first two BUILD_LOG conflict resolutions used a python `re.sub` conflict-marker script — the same class of bug as the wave-195 NUL incident (re.sub with unresolved replacement). Both times the script silently TRUNCATED the file to the conflict region (42 lines vs ~10400). Caught by a line-count check after the second resolution; repaired by the deterministic reconstruction above (byte-exact sections + base, 0 NUL/control bytes verified in both file and base). Standing rule, sharpened: never resolve conflicts with regex — splice by exact line index or reconstruct deterministically, and always verify post-merge (line counts, marker grep, byte-identity spot checks).
+
+**Independent F203 red-first audit (merged tree, live Rekor v1.5.4 stack).** RED: full pristine `d933dd1` gov/ tree against the live stack → `WitnessDownError: rekor HTTP 400 ... unsupported hash algorithm: "SHA-256" not in [SHA-512]` (reproduced; an earlier attempt that mixed pristine modules with the merged tree falsely showed acceptance — path-priority bug in my harness, discarded, re-run with a clean pristine extraction). GREEN: merged tree `evals/rekor_f203_probes.py::p_live_roundtrip` → HELD (submit → real entry → verify OK). Close-when satisfied on the merged tree; FINDINGS.md "F203 CLOSED 2026-09-29 (wave-198 lane A)" stands — no re-filing. Open findings: none. Next free: F204.
+
+**Gates.** (To be filled by the gate run below.)
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
