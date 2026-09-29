@@ -48,6 +48,8 @@ from hashlib import sha256
 from pathlib import Path
 
 from .approvals import approval_digest_ok
+from .durable_approval import (Engine, GrantRefused, APPROVAL_DENIED,
+                               APPROVAL_GRANTED, TIMER_FIRED)
 from .log import read_entries, verify_chain
 from .policy import PolicyDecision
 
@@ -76,6 +78,10 @@ _DIGEST_DOMAIN = b"agent-governance/release/v1\x00"
 
 class ReleaseNotApproved(Exception):
     """Raised by ship_release when the release does not verify."""
+
+
+class VoteRefused(Exception):
+    """A release vote was refused (duplicate voter, non-pending, ...)."""
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +561,18 @@ def ship_release(*, queue, approval_id, code_dir, eval_results_path,
     # symlinks are not followed and not shipped (the digest binds
     # exactly the bytes verified — a symlink's target could change
     # after the digest was computed, so it never rides along).
+    _copy_release_bits(dest, code_dir, eval_results_path, sar_path)
+    return dest
+
+
+def _copy_release_bits(dest, code_dir, eval_results_path, sar_path):
+    """Copy the verified candidate bits into ``dest``.
+
+    Shared by the queue-based ``ship_release`` and the durable ship
+    activity: the release digest binds exactly the bytes verified — a
+    symlink's target could change after the digest was computed, so
+    symlinks are not followed and not shipped.
+    """
     for dirpath, dirnames, filenames in os.walk(code_dir,
                                                 followlinks=False):
         dirnames.sort()
@@ -567,4 +585,257 @@ def ship_release(*, queue, approval_id, code_dir, eval_results_path,
             shutil.copy2(full, dest / "code" / rel_dir / name)
     shutil.copy2(eval_results_path, dest / Path(eval_results_path).name)
     shutil.copy2(sar_path, dest / Path(sar_path).name)
-    return dest
+
+# ---------------------------------------------------------------------------
+# Wave-201: the release ceremony as a DURABLE workflow.
+#
+# The queue-based ceremony above (propose_release / record_release_vote /
+# verify_release / ship_release) governs through the existing approval
+# queue. This section replays the SAME ceremony over a
+# ``gov.durable_approval.Engine`` so a kill -9 mid-ceremony neither loses
+# the proposal, duplicates a vote, nor ships twice.
+#
+# Reuse, not duplication: the release digest (``release_digest``,
+# ``compute_candidate``) and the release_id charset
+# (``validate_release_id``) are the existing functions above. The quorum
+# invariants mirror the queue's (at least 2 distinct approvers, one deny
+# vetoes, the requester can never approve its own release) but are folded
+# from journaled ``ReleaseVote`` records so they survive restarts.
+# ---------------------------------------------------------------------------
+
+RELEASE_VOTE = "ReleaseVote"
+
+
+class _DurableReleaseEngine(Engine):
+    """Engine with the release quorum folded from ReleaseVote records."""
+
+    def __init__(self, journal_path, outcome_dir, audit_append=None,
+                 quorum=2):
+        self.quorum = quorum
+        super(_DurableReleaseEngine, self).__init__(
+            journal_path, outcome_dir, audit_append=audit_append)
+
+    def _fold(self, records):
+        states = super(_DurableReleaseEngine, self)._fold(records)
+        for rec in records:
+            if rec["type"] != RELEASE_VOTE:
+                continue
+            b = rec["body"]
+            aid = b.get("approval_id")
+            st = states.get(aid)
+            if st is None or st["status"] != "pending":
+                continue
+            st["votes"].append({"voter": b.get("voter"),
+                                "approve": bool(b.get("approve")),
+                                "reason": b.get("reason", "")})
+            approvers = {v["voter"] for v in st["votes"] if v["approve"]}
+            rejectors = {v["voter"] for v in st["votes"] if not v["approve"]}
+            if rejectors:
+                # One deny vetoes (queue invariant, mirrored).
+                st["status"] = "denied"
+                st["deny_reason"] = "vetoed by %s" % sorted(rejectors)[0]
+            elif len(approvers) >= self.quorum:
+                st["status"] = "approved"
+                st["approver"] = "quorum:%s" % ",".join(sorted(approvers))
+        return states
+
+
+class DurableReleaseWorkflow:
+    """The release ceremony as a crash-surviving durable workflow.
+
+    ``propose`` journals the release digest (bound by the existing
+    ``release_digest`` combiner); ``vote`` journals quorum votes;
+    ``verify`` recomputes the digest and checks the journaled quorum;
+    ``ship`` runs the idempotent ship activity exactly once. A kill -9
+    at any point restarts into the same ceremony — never a lost
+    proposal, never a double ship.
+    """
+
+    def __init__(self, journal_path, outcome_dir, audit_append=None,
+                 quorum=2):
+        if not isinstance(quorum, int) or quorum < 2:
+            raise ValueError("quorum must be an int >= 2 (two-human rule)")
+        self.engine = _DurableReleaseEngine(journal_path, outcome_dir,
+                                            audit_append=audit_append,
+                                            quorum=quorum)
+        self.quorum = quorum
+
+    # -- ceremony ------------------------------------------------------
+    def propose(self, release_id, *, code_dir, eval_results_path,
+                sar_path, requester, ttl_seconds=86400):
+        """Propose a release. Returns the durable approval_id.
+
+        Computes the candidate digests with the existing
+        ``compute_candidate`` (fail-closed on missing evidence) and
+        opens the durable workflow with the release digest as the
+        packet digest. The idempotency key IS the release_id.
+        """
+        validate_release_id(release_id)
+        candidate = compute_candidate(code_dir, eval_results_path,
+                                      sar_path, release_id=release_id)
+        approval_id = "release-%s" % release_id
+        self.engine.request(
+            approval_id, requester=requester,
+            packet_digest=candidate["release_digest"],
+            action_kind="release", idempotency_key=release_id,
+            ttl_seconds=ttl_seconds)
+        return approval_id
+
+    def vote(self, approval_id, voter, approve, reason=""):
+        """Journal one quorum vote. The requester can never vote on its
+        own release; a second vote by the same voter is refused loudly;
+        votes on non-pending releases are refused. The duplicate-voter
+        and still-pending checks re-run atomically under the journal's
+        mutation mutex, so a cross-process double-vote race is refused
+        loudly instead of journaling a duplicate."""
+        st = self.engine.states().get(approval_id)
+        if st is None:
+            raise VoteRefused("unknown approval %r" % (approval_id,))
+        if st["status"] != "pending":
+            raise VoteRefused("vote refused: %r is %r, not pending"
+                              % (approval_id, st["status"]))
+        if voter == st.get("requester"):
+            raise VoteRefused("requester may not vote on its own release")
+        if any(v["voter"] == voter for v in st["votes"]):
+            raise VoteRefused("voter %r already voted" % (voter,))
+
+        def _still_clean(records):
+            for r in records:
+                body = r["body"] or {}
+                if body.get("approval_id") != approval_id:
+                    continue
+                if r["type"] in (APPROVAL_GRANTED, APPROVAL_DENIED,
+                                 TIMER_FIRED):
+                    return False
+                if r["type"] == RELEASE_VOTE \
+                        and body.get("voter") == voter:
+                    return False
+            return True
+
+        appended, _ = self.engine.journal.append_if(
+            [(RELEASE_VOTE,
+              {"approval_id": approval_id, "voter": voter,
+               "approve": bool(approve), "reason": reason})],
+            _still_clean)
+        if not appended:
+            raise VoteRefused(
+                "vote refused: approval %r transitioned or voter %r "
+                "voted concurrently" % (approval_id, voter))
+
+    def verify(self, approval_id, *, code_dir, eval_results_path,
+               sar_path, release_id):
+        """Recompute the candidate digest and check the journaled
+        quorum. Returns ``(True, "")`` or ``(False, reason)``; never
+        raises on a verification failure (fail-closed verdict, loud
+        caller)."""
+        validate_release_id(release_id)
+        if approval_id != "release-%s" % release_id:
+            return False, "approval_id does not name this release_id"
+        candidate = _candidate_or_none(code_dir, eval_results_path,
+                                       sar_path, release_id=release_id)
+        if candidate is None:
+            return False, "candidate evidence unreadable"
+        st = self.engine.states().get(approval_id)
+        if st is None:
+            return False, "unknown approval %r" % (approval_id,)
+        if st.get("packet_digest") != candidate["release_digest"]:
+            return False, "release digest mismatch: candidate bits changed"
+        if st["status"] == "expired":
+            return False, "release approval expired"
+        if st["status"] == "denied":
+            return False, "release denied: %s" % st.get("deny_reason", "")
+        if st["status"] == "executed":
+            return False, "release already shipped (executed)"
+        if st["status"] != "approved":
+            return False, "quorum not met: %r" % (st["status"],)
+        return True, ""
+
+    def ship(self, approval_id, *, code_dir, eval_results_path,
+             sar_path, release_id, dest_parent):
+        """Ship the release: verify, then run the idempotent ship
+        activity exactly once (crash-safe via the journal claim).
+
+        ``dest_parent/<release_id>/`` is created with the verified
+        bits; an existing destination with a DIFFERENT digest is
+        refused loudly, an identical one is a no-op (idempotent).
+        Calling ship again after a successful ship is a no-op that
+        re-converges WITHOUT re-reading the candidate evidence: the
+        already-executed check runs first and compares the destination
+        marker against the journal-pinned digest, so evidence cleaned
+        up after a successful ship does not turn a no-op into an
+        error. The journal is the source of truth, not the disk.
+        """
+        validate_release_id(release_id)
+        if approval_id != "release-%s" % release_id:
+            raise GrantRefused("ship refused: approval_id does not name "
+                               "this release_id")
+        dest_parent = Path(dest_parent)
+        dest = dest_parent / release_id
+        self.engine._reload()  # current cross-process state
+        st = self.engine.states().get(approval_id)
+        if st is not None and st["status"] == "executed":
+            # Already shipped: decide from the journal alone, before
+            # touching the candidate evidence (which may have been
+            # cleaned up since). The digest pinned at propose time is
+            # the shipped identity.
+            want = st.get("packet_digest")
+            marker = dest / "RELEASE_DIGEST"
+            if marker.is_file() and \
+                    marker.read_text(encoding="utf-8").strip() == want:
+                return {"did": [], "states": self.engine.states()}
+            raise GrantRefused(
+                "ship refused: release %r already shipped but "
+                "destination %s diverged from the journal (missing or "
+                "different bits); investigate before re-shipping"
+                % (release_id, dest))
+        candidate = compute_candidate(code_dir, eval_results_path,
+                                      sar_path, release_id=release_id)
+        want = candidate["release_digest"]
+
+        def _destination_matches(dest):
+            marker = dest / "RELEASE_DIGEST"
+            return (marker.is_file() and
+                    marker.read_text(encoding="utf-8").strip() == want)
+
+        def _ship_action(ctx):
+            dest = dest_parent / release_id
+            if dest.exists():
+                if _destination_matches(dest):
+                    return  # idempotent no-op: same bits already shipped
+                raise GrantRefused(
+                    "ship refused: destination %s exists with different "
+                    "bits" % (dest,))
+            dest.mkdir(parents=True)
+            _copy_release_bits(dest, code_dir, eval_results_path, sar_path)
+            (dest / "RELEASE_DIGEST").write_text(want + "\n",
+                                                 encoding="utf-8")
+
+        self.engine.register_action("release", _ship_action)
+        st = self.engine.states().get(approval_id)
+        if st is None:
+            raise GrantRefused("ship refused: unknown approval %r"
+                               % (approval_id,))
+        ok, reason = self.verify(approval_id, code_dir=code_dir,
+                                 eval_results_path=eval_results_path,
+                                 sar_path=sar_path, release_id=release_id)
+        if not ok:
+            raise GrantRefused("ship refused: %s" % reason)
+        # The quorum already approved: record the grant explicitly so
+        # the journal shows the decision, then drive the ship.
+        already = any(
+            r["type"] == APPROVAL_GRANTED
+            and r["body"].get("approval_id") == approval_id
+            for r in self.engine.journal.records)
+        if not already:
+            self.engine.journal.append(
+                APPROVAL_GRANTED,
+                {"approval_id": approval_id,
+                 "approver": self.engine.states()[approval_id]["approver"]})
+        return self.engine.drive()
+
+    def drive(self):
+        """Drive pending timers / executions (idempotent)."""
+        return self.engine.drive()
+
+    def states(self):
+        return self.engine.states()
