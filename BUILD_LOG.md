@@ -10767,3 +10767,91 @@ production-default sandbox runs without it here (G16 proves the
 missing-layer path refuses fail-closed).
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+
+## 2026-09-29 — Wave-202 merge: provenance+envelope, deploy trust config, decision log v2, capability grants (merge coordinator)
+
+**Base.** `8d8ad47` (wave-201 close-out). **Merged (cherry-pick, in order):** lane B
+(provenance+envelope) `4451ff15b00af67405a31773c1759b2f0a3a8986` → `782dd1b`
+(`gov/build_provenance.py`, `gov/signature_envelope_v2.py`); lane C (deploy
+trust config) `1c88e04a83b71505dc3509f67b123bd7c7a56cbf` → `b1e588c`
+(`gov/deploy_trust_config.py`); lane D (decision log v2)
+`38cd3e7bd16782fe68ba310f524cce2a18dfcb2a` → `3559189`
+(`gov/decision_log_v2.py`, additive `decision_event_v2` in `gov/decision_bom.py`);
+lane E (capability grants) `cb4f548187890c71df2011ee402603a402e61425` →
+`cf6ebf9` (`gov/capability_grants.py`, additive `tool_grants` in
+`gov/decision_bom.py`). Merge diff vs base: 16 files, 7718 insertions(+), 4
+deletions(−). All four lane commits and this close-out carry the required
+Signed-off-by trailer.
+
+**Merge conflicts.** Lane B: the cherry-pick staged cleanly but could not
+commit (no local git identity); identity set locally and the staged changes
+committed verbatim as `782dd1b` (diff vs lane source: empty). Lane C applied
+cleanly. Lane D conflicted only in BUILD_LOG.md — resolved keeping the
+complete lane-B entry followed by the complete lane-D entry (lane D's 16-line
+added block verified verbatim against its source commit; no regex surgery).
+Lane E conflicted in `gov/decision_bom.py` (BUILD_LOG auto-merged): resolved
+retaining BOTH additive APIs — `decision_event_v2=None` and
+`tool_grants=None`, both `inputs.decision_event` and `inputs.grants`, both
+shape-validation branches, and lane E's
+`verify_bom(..., grant_capability_specs=...)` leg; `python -m py_compile`
+clean. Lane E had accidentally staged its root `REPORT.md`; removed before
+commit so it does not land in the product (`REPORT.md` absent at product
+root). All lane BUILD_LOG entries verified verbatim (B head-25
+byte-identical; C appended block; D tail block; E tail block modulo a
+leading blank line); `git diff --check` clean.
+
+**Red-first merged-tree audit (all claims held, fresh `/var/tmp/g202m-*`
+TMPDIRs, `GOV_SKIP_GREEN=1`).** Lane B `evals/provenance_envelope_probes.py`
+**12/12**; lane C `evals/deploy_trust_probes.py` **11/11**; lane D
+`evals/decision_log_v2_probes.py` **10/10** (run after D and again after
+D+E); lane E `evals/capability_grant_probes.py` **16/16**;
+`tests.test_decision_bom` **32/32**. A custom joint-BOM probe proved the D+E
+resolution: one BOM can carry both `inputs.decision_event` and
+`inputs.grants`; omitting both keeps the legacy shape free of both sections;
+malformed digests and unknown fields are rejected independently per section;
+forged decision IDs are caught by `decision_log_v2.verify_event`. Adjacent
+seams: durable_approval **10/10**; rotation_policy **26/26**;
+keyset_lifecycle 7/7; policy_report 11/11; capability_rules 15 held + unit
+OK (1 skip is the depth-1 `GOV_SKIP_GREEN` convention, honored); perm_loader
+14 held + unit OK; pack_loader 14 held + unit OK; attestation_release 9 held
+/ 0 break; graduation_ladder 13 held / 0 break; F203 Rekor envelope 8 held /
+0 break / 1 expected; MCP wiring 9 pass / 0 fail; DigestRef unit OK. No
+overstated claims; no new findings.
+
+**Gates (serialized, fresh unique `/var/tmp/g202m-*` TMPDIRs, zero concurrent
+suites, ~1.5GB available — inside the wave-195 no-contention envelope).**
+- Canonical: **6713 collected; 6 failures + 10 errors — PROVEN PRE-EXISTING.**
+  Control run: pristine `8d8ad47` under identical conditions (6592 tests,
+  fresh worktree, identical env) shows the byte-identical sorted FAIL/ERROR
+  list (diff: empty). The merged tree adds 121 new lane tests and zero new
+  failures. Carried as test-hygiene debt, not a finding against the product.
+- Registry: **GREEN** (`evals/run_evals.py --registry-gate`;
+  `battery_100_results.json` restored, never committed)
+- Matrix: **3216/3216 SHIP-GATE GREEN** (provisional 1608/1608, real 1608/1608)
+- Realistic: **7/7** (`GOV_RUN_ROOT=/var/tmp/g202m-realistic` set explicitly)
+- AMSB: **90.00 / FINAL C / FP 0.0%** (matches wave-199–201 baseline;
+  scorecard pair committed)
+- Hygiene: `git diff --check` clean; no NUL/control bytes in new product
+  files; no `.orig`/`.rej`; trailers verified on all five new commits;
+  `evals/FINDINGS.md` untouched.
+
+**Findings:** none filed. Next free: F204. Open findings: none (carried).
+
+**Honest residuals (carried from lanes, unchanged).** Provenance: (1)
+`built_at` informational only; (2) rebuilder correctness is caller-owned;
+(3) non-deterministic inputs cannot be independently reproduced; (4)
+envelope expiry/revocation remains keyset-owned. Trust config: (1) operator
+identities are caller-supplied strings; (2) `verify_skill_manifest` not yet
+wired to `check_manifest_trust`; (3) grace periods use wall clock; (4)
+deployment-root compromise remains catastrophic. Decision log: (1)
+capture-time self-consistent lies cannot be detected offline; (2) redaction
+policy is caller-owned; (3) decision ID is a binding, not a signature; (4)
+no executor verdict-path wiring yet. Capability grants: (1) covert channels
+out of scope; (2) no live network mediation; (3) no expiry/revocation beyond
+single use; (4) cross-domain grant provenance not audited; (5)
+over-granting remains a policy/usability risk; (6) `gov/executor.py` not yet
+rewired; (7) seccomp unavailable on this VM — missing-layer refusal is
+fail-closed.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
