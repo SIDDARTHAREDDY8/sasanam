@@ -287,6 +287,13 @@ class ModeLedger:
 
     # ------------------------------------------------------------ queries
 
+    def rule_ids(self):
+        """Registered rule ids (sorted). Public for telemetry
+        projection: rules with evaluations but zero violations have
+        no chain records, yet the auditor needs their evaluated
+        counts (dryrun-blindness evidence)."""
+        return sorted(self._rules)
+
     def stats(self, rule_id):
         """Snapshot of a rule's telemetry (copy; never the live dict)."""
         st = self._stats(rule_id)

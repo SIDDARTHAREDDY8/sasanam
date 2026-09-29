@@ -10495,3 +10495,17 @@ Row 7: the closed-cue-list residual is **narrowed, not closed** — 8 languages'
 **Merge-integration break found by the registry gate — FIXED.** Lane A's Spec-review hardening (envelope-signature re-verification in `verify_receipt`) broke `redteam.anchor_w72.rekor_backend_two_leaf_proof_verifies` (registry MISMATCH: observed=break, expected ['flagged','stopped']): the probe's synthetic entries carried no `spec.signature`, and the lane's "13/13 HOLD" claim was measured before the hardening landed (12/1 on the lane tree — stale claim, not a product regression). Probe-only fix in the close-out: synthetic bodies now carry a real Ed25519ph signature (the shape a real Rekor v1.5.x server always returns) plus a new negative case pinning that a signature-stripped body is refused. `evals/w72_probes.py` 13/13 HOLD; registry re-run GREEN.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## 2026-09-29 — Wave-199 lane F: Kyverno PolicyReport telemetry for the graduation ladder
+
+**Build.** New `gov/policy_report.py` (+421): projects the ModeLedger into auditor-consumable PolicyReport-shaped records — `project_result` (`{source, policy, rule, resources, result, severity, category, message, timestamp, properties}`; resources carry request identity `{kind: "sasanam/request", uid: <request_digest>}`, never content), `build_report` (deterministic as-of time = latest record timestamp; `ruleStats` for every registered rule incl. zero-violation rules), `seal_report`/`verify_report` (Ed25519, domain `policy-report/v1`, fail-closed), `emit_policy_report` (one signed artifact per audit window; unsigned refused loudly). `gov/mode_ledger.py` +7 (public `rule_ids()` accessor only). ADAPT of kyverno/kyverno (Apache-2.0, LICENSE bytes verified): Audit-vs-Enforce as second convergent ladder data point; PolicyReportResult shape for the ledger. Kyverno mapping documented in-module with divergences explicit (observe stricter-than-Audit → skip; warn ≈ Audit → warn; deny stronger-than-Enforce, lives in the decision BOM; no namespace-override equivalent; three rungs + quorum graduation vs binary action).
+
+**Red-first.** Pristine `1efce86`: P0–P1 BREAK (no projector; auditor cannot attribute warnings to rule+policy), P2–P10 EXPECTED. Fixed tree: **11/11 HELD** x4 (incl. `env -u GOV_DEPLOYMENT_MODE` clean-env run); green check 20/20 each run; deterministic x2.
+
+**Breaks caught pre-commit (battery/test failures, fixed, not quiet patches).** (1) Transition records carry `kind` = graduation/demotion/emergency_demotion (payload kind overwrites record kind in `_append`) — the literal `RESULT_KINDS` filter would have SILENTLY DROPPED every mode transition; fixed by structural detection (`old_mode`+`new_mode`), regression test pins an unknown future label still projecting. (2) `generatedAt` used wall-clock → non-deterministic builds; fixed to as-of = latest record timestamp. (3) Window-probe timestamp off-by-one (test bug, fixed). (4) A mis-placed edit corrupted `gov/mode_ledger.py` (SyntaxError) — caught by the battery, repaired, byte-verified.
+
+**Adjacent suites.** graduation_ladder + policy_report + evidence_bundle: **149/149 OK**. `git diff --check` clean; zero NUL/control bytes. Two-axis review: Standards clean (staging pins, depth-1 green, fail-closed, loud ledger-seam checks); Spec: all three brief requirements met.
+
+**Findings:** none filed. Next free: F204. Open findings: none (carried).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
