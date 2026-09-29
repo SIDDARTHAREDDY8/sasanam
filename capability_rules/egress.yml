@@ -1,0 +1,144 @@
+rules:
+  -
+    meta:
+      name: "egress primitive 0"
+      namespace: capability/egress/prim-00
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "import socket"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bimport\s+socket\b"
+  -
+    meta:
+      name: "egress primitive 1"
+      namespace: capability/egress/prim-01
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "from socket import"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bfrom\s+socket\s+import\b"
+  -
+    meta:
+      name: "egress primitive 2"
+      namespace: capability/egress/prim-02
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "urllib.request"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\burllib\.request\b"
+  -
+    meta:
+      name: "egress primitive 3"
+      namespace: capability/egress/prim-03
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "urllib3"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\burllib3\b"
+  -
+    meta:
+      name: "egress primitive 4"
+      namespace: capability/egress/prim-04
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "import requests"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bimport\s+requests\b"
+  -
+    meta:
+      name: "egress primitive 5"
+      namespace: capability/egress/prim-05
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "from requests import"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bfrom\s+requests\s+import\b"
+  -
+    meta:
+      name: "egress primitive 6"
+      namespace: capability/egress/prim-06
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "http.client"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bhttp\.client\b"
+  -
+    meta:
+      name: "egress primitive 7"
+      namespace: capability/egress/prim-07
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "httpx"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bhttpx\b"
+  -
+    meta:
+      name: "egress primitive 8"
+      namespace: capability/egress/prim-08
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "aiohttp"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\baiohttp\b"
+  -
+    meta:
+      name: "egress primitive 9"
+      namespace: capability/egress/prim-09
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "websocket"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bwebsocket\b"
+  -
+    meta:
+      name: "egress primitive 10"
+      namespace: capability/egress/prim-10
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "create_connection("
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bcreate_connection\s*\("
+  -
+    meta:
+      name: "egress primitive 11"
+      namespace: capability/egress/prim-11
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "getaddrinfo("
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bgetaddrinfo\s*\("
+  -
+    meta:
+      name: "egress primitive 12"
+      namespace: capability/egress/prim-12
+      scopes:
+        static: module
+      capability_tags: [capability/egress]
+      label: "smtplib"
+      description: "Byte-identical migration of the flat lint entry for category egress."
+    features:
+      pattern: "\bsmtplib\b"

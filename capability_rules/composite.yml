@@ -1,0 +1,20 @@
+rules:
+  -
+    meta:
+      name: "credential-bearing egress"
+      namespace: capability/egress/credential-bearing
+      scopes:
+        static: module
+      capability_tags: [capability/egress/credential-bearing]
+      label: "credential-bearing egress"
+      description: "Composite capability (capa Rule 1): the module both reaches the network and touches credential-shaped secrets. Either signal alone is declared in its own category; the conjunction is a distinct capability that must be declared. The flat lint cannot express this conjunction without new code per case; the rule engine expresses it as data."
+    features:
+      and:
+        - match: capability/egress/*
+        -
+          or:
+            - match: capability/secrets/*
+            -
+              and:
+                - match: capability/env/*
+                - env-name: .*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL).*

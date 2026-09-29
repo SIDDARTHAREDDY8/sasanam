@@ -1,0 +1,144 @@
+rules:
+  -
+    meta:
+      name: "filesystem primitive 0"
+      namespace: capability/filesystem/prim-00
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "open("
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "(?<![\w.])open\s*\("
+  -
+    meta:
+      name: "filesystem primitive 1"
+      namespace: capability/filesystem/prim-01
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.remove"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.remove\b"
+  -
+    meta:
+      name: "filesystem primitive 2"
+      namespace: capability/filesystem/prim-02
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.unlink"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.unlink\b"
+  -
+    meta:
+      name: "filesystem primitive 3"
+      namespace: capability/filesystem/prim-03
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.mkdir"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.mkdir\b"
+  -
+    meta:
+      name: "filesystem primitive 4"
+      namespace: capability/filesystem/prim-04
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.makedirs"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.makedirs\b"
+  -
+    meta:
+      name: "filesystem primitive 5"
+      namespace: capability/filesystem/prim-05
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.rmdir"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.rmdir\b"
+  -
+    meta:
+      name: "filesystem primitive 6"
+      namespace: capability/filesystem/prim-06
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.rename"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.rename\b"
+  -
+    meta:
+      name: "filesystem primitive 7"
+      namespace: capability/filesystem/prim-07
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.replace"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.replace\b"
+  -
+    meta:
+      name: "filesystem primitive 8"
+      namespace: capability/filesystem/prim-08
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "os.write"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bos\.write\b"
+  -
+    meta:
+      name: "filesystem primitive 9"
+      namespace: capability/filesystem/prim-09
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "shutil"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bshutil\b"
+  -
+    meta:
+      name: "filesystem primitive 10"
+      namespace: capability/filesystem/prim-10
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "pathlib"
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bpathlib\b"
+  -
+    meta:
+      name: "filesystem primitive 11"
+      namespace: capability/filesystem/prim-11
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "write_text("
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bwrite_text\s*\("
+  -
+    meta:
+      name: "filesystem primitive 12"
+      namespace: capability/filesystem/prim-12
+      scopes:
+        static: module
+      capability_tags: [capability/filesystem]
+      label: "write_bytes("
+      description: "Byte-identical migration of the flat lint entry for category filesystem."
+    features:
+      pattern: "\bwrite_bytes\s*\("

@@ -101,7 +101,8 @@ def build_bom(*, policy_id, policy_version, policy_digest,
               evidence_head_digest, principal, pin_digests=None,
               approval_id=None, approval_record_digest=None,
               decision_mode=None, nominal_effect=None,
-              decision_warnings=None, rule_mode_history=None):
+              decision_warnings=None, rule_mode_history=None,
+              perm_model=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -128,6 +129,21 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     When any is supplied, all four are required and validated loudly:
     a BOM must never silently record a weaker claim than the decision
     actually rested on.
+
+    Wave-200 (PERM model-as-data): ``perm_model`` is an optional
+    all-or-none dict ``{"model_digest": hex64, "policy_digest":
+    hex64, "composition_digest": hex64, "function_set_digest":
+    hex64}`` -- the signed PERM model + policy documents the decision
+    ran under (``gov.perm_loader``), the screen-composition order +
+    verdict mapping, and the matcher function-set digest (the model
+    names functions; the engine provides them -- the digest makes the
+    coupling auditable). Supplied as
+    ``PermModel.bom_perm_section()``. Omitted when the decision did
+    not run under a PERM model, and BOMs built without it are
+    byte-identical to before (the wave-191 token_digest and wave-198
+    ladder precedents). A partial dict raises BomError: the BOM never
+    silently records a weaker claim than the decision actually rested
+    on.
 
     Every required input is validated LOUD: a missing or malformed
     digest, an empty policy id/version, or a non-dict principal raises
@@ -221,6 +237,33 @@ def build_bom(*, policy_id, policy_version, policy_digest,
             "warnings": warnings,
             "rule_mode_history": history,
         }
+    # Wave-200 (PERM model-as-data): the optional perm section.
+    # All-or-none: a partial dict is refused loud, and absence keeps
+    # the BOM byte-identical to before.
+    perm_inputs = None
+    if perm_model is not None:
+        if not isinstance(perm_model, dict):
+            raise BomError("perm_model must be a dict or None")
+        for key in ("model_digest", "policy_digest",
+                    "composition_digest", "function_set_digest"):
+            value = perm_model.get(key)
+            if not _is_hex64(value):
+                raise BomError(
+                    "perm_model %r must be 64-char lowercase hex"
+                    % (key,))
+        unknown_perm = set(perm_model) - {
+            "model_digest", "policy_digest", "composition_digest",
+            "function_set_digest"}
+        if unknown_perm:
+            raise BomError(
+                "perm_model carries unknown keys: %s"
+                % sorted(unknown_perm))
+        perm_inputs = {
+            "model_digest": perm_model["model_digest"],
+            "policy_digest": perm_model["policy_digest"],
+            "composition_digest": perm_model["composition_digest"],
+            "function_set_digest": perm_model["function_set_digest"],
+        }
     inputs = {
         "policy": {
             "policy_id": policy_id,
@@ -239,6 +282,8 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     }
     if ladder_inputs is not None:
         inputs["ladder"] = ladder_inputs
+    if perm_inputs is not None:
+        inputs["perm"] = perm_inputs
     return {
         "bom_version": BOM_VERSION,
         "inputs": inputs,
@@ -318,11 +363,27 @@ def check_bom_shape(bom):
         if not isinstance(history, list) or not all(
                 _mode_history_entry_ok(h) for h in history):
             return False, "bom.inputs.ladder.rule_mode_history malformed"
+    # Wave-200 (PERM model-as-data): the optional perm section, when
+    # present, must carry all three digests well-formed. Absent is
+    # fine (non-PERM decisions omit it).
+    perm = inputs.get("perm")
+    if perm is not None:
+        if not isinstance(perm, dict):
+            return False, "bom.inputs.perm is not a dict"
+        for key in ("model_digest", "policy_digest",
+                    "composition_digest", "function_set_digest"):
+            if not _is_hex64(perm.get(key)):
+                return False, (
+                    "bom.inputs.perm.%s is not 64-char hex" % (key,))
+        if set(perm) - {"model_digest", "policy_digest",
+                        "composition_digest", "function_set_digest"}:
+            return False, "bom.inputs.perm carries unknown keys"
     return True, "ok"
 
 
 def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
-               approval_records=None):
+               approval_records=None, perm_model_bytes=None,
+               perm_policy_bytes=None):
     """On-demand reconstruction check (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -354,18 +415,30 @@ def verify_bom(bom, *, policy_bundle_bytes=None, pin_digests=None,
     supplied but the BOM names an approval, the approval leg is
     reported as UNVERIFIED in the reason -- never silently passed.
     Pass the artifacts for the full check.
+
+    Wave-200 (PERM): ``perm_model_bytes`` / ``perm_policy_bytes`` are
+    the exact signed model/policy document bytes; their sha256 must
+    equal the BOM's ``inputs.perm`` digests. The composition and
+    function-set digests are shape-checked only here -- full
+    re-derivation needs the model compiler (``gov.perm_loader``),
+    which the standalone offline verifier deliberately does not
+    import; an auditor with the engine re-derives them via
+    ``PermModel.composition_digest`` / ``function_set_digest``.
     """
     try:
         return _verify(bom,
                        policy_bundle_bytes=policy_bundle_bytes,
                        pin_digests=pin_digests,
-                       approval_records=approval_records)
+                       approval_records=approval_records,
+                       perm_model_bytes=perm_model_bytes,
+                       perm_policy_bytes=perm_policy_bytes)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
 
 
-def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records):
+def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records,
+            perm_model_bytes, perm_policy_bytes):
     ok, reason = check_bom_shape(bom)
     if not ok:
         return False, reason
@@ -421,6 +494,39 @@ def _verify(bom, *, policy_bundle_bytes, pin_digests, approval_records):
             checked.append("approval")
     elif approval_id is not None:
         unverified.append("approval")
+    # Wave-200 (PERM): re-derive the model/policy digests from the
+    # exact document bytes. The composition and function-set digests
+    # need the compiler; they are shape-checked only (see docstring).
+    perm = inputs.get("perm")
+    if perm is not None:
+        # Partial verification must never return an overbroad "ok":
+        # every PERM leg that cannot be re-derived is NAMED in the
+        # unverified list, exactly like the approval leg above.
+        if perm_model_bytes is None:
+            unverified.append("perm-model")
+        else:
+            if not isinstance(perm_model_bytes, (bytes, bytearray)):
+                return False, "perm_model_bytes is not bytes"
+            rederived = hashlib.sha256(
+                bytes(perm_model_bytes)).hexdigest()
+            if rederived != perm["model_digest"]:
+                return False, (
+                    "perm model digest does not re-derive from the "
+                    "supplied model bytes (swapped or tampered model)")
+            checked.append("perm-model")
+        if perm_policy_bytes is None:
+            unverified.append("perm-policy")
+        else:
+            if not isinstance(perm_policy_bytes, (bytes, bytearray)):
+                return False, "perm_policy_bytes is not bytes"
+            rederived = hashlib.sha256(
+                bytes(perm_policy_bytes)).hexdigest()
+            if rederived != perm["policy_digest"]:
+                return False, (
+                    "perm policy digest does not re-derive from the "
+                    "supplied policy bytes (swapped or tampered "
+                    "policy)")
+            checked.append("perm-policy")
     if not checked:
         return False, ("no artifacts supplied for re-derivation: BOM "
                        "shape ok, provenance UNVERIFIED")

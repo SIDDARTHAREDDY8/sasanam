@@ -1,0 +1,17 @@
+rules:
+  -
+    meta:
+      name: "mixed-trust exfiltration path"
+      namespace: capability/composition/mixed-trust-exfil
+      scopes:
+        static: bundle
+      capability_tags: [capability/composition/mixed-trust-exfil]
+      label: "mixed-trust exfiltration path"
+      description: "Bundle composition (capa Rule 3): one module in the bundle reads credentials, a DIFFERENT module in the same bundle reaches the network. Per-module declarations may each look innocent; the bundle as a unit has an exfiltration path. Fires only when the two signals live in different modules (the same-module case is the module-scope composite rule). Review-time: evaluated by evaluate_bundle, not the load seam."
+    features:
+      and:
+        - match: capability/secrets/*
+        - match: capability/egress/*
+        -
+          not:
+            match: capability/composition/same-module

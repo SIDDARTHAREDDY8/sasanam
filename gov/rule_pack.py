@@ -45,6 +45,8 @@ from .signing import ThresholdSigner
 __all__ = [
     "RULE_PACK_FORMAT",
     "KEYSET_PURPOSE_RULE_PACK",
+    "PERM_PACK_FORMAT",
+    "KEYSET_PURPOSE_PERM_PACK",
     "RulePackError",
     "RulePack",
     "mint_rule_pack",
@@ -60,6 +62,20 @@ RULE_PACK_FORMAT = "sasanam-detection-rule-pack/v1"
 #: keyset can never mint a rule pack either -- distinct trust domain).
 KEYSET_PURPOSE_RULE_PACK = "sasanam-rule-pack-signing/v1"
 
+#: Wave-200 (PERM model packs): the authorization-model pack is a
+#: structurally identical signed member enumeration, but changing
+#: what "allow" MEANS is more sensitive than changing detection
+#: rules, so it lives in its own trust domain -- its own format tag
+#: (exact match at verify, and the signature domain derives from it)
+#: and its own keyset purpose. A rule-signing keyset can never mint
+#: a PERM model pack and vice versa. ``mint_rule_pack`` /
+#: ``verify_rule_pack`` take both as optional kwargs defaulting to
+#: the detection-rule values, so existing callers are unaffected.
+PERM_PACK_FORMAT = "sasanam-perm-model-pack/v1"
+
+#: Keyset purpose bound into PERM model packs.
+KEYSET_PURPOSE_PERM_PACK = "sasanam-perm-model-signing/v1"
+
 #: Fields allowed on a v1 pack document (unknown fields refused).
 _PACK_FIELDS = frozenset({
     "format", "pack_version", "issued_at", "expires_at",
@@ -70,6 +86,18 @@ _PACK_FIELDS = frozenset({
 _SIG_FIELDS = frozenset({"key_id", "key_version", "sig"})
 
 _PACK_DOMAIN = b"sasanam-detection-rule-pack/v1\x00"
+
+
+def _pack_domain_for(format_tag):
+    """Signature domain for a pack kind. The default call (no
+    format_tag override) returns the historic domain byte-identically,
+    so previously minted packs still verify."""
+    if format_tag == RULE_PACK_FORMAT:
+        return _PACK_DOMAIN
+    if not isinstance(format_tag, str) or not format_tag:
+        raise RulePackError("bad-format", "format tag must be a "
+                            "non-empty string")
+    return format_tag.encode("utf-8") + b"\x00"
 # Member domain: MUST be byte-identical to the body
 # gov.signing.ThresholdSigner.sign_all signs for a versioned member
 # (``gov/signing.py::_member_sig_body``): domain + key_id + b"|kv" +
@@ -129,9 +157,9 @@ def canonical_rule_pack_json(doc):
     return text.encode("utf-8")
 
 
-def _common_body(doc):
+def _common_body(doc, domain):
     """The bytes every member signs: domain + canonical JSON."""
-    return _PACK_DOMAIN + canonical_rule_pack_json(doc)
+    return domain + canonical_rule_pack_json(doc)
 
 
 def _member_body(common, key_id, key_version):
@@ -169,26 +197,33 @@ class RulePack:
 
 
 def mint_rule_pack(keyset, signers, *, rules, pack_version,
-                   issued_at, expires_at, threshold):
+                   issued_at, expires_at, threshold,
+                   purpose=KEYSET_PURPOSE_RULE_PACK,
+                   format_tag=RULE_PACK_FORMAT):
     """Mint a signed rule pack (operator-side).
 
-    ``keyset``: a :class:`Keyset` whose ``purpose`` is
-    ``KEYSET_PURPOSE_RULE_PACK``. ``signers``: non-empty list of
-    ``KeysetSigner`` members of ``keyset`` (each member's version is
-    cryptographically attested in the signature body -- same
-    semantics as the corpus manifest).
+    ``keyset``: a :class:`Keyset` whose ``purpose`` is ``purpose``
+    (default the detection-rule-pack purpose). ``signers``: non-empty
+    list of ``KeysetSigner`` members of ``keyset`` (each member's
+    version is cryptographically attested in the signature body --
+    same semantics as the corpus manifest).
     ``rules``: ``{rule_id: "sha256:<64-hex>"}`` over the exact rule
     file bytes. ``issued_at`` / ``expires_at``: ISO-8601 UTC strings;
     ``expires_at`` must be after ``issued_at``.
+    ``format_tag`` selects the pack kind (default the
+    detection-rule-pack tag; wave-200 PERM model packs use
+    ``PERM_PACK_FORMAT`` with ``KEYSET_PURPOSE_PERM_PACK`` -- a
+    distinct trust domain with its own signature domain).
     Returns the pack dict (JSON-serializable).
     """
     if not isinstance(keyset, Keyset):
         raise TypeError("keyset must be a Keyset")
-    if keyset.purpose != KEYSET_PURPOSE_RULE_PACK:
+    if keyset.purpose != purpose:
         raise RulePackError(
             "wrong-purpose",
-            "keyset purpose %r cannot mint rule packs"
-            % (keyset.purpose,))
+            "keyset purpose %r cannot mint %r packs"
+            % (keyset.purpose, format_tag))
+    domain = _pack_domain_for(format_tag)
     signers = list(signers or [])
     if not signers:
         raise RulePackError("bad-threshold", "no signers")
@@ -219,16 +254,16 @@ def mint_rule_pack(keyset, signers, *, rules, pack_version,
                 "bad-rules",
                 "rule %r digest is not a sha256 pin" % (rid,))
     doc = {
-        "format": RULE_PACK_FORMAT,
+        "format": format_tag,
         "pack_version": pack_version,
         "issued_at": issued_at,
         "expires_at": expires_at,
-        "keyset_purpose": KEYSET_PURPOSE_RULE_PACK,
+        "keyset_purpose": purpose,
         "rules": {str(r): str(d) for r, d in rules.items()},
         "threshold": threshold,
         "signatures": [],
     }
-    common = _common_body(doc)
+    common = _common_body(doc, domain)
     doc["signatures"] = ThresholdSigner(signers, threshold).sign_all(
         common)
     return doc
@@ -270,8 +305,18 @@ def _verify_member(keyset, common, entry):
     return kid if ok else None
 
 
-def verify_rule_pack(doc, keyset, *, now=None):
-    """Verify a rule pack against the rule-signing keyset.
+def verify_rule_pack(doc, keyset, *, now=None,
+                     purpose=KEYSET_PURPOSE_RULE_PACK,
+                     format_tag=RULE_PACK_FORMAT):
+    """Verify a rule pack against the pack-signing keyset.
+
+    ``purpose`` / ``format_tag`` select the expected trust domain
+    (defaults: the detection-rule-pack domain; wave-200 PERM model
+    packs verify with ``purpose=KEYSET_PURPOSE_PERM_PACK`` and
+    ``format_tag=PERM_PACK_FORMAT``). A pack minted for one domain
+    never verifies under another: the format tag is exact-matched,
+    the keyset purpose is checked on both the pack and the keyset,
+    and the signature domain derives from the format tag.
 
     Returns a :class:`RulePack`. Fail-closed: raises
     :class:`RulePackError` with a distinct code on every failure
@@ -291,24 +336,24 @@ def verify_rule_pack(doc, keyset, *, now=None):
         raise RulePackError(
             "bad-format", "pack carries unknown fields: %s"
             % sorted(set(doc) - _PACK_FIELDS))
-    if doc.get("format") != RULE_PACK_FORMAT:
+    if doc.get("format") != format_tag:
         raise RulePackError(
-            "bad-format", "format must be %r" % (RULE_PACK_FORMAT,))
+            "bad-format", "format must be %r" % (format_tag,))
     version = doc.get("pack_version")
     if (isinstance(version, bool) or not isinstance(version, int)
             or version < 1):
         raise RulePackError(
             "bad-version", "pack_version must be an integer >= 1")
-    if doc.get("keyset_purpose") != KEYSET_PURPOSE_RULE_PACK:
+    if doc.get("keyset_purpose") != purpose:
         raise RulePackError(
             "wrong-purpose",
-            "pack keyset_purpose %r is not the rule-pack purpose"
-            % (doc.get("keyset_purpose"),))
-    if keyset.purpose != KEYSET_PURPOSE_RULE_PACK:
+            "pack keyset_purpose %r is not %r"
+            % (doc.get("keyset_purpose"), purpose))
+    if keyset.purpose != purpose:
         raise RulePackError(
             "wrong-purpose",
-            "verifying keyset purpose %r is not the rule-pack purpose"
-            % (keyset.purpose,))
+            "verifying keyset purpose %r is not %r"
+            % (keyset.purpose, purpose))
     expires = _parse_iso(doc.get("expires_at"), "expires_at")
     _parse_iso(doc.get("issued_at"), "issued_at")
     if now is None:
@@ -341,7 +386,7 @@ def verify_rule_pack(doc, keyset, *, now=None):
         raise RulePackError(
             "bad-threshold",
             "threshold must satisfy 1 <= k <= %d" % len(sigs))
-    common = _common_body(doc)
+    common = _common_body(doc, _pack_domain_for(format_tag))
     valid_kids = []
     seen = set()
     for entry in sigs:

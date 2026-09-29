@@ -319,9 +319,21 @@ class ManifestStore(object):
     same trust level as skill pins): no network fetches, no key
     discovery, no ``jku``. A manifest for an unknown skill id, or a
     signature from an unknown kid, fails closed.
+
+    ``capability_pack`` (wave-200): an optional COMPILED capability
+    rule pack (``gov.capability_rules.CompiledPack``) activated
+    through the signed pack pipeline (``gov.pack_loader`` +
+    ``gov.capability_rules.load_pack_files``). When present,
+    ``verify_skill_manifest`` detects capabilities with the rule
+    engine (including composite capabilities such as
+    credential-bearing egress, which the flat lint cannot express);
+    when absent, the flat lint runs exactly as before. The pack is
+    validated at set time -- a non-CompiledPack is refused loud, so
+    a malformed pack can never silently weaken detection (a pack
+    that fails to COMPILE never becomes a CompiledPack at all).
     """
 
-    def __init__(self, keys=None, manifests=None):
+    def __init__(self, keys=None, manifests=None, capability_pack=None):
         self._keys = {}
         for kid, pub in (keys or {}).items():
             if not isinstance(kid, str) or not kid:
@@ -332,6 +344,22 @@ class ManifestStore(object):
                                  "32-byte Ed25519 public key" % (kid,))
             self._keys[kid] = bytes(pub)
         self._manifests = dict(manifests or {})
+        if capability_pack is not None:
+            # Late import: capability_rules is standalone; the check
+            # is duck-typed on the compiled shape so the import is
+            # only needed for the error path message.
+            from .capability_rules import CompiledPack
+            if not isinstance(capability_pack, CompiledPack):
+                raise TypeError(
+                    "capability_pack must be a CompiledPack from "
+                    "gov.capability_rules.load_pack_files (a pack "
+                    "that fails to compile never becomes one)")
+        self._capability_pack = capability_pack
+
+    @property
+    def capability_pack(self):
+        """The active compiled capability rule pack, or None."""
+        return self._capability_pack
 
     def pubkey_for(self, kid):
         """32-byte public key for ``kid``, or None."""
@@ -507,6 +535,19 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     ``content`` is the EXACT bytes the watcher hashed (the
     fetch-verified handoff) — there is no second observation for the
     source to equivocate on between check and lint.
+
+    Wave-200: when the store carries a compiled capability rule pack
+    (``store.capability_pack``), detection runs through the rule
+    engine (``gov.capability_rules.detect_capabilities``) instead of
+    the flat lint. The public contract is unchanged -- the same
+    ``(ok, detail)`` shape, the same fail-closed drift check -- but
+    composite capabilities (e.g. credential-bearing egress) are now
+    detectable and review-visible in the signals. Enforcement keeps
+    the inherited contract: only env/tools are name-checked, so a
+    category grant covers a composite label in that category; the
+    composite's enforcement value is at the bundle/review seam
+    (``evaluate_bundle`` / ``diff_namespaces``). When the store
+    carries no pack, the flat lint runs exactly as before.
     """
     if store is None:
         return True, "no-store"
@@ -523,7 +564,19 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     observed = "sha256:" + hashlib.sha256(bytes(content)).hexdigest()
     if manifest.get("artifact_digest") != observed:
         return False, "manifest-digest-mismatch"
-    detected = detect_capabilities(content)
+    pack = store.capability_pack
+    if pack is None:
+        detected = detect_capabilities(content)
+    else:
+        from .capability_rules import detect_capabilities as \
+            _rule_detect
+        # Strict: an evaluator exception must REFUSE the load, never
+        # silently weaken detection (an empty detection set would
+        # pass the drift check vacuously).
+        try:
+            detected = _rule_detect(content, pack, strict=True)
+        except Exception:
+            return False, "manifest-capability-eval-failed"
     ok, detail = check_capabilities(manifest.get("capabilities"), detected)
     if not ok:
         return False, detail

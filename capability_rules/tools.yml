@@ -1,0 +1,23 @@
+rules:
+  -
+    meta:
+      name: "tools primitive 0"
+      namespace: capability/tools/prim-00
+      scopes:
+        static: module
+      capability_tags: [capability/tools]
+      label: "@tool decorator"
+      description: "Byte-identical migration of the flat lint entry for category tools."
+    features:
+      pattern: "@(?:[A-Za-z_]\w*\.)?tool\b"
+  -
+    meta:
+      name: "tools primitive 1"
+      namespace: capability/tools/prim-01
+      scopes:
+        static: module
+      capability_tags: [capability/tools]
+      label: "Tool( constructor"
+      description: "Byte-identical migration of the flat lint entry for category tools."
+    features:
+      pattern: "(?:FunctionTool|Tool|MCPTool)\s*\("

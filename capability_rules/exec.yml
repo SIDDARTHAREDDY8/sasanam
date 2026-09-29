@@ -1,0 +1,89 @@
+rules:
+  -
+    meta:
+      name: "exec primitive 0"
+      namespace: capability/exec/prim-00
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "subprocess"
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\bsubprocess\b"
+  -
+    meta:
+      name: "exec primitive 1"
+      namespace: capability/exec/prim-01
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "os.system"
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\bos\.system\b"
+  -
+    meta:
+      name: "exec primitive 2"
+      namespace: capability/exec/prim-02
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "os.popen"
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\bos\.popen\b"
+  -
+    meta:
+      name: "exec primitive 3"
+      namespace: capability/exec/prim-03
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "os.exec*"
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\bos\.exec[lv]e?\b"
+  -
+    meta:
+      name: "exec primitive 4"
+      namespace: capability/exec/prim-04
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "os.spawn*"
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\bos\.spawn\w*\b"
+  -
+    meta:
+      name: "exec primitive 5"
+      namespace: capability/exec/prim-05
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "eval("
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "(?<![\w.])eval\s*\("
+  -
+    meta:
+      name: "exec primitive 6"
+      namespace: capability/exec/prim-06
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "exec("
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "(?<![\w.])exec\s*\("
+  -
+    meta:
+      name: "exec primitive 7"
+      namespace: capability/exec/prim-07
+      scopes:
+        static: module
+      capability_tags: [capability/exec]
+      label: "__import__("
+      description: "Byte-identical migration of the flat lint entry for category exec."
+    features:
+      pattern: "\b__import__\s*\("
