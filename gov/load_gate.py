@@ -780,10 +780,27 @@ class SkillLoader:
     adoption path). Recommended production setting: wire the registry
     that governs the enforced namespace; the default ``None``
     preserves legacy behavior for callers that have not adopted
-    signed-only deployment yet."""
+    signed-only deployment yet.
+
+    ``scan_gate`` (wave-213) is an optional
+    :class:`gov.scan_verdicts.ScanGate` holding the scan policy (which
+    scanner names are required -- default: none) and the pinned
+    scanner keysets. When given, :meth:`load_skill` additionally
+    requires the caller to present scan-verdict envelopes via the
+    ``scan_verdicts`` kwarg and consults the gate for the pin's
+    digest: missing verdicts, stale/wrong-target/forged verdicts, and
+    verified ``fail``/``error`` verdicts refuse here as
+    ``scan_verdicts_unpresented`` / ``scan_gate_refused`` (the NIST SP
+    800-190 ADAPT -- promotion gated on named, signed,
+    freshness-bounded scan verdicts; the scanner itself is NOT built
+    here). Without it the pinset-only behavior is unchanged
+    (documented adoption path). Recommended production setting: wire
+    the gate that governs the enforced namespace once the deployment
+    has adopted scan gating."""
 
     def __init__(self, pinset, store, log=None, corpus=None,
-                 bundle_refresh=None, namespace_registry=None):
+                 bundle_refresh=None, namespace_registry=None,
+                 scan_gate=None):
         if not isinstance(pinset, ArtifactPinset):
             raise TypeError("pinset must be an ArtifactPinset")
         if corpus is not None and not isinstance(
@@ -799,14 +816,19 @@ class SkillLoader:
                 namespace_registry, "admit_deploy"):
             raise TypeError("namespace_registry must expose admit_deploy "
                             "(a NamespaceRegistry) or None")
+        if scan_gate is not None and not hasattr(scan_gate, "check"):
+            raise TypeError("scan_gate must expose check "
+                            "(a gov.scan_verdicts.ScanGate) or None")
         self._pinset = pinset
         self._store = store
         self._log = log
         self._corpus = corpus
         self._bundle_refresh = bundle_refresh
         self._namespace_registry = namespace_registry
+        self._scan_gate = scan_gate
 
-    def load_skill(self, skill_name, *, corpus_doc=None):
+    def load_skill(self, skill_name, *, corpus_doc=None,
+                   scan_verdicts=None):
         artifact_id = "skill:" + str(skill_name)
         entry = self._store.get(skill_name)
         if entry is None:
@@ -838,6 +860,13 @@ class SkillLoader:
         # pass through the loader, so enforcement cannot brick signing.
         if self._namespace_registry is not None:
             self._check_namespace_admission(artifact_id, verified.digest)
+        # Scan-gated promotion (wave-213 NIST SP 800-190 ADAPT): when
+        # the deployment wires a scan gate (or presents verdicts), the
+        # pin's digest must satisfy the scan policy -- named, signed,
+        # freshness-bounded verdicts consulted at the enforced seam.
+        if scan_verdicts is not None or self._scan_gate is not None:
+            self._check_scan_verdicts(artifact_id, verified.digest,
+                                      scan_verdicts)
         if self._log is not None:
             self._log.append({
                 "event": "skill_loaded",
@@ -948,10 +977,65 @@ class SkillLoader:
                 "promoted_by": list(admitted.get("promoted_by", [])),
             })
 
+    def _check_scan_verdicts(self, artifact_id, pin_digest, scan_verdicts):
+        """Scan-gated promotion (wave-213).
+
+        When the deployment wires a :class:`gov.scan_verdicts.ScanGate`,
+        the pin's digest is consulted against the scan policy: named,
+        signed, freshness-bounded verdicts (NIST SP 800-190 ADAPT) at
+        the enforced seam. The policy decides which scanner names are
+        required -- and the default policy requires NOTHING: when
+        nothing is required and nothing is presented, the check passes
+        through (opt-in, never silently mandatory). Verdicts presented
+        without a wired gate, or a wired gate with required scans and
+        no verdicts presented, refuse fail-closed -- there is no silent
+        downgrade to unscanned promotion. Verdicts presented under an
+        empty policy are still verified (presented evidence is never
+        silently trusted). The import is lazy so legacy import behavior
+        is unchanged when no gate is wired.
+        """
+        from .scan_verdicts import ScanVerdictError
+        if self._scan_gate is None:
+            _refused(self._log, artifact_id, "scan_gate_unwired",
+                      "scan_verdicts were presented but this loader has "
+                      "no ScanGate wired")
+            raise ArtifactRefused(
+                "scan_gate_unwired: scan_verdicts presented but no "
+                "ScanGate is wired on this loader")
+        required = self._scan_gate.policy.required_scans
+        if scan_verdicts is None:
+            if not required:
+                # Opt-in: nothing required, nothing presented -- admit.
+                return
+            _refused(self._log, artifact_id, "scan_verdicts_unpresented",
+                      "loader has a scan gate requiring %s but no "
+                      "scan_verdicts were presented for %s"
+                      % (list(required), pin_digest))
+            raise ArtifactRefused(
+                "scan_verdicts_unpresented: loader has a scan gate but "
+                "no scan_verdicts were presented")
+        try:
+            result = self._scan_gate.check(pin_digest, scan_verdicts)
+        except ScanVerdictError as exc:
+            _refused(self._log, artifact_id, "scan_gate_refused",
+                      "scan gate refused %s: %s" % (pin_digest, exc))
+            raise ArtifactRefused(
+                "scan_gate_refused: %r is not promotable under the scan "
+                "policy (%s)" % (artifact_id, exc))
+        if self._log is not None:
+            self._log.append({
+                "event": "scan_gate_checked",
+                "artifact_id": artifact_id,
+                "digest": pin_digest,
+                "required": list(result.get("required", [])),
+                "checked": list(result.get("checked", [])),
+            })
+
 
 def load_skill_content(pinset, store, skill_name, *, log=None,
                        corpus=None, corpus_doc=None, bundle_refresh=None,
-                       namespace_registry=None):
+                       namespace_registry=None, scan_gate=None,
+                       scan_verdicts=None):
     """The FORCED entry point for skill content into the sterile
     ``skill_content`` channel (wave-80).
 
@@ -984,6 +1068,12 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     behavior is unchanged. Recommended production setting: wire the
     registry that governs the enforced namespace.
 
+    ``scan_gate`` / ``scan_verdicts`` (wave-213): an optional
+    :class:`gov.scan_verdicts.ScanGate` plus the scan-verdict
+    envelopes to present, wired through to :class:`SkillLoader`
+    (scan-gated promotion at the enforced namespace; see there).
+    Without them the pinset-only behavior is unchanged.
+
     There is no raw-bytes return path on purpose: callers that want
     the bytes must unwrap the marker via ``acknowledge()`` (the
     channel's only documented read), so every consumption is an
@@ -996,8 +1086,10 @@ def load_skill_content(pinset, store, skill_name, *, log=None,
     from .sterile import Unvetted
     loader = SkillLoader(pinset, store, log=log, corpus=corpus,
                          bundle_refresh=bundle_refresh,
-                         namespace_registry=namespace_registry)
-    verified = loader.load_skill(skill_name, corpus_doc=corpus_doc)
+                         namespace_registry=namespace_registry,
+                         scan_gate=scan_gate)
+    verified = loader.load_skill(skill_name, corpus_doc=corpus_doc,
+                                 scan_verdicts=scan_verdicts)
     return Unvetted(
         verified.data,
         origin="skill_content",
