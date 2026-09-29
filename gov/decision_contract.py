@@ -52,6 +52,10 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 # silently coerced at match time. None stays the absence sentinel;
 # unknown keys pass through for forward compatibility.
 from .context_schema import ContextTypeError, validate_context
+# Wave-198: the ladder mode vocabulary lives in gov/mode_ledger.py
+# (stdlib-only, no import cycle); every boundary validates against
+# the one tuple instead of repeating the literal.
+from .mode_ledger import LADDER_MODES
 
 
 class ContractError(TypeError):
@@ -185,6 +189,16 @@ class RuleHit:
     flag: Optional[str]
     declaration_index: int  # position in the policy rule list
     deciding: bool = False  # True iff this rule determined the verdict
+    # Wave-198 (graduation ladder): the rule's ladder mode when it
+    # matched. "deny" is also the resting default for mode-absent
+    # rules, so existing serialized shapes are unchanged.
+    mode: str = "deny"
+
+    def __post_init__(self):
+        if self.mode not in LADDER_MODES:
+            raise ContractError(
+                "RuleHit.mode must be observe/warn/deny, got %r"
+                % (self.mode,))
 
 
 @dataclass(frozen=True)
@@ -205,6 +219,11 @@ class Diagnostics:
     permit_hits: Tuple[RuleHit, ...] = ()
     trace: Tuple[TraceEntry, ...] = ()
     policy_ids: frozenset = frozenset()
+    # Wave-198 (graduation ladder): rules that matched but were in
+    # observe mode when they matched. They are named here -- never
+    # hidden -- but they carry no authority and appear in none of the
+    # three effect buckets.
+    observed_hits: Tuple[RuleHit, ...] = ()
 
     @property
     def forbid_policy_ids(self) -> Tuple[str, ...]:
@@ -219,11 +238,17 @@ class Diagnostics:
 
     def to_dict(self) -> Dict[str, Any]:
         def _hit(h: RuleHit) -> Dict[str, Any]:
-            return {"rule_id": h.rule_id, "effect": h.effect,
-                    "reason": h.reason, "flag": h.flag,
-                    "declaration_index": h.declaration_index,
-                    "deciding": h.deciding}
-        return {
+            d = {"rule_id": h.rule_id, "effect": h.effect,
+                 "reason": h.reason, "flag": h.flag,
+                 "declaration_index": h.declaration_index,
+                 "deciding": h.deciding}
+            # Wave-198: mode is serialized only when it differs from
+            # the resting default, so mode-absent policies keep their
+            # byte-identical serialized shape.
+            if h.mode != "deny":
+                d["mode"] = h.mode
+            return d
+        out = {
             "deciding_rule": (_hit(self.deciding_rule)
                               if self.deciding_rule else None),
             "forbid_hits": [_hit(h) for h in self.forbid_hits],
@@ -233,6 +258,11 @@ class Diagnostics:
                        "matched": t.matched} for t in self.trace],
             "policy_ids": sorted(self.policy_ids),
         }
+        # Wave-198: observed_hits is serialized only when non-empty --
+        # mode-absent policies keep their byte-identical shape.
+        if self.observed_hits:
+            out["observed_hits"] = [_hit(h) for h in self.observed_hits]
+        return out
 
 
 # The verdict a Decision carries when no rule matched at all. A
@@ -259,6 +289,20 @@ class Decision:
     flag: Optional[str]
     diagnostics: Diagnostics
     request: Request
+    # Wave-198 (graduation ladder): what the rule asked for (nominal)
+    # vs what the ladder enforced (effect). Equal for deny-mode and
+    # mode-absent rules; differ when a warn-mode rule's verdict is
+    # demoted to allow. None normalizes to effect in __post_init__
+    # (existing constructors that predate the ladder get
+    # nominal == effect, which is the honest reading).
+    nominal_effect: Optional[str] = None
+    # The ladder mode of the deciding rule ("deny" is the resting
+    # default for mode-absent rules).
+    mode: str = "deny"
+    # Operator telemetry strings for warn-mode decisions. Aggregated
+    # into per-window digests by the executor; NEVER returned to the
+    # agent as interrupts (R1 warn-fatigue).
+    warnings: Tuple[str, ...] = ()
 
     def __post_init__(self):
         if self.effect not in ("allow", "require_approval", "deny"):
@@ -269,13 +313,41 @@ class Decision:
             raise ContractError(
                 "Decision.allowed must equal (effect == 'allow'); got "
                 "allowed=%r for effect=%r" % (self.allowed, self.effect))
+        nominal = self.effect if self.nominal_effect is None \
+            else self.nominal_effect
+        if nominal not in ("allow", "require_approval", "deny"):
+            raise ContractError(
+                "Decision.nominal_effect must be allow/require_approval/"
+                "deny, got %r" % (self.nominal_effect,))
+        if self.mode not in LADDER_MODES:
+            raise ContractError(
+                "Decision.mode must be observe/warn/deny, got %r"
+                % (self.mode,))
+        # The ladder invariant: the enforced effect is what "allowed"
+        # mirrors; nominal_effect is what the rule asked for. An
+        # observe-mode rule never decides, so mode == "observe" is
+        # impossible here -- loud, not silent.
+        if self.mode == "observe":
+            raise ContractError(
+                "Decision.mode cannot be 'observe': observe-mode rules "
+                "record hits but never decide")
+        for w in self.warnings:
+            if not isinstance(w, str) or not w:
+                raise ContractError(
+                    "Decision.warnings entries must be non-empty strings, "
+                    "got %r" % (w,))
+        # Frozen dataclass: normalize via object.__setattr__.
+        object.__setattr__(self, "nominal_effect", nominal)
+        object.__setattr__(self, "warnings", tuple(self.warnings))
 
     def to_policy_decision(self):
         """Convert to the legacy PolicyDecision (compat shim).
 
         ``matched_rules`` keeps its exact legacy semantics: the
         deciding rule id, or ["default_deny"] for the implicit deny.
-        Shadowed hits live in ``diagnostics``, not here.
+        Shadowed hits live in ``diagnostics``, not here. The ladder
+        fields (nominal_effect / mode / warnings) ride along so
+        downstream evidence (audit entries, BOMs) can bind them.
         """
         # Lazy import: gov/policy.py imports this module at module
         # level, so a top-level import here would cycle.
@@ -285,14 +357,26 @@ class Decision:
         return PolicyDecision(self.effect, self.reason,
                               policy_id=self.policy_id, flag=self.flag,
                               matched_rules=matched,
-                              diagnostics=self.diagnostics)
+                              diagnostics=self.diagnostics,
+                              nominal_effect=self.nominal_effect,
+                              mode=self.mode,
+                              warnings=self.warnings)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"effect": self.effect, "allowed": self.allowed,
-                "reason": self.reason, "policy_id": self.policy_id,
-                "flag": self.flag,
-                "diagnostics": self.diagnostics.to_dict(),
-                "request": {"principal": self.request.principal,
-                            "action": self.request.action,
-                            "resource": self.request.resource,
-                            "role": self.request.role}}
+        d = {"effect": self.effect, "allowed": self.allowed,
+             "reason": self.reason, "policy_id": self.policy_id,
+             "flag": self.flag,
+             "diagnostics": self.diagnostics.to_dict(),
+             "request": {"principal": self.request.principal,
+                         "action": self.request.action,
+                         "resource": self.request.resource,
+                         "role": self.request.role}}
+        # Wave-198: ladder fields are serialized only when they carry
+        # information -- mode-absent policies keep their byte-identical
+        # serialized shape.
+        if self.mode != "deny" or self.nominal_effect != self.effect \
+                or self.warnings:
+            d["nominal_effect"] = self.nominal_effect
+            d["mode"] = self.mode
+            d["warnings"] = list(self.warnings)
+        return d

@@ -218,6 +218,155 @@ class DifferentialTest(unittest.TestCase):
         self.assertIsNone(result["policy_id"])
 
 
+_LADDER_REPLAY_POLICY = """\
+version: 1
+approvals:
+  quorum:
+    min_approvals: 2
+    eligible_principals: [op1, op2]
+policies:
+  - id: obs-cand
+    effect: deny
+    mode: observe
+    match:
+      tool: http_post
+    reason: candidate
+  - id: warn-cand
+    effect: deny
+    mode: warn
+    match:
+      tool: delete_file
+    reason: warning
+  - id: plain-allow
+    effect: allow
+    match:
+      tool: read_file
+    reason: reads ok
+"""
+
+
+class LadderReplayTest(unittest.TestCase):
+    """Wave-198: replay routes by the RECORDED decision-time mode,
+    not the bundle's load-time mode (runtime graduation moves the
+    ledger; the bundle only carries load-time modes)."""
+
+    def _ladder_engine(self):
+        return PolicyEngine.from_text(_LADDER_REPLAY_POLICY,
+                                      source_label="<test-ladder>")
+
+    def _action(self, tool):
+        return {"tool": tool, "agent_id": "a", "args": {}}
+
+    def test_deny_mode_routes_ahead_of_warn_in_replay(self):
+        # Wave-198 (review catch): replay must mirror decide()'s
+        # decider routing -- a deny-mode deny declared AFTER a
+        # warn-mode forbid still decides deny, never allow.
+        policy = PolicyEngine.from_text(
+            "version: 1\n"
+            "policies:\n"
+            "  - id: warn-first\n"
+            "    effect: deny\n"
+            "    mode: warn\n"
+            "    match:\n"
+            "      tool: delete_file\n"
+            "    reason: warn candidate\n"
+            "  - id: deny-second\n"
+            "    effect: deny\n"
+            "    mode: deny\n"
+            "    match:\n"
+            "      tool: delete_file\n"
+            "    reason: real deny\n",
+            source_label="<test-ladder>")
+        action = self._action("delete_file")
+        decision = policy.decide(Request.from_action(action, {}))
+        self.assertEqual(decision.effect, "deny")
+        trace = dr.build_trace(decision=decision, action=action,
+                               context={}, policy=policy)
+        bundle = dr.policy_bundle_from_policy(policy)
+        result = dr.replay(trace, bundle)
+        self.assertEqual(result["verdict"], "deny")
+        self.assertEqual(result["deciding_mode"], "deny")
+        self.assertEqual(result["policy_id"], "deny-second")
+
+    def test_warn_decision_replays(self):
+        policy = self._ladder_engine()
+        action = self._action("delete_file")
+        decision = policy.decide(Request.from_action(action, {}))
+        self.assertEqual((decision.effect, decision.nominal_effect,
+                          decision.mode),
+                         ("allow", "deny", "warn"))
+        trace = dr.build_trace(decision=decision, action=action,
+                               context={}, policy=policy)
+        self.assertEqual(trace["verdict"]["mode"], "warn")
+        self.assertEqual(trace["verdict"]["nominal_effect"], "deny")
+        hit = trace["evaluation"]["forbid_hits"][0]
+        self.assertEqual(hit["mode"], "warn")
+        bundle = dr.policy_bundle_from_policy(policy)
+        result = dr.replay(trace, bundle)
+        self.assertEqual(result["verdict"], "allow")
+        self.assertEqual(result["nominal_verdict"], "deny")
+        self.assertEqual(result["deciding_mode"], "warn")
+        self.assertEqual(result["policy_id"], "warn-cand")
+
+    def test_observe_only_match_replays_as_default_deny(self):
+        # The observe hit has no authority: the decider is the
+        # implicit default deny, and the mirror must not crown the
+        # observe rule.
+        policy = self._ladder_engine()
+        action = self._action("http_post")
+        decision = policy.decide(Request.from_action(action, {}))
+        self.assertEqual(decision.effect, "deny")
+        self.assertIsNone(decision.policy_id)
+        self.assertEqual(len(decision.diagnostics.observed_hits), 1)
+        trace = dr.build_trace(decision=decision, action=action,
+                               context={}, policy=policy)
+        bundle = dr.policy_bundle_from_policy(policy)
+        result = dr.replay(trace, bundle)
+        self.assertEqual(result["verdict"], "deny")
+        self.assertIsNone(result["policy_id"])
+
+    def test_runtime_graduation_replays_by_recorded_mode(self):
+        # The bundle still says observe (load-time); the ledger moved
+        # the rule to warn at runtime. Replay must honor the trace,
+        # not the bundle.
+        policy = self._ladder_engine()
+        ledger = policy.mode_ledger
+        for _ in range(120):
+            policy.decide(Request.from_action(
+                self._action("http_post"), {}))
+        for _ in range(30):
+            ledger.record_review("obs-cand", correct=True,
+                                 reviewer="op1")
+        ok, reasons = policy.apply_graduation(
+            "obs-cand", "warn", approvers=["op1", "op2"])
+        self.assertTrue(ok, reasons)
+        action = self._action("http_post")
+        decision = policy.decide(Request.from_action(action, {}))
+        self.assertEqual(decision.mode, "warn")
+        self.assertEqual(decision.effect, "allow")
+        trace = dr.build_trace(decision=decision, action=action,
+                               context={}, policy=policy)
+        bundle = dr.policy_bundle_from_policy(policy)
+        bundle_mode = [r for r in bundle["rules"]
+                       if r["id"] == "obs-cand"][0].get("mode")
+        self.assertEqual(bundle_mode, "observe")  # load-time, stale
+        self.assertEqual(trace["verdict"]["mode"], "warn")  # recorded
+        result = dr.replay(trace, bundle)
+        self.assertEqual(result["verdict"], "allow")
+        self.assertEqual(result["nominal_verdict"], "deny")
+
+    def test_tampered_recorded_mode_fails_replay(self):
+        policy = self._ladder_engine()
+        action = self._action("delete_file")
+        decision = policy.decide(Request.from_action(action, {}))
+        trace = dr.build_trace(decision=decision, action=action,
+                               context={}, policy=policy)
+        bundle = dr.policy_bundle_from_policy(policy)
+        trace["verdict"]["mode"] = "deny"  # tamper, digests not repaired
+        with self.assertRaises(dr.TraceTamperedError):
+            dr.replay(trace, bundle)
+
+
 class LoudFailureTest(unittest.TestCase):
     """Tamper / drift / version failures are named, never silent."""
 

@@ -106,6 +106,9 @@ from . import target_match as _target_match
 # role / renewal policy). Read at mint time only when a registry is
 # configured; otherwise mint_identity behaves exactly as before.
 from . import provisioner as _provisioner
+# Wave-198 (graduation ladder): the per-rule-per-window warn digest
+# aggregator (R1 warn-fatigue). Stdlib-only, no import cycle.
+from . import mode_ledger as _mode_ledger
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
@@ -1060,6 +1063,12 @@ class ToolExecutor:
                 % (provisioner_registry,))
         self._provisioner_registry = provisioner_registry
         self._provisioner_mint_counts = {}
+        # Wave-198 (graduation ladder, R1 warn-fatigue): the per-rule
+        # per-window warn digest aggregator. Warn-mode decisions are
+        # recorded here and flushed as ONE chained operator digest per
+        # rule per window -- the agent's verdict path is untouched and
+        # warnings never reach the agent as interrupts.
+        self._warn_digest_agg = _mode_ledger.WarnDigestAggregator()
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -2996,7 +3005,12 @@ class ToolExecutor:
             {"tool": tool, "role": role, "agent_id": "delegation-probe",
              "args": {}},
             {"role": role, "agent": "delegation-probe",
-             "domain_allowlisted": True})
+             "domain_allowlisted": True},
+            # Wave-198: this is a hypothetical ("could the delegator
+            # invoke the tool at all"), not a real enforcement. Its
+            # matches must never enter the mode ledger's violation
+            # telemetry as graduation evidence.
+            record_telemetry=False)
         return decision.effect
 
     def _delegation_store_error(self, _base, identity, tool, exc):
@@ -8489,6 +8503,170 @@ class ToolExecutor:
                 "None, got %r" % type(boundary).__name__)
         self._authority_boundary = boundary
 
+    def _surface_warn_digest(self, decision):
+        """Aggregate warn-mode telemetry into per-window operator digests.
+
+        Wave-198 (graduation ladder, R1 warn-fatigue): a warn-mode
+        rule firing 1000x must produce ONE operator digest, not 1000
+        agent interrupts. This hook records the decision's warnings in
+        the per-rule-per-window aggregator and chains a ``warn_digest``
+        audit entry for each window that rolled. The agent's verdict
+        path is untouched -- warnings never reach the agent.
+
+        Telemetry must never break the verdict path: any failure here
+        is chained loudly as ``warn_digest_error`` (when a log is
+        available) and swallowed, so the decision stands.
+        """
+        try:
+            warnings = tuple(getattr(decision, "warnings", ()) or ())
+            if not warnings:
+                return
+            agg = self._warn_digest_agg
+            # Wave-198: the bucket key must match the mode ledger's
+            # rule key. ``policy_id`` is the rule's raw "id" (None for
+            # id-less rules, legacy compat); the ledger registers
+            # id-less rules under the synthetic "rule-N" fallback,
+            # which is also what ``deciding_rule.rule_id`` carries.
+            # Deriving from diagnostics first keeps the digest
+            # attributable to the same rule the ladder tracks.
+            diag = getattr(decision, "diagnostics", None)
+            deciding = getattr(diag, "deciding_rule", None)
+            rule_id = (getattr(deciding, "rule_id", None)
+                       or getattr(decision, "policy_id", None)
+                       or "unknown")
+            nominal = getattr(decision, "nominal_effect", None)
+            due = []
+            for w in warnings:
+                due.extend(agg.record(rule_id=rule_id,
+                                      nominal_effect=nominal,
+                                      warning=w))
+            due.extend(agg.flush_due())
+            for digest in due:
+                self._chain_warn_digest(digest)
+        except Exception as e:
+            try:
+                if self.log is not None:
+                    self.log.append({
+                        "event": "warn_digest_error",
+                        "decision": "warn_digest_error",
+                        "error": "%s: %s" % (type(e).__name__, e),
+                    })
+            except Exception:
+                pass
+
+    def _check_ladder_escalations(self):
+        """Route ladder escalations to the operator audit trail.
+
+        Wave-198 (graduation ladder, §§3.4-3.5): two escalation
+        conditions exist on the ladder, and both are operational --
+        not just queryable:
+
+        * warn-stale: a rule sitting in warn past WARN_MAX_DWELL_SECS
+          chains a ``warn_stale`` audit entry (once per warn
+          episode) so the operator inbox sees it.
+        * emergency-review-overdue: an emergency demotion whose
+          24h post-hoc review deadline passed chains an
+          ``emergency_review_overdue`` entry (once per demotion).
+
+        Called at the policy-decision seams alongside the warn
+        digest hook. Telemetry must never break the verdict path:
+        failures are chained loudly as ``ladder_escalation_error``
+        (when a log is available) and swallowed.
+        """
+        try:
+            ledger = getattr(getattr(self, "policy", None),
+                             "mode_ledger", None)
+            if ledger is None:
+                return
+            for rule_id in ledger.pop_stale_escalations():
+                self.log.append({
+                    "event": "warn_stale",
+                    "decision": "warn_stale",
+                    "policy_id": rule_id,
+                    "note": ("rule %r sat in warn past the %ds max dwell: "
+                             "route to operator review (graduate to deny "
+                             "or demote to observe)"
+                             % (rule_id,
+                                _mode_ledger.WARN_MAX_DWELL_SECS)),
+                })
+            for pending in ledger.pop_overdue_emergency_reviews():
+                self.log.append({
+                    "event": "emergency_review_overdue",
+                    "decision": "emergency_review_overdue",
+                    "policy_id": pending.get("rule_id"),
+                    "note": ("emergency demotion of %r by %r missed its "
+                             "24h post-hoc review deadline: re-escalating"
+                             % (pending.get("rule_id"),
+                                 pending.get("operator"))),
+                })
+        except Exception as e:
+            try:
+                if self.log is not None:
+                    self.log.append({
+                        "event": "ladder_escalation_error",
+                        "decision": "ladder_escalation_error",
+                        "error": "%s: %s" % (type(e).__name__, e),
+                    })
+            except Exception:
+                pass
+
+    def _chain_warn_digest(self, digest):
+        """Chain one rolled warn-digest window as an operator entry."""
+        # Wave-198 (SPIKE §3.3): the per-mode warning count accrues in
+        # the ledger so graduation evidence includes warning volume.
+        _ledger = getattr(self.policy, "mode_ledger", None)
+        if _ledger is not None:
+            _ledger.record_warnings(digest["rule_id"], digest["count"])
+        self.log.append({
+            "event": "warn_digest",
+            "decision": "warn_digest",
+            "policy_id": digest["rule_id"],
+            "window_start": digest["window_start"],
+            "window_end": digest["window_end"],
+            "warn_count": digest["count"],
+            "nominal_effect": digest["nominal_effect"],
+            "warning_samples": digest["samples"],
+            "note": ("warn-mode telemetry: %d warning(s) in window; "
+                     "operator digest, not an agent interrupt"
+                     % (digest["count"],)),
+        })
+
+    def flush_warn_digests(self):
+        """Flush all open warn-digest windows (operator tooling).
+
+        Chains one ``warn_digest`` audit entry per rule with pending
+        warnings and returns the digests. Safe to call at run end or
+        on an operator cadence; a no-warning state returns ().
+        """
+        due = self._warn_digest_agg.flush_all()
+        for digest in due:
+            self._chain_warn_digest(digest)
+        return due
+
+    def record_warning_ack(self, rule_id, *, operator):
+        """Operator acknowledges a warn-mode rule's warnings.
+
+        Wave-198: the public seam for the warn->deny graduation bar
+        (``min_acknowledged``). Operators review chained
+        ``warn_digest`` entries, then attest here; the ledger records
+        the attestation. The operator name is recorded verbatim --
+        the caller attests it names a human (R3).
+        """
+        _ledger = getattr(self.policy, "mode_ledger", None)
+        if _ledger is None:
+            raise RuntimeError(
+                "no mode ledger on the policy engine; "
+                "cannot record warning ack")
+        _ledger.record_warning_ack(rule_id, operator=operator)
+        self.log.append({
+            "event": "warning_ack",
+            "decision": "warning_ack",
+            "policy_id": rule_id,
+            "operator": operator,
+            "note": ("operator-attested warning acknowledgement; "
+                     "counts toward warn->deny graduation bar"),
+        })
+
     def _emit_decision_packet(self, *, decision, decision_seq, head_digest,
                               tool, redacted_args, policy_decision, policy,
                               policy_ctx_snapshot, identity,
@@ -8568,6 +8746,60 @@ class ToolExecutor:
             _bom_pins = {}
             if skill_id and skill_attested_digest:
                 _bom_pins = {skill_id: skill_attested_digest}
+            # Wave-198 (graduation ladder): thread the ladder
+            # telemetry into the BOM. The ladder section is included
+            # only when it carries information (a warn-mode decision,
+            # warnings, or nominal != enforced); mode-absent deny
+            # decisions keep byte-identical BOMs. The rule's chained
+            # mode history is looked up by the deciding hit's rule id
+            # (the same key the mode ledger records under).
+            _ladder_kwargs = {}
+            _pd_mode = getattr(policy_decision, "mode", "deny")
+            _pd_nominal = getattr(policy_decision, "nominal_effect",
+                                  None)
+            _pd_warnings = tuple(
+                getattr(policy_decision, "warnings", ()) or ())
+            _deciding_hit = None
+            _pdiag = getattr(policy_decision, "diagnostics", None)
+            if _pdiag is not None:
+                _deciding_hit = _pdiag.deciding_rule
+            _history = ()
+            if _deciding_hit is not None:
+                _ledger = getattr(policy, "mode_ledger", None)
+                if _ledger is not None:
+                    # Fail closed, never silent: a BOM must never
+                    # record an empty history when the decision
+                    # rested on a real one (the ledger read is an
+                    # in-memory lookup -- failure means something
+                    # is deeply wrong).
+                    try:
+                        _history = _ledger.mode_history(
+                            _deciding_hit.rule_id)
+                    except Exception as e:
+                        raise _decision_bom.BomError(
+                            "ladder mode-history lookup failed for "
+                            "rule %r: %s: %s -- refusing to build a "
+                            "BOM that drops the mode history"
+                            % (_deciding_hit.rule_id,
+                               type(e).__name__, e))
+            # Wave-198: the ladder section rides the BOM whenever the
+            # decision's posture is ladder-shaped -- warn/observe
+            # routing, warnings, nominal/effect split -- OR the
+            # deciding rule has a graduation history. A rule that
+            # graduated observe->warn->deny and now denies carries
+            # its history so an auditor sees the deny was earned,
+            # not just declared. Mode-absent rules (empty history)
+            # stay byte-identical (P8).
+            if (_pd_mode != "deny" or _pd_warnings
+                    or (_pd_nominal is not None
+                        and _pd_nominal != policy_decision.effect)
+                    or _history):
+                _ladder_kwargs = {
+                    "decision_mode": _pd_mode,
+                    "nominal_effect": _pd_nominal,
+                    "decision_warnings": list(_pd_warnings),
+                    "rule_mode_history": [dict(h) for h in _history],
+                }
             _bom = _decision_bom.build_bom(
                 policy_id=policy_decision.policy_id,
                 policy_version=getattr(policy, "policy_version",
@@ -8580,7 +8812,8 @@ class ToolExecutor:
                            "run_id": identity.run_id},
                 pin_digests=_bom_pins,
                 approval_id=approval_id,
-                approval_record_digest=_approval_record_digest)
+                approval_record_digest=_approval_record_digest,
+                **_ladder_kwargs)
             _body = _dp.build_decision_packet(
                 decision=decision,
                 boundary_declared=_boundary_declared,
@@ -9455,6 +9688,18 @@ class ToolExecutor:
 
         _decision_full = policy.decide(Request.from_action(action, ctx))
         decision = _decision_full.to_policy_decision()
+
+        # Wave-198 (graduation ladder, R1 warn-fatigue): warn-mode
+        # decisions carry operator telemetry. Aggregate it into the
+        # per-rule-per-window digest here -- the agent's verdict path
+        # below is untouched, and warnings are NEVER returned to the
+        # agent as interrupts. A telemetry failure is chained loudly
+        # but never changes the verdict.
+        self._surface_warn_digest(decision)
+        # Wave-198 (graduation ladder, §§3.4-3.5): route ladder
+        # escalations (warn-stale, overdue emergency reviews) to the
+        # operator audit trail at this seam too.
+        self._check_ladder_escalations()
 
         # Wave-176 (OpenShell steal #1, AuthorityProof contract): check
         # the proposed action against the operator-declared authority
@@ -11286,6 +11531,15 @@ class ToolExecutor:
                       "identity": rec.get("identity"),
                       "role": rec.get("role"), "agent_id": rec.get("agent_id")}
             decision = self.policy.evaluate(action, ctx)
+            # Wave-198 (graduation ladder, R1 warn-fatigue): surface
+            # warn-mode telemetry at this enforcement seam too. The
+            # verdict path below is untouched; warnings aggregate into
+            # the per-window operator digest, never agent interrupts.
+            self._surface_warn_digest(decision)
+            # Wave-198 (graduation ladder, §§3.4-3.5): ladder
+            # escalations (warn-stale, overdue emergency reviews) are
+            # chained to the operator audit trail here as well.
+            self._check_ladder_escalations()
             if decision.effect == "deny":
                 _refuse("Approval %s no longer permitted: %s"
                         % (aid, decision.reason), decision.flag or "policy_re_eval_deny",

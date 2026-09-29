@@ -57,6 +57,27 @@ from .decision_contract import (
     TraceEntry,
     DEFAULT_DENY_ID,
 )
+
+# Wave-198 (graduation ladder): per-rule violation telemetry + the
+# observe -> warn -> deny ladder. No import cycle: mode_ledger imports
+# only stdlib.
+from .mode_ledger import LADDER_MODES, ModeLedger, ModeLedgerError
+
+import json as _json
+
+
+def _request_digest(action):
+    """sha256 over the canonical JSON of the request action.
+
+    Wave-198 (SPIKE §3.3): every observe/warn violation record
+    carries the digest of the exact request that triggered it, so a
+    violation is attributable without storing request bytes.
+    """
+    if not isinstance(action, dict):
+        action = {"action": action}
+    return sha256(
+        _json.dumps(action, sort_keys=True, separators=(",", ":"),
+                    default=str).encode("utf-8")).hexdigest()
 # Wave-194 R1 (Cedar D1 steal): typed context-attribute schema. The
 # strict accessors replace bare bool()/int() coercion in _matches;
 # validate_match_types closes the same bug on the policy-authoring
@@ -121,7 +142,13 @@ KNOWN_RULE_FIELDS = frozenset(
      "dsl_rule",
      # Stamped by apply_dsl AFTER validation; listed so a stamped rule
      # that is re-validated later is not rejected.
-     "dsl_source_hash"})
+     "dsl_source_hash",
+     # Wave-198 (graduation ladder): the rollout mode of the rule
+     # ("observe" | "warn" | "deny"; absent means deny) and whether
+     # the rule is pinned to deny forever (credential-exfil forbids,
+     # key-custody). Unknown modes and pinned+non-deny are refused
+     # loudly in _validate_rule.
+     "mode", "pinned"})
 
 KNOWN_TOP_LEVEL_KEYS = frozenset(
     {"version", "roles", "rate_limit", "egress", "approvals",
@@ -175,7 +202,8 @@ def default_policy_path():
 
 class PolicyDecision:
     def __init__(self, effect, reason, policy_id=None, flag=None,
-                 matched_rules=None, diagnostics=None):
+                 matched_rules=None, diagnostics=None,
+                 nominal_effect=None, mode="deny", warnings=None):
         self.effect = effect          # "allow" | "require_approval" | "deny"
         self.reason = reason
         self.policy_id = policy_id
@@ -196,13 +224,57 @@ class PolicyDecision:
         # sets it. Additive for key-access readers (a new to_dict()
         # key appears; no existing key changes shape).
         self.diagnostics = diagnostics
+        # Wave-198 (graduation ladder): what the deciding rule asked
+        # for vs what the ladder enforced. Equal for deny-mode and
+        # mode-absent rules; differ when a warn-mode rule's verdict is
+        # demoted to allow. None normalizes to effect (the honest
+        # reading for constructors that predate the ladder).
+        if nominal_effect is None:
+            nominal_effect = effect
+        if nominal_effect not in ("allow", "require_approval", "deny"):
+            raise ValueError(
+                "PolicyDecision.nominal_effect must be "
+                "allow/require_approval/deny, got %r" % (nominal_effect,))
+        self.nominal_effect = nominal_effect
+        # Wave-198: the ladder mode of the deciding rule ("deny" is
+        # the resting default for mode-absent rules). A FINAL
+        # decision is never "observe" -- observe hits are
+        # diagnostic-only and carry no verdict (agrees with
+        # Decision.__init__, which rejects observe the same way).
+        if mode not in LADDER_MODES:
+            raise ValueError(
+                "PolicyDecision.mode must be observe/warn/deny, got %r"
+                % (mode,))
+        if mode == "observe":
+            raise ValueError(
+                "PolicyDecision.mode cannot be 'observe': observe hits "
+                "are diagnostic-only and never final decisions")
+        self.mode = mode
+        # Wave-198: operator telemetry for warn-mode decisions.
+        # Aggregated into per-window digests by the executor; NEVER
+        # returned to the agent as interrupts (R1 warn-fatigue).
+        self.warnings = tuple(warnings or ())
+        for w in self.warnings:
+            if not isinstance(w, str) or not w:
+                raise ValueError(
+                    "PolicyDecision.warnings entries must be non-empty "
+                    "strings, got %r" % (w,))
 
     def to_dict(self):
-        return {"effect": self.effect, "reason": self.reason,
-                "policy_id": self.policy_id, "flag": self.flag,
-                "matched_rules": list(self.matched_rules),
-                "diagnostics": (self.diagnostics.to_dict()
-                                if self.diagnostics is not None else None)}
+        out = {"effect": self.effect, "reason": self.reason,
+               "policy_id": self.policy_id, "flag": self.flag,
+               "matched_rules": list(self.matched_rules),
+               "diagnostics": (self.diagnostics.to_dict()
+                               if self.diagnostics is not None else None)}
+        # Wave-198: ladder fields are serialized only when they carry
+        # information -- mode-absent decisions keep their
+        # byte-identical serialized shape.
+        if self.mode != "deny" or self.nominal_effect != self.effect \
+                or self.warnings:
+            out["nominal_effect"] = self.nominal_effect
+            out["mode"] = self.mode
+            out["warnings"] = list(self.warnings)
+        return out
 
 
 def _resolve(path, context):
@@ -423,6 +495,17 @@ class PolicyEngine:
         for i, rule in enumerate(cfg.get("policies") or []):
             self._validate_rule(rule, i)
             self.policies.append(rule)
+        # Wave-198 (graduation ladder): per-rule violation telemetry
+        # and ladder state, registered at load so observe/warn rules
+        # have a telemetry home from the first decision. Validation
+        # above already refused unknown modes and pinned+non-deny, so
+        # register_rule cannot raise here (defense in depth anyway).
+        self.mode_ledger = ModeLedger()
+        for i, rule in enumerate(self.policies):
+            self.mode_ledger.register_rule(
+                rule.get("id", "rule-%d" % i),
+                mode=rule.get("mode", "deny"),
+                pinned=rule.get("pinned", False))
         # Wave-53 P1 (sterile cockpit): the ``critical_windows:`` block.
         # Absent = feature off (None). Present = validated fail-closed
         # HERE at load via gov/sterile.py's WindowPolicy — an invalid
@@ -749,6 +832,26 @@ class PolicyEngine:
         # convention.
         validate_match_types(rule_id, match)
         self._validate_when(rule_id, match.get("when"))
+        # Wave-198 (graduation ladder): mode/pinned validation. An
+        # unknown mode is refused loudly (F90 convention -- a typo'd
+        # mode must never silently fall back to deny); a pinned rule
+        # is deny-only forever (credential-exfil forbids, key-custody
+        # rules), so pinned + non-deny mode is refused.
+        mode = rule.get("mode", "deny")
+        if mode not in LADDER_MODES:
+            raise ValueError(
+                "policy %s: unknown mode %r (must be one of "
+                "observe/warn/deny); refusing rather than silently "
+                "falling back" % (rule_id, mode))
+        pinned = rule.get("pinned", False)
+        if not isinstance(pinned, bool):
+            raise ValueError(
+                "policy %s: pinned must be a bool, got %r"
+                % (rule_id, pinned))
+        if pinned and mode != "deny":
+            raise ValueError(
+                "policy %s: pinned rules must use mode 'deny' "
+                "(pinned + mode %r refused)" % (rule_id, mode))
 
     @staticmethod
     def _validate_when(rule_id, when):
@@ -792,7 +895,7 @@ class PolicyEngine:
 
     # ------------------------------------------------------------ evaluation
 
-    def decide(self, request):
+    def decide(self, request, *, record_telemetry=True):
         """Typed authorization: Request -> Decision with Diagnostics.
 
         Cedar-style contract (see gov/decision_contract.py): the
@@ -807,6 +910,43 @@ class PolicyEngine:
         permit is consulted, so a permit can never shadow a forbid
         by declaration order, and the trace records every rule's
         match/no-match for the diagnostics.
+
+        Wave-198 (graduation ladder): two-phase routing. Phase 1
+        evaluates EVERY rule (in the legacy effect-pass order, so the
+        trace keeps its exact legacy order and mode-absent policies
+        serialize byte-identically) and records each rule's ladder
+        mode alongside the match; every evaluation is fed to the
+        mode ledger's violation telemetry. Phase 2 routes matched
+        rules by mode:
+
+          * observe-mode matches are recorded (Diagnostics.
+            observed_hits + chained violation telemetry) but carry NO
+            authority -- the three effect buckets keep their exact
+            legacy membership, so deny/allow rules and the implicit
+            default deny decide exactly as before;
+            authority: deny/allow rules and the implicit default deny
+            decide exactly as before (R4 observe-cannot-weaken).
+          * warn-mode matches are routed by their NOMINAL effect, but
+            the ENFORCED verdict is "allow" with the nominal effect
+            preserved (Decision.nominal_effect) and an operator
+            warning attached (Decision.warnings). Warnings are
+            operator telemetry aggregated into per-window digests by
+            the executor -- never agent interrupts (R1 warn-fatigue).
+          * deny-mode matches -- and every mode-absent rule, which is
+            deny -- behave exactly as before.
+
+        The invariant ``Decision.allowed == (Decision.effect ==
+        "allow")`` is enforced by the contract dataclass itself; the
+        enforced effect is what "allowed" mirrors, and
+        ``nominal_effect`` is what the rule requested.
+
+        ``record_telemetry`` (default True): when True, every rule
+        evaluation is fed to the mode ledger's violation telemetry
+        (the graduation/demotion evidence base). Pass False for
+        synthetic evaluations -- what-if simulators, delegation mint
+        probes -- whose hypothetical matches must never masquerade
+        as real enforcement evidence. The VERDICT is identical either
+        way; only the ledger write is skipped.
         """
         if not isinstance(request, Request):
             raise TypeError(
@@ -826,35 +966,92 @@ class PolicyEngine:
         forbid_hits = []
         approval_hits = []
         permit_hits = []
+        observed_hits = []
         trace = []
-        for effect, bucket in (("deny", forbid_hits),
-                               ("require_approval", approval_hits),
-                               ("allow", permit_hits)):
+        # Phase 1: evaluate every rule in the legacy effect-pass
+        # order (deny -> require_approval -> allow). The trace keeps
+        # its exact legacy order; each rule's CURRENT ladder mode is
+        # recorded alongside the match (the ledger is the runtime
+        # source of truth -- graduation/demotion move it; the YAML
+        # only declares the load-time mode) and every evaluation is
+        # fed to the mode ledger's violation telemetry.
+        evaluated = []
+        for effect in ("deny", "require_approval", "allow"):
             for index, rule in enumerate(self.policies):
                 if rule.get("effect") != effect:
                     continue
                 rule_id = rule.get("id", "rule-%d" % index)
+                mode = self.mode_ledger.current_mode(rule_id)
+                if mode is None:
+                    mode = rule.get("mode", "deny")
                 matched = self._matches(rule.get("match") or {}, action,
                                         match_ctx)
                 trace.append(TraceEntry(effect=effect, rule_id=rule_id,
                                         matched=matched))
+                # Wave-198: real enforcement feeds the graduation
+                # evidence base; synthetic callers (simulator,
+                # delegation mint probe) pass record_telemetry=False
+                # so hypothetical matches never become ledger
+                # violations. The violation record carries the request
+                # digest (SPIKE §3.3) so a violation is attributable
+                # to the exact request that triggered it.
+                if record_telemetry:
+                    self.mode_ledger.observe(
+                        rule_id, mode=mode, matched=matched,
+                        nominal_effect=effect if matched else None,
+                        request_digest=(_request_digest(action)
+                                        if matched else None))
                 if matched:
-                    bucket.append(RuleHit(
-                        rule_id=rule_id,
-                        effect=effect,
-                        reason=rule.get(
-                            "reason",
-                            "Matched policy %s." % rule.get("id")),
-                        flag=rule.get("flag"),
-                        declaration_index=index))
+                    evaluated.append((index, rule, effect, rule_id,
+                                      mode))
+
+        # Phase 2: route matched rules by mode. Observe-mode hits are
+        # named in observed_hits and carry no authority -- the three
+        # effect buckets keep their exact legacy membership, so
+        # deny/allow rules and the implicit default deny decide
+        # exactly as before.
+        for index, rule, effect, rule_id, mode in evaluated:
+            hit = RuleHit(
+                rule_id=rule_id,
+                effect=effect,
+                reason=rule.get(
+                    "reason",
+                    "Matched policy %s." % rule.get("id")),
+                flag=rule.get("flag"),
+                declaration_index=index,
+                mode=mode)
+            if mode == "observe":
+                observed_hits.append(hit)
+                continue
+            if effect == "deny":
+                forbid_hits.append(hit)
+            elif effect == "require_approval":
+                approval_hits.append(hit)
+            else:
+                permit_hits.append(hit)
 
         deciding = None
         verdict_effect = "deny"
-        for bucket in (forbid_hits, approval_hits, permit_hits):
-            if bucket:
-                deciding = bucket[0]
-                verdict_effect = deciding.effect
-                break
+        # Wave-198: full-authority (deny-mode) hits route ahead of
+        # warn-mode hits -- a warn rung is dryrun and must never
+        # weaken a verdict the policy set would otherwise enforce
+        # (Gatekeeper discipline: dryrun never weakens the rest of
+        # the policy set). Observe hits carry no authority and never
+        # appear in these buckets. A warn hit decides only when no
+        # deny-mode rule matched at all.
+        _deny_mode_hit = next(
+            (h for bucket in (forbid_hits, approval_hits, permit_hits)
+             for h in bucket if h.mode == "deny"),
+            None)
+        if _deny_mode_hit is not None:
+            deciding = _deny_mode_hit
+            verdict_effect = deciding.effect
+        else:
+            for bucket in (forbid_hits, approval_hits, permit_hits):
+                if bucket:
+                    deciding = bucket[0]
+                    verdict_effect = deciding.effect
+                    break
 
         def _mark(bucket, decider):
             return tuple(
@@ -880,6 +1077,7 @@ class PolicyEngine:
             forbid_hits=forbid_hits,
             approval_hits=approval_hits,
             permit_hits=permit_hits,
+            observed_hits=tuple(observed_hits),
             trace=tuple(trace),
             policy_ids=policy_ids)
 
@@ -890,6 +1088,19 @@ class PolicyEngine:
             # is diagnostics-display only.
             raw_id = self.policies[
                 deciding_marked.declaration_index].get("id")
+            # Wave-198: the rule decides by its nominal effect, but a
+            # warn-mode rule's ENFORCED verdict is allow. The nominal
+            # effect and an operator warning ride the Decision for
+            # telemetry; the enforced effect is what "allowed"
+            # mirrors.
+            nominal_effect = deciding_marked.effect
+            warnings = ()
+            if deciding_marked.mode == "warn":
+                verdict_effect = "allow"
+                warnings = (
+                    "warn-mode rule %r matched (nominal effect %r); "
+                    "enforced allow pending graduation to deny"
+                    % (deciding_marked.rule_id, nominal_effect),)
             return Decision(
                 effect=verdict_effect,
                 allowed=(verdict_effect == "allow"),
@@ -897,7 +1108,10 @@ class PolicyEngine:
                 policy_id=raw_id,
                 flag=deciding_marked.flag,
                 diagnostics=diagnostics,
-                request=request)
+                request=request,
+                nominal_effect=nominal_effect,
+                mode=deciding_marked.mode,
+                warnings=warnings)
         return Decision(
             effect="deny",
             allowed=False,
@@ -907,16 +1121,119 @@ class PolicyEngine:
             diagnostics=diagnostics,
             request=request)
 
-    def evaluate(self, action, context=None):
+    def evaluate(self, action, context=None, *, record_telemetry=True):
         """Return a PolicyDecision. Fail-closed: no matching rule -> deny.
 
         Implemented on top of decide(): the verdict fields are
         byte-identical to the pre-contract engine; the structured
         diagnostics are available via decide() for callers that want
-        the why.
+        the why. ``record_telemetry`` mirrors decide(): synthetic
+        callers pass False so hypothetical matches never enter the
+        mode ledger's evidence base.
         """
-        return self.decide(Request.from_action(action, context)
+        return self.decide(Request.from_action(action, context),
+                           record_telemetry=record_telemetry
                            ).to_policy_decision()
+
+    # -------------------------------------------------- graduation ladder
+    # Wave-198: operator-tooling seams over the mode ledger. The
+    # engine's normalized approvals.quorum config supplies the human
+    # quorum; graduation/demotion are always operator-initiated, never
+    # automatic.
+    #
+    # Wave-198: the human quorum is ATTESTED, not assumed. Every seam
+    # below that changes enforcement fails closed when the policy
+    # does not configure approvals.quorum: without the eligible set,
+    # any two strings would pass as "human approvers", which is
+    # exactly the rubber-stamp the quorum exists to prevent (§3.4:
+    # "quorum (2) human approvers (reuses the approvals quorum
+    # machinery)").
+
+    def _require_human_quorum(self):
+        """(ok, reasons) -- the approvals.quorum attestation gate."""
+        if self.approvals_quorum is None:
+            return False, [
+                "no approvals.quorum configured: human approvers are "
+                "unattested without the eligible-principals set; "
+                "refusing rather than graduating on self-attested "
+                "names (configure approvals.quorum with "
+                "eligible_principals)"]
+        return True, []
+
+    def evaluate_graduation(self, rule_id, target_mode, *, approvers):
+        """Evaluate a one-rung graduation (pure; applies nothing).
+
+        Returns (ok, reasons). ``approvers``: principal strings or
+        (principal, bool) votes, checked against the policy's
+        approvals.quorum config. Fails closed without a configured
+        quorum (human attestation required).
+        """
+        ok, reasons = self._require_human_quorum()
+        if not ok:
+            return False, reasons
+        return self.mode_ledger.evaluate_graduation(
+            rule_id, target_mode, approvers=approvers,
+            quorum_cfg=self.approvals_quorum)
+
+    def apply_graduation(self, rule_id, target_mode, *, approvers):
+        """Evaluate and apply a one-rung graduation (chained record).
+
+        Fails closed without a configured approvals.quorum.
+        """
+        ok, reasons = self._require_human_quorum()
+        if not ok:
+            return False, reasons
+        return self.mode_ledger.apply_graduation(
+            rule_id, target_mode, approvers=approvers,
+            quorum_cfg=self.approvals_quorum)
+
+    def propose_demotion(self, rule_id, target_mode, *, reason,
+                         requested_by):
+        """Open a demotion proposal (never applied automatically).
+
+        The proposal itself changes nothing; approval is the gate.
+        """
+        return self.mode_ledger.propose_demotion(
+            rule_id, target_mode, reason=reason,
+            requested_by=requested_by)
+
+    def approve_demotion(self, proposal_id, *, approvers):
+        """Quorum-approve a demotion proposal and apply it.
+
+        Fails closed without a configured approvals.quorum.
+        """
+        ok, reasons = self._require_human_quorum()
+        if not ok:
+            return False, reasons
+        return self.mode_ledger.approve_demotion(
+            proposal_id, approvers=approvers,
+            quorum_cfg=self.approvals_quorum)
+
+    def emergency_demote(self, rule_id, target_mode, *, operator,
+                         reason):
+        """Single-operator emergency demotion (post-hoc quorum review
+        mandated within 24h).
+
+        Fails closed without a configured approvals.quorum: the
+        mandate needs a quorum to be reviewable against.
+        """
+        ok, reasons = self._require_human_quorum()
+        if not ok:
+            raise ModeLedgerError(reasons[0])
+        return self.mode_ledger.emergency_demote(
+            rule_id, target_mode, operator=operator, reason=reason)
+
+    def resolve_emergency_review(self, rule_id, *, approvers):
+        """Record the post-hoc quorum review of an emergency demotion.
+
+        Fails closed without a configured approvals.quorum.
+        """
+        ok, reasons = self._require_human_quorum()
+        if not ok:
+            return False, reasons
+        return self.mode_ledger.resolve_emergency_review(
+            rule_id, approvers=approvers,
+            quorum_cfg=self.approvals_quorum)
 
     def _matches(self, match, action, context):
         tool = action.get("tool")

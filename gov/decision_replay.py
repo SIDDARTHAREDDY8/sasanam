@@ -296,7 +296,13 @@ def _hit_to_dict(hit):
             "flag": _need(hit, "flag", "RuleHit"),
             "declaration_index": _need(hit, "declaration_index",
                                        "RuleHit"),
-            "deciding": bool(_need(hit, "deciding", "RuleHit"))}
+            "deciding": bool(_need(hit, "deciding", "RuleHit")),
+            # Wave-198: the rule's ladder mode AT DECISION TIME. The
+            # policy bundle only carries load-time modes -- runtime
+            # graduation moves the ledger -- so replay routes by the
+            # recorded mode, never by re-deriving it from the bundle.
+            # Legacy hits default to "deny".
+            "mode": getattr(hit, "mode", "deny") or "deny"}
 
 
 def build_trace(*, decision, action, context, policy,
@@ -361,14 +367,24 @@ def build_trace(*, decision, action, context, policy,
         "context": scrub_context(context or {}),
     }
     policy_id = _need(decision, "policy_id", "Decision")
+    _effect = _need(decision, "effect", "Decision")
     verdict_block = {
-        "effect": _need(decision, "effect", "Decision"),
+        "effect": _effect,
         "policy_id": policy_id,
         "reason": _need(decision, "reason", "Decision"),
         "flag": _need(decision, "flag", "Decision"),
         # Legacy matched_rules semantics: the deciding rule id, or the
         # documented default_deny sentinel for the implicit deny.
         "matched_rules": ([policy_id] if policy_id else ["default_deny"]),
+        # Wave-198: the ladder routing the verdict rested on. The
+        # bundle only carries load-time modes; runtime graduation
+        # moves the ledger, so replay compares against the recorded
+        # decision-time mode/nominal rather than re-deriving them.
+        # getattr defaults keep duck-typed legacy decisions working.
+        "mode": getattr(decision, "mode", "deny") or "deny",
+        "nominal_effect": (getattr(decision, "nominal_effect", None)
+                           or _effect),
+        "warnings": list(getattr(decision, "warnings", None) or ()),
     }
     evaluation_block = {
         "deciding_rule": (_hit_to_dict(deciding)
@@ -381,6 +397,13 @@ def build_trace(*, decision, action, context, policy,
                                  "Diagnostics") or ())],
         "permit_hits": [_hit_to_dict(h) for h in
                         (_need(diagnostics, "permit_hits", "Diagnostics")
+                         or ())],
+        # Wave-198: observe-mode hits carry no authority but ARE
+        # recorded here (with their decision-time mode) so replay
+        # can see every matched rule's mode. getattr default keeps
+        # duck-typed legacy decisions working.
+        "observed_hits": [_hit_to_dict(h) for h in
+                        (getattr(diagnostics, "observed_hits", None)
                          or ())],
         "trace": trace_entries,
     }
@@ -597,15 +620,27 @@ _DEFAULT_DENY_REASON = "No policy matched; denied by default (fail-closed)."
 _DEFAULT_DENY_ID = "default_deny"
 
 
-def _evaluate(rules, action, context):
+def _evaluate(rules, action, context, rule_modes=None):
     """Mirror of PolicyEngine.decide()'s verdict computation.
 
     Iterates in PASS order (deny -> require_approval -> allow), exactly
     like decide(): the per-rule list is in evaluation order and each
-    entry carries the rule's TRUE declaration index. Returns
-    (effect, policy_id, reason, flag, per_rule) where per_rule is a
-    list of (declaration_index, display_rule_id, effect, matched).
+    entry carries the rule's TRUE declaration index.
+
+    Wave-198: ``rule_modes`` maps rule_id -> the rule's ladder mode AT
+    DECISION TIME (recorded in the trace's hit blocks; the bundle only
+    carries load-time modes, and runtime graduation moves the ledger).
+    Observe-mode rules have no authority and can never be the decider;
+    a warn-mode decider's nominal effect is preserved while the
+    ENFORCED effect becomes allow -- exactly like decide()'s phase 2.
+    Missing entries default to "deny" (legacy traces replay exactly
+    as before).
+
+    Returns (enforced_effect, nominal_effect, deciding_mode,
+    policy_id, reason, flag, per_rule) where per_rule is a list of
+    (declaration_index, display_rule_id, effect, matched).
     """
+    rule_modes = rule_modes or {}
     per_rule = []
     matched_by_effect = {"deny": [], "require_approval": [],
                          "allow": []}
@@ -619,18 +654,40 @@ def _evaluate(rules, action, context):
             if matched:
                 matched_by_effect[effect].append(index)
     deciding_index = None
+    deciding_mode = "deny"
+    deciding_nominal = "deny"
+    # Wave-198: mirror of decide()'s decider routing -- a deny-mode
+    # hit anywhere routes ahead of any warn-mode hit (dryrun never
+    # weakens the rest of the policy set). Observe hits carry no
+    # authority (R4).
+    _candidates = []
     for effect in ("deny", "require_approval", "allow"):
-        if matched_by_effect[effect]:
-            deciding_index = matched_by_effect[effect][0]
-            break
+        for index in matched_by_effect[effect]:
+            rule = rules[index]
+            rule_id = rule.get("id", "rule-%d" % index)
+            mode = rule_modes.get(rule_id, "deny") or "deny"
+            if mode == "observe":
+                continue
+            _candidates.append((mode != "deny", index, effect, mode))
+    if _candidates:
+        # (deny-mode first, then pass order, then declaration order)
+        _candidates.sort(key=lambda c: (c[0], c[2] != "deny",
+                                        c[2] != "require_approval",
+                                        c[1]))
+        _, deciding_index, deciding_nominal, deciding_mode = _candidates[0]
     if deciding_index is None:
-        return ("deny", None, _DEFAULT_DENY_REASON, _DEFAULT_DENY_ID,
-                per_rule)
+        return ("deny", "deny", "deny", None, _DEFAULT_DENY_REASON,
+                _DEFAULT_DENY_ID, per_rule)
     rule = rules[deciding_index]
-    _idx, display_id, effect, _m = per_rule[
+    _idx, display_id, _eff, _m = per_rule[
         [p[0] for p in per_rule].index(deciding_index)]
     reason = rule.get("reason", "Matched policy %s." % rule.get("id"))
-    return (effect, rule.get("id"), reason, rule.get("flag"), per_rule)
+    if deciding_mode == "warn":
+        enforced = "allow"  # warn demotes the enforced verdict (R1)
+    else:
+        enforced = deciding_nominal
+    return (enforced, deciding_nominal, deciding_mode, rule.get("id"),
+            reason, rule.get("flag"), per_rule)
 
 
 _EFFECT_RANK = {"allow": 0, "require_approval": 1, "deny": 2}
@@ -696,21 +753,44 @@ def replay(trace, policy_bundle):
             % (str(recorded_digest)[:16], bundle_digest[:16]))
 
     # 3. Re-run the deterministic evaluation on the recorded inputs.
+    # Wave-198: route by the RECORDED decision-time modes (from the
+    # trace's hit blocks). The bundle only carries load-time modes;
+    # runtime graduation moves the ledger, so re-deriving modes from
+    # the bundle would misroute -- and every warn/observe decision
+    # would falsely "diverge".
     request = trace["request"]
     action = {"tool": request.get("action"),
               "role": request.get("role"),
               "agent_id": request.get("agent_id"),
               "args": request.get("args") or {}}
     context = request.get("context") or {}
-    effect, policy_id, reason, flag, per_rule = _evaluate(
-        rules, action, context)
+    recorded_eval = trace["evaluation"]
+    recorded_hits = []
+    for _key in ("forbid_hits", "approval_hits", "permit_hits",
+                 "observed_hits"):
+        recorded_hits.extend(recorded_eval.get(_key) or ())
+    _deciding_hit = recorded_eval.get("deciding_rule")
+    if isinstance(_deciding_hit, dict):
+        recorded_hits.append(_deciding_hit)
+    rule_modes = {}
+    for _h in recorded_hits:
+        if isinstance(_h, dict) and _h.get("rule_id"):
+            rule_modes[_h["rule_id"]] = _h.get("mode") or "deny"
+    enforced, nominal, _dec_mode, policy_id, reason, flag, per_rule = \
+        _evaluate(rules, action, context, rule_modes=rule_modes)
 
     # 4. The recomputation must agree with the record, rule by rule.
     recorded_verdict = trace["verdict"]
-    if effect != recorded_verdict.get("effect"):
+    if enforced != recorded_verdict.get("effect"):
         raise ReplayMismatchError(
             "verdict effect diverged: recorded %r, recomputed %r"
-            % (recorded_verdict.get("effect"), effect))
+            % (recorded_verdict.get("effect"), enforced))
+    recorded_nominal = recorded_verdict.get(
+        "nominal_effect", recorded_verdict.get("effect"))
+    if nominal != recorded_nominal:
+        raise ReplayMismatchError(
+            "verdict nominal effect diverged: recorded %r, recomputed %r"
+            % (recorded_nominal, nominal))
     if policy_id != recorded_verdict.get("policy_id"):
         raise ReplayMismatchError(
             "deciding rule diverged: recorded policy_id %r, recomputed %r"
@@ -743,22 +823,29 @@ def replay(trace, policy_bundle):
             "%d rule-evaluation divergence(s): %s"
             % (len(divergences), "; ".join(divergences)))
 
-    # 5. Post-policy layers may only tighten, never loosen.
+    # 5. Post-policy layers may only tighten, never loosen. The
+    # comparison is on the ENFORCED deterministic effect (what the
+    # agent actually faced), not the nominal.
     post = trace["post_verdict"]
     final_effect = post.get("final_effect")
-    det_rank = _EFFECT_RANK.get(effect)
+    det_rank = _EFFECT_RANK.get(enforced)
     fin_rank = _EFFECT_RANK.get(final_effect)
     if det_rank is None or fin_rank is None:
         raise TraceSchemaError(
             "unknown effect in trace: deterministic=%r final=%r"
-            % (effect, final_effect))
+            % (enforced, final_effect))
     if fin_rank < det_rank:
         raise ReplayMismatchError(
             "post-verdict effect loosened the deterministic verdict: "
-            "deterministic %r, final %r" % (effect, final_effect))
+            "deterministic %r, final %r" % (enforced, final_effect))
 
     return {
-        "verdict": effect,
+        # The ENFORCED deterministic verdict (what the agent faced);
+        # the nominal (what the rule requested) rides alongside for
+        # warn-mode decisions.
+        "verdict": enforced,
+        "nominal_verdict": nominal,
+        "deciding_mode": _dec_mode,
         "policy_id": policy_id,
         "reason": reason,
         "flag": flag,

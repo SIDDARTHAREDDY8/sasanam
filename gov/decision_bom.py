@@ -59,6 +59,9 @@ BOM keeps the compact single-algorithm form.
 
 import hashlib
 import json
+# Wave-198: the ladder mode vocabulary (stdlib-only, no
+# import cycle).
+from .mode_ledger import LADDER_MODES
 
 
 BOM_VERSION = 1
@@ -78,9 +81,27 @@ def _is_hex64(value):
             and all(c in "0123456789abcdef" for c in value))
 
 
+# Wave-198: one shared mode-history entry validator. build_bom
+# raises BomError (fail closed) while check_bom_shape returns
+# (False, reason); the shape test is the same at both boundaries.
+def _mode_history_entry_ok(h):
+    if not isinstance(h, dict):
+        return False
+    for key in ("old_mode", "new_mode", "at", "approvers"):
+        if key not in h:
+            return False
+    if h["old_mode"] not in LADDER_MODES \
+            or h["new_mode"] not in LADDER_MODES:
+        return False
+    return (isinstance(h["at"], (int, float))
+            and isinstance(h["approvers"], list))
+
+
 def build_bom(*, policy_id, policy_version, policy_digest,
               evidence_head_digest, principal, pin_digests=None,
-              approval_id=None, approval_record_digest=None):
+              approval_id=None, approval_record_digest=None,
+              decision_mode=None, nominal_effect=None,
+              decision_warnings=None, rule_mode_history=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -95,6 +116,18 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     approval (direct allow/deny) -- honest, not a gap. But an
     approval_id WITHOUT a resolvable record digest raises BomError:
     the BOM must never silently drop approval provenance.
+
+    Wave-198 (graduation ladder): ``decision_mode`` ("observe" |
+    "warn" | "deny"), ``nominal_effect`` (what the rule asked for vs
+    the enforced verdict), ``decision_warnings`` (operator telemetry
+    strings), and ``rule_mode_history`` (the deciding rule's chained
+    mode-change history) ride an optional ``inputs.ladder`` section.
+    All four default to None and the section is omitted when none is
+    supplied -- BOMs built without ladder telemetry are
+    byte-identical to before (the wave-191 token_digest precedent).
+    When any is supplied, all four are required and validated loudly:
+    a BOM must never silently record a weaker claim than the decision
+    actually rested on.
 
     Every required input is validated LOUD: a missing or malformed
     digest, an empty policy id/version, or a non-dict principal raises
@@ -154,24 +187,61 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     }
     if token_digest is not None:
         principal_inputs["token_digest"] = token_digest
+    # Wave-198 (graduation ladder): the optional ladder section. When
+    # none of the four inputs is supplied the section is omitted --
+    # byte-identical BOMs for mode-absent decisions. When any is
+    # supplied, all four are required and validated loudly.
+    ladder_inputs = None
+    if (decision_mode is not None or nominal_effect is not None
+            or decision_warnings is not None
+            or rule_mode_history is not None):
+        if decision_mode not in LADDER_MODES:
+            raise BomError(
+                "decision_mode must be observe/warn/deny, got %r"
+                % (decision_mode,))
+        if nominal_effect not in ("allow", "require_approval", "deny"):
+            raise BomError(
+                "nominal_effect must be allow/require_approval/deny, "
+                "got %r" % (nominal_effect,))
+        warnings = list(decision_warnings or ())
+        for w in warnings:
+            if not isinstance(w, str) or not w:
+                raise BomError(
+                    "decision_warnings entries must be non-empty strings, "
+                    "got %r" % (w,))
+        history = list(rule_mode_history or ())
+        for h in history:
+            if not _mode_history_entry_ok(h):
+                raise BomError(
+                    "rule_mode_history entry malformed or has a bad mode "
+                    "transition: %r" % (h,))
+        ladder_inputs = {
+            "mode": decision_mode,
+            "nominal_effect": nominal_effect,
+            "warnings": warnings,
+            "rule_mode_history": history,
+        }
+    inputs = {
+        "policy": {
+            "policy_id": policy_id,
+            "policy_version": policy_version,
+            "digest": policy_digest,
+        },
+        "evidence": {
+            "head_digest": evidence_head_digest,
+        },
+        "principal": principal_inputs,
+        "pins": pins,
+        "approval": {
+            "approval_id": approval_id,
+            "record_digest": approval_record_digest,
+        },
+    }
+    if ladder_inputs is not None:
+        inputs["ladder"] = ladder_inputs
     return {
         "bom_version": BOM_VERSION,
-        "inputs": {
-            "policy": {
-                "policy_id": policy_id,
-                "policy_version": policy_version,
-                "digest": policy_digest,
-            },
-            "evidence": {
-                "head_digest": evidence_head_digest,
-            },
-            "principal": principal_inputs,
-            "pins": pins,
-            "approval": {
-                "approval_id": approval_id,
-                "record_digest": approval_record_digest,
-            },
-        },
+        "inputs": inputs,
     }
 
 
@@ -227,6 +297,27 @@ def check_bom_shape(bom):
     rd = approval.get("record_digest")
     if rd is not None and not _is_hex64(rd):
         return False, "bom.inputs.approval.record_digest malformed"
+    # Wave-198 (graduation ladder): the optional ladder section, when
+    # present, must be well-formed. Absent is fine (mode-absent
+    # decisions omit it).
+    ladder = inputs.get("ladder")
+    if ladder is not None:
+        if not isinstance(ladder, dict):
+            return False, "bom.inputs.ladder is not a dict"
+        if ladder.get("mode") not in LADDER_MODES:
+            return False, "bom.inputs.ladder.mode malformed"
+        if ladder.get("nominal_effect") not in ("allow",
+                                                "require_approval",
+                                                "deny"):
+            return False, "bom.inputs.ladder.nominal_effect malformed"
+        warnings = ladder.get("warnings")
+        if not isinstance(warnings, list) or not all(
+                isinstance(w, str) and w for w in warnings):
+            return False, "bom.inputs.ladder.warnings malformed"
+        history = ladder.get("rule_mode_history")
+        if not isinstance(history, list) or not all(
+                _mode_history_entry_ok(h) for h in history):
+            return False, "bom.inputs.ladder.rule_mode_history malformed"
     return True, "ok"
 
 

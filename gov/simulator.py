@@ -326,7 +326,10 @@ def simulate_policy(policy_path, run_dirs):
                     "detail": indeterminate,
                 })
                 continue
-            new = policy.evaluate(action, context)
+            # Wave-198: a what-if simulation is hypothetical, not
+            # enforcement -- its matches must never enter the mode
+            # ledger's violation telemetry as graduation evidence.
+            new = policy.evaluate(action, context, record_telemetry=False)
             if new.effect == old:
                 if new.policy_id != entry.get("policy_id"):
                     run_summary["rule_changed_only"] += 1

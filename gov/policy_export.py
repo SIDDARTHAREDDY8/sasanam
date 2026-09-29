@@ -173,9 +173,13 @@ _KNOWN_TOP_LEVEL = frozenset(
 
 # Rule fields the translator understands. ``bridge`` is exporter-only
 # (the engine ignores it); ``description`` is free-text metadata like
-# ``reason`` (used by policies/default.yaml).
+# ``reason`` (used by policies/default.yaml). ``mode``/``pinned``
+# (wave-198 graduation ladder) are engine-enforced rollout fields;
+# the Cedar translation documents them as annotations rather than
+# dropping them silently.
 _KNOWN_RULE_FIELDS = frozenset(
-    {"id", "effect", "match", "reason", "description", "flag", "bridge"})
+    {"id", "effect", "match", "reason", "description", "flag", "bridge",
+     "mode", "pinned"})
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +510,31 @@ def _rule_policy(rule, index, dogwood):
         flag = rule.get("flag")
         lines.append("// %s%s" % (
             reason, " (flag: %s)" % flag if flag else ""))
+    # Wave-198 (graduation ladder): mode/pinned are engine-enforced
+    # rollout fields with no Cedar equivalent. They are documented as
+    # annotations -- never silently dropped -- so the exported policy
+    # does not claim a stronger posture than the engine enforces (a
+    # mode: warn forbid exports as a plain forbid; the annotation says
+    # the engine currently only warns). Values are validated loudly,
+    # mirroring the engine's load-time refusal, against the one shared
+    # mode tuple (gov/mode_ledger.py) rather than a re-literalized copy.
+    from gov.mode_ledger import LADDER_MODES
+    ladder_mode = rule.get("mode", "deny")
+    if ladder_mode not in LADDER_MODES:
+        raise PolicyExportError(
+            "rule %s: unknown mode %r (must be one of %s)"
+            % (rule_id, ladder_mode, "/".join(LADDER_MODES)))
+    ladder_pinned = rule.get("pinned", False)
+    if not isinstance(ladder_pinned, bool):
+        raise PolicyExportError(
+            "rule %s: pinned must be a bool, got %r"
+            % (rule_id, ladder_pinned))
+    if ladder_pinned and ladder_mode != "deny":
+        raise PolicyExportError(
+            "rule %s: pinned rules must use mode 'deny'" % (rule_id,))
+    if ladder_mode != "deny" or ladder_pinned:
+        lines.append("// ladder: mode=%s%s" % (
+            ladder_mode, ", pinned" if ladder_pinned else ""))
     if bound is not None:
         lines.append(
             "// bridge: D1-AWS approval action %s, approval must be "
