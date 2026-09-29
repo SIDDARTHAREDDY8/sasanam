@@ -1,4 +1,4 @@
-## 2026-09-29 — Wave-192 merge close-out: token claim-set + evidence distribution (IN PROGRESS)
+## 2026-09-29 — Wave-192 merge close-out: token claim-set + evidence distribution
 
 **Merge mechanics.** Cherry-picks `8007405` (wave-191 Lane A) and `7d67f9d` (wave-191 Lane B) onto `6892dfa` (wave-189). The token commit applied clean via `git am`; the distribute patch collided with the token commit in `BUILD_LOG.md` (both lanes wrote a wave-191 entry at the top) — resolved by hand: applied the distribute tree via `git apply --exclude=BUILD_LOG.md`, committed with the original message/author, then inserted the distribute BUILD_LOG entry above the token entry by hand. `git diff --check` clean. Both lane BUILD_LOG entries preserved verbatim above this one.
 
