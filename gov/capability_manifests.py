@@ -529,7 +529,9 @@ def verify_manifest(manifest, store, *, expected_skill_id=None,
             "artifact_digest": manifest.get("artifact_digest")}
 
 
-def verify_skill_manifest(skill_id, content, store, *, threshold=1):
+def verify_skill_manifest(skill_id, content, store, *, threshold=1,
+                          trust_registry=None, pack_class=None,
+                          trust_now=None):
     """Full load-time check for one skill's artifact bytes.
 
     Returns ``(ok, detail)`` — never raises for well-formed inputs:
@@ -570,6 +572,42 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     Wave-206: when the store's pack came from a lint-failed pack
     (``store.capability_pack_lint_failed``), every returned detail
     string carries the ``|pack-lint-failed`` marker.
+
+    Wave-211: optional deploy-trust wiring. ``trust_registry`` is a
+    :class:`gov.deploy_trust_config.TrustConfigRegistry` (activated
+    with a signed deploy trust config) and ``pack_class`` is the
+    trust-config class the skill's signers must be trust roots of
+    (e.g. ``"capability_rules"``; the trust config default-denies
+    unknown classes). When BOTH are supplied, the manifest's
+    verified signer kids are checked against the active trust
+    config via :func:`gov.deploy_trust_config.check_manifest_trust`
+    -- this is the seam that module documented as "for callers on
+    the manifest path":
+
+      * untrusted / unknown / revoked signers -> ``(False,
+        "manifest-trust-<code>")`` where ``<code>`` is the
+        underlying :class:`TrustConfigError` code (``no-trust-config``,
+        ``trust-class-unknown``, ``trust-root-revoked``,
+        ``trust-root-unknown``, ``trust-threshold-unmet``).
+      * registry supplied without ``pack_class`` -> ``(False,
+        "manifest-trust-class-missing")`` (fail-closed: there is no
+        class to authorize against).
+      * trust passes -> ``(True, "clean|trust-checked")`` (plus the
+        wave-206 marker when it applies) -- the ``|trust-checked``
+        suffix proves the deployment's trust config was consulted,
+        so a legacy "clean" can never be mistaken for a
+        trust-checked admission.
+
+    When ``trust_registry`` is None (the default), this function
+    behaves byte-identically to the pre-wave-211 contract: existing
+    callers, batteries, and pinned details are untouched. The trust
+    check runs immediately after signature verification (signer
+    authorization is a property of the signers, not of the content
+    checks that follow). Recommended production wiring: the
+    deployment activates its signed trust config at startup and
+    passes the registry plus the skill's trust class on the manifest
+    path; leaving the registry unwired keeps today's advisory
+    behavior (explicit opt-in, never silent).
     """
     if store is None:
         return True, "no-store"
@@ -584,10 +622,30 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     lint_marker = ("|pack-lint-failed"
                    if store.capability_pack_lint_failed else "")
     try:
-        verify_manifest(manifest, store, expected_skill_id=skill_id,
-                        threshold=threshold)
+        verified = verify_manifest(manifest, store,
+                                   expected_skill_id=skill_id,
+                                   threshold=threshold)
     except ManifestVerificationError as exc:
         return False, "manifest-%s%s" % (exc.code, lint_marker)
+    # Wave-211: deploy-trust check. Lazy import: the trust module
+    # pulls the rule-pack machinery; the manifest module must stay
+    # importable without it (and legacy callers never pay for it).
+    if trust_registry is not None:
+        if pack_class is None:
+            return False, "manifest-trust-class-missing" + lint_marker
+        from .deploy_trust_config import (
+            TrustConfigRegistry, TrustConfigError, check_manifest_trust)
+        if not isinstance(trust_registry, TrustConfigRegistry):
+            raise TypeError("trust_registry must be a TrustConfigRegistry")
+        try:
+            check_manifest_trust(trust_registry, pack_class,
+                                verified.get("kids") or [],
+                                now=trust_now)
+        except TrustConfigError as exc:
+            return False, "manifest-trust-%s%s" % (exc.code, lint_marker)
+        trust_suffix = "|trust-checked"
+    else:
+        trust_suffix = ""
     observed = "sha256:" + hashlib.sha256(bytes(content)).hexdigest()
     if manifest.get("artifact_digest") != observed:
         return False, "manifest-digest-mismatch" + lint_marker
@@ -607,7 +665,7 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     ok, detail = check_capabilities(manifest.get("capabilities"), detected)
     if not ok:
         return False, detail + lint_marker
-    return True, "clean" + lint_marker
+    return True, "clean" + trust_suffix + lint_marker
 
 
 def make_manifest(skill_id, content, *, capabilities, kid, seed,
