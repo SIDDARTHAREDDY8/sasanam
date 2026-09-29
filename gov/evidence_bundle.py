@@ -53,6 +53,7 @@ import os
 from datetime import datetime, timezone
 
 from gov import log as _log
+from gov import claim_bounds as _claim_bounds
 from gov.discovery import DiscoveryLedger, LedgerCorruptError
 from gov.safeguard_bundle import (
     compute_bundle_digest as _compute_bundle_digest,
@@ -353,6 +354,17 @@ class EvidenceBundle:
             "discovery": self._build_discovery(),
             "sections_meta": {},
         }
+        # Wave-209: mandatory claim bounds (the narrow-claims honesty
+        # rule). Every bundle declares what it proves and what it does
+        # not; V18 in the offline verifier refuses boundless or
+        # overstated bundles. Emitted before the bundle_id computation
+        # so the bounds are inside the deterministic identity.
+        _evidence_sections = [k for k in payload if k != "sections_meta"]
+        _bounds = _claim_bounds.default_bundle_bounds()
+        payload["claim_bounds"] = _bounds
+        payload["claim_assignment"] = _claim_bounds.default_claim_assignment(
+            _evidence_sections, _bounds["proves"],
+            discovery_present=payload.get("discovery") is not None)
         payload["kms_attestation"], meta = self._build_kms_attestation()
         payload["sections_meta"]["kms_attestation"] = meta
         # H6 (wave-117): bind the seal-time KMS/retention claims against

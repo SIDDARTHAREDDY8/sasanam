@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import dsse_envelope  # noqa: E402
+from gov import claim_bounds as _claim_bounds  # noqa: E402
 from gov.signing import Verifier  # noqa: E402
 
 CONTEXT_V2 = "https://www.w3.org/ns/credentials/v2"
@@ -181,7 +182,19 @@ def _build_claim_bounds(claim_bounds):
             or not all(isinstance(s, str) and s for s in does_not)):
         raise VCBundleError("claimBounds.doesNotProve: must be a "
                             "non-empty list of non-empty str")
-    return {"proves": list(proves), "doesNotProve": list(does_not)}
+    built = {"proves": list(proves), "doesNotProve": list(does_not)}
+    # Wave-209: the narrow-claims discipline is one primitive across
+    # every evidence shape. The VC profile's bounds must also validate
+    # under the canonical gov/claim_bounds schema (the bridge inherits
+    # the canonical verifier assumptions and scope limits explicitly).
+    # ClaimBoundsError is wrapped to keep this seam's single error
+    # vocabulary.
+    try:
+        _claim_bounds.from_vc_bounds(built)
+    except _claim_bounds.ClaimBoundsError as e:
+        raise VCBundleError("claimBounds: canonical schema refused: %s"
+                            % e)
+    return built
 
 
 def _check_evidence(evidence):

@@ -43,6 +43,11 @@ Checks (V1-V13, see docs/evidence-bundle-spec.md):
   V14 deterministic bundle ID (v1 extension, non-normative)
   V15 provenance block well-formed (v1 extension, non-normative)
   V16 retention schema valid (v1 extension, non-normative)
+  V17 invocation receipts (v1 extension, non-normative)
+  V18 claim bounds present, well-formed, and honored (v1 extension,
+      non-normative): the narrow-claims honesty rule -- a bundle that
+      does not declare what it proves and what it does not, or whose
+      per-section claims exceed its declared proves, is refused.
 
 WHAT THIS DOES NOT PROVE (normative, spec §7 — printed on every run):
 recorded events only, not unrecorded ones; integrity is not truth;
@@ -1747,6 +1752,87 @@ def v17_invocation_receipts(ctx):
                 "--pin-receipt-pubkey)" % len(entries))
 
 
+# V18 structural rule, deliberately self-contained: this verifier runs
+# WITHOUT the repository installed, so it cannot import
+# gov/claim_bounds.py. The normative definition lives there; this
+# function enforces the same structural rules (four-field schema,
+# non-empty token lists, proves/disjointness, exact section-set
+# coverage, token membership). The wave-209 battery proves the two
+# implementations agree end to end: the wave-209 battery's parity
+# probe (v18_parity_with_canonical) runs an edge-case corpus through
+# BOTH implementations and fails on any verdict divergence -- the
+# regression guard against rule drift.
+_CLAIM_BOUND_FIELDS = ("proves", "does_not_prove", "verifier_assumptions",
+                       "scope_limits")
+_CLAIM_BOUND_META_KEYS = ("sections_meta", "claim_bounds",
+                          "claim_assignment")
+
+
+def _v18_token_list(value, where):
+    """Returns an error string, or None when the token list is valid."""
+    if not isinstance(value, list) or not value:
+        return "%s: must be a non-empty list of non-empty str" % where
+    for i, tok in enumerate(value):
+        if not isinstance(tok, str) or not tok:
+            return "%s[%d]: must be a non-empty str" % (where, i)
+    dupes = sorted({t for t in value if value.count(t) > 1})
+    if dupes:
+        return "%s: duplicate claim token(s) refused: %s" % (where, dupes)
+    return None
+
+
+def v18_claim_bounds(ctx):
+    c = Check("V18", "V18 claim bounds (v1 extension)")
+    p = ctx.payload
+    bounds = p.get("claim_bounds")
+    if not isinstance(bounds, dict):
+        return c.fail("claim_bounds section missing or malformed: every "
+                       "bundle must declare what it proves and what it "
+                       "does not (narrow-claims honesty rule)")
+    extra = sorted(set(bounds) - set(_CLAIM_BOUND_FIELDS))
+    if extra:
+        return c.fail("claim_bounds: unknown field(s) refused: %s" % extra)
+    missing = [f for f in _CLAIM_BOUND_FIELDS if f not in bounds]
+    if missing:
+        return c.fail("claim_bounds: missing required field(s): %s"
+                      % missing)
+    for field in _CLAIM_BOUND_FIELDS:
+        err = _v18_token_list(bounds[field], "claim_bounds." + field)
+        if err:
+            return c.fail(err)
+    incoherent = sorted(set(bounds["proves"])
+                        & set(bounds["does_not_prove"]))
+    if incoherent:
+        return c.fail("claim_bounds: token(s) in both proves and "
+                       "does_not_prove (incoherent): %s" % incoherent)
+    assignment = p.get("claim_assignment")
+    if not isinstance(assignment, dict):
+        return c.fail("claim_assignment section missing or malformed: "
+                       "every evidence section needs declared claim tokens")
+    expected = set(k for k in p if k not in _CLAIM_BOUND_META_KEYS)
+    got = set(assignment)
+    if got != expected:
+        return c.fail("claim_assignment: section set mismatch: missing %s, "
+                       "extra %s (every evidence section must declare its "
+                       "claims; no section may smuggle undeclared claims)"
+                       % (sorted(expected - got), sorted(got - expected)))
+    proves = set(bounds["proves"])
+    for section in sorted(assignment):
+        claims = assignment[section]
+        err = _v18_token_list(claims, "claim_assignment." + section)
+        if err:
+            return c.fail(err)
+        stray = sorted({t for t in claims if t not in proves})
+        if stray:
+            return c.fail("claim_assignment.%s: evidence claim(s) broader "
+                           "than proves refused: %s" % (section, stray))
+    return c.ok("claim bounds present and well-formed (%d proves, %d "
+                 "does_not_prove); %d sections assigned, all claims within "
+                 "proves"
+                 % (len(bounds["proves"]), len(bounds["does_not_prove"]),
+                    len(assignment)))
+
+
 def v12_receipt(ctx):
     c = Check("V12", "V12 export receipt")
     try:
@@ -1916,8 +2002,8 @@ class Ctx:
     pass
 
 
-def _run_checks_v4_v17(ctx, run, checks):
-    """V4–V16 in spec order. Returns False when V4 fails (remaining
+def _run_checks_v4_v18(ctx, run, checks):
+    """V4–V18 in spec order (V14–V18 are v1 extensions). Returns False when V4 fails (remaining
     checks are meaningless without the payload); True otherwise. Any
     unexpected exception propagates to verify_bundle's outer guard.
     F151: if V6 fails (wrong pin), V7 does not run against the wrong
@@ -1941,6 +2027,7 @@ def _run_checks_v4_v17(ctx, run, checks):
     run(v15_provenance)
     run(v16_retention)
     run(v17_invocation_receipts)
+    run(v18_claim_bounds)
     return True
 
 
@@ -1979,7 +2066,7 @@ def _discovery_snapshot(ctx):
 
 def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
                    source_log=None, receipt_pins=()):
-    """Run V1–V17. Returns (exit_code, checks, summary_dict)."""
+    """Run V1–V18. Returns (exit_code, checks, summary_dict)."""
     ctx = Ctx()
     ctx.dir = bundle_dir
     ctx.pins = list(pins)
@@ -2039,7 +2126,7 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
     # V4-V16 run under one outer guard: hostile bundle data must FAIL
     # cleanly (a named check, exit 1), never crash with a traceback.
     try:
-        _run_checks_v4_v17(ctx, run, checks)
+        _run_checks_v4_v18(ctx, run, checks)
     except Exception as e:  # hostile/malformed bundle: fail, don't crash
         c = Check("V0", "bundle fatal")
         c.fail("unexpected error while verifying bundle: %r" % (e,))

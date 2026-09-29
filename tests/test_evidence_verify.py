@@ -302,10 +302,10 @@ class TestEvidenceVerifyFormat(unittest.TestCase):
             self.assertIsInstance(doc["authorship"], dict)
             self.assertFalse(doc["authorship"]["pinned"])
             self.assertIsNone(doc["authorship"]["key_id"])
-            # 18 checks since wave-179 lane A: V9d "per-entry Ed25519
-            # audit signatures" added the entry-signature check to the
-            # standalone verifier (was 17 since wave-175's V17).
-            self.assertEqual(len(doc["checks"]), 18)
+            # 19 checks since wave-209 lane A: V18 "claim bounds" added
+            # the claim-bounds check to the standalone verifier (was 18
+            # since wave-179's V9d; wave-175's V17 before that).
+            self.assertEqual(len(doc["checks"]), 19)
         finally:
             base.tearDown()
 

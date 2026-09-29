@@ -806,7 +806,7 @@ Every item below was checked against the current tree; none is assumed.
 
 ### 8.4 v1 implementation extensions (non-normative)
 
-The reference implementation (`gov/evidence_verify.py`) performs three
+The reference implementation (`gov/evidence_verify.py`) performs five
 checks beyond the normative V1–V13. These are v1 conveniences, not
 conformance requirements; a verifier implementing only V1–V13 is
 conformant.
@@ -819,3 +819,13 @@ conformant.
 - **V16 retention schema** — the manifest's retention block conforms to
   the declared schema (retention/operator-supplied values are assertions;
   only schema/presence is verified).
+- **V17 invocation receipts** — countersigned invocation receipts in
+  the window verify standalone (opt-in evidence extension).
+- **V18 claim bounds** — the narrow-claims honesty rule: the payload's
+  `claim_bounds` section must declare `{proves, does_not_prove,
+  verifier_assumptions, scope_limits}` (all non-empty, `does_not_prove`
+  never empty, `proves`/`does_not_prove` disjoint), and the
+  `claim_assignment` section must assign every evidence section claim
+  tokens that are exact members of `proves`. A bundle missing bounds,
+  or whose evidence claims exceed its declared `proves`, is refused.
+  Normative definition: `gov/claim_bounds.py`.

@@ -1,3 +1,25 @@
+## 2026-09-29 — Wave-209 lane A: claim-bounds enforcement primitive for evidence bundles
+
+**Scope.** The wave-207 prospectus cross-cutting finding: the narrow-claims discipline appears independently in W3C VC ("verifiable ≠ true"), SCITT (receipts prove action/principal/policy/verdict, explicitly NOT "correct, safe, or wise"), and TEE (platform+image, never workload behavior) — the prospectus recommended it become our documented evidence-bundle honesty rule. Wave-209 prospecting (EAT RFC 9711, C2PA spec 2.2) found two more independent statements of the same rule (now six sources deep), cited here as rationale. Wave-208 lane A already emits `claimBounds` in VC-shaped credentials; this lane makes the rule a mandatory, fail-closed primitive.
+
+**Build (stdlib-only).**
+- `gov/claim_bounds.py` (new): mandatory claim-bounds schema `{proves, does_not_prove, verifier_assumptions, scope_limits}`. `validate_bounds` refuses missing/unknown fields, empty lists, empty `does_not_prove` (a degenerate honesty dodge), proves∩does_not_prove incoherence, and duplicate tokens. `claims_within_bounds` is an explicit token-membership overlap check (not NLP), naming stray tokens. `validate_claim_assignment` requires assignment keys to be EXACTLY the payload's evidence sections, every token in `proves`. Canonical v1 honesty defaults plus a `from_vc_bounds` bridge. The module docstring states the honesty rule and cites F205's lesson.
+- `gov/evidence_bundle.py` (modified): `build()` emits `claim_bounds` + `claim_assignment` before the deterministic `bundle_id`.
+- `gov/evidence_verify.py` (modified): new **V18** check (v1 extension) — refuses boundless bundles and section claims broader than `proves`, naming the field/token. Rules self-contained inline so the standalone verifier runs without the repo; `tools/evidence-verify` re-synced byte-identical.
+- `gov/vc_bundle.py` (modified): VC `claimBounds` additionally validated through the canonical schema (bridge), `ClaimBoundsError` wrapped into `VCBundleError`.
+- `docs/evidence-bundle-spec.md` (modified): V18 documented in §8.4; V1–V13 conformance unchanged.
+- NOTE: the merge coordinator wrote this BUILD_LOG entry; the lane commit `9001ce9` omitted it (worktree hygiene otherwise clean). The entry is documentation-only, no product code added here.
+
+**Red-first.** `evals/claim_bounds_probes.py` (new, 13 probes, incl. a **parity probe** running 14 edge cases through both rule implementations with zero divergence): pristine `53c7974` shows genuine red — 0/12 HELD (8 GAP, 2 BROKEN, 2 ERROR). Fixed tree: **13/13 HELD ×3** (incl. `env -u GOV_DEPLOYMENT_MODE`), probes run twice internally. Covers: boundless refused, broader-claim refused with token named, well-bounded verifies, empty `does_not_prove` refused, errors name fields, disjointness, exact-set assignment, VC bridge, parity.
+
+**Tests.** `tests/test_claim_bounds.py` (new): **22/22 OK**. `tests/test_evidence_verify.py` modified: honest 18→19 pin re-pin for the new V18 check (test-only, wave-176 precedent). Adjacent: claim_bounds + evidence_bundle 68/68; evidence_verify/evidence_bundle/VC/SCITT 125 with 1 failure = `test_ed25519_vendoring_drift_guard`, verified pre-existing on pristine `53c7974` (reproduced via `git show`, file untouched by this lane's logic); w82/w85 28/28; VC probes 17 PASS; SCITT probes 7 PASS; tamper battery 14/0/15; adversarial battery 9/0/5.
+
+**Two-axis review (lane, done — blockers fixed).** Standards: no hard violations; 4 judgement smells fixed (dead param, dead import, stale runner name, V18 drift risk → parity probe). Spec: the overlap check is issuer-declared-on-issuer-declared (unavoidable without NLP; documented as residual); the unwired `from_scitt_receipt` bridge was deleted as speculative generality; VC bridge kept (wired), disjointness/duplicate hardening, and the assignment machinery kept with documented rationale.
+
+**Honest residuals.** (1) A consistently-lying issuer is undetectable by token membership (spec-mandated non-NLP limitation; the auditor reads the declared bounds). (2) V18 duplication between the inline rules and `tools/evidence-verify` is guarded by the parity probe, not by construction.
+
+**Findings.** None filed (new-feature lane, no claimed closure). Open findings: none. Next free: F206.
+
 ## 2026-09-29 — Wave-208 lane D: TEE attestation verifiers (SEV-SNP + TDX DCAP, flag-gated, offline)
 
 **Scope.** Wave-207 prospecting §4 verdict (ADAPT the TEE attestation-verifier shape — SEV-SNP and Intel TDX DCAP — re-implemented stdlib-only, nothing vendored). New `gov/tee_attest.py` (~1050 lines, stdlib-only): offline SEV-SNP and Intel TDX attestation verifiers behind the `GOV_TEE_ATTEST_ENABLED` flag (default OFF — explicit opt-in), additive composition with `gov/attested_identity.py` (`Attester(tee_verifier=...)` + `bootstrap_with_tee_report`), and AuthorityProof/Decision-BOM composition helpers. Every fixture is generated synthetically in-process and labeled as such — no live TEE hardware, no copied third-party fixtures (the edgelesssys/go-tdx-qpl AGPL-3.0 license trap is respected: no real TDX quote bytes are reused anywhere).
