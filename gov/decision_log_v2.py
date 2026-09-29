@@ -276,6 +276,98 @@ def _sensitive_digest(pointer, value):
 # Build
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Additive diagnostics block (wave-206 lane C, Cedar/AVP ADAPT)
+#
+# ``build_event(..., diagnostics=record)`` carries a
+# gov.decision_diagnostics decision record under the ``diagnostics``
+# key. This module stays gov-import-free: it shape-checks the block
+# only (semantic verification is
+# decision_diagnostics.verify_decision_record). The block rides the
+# ``decision_id`` preimage, so it is tamper-bound; absent on legacy
+# events (omitted when None -- legacy bytes preserved).
+# ---------------------------------------------------------------------------
+
+#: Decision vocabulary accepted in a diagnostics block (mirrors
+#: gov.decision_diagnostics.DECISIONS; duplicated, not imported, to
+#: keep this module gov-import-free).
+_DIAG_DECISIONS = ("allow", "deny", "require_approval", "no-decision")
+
+#: Shape vocabulary for the diagnostics block. This is a SHAPE gate
+#: only -- it must stay in sync with gov.decision_diagnostics
+#: (_RECORD_KEYS / _RESIDUAL_KEYS / RECORD_VERSION there); semantic
+#: verification is gov.decision_diagnostics.verify_decision_record.
+#: Duplicated, not imported, to keep this module gov-import-free --
+#: do not "deduplicate" by importing.
+_DIAG_RECORD_VERSION = 1
+_DIAG_TOP_KEYS = frozenset({"decision", "decision_id",
+                            "determining_policies", "errors", "residuals"})
+_DIAG_RESIDUAL_KEYS = frozenset({"decision_holds_iff", "unknown_entities",
+                                 "default_used", "bindings"})
+
+
+def _check_diagnostics_shape(record, exc):
+    """Structural check of a diagnostics block. ``exc`` is the
+    exception class to raise (EventBuildError at build time,
+    EventVerifyError at verify time -- same shape, different
+    taxonomy).
+
+    Mirrors gov.decision_diagnostics._check_record_shape at shape
+    level only (unknown keys refused, digest shapes checked); it is
+    intentionally less strict than the full gate (e.g. it does not
+    type-check every determining-policy field) -- full verification
+    is verify_decision_record's job.
+    """
+    if not isinstance(record, dict):
+        raise exc("diagnostics must be a dict")
+    unknown = set(record) - _DIAG_TOP_KEYS
+    if unknown:
+        raise exc("diagnostics carries unknown top-level keys: %s"
+                  % sorted(unknown))
+    missing = _DIAG_TOP_KEYS - set(record)
+    if missing:
+        raise exc("diagnostics missing top-level keys: %s"
+                  % sorted(missing))
+    if record.get("decision") not in _DIAG_DECISIONS:
+        raise exc("diagnostics decision must be one of %s"
+                  % (list(_DIAG_DECISIONS),))
+    if not isinstance(record.get("determining_policies"), list):
+        raise exc("diagnostics determining_policies must be a list")
+    for i, entry in enumerate(record["determining_policies"]):
+        where = "diagnostics determining_policies[%d]" % i
+        if not isinstance(entry, dict):
+            raise exc("%s must be a dict" % where)
+        for key in ("screen", "policy_index", "policy_id", "effect"):
+            if key not in entry:
+                raise exc("%s missing %r" % (where, key))
+    if not isinstance(record.get("errors"), list):
+        raise exc("diagnostics errors must be a list")
+    residuals = record.get("residuals")
+    if not isinstance(residuals, dict):
+        raise exc("diagnostics residuals must be a dict")
+    unknown = set(residuals) - _DIAG_RESIDUAL_KEYS
+    if unknown:
+        raise exc("diagnostics residuals carries unknown keys: %s"
+                  % sorted(unknown))
+    bindings = residuals.get("bindings")
+    if not isinstance(bindings, dict):
+        raise exc("diagnostics residuals.bindings must be a dict")
+    if bindings.get("record_version") != _DIAG_RECORD_VERSION:
+        raise exc("diagnostics record_version must be %d"
+                  % _DIAG_RECORD_VERSION)
+    if not _is_hex64(bindings.get("request_digest")):
+        raise exc("diagnostics request_digest is not 64-char hex")
+    perm = bindings.get("perm")
+    if not isinstance(perm, dict):
+        raise exc("diagnostics perm must be a dict")
+    for key in ("model_digest", "policy_digest", "composition_digest",
+                "function_set_digest"):
+        if not _is_hex64(perm.get(key)):
+            raise exc("diagnostics perm.%s is not 64-char hex" % (key,))
+    if not _is_hex64(record.get("decision_id")):
+        raise exc("diagnostics decision_id is not 64-char hex")
+
+
 def _check_pointer_lists(erased, masked):
     for name, lst in (("erased", erased), ("masked", masked)):
         if not isinstance(lst, (list, tuple)):
@@ -297,7 +389,7 @@ def _check_pointer_lists(erased, masked):
 
 def build_event(*, decision, raw_body, erased=(), masked=(),
                 replay_fn, replay_inputs, replay_verdict,
-                replay_complete=True):
+                replay_complete=True, diagnostics=None):
     """Build a v2 decision event (fail-closed on bad inputs).
 
     ``decision``: dict with kind/effect/policy_id/reason (strings).
@@ -307,6 +399,10 @@ def build_event(*, decision, raw_body, erased=(), masked=(),
     the canonical inputs; ``replay_verdict`` the recorded verdict;
     ``replay_complete``: True iff the capture is claimed complete
     (an honest False says "partial capture" instead of lying).
+    ``diagnostics``: optional decision-diagnostics record dict (see
+    gov.decision_diagnostics); shape-checked and bound by
+    ``decision_id``. Omitted (None) on legacy events -- the key is
+    absent, not null, so legacy bytes are preserved.
     """
     if not isinstance(decision, dict):
         raise EventBuildError("decision must be a dict")
@@ -340,6 +436,9 @@ def build_event(*, decision, raw_body, erased=(), masked=(),
     # every later _canonical call in-taxonomy (no bare TypeError).
     _canonical_build(raw_body, "raw_body")
     _canonical_build(decision, "decision")
+    if diagnostics is not None:
+        _check_diagnostics_shape(diagnostics, EventBuildError)
+        _canonical_build(diagnostics, "diagnostics")
 
     body = copy.deepcopy(raw_body)
     sensitive_digests = []
@@ -370,6 +469,11 @@ def build_event(*, decision, raw_body, erased=(), masked=(),
             "complete": replay_complete,
         },
     }
+    if diagnostics is not None:
+        # Additive: present only when supplied. Rides the decision_id
+        # preimage (bound against tampering); legacy events omit the
+        # key entirely.
+        event["diagnostics"] = copy.deepcopy(diagnostics)
     event["decision_id"] = _decision_id_for(event)
     return event
 
@@ -541,6 +645,12 @@ def verify_event(event, *, value_predicates=()):
     body = event.get("body")
     if not isinstance(body, dict):
         raise EventVerifyError("event.body is not a dict")
+    if "diagnostics" in event:
+        # Additive block: shape-checked (semantic verification is
+        # gov.decision_diagnostics.verify_decision_record). It rides
+        # the decision_id preimage checked below, so a forged block
+        # breaks the id binding.
+        _check_diagnostics_shape(event["diagnostics"], EventVerifyError)
     erased = event.get("erased")
     masked = event.get("masked")
     if not isinstance(erased, (list, tuple)) or not isinstance(

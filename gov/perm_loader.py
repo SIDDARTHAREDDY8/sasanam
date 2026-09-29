@@ -57,6 +57,7 @@ top-level ``not`` are all refused loud -- never silently ignored.
 $0 spend, synthetic/local deterministic only. No network.
 """
 
+import copy
 import fnmatch
 import hashlib
 import json
@@ -272,6 +273,79 @@ def _operand_type_compatible(op, left, right, where):
             % (where, op, lt, rt))
 
 
+def _const_operand_value(operand):
+    """(is_const, value) for a compiled operand. Literals are
+    constant (a precompiled regex literal counts as its compiled
+    pattern object -- ``_eval_matcher`` compares the same objects by
+    identity, so the fold agrees with runtime); req/pol references
+    are not."""
+    kind, name, _typ = operand
+    if kind == "lit":
+        return True, name
+    return False, None
+
+
+def _const_eval(node):
+    """(is_const, value): True when the compiled matcher node is
+    provably constant -- it references no req/pol operand, so its
+    truth value is fixed at load time. Used to refuse
+    provably-never-true screen matchers (the silently-never-matching
+    pack shape Cedar's validation docs warn about)."""
+    kind = node[0]
+    if kind == "and":
+        vals = []
+        for sub in node[1]:
+            const, val = _const_eval(sub)
+            if not const:
+                return False, None
+            vals.append(val)
+        return True, all(vals)
+    if kind == "or":
+        vals = []
+        for sub in node[1]:
+            const, val = _const_eval(sub)
+            if not const:
+                return False, None
+            vals.append(val)
+        return True, any(vals)
+    if kind == "not":
+        const, val = _const_eval(node[1])
+        return (True, not val) if const else (False, None)
+    if kind in _COMPARE_OPS:
+        lconst, lval = _const_operand_value(node[1])
+        rconst, rval = _const_operand_value(node[2])
+        if not (lconst and rconst):
+            return False, None
+        if kind == "eq":
+            return True, lval == rval
+        if kind == "neq":
+            return True, lval != rval
+        if kind == "gt":
+            return True, lval > rval
+        if kind == "gte":
+            return True, lval >= rval
+        if kind == "lt":
+            return True, lval < rval
+        return True, lval <= rval
+    if kind == "call":
+        _k, impl_name, args = node
+        impl, _arity = FUNCTION_REGISTRY[impl_name]
+        vals = []
+        for arg in args:
+            const, val = _const_operand_value(arg)
+            if not const:
+                return False, None
+            vals.append(val)
+        try:
+            return True, bool(impl(*vals))
+        except Exception:
+            # A constant-fold failure is not a load failure: the
+            # node simply is not provably constant (evaluation will
+            # raise loudly per-row if the inputs are actually bad).
+            return False, None
+    return False, None
+
+
 def _compile_matcher(node, req_schema, pol_schema, matchers, where,
                      _top=True):
     """Compile a matcher node to a nested tuple tree."""
@@ -446,6 +520,23 @@ def parse_perm_model(data):
         compiled = _compile_matcher(
             screen["matcher"], req_schema, pol_schema, matchers,
             "%s/matcher" % where)
+        is_const, const_val = _const_eval(compiled)
+        if is_const and const_val is False:
+            # Wave-206 (Cedar ADAPT): a screen whose matcher is
+            # provably never-true can never fire -- its policy rows
+            # are silently dead. That is the never-matching-pack
+            # shape Cedar's validation docs warn about (a typo'd
+            # policy that "will have no impact" and is ignored). The
+            # honest way to disable a screen is empty policy rows,
+            # which keep the screen visible in the pack; a
+            # constant-false matcher is refused loud at load.
+            # (Constant-TRUE matchers are allowed: "match all" is the
+            # pack author's explicit, digest-visible choice.)
+            raise PermError(
+                "%s: matcher is provably never-true (constant-folds "
+                "to False) -- a screen that can never fire is refused; "
+                "disable the screen with empty policy rows instead"
+                % where)
         compiled_screens.append({
             "name": name,
             "effect": effect,
@@ -739,6 +830,21 @@ class PermModel(object):
             "function_set_digest": self._function_set_digest,
         }
 
+    def policy_row(self, screen_name, index):
+        """The policy row dict at ``index`` of ``screen_name``'s policy
+        list (indices stable within one pinned policy digest). Public
+        accessor for diagnostics consumers -- the row dict is a copy,
+        so callers cannot mutate the loaded pack."""
+        try:
+            rows = self._policies[screen_name]
+        except KeyError:
+            raise PermError("unknown screen %r" % (screen_name,))
+        try:
+            return copy.deepcopy(rows[index])
+        except (IndexError, TypeError):
+            raise PermError(
+                "screen %r has no policy row %r" % (screen_name, index))
+
     def decide(self, request):
         """Render a verdict for one request.
 
@@ -748,18 +854,65 @@ class PermModel(object):
         ``matched_rows``. Fail-closed: a malformed request raises
         PermError -- decide NEVER returns allow on bad input.
         """
+        verdict, screen, trace = self.decide_traced(request)
+        if screen == "default":
+            return (verdict, screen, {"matched_rows": 0})
+        # decide_traced guarantees a deciding entry when screen !=
+        # "default"; the None-default keeps the failure in-taxonomy
+        # (PermError) instead of leaking StopIteration.
+        deciding = next((t for t in trace if t["decided"]), None)
+        if deciding is None:
+            raise PermError(
+                "decide_traced returned no deciding entry for a "
+                "screen-fired verdict")
+        return (verdict, screen, {"matched_rows": len(deciding["matched"])})
+
+    def decide_traced(self, request):
+        """Render a verdict with the full per-screen trace.
+
+        Returns ``(verdict, screen, trace)``. ``trace`` has one entry
+        per composition-order screen evaluated, in order::
+
+            {"screen": name, "verdict": entry_verdict,
+             "effect": effect_expression, "invert": bool,
+             "matched": [{"index": row_index, "effect": row_eft}, ...],
+             "effect_value": bool, "decided": bool}
+
+        ``matched`` carries row indices into the screen's policy list
+        (stable within one pinned policy digest) plus each row's
+        ``eft``. The deciding entry has ``decided=True``; entries
+        after it are absent. When no screen fires, screen is
+        ``"default"`` and the trace covers every screen with
+        ``decided=False``. Powers the decision+diagnostics contract
+        (:mod:`gov.decision_diagnostics`): which rows determined the
+        decision is traceable, never inferred.
+        """
         req = _validate_request(request, self._model["request_schema"])
         composition = self._model["composition"]
+        trace = []
         for entry in composition["order"]:
             screen = self._screens[entry["screen"]]
-            matched = [row for row in self._policies[screen["name"]]
-                       if _eval_matcher(screen["matcher"], req, row)]
-            effect_value = _apply_effect(screen["effect"], matched)
-            if effect_value != entry["invert"]:
-                return (entry["verdict"], screen["name"],
-                        {"matched_rows": len(matched)})
-        return (composition["default_verdict"], "default",
-                {"matched_rows": 0})
+            matched = [
+                {"index": i, "effect": row["eft"]}
+                for i, row in enumerate(self._policies[screen["name"]])
+                if _eval_matcher(screen["matcher"], req, row)]
+            effect_value = _apply_effect(
+                screen["effect"],
+                [self._policies[screen["name"]][m["index"]]
+                 for m in matched])
+            decided = (effect_value != entry["invert"])
+            trace.append({
+                "screen": screen["name"],
+                "verdict": entry["verdict"],
+                "effect": screen["effect"],
+                "invert": entry["invert"],
+                "matched": matched,
+                "effect_value": effect_value,
+                "decided": decided,
+            })
+            if decided:
+                return (entry["verdict"], screen["name"], trace)
+        return (composition["default_verdict"], "default", trace)
 
 
 def compile_perm_model(model_data, policy_data):
