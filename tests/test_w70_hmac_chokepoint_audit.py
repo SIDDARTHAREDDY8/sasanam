@@ -206,6 +206,17 @@ ALLOWED_HMAC_SITES = {
     # the scheme marker cannot be stripped off-band.
     ("gov/chained_store.py", "keyed_digest", 0):
         "row-9 chain-record MAC; key from resolve_active_key() chokepoint, domain-separated per record schema",
+    # gov/tee_attest.py (wave-208, lane D): the SYNTHETIC local-TDREPORT
+    # platform MAC. The key is secrets.token_bytes(32) minted fresh on
+    # every call -- never a production key, never hard-coded, never
+    # stored, exported, or reused. The MAC authenticates only synthetic
+    # local TDREPORT fixtures (kind=TDX_KIND_LOCAL, labeled synthetic);
+    # no remote verifier can check it, and the remote TDX verifier must
+    # refuse these reports even when every exposed field matches. This
+    # is fixture-only key material, not a credential and not custody
+    # material; nothing production flows through this site.
+    ("gov/tee_attest.py", "make_synthetic_local_tdreport", 0):
+        "synthetic local-TDREPORT fixture MAC; ephemeral random key per call, remote-unverifiable by design",
 }
 
 
