@@ -331,9 +331,18 @@ class ManifestStore(object):
     validated at set time -- a non-CompiledPack is refused loud, so
     a malformed pack can never silently weaken detection (a pack
     that fails to COMPILE never becomes a CompiledPack at all).
+
+    ``capability_pack_lint_failed`` (wave-206): True when the
+    compiled pack came from an activated pack that FAILED the pack
+    lint (LOG_ONLY). Every ``verify_skill_manifest`` result through
+    this store then carries the ``pack-lint-failed`` marker in its
+    detail string. The constructor is not a trust boundary -- the
+    enforcement point is the caller passing
+    ``active.lint_failed`` from the activated pack.
     """
 
-    def __init__(self, keys=None, manifests=None, capability_pack=None):
+    def __init__(self, keys=None, manifests=None, capability_pack=None,
+                 capability_pack_lint_failed=False):
         self._keys = {}
         for kid, pub in (keys or {}).items():
             if not isinstance(kid, str) or not kid:
@@ -355,11 +364,20 @@ class ManifestStore(object):
                     "gov.capability_rules.load_pack_files (a pack "
                     "that fails to compile never becomes one)")
         self._capability_pack = capability_pack
+        if not isinstance(capability_pack_lint_failed, bool):
+            raise ValueError("capability_pack_lint_failed must be a "
+                             "bool")
+        self._capability_pack_lint_failed = capability_pack_lint_failed
 
     @property
     def capability_pack(self):
         """The active compiled capability rule pack, or None."""
         return self._capability_pack
+
+    @property
+    def capability_pack_lint_failed(self):
+        """True when the store's pack came from a lint-failed pack."""
+        return self._capability_pack_lint_failed
 
     def pubkey_for(self, kid):
         """32-byte public key for ``kid``, or None."""
@@ -548,6 +566,10 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     composite's enforcement value is at the bundle/review seam
     (``evaluate_bundle`` / ``diff_namespaces``). When the store
     carries no pack, the flat lint runs exactly as before.
+
+    Wave-206: when the store's pack came from a lint-failed pack
+    (``store.capability_pack_lint_failed``), every returned detail
+    string carries the ``|pack-lint-failed`` marker.
     """
     if store is None:
         return True, "no-store"
@@ -556,14 +578,19 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     manifest = store.manifest_for(skill_id)
     if manifest is None:
         return True, "manifest-absent"
+    # Wave-206: when the store's pack came from a lint-failed pack,
+    # every result detail carries the marker -- the marker is
+    # store-derived, never caller-controlled.
+    lint_marker = ("|pack-lint-failed"
+                   if store.capability_pack_lint_failed else "")
     try:
         verify_manifest(manifest, store, expected_skill_id=skill_id,
                         threshold=threshold)
     except ManifestVerificationError as exc:
-        return False, "manifest-%s" % exc.code
+        return False, "manifest-%s%s" % (exc.code, lint_marker)
     observed = "sha256:" + hashlib.sha256(bytes(content)).hexdigest()
     if manifest.get("artifact_digest") != observed:
-        return False, "manifest-digest-mismatch"
+        return False, "manifest-digest-mismatch" + lint_marker
     pack = store.capability_pack
     if pack is None:
         detected = detect_capabilities(content)
@@ -576,11 +603,11 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1):
         try:
             detected = _rule_detect(content, pack, strict=True)
         except Exception:
-            return False, "manifest-capability-eval-failed"
+            return False, "manifest-capability-eval-failed" + lint_marker
     ok, detail = check_capabilities(manifest.get("capabilities"), detected)
     if not ok:
-        return False, detail
-    return True, "clean"
+        return False, detail + lint_marker
+    return True, "clean" + lint_marker
 
 
 def make_manifest(skill_id, content, *, capabilities, kid, seed,

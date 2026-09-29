@@ -783,11 +783,18 @@ class PermModel(object):
     """
 
     def __init__(self, model, policies, *, model_digest,
-                 policy_digest):
+                 policy_digest, lint_failed=False):
         self._model = model
         self._policies = policies
         self._model_digest = model_digest
         self._policy_digest = policy_digest
+        # Wave-206: True when this model was built from an activated
+        # pack that failed the pack lint (LOG_ONLY). Every decide()
+        # output then carries the pack-lint-failed marker.
+        if isinstance(lint_failed, bool):
+            self._lint_failed = lint_failed
+        else:
+            raise PermError("lint_failed must be a bool")
         self._composition_digest = hashlib.sha256(
             json.dumps(model["composition"], sort_keys=True,
                        separators=(",", ":")).encode("utf-8")
@@ -820,6 +827,11 @@ class PermModel(object):
     def screen_names(self):
         return [s["name"] for s in self._model["screens"]]
 
+    @property
+    def lint_failed(self):
+        """True when this model came from a lint-failed pack."""
+        return self._lint_failed
+
     def bom_perm_section(self):
         """The ``inputs.perm`` section for the Decision BOM
         (all-or-none with the other digests)."""
@@ -851,12 +863,15 @@ class PermModel(object):
         Returns ``(verdict, screen, detail)`` where verdict is one of
         ``deny`` / ``require_approval`` / ``allow``, screen is the
         deciding screen name (or ``"default"``), and detail carries
-        ``matched_rows``. Fail-closed: a malformed request raises
+        ``matched_rows``. When this model was built from a lint-failed
+        pack (wave-206 LOG_ONLY), detail also carries
+        ``pack_lint_failed: True`` -- the marker cannot be stripped
+        by the request. Fail-closed: a malformed request raises
         PermError -- decide NEVER returns allow on bad input.
         """
         verdict, screen, trace = self.decide_traced(request)
         if screen == "default":
-            return (verdict, screen, {"matched_rows": 0})
+            return (verdict, screen, self._detail(0))
         # decide_traced guarantees a deciding entry when screen !=
         # "default"; the None-default keeps the failure in-taxonomy
         # (PermError) instead of leaking StopIteration.
@@ -865,7 +880,7 @@ class PermModel(object):
             raise PermError(
                 "decide_traced returned no deciding entry for a "
                 "screen-fired verdict")
-        return (verdict, screen, {"matched_rows": len(deciding["matched"])})
+        return (verdict, screen, self._detail(len(deciding["matched"])))
 
     def decide_traced(self, request):
         """Render a verdict with the full per-screen trace.
@@ -914,14 +929,23 @@ class PermModel(object):
                 return (entry["verdict"], screen["name"], trace)
         return (composition["default_verdict"], "default", trace)
 
+    def _detail(self, matched_rows):
+        """The decide() detail mapping (marker included when set)."""
+        detail = {"matched_rows": matched_rows}
+        if self._lint_failed:
+            detail["pack_lint_failed"] = True
+        return detail
 
-def compile_perm_model(model_data, policy_data):
+
+def compile_perm_model(model_data, policy_data, lint_failed=False):
     """Strict-parse and compile a model + policy document pair.
 
     ``model_data`` / ``policy_data``: bytes or str of the YAML
-    documents. Returns a :class:`PermModel`. Raises PermError loud
-    on any malformed input -- an unsigned or malformed model never
-    becomes a decider.
+    documents. ``lint_failed``: True when the documents came from an
+    activated pack that failed the pack lint -- every decide()
+    output then carries the ``pack_lint_failed`` marker. Returns a
+    :class:`PermModel`. Raises PermError loud on any malformed input
+    -- an unsigned or malformed model never becomes a decider.
     """
     if isinstance(model_data, (bytearray, memoryview)):
         model_data = bytes(model_data)
@@ -936,7 +960,8 @@ def compile_perm_model(model_data, policy_data):
     return PermModel(
         model, policies,
         model_digest=hashlib.sha256(model_bytes).hexdigest(),
-        policy_digest=hashlib.sha256(policy_bytes).hexdigest())
+        policy_digest=hashlib.sha256(policy_bytes).hexdigest(),
+        lint_failed=lint_failed)
 
 
 def load_perm_from_active_pack(active):
@@ -948,6 +973,10 @@ def load_perm_from_active_pack(active):
     refused (the pack signature already binds the member set; this
     is the type check that the pack is a model pack, not merely a
     signed one).
+
+    Wave-206: when the activated pack failed the pack lint, the
+    model carries the failure through -- every decide() output is
+    marked ``pack_lint_failed``.
     """
     if not isinstance(active, ActivePack):
         raise PermError("active must be an ActivePack")
@@ -965,7 +994,8 @@ def load_perm_from_active_pack(active):
             % (PERM_MODEL_MEMBER, PERM_POLICY_MEMBER,
                sorted(active.members)))
     return compile_perm_model(active.member(PERM_MODEL_MEMBER),
-                              active.member(PERM_POLICY_MEMBER))
+                              active.member(PERM_POLICY_MEMBER),
+                              lint_failed=active.lint_failed)
 
 
 def mint_perm_pack(keyset, signers, *, model_bytes, policy_bytes,
