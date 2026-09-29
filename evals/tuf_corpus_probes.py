@@ -165,9 +165,16 @@ def _world(threshold=1, nsigners=1, tier="dev"):
 
 def _pin(w, artifact_id, digest, tier="dev"):
     lg = w["lg"]
-    body = lg._canonical_pin_body(tier, artifact_id, digest, _TS)
+    # v2 pin protocol (wave-194 lane A): the canonical body commits to
+    # (tier|artifact_id|digest|ts|version|not_after), so probes pin at
+    # version 1 with the default 90-day expiry bound resolved from ts.
+    version = 1
+    not_after = lg._resolve_pin_not_after(_TS, None)
+    body = lg._canonical_pin_body(tier, artifact_id, digest, _TS,
+                                  version=version, not_after=not_after)
     return w["pinset"].pin(artifact_id, digest, w["h1"].key_id,
-                           w["h1"].sign(body).hex(), ts=_TS, tier=tier)
+                           w["h1"].sign(body).hex(), ts=_TS, tier=tier,
+                           version=version, not_after=not_after)
 
 
 def _mint(w, artifacts, version=1, expires_at=_FUTURE,

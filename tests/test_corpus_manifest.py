@@ -76,9 +76,16 @@ def _pin_world():
 
 
 def _pin(pinset, h1, artifact_id, digest, tier="dev"):
-    body = lg._canonical_pin_body(tier, artifact_id, digest, _TS)
+    # v2 pin protocol (wave-194 lane A): the canonical body commits to
+    # (tier|artifact_id|digest|ts|version|not_after), so tests pin at
+    # version 1 with the default 90-day expiry bound resolved from ts.
+    version = 1
+    not_after = lg._resolve_pin_not_after(_TS, None)
+    body = lg._canonical_pin_body(tier, artifact_id, digest, _TS,
+                                  version=version, not_after=not_after)
     return pinset.pin(artifact_id, digest, h1.key_id,
-                      h1.sign(body).hex(), ts=_TS, tier=tier)
+                      h1.sign(body).hex(), ts=_TS, tier=tier,
+                      version=version, not_after=not_after)
 
 
 class TestCorpusManifestMintVerify(unittest.TestCase):
