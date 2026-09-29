@@ -373,21 +373,30 @@ def sign_manifest(manifest, kid, seed):
     return {"protected": protected_b64, "signature": _b64u_encode(sig)}
 
 
-def verify_manifest(manifest, store, *, expected_skill_id=None):
+def verify_manifest(manifest, store, *, expected_skill_id=None,
+                    threshold=1):
     """Verify a signed capability manifest against the pinned store.
 
     Returns ``{"skill_id": <manifest skill_id>, "kids": [verified kids],
     "artifact_digest": <bound digest>}``. Fail-closed: raises
     ManifestVerificationError with a distinct code on every failure
-    mode. Requires at least one fully valid signature. A protected
-    header naming ``jku`` is refused outright (``jku-not-allowed``) —
-    key discovery is never performed. When ``expected_skill_id`` is
-    given, the manifest's ``skill_id`` must equal it
-    (``skill-id-mismatch``) — a manifest attested for one artifact
-    never verifies for another.
+    mode. Requires at least ``threshold`` valid signatures from
+    DISTINCT pinned kids (wave-194: the production pin tier needs two
+    distinct-human signatures — pass ``threshold=2``; the default
+    ``threshold=1`` preserves the legacy "at least one" contract).
+    A protected header naming ``jku`` is refused outright
+    (``jku-not-allowed``) — key discovery is never performed. When
+    ``expected_skill_id`` is given, the manifest's ``skill_id`` must
+    equal it (``skill-id-mismatch``) — a manifest attested for one
+    artifact never verifies for another. ``threshold-unmet`` names
+    the distinct-kid shortfall.
     """
     if not isinstance(store, ManifestStore):
         raise TypeError("store must be a ManifestStore")
+    if (isinstance(threshold, bool) or not isinstance(threshold, int)
+            or threshold < 1):
+        raise ManifestVerificationError(
+            "bad-threshold", "threshold must be an integer >= 1")
     canonical = canonical_manifest_json(manifest)  # type-check first
     skill_id = manifest.get("skill_id")
     if not isinstance(skill_id, str) or not skill_id:
@@ -457,16 +466,24 @@ def verify_manifest(manifest, store, *, expected_skill_id=None):
             ok = _ed.verify(pubkey, signing_input, sig)
         except Exception:
             ok = False
-        if ok:
+        # Distinct kids only: the same key signing twice is one
+        # attestation, not two — threshold counts attestations, not
+        # signature entries.
+        if ok and kid not in valid_kids:
             valid_kids.append(kid)
-    if not valid_kids:
+    if len(valid_kids) < threshold:
+        if not valid_kids:
+            raise ManifestVerificationError(
+                "bad-signature", "no valid signature from a pinned key")
         raise ManifestVerificationError(
-            "bad-signature", "no valid signature from a pinned key")
+            "threshold-unmet",
+            "%d of %d required distinct signatures verify"
+            % (len(valid_kids), threshold))
     return {"skill_id": skill_id, "kids": valid_kids,
             "artifact_digest": manifest.get("artifact_digest")}
 
 
-def verify_skill_manifest(skill_id, content, store):
+def verify_skill_manifest(skill_id, content, store, *, threshold=1):
     """Full load-time check for one skill's artifact bytes.
 
     Returns ``(ok, detail)`` — never raises for well-formed inputs:
@@ -476,6 +493,9 @@ def verify_skill_manifest(skill_id, content, store):
         (advisory; the caller emits ``capability_manifest_absent``).
       * bad signature / unknown kid / jku / ... ->
         ``(False, "manifest-<code>")``.
+      * fewer than ``threshold`` distinct valid signatures ->
+        ``(False, "manifest-threshold-unmet")`` (wave-194: the
+        production pin tier needs two distinct-human signatures).
       * manifest for a different skill -> ``(False,
         "manifest-skill-id-mismatch")``.
       * ``artifact_digest`` != sha256(content) -> ``(False,
@@ -496,7 +516,8 @@ def verify_skill_manifest(skill_id, content, store):
     if manifest is None:
         return True, "manifest-absent"
     try:
-        verify_manifest(manifest, store, expected_skill_id=skill_id)
+        verify_manifest(manifest, store, expected_skill_id=skill_id,
+                        threshold=threshold)
     except ManifestVerificationError as exc:
         return False, "manifest-%s" % exc.code
     observed = "sha256:" + hashlib.sha256(bytes(content)).hexdigest()

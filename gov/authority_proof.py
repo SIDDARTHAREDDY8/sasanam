@@ -115,6 +115,11 @@ import json
 import posixpath
 import re
 
+try:
+    from . import mcp_annotations as _mcp_annotations
+except ImportError:  # standalone/offline: mcp_annotations.py beside this file
+    import mcp_annotations as _mcp_annotations
+
 # The four proof verdicts. Only ``within_boundary`` is a passing
 # result; every other verdict fails closed at an enforcing seam.
 WITHIN = "within_boundary"
@@ -1128,7 +1133,9 @@ def _derive_graphql_accesses(tool: str, args: Mapping[str, Any]):
 
 def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
           boundary: Optional[AuthorityBoundary],
-          max_accesses: int = DEFAULT_MAX_ACCESSES) -> AuthorityProof:
+          max_accesses: int = DEFAULT_MAX_ACCESSES, *,
+          mcp_tool_registry: Optional[Mapping[str, Any]] = None,
+          token_claims: Optional[Mapping[str, Any]] = None) -> AuthorityProof:
     """Check one proposed action against the operator boundary.
 
     Pure function: deterministic, stdlib-only, no I/O, no clock. Never
@@ -1137,6 +1144,22 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
     turn a hostile action dict into a crash). ``boundary=None`` means
     the operator declared no boundary: verdict ``inconclusive`` with
     all domains uncovered (advisory at the seam, never a refusal).
+
+    ``mcp_tool_registry`` / ``token_claims`` are the wave-196 MCP
+    annotation-attestation seam (see ``gov.mcp_annotations``): when a
+    registry is supplied, each authorized ``mcp_call`` is additionally
+    checked against the attested ``required_scopes`` for its exact
+    ``server::tool`` pair, using the caller's verified identity-token
+    claim set (``aud``/``exp`` validated, then ``agent_scope`` matched
+    exactly). A scope miss is ``exceeds_boundary`` (fail closed).
+    Clock note: the scope path validates token expiry against the wall
+    clock (via ``decision_packet.check_token_claims``), so with a
+    registry and claims supplied the function is no longer clock-free
+    -- two runs straddling a token's expiry boundary can differ;
+    otherwise it is deterministic. Without a registry the MCP check
+    is exactly the legacy one (boundary allowlist + argument byte
+    budget); the new keyword args are additive and ignored by the
+    legacy path.
     """
     if not isinstance(action, Mapping):
         action = {}
@@ -1174,6 +1197,21 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             boundary_version=None,
             resolution_source="none",
             detail="seam error: boundary is not an AuthorityBoundary",
+        )
+    if mcp_tool_registry is not None and \
+            not isinstance(mcp_tool_registry, Mapping):
+        # A programming error at the seam (the registry must be built
+        # by gov.mcp_annotations.build_tool_registry): fail closed as
+        # inconclusive rather than trusting an unshaped registry.
+        return AuthorityProof(
+            verdict=INCONCLUSIVE,
+            covered_domains=(),
+            uncovered_domains=ALL_DOMAINS,
+            counterexample=None,
+            boundary_id=None,
+            boundary_version=None,
+            resolution_source="none",
+            detail="seam error: mcp_tool_registry is not a mapping",
         )
 
     fs_accesses, fs_unsupported, resolution_source = _derive_fs_accesses(
@@ -1345,6 +1383,27 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
                 resolution_source=resolution_source,
                 detail="MCP argument budget outside the declared boundary",
             )
+        if mcp_tool_registry is not None:
+            # Attested annotation seam (wave-196): the pair passed the
+            # boundary allowlist above; now enforce any attested
+            # required scopes against the caller's identity-token
+            # claim set. Attestation can only tighten: un-attested
+            # pairs require nothing here.
+            scope_ok, scope_why = _mcp_annotations.check_required_scopes(
+                pair, mcp_tool_registry, token_claims)
+            if not scope_ok:
+                return AuthorityProof(
+                    verdict=EXCEEDS,
+                    covered_domains=covered_domains,
+                    uncovered_domains=uncovered_domains,
+                    counterexample=Counterexample(
+                        domain="mcp_tools", access=pair,
+                        nearest_rule=None, reason=scope_why),
+                    boundary_id=boundary.boundary_id,
+                    boundary_version=boundary.version,
+                    resolution_source=resolution_source,
+                    detail="MCP required-scope check failed for %r" % pair,
+                )
     for op_type, max_depth, mut_roots, has_intro in graphql_accesses:
         op_access = "%s depth=%d" % (op_type, max_depth)
         if has_intro and not boundary.graphql_allow_introspection:

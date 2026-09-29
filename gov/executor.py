@@ -100,6 +100,11 @@ from . import decision_bom as _decision_bom
 from . import supplychain_install as sc_install
 from . import artifact_sweep as _artifact_sweep
 from . import target_match as _target_match
+# Wave-196 lane C (step-ca steal): the provisioner abstraction + lifetime
+# claims envelope (typed issuance authorities with per-issuer TTL / scope /
+# role / renewal policy). Read at mint time only when a registry is
+# configured; otherwise mint_identity behaves exactly as before.
+from . import provisioner as _provisioner
 from .approvals import (DelegationError, DelegationStore,
                         IdentityVerifierAlreadySetError, approval_digest_ok,
                         APPROVAL_DIGEST_SCHEME, record_digest,
@@ -1017,7 +1022,32 @@ class ToolExecutor:
                  # GOV_DECISION_PACKET_KEY_FILE; unconfigured = packets
                  # disabled with one loud chained event (never silent,
                  # never a dev-key fallback).
-                 packet_key_seed=None):
+                 packet_key_seed=None,
+                 # Wave-196 lane C (step-ca steal): the deployment's
+                 # issuance authorities. None (default) = the legacy
+                 # mint_identity behavior, byte-for-byte. Configured =
+                 # every mint names a provisioner and is checked against
+                 # its lifetime-claims envelope (max TTL, scopes, roles,
+                 # renewal, per-provisioner budget, break-glass
+                 # justification). Built from deployment config, never
+                 # from agent input.
+                 provisioner_registry=None):
+        # Wave-196 lane C: the provisioner registry (None = legacy
+        # issuance behavior) and the per-provisioner mint counters used
+        # for max_mints_per_run budgets. Counters live per executor
+        # (per run); refusals never increment them. Fail fast on a
+        # misconfigured registry: a non-registry value would otherwise
+        # explode with AttributeError at mint time.
+        if (provisioner_registry is not None
+                and not isinstance(
+                    provisioner_registry,
+                    _provisioner.ProvisionerRegistry)):
+            raise ValueError(
+                "provisioner_registry must be a "
+                "gov.provisioner.ProvisionerRegistry or None, got %r"
+                % (provisioner_registry,))
+        self._provisioner_registry = provisioner_registry
+        self._provisioner_mint_counts = {}
         self.run_dir = Path(run_dir)
         self.run_id = self.run_dir.name
         self.policy = policy
@@ -2166,7 +2196,28 @@ class ToolExecutor:
         self._delegation_receipt_cache = (ctx, receipt)
         return receipt
 
-    def mint_identity(self, agent_id, role, principal, token_claims=None):
+    def _audit_provisioner_refused(self, agent_id, role, principal,
+                                     policy_id, reason):
+        """Chained audit entry for a provisioner-issuance refusal.
+
+        Same ``identity_mint_refused`` shape as the F50 registry
+        refusal (so auditors query one event): a refused mint never
+        consumes budget and never issues.
+        """
+        self.log.append({
+            "event": "identity_mint_refused",
+            "run_id": self.run_id,
+            "agent_id": agent_id,
+            "role": role,
+            "principal": principal,
+            "decision": "refused",
+            "policy_id": policy_id,
+            "reason": ("identity_mint refused: %s" % reason),
+        })
+
+    def mint_identity(self, agent_id, role, principal, token_claims=None,
+                      provisioner=None, ttl_seconds=None, scopes=None,
+                      justification=None):
         """Issue the only kind of identity this executor will honor.
 
         F17b: issuance is rate-limited (per-run cap,
@@ -2196,6 +2247,27 @@ class ToolExecutor:
         never consumes mint budget and never issues. This is the
         defense-in-depth twin of the packet verifier's token check:
         issuance refuses a bad token even before any packet exists.
+
+        Wave-196 lane C (step-ca steal): when a
+        ``provisioner_registry`` is configured, ``provisioner`` names
+        the issuance authority and the mint is checked against its
+        lifetime-claims envelope (max/min TTL, scopes, roles,
+        renewal policy, per-provisioner mint budget, break-glass
+        justification). ``ttl_seconds`` requests a lifetime (default:
+        the deployment default capped by the provisioner's max TTL);
+        ``scopes`` requests grant scopes (a string or a collection);
+        ``justification`` is required (and only required) for
+        break-glass provisioners. A presented token whose
+        (exp - iat) lifetime exceeds the provisioner's max TTL is
+        refused, and scopes outside the provisioner's grant are
+        refused even when the token claims them. Every refusal raises
+        ``ProvisionerRefusedError`` (or a subclass), never consumes
+        mint budget, and is audit-logged as
+        ``identity_mint_refused`` with ``policy_id``
+        ``provisioner:<name>``. Without a configured registry the
+        four new arguments are refused fail-closed -- a policy that
+        was never configured is never silently honored -- and legacy
+        callers see byte-identical behavior.
         """
         if self._mint_count >= _MAX_IDENTITY_MINTS_PER_RUN:
             raise IdentityMintLimitError(
@@ -2224,6 +2296,114 @@ class ToolExecutor:
             # loudly, once per process (same disclosure pattern as the
             # dev-key warnings).
             warn_self_asserted_identity_once()
+        # Wave-196 lane C (step-ca steal): the provisioner issuance
+        # policy. Fail-closed at every step: refusals never consume
+        # mint budget, never issue, and are audit-logged via
+        # _audit_provisioner_refused.
+        _prov = None          # the resolved Provisioner, or None
+        _prov_ttl = None      # resolved lifetime in seconds
+        _prov_scopes = []     # resolved effective scope list
+        _prov_expires = None  # resolved expiry epoch (token exp else
+                              # now + ttl)
+        if self._provisioner_registry is None:
+            if (provisioner is not None or ttl_seconds is not None
+                    or scopes is not None or justification is not None):
+                # Issuance-policy arguments with no registry to enforce
+                # them: fail closed rather than silently honoring a
+                # policy the deployment never configured.
+                _no_reg_reason = (
+                    "issuance-policy arguments passed (provisioner=%r, "
+                    "ttl_seconds=%r, scopes=%r, justification=%r) but no "
+                    "provisioner_registry is configured on this "
+                    "executor" % (provisioner, ttl_seconds, scopes,
+                                  justification is not None))
+                self._audit_provisioner_refused(
+                    agent_id, role, principal, "no-provisioner-registry",
+                    _no_reg_reason)
+                raise _provisioner.ProvisionerRefusedError(
+                    "identity_mint refused: %s" % _no_reg_reason)
+        else:
+            if provisioner is None:
+                _unnamed_reason = (
+                    "provisioner_registry is configured: mint_identity "
+                    "requires provisioner=<name> (registered: %s)" %
+                    self._provisioner_registry.names())
+                self._audit_provisioner_refused(
+                    agent_id, role, principal, "provisioner:unnamed",
+                    _unnamed_reason)
+                raise _provisioner.ProvisionerRefusedError(
+                    "identity_mint refused: %s" % _unnamed_reason)
+            try:
+                _prov = self._provisioner_registry.get(provisioner)
+            except _provisioner.UnknownProvisionerError as _upe:
+                self._audit_provisioner_refused(
+                    agent_id, role, principal,
+                    "provisioner:%s" % (provisioner,),
+                    str(_upe))
+                raise
+            _prov_policy = "provisioner:%s" % _prov.name
+
+            def _refuse(_reason, _exc=None):
+                self._audit_provisioner_refused(
+                    agent_id, role, principal, _prov_policy, _reason)
+                raise (_exc or _provisioner.ProvisionerRefusedError)(
+                    "identity_mint refused: %s" % _reason)
+
+            if _prov.requires_presented_token() and token_claims is None:
+                # The OIDC attestation method attests via the
+                # dex-issued JWT (the wave-191 verified claim set):
+                # with no presented token there is nothing attesting
+                # the identity, so the mint is refused fail-closed.
+                _refuse("provisioner %r uses the oidc attestation "
+                        "method, which requires a presented identity "
+                        "token (token_claims)" % _prov.name)
+
+            # Normalize the requested scopes (a single string is one
+            # scope); the token's agent_scope is read for the
+            # cross-check and for the effective scope set.
+            if scopes is None:
+                _req_scopes = []
+            elif isinstance(scopes, str):
+                _req_scopes = [scopes]
+            else:
+                try:
+                    _req_scopes = list(scopes)
+                except TypeError:
+                    _req_scopes = None
+            if _req_scopes is None:
+                _refuse("scopes must be a string or a collection of "
+                        "strings, got %r" % (scopes,))
+            _tok_scopes = []
+            if isinstance(token_claims, dict):
+                _raw_scope = token_claims.get("agent_scope")
+                if isinstance(_raw_scope, str):
+                    _tok_scopes = _raw_scope.split()
+            if scopes is not None and token_claims is not None:
+                # The caller may not mint scopes the presented token
+                # does not carry.
+                if not set(_req_scopes) <= set(_tok_scopes):
+                    _refuse("requested scopes %s exceed the presented "
+                            "token's agent_scope %r"
+                            % (sorted(set(_req_scopes) - set(_tok_scopes)),
+                               token_claims.get("agent_scope")))
+            _prov_scopes = (_req_scopes if scopes is not None
+                            else list(_tok_scopes))
+            _prov_ttl = (_prov.claims.default_ttl()
+                         if ttl_seconds is None else ttl_seconds)
+            _ok, _why = _prov.authorize_mint(
+                _prov_ttl, _prov_scopes, justification, role)
+            if not _ok:
+                if isinstance(_prov,
+                              _provisioner.BreakGlassProvisioner):
+                    _refuse(_why,
+                            _exc=_provisioner.BreakGlassRefusedError)
+                _refuse(_why)
+            _budget = _prov.claims.max_mints_per_run
+            if (_budget is not None
+                    and self._provisioner_mint_counts.get(_prov.name, 0)
+                    >= _budget):
+                _refuse("provisioner %r mint budget exhausted (%d per "
+                        "run)" % (_prov.name, _budget))
         if token_claims is not None:
             # Wave-191 (identity token): the defense-in-depth twin of
             # the packet verifier's token check. The caller presents
@@ -2250,13 +2430,107 @@ class ToolExecutor:
                         "identity with %s %r (token-identity mismatch)"
                         % (_claim, token_claims.get(_claim), _field,
                            _want))
+            if _prov is not None:
+                # Wave-196 lane C: the token's lifetime is issuance
+                # policy, not just expiry -- a token that lives longer
+                # than the provisioner's max TTL is refused at mint
+                # time. (check_token_claims above already validated
+                # iat/exp types and ordering.)
+                _tok_lifetime = (token_claims["exp"]
+                                 - token_claims["iat"])
+                if _tok_lifetime > _prov.claims.max_ttl_seconds:
+                    _refuse("presented token lifetime %ds exceeds "
+                            "provisioner %r max_ttl_seconds %d"
+                            % (_tok_lifetime, _prov.name,
+                               _prov.claims.max_ttl_seconds))
+                _prov_expires = token_claims["exp"]
         self._mint_count += 1
         ident = AgentIdentity(agent_id=agent_id, role=role,
                               run_id=self.run_id, principal=principal,
                               provenance="minted")
         self._minted.add((ident.agent_id, ident.role,
                           ident.run_id, ident.principal))
-        if self._principal_registry is not None:
+        if _prov is not None:
+            # Successful mints only: refusals never reach this line, so
+            # per-provisioner budgets count issuance, not attempts.
+            self._provisioner_mint_counts[_prov.name] = \
+                self._provisioner_mint_counts.get(_prov.name, 0) + 1
+            if _prov_expires is None:
+                _prov_expires = int(time.time()) + _prov_ttl
+            _renewable = not _prov.claims.disable_renewal
+            _renew_after = None
+            if (_renewable
+                    and _prov.claims.renewal_window_seconds is not None):
+                _renew_after = datetime.fromtimestamp(
+                    _prov_expires - _prov.claims.renewal_window_seconds,
+                    tz=timezone.utc).isoformat()
+            _expires_iso = datetime.fromtimestamp(
+                _prov_expires, tz=timezone.utc).isoformat()
+            if isinstance(_prov, _provisioner.BreakGlassProvisioner):
+                # Loud: break-glass issuance must be unmistakable in
+                # the operator's face as well as in the chain.
+                print(
+                    "GOVERNANCE BREAK-GLASS: identity minted under "
+                    "break-glass provisioner %r for agent %r (role %r, "
+                    "principal %r), TTL %ds, justification: %s"
+                    % (_prov.name, agent_id, role, principal,
+                       _prov_ttl, justification),
+                    file=sys.stderr)
+            self.log.append({
+                "event": "identity_minted",
+                "run_id": self.run_id,
+                "agent_id": agent_id,
+                "role": role,
+                "principal": principal,
+                "decision": "identity_issued",
+                "policy_id": ("provisioner:%s" % _prov.name
+                              if self._principal_registry is None
+                              else "principal-registry"),
+                "reason": ("Identity issued under provisioner %r "
+                           "(%s); lifetime claims enforced and "
+                           "recorded." % (_prov.name,
+                                          _prov.provisioner_type)),
+                # Wave-196 lane C: the lifetime-claims envelope is
+                # signature-covered via the chained audit event (the
+                # audit log's hash chain / audit signing is the
+                # signature layer; the wave-192 packet section stays
+                # byte-identical when this feature is absent). The
+                # event records the resolved outcome (ttl, scopes)
+                # above; "policy" records the envelope that authorized
+                # it, so the decision is reconstructible from the
+                # chain alone.
+                "provisioner": _prov.name,
+                "provisioner_type": _prov.provisioner_type,
+                "ttl_seconds": _prov_ttl,
+                "expires_at": _expires_iso,
+                "scopes": sorted(_prov_scopes),
+                "policy": _prov.claims.as_audit_dict(),
+                "renewable": _renewable,
+                "renew_after": _renew_after,
+                "revocation": _prov.claims.revocation,
+            })
+            if isinstance(_prov, _provisioner.BreakGlassProvisioner):
+                # The dedicated loud event: justification on the chain,
+                # separate from the standard issuance event, so a
+                # break-glass mint is queryable without parsing
+                # reasons.
+                self.log.append({
+                    "event": "identity_break_glass_minted",
+                    "run_id": self.run_id,
+                    "agent_id": agent_id,
+                    "role": role,
+                    "principal": principal,
+                    "decision": "break_glass_issued",
+                    "policy_id": "provisioner:%s" % _prov.name,
+                    "provisioner": _prov.name,
+                    "ttl_seconds": _prov_ttl,
+                    "expires_at": _expires_iso,
+                    "justification": justification,
+                    "reason": ("Break-glass identity issued under "
+                               "provisioner %r; requires post-hoc "
+                               "review." % _prov.name),
+                })
+        elif self._principal_registry is not None:
             self.log.append({
                 "event": "identity_minted",
                 "run_id": self.run_id,

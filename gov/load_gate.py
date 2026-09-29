@@ -72,6 +72,7 @@ __all__ = [
     "SkillLoader",
     "load_skill_content",
     "is_digest_pin",
+    "CorpusManifestTracker",
 ]
 
 
@@ -455,6 +456,90 @@ def _refused(log, artifact_id, reason, detail):
     })
 
 
+class CorpusManifestTracker:
+    """The load-side holder of the corpus-signing keyset.
+
+    A corpus manifest (``gov/corpus_manifest.py``) is the signed,
+    versioned, expiring binding ``{artifact_id -> digest}`` for the
+    load corpus — the TUF snapshot/targets structure in our own terms
+    (wave-194). Present a manifest doc via :meth:`present`; it is
+    signature/expiry/purpose-verified against the keyset, and the
+    tracker remembers the highest verified ``corpus_version`` — a
+    re-presented OLDER manifest refuses ``corpus_stale`` (the TUF
+    rollback shape). The manifest the tracker holds is what
+    :meth:`SkillLoader.load_skill` checks the pin against.
+
+    The tracker is deployment-held and long-lived: the version memory
+    only works when the same tracker sees every presentation. A fresh
+    tracker starts with no version memory (honest residual: a
+    rebooted deployment re-trusts the presented manifest — the
+    manifest's own expiry bounds that window).
+    """
+
+    def __init__(self, keyset):
+        from .keyset import Keyset
+        if not isinstance(keyset, Keyset):
+            raise TypeError("keyset must be a Keyset")
+        self._keyset = keyset
+        self._highest_version = 0
+        self._manifest = None
+
+    def present(self, doc):
+        """Verify *doc* and adopt it as the current corpus manifest.
+
+        Raises :class:`ArtifactRefused` (fail-closed) on any corpus
+        violation: forged/tampered (``corpus_manifest_bad_signature``),
+        expired (``corpus_manifest_expired``), wrong keyset purpose
+        (``corpus_manifest_wrong_purpose``), threshold unmet
+        (``corpus_manifest_threshold_unmet``), or an older version
+        than already seen (``corpus_manifest_stale``). Returns the
+        verified :class:`CorpusManifest`.
+        """
+        from . import corpus_manifest as _cm
+        try:
+            manifest = _cm.verify_corpus_manifest(doc, self._keyset)
+        except _cm.CorpusManifestError as exc:
+            raise ArtifactRefused(
+                "corpus_manifest_%s: %s"
+                % (exc.code.replace("-", "_"), exc.detail))
+        if manifest.version < self._highest_version:
+            raise ArtifactRefused(
+                "corpus_manifest_stale: corpus version %d is older "
+                "than the verified version %d (rollback refused)"
+                % (manifest.version, self._highest_version))
+        self._highest_version = manifest.version
+        self._manifest = manifest
+        return manifest
+
+    @property
+    def manifest(self):
+        """The currently adopted manifest, or None."""
+        return self._manifest
+
+    @property
+    def highest_version(self):
+        return self._highest_version
+
+    def digest_for(self, artifact_id):
+        """The manifest-bound digest for *artifact_id*.
+
+        Raises :class:`ArtifactRefused` ``corpus_manifest_unpresented``
+        when no manifest was presented, ``corpus_manifest_unbound``
+        when the artifact id is not in the manifest.
+        """
+        if self._manifest is None:
+            raise ArtifactRefused(
+                "corpus_manifest_unpresented: no corpus manifest has "
+                "been presented to this tracker")
+        digest = self._manifest.digest_for(artifact_id)
+        if digest is None:
+            raise ArtifactRefused(
+                "corpus_manifest_unbound: artifact %r is not bound in "
+                "the corpus manifest (version %d)"
+                % (artifact_id, self._manifest.version))
+        return digest
+
+
 class SkillLoader:
     """Governed skill loading: skills are plugin-shaped content and go
     through the digest gate before reaching model context.
@@ -464,16 +549,31 @@ class SkillLoader:
     what get verified and handed over). Returns a
     :class:`VerifiedArtifact`; the caller passes ``.data`` into the
     sterile ``skill_content`` channel. A ``skill_loaded`` record chains
-    the digest that was actually loaded."""
+    the digest that was actually loaded.
 
-    def __init__(self, pinset, store, log=None):
+    ``corpus`` is an optional :class:`CorpusManifestTracker` holding
+    the corpus-signing keyset. When ``corpus_doc`` is passed to
+    :meth:`load_skill`, the manifest is presented (signature, expiry,
+    purpose, threshold, and version-monotonicity verified, fail
+    closed) and the pin's digest must EQUAL the manifest-bound digest
+    for the artifact id — the TUF mix-and-match binding: a pin rotated
+    without the corpus, or a corpus presented against another
+    version's bytes, refuses. Without a corpus doc the pinset-only
+    behavior is unchanged (documented adoption path)."""
+
+    def __init__(self, pinset, store, log=None, corpus=None):
         if not isinstance(pinset, ArtifactPinset):
             raise TypeError("pinset must be an ArtifactPinset")
+        if corpus is not None and not isinstance(
+                corpus, CorpusManifestTracker):
+            raise TypeError("corpus must be a CorpusManifestTracker "
+                            "or None")
         self._pinset = pinset
         self._store = store
         self._log = log
+        self._corpus = corpus
 
-    def load_skill(self, skill_name):
+    def load_skill(self, skill_name, *, corpus_doc=None):
         artifact_id = "skill:" + str(skill_name)
         entry = self._store.get(skill_name)
         if entry is None:
@@ -484,6 +584,12 @@ class SkillLoader:
         fetched = entry() if callable(entry) else entry
         verified = verify_and_load(self._pinset, artifact_id, fetched,
                                    log=self._log)
+        # Corpus consistency binding (wave-194 TUF steal): when the
+        # deployment presents a corpus manifest, the pin's digest must
+        # equal the manifest-bound digest — a pin and a manifest that
+        # disagree (mix-and-match across versions) refuse here.
+        if corpus_doc is not None or self._corpus is not None:
+            self._check_corpus(artifact_id, verified.digest, corpus_doc)
         if self._log is not None:
             self._log.append({
                 "event": "skill_loaded",
@@ -493,8 +599,33 @@ class SkillLoader:
             })
         return verified
 
+    def _check_corpus(self, artifact_id, pin_digest, corpus_doc):
+        if self._corpus is None:
+            raise ArtifactRefused(
+                "corpus_manifest_unpresented: a corpus document was "
+                "given but this loader has no CorpusManifestTracker")
+        if corpus_doc is None and self._corpus.manifest is None:
+            raise ArtifactRefused(
+                "corpus_manifest_unpresented: loader has a tracker "
+                "but no corpus manifest was presented")
+        if corpus_doc is not None:
+            self._corpus.present(corpus_doc)
+        bound = self._corpus.digest_for(artifact_id)
+        if bound != pin_digest:
+            _refused(self._log, artifact_id, "corpus_manifest_mismatch",
+                      "pin digest %s != corpus-bound digest %s "
+                      "(corpus version %d)"
+                      % (pin_digest, bound,
+                         self._corpus.manifest.version))
+            raise ArtifactRefused(
+                "corpus_manifest_mismatch: pin for %r (%s) disagrees "
+                "with the corpus manifest binding (%s) — "
+                "mix-and-match across versions refused"
+                % (artifact_id, pin_digest, bound))
 
-def load_skill_content(pinset, store, skill_name, *, log=None):
+
+def load_skill_content(pinset, store, skill_name, *, log=None,
+                       corpus=None, corpus_doc=None):
     """The FORCED entry point for skill content into the sterile
     ``skill_content`` channel (wave-80).
 
@@ -507,6 +638,14 @@ def load_skill_content(pinset, store, skill_name, *, log=None):
     crossed the channel cannot be silently treated as trusted, and
     the ack trail names the exact digest that was loaded.
 
+    ``corpus`` / ``corpus_doc`` (wave-194): an optional
+    :class:`CorpusManifestTracker` plus the manifest document to
+    present. When given, the manifest is verified (signature, expiry,
+    purpose, threshold, version monotonicity) and the pin's digest
+    must equal the manifest-bound digest — mix-and-match across
+    corpus versions refuses. Without them the pinset-only behavior is
+    unchanged (adoption path).
+
     There is no raw-bytes return path on purpose: callers that want
     the bytes must unwrap the marker via ``acknowledge()`` (the
     channel's only documented read), so every consumption is an
@@ -517,8 +656,8 @@ def load_skill_content(pinset, store, skill_name, *, log=None):
     downstream contract expects.
     """
     from .sterile import Unvetted
-    loader = SkillLoader(pinset, store, log=log)
-    verified = loader.load_skill(skill_name)
+    loader = SkillLoader(pinset, store, log=log, corpus=corpus)
+    verified = loader.load_skill(skill_name, corpus_doc=corpus_doc)
     return Unvetted(
         verified.data,
         origin="skill_content",
