@@ -1,3 +1,32 @@
+## 2026-09-29 — Wave-199 merge: keyset lifecycle + DigestRef + PolicyReport + zot runbook
+
+**Base.** `1efce86` (wave-198 close-out). **Merged:** `a56c14b` (lane A keyset), `d9d6700` (lane D digesttype), `8c51d8d` (lane F policyreport), `09f103f` (lane E zot runbook, docs-only). Spike lanes B (capa SPIKE.md) and C (casbin SPIKE.md) produced no product code and were not merged. No force-push; fast-forward only.
+
+**Merge conflicts.** None on product code (lanes touch disjoint files; only BUILD_LOG.md was shared — both lane entries present verbatim, verified by hand). Digesttype + policyreport cherry-picks applied cleanly in sequence A → D → F → E.
+
+**Red-first merged-tree audit (mandatory, all claims re-verified break-first).**
+- Keyset lifecycle (lane A): `evals/keyset_lifecycle_probes.py` **7/7 HELD** on merged tree (0/7 on pristine, independently re-verified by lane's spec reviewer); DESTROYED refused, non-primary mint refused, KeysetInfo material-free.
+- DigestRef (lane D): `evals/evidence_distribute_probes.py` **5/5 HELD**, `evals/anchoring_probes.py` **7/7 HELD**; construction-time tag refusal at identity seams holds.
+- PolicyReport (lane F): `evals/policy_report_probes.py` **11/11 HELD**; signed emission, deterministic bytes, auditor round-trip all hold.
+- Attestation release (w198): `evals/attestation_release_probes.py` 9 held, 0 breaks; unit suite 82 OK.
+- Graduation ladder: `tests.test_graduation_ladder` OK.
+- F203 Rekor envelope: `evals/rekor_f203_probes.py` **8 HELD / 0 BREAK / 1 EXPECTED** (live public-seam round trip still completes after the DigestRef migration); `evals/w72_probes.py` **13 HOLD**.
+- MCP token claims (w198): `evals/mcp_wiring_probes.py` **16 pass, 0 fail**, twice-stable.
+
+**One integration interaction investigated (not a break).** The four-suite combination `test_graduation_ladder + test_attestation_release + test_mcp_wiring + test_authority_proof_mcp_graphql` shows 3 errors in `test_mcp_wiring` (decision-BOM policy_id) on the merged tree — but the SAME combination on pristine `1efce86` shows the SAME 3 errors (byte-identical error list verified by diff). Pre-existing test-order interaction, carried; each suite passes standalone on the merged tree.
+
+**Findings:** none filed (red-first audit closed every claim; the order-interaction pre-exists and needs no finding). Next free: F204. Open findings: none (carried).
+
+**Gates (serialized, fresh unique `/var/tmp/g199m-*` TMPDIRs, canonical under `~/workspace/.gov-venv/bin/python`).**
+- Canonical: **GREEN** (6428 tests collected, exit 0)
+- Registry: **GREEN**
+- Matrix: **3216/3216 SHIP-GATE GREEN**
+- Realistic: **7/7**
+- AMSB: **90.00 / FINAL C / FP 0.0%**
+- `git diff --check` clean; zero NUL/control bytes; no `.orig`/`.rej`; trailer present.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 ## 2026-09-29 — Wave-199 lane D: digest-first-class reference type (DigestRef) BUILD
 
 **Scope.** Prospectus section 6 (google/go-containerregistry — ADAPT): make digest references first-class so tags become unrepresentable where immutable artifact identity is required. New product module `gov/digest_ref.py` (`DigestRef` immutable/hashable value type, `DigestRefError(ValueError)`); construction-time tag refusal (`DigestRef.parse("repo:latest")` raises; non-string raises TypeError). Migrated identity-critical seams: (1) `gov/evidence_distribute.py` — `_require_ref` seam guard (TypeError on any str), `push_bundle`/`resolve_and_pin` return `DigestRef`, `_attach`/`attach_bom`/`attach_signature`/`pull_bundle`/`audit_bundle` require `DigestRef` (kwarg `digest=` renamed to `ref=`; `.digest` used only at the registry wire boundary); (2) `gov/corpus_manifest.py` — `artifacts` values normalized to `DigestRef` at construction, `digest_for` returns `DigestRef`; `gov/load_gate.py` `_check_corpus` compares `bound.digest` to the loader-computed pin string; (3) `gov/anchor_backend.py` — abstract contract is now `DigestRef|str` via `_coerce_anchor_hash` (str form still strictly 64-hex validated), `FakeWitness`/`LocalAnchorLog`/`RekorBackend` submit+verify_receipt coerce (verify path never raises via `_verify_anchor_hash`); `gov/anchorer.py` + `gov/anchoring.py` pass `DigestRef.from_hex`; `gov/rekor_anchor.py` `RekorClient.submit`/`verify_inclusion` accept `DigestRef` via `_anchor_hash_hex`. Display/audit serialization stays strings (verdict dicts, receipts, log records).
