@@ -193,23 +193,56 @@ def _inclusion_proof(leaf_hashes, index):
 
 
 def _verify_proof(leaf_hash, leaf_index, proof_hashes, tree_size):
-    """Recompute the root a (leaf, proof) commits to."""
+    """Recompute the root a (leaf, proof) commits to.
+
+    Models RFC 6962 leaf promotion exactly like :func:`_root` and
+    :func:`_inclusion_proof`: on an odd-sized level the last leaf is
+    promoted without hashing (consumes no proof hash); otherwise an
+    odd index takes the proof hash as its LEFT sibling and an even
+    index as its RIGHT sibling. The number of proof hashes must equal
+    the number of hashed levels -- extras AND shortfalls are refused
+    (no silent truncation, no silent padding).
+
+    (F205: the previous version used index parity alone and never
+    modeled promotion, so every proof for a promoted leaf -- e.g.
+    leaf 2 of 3 -- failed to recompute.)
+    """
     if not 0 <= leaf_index < tree_size:
         raise ValueError("leaf index out of range for tree size")
     h = bytes(leaf_hash)
-    idx = leaf_index
-    # The number of proof hashes must be consistent with the path
-    # length; extra hashes are refused (no silent truncation).
-    for sib in proof_hashes:
-        sib = bytes(sib)
+    if len(h) != 32:
+        raise ValueError("leaf hash must be 32 bytes")
+    proof = [bytes(s) for s in proof_hashes]
+    for sib in proof:
         if len(sib) != 32:
             raise ValueError("proof hash must be 32 bytes")
-        if idx % 2 == 1:
+    it = iter(proof)
+    idx = leaf_index
+    n = tree_size
+    while n > 1:
+        if idx == n - 1 and n % 2 == 1:
+            # Promoted leaf: carried up a level unhashed, exactly as
+            # _root/_inclusion_proof do. Consumes no proof hash.
+            pass
+        elif idx % 2 == 1:
+            try:
+                sib = next(it)
+            except StopIteration:
+                raise ValueError("proof too short for the path")
             h = _node(sib, h)
         else:
+            try:
+                sib = next(it)
+            except StopIteration:
+                raise ValueError("proof too short for the path")
             h = _node(h, sib)
         idx //= 2
-    return h
+        n = (n + 1) // 2
+    try:
+        next(it)
+    except StopIteration:
+        return h
+    raise ValueError("extra proof hashes refused")
 
 
 def _canonical(obj):

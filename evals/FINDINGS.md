@@ -6334,4 +6334,18 @@ unaffected. HIGH rejected: nothing is bypassed and no data leaves.
 
 ---
 
-Next free finding: **F205**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A.)
+## F205: Rekor v2 tile-log inclusion proofs fail for promoted leaves on odd-sized trees (MEDIUM)
+
+**Cells:** wave-208 lane B (SCITT) integration testing, 2026-09-29. Standing regression pin: `evals/scitt_receipt_probes.py` probe `scitt_equivocation_detected` (fails whenever the log holds an odd number of leaves at issuance) + `tests/test_rekor_v2_anchor.py::TestOddTreeInclusion`.
+
+**Defect:** `gov/rekor_v2_anchor.py::_verify_proof` reconstructs the root from (leaf, proof) using only index parity, never modeling RFC 6962 leaf promotion: on an odd-sized level the last leaf is promoted without hashing (`_root`/`_inclusion_proof` do this correctly), but the verifier treats the promoted index as a left child and hashes it with its level-1 sibling on the wrong side. Result: every inclusion proof for a promoted leaf (e.g. leaf 2 of 3, leaf 4 of 5) fails to recompute to the receipt's own root -- `HermeticRekorV2.verify_inclusion` raises "proof does not recompute to the receipt's root" for a honestly-issued receipt. A transparency proof that fails ~50% of the time is not a transparency proof.
+
+**Severity rationale:** MEDIUM. No forgery is possible (fail-closed: honest receipts are rejected, not dishonest ones accepted), but the v2 anchor's core promise -- client-verifiable inclusion -- is broken for half of all issuance orders, which would silently push callers toward skipping verification.
+
+**Status: CLOSED 2026-09-29 (wave-208 lane B).** `gov/rekor_v2_anchor.py::_verify_proof` now models RFC 6962 leaf promotion exactly like `_root`/`_inclusion_proof`: on an odd-sized level the last leaf is promoted unhashed (consuming no proof hash); odd indices take the proof hash as LEFT sibling, even as RIGHT; the proof-hash count must equal the hashed-level count (extras AND shortfalls refused). Even-tree behavior is unchanged (parity logic identical when no promotion occurs).
+
+**Closure evidence:** pristine RED (`evals/scitt_receipt_probes.py` probe `scitt_equivocation_detected` BROKEN -- "inclusion proof does not recompute to the receipt's root" whenever the log held an odd leaf count at issuance; direct v2-seam repro: `verify_inclusion` failed for leaves 2-of-3 and 4-of-5); fixed GREEN (6/6 probes HELD + determinism, identical under `env -u GOV_DEPLOYMENT_MODE`; new `TestOddTreeInclusion`: every leaf of every tree size 1..9 recomputes to the root, public-seam verify at odd sizes 1..7, short/extra proofs refused). Adjacent `tests.test_rekor_v2_anchor`: 39/39 OK (35 pre-existing + 4 new). The fix is fail-closed in the same direction as before (honest proofs accepted; dishonest proofs still rejected).
+
+---
+
+Next free finding: **F206**. **Open findings: none.** (F196 closed 2026-09-28, wave-179 fast-follow; F197 filed and closed 2026-09-28, wave-179 lane E; F198 filed and closed 2026-09-28, wave-180 lane B; F199 filed and closed 2026-09-28, wave-181 F199 lane; F200 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F201 filed 2026-09-28 wave-181 BOM red-team, closed 2026-09-28 wave-182; F202 filed 2026-09-28 wave-183 witness spike, closed 2026-09-28 wave-183 F202 closure lane; F203 filed 2026-09-29, wave-194 lane D, CLOSED 2026-09-29 wave-198 lane A.)

@@ -239,6 +239,56 @@ class TestInclusion(unittest.TestCase):
         self.assertTrue(self.c.verify_inclusion(bad, entry_bytes))
 
 
+class TestOddTreeInclusion(unittest.TestCase):
+    """F205 regression: inclusion proofs for promoted leaves on
+    odd-sized trees must recompute to the receipt's root.
+
+    The pre-fix _verify_proof used index parity alone and never
+    modeled RFC 6962 leaf promotion, so every proof for a promoted
+    leaf (leaf 2 of 3, leaf 4 of 5, ...) failed with "proof does not
+    recompute to the receipt's root".
+    """
+
+    def test_every_leaf_every_size_to_nine(self):
+        # White-box property test: _verify_proof must agree with
+        # _inclusion_proof/_root for every leaf of every tree size.
+        for n in range(1, 10):
+            leaves = [v2._leaf(b"leaf-%d" % i) for i in range(n)]
+            root = v2._root(leaves)
+            for idx in range(n):
+                # _inclusion_proof yields raw bytes (the tile log hexlifies).
+                proof = [bytes(h) for h in v2._inclusion_proof(leaves, idx)]
+                recomputed = v2._verify_proof(leaves[idx], idx, proof, n)
+                self.assertEqual(
+                    recomputed, root,
+                    "leaf %d of %d does not recompute" % (idx, n))
+
+    def test_verify_inclusion_odd_tree_public_seam(self):
+        # Public seam: the last-issued receipt always commits to the
+        # current root, so it must verify at every odd tree size.
+        c = _client()
+        digest, sig, pem = _material()
+        for i in range(7):
+            d, s, _ = _material(seed_byte=80 + i)
+            r = c.submit_hashedrekord(d, signature_b64=s,
+                                      pubkey_pem=pem)
+            self.assertTrue(
+                c.verify_inclusion(r, c.entry_bytes_for_receipt(r)),
+                "receipt %d (tree size %d) failed to verify" % (i, i + 1))
+
+    def test_short_proof_refused(self):
+        leaves = [v2._leaf(b"leaf-%d" % i) for i in range(4)]
+        proof = [bytes(h) for h in v2._inclusion_proof(leaves, 0)]
+        with self.assertRaises(ValueError):
+            v2._verify_proof(leaves[0], 0, proof[:-1], 4)
+
+    def test_extra_proof_hash_refused(self):
+        leaves = [v2._leaf(b"leaf-%d" % i) for i in range(4)]
+        proof = [bytes(h) for h in v2._inclusion_proof(leaves, 0)]
+        with self.assertRaises(ValueError):
+            v2._verify_proof(leaves[0], 0, proof + [b"\x00" * 32], 4)
+
+
 class TestLocalIndex(unittest.TestCase):
     def test_record_lookup_miss(self):
         idx = v2.V2LocalIndex()
