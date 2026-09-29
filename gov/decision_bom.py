@@ -102,7 +102,7 @@ def build_bom(*, policy_id, policy_version, policy_digest,
               approval_id=None, approval_record_digest=None,
               decision_mode=None, nominal_effect=None,
               decision_warnings=None, rule_mode_history=None,
-              perm_model=None):
+              perm_model=None, decision_event_v2=None):
     """Assemble the bill of materials for one policy decision.
 
     ``policy_digest`` is sha256 hex over the exact policy-bundle bytes
@@ -149,6 +149,15 @@ def build_bom(*, policy_id, policy_version, policy_digest,
     digest, an empty policy id/version, or a non-dict principal raises
     BomError. A BOM must never silently record a weaker claim than the
     decision actually rested on.
+
+    Wave-202 (decision-log v2): ``decision_event_v2`` is an optional
+    verified v2 decision event (``gov.decision_log_v2``). When supplied
+    it is fully verified here (fail-closed: BomError on any verification
+    failure) and bound BY DIGEST under ``inputs.decision_event`` as
+    ``{"decision_id", "event_digest"}`` -- the event_digest excludes the
+    ``audit`` chain bookkeeping so an auditor holding only the chained
+    log entry can re-derive it. Omitted when the decision carries no v2
+    event, and BOMs built without it are byte-identical to before.
     """
     if not isinstance(policy_id, str) or not policy_id:
         raise BomError("policy_id must be a non-empty string")
@@ -284,6 +293,22 @@ def build_bom(*, policy_id, policy_version, policy_digest,
         inputs["ladder"] = ladder_inputs
     if perm_inputs is not None:
         inputs["perm"] = perm_inputs
+    # Wave-202 (decision-log v2): the optional decision-event section.
+    # Binds the v2 decision event BY DIGEST so evidence bundles carry a
+    # reference an auditor can resolve against the chained audit log.
+    # The event is fully verified here (fail-closed); absence keeps the
+    # BOM byte-identical to before.
+    if decision_event_v2 is not None:
+        from . import decision_log_v2 as _dlv
+        try:
+            _dlv.verify_event(decision_event_v2)
+        except _dlv.DecisionEventError as e:
+            raise BomError("decision_event_v2 failed verification: %s"
+                           % (e,))
+        inputs["decision_event"] = {
+            "decision_id": decision_event_v2["decision_id"],
+            "event_digest": _dlv.event_digest(decision_event_v2),
+        }
     return {
         "bom_version": BOM_VERSION,
         "inputs": inputs,
@@ -378,6 +403,21 @@ def check_bom_shape(bom):
         if set(perm) - {"model_digest", "policy_digest",
                         "composition_digest", "function_set_digest"}:
             return False, "bom.inputs.perm carries unknown keys"
+    # Wave-202 (decision-log v2): the optional decision_event section,
+    # when present, must bind a decision_id and an event digest.
+    # Absent is fine (decisions without a v2 event omit it).
+    devt = inputs.get("decision_event")
+    if devt is not None:
+        if not isinstance(devt, dict):
+            return False, "bom.inputs.decision_event is not a dict"
+        if not _is_hex64(devt.get("decision_id")):
+            return False, ("bom.inputs.decision_event.decision_id is not "
+                           "64-char hex")
+        if not _is_hex64(devt.get("event_digest")):
+            return False, ("bom.inputs.decision_event.event_digest is not "
+                           "64-char hex")
+        if set(devt) - {"decision_id", "event_digest"}:
+            return False, "bom.inputs.decision_event carries unknown keys"
     return True, "ok"
 
 
