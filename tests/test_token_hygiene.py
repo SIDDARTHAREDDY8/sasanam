@@ -274,7 +274,9 @@ class ScanTest(unittest.TestCase):
         # Wave-234 merge: lane-local pin 606 -> 617 (3 lane-A octet-digest
         # chain codes + 8 lane-C consumption-ledger codes added at merge;
         # canonical pin is asserted in tests/test_decision_codes.py).
-        self.assertEqual(len(dc.TAXONOMY), 617)
+        # Wave-235 merge: re-pointed 617 -> 631 (4 trust-material + 7
+        # bound-permit + 3 grant-attenuation codes).
+        self.assertEqual(len(dc.TAXONOMY), 631)
 
 
 if __name__ == "__main__":

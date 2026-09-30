@@ -73,6 +73,21 @@ def _decision_codes():
     return mod
 
 
+def _trust_material():
+    """Lazy handle on gov/trust_material (wave-235).
+
+    Imported lazily -- and only on the trust-root / relied-claims
+    paths -- so the legacy standalone story is unchanged: a verifier
+    that never passes trust_root/relied_claims never needs
+    trust_material.py beside this file.
+    """
+    try:
+        from . import trust_material as mod
+    except ImportError:  # standalone/offline: trust_material.py beside
+        import trust_material as mod  # this file
+    return mod
+
+
 def _dsse_envelope():
     """Lazy handle on gov/dsse_envelope (wave-232).
 
@@ -966,7 +981,8 @@ def _find_packet_entries(entries, digest):
     return out
 
 
-def verify_decision_packet(packet, entries=None, token_claims=None):
+def verify_decision_packet(packet, entries=None, token_claims=None,
+                           trust_root=None, relied_claims=None):
     """Offline verification of a signed decision packet (stdlib only).
 
     Returns ``(True, "ok")`` or ``(False, reason)``. Never raises on
@@ -998,17 +1014,40 @@ def verify_decision_packet(packet, entries=None, token_claims=None):
     (sub -> agent_id, role, principal); any failure returns
     ``(False, reason)``.
 
+    ``trust_root`` is the OPTIONAL external trust root
+    (``gov.trust_material.TrustRoot``) the deployment pinned the
+    packet-signing keys in. ``None`` -- the default -- keeps the
+    legacy semantics exactly: the record's self-asserted authority
+    block is trusted after the well-formedness checks. When a root is
+    supplied, the packet's (kid, pubkey) pair is bound to the root
+    after the pubkey shape check and BEFORE the kid/pubkey
+    self-consistency check: an unpinned key id refuses
+    ``untrusted-key`` (key material carried inside the record is never
+    trusted) and a pinned key id with different material refuses
+    ``trust-key-repointed``. External-root enforcement is opt-in: the
+    deployment owns the root-pinning decision (wave-235 honest
+    residual -- without a pinned root there is no external trust).
+
+    ``relied_claims`` is the OPTIONAL ``{field: expected_value}`` set
+    of claims the caller wants verification to treat as trusted. Every
+    named claim is resolved from the SIGNATURE-COVERED body only: a
+    claim with no covered source refuses ``unsigned-field-ignored``
+    (fail closed, never silent accept), and a claim whose covered
+    value disagrees with the expected value refuses. Unsigned fields
+    are never consulted by verification.
+
     ``entries=None`` skips the linkage check (reported in the reason);
     pass the chain for the full check.
     """
     try:
-        return _verify(packet, entries, token_claims)
+        return _verify(packet, entries, token_claims, trust_root,
+                       relied_claims)
     except Exception as e:  # noqa: BLE001 - verifiers never raise
         return False, "verifier exception (fail-closed): %s: %s" % (
             type(e).__name__, e)
 
 
-def _verify(packet, entries, token_claims):
+def _verify(packet, entries, token_claims, trust_root, relied_claims):
     if not isinstance(packet, dict):
         return False, "packet is not a dict"
     if packet.get("decision_packet_version") != DECISION_PACKET_VERSION:
@@ -1168,6 +1207,23 @@ def _verify(packet, entries, token_claims):
         return False, "authority.pubkey not hex"
     if len(pub) != 32:
         return False, "authority.pubkey not 32 bytes"
+    if trust_root is not None:
+        # Wave-235 (trust-material externality): bind the record's
+        # (kid, pubkey) pair to the EXTERNAL trust root BEFORE any
+        # self-consistency check. The root is the deployment's pinned
+        # key material; the record's own key material (authority block,
+        # any embedded keys bundle) is never consulted. An unpinned key
+        # id refuses untrusted-key; a pinned id with different material
+        # refuses trust-key-repointed. From here on the verifier uses
+        # the PINNED material, never the record's.
+        _tm = _trust_material()
+        if not isinstance(trust_root, _tm.TrustRoot):
+            return False, \
+                "trust_root is not a gov.trust_material.TrustRoot"
+        try:
+            pub = trust_root.bind_authority(auth.get("kid"), pub)
+        except _tm.TrustMaterialError as exc:
+            return False, "%s: %s" % (exc.code, exc.detail)
     if auth.get("kid") != hashlib.sha256(pub).digest()[:16].hex():
         return False, "authority.kid does not match pubkey"
     sig_b64 = packet.get("signature")
@@ -1206,6 +1262,29 @@ def _verify(packet, entries, token_claims):
             return False, "dsse-signature-invalid: packet envelope " \
                 "payload is not the packet's signed body (payload " \
                 "transplant)"
+    # Wave-235 (trust-material externality): claims the caller wants
+    # verification to rely on are resolved from the SIGNATURE-COVERED
+    # body only -- this runs after the signature check, so the body is
+    # trustworthy here. A claim with no covered source refuses
+    # unsigned-field-ignored (fail closed, never silent accept); a
+    # claim whose covered value disagrees refuses as a mismatch.
+    # Unsigned fields are never consulted by verification.
+    if relied_claims is not None:
+        if not isinstance(relied_claims, dict):
+            return False, "relied_claims must be a dict"
+        for _name, _expected in relied_claims.items():
+            if _name not in body:
+                return False, \
+                    "unsigned-field-ignored: relied claim %r has no " \
+                    "signature-covered source; verification refuses to " \
+                    "consult unsigned fields" % (_name,)
+            _covered = body[_name]
+            _value = _covered.get("value") \
+                if isinstance(_covered, dict) else _covered
+            if _value != _expected:
+                return False, \
+                    "relied claim %r disagrees with the " \
+                    "signature-covered packet value" % (_name,)
     # Wave-228 (decision codes): replay the attached machine claim
     # against the live taxonomy. The claim is signature-covered, so a
     # swapped claim already fails above; this rejects a well-signed

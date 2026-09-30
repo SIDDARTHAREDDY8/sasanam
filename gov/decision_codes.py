@@ -5143,6 +5143,157 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
     # Wave-234 merge: 599 + 18 = 617 (3 lane-A audit-chain + 7 lane-B token_hygiene + 8 lane-C consumption), additive only.
+    # Wave-235 lane A (trust-material externality: gov/trust_material.py
+    # codes), additive.
+    'untrusted-key': {
+        "domain": 'trust',
+        "code": 'untrusted-key',
+        "human": 'trust material: the record\'s signing key id is not '
+                 'pinned in the external trust root; key material '
+                 'supplied inside the record is never trusted',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-key-repointed': {
+        "domain": 'trust',
+        "code": 'trust-key-repointed',
+        "human": 'trust material: the key id is pinned in the external '
+                 'trust root but the record\'s key material differs from '
+                 'the pinned material; the label was re-pointed',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'unsigned-field-ignored': {
+        "domain": 'trust',
+        "code": 'unsigned-field-ignored',
+        "human": 'trust material: verification was asked to rely on a '
+                 'field outside the signature-covered body; unsigned '
+                 'fields are never consulted, refusing fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-material-malformed': {
+        "domain": 'trust',
+        "code": 'trust-material-malformed',
+        "human": 'trust material: malformed key material presented at '
+                 'trust-root construction; a construction-time refusal, '
+                 'never emitted at verification',
+        "severity": 'low',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-235 lane B (bound-permit conjunction: gov/bound_permit.py codes), additive.
+    'permit-decision-absent': {
+        "domain": 'permit',
+        "code": 'permit-decision-absent',
+        "human": 'bound permit: issuance attempted without a decision '
+                 'record; a permit is decision AND mandate AND policy, '
+                 'so the absent leg refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-mandate-absent': {
+        "domain": 'permit',
+        "code": 'permit-mandate-absent',
+        "human": 'bound permit: issuance attempted without a mandate '
+                 'record; the mandate leg is absent so no permit issues',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-policy-absent': {
+        "domain": 'permit',
+        "code": 'permit-policy-absent',
+        "human": 'bound permit: issuance attempted without a local '
+                 'policy binding; the policy leg is absent so no permit '
+                 'issues',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-jti-duplicate': {
+        "domain": 'permit',
+        "code": 'permit-jti-duplicate',
+        "human": 'bound permit: (iss, jti) is already claimed and the '
+                 'outcome is not settled as not-executed; a fresh '
+                 'permit refuses until the unknown outcome is '
+                 'reconciled via jti -- never re-mint',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-leg-refusal-unmapped': {
+        "domain": 'permit',
+        "code": 'permit-leg-refusal-unmapped',
+        "human": 'bound permit: a leg verifier refused without naming '
+                 'a machine code; unnamed refusals are unauditable and '
+                 'cannot issue a permit',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-malformed': {
+        "domain": 'permit',
+        "code": 'permit-malformed',
+        "human": 'bound permit: the presented permit, reconciliation '
+                 'record, leg, or registry argument is the wrong shape; '
+                 'refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-tampered': {
+        "domain": 'permit',
+        "code": 'permit-tampered',
+        "human": 'bound permit: a permit or reconciliation record '
+                 'digest does not recompute over its body; the record '
+                 'was edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-235 lane C (grant anti-widening: gov/grant_attenuation.py codes), additive.
+    'grant-widened': {
+        "domain": 'grants',
+        "code": 'grant-widened',
+        "human": 'grant attenuation: a delegation attenuation widens a '
+                 'scope dimension of the parent grant (a value, dimension, '
+                 'or scalar change the parent never held); grants refine, '
+                 'never extend',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'grant-attenuation-gap': {
+        "domain": 'grants',
+        "code": 'grant-attenuation-gap',
+        "human": 'grant attenuation: a delegation hop fails to narrow '
+                 '(a rights copy, not an attenuation), or a hop digest '
+                 'or chain continuity does not check out',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'grant-chain-required': {
+        "domain": 'grants',
+        "code": 'grant-chain-required',
+        "human": 'grant attenuation: the presented grant carries no '
+                 'attenuation chain; a leaf alone is not auditable',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    # grant-revoked and grant-malformed are REUSED from the existing
+    # taxonomy (authorization_receipt domain): a revoked hop is a
+    # revoked credential, and a malformed grant/hop shape is a
+    # structural validation failure. Additive-only: no redefinition.
+    # Wave-235 merge: 617 + 14 = 631 (4 lane-A trust-material + 7 lane-B bound-permit
+    # + 3 lane-C grant-attenuation), additive only, zero key collisions, composed from
+    # the three lane commits by direct byte-verification.
 }
 
 
