@@ -93,6 +93,17 @@ class PacketError(Exception):
     """The packet could not be built (loud, fail-closed for builders)."""
 
 
+class InvalidLabels(PacketError):
+    """rule_labels failed validation (code ``decision-labels-invalid``).
+
+    Raised by build_decision_packet when the rule-labels evidence map
+    is not a dict of non-empty printable string keys to non-empty
+    printable string values.
+    """
+
+    code = "decision-labels-invalid"
+
+
 class NoPacketKeyError(Exception):
     """No packet-signing key configured (loud, no dev-key fallback)."""
 
@@ -239,6 +250,41 @@ def _check_identity_token_value(value):
     if not isinstance(value.get("jti"), str) or not value.get("jti"):
         return False, "identity_token.jti must be a non-empty string"
     return True, "ok"
+
+
+def _check_rule_labels(rule_labels):
+    """Validate the rule_labels evidence map.
+
+    Returns a fresh dict on success. Refuses ``decision-labels-invalid``
+    (via :class:`InvalidLabels`) when the map is not a dict of
+    non-empty string keys to non-empty printable string values --
+    evidence labels must be machine-readable and safe to render, so
+    control characters and empty names fail closed at construction.
+    ``None`` (absent) returns None: the caller adds no section and the
+    packet stays byte-identical to the legacy shape.
+    """
+    if rule_labels is None:
+        return None
+    if not isinstance(rule_labels, dict):
+        raise InvalidLabels(
+            "rule_labels must be a dict, got %s"
+            % type(rule_labels).__name__)
+    if not rule_labels:
+        raise InvalidLabels("rule_labels must not be empty")
+    checked = {}
+    for key, value in rule_labels.items():
+        if not isinstance(key, str) or not key:
+            raise InvalidLabels(
+                "rule_labels keys must be non-empty strings, got %r" % (key,))
+        if not isinstance(value, str) or not value:
+            raise InvalidLabels(
+                "rule_labels[%r] value must be a non-empty string, got %r"
+                % (key, value))
+        if not value.isprintable() or not key.isprintable():
+            raise InvalidLabels(
+                "rule_labels[%r] contains non-printable characters" % (key,))
+        checked[key] = value
+    return checked
 
 
 def _get_identity_token_section(packet):
@@ -488,7 +534,8 @@ def build_decision_packet(*, decision, boundary_declared,
                           identity=None, approval_id=None,
                           decision_seq=None, policy_reason=None,
                           issued_at=None, bill_of_materials=None,
-                          policy_bundle_digest=None, identity_token=None):
+                          policy_bundle_digest=None, identity_token=None,
+                          rule_labels=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -510,6 +557,18 @@ def build_decision_packet(*, decision, boundary_declared,
     ``{token_digest, iss, aud, exp, jti}`` -- the claims, never the raw
     bearer token. ``None`` builds a legacy packet: the 17 existing
     sections are byte-identical to a build without the kwarg.
+
+    ``rule_labels`` is the OPTIONAL evidence-enrichment map
+    ``{rule_name: rule_identifier}`` naming the policy rules/verdicts
+    that produced the decision (OPA 1.21.1 ``rule_labels`` pattern,
+    re-derived -- prose and mechanics written fresh). Keys must be
+    non-empty strings and values non-empty printable strings;
+    violations raise :class:`InvalidLabels`
+    (``decision-labels-invalid``). ``None`` builds a legacy packet: no
+    ``rule_labels`` section is added and the body is byte-identical to
+    a build without the kwarg. When present the section is
+    signature-covered like every other section, so a swapped label
+    breaks the packet signature.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -636,6 +695,15 @@ def build_decision_packet(*, decision, boundary_declared,
         # A copy is stored so the caller's dict is never aliased.
         body["identity_token"] = _wrap(dict(identity_token),
                                        TOKEN_IDENTITY_PRODUCER)
+    labels = _check_rule_labels(rule_labels)
+    if labels is not None:
+        # Wave-225 (rule labels): the optional evidence-enrichment
+        # section naming the rules/verdicts that produced the
+        # decision. Signature-covered like every other section (it is
+        # part of the body before sign_packet runs), so a swapped
+        # label breaks the packet signature. A copy is stored so the
+        # caller's dict is never aliased.
+        body["rule_labels"] = _wrap(dict(labels), "gov/decision_packet.py")
     return body
 
 
@@ -737,6 +805,31 @@ def _verify(packet, entries, token_claims):
             return False, "section %r names no producer" % name
         if not section.get("producer_version"):
             return False, "section %r names no producer_version" % name
+    labels_section = packet.get("rule_labels")
+    if labels_section is not None:
+        # Wave-225 (rule labels): optional evidence section. When
+        # present it must be well-formed and producer-attributed; the
+        # label values themselves are signature-covered, so a tampered
+        # label fails the signature check below -- this rejects
+        # malformed shapes for unsigned consumers (defense in depth).
+        if not isinstance(labels_section, dict):
+            return False, "rule_labels section is not a dict"
+        if "value" not in labels_section:
+            return False, "rule_labels section has no value"
+        if not labels_section.get("producer"):
+            return False, "rule_labels section names no producer"
+        if not labels_section.get("producer_version"):
+            return False, "rule_labels section names no producer_version"
+        labels_value = labels_section.get("value")
+        if not isinstance(labels_value, dict) or not labels_value:
+            return False, "rule_labels value must be a non-empty dict"
+        for lkey, lval in labels_value.items():
+            if (not isinstance(lkey, str) or not lkey
+                    or not lkey.isprintable()
+                    or not isinstance(lval, str) or not lval
+                    or not lval.isprintable()):
+                return False, \
+                    "rule_labels entries must be non-empty printable strings"
     if packet["decision"]["value"] not in DECISIONS:
         return False, "decision %r not in %r" % (
             packet["decision"]["value"], DECISIONS)

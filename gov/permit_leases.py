@@ -65,6 +65,13 @@ Rules (all fail closed, all refusals carry machine-readable codes):
   No policy and no block behaves exactly as before: the block is a
   sealed constraint, never a credential, and never upgrades
   authority.
+* Optional live parent re-verification (wave-225,
+  ``gov/reverify.py``): ``PermitLease.redeem(...,
+  reverify_at_use=True, use_verifier=..., use_record=...)`` — the
+  parent record is re-verified at use time (signature, revocation,
+  liveness) after the digest check and before any binding; a
+  missing or invalid re-verification refuses ``reverify-required``.
+  Default False: the legacy path runs exactly as before.
 
 Stdlib only. No network. $0.
 """
@@ -334,16 +341,19 @@ class PermitLease:
 
     def redeem(self, presented_digest, *, request_scope=None, now=None,
                revocation_registry=None, attenuation=None,
-               require_attenuation=False):
+               require_attenuation=False, reverify_at_use=False,
+               use_verifier=None, use_record=None):
         """Consume the lease for the exact recorded parameters.
 
         Check order is fixed — attenuation-missing, used, expired,
-        digest, revocation, attenuation-bind, scope — so a caller that
-        never presented a block learns nothing about the lease, a
-        consumed or expired permit never confirms or denies a digest,
-        and revocation/attenuation are checked only after the
-        presented digest proved correct (no revocation or attenuation
-        oracle for wrong digests). ``revocation_registry`` is an
+        digest, revocation, use-time re-verification, attenuation-bind,
+        scope — so a caller that never presented a block learns nothing
+        about the lease, a consumed or expired permit never confirms or
+        denies a digest, revocation/attenuation are checked only after
+        the presented digest proved correct (no revocation or
+        attenuation oracle for wrong digests), and the live
+        re-verification runs before any binding that could narrow the
+        outcome. ``revocation_registry`` is an
         optional exact-target revocation source
         (``gov/revocation.py`` or any object with
         ``check(digest) -> "revoked" | "active"``); when None the
@@ -357,6 +367,13 @@ class PermitLease:
         ``attenuation-widening-refused``. A revoked lease refuses
         ``permit-revoked`` even when otherwise valid, and the refused
         redeem does not consume the lease.
+        ``reverify_at_use`` is the optional live parent re-verification
+        (``gov/reverify.py``): when True, ``use_verifier`` must be a
+        ``UseTimeVerifier`` and ``use_record`` the use envelope for
+        the parent being consumed; a missing verifier/record — or a
+        re-verification that does not hold — refuses
+        ``reverify-required`` (the inner reverify code is preserved in
+        the detail). Default False: the legacy path is byte-identical.
         On success the lease is marked used and a grant record is
         returned; the grant is the only proof of redemption. The
         grant carries an ``attenuation`` sub-record only when a block
@@ -367,12 +384,20 @@ class PermitLease:
         at = float(now_fn())
         narrowed = None
         _att = None
+        _rvf = None
         if attenuation is not None or require_attenuation:
             from . import attenuation as _att  # lazy: circular import
             if attenuation is None:
                 self._refuse(_att.AttenuationMissingError(
                     "attenuation-missing: this redeem policy requires a "
                     "requester-signed attenuation block"))
+        if reverify_at_use:
+            from . import reverify as _rvf  # lazy: optional seam
+            if use_verifier is None or use_record is None:
+                self._refuse(_rvf.ReverifyRequiredError(
+                    "reverify-required: this redeem policy requires a "
+                    "live use-time re-verification; verifier or use "
+                    "record is missing"))
         if self._used:
             self._refuse(PermitReusedError(
                 "permit-reused: permit %r was already consumed; one-use "
@@ -393,6 +418,23 @@ class PermitLease:
                 "permit-revoked: permit %r targets a revoked digest; the "
                 "approval it bound is no longer good"
                 % (self.permit_id,)))
+        if _rvf is not None:
+            # Live parent re-verification at use time: the parent
+            # record is re-checked — signature, revocation, liveness —
+            # right here, never inherited from an earlier check. The
+            # check runs after the digest proved correct so no
+            # verification outcome leaks for wrong digests.
+            try:
+                use_verifier.verify_at_use(use_record)
+            except _rvf.ReverifyError as exc:
+                self._refuse(_rvf.ReverifyRequiredError(
+                    "reverify-required: use-time re-verification did "
+                    "not hold (%s)" % (exc.code,)))
+            if self._audit is not None:
+                self._audit({"event": "reverify_bound",
+                             "permit_id": self.permit_id,
+                             "parent_digest": use_record.get(
+                                 "parent_digest")})
         if _att is not None and attenuation is not None:
             # Bound only after the digest proved correct: a block can
             # never be used as a digest oracle (no attenuation validity
@@ -477,7 +519,9 @@ class PermitRegistry:
         return lease
 
     def redeem(self, permit_id, presented_digest, *, request_scope=None,
-               attenuation=None, require_attenuation=False):
+               attenuation=None, require_attenuation=False,
+               reverify_at_use=False, use_verifier=None,
+               use_record=None):
         lease = self._leases.get(permit_id)
         if lease is None:
             exc = PermitUnknownError(
@@ -489,7 +533,10 @@ class PermitRegistry:
                             now=self._now,
                             revocation_registry=self._revocation_registry,
                             attenuation=attenuation,
-                            require_attenuation=require_attenuation)
+                            require_attenuation=require_attenuation,
+                            reverify_at_use=reverify_at_use,
+                            use_verifier=use_verifier,
+                            use_record=use_record)
 
 
 # ----------------------------------------------------------------------

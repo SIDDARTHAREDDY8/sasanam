@@ -49,6 +49,17 @@ component digests over the embedded attempt and effect. A mismatch
 refuses ``capsule-digest-mismatch``; a malformed capsule refuses
 ``capsule-malformed``.
 
+Batch verification (recompute-don't-assert): :func:`chain_capsules`
+replays every capsule digest, RECOMPUTES the counts (verdicts,
+refusal capsules, links) from the sealed items, and DERIVES the
+close state from the acknowledges/rebuts links — no links means
+"open", any "rebuts" means "closed-rebutted", otherwise any
+"acknowledges" means "closed-acknowledged". An issuer-claimed count
+that disagrees refuses ``capsule-count-mismatch``; a claimed close
+state that disagrees with the derived state refuses
+``capsule-closestate-mismatch``. The issuer's claims are checked,
+never trusted.
+
 Stdlib only. No network. $0.
 """
 
@@ -88,6 +99,14 @@ class _DigestMismatch(CapsuleError):
     code = "capsule-digest-mismatch"
 
 
+class _CountMismatch(CapsuleError):
+    code = "capsule-count-mismatch"
+
+
+class _CloseStateMismatch(CapsuleError):
+    code = "capsule-closestate-mismatch"
+
+
 class _Malformed(CapsuleError):
     code = "capsule-malformed"
 
@@ -106,6 +125,18 @@ _AUTHORITY_FIELDS = frozenset(
 
 # Closed effect statuses.
 _EFFECT_STATUSES = frozenset({"admitted", "refused"})
+
+# Closed close states, derived from links — never asserted.
+_CLOSE_STATES = frozenset({"open", "closed-acknowledged",
+                           "closed-rebutted"})
+
+# Closed link kinds.
+_LINK_KINDS = frozenset({"acknowledges", "rebuts"})
+
+# Top-level keys a batch may claim counts under. Only these keys
+# are recomputed; an issuer cannot invent new count claims.
+_KNOWN_COUNT_KEYS = frozenset({"verdicts", "refusal_capsules",
+                               "links"})
 
 # JSON value types the JCS gate admits. Floats are refused: JCS has
 # strict number rules and a float cannot be canonically re-encoded
@@ -373,3 +404,178 @@ def capsule_from_refusal(refusal_code, subject_digest):
             "observed": "refusal emitted; nothing executed",
         },
     })
+
+
+# ----------------------------------------------------------------------
+# Batch verification: recompute-don't-assert.
+#
+# ADAPT of the upstream action-capsule recompute rules (re-derived;
+# nothing copied): a batch verifier must RECOMPUTE what it can
+# instead of trusting the issuer's assertions.
+#
+# * claimed counts (number of sealed verdicts, number of refusal
+#   capsules, number of links) are recomputed from the sealed items
+#   themselves; disagreement refuses ``capsule-count-mismatch``.
+# * close state is DERIVED from the acknowledges/rebuts links, never
+#   asserted: no links -> "open"; any "rebuts" link ->
+#   "closed-rebutted"; otherwise any "acknowledges" link ->
+#   "closed-acknowledged". A claimed close state that mismatches the
+#   derived state refuses ``capsule-closestate-mismatch``.
+# * ``chain_capsules`` verifies every capsule digest via
+#   ``verify_capsule`` and returns a chain commitment over the
+#   capsule digests and links. Link tampering refuses with the
+#   original module codes.
+#
+# Like capsules, batches are evidence, never authority.
+# ----------------------------------------------------------------------
+
+
+def _validate_links(links, capsule_digests):
+    """Validate link records against the batch's capsule digests.
+
+    Fails closed: unknown link fields refuse
+    ``capsule-unknown-field``; unknown link kinds refuse
+    ``capsule-malformed``; a link whose target digest matches no
+    sealed capsule in the batch refuses ``capsule-digest-mismatch``
+    (the link claims a target that does not exist here).
+    """
+    digest_set = set(capsule_digests)
+    for link in links:
+        if not isinstance(link, dict):
+            raise _Malformed("link must be an object")
+        unknown = set(link.keys()) - {"kind",
+                                      "target_capsule_digest"}
+        if unknown:
+            raise _UnknownField(
+                "unknown link fields: %s" % sorted(unknown))
+        kind = link.get("kind")
+        if kind not in _LINK_KINDS:
+            raise _Malformed("unknown link kind: %r" % (kind,))
+        target = link.get("target_capsule_digest")
+        if not isinstance(target, str) or not target:
+            raise _Malformed(
+                "link target_capsule_digest must be a non-empty string")
+        if target not in digest_set:
+            raise _DigestMismatch(
+                "link target digest matches no capsule in the batch")
+
+
+def _derive_close_state(links):
+    """Derive the batch close state from its links.
+
+    No links -> "open". Any "rebuts" link -> "closed-rebutted" (a
+    rebuttal dominates an acknowledgement). Otherwise any
+    "acknowledges" link -> "closed-acknowledged". The state is
+    computed here; the issuer's claim is checked against it, never
+    trusted.
+    """
+    kinds = {link["kind"] for link in links}
+    if "rebuts" in kinds:
+        return "closed-rebutted"
+    if "acknowledges" in kinds:
+        return "closed-acknowledged"
+    return "open"
+
+
+def chain_capsules(capsules, links=()):
+    """Verify every capsule digest, recompute counts, derive close
+    state, and return a chain commitment.
+
+    ``capsules`` is a list of sealed capsule dicts; ``links`` is an
+    optional list of ``{"kind", "target_capsule_digest"}`` records.
+    Every capsule is replayed through :func:`verify_capsule`, so
+    tampering refuses with the original module codes. Returns::
+
+        {v, chain_digest, capsule_digests, counts, close_state}
+
+    ``counts`` is ``{verdicts, refusal_capsules, links}`` recomputed
+    from the sealed items. ``chain_digest`` is SHA-256 of the
+    canonical JSON bytes of ``{v, capsule_digests, links}``.
+    """
+    if not isinstance(capsules, (list, tuple)):
+        raise _Malformed("capsules must be a list")
+    if not isinstance(links, (list, tuple)):
+        raise _Malformed("links must be a list")
+    bodies = [verify_capsule(capsule) for capsule in capsules]
+    capsule_digests = [str(capsule["capsule_digest"])
+                       for capsule in capsules]
+    _validate_links(links, capsule_digests)
+    link_list = [{"kind": link["kind"],
+                  "target_capsule_digest": link["target_capsule_digest"]}
+                 for link in links]
+    refusal_capsules = sum(
+        1 for body in bodies
+        if isinstance(body.get("effect"), dict)
+        and body["effect"].get("status") == "refused")
+    counts = {"verdicts": len(capsules),
+              "refusal_capsules": refusal_capsules,
+              "links": len(links)}
+    close_state = _derive_close_state(link_list)
+    commitment_body = {"v": CAPSULE_VERSION,
+                       "capsule_digests": capsule_digests,
+                       "links": link_list}
+    chain_digest = _digest(canonical_json_bytes(commitment_body))
+    return {"v": CAPSULE_VERSION,
+            "chain_digest": chain_digest,
+            "capsule_digests": capsule_digests,
+            "counts": counts,
+            "close_state": close_state}
+
+
+def verify_capsule_batch(batch):
+    """Verify a capsule batch: per-capsule digest replay, recomputed
+    counts, derived close state, all chained.
+
+    ``batch`` is ``{"capsules": [...], "links": [...],
+    "claimed_counts": {...}, "claimed_close_state": ...}``. Only
+    ``capsules`` is required; everything else is optional. Claimed
+    counts are checked against the counts recomputed from the
+    sealed items — disagreement refuses
+    ``capsule-count-mismatch``. A claimed close state is checked
+    against the state derived from the links — disagreement
+    refuses ``capsule-closestate-mismatch``. Unknown top-level
+    batch fields or unknown count keys fail closed with
+    ``capsule-unknown-field``. Returns the chain commitment from
+    :func:`chain_capsules`.
+    """
+    if not isinstance(batch, dict):
+        raise _Malformed("batch must be a dict")
+    unknown = set(batch.keys()) - {"capsules", "links",
+                                   "claimed_counts",
+                                   "claimed_close_state"}
+    if unknown:
+        raise _UnknownField(
+            "unknown batch fields: %s" % sorted(unknown))
+    capsules = batch.get("capsules", [])
+    links = batch.get("links", [])
+    commitment = chain_capsules(capsules, links)
+    claimed_counts = batch.get("claimed_counts")
+    if claimed_counts is not None:
+        if not isinstance(claimed_counts, dict):
+            raise _Malformed("claimed_counts must be an object")
+        unknown_counts = (set(claimed_counts.keys())
+                          - _KNOWN_COUNT_KEYS)
+        if unknown_counts:
+            raise _UnknownField(
+                "unknown count keys: %s" % sorted(unknown_counts))
+        for key, claimed in claimed_counts.items():
+            if (not isinstance(claimed, int)
+                    or isinstance(claimed, bool)
+                    or claimed < 0):
+                raise _Malformed(
+                    "count values must be non-negative integers")
+            actual = commitment["counts"][key]
+            if claimed != actual:
+                raise _CountMismatch(
+                    "claimed %s=%d, recomputed %d"
+                    % (key, claimed, actual))
+    claimed_close = batch.get("claimed_close_state")
+    if claimed_close is not None:
+        if claimed_close not in _CLOSE_STATES:
+            raise _Malformed(
+                "unknown claimed_close_state: %r" % (claimed_close,))
+        if claimed_close != commitment["close_state"]:
+            raise _CloseStateMismatch(
+                "claimed close_state=%r, derived=%r"
+                % (claimed_close, commitment["close_state"]))
+    return commitment
