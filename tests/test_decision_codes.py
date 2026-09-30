@@ -68,7 +68,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 647)
+        self.assertEqual(len(dc.TAXONOMY), 667)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
@@ -109,6 +109,20 @@ class VocabularyCoverageTest(unittest.TestCase):
         # deletions, zero key collisions.
         # Wave-236 merge: 631 + 16 = 647, composed from the three lane
         # commits by direct byte-verification, pin updated here to match.
+        # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
+        # gate-rule codes: gate-tampered, gate-undecidable,
+        # gate-verdict-unreasoned, gate-undecidable-allowed; 3 lane-B
+        # edited-approval refusal codes: approval-edited,
+        # approval-rebinding, approval-malformed; 5 lane-C
+        # canonical-record codes: record-duplicate-member,
+        # record-depth-exceeded, record-noncanonical-float,
+        # record-malformed, record-opaque-bytes; 8 lane-D closure-scoped
+        # approval codes: approval-{run,sandbox,route}-mismatch,
+        # approval-capability-dead, approval-state-stale,
+        # scoped-approval-{malformed,tampered,capability-unknown}),
+        # additive, zero deletions, zero key collisions, composed from
+        # the four lane commits by direct byte-verification, pin
+        # updated here to match.
         # 585 = wave-232 merge pin; + 9 wave-233 lane-A evaluation-function
         # codes (evaluation-{malformed,incomplete-details,
         # key-role-conflation,input-swapped,non-reproducible,

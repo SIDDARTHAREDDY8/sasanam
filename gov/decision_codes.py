@@ -5465,10 +5465,212 @@ TAXONOMY = {
     # only: no redefinition.
     # only, zero key collisions, verified by direct byte-inspection of
     # the taxonomy.
-    # Wave-236 merge: 631 + 16 = 647 (7 lane-A close-record signer binding
-    # + 4 lane-B denial capsules + 5 lane-C permit/closure), additive only,
-    # zero key collisions, composed from the three lane commits by
-    # direct byte-verification.
+    # Lane A codes: three-outcome gate rule (gov/gate_outcomes.py) — undecidable is a failure to verify, never tamper.
+    'gate-tampered': {
+        "domain": 'gate',
+        "code": 'gate-tampered',
+        "human": 'gate: the verifier reported that the evidence was '
+                 'tampered; the gate refuses the action',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-undecidable': {
+        "domain": 'gate',
+        "code": 'gate-undecidable',
+        "human": 'gate: the verifier could not verify the evidence; '
+                 'undecidable is a failure to verify, not evidence of '
+                 'tampering; the gate refuses fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-verdict-unreasoned': {
+        "domain": 'gate',
+        "code": 'gate-verdict-unreasoned',
+        "human": 'gate: the verifier returned undecidable without a '
+                 'mandatory reason from the closed vocabulary; the '
+                 'gate contract refuses the verdict itself',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-undecidable-allowed': {
+        "domain": 'gate',
+        "code": 'gate-undecidable-allowed',
+        "human": 'gate self-check: a gate allowed an undecidable '
+                 'verdict (or crashed on the probe instead of refusing '
+                 'it); the gate is declared non-compliant',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Lane B codes: edited-approval refusal at the adapter boundary (gov/approval_edit_guard.py).
+    'approval-edited': {
+        "domain": 'approval',
+        "code": 'approval-edited',
+        "human": 'approval: the approved action bytes differ from the '
+                 'proposed action bytes; approving with edits is '
+                 'refused -- re-propose the edited action instead',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-rebinding': {
+        "domain": 'approval',
+        "code": 'approval-rebinding',
+        "human": 'approval: the approval is presented in a proposal '
+                 'context it does not belong to (proposal id mismatch); '
+                 'approvals are never rebound across proposals',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-malformed': {
+        "domain": 'approval',
+        "code": 'approval-malformed',
+        "human": 'approval: the proposal or approval record is not a '
+                 'well-formed adapter-boundary record; refusing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Lane C codes: canonical audit-record contract (gov/canonical_record.py) — RFC 8785 + I-JSON; opaque bytes never coerced.
+    'record-duplicate-member': {
+        "domain": 'canonical',
+        "code": 'record-duplicate-member',
+        "human": 'canonical records: a JSON record carries the same '
+                 'object member twice; duplicate keys are a '
+                 'cross-deployment canonicalization hazard, refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-depth-exceeded': {
+        "domain": 'canonical',
+        "code": 'record-depth-exceeded',
+        "human": 'canonical records: nesting deeper than 128 levels; '
+                 'unbounded nesting is a parser hazard, refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-noncanonical-float': {
+        "domain": 'canonical',
+        "code": 'record-noncanonical-float',
+        "human": 'canonical records: a float value cannot be '
+                 'canonicalized byte-identically across deployments; '
+                 'refusing, never coercing to integer',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-malformed': {
+        "domain": 'canonical',
+        "code": 'record-malformed',
+        "human": 'canonical records: the record shape is not '
+                 'canonicalizable (non-string keys, unsupported types, '
+                 'unencodable characters); refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-opaque-bytes': {
+        "domain": 'canonical',
+        "code": 'record-opaque-bytes',
+        "human": 'canonical records: input is non-JSON bytes; passing '
+                 'through byte-exact with the opaque-bytes marker, '
+                 'never silently coercing',
+        "severity": 'low',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    # Lane D codes: closure-scoped approvals (gov/closure_scoped_approvals.py).
+    'approval-run-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-run-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different run_id than the one it is presented against',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-sandbox-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-sandbox-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different sandbox_id than the one it is presented '
+                 'against',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-route-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-route-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different route than the one it is presented against; '
+                 'a pre-computed approval is never replayed at another '
+                 'route',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-capability-dead': {
+        "domain": 'scoped',
+        "code": 'approval-capability-dead',
+        "human": 'closure-scoped approval: the packet\u2019s attempt is '
+                 'settled; capabilities die at settlement, there is no '
+                 'second execution',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-state-stale': {
+        "domain": 'scoped',
+        "code": 'approval-state-stale',
+        "human": 'closure-scoped approval: state moved since issuance; '
+                 'the write-time recheck refused because the approval no '
+                 'longer covers the current state',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet', 'state-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'scoped-approval-malformed': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-malformed',
+        "human": 'closure-scoped approval: the presented packet or '
+                 'argument is the wrong shape; refusing instead of '
+                 'guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'scoped-approval-tampered': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-tampered',
+        "human": 'closure-scoped approval: the packet\u2019s '
+                 'approval_digest does not recompute over its body; the '
+                 'record was edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'scoped-approval-capability-unknown': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-capability-unknown',
+        "human": 'closure-scoped approval: the requested capability was '
+                 'never granted by this packet',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
+    # gate-rule + 3 lane-B edited-approval refusal +
+    # 5 lane-C canonical-record + 8 lane-D closure-scoped
+    # approval codes), additive only, zero key collisions,
+    # composed from the four lane commits by direct
+    # byte-verification.
 }
 
 

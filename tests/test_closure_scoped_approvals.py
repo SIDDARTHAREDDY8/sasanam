@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Unit tests for gov.closure_scoped_approvals (wave-237 lane D).
+
+Tests live at the public seams: issue_scoped_approval,
+verify_scoped_approval, settle_attempt, exercise_capability,
+recheck_and_write. Assertions use literal expected values (worked
+examples), never recompute the module's own digest to "prove" the
+digest.
+"""
+
+import copy
+import os
+import sys
+import unittest
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, REPO)
+
+from gov import closure_scoped_approvals as csa  # noqa: E402
+
+
+def _issue(**over):
+    kw = dict(run_id="run-001", sandbox_id="sbx-a",
+              requester_id="agent-7", route="deploy/prod",
+              approval_identity="approver-3",
+              capabilities=["deploy:prod", "logs:read"],
+              request_digest="ab" * 32, state_digest="cd" * 32)
+    kw.update(over)
+    return csa.issue_scoped_approval(**kw)
+
+
+class IssueTest(unittest.TestCase):
+    def test_packet_shape_and_seal(self):
+        packet = _issue()
+        self.assertEqual(packet["version"], 1)
+        self.assertEqual(len(packet["approval_digest"]), 64)
+        # Deterministic: same inputs seal identically, derive the same id.
+        again = _issue()
+        self.assertEqual(again["approval_digest"], packet["approval_digest"])
+        self.assertEqual(again["approval_id"], packet["approval_id"])
+        self.assertFalse(packet["settled"])
+        self.assertEqual(packet["consumption"], [])
+
+    def test_explicit_approval_id_kept(self):
+        packet = _issue(approval_id="my-approval")
+        self.assertEqual(packet["approval_id"], "my-approval")
+        self.assertTrue(csa.verify_scoped_approval(packet))
+
+    def test_malformed_inputs_refused(self):
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            _issue(run_id="")
+        self.assertEqual(cm.exception.code, "scoped-approval-malformed")
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            _issue(capabilities=[])
+        self.assertEqual(cm.exception.code, "scoped-approval-malformed")
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            _issue(request_digest="not-hex")
+        self.assertEqual(cm.exception.code, "scoped-approval-malformed")
+        # Duplicate capabilities are a shape violation, not silent dedup.
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            _issue(capabilities=["a", "a"])
+        self.assertEqual(cm.exception.code, "scoped-approval-malformed")
+
+
+class VerifyTest(unittest.TestCase):
+    def test_happy(self):
+        self.assertTrue(csa.verify_scoped_approval(_issue()))
+        self.assertTrue(csa.verify_scoped_approval(
+            _issue(), run_id="run-001", sandbox_id="sbx-a",
+            route="deploy/prod"))
+
+    def test_named_context_mismatches(self):
+        packet = _issue()
+        for kwargs, code in (
+                ({"run_id": "run-x"}, "approval-run-mismatch"),
+                ({"sandbox_id": "sbx-x"}, "approval-sandbox-mismatch"),
+                ({"route": "deploy/x"}, "approval-route-mismatch")):
+            with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+                csa.verify_scoped_approval(packet, **kwargs)
+            self.assertEqual(cm.exception.code, code)
+        # No context arguments: no check, no refusal.
+        self.assertTrue(csa.verify_scoped_approval(packet))
+
+    def test_tampered_packet_refused(self):
+        packet = _issue()
+        edited = dict(packet)
+        edited["route"] = "deploy/evil"
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.verify_scoped_approval(edited)
+        self.assertEqual(cm.exception.code, "scoped-approval-tampered")
+
+    def test_malformed_packet_refused(self):
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.verify_scoped_approval({"version": 1})
+        self.assertEqual(cm.exception.code, "scoped-approval-malformed")
+
+
+class SettleTest(unittest.TestCase):
+    def test_settle_and_idempotence(self):
+        packet = _issue()
+        r1 = csa.settle_attempt(packet)
+        self.assertTrue(r1["settled"])
+        self.assertEqual(r1["approval_digest"], packet["approval_digest"])
+        r2 = csa.settle_attempt(packet)
+        # Idempotent: the same receipt, never a second execution.
+        self.assertEqual(r1, r2)
+
+    def test_settle_tampered_refused(self):
+        packet = _issue()
+        edited = dict(packet)
+        edited["capabilities"] = ["*"]
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.settle_attempt(edited)
+        self.assertEqual(cm.exception.code, "scoped-approval-tampered")
+
+
+class CapabilityTest(unittest.TestCase):
+    def test_exercise_once_then_dead(self):
+        packet = _issue()
+        record = csa.exercise_capability(packet, "deploy:prod")
+        self.assertEqual(record["capability"], "deploy:prod")
+        self.assertEqual(len(packet["consumption"]), 1)
+        csa.settle_attempt(packet)
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.exercise_capability(packet, "logs:read")
+        self.assertEqual(cm.exception.code, "approval-capability-dead")
+
+    def test_unknown_capability_refused(self):
+        packet = _issue()
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.exercise_capability(packet, "secrets:read")
+        self.assertEqual(cm.exception.code,
+                         "scoped-approval-capability-unknown")
+
+    def test_exercise_in_wrong_context_refused(self):
+        packet = _issue()
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.exercise_capability(packet, "deploy:prod", run_id="run-x")
+        self.assertEqual(cm.exception.code, "approval-run-mismatch")
+
+
+class RecheckWriteTest(unittest.TestCase):
+    def test_stale_state_refused_and_not_settled(self):
+        packet = _issue()
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.recheck_and_write(packet, "ef" * 32)
+        self.assertEqual(cm.exception.code, "approval-state-stale")
+        self.assertFalse(packet["settled"])  # refusal is not the write
+
+    def test_fresh_state_writes_and_settles(self):
+        packet = _issue()
+        receipt = csa.recheck_and_write(packet, "cd" * 32)
+        self.assertTrue(receipt["settled"])
+        self.assertEqual(receipt["approval_digest"],
+                         packet["approval_digest"])
+        # A second write under the same approval is dead.
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.recheck_and_write(packet, "cd" * 32)
+        self.assertEqual(cm.exception.code, "approval-capability-dead")
+
+    def test_apply_called_between_recheck_and_settlement(self):
+        packet = _issue()
+        calls = []
+
+        def apply(p):
+            calls.append(p["approval_digest"])
+
+        receipt = csa.recheck_and_write(packet, "cd" * 32, apply=apply)
+        self.assertEqual(calls, [packet["approval_digest"]])
+        self.assertTrue(receipt["settled"])
+
+    def test_apply_failure_does_not_settle(self):
+        packet = _issue()
+
+        def boom(p):
+            raise RuntimeError("deployment write failed")
+
+        with self.assertRaises(RuntimeError):
+            csa.recheck_and_write(packet, "cd" * 32, apply=boom)
+        self.assertFalse(packet["settled"])
+
+    def test_write_in_wrong_context_refused(self):
+        packet = _issue()
+        with self.assertRaises(csa.ClosureScopedApprovalError) as cm:
+            csa.recheck_and_write(packet, "cd" * 32,
+                                  sandbox_id="sbx-other")
+        self.assertEqual(cm.exception.code, "approval-sandbox-mismatch")
+
+
+class TaxonomyPinTest(unittest.TestCase):
+    def test_new_codes_registered(self):
+        from gov import decision_codes as dc
+        for code in ("approval-run-mismatch", "approval-sandbox-mismatch",
+                     "approval-route-mismatch", "approval-capability-dead",
+                     "approval-state-stale", "scoped-approval-malformed",
+                     "scoped-approval-tampered",
+                     "scoped-approval-capability-unknown"):
+            self.assertIn(code, dc.TAXONOMY)
+        # Wave-237 merge: re-pointed 655 -> 667 (lane-local 647 + 8;
+        # the merge composes 20 new codes: 647 -> 667).
+        self.assertEqual(len(dc.TAXONOMY), 667)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -282,7 +282,11 @@ class ScanTest(unittest.TestCase):
         # Wave-236 merge: re-pointed 635 -> 647 (7 close-record signer
         # binding + 5 permit/closure codes), composed from the three lane
         # commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 647)
+        # Wave-237 merge: re-pointed 647 -> 667 (4 three-outcome
+        # gate-rule + 3 edited-approval refusal + 5 canonical-record +
+        # 8 closure-scoped approval codes), composed from the four lane
+        # commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 667)
 
 
 if __name__ == "__main__":
