@@ -1,7 +1,11 @@
 """PCI device-attachment deny-by-default for jail policies.
 
-Design input (ADAPT, not vendored): Firecracker's device-passthrough
-attack surface pressure (CVE-2026-5747, wave-219 prospecting). A tool
+Design input (ADAPT, not vendored): PCI device-passthrough is a
+confinement attack surface. NOTE (wave-221 merge adjudication): wave-219
+prospecting attributed this direction to Firecracker's CVE-2026-5747;
+wave-221 prospecting could not verify that attribution (zero hits in the
+firecracker tree), so it is NOT claimed here. The deny-by-default
+direction stands on its own as defense-in-depth. A tool
 jail that silently permits PCI device attachment lets an agent widen
 its confinement by naming a device at runtime. This module makes
 device attachment explicit and pinned:

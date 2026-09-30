@@ -11,7 +11,10 @@ seam uses — one normalizer, not two) plus its digest.
 ``seal_approval(record, presentation, signer=...)`` binds the signing
 ceremony: ``{approval_id, artifact_digest, presentation_digest,
 presentation_text, signer, at}``, optionally stamped with the
-request's ``parameter_digest`` (mission-bound seals).
+request's ``parameter_digest`` (mission-bound seals), and optionally
+carrying a ``gov.render_commit`` ``RenderingCommitment`` under
+``"rendering_commitment"`` (wave-221) so a later auditor can replay
+exactly what the approver saw.
 
 ``verify_seal(record, sealed)`` is the approval-pipeline gate. It
 refuses fail-closed with the named ``display-hash-mismatch`` code when:
@@ -36,6 +39,7 @@ import hmac
 
 from .approvals import canonical_packet, sanitize_preview_text
 from . import presentation as _pres
+from . import render_commit as _rc
 
 
 def _render_text(record):
@@ -87,7 +91,8 @@ def render_approval(record):
     return {"text": text, "digest": _pres.presentation_digest(text)}
 
 
-def seal_approval(record, presentation, *, signer, parameter_digest=None):
+def seal_approval(record, presentation, *, signer, parameter_digest=None,
+                rendering_commitment=None):
     """Bind the signing ceremony to the artifact AND its presentation.
 
     Returns the sealed envelope ``{approval_id, artifact_digest,
@@ -102,6 +107,17 @@ def seal_approval(record, presentation, *, signer, parameter_digest=None):
     digest into the seal, making the seal itself mission-bound:
     ``verify_seal`` refuses the signature when the authorization path
     presents a different digest.
+
+    ``rendering_commitment`` (optional, wave-221) is a
+    ``gov.render_commit`` ``RenderingCommitment`` produced over the
+    view-time render bytes. When present it is attached to the
+    envelope under ``"rendering_commitment"`` and the seal refuses
+    fail-closed (``display-hash-mismatch``) unless the commitment
+    actually commits to THIS presentation (its ``render_hash`` equals
+    the presentation digest) and THIS artifact (its
+    ``artifact_digest`` equals the record's). With
+    ``rendering_commitment=None`` the envelope keys are exactly the
+    wave-220 set — the legacy path is untouched.
     """
     if not isinstance(record, dict):
         raise TypeError("record must be a dict")
@@ -111,9 +127,24 @@ def seal_approval(record, presentation, *, signer, parameter_digest=None):
             not isinstance(parameter_digest, str) or not parameter_digest):
         raise ValueError("parameter_digest must be a non-empty string")
     _pres.check_presentation_integrity(presentation)
+    artifact = _pres.artifact_digest(record)
+    if rendering_commitment is not None:
+        # Fail closed at seal time: a commitment that does not commit
+        # to this presentation / this artifact is never attached.
+        _rc.check_commitment_shape(rendering_commitment)
+        if not hmac.compare_digest(rendering_commitment["render_hash"],
+                                   presentation["digest"]):
+            raise _pres.DisplayHashMismatchError(
+                "display-hash-mismatch: the rendering commitment does "
+                "not commit to the presentation being sealed")
+        if not hmac.compare_digest(rendering_commitment["artifact_digest"],
+                                   artifact):
+            raise _pres.DisplayHashMismatchError(
+                "display-hash-mismatch: the rendering commitment binds a "
+                "different artifact than the record being sealed")
     sealed = {
         "approval_id": record.get("id"),
-        "artifact_digest": _pres.artifact_digest(record),
+        "artifact_digest": artifact,
         "presentation_digest": presentation["digest"],
         "presentation_text": presentation["text"],
         "signer": signer,
@@ -121,6 +152,8 @@ def seal_approval(record, presentation, *, signer, parameter_digest=None):
     }
     if parameter_digest is not None:
         sealed["parameter_digest"] = parameter_digest
+    if rendering_commitment is not None:
+        sealed["rendering_commitment"] = rendering_commitment
     return sealed
 
 
@@ -138,6 +171,11 @@ def verify_seal(record, sealed, *, parameter_digest=None):
       supplies the request's ``parameter_digest``, a seal binding a
       different digest (or none) is refused: the approval cannot be
       retargeted onto different parameters.
+    * ``display-hash-mismatch`` — when the seal carries a
+      ``rendering_commitment`` (wave-221) whose ``render_hash`` does
+      not match the replay of the sealed presentation text, or whose
+      ``artifact_digest`` does not match the sealed artifact: the
+      audit trail cannot prove what the approver was shown.
 
     Returns True when the presentation faithfully renders the artifact
     the approver is signing.
@@ -179,6 +217,30 @@ def verify_seal(record, sealed, *, parameter_digest=None):
     # request's parameter_digest, the seal must bind exactly it.
     if parameter_digest is not None:
         _pres.verify_mission_binding(sealed, parameter_digest)
+    # (5) Rendering-commitment replay (wave-221): when the seal
+    # carries a commitment, the sealed presentation text must replay
+    # to the committed render_hash — this is the auditor's proof of
+    # exactly what the approver saw. A stale/forged commitment (e.g.
+    # one sealed for a different presentation) refuses with the
+    # existing display-hash-mismatch code. Note the commitment binds
+    # the SEALED presentation text, not a re-render: the commitment
+    # is evidence of view-time, and the artifact/freshness checks
+    # above already tie the sealed text to the live record.
+    commitment = sealed.get("rendering_commitment")
+    if commitment is not None:
+        _rc.check_commitment_shape(commitment)
+        if not hmac.compare_digest(commitment["artifact_digest"],
+                                   sealed["artifact_digest"]):
+            raise _pres.DisplayHashMismatchError(
+                "display-hash-mismatch: the rendering commitment binds "
+                "a different artifact than the sealed approval")
+        try:
+            _rc.verify(commitment,
+                       sealed["presentation_text"].encode("utf-8"))
+        except _rc.RenderingCommitmentError as exc:
+            raise _pres.DisplayHashMismatchError(
+                "display-hash-mismatch: the rendering commitment does "
+                "not replay the sealed presentation — %s" % (exc,))
     return True
 
 
