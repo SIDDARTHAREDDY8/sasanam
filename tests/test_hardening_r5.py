@@ -797,7 +797,12 @@ class TestF22LogGuard(unittest.TestCase):
         self.assertEqual(cp["seq"], 2000)
 
     def test_size_guard_blocks_append_and_chain_stays_valid(self):
-        log = ActionLog(os.path.join(self.tmp, "b.jsonl"), max_bytes=300)
+        # Cap is 400 (not 300): wave-234 stamps `prev_record_octets_digest`
+        # on every entry (~95 bytes: 64-hex digest + field name), so the old
+        # 300-byte arithmetic no longer leaves room for the "first" entry.
+        # The guard itself is unchanged -- it still refuses the genuinely
+        # over-cap filler appends below, and the chain stays valid.
+        log = ActionLog(os.path.join(self.tmp, "b.jsonl"), max_bytes=400)
         log.append({"event": "first"})
         with self.assertRaises(LogFullError):
             for _ in range(50):
@@ -810,15 +815,18 @@ class TestF22LogGuard(unittest.TestCase):
         # The guard rejects when current + new line would exceed the
         # cap — not only when the current size already exceeds it —
         # and the refusal mutates no chain state (no seq gap).
-        # Cap is 700 (not 600): wave-72 stamps `epoch_id` on every
-        # entry (~24 bytes), so the old 600-byte arithmetic no longer
-        # leaves room for the small "third" entry. The guard itself is
-        # unchanged — it still refused the genuinely-over-cap "second"
-        # append above (603 > 600 projected).
-        log = ActionLog(os.path.join(self.tmp, "d.jsonl"), max_bytes=700)
+        # Cap is 850 (not 700): wave-234 stamps `prev_record_octets_digest`
+        # on every entry (~95 bytes; the first entry is now 437 bytes), so
+        # the old 700-byte arithmetic no longer leaves room for the small
+        # "third" entry (438 + 337 = 775 > 700). The guard itself is
+        # unchanged — it still refuses the genuinely-over-cap "second"
+        # append below (975 > 850 projected).
+        log = ActionLog(os.path.join(self.tmp, "d.jsonl"), max_bytes=850)
         log.append({"event": "first", "pad": "x" * 100})
         size = os.path.getsize(log.path)
-        self.assertLess(size, 400)
+        # 500 (not 400): wave-234's `prev_record_octets_digest` adds ~95
+        # bytes to every entry (438 bytes at wave-234 vs 343 at wave-72).
+        self.assertLess(size, 500)
         with self.assertRaises(LogFullError):
             log.append({"event": "second", "pad": "y" * 200})
         ok, broken, count = verify_chain(log.path)

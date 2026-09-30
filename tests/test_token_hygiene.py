@@ -1,0 +1,281 @@
+"""Unit tests for gov/token_hygiene.py (wave-234 lane B).
+
+Deterministic: every clock is injected (now=). Digest expectations
+come from stdlib primitives, not from the module under test.
+"""
+
+import time
+import unittest
+
+from gov import token_hygiene as th
+
+
+T0 = 1790817600  # 2026-09-30T12:00:00Z
+
+
+def _claims(iat=T0, ttl=600, aud="svc:policy", iss="issuer:1",
+            key_id="k1", key_issued_at=T0, impact="standard"):
+    return {"type": "agent-credential", "iat": iat, "exp": iat + ttl,
+            "aud": aud, "iss": iss, "scope": "policy:evaluate",
+            "key_id": key_id, "key_issued_at": key_issued_at,
+            "impact": impact}
+
+
+class IssuanceTest(unittest.TestCase):
+    def setUp(self):
+        self.hyg = th.TokenHygiene()
+
+    def test_cap_exact_passes(self):
+        # Exactly 3600s is the cap: the boundary belongs to the cap.
+        out = self.hyg.validate_issuance(
+            _claims(ttl=th.MAX_TTL_SECONDS), now=T0)
+        self.assertEqual(out["exp"], T0 + 3600)
+
+    def test_cap_plus_one_refuses(self):
+        # One second over the cap refuses at ISSUANCE, not at expiry.
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(
+                _claims(ttl=th.MAX_TTL_SECONDS + 1), now=T0)
+        self.assertEqual(ctx.exception.code, "token-ttl-exceeded")
+
+    def test_expiry_after_issuance_still_checked_at_issuance(self):
+        # A token that is NOT yet expired is still refused when its
+        # LIFETIME was too long: the cap is an issuance property.
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(_claims(ttl=7200), now=T0)
+        self.assertEqual(ctx.exception.code, "token-ttl-exceeded")
+
+    def test_widening_cap_refused_fail_closed(self):
+        # The 1h cap is the invariant, not a default: widening fails.
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            th.TokenHygiene(max_ttl_seconds=7200)
+        self.assertEqual(ctx.exception.code, "token-ttl-exceeded")
+
+    def test_tightening_cap_allowed(self):
+        strict = th.TokenHygiene(max_ttl_seconds=1800)
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            strict.validate_issuance(_claims(ttl=3600), now=T0)
+        self.assertEqual(ctx.exception.code, "token-ttl-exceeded")
+
+    def test_missing_audience(self):
+        claims = _claims()
+        del claims["aud"]
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(claims, now=T0)
+        self.assertEqual(ctx.exception.code, "token-audience-missing")
+
+    def test_empty_audience(self):
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(_claims(aud=""), now=T0)
+        self.assertEqual(ctx.exception.code, "token-audience-missing")
+
+    def test_malformed_claims(self):
+        bad = [None, "x", 42, ["aud"], {"iat": "soon", "exp": T0 + 600,
+                                        "aud": "a", "key_id": "k",
+                                        "key_issued_at": T0}]
+        for claims in bad:
+            with self.assertRaises(th.TokenHygieneError) as ctx:
+                self.hyg.validate_issuance(claims, now=T0)
+            self.assertEqual(ctx.exception.code, "token-malformed",
+                             "claims=%r" % (claims,))
+
+    def test_exp_not_after_iat(self):
+        claims = _claims()
+        claims["exp"] = claims["iat"]
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(claims, now=T0)
+        self.assertEqual(ctx.exception.code, "token-malformed")
+
+    def test_base_class_defines_no_code(self):
+        # Wave-233 lane-A lesson: the base class must not carry
+        # product vocabulary (the w228 scanner maps class-level
+        # ``code`` attributes).
+        self.assertNotIn("code", vars(th.TokenHygieneError))
+
+    def test_reason_mirrors_code(self):
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(_claims(ttl=7200), now=T0)
+        self.assertEqual(ctx.exception.reason, ctx.exception.code)
+
+
+class KeyRotationTest(unittest.TestCase):
+    def setUp(self):
+        self.hyg = th.TokenHygiene()
+
+    def test_stale_high_impact_key_refused(self):
+        stale = T0 - 91 * 86400
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(
+                _claims(key_issued_at=stale, impact="high"), now=T0)
+        self.assertEqual(ctx.exception.code, "token-key-stale")
+
+    def test_fresh_high_impact_key_passes(self):
+        fresh = T0 - 89 * 86400
+        out = self.hyg.validate_issuance(
+            _claims(key_issued_at=fresh, impact="high"), now=T0)
+        self.assertEqual(out["key_id"], "k1")
+
+    def test_stale_key_standard_impact_passes(self):
+        # The 90-day window binds high-impact keys only.
+        stale = T0 - 91 * 86400
+        out = self.hyg.validate_issuance(
+            _claims(key_issued_at=stale, impact="standard"), now=T0)
+        self.assertEqual(out["impact"], "standard")
+
+    def test_present_rechecks_key_stale(self):
+        # Pinned deliberate semantics: present() re-validates the full
+        # issuance policy at presentation time. A high-impact token
+        # issued with a key just inside the window (89 days) presented
+        # after the key crosses 90 days refuses token-key-stale.
+        # (Fail-closed strictness; the 1h TTL cap bounds the drift.)
+        key_birth = T0 - 89 * 86400
+        issued = self.hyg.validate_issuance(
+            _claims(ttl=600, key_issued_at=key_birth, impact="high"),
+            now=T0)
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.present(issued, "svc:policy", now=T0 + 2 * 86400)
+        self.assertEqual(ctx.exception.code, "token-key-stale")
+
+    def test_bad_impact_refused(self):
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.validate_issuance(_claims(impact="cosmic"), now=T0)
+        self.assertEqual(ctx.exception.code, "token-malformed")
+
+
+class PresentationTest(unittest.TestCase):
+    def setUp(self):
+        self.hyg = th.TokenHygiene()
+
+    def test_expired_refused(self):
+        issued = self.hyg.validate_issuance(_claims(ttl=600), now=T0)
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.present(issued, "svc:policy", now=T0 + 601)
+        self.assertEqual(ctx.exception.code, "token-expired")
+
+    def test_expired_never_refreshed(self):
+        # Retry at a later time refuses identically: there is no
+        # refresh path.
+        issued = self.hyg.validate_issuance(_claims(ttl=600), now=T0)
+        for later in (T0 + 601, T0 + 3600, T0 + 86400):
+            with self.assertRaises(th.TokenHygieneError) as ctx:
+                self.hyg.present(issued, "svc:policy", now=later)
+            self.assertEqual(ctx.exception.code, "token-expired",
+                             "now=%d" % later)
+
+    def test_valid_present_passes(self):
+        issued = self.hyg.validate_issuance(_claims(ttl=600), now=T0)
+        out = self.hyg.present(issued, "svc:policy", now=T0 + 599)
+        self.assertEqual(out["aud"], "svc:policy")
+
+    def test_audience_mismatch(self):
+        issued = self.hyg.validate_issuance(_claims(ttl=600), now=T0)
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.present(issued, "svc:billing", now=T0 + 10)
+        self.assertEqual(ctx.exception.code, "token-audience-mismatch")
+
+    def test_present_rechecks_shape(self):
+        issued = self.hyg.validate_issuance(_claims(ttl=600), now=T0)
+        del issued["aud"]
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            self.hyg.present(issued, "svc:policy", now=T0 + 10)
+        self.assertEqual(ctx.exception.code, "token-audience-missing")
+
+
+class RegistryTest(unittest.TestCase):
+    def setUp(self):
+        th.clear_known_tokens()
+
+    def tearDown(self):
+        th.clear_known_tokens()
+
+    def test_register_and_snapshot(self):
+        th.register_known_token("tok-A")
+        self.assertIn("tok-A", th.known_token_values())
+
+    def test_register_rejects_empty(self):
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            th.register_known_token("")
+        self.assertEqual(ctx.exception.code, "token-malformed")
+
+    def test_clear(self):
+        th.register_known_token("tok-A")
+        th.clear_known_tokens()
+        self.assertEqual(th.known_token_values(), frozenset())
+
+
+class ScrubTest(unittest.TestCase):
+    def setUp(self):
+        th.clear_known_tokens()
+        th.register_known_token("tok-SECRET-1")
+
+    def tearDown(self):
+        th.clear_known_tokens()
+
+    def test_scrub_dict_values(self):
+        out = th.token_scrub({"token": "tok-SECRET-1", "n": 1})
+        self.assertEqual(out["token"], th.REDACTED_MARKER)
+        self.assertEqual(out["n"], 1)
+
+    def test_scrub_keys_untouched(self):
+        # Dict keys are the log's own field names, never secrets.
+        out = th.token_scrub({"tok-SECRET-1": "value"})
+        self.assertIn("tok-SECRET-1", out)
+
+    def test_scrub_nested(self):
+        out = th.token_scrub(
+            {"a": ["x", {"b": "prefix tok-SECRET-1 suffix"}]})
+        self.assertIn(th.REDACTED_MARKER, out["a"][1]["b"])
+        self.assertNotIn("tok-SECRET-1", out["a"][1]["b"])
+
+    def test_scrub_noop_without_registration(self):
+        th.clear_known_tokens()
+        payload = {"token": "tok-SECRET-1"}
+        self.assertIs(th.token_scrub(payload), payload)
+
+    def test_scrub_str(self):
+        self.assertIn(th.REDACTED_MARKER,
+                      th.token_scrub("bearer tok-SECRET-1 here"))
+
+
+class ScanTest(unittest.TestCase):
+    def setUp(self):
+        th.clear_known_tokens()
+        th.register_known_token("tok-INCIDENT-2")
+
+    def tearDown(self):
+        th.clear_known_tokens()
+
+    def test_assert_clean_refuses(self):
+        redactor = th.TokenRedactor.from_registry()
+        with self.assertRaises(th.TokenHygieneError) as ctx:
+            redactor.assert_clean('{"token": "tok-INCIDENT-2"}')
+        self.assertEqual(ctx.exception.code, "token-in-log")
+        self.assertIn("incident", str(ctx.exception).lower())
+
+    def test_assert_clean_passes(self):
+        redactor = th.TokenRedactor.from_registry()
+        self.assertIsNone(
+            redactor.assert_clean('{"token": "<redacted:token>"}'))
+
+    def test_redactor_only_scans(self):
+        # The redactor has no quiet-redact path by design; redaction
+        # lives at module level (token_scrub, defense-in-depth half).
+        self.assertFalse(hasattr(th.TokenRedactor("x"), "scrub"))
+
+    def test_seven_codes_in_taxonomy(self):
+        from gov import decision_codes as dc
+        codes = ["token-malformed", "token-ttl-exceeded", "token-expired",
+                 "token-audience-missing", "token-audience-mismatch",
+                 "token-key-stale", "token-in-log"]
+        for code in codes:
+            self.assertIn(code, dc.TAXONOMY, code)
+            self.assertEqual(dc.TAXONOMY[code]["domain"], "token_hygiene",
+                             code)
+        # Wave-234 merge: lane-local pin 606 -> 617 (3 lane-A octet-digest
+        # chain codes + 8 lane-C consumption-ledger codes added at merge;
+        # canonical pin is asserted in tests/test_decision_codes.py).
+        self.assertEqual(len(dc.TAXONOMY), 617)
+
+
+if __name__ == "__main__":
+    unittest.main()

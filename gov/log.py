@@ -113,6 +113,7 @@ from . import merkle as _merkle
 from . import signing as _signing
 from . import ed25519 as _ed25519
 from . import keyset as _keyset
+from . import token_hygiene as _token_hygiene  # Wave-234: unconditional (fail-closed)
 # NOTE (wave-137): gov.anchoring is imported LAZILY inside
 # export_bundle/verify_export_bundle, never at module level. The
 # anchor client (gov.anchor_backend) is executor-side only: importing
@@ -121,6 +122,12 @@ from . import keyset as _keyset
 
 GENESIS = "GENESIS"
 FORMAT_VERSION = 1
+# Wave-234 (octet-digest receipt chaining): the prev_record_octets_digest
+# value for the genesis entry (seq 1), which has no previous record. A
+# fixed, documented constant -- never a digest of anything -- so it
+# cannot be mistaken for a real link. Stored on the entry like every
+# other link field, hence HMAC-bound via _canonical.
+OCTET_DIGEST_GENESIS = "0" * 64
 # Checkpoint format 2: HMAC fields plus the signed tree head
 # (merkle_root, threshold sigs, roster binding). Entries stay v1.
 CHECKPOINT_SIG_VERSION = 2
@@ -705,11 +712,28 @@ class LogFullError(Exception):
     """
 
 
+class OctetDigestError(Exception):
+    """Raised when octet-digest chain linking fails (wave-234).
+
+    ``code`` is the chain-domain taxonomy refusal code
+    (``chain-octet-digest-mismatch`` / ``chain-octet-digest-absent`` /
+    ``chain-record-truncated``); ``detail`` names the failing sequence
+    number. The strict writer raises this instead of linking without
+    the previous record's transmitted octets (fail closed, never
+    silently degrade to semantic chaining).
+    """
+
+    def __init__(self, code, detail=""):
+        self.code = code
+        self.detail = detail
+        super().__init__("%s%s" % (code, (": " + detail) if detail else ""))
+
+
 class ActionLog:
     """Append-only JSONL log with HMAC chaining and signed checkpoints."""
 
     def __init__(self, path, max_bytes=None, signer=None, roster=None, *,
-                 deployment_mode=None):
+                 deployment_mode=None, require_octet_digest=False):
         """Create/open the log at ``path``.
 
         ``signer`` (P2): an optional ``gov.signing.Signer`` (or
@@ -730,10 +754,20 @@ class ActionLog:
         verification helpers (``_verify``, ``verify_chain_tip``, ...)
         deliberately keep the default: verification must work
         regardless of a creation-time declaration.
+        ``require_octet_digest`` (wave-234): strict writer mode for
+        octet-digest chain linking. When True, ``append`` refuses
+        (``OctetDigestError`` naming ``chain-octet-digest-absent``)
+        rather than link a new entry without the previous record's
+        transmitted octets. Keyword-only; ``False`` (default) keeps
+        pre-wave-234 behavior. ``refresh()`` always captures the tail
+        record's raw bytes, so the refusal is defense-in-depth.
         """
         self.path = Path(path)
         self.checkpoint_path = self.path.parent / "checkpoints.jsonl"
         self._deployment_mode = deployment_mode
+        # Wave-234: strict octet-digest writer mode (fail closed when
+        # the previous record's transmitted octets are unavailable).
+        self._require_octet_digest = bool(require_octet_digest)
         if deployment_mode is not None:
             # Fail fast on unknown modes at construction (the per-append
             # re-resolution would raise the same ValueError, but a
@@ -755,6 +789,11 @@ class ActionLog:
                 "set" % (signer.threshold,))
         self._merkle = None  # MerkleStack, built by refresh() iff signer
         self._known_sig = None  # (size, mtime_ns) the cached tail matches
+        # Wave-234: the exact transmitted bytes (as received) of the
+        # tail record. The next append commits to them via
+        # prev_record_octets_digest. Always captured by refresh() when
+        # the log is non-empty; None only for an empty log (genesis).
+        self._prev_raw = None
         # Wave-72: the currently open anchor epoch. Always stamped on new
         # entries as reserved chain metadata (bound inside the HMAC input
         # via the canonical form); derived from the tail entry on refresh.
@@ -845,8 +884,13 @@ class ActionLog:
         # still implies the file is unchanged.
         self._known_sig = self._file_sig()
         if self.path.exists():
-            for line in self.path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
+            for raw_line in self.path.read_text(
+                    encoding="utf-8").splitlines(keepends=True):
+                # Wave-234: keep the exact transmitted bytes (line
+                # terminator included) so the next append can commit
+                # to them via prev_record_octets_digest. Parsing is
+                # unchanged (strip-then-load, same skips as before).
+                line = raw_line.strip()
                 if not line:
                     continue
                 try:
@@ -860,6 +904,10 @@ class ActionLog:
                     continue
                 self._seq = seq
                 self._prev = chain_hash
+                # Wave-234: retain the tail record's raw bytes. Re-
+                # encoding utf-8 round-trips the read text exactly, so
+                # this is byte-identical to what is on disk.
+                self._prev_raw = raw_line.encode("utf-8")
                 epoch_id = entry.get("epoch_id")
                 if _valid_epoch_id(epoch_id):
                     self._epoch_id = epoch_id
@@ -1027,6 +1075,37 @@ class ActionLog:
         from gov import evidence_tiers as _et
         return _et.retire_hot(self.path, policy, now=now)
 
+    def _octet_link_digest(self, seq):
+        """SHA-256 of the previous record's exact transmitted bytes.
+
+        Wave-234 (octet-digest receipt chaining): the link commits to
+        the raw stored line bytes of the previous record as this
+        linker received them -- never a re-serialization. The genesis
+        entry (seq 1) has no previous record: the documented
+        ``OCTET_DIGEST_GENESIS`` constant. Otherwise the digest covers
+        the tail bytes captured by ``refresh()``.
+
+        Strict writer mode (``require_octet_digest=True``) raises
+        ``OctetDigestError`` (``chain-octet-digest-absent``) when the
+        tail bytes are unavailable instead of linking without them.
+        In default mode an unavailable tail (unreachable via the
+        public API -- ``refresh()`` always captures the tail bytes of
+        a non-empty log) returns None and the field is omitted; a
+        ``require_octet_digest=True`` verifier will then refuse the
+        entry ``chain-octet-digest-absent`` -- no silent degradation.
+        """
+        if seq == 1:
+            return OCTET_DIGEST_GENESIS
+        if self._prev_raw is not None:
+            return hashlib.sha256(self._prev_raw).hexdigest()
+        if self._require_octet_digest:
+            raise OctetDigestError(
+                "chain-octet-digest-absent",
+                "seq %d: previous record's transmitted octets are "
+                "unavailable; strict writer refuses to link without them"
+                % seq)
+        return None
+
     def append(self, event):
         """Append an event dict; returns the stored entry.
 
@@ -1066,8 +1145,27 @@ class ActionLog:
             new_seq = self._seq + 1
             entry = {}
             entry.update(event)
+            # Wave-234 (token hygiene): defense-in-depth redaction of
+            # REGISTERED bearer token values, applied to the entry
+            # BEFORE chain/MAC computation so the scrubbed entry is
+            # what the chain binds (an accident cannot fork the
+            # chain). Precise contract, see gov/token_hygiene.py:
+            # the CALLER must never hand the log a token value --
+            # events carry {type, issuer, scope, audience} metadata
+            # only. This scrub is not enforcement: TokenRedactor
+            # .assert_clean refuses token-in-log (incident material)
+            # on any rendered/stored line that still carries a
+            # registered value. With no registered values this is a
+            # no-op and stored bytes are unchanged.
+            entry = _token_hygiene.token_scrub(entry)
+            # Wave-234: the octet-digest link is reserved chain
+            # metadata (a caller-supplied prev_record_octets_digest is
+            # dropped like every other reserved field). Computed BEFORE
+            # the MAC so it is HMAC-bound via the canonical form; the
+            # existing prev_hash/hash semantics are unchanged.
+            octet_link = self._octet_link_digest(new_seq)
             # Reserved metadata wins over anything the caller supplied.
-            entry.update({
+            reserved = {
                 "seq": new_seq,
                 "ts": _utcnow(),
                 "prev_hash": self._prev,
@@ -1077,7 +1175,10 @@ class ActionLog:
                 # input via the canonical form (backdating / reordering /
                 # cross-epoch moves without the key break verification).
                 "epoch_id": self._epoch_id,
-            })
+            }
+            if octet_link is not None:
+                reserved["prev_record_octets_digest"] = octet_link
+            entry.update(reserved)
             entry["hash"] = _compute_mac(key, epoch, self._prev,
                                          _canonical(entry))
             if self._signer is not None:
@@ -1118,6 +1219,9 @@ class ActionLog:
                         % (self.path, self._max_bytes))
             self._seq = new_seq
             self._prev = entry["hash"]
+            # Wave-234: the bytes just written become the tail whose
+            # octets the NEXT append commits to.
+            self._prev_raw = line.encode("utf-8")
             f.write(line)
             f.flush()
             os.fsync(f.fileno())
@@ -1212,7 +1316,85 @@ def _parse_sidecar_lines(lines):
     return cps, n_bad
 
 
-def _verify(path, _skip_malformed=False):
+def _is_octet_digest_shape(value):
+    """64 lowercase hex chars -- the shape of a SHA-256 hex digest."""
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _verify_octet_links(path):
+    """Octet-digest link verification (wave-234), independent pre-pass.
+
+    Walks the raw stored lines in order and checks every entry's
+    ``prev_record_octets_digest`` against the ACTUAL stored octets of
+    the preceding line -- never a re-serialization. Returns None when
+    every link checks out, else the refusal error string naming the
+    chain-domain taxonomy code:
+
+    * ``chain-record-truncated`` -- a record's bytes (or its
+      predecessor's) do not decode as a JSON object; the bytes are
+      reported, never silently skipped.
+    * ``chain-octet-digest-absent`` -- an entry carries no
+      well-formed digest field; refuses instead of silently
+      degrading to semantic (prev_hash) chaining.
+    * ``chain-octet-digest-mismatch`` -- the claimed digest does not
+      match the stored previous-record octets: the previous record
+      was re-encoded (byte-different, semantically equal). This is
+      the deliberate failure mode -- a canonicalizing linker breaks
+      this check by construction.
+
+    Blank lines are ignored exactly as in the main walk. This pass
+    checks links only; seq continuity, MACs, epochs, and checkpoints
+    stay the main walk's job.
+    """
+    p = Path(path)
+    raws = []
+    for lineno, raw_line in enumerate(
+            p.read_text(encoding="utf-8").splitlines(keepends=True), 1):
+        if not raw_line.strip():
+            continue
+        raws.append((lineno, raw_line.encode("utf-8")))
+    for idx, (lineno, raw) in enumerate(raws):
+        try:
+            entry = json.loads(raw.decode("utf-8"))
+            if not isinstance(entry, dict):
+                raise ValueError("not a JSON object")
+        except (UnicodeDecodeError, ValueError) as exc:
+            return ("chain-record-truncated: log line %d bytes do not "
+                    "decode as a JSON record (%s); refusing, never "
+                    "silently skipping" % (lineno, exc))
+        claimed = entry.get("prev_record_octets_digest")
+        if not _is_octet_digest_shape(claimed):
+            return ("chain-octet-digest-absent: seq %r at log line %d "
+                    "carries no well-formed prev_record_octets_digest; "
+                    "refusing (no silent degradation to semantic "
+                    "chaining)" % (entry.get("seq"), lineno))
+        if idx == 0:
+            expected = OCTET_DIGEST_GENESIS
+        else:
+            prev_lineno, prev_raw = raws[idx - 1]
+            try:
+                prev_entry = json.loads(prev_raw.decode("utf-8"))
+                if not isinstance(prev_entry, dict):
+                    raise ValueError("not a JSON object")
+            except (UnicodeDecodeError, ValueError) as exc:
+                return ("chain-record-truncated: previous record bytes "
+                        "(log line %d) do not decode as a JSON record "
+                        "(%s); refusing, never silently skipping"
+                        % (prev_lineno, exc))
+            expected = hashlib.sha256(prev_raw).hexdigest()
+        if not hmac.compare_digest(claimed, expected):
+            return ("chain-octet-digest-mismatch: seq %r at log line %d "
+                    "commits to %s but the stored previous-record "
+                    "octets (log line %d) digest to %s: the previous "
+                    "record was re-encoded (byte-different, "
+                    "semantically equal); refusing"
+                    % (entry.get("seq"), lineno, claimed,
+                       raws[idx - 1][0] if idx else lineno, expected))
+    return None
+
+
+def _verify(path, _skip_malformed=False, require_octet_digest=False):
     """Full verification. Returns a verdict dict.
 
     Never raises on file CONTENT problems (F28): corrupt log lines and
@@ -1249,6 +1431,14 @@ def _verify(path, _skip_malformed=False):
     log that spans a key rotation does NOT verify here by design
     (fail-closed): use KeyRing.verify_log for those (each label selects
     its own key there, so a forged label fails the per-epoch MAC instead).
+
+    Wave-234: ``require_octet_digest=True`` runs the
+    ``_verify_octet_links`` pre-pass first: every entry's
+    ``prev_record_octets_digest`` is checked against the actual stored
+    octets of the previous record (genesis expects
+    ``OCTET_DIGEST_GENESIS``). A pre-pass failure fails closed with
+    the named chain-domain refusal code; otherwise the walk below
+    runs exactly as before. The default (``False``) is unchanged.
     """
     key, epoch = _active_key()
     p = Path(path)
@@ -1263,6 +1453,14 @@ def _verify(path, _skip_malformed=False):
     n_skipped = 0
     if not p.exists():
         return _fail([], "log file does not exist")
+    if require_octet_digest:
+        # Wave-234: octet-digest links are verified against the raw
+        # stored bytes BEFORE the semantic walk. The pre-pass names
+        # the precise refusal (mismatch / absent / truncated); the
+        # walk below still runs for MACs, seq, epochs, checkpoints.
+        octet_err = _verify_octet_links(p)
+        if octet_err is not None:
+            return _fail([], octet_err)
     entries = []
     prev = GENESIS
     for lineno, line in enumerate(
@@ -1421,9 +1619,19 @@ def require_verified(path):
     return v
 
 
-def verify_chain(path):
-    """Replay the chain. Returns (ok, broken_seq_or_None, entry_count)."""
-    v = _verify(path)
+def verify_chain(path, require_octet_digest=False):
+    """Replay the chain. Returns (ok, broken_seq_or_None, entry_count).
+
+    Wave-234: ``require_octet_digest=True`` additionally verifies every
+    entry's ``prev_record_octets_digest`` against the actual stored
+    octets of the previous record (genesis expects the documented
+    ``OCTET_DIGEST_GENESIS`` constant). Refusals name the chain-domain
+    taxonomy codes ``chain-octet-digest-mismatch``,
+    ``chain-octet-digest-absent``, and ``chain-record-truncated`` in
+    the verdict's error string. The default (``False``) keeps all
+    existing behavior.
+    """
+    v = _verify(path, require_octet_digest=require_octet_digest)
     return v["ok"], v["broken_seq"], v["entries"]
 
 

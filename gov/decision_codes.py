@@ -4962,6 +4962,187 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
     # Wave-233 merge: 585 + 14 = 599 (9 lane-A evaluation + 4 lane-B dsse + 1 lane-C honest_claims), additive only.
+    # Wave-234 lane A (octet-digest receipt chaining: gov/log.py octet-digest pre-pass codes), additive.
+    # 599 -> 602 (3 new chain-domain codes). The codes name the exact
+    # refusal in gov.log's octet-digest pre-pass.
+    'chain-octet-digest-mismatch': {
+        "domain": 'audit',
+        "code": 'chain-octet-digest-mismatch',
+        "human": 'audit log: an entry\u2019s prev_record_octets_digest does '
+                 'not match the stored previous-record octets (the '
+                 'previous record was re-encoded: byte-different, '
+                 'semantically equal); refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-octet-digest-absent': {
+        "domain": 'audit',
+        "code": 'chain-octet-digest-absent',
+        "human": 'audit log: an entry carries no well-formed '
+                 'prev_record_octets_digest; refusing instead of '
+                 'silently degrading to semantic chaining',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-record-truncated': {
+        "domain": 'audit',
+        "code": 'chain-record-truncated',
+        "human": 'audit log: a record\u2019s stored bytes (or its '
+                 'predecessor\u2019s) do not decode as a JSON record; '
+                 'refusing, never silently skipping',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-234 lane B (NIST IR 8587-style token hygiene: gov/token_hygiene.py codes), additive.
+    'token-malformed': {
+        "domain": 'token_hygiene',
+        "code": 'token-malformed',
+        "human": 'token hygiene: agent credential claims are misshapen '
+                 '(not a dict, bad iat/exp/key fields); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-ttl-exceeded': {
+        "domain": 'token_hygiene',
+        "code": 'token-ttl-exceeded',
+        "human": 'token hygiene: token lifetime exceeds the 1h issuance '
+                 'cap; a token must never be issued with a longer life',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-expired': {
+        "domain": 'token_hygiene',
+        "code": 'token-expired',
+        "human": 'token hygiene: expired token presented; refused '
+                 'outright, never refreshed, never tolerated',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-audience-missing': {
+        "domain": 'token_hygiene',
+        "code": 'token-audience-missing',
+        "human": 'token hygiene: token issued without an explicit '
+                 'audience (aud); every agent credential must declare one',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-audience-mismatch': {
+        "domain": 'token_hygiene',
+        "code": 'token-audience-mismatch',
+        "human": 'token hygiene: token presented outside its declared '
+                 'audience; the presentation is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-key-stale': {
+        "domain": 'token_hygiene',
+        "code": 'token-key-stale',
+        "human": 'token hygiene: high-impact issuing key is older than '
+                 'the 90-day rotation window; rotate before issuing',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-in-log': {
+        "domain": 'token_hygiene',
+        "code": 'token-in-log',
+        "human": 'token hygiene: a bearer token value reached a log '
+                 'line; INCIDENT MATERIAL -- rotate the token and audit '
+                 'the leak path; lines must carry {type, issuer, scope, '
+                 'audience} metadata only',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-234 lane C (at-most-once consumption ledger: gov/consumption_ledger.py codes), additive.
+    'previously-consumed': {
+        "domain": 'consumption',
+        "code": 'previously-consumed',
+        "human": 'consumption ledger: the authorization instance was '
+                 'already consumed; replay is an explicit named outcome '
+                 'carrying the original receipt, never a silent release',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-idempotency-reused': {
+        "domain": 'consumption',
+        "code": 'consumption-idempotency-reused',
+        "human": 'consumption ledger: an entity-bound idempotency key '
+                 'already consumed one frozen instance; a different '
+                 'instance cannot release under it',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-instance-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-instance-malformed',
+        "human": 'consumption ledger: the presented instance digest is '
+                 'not a bare 64-hex sha256 digest; the ledger is keyed '
+                 'to frozen-instance digests only',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-key-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-key-malformed',
+        "human": 'consumption ledger: idempotency key parts must be a '
+                 'tuple/list of at least two non-empty strings (key '
+                 'type + entity identifier)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-journal-unusable': {
+        "domain": 'consumption',
+        "code": 'consumption-journal-unusable',
+        "human": 'consumption ledger: the write-ahead journal cannot be '
+                 'read or fails receipt verification; the ledger refuses '
+                 'to operate rather than release against an untrustworthy '
+                 'consumed set',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-journal-write-failed': {
+        "domain": 'consumption',
+        "code": 'consumption-journal-write-failed',
+        "human": 'consumption ledger: the write-ahead commit failed; '
+                 'nothing was marked consumed and no receipt was issued',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-receipt-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-receipt-malformed',
+        "human": 'consumption ledger: the presented receipt is missing '
+                 'fields or carries non-digest values',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-receipt-tampered': {
+        "domain": 'consumption',
+        "code": 'consumption-receipt-tampered',
+        "human": 'consumption ledger: the receipt digest does not '
+                 'recompute over the receipt body; the receipt was '
+                 'edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-234 merge: 599 + 18 = 617 (3 lane-A audit-chain + 7 lane-B token_hygiene + 8 lane-C consumption), additive only.
 }
 
 
