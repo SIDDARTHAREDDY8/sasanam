@@ -88,8 +88,22 @@ class ActionTypeTests(unittest.TestCase):
 class BindTests(unittest.TestCase):
     def test_bound_digest_matches_independent_literal(self):
         bound = _bound()
+        # Wave-230: the bound digest also commits to
+        # definition_sha256 (label -> type definition -> validation
+        # semantics). The semantics body is recomputed from stdlib
+        # primitives over fixed literals, not via the module under
+        # test; defaults are the documented wave-230 constants.
+        sem_body = {"type_id": _TYPE_ID, "version": _VERSION,
+                    "required_material": sorted(_REQUIRED),
+                    "field_types": {"amount": "any",
+                                    "recipient": "any"},
+                    "max_depth": 3, "max_values": 128,
+                    "max_value_len": 4096}
+        def_sha = hashlib.sha256(_canon(sem_body)).hexdigest()
+        self.assertEqual(bound["definition_sha256"], def_sha)
         body = {"type_id": _TYPE_ID, "version": _VERSION,
                 "type_digest": _TYPE_DIGEST_LITERAL,
+                "definition_sha256": def_sha,
                 "material": dict(_MATERIAL)}
         self.assertEqual(bound["bound_digest"],
                          hashlib.sha256(_canon(body)).hexdigest())
@@ -214,6 +228,209 @@ class CapsuleCompositionTests(unittest.TestCase):
             _code_of(lambda: ta.verify_capsule_typed_action(
                 composed, verifier)),
             "action-type-drift")
+
+
+def _reason_of(fn):
+    try:
+        fn()
+    except Exception as exc:  # noqa: BLE001
+        return getattr(exc, "reason", None)
+    return None
+
+
+def _sem_registry(**kw):
+    reg = ta.TypeRegistry()
+    reg.register(ta.ActionType.build(_TYPE_ID, _VERSION,
+                                    list(_REQUIRED), **kw))
+    return reg
+
+
+class DefinitionSha256Tests(unittest.TestCase):
+    def test_defsha_matches_independent_literal(self):
+        t = ta.ActionType.build(_TYPE_ID, _VERSION, list(_REQUIRED))
+        sem_body = {"type_id": _TYPE_ID, "version": _VERSION,
+                    "required_material": sorted(_REQUIRED),
+                    "field_types": {"amount": "any",
+                                    "recipient": "any"},
+                    "max_depth": 3, "max_values": 128,
+                    "max_value_len": 4096}
+        self.assertEqual(t.definition_sha256,
+                         hashlib.sha256(_canon(sem_body)).hexdigest())
+
+    def test_field_change_moves_digest(self):
+        a = ta.ActionType.build("wire", 1, ["amount", "recipient"])
+        b = ta.ActionType.build("wire", 1, ["amount"])
+        self.assertNotEqual(a.definition_sha256, b.definition_sha256)
+
+    def test_declared_type_change_moves_digest(self):
+        a = ta.ActionType.build("wire", 1, ["amount"],
+                                field_types={"amount": "int"})
+        b = ta.ActionType.build("wire", 1, ["amount"],
+                                field_types={"amount": "str"})
+        self.assertNotEqual(a.definition_sha256, b.definition_sha256)
+
+    def test_constraint_change_moves_digest(self):
+        a = ta.ActionType.build("wire", 1, ["amount"], max_depth=3)
+        b = ta.ActionType.build("wire", 1, ["amount"], max_depth=4)
+        self.assertNotEqual(a.definition_sha256, b.definition_sha256)
+
+    def test_order_independent(self):
+        a = ta.ActionType.build(
+            "wire", 1, ["amount", "recipient"],
+            field_types={"amount": "int", "recipient": "str"})
+        b = ta.ActionType.build(
+            "wire", 1, ["recipient", "amount"],
+            field_types={"recipient": "str", "amount": "int"})
+        self.assertEqual(a.definition_sha256, b.definition_sha256)
+
+    def test_as_dict_carries_semantics(self):
+        d = ta.ActionType.build(
+            "wire", 1, ["amount"],
+            field_types={"amount": "int"}, max_depth=2).as_dict()
+        self.assertEqual(d["field_types"], {"amount": "int"})
+        self.assertEqual(d["max_depth"], 2)
+        self.assertEqual(len(d["definition_sha256"]), 64)
+
+    def test_bad_semantics_kwargs_malformed(self):
+        self.assertEqual(
+            _code_of(lambda: ta.ActionType.build(
+                "wire", 1, ["amount"],
+                field_types={"nope": "int"})),
+            "typed-action-malformed")
+        self.assertEqual(
+            _code_of(lambda: ta.ActionType.build(
+                "wire", 1, ["amount"],
+                field_types={"amount": "uuid"})),
+            "typed-action-malformed")
+        self.assertEqual(
+            _code_of(lambda: ta.ActionType.build(
+                "wire", 1, ["amount"], max_depth=0)),
+            "typed-action-malformed")
+
+
+class SemanticsEnforcementTests(unittest.TestCase):
+    def test_exact_missing_field_reason(self):
+        reg = _sem_registry()
+        reason = _reason_of(
+            lambda: ta.bind_action(_TYPE_ID, _VERSION,
+                                   {"amount": 100}, reg))
+        self.assertEqual(reason, "missing_material_field:recipient")
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(_TYPE_ID, _VERSION,
+                                            {"amount": 100}, reg)),
+            "action-material-missing")
+
+    def test_declared_type_mismatch(self):
+        reg = _sem_registry(field_types={"amount": "int",
+                                         "recipient": "str"})
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(
+                _TYPE_ID, _VERSION,
+                {"amount": "100", "recipient": "alice"}, reg)),
+            "action-material-type-mismatch")
+        # bool is not int: exact-type identity, no subclass leniency.
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(
+                _TYPE_ID, _VERSION,
+                {"amount": True, "recipient": "alice"}, reg)),
+            "action-material-type-mismatch")
+        bound = ta.bind_action(
+            _TYPE_ID, _VERSION,
+            {"amount": 100, "recipient": "alice"}, reg)
+        self.assertTrue(ta.verify_typed_action(bound, reg))
+
+    def test_depth_exceeded(self):
+        reg = _sem_registry(max_depth=1)
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(
+                _TYPE_ID, _VERSION,
+                {"amount": 100,
+                 "recipient": {"nick": {"x": "deep"}}}, reg)),
+            "action-depth-exceeded")
+        shallow = ta.bind_action(
+            _TYPE_ID, _VERSION,
+            {"amount": 100, "recipient": {"nick": "a"}}, reg)
+        self.assertTrue(ta.verify_typed_action(shallow, reg))
+
+    def test_value_count_exceeded(self):
+        reg = ta.TypeRegistry()
+        reg.register(ta.ActionType.build("wire", 1, ["a", "b", "c"],
+                                        max_values=2))
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(
+                "wire", 1, {"a": 1, "b": 2, "c": 3}, reg)),
+            "action-value-count-exceeded")
+
+    def test_value_too_long(self):
+        reg = _sem_registry(max_value_len=4)
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action(
+                _TYPE_ID, _VERSION,
+                {"amount": 100, "recipient": "toolong"}, reg)),
+            "action-value-too-long")
+
+    def test_duplicate_key_json(self):
+        reg = _sem_registry()
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action_from_json(
+                _TYPE_ID, _VERSION,
+                b'{"amount": 100, "recipient": "a", "amount": 7}',
+                reg)),
+            "action-duplicate-key")
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action_from_json(
+                _TYPE_ID, _VERSION, b'[1, 2]', reg)),
+            "typed-action-malformed")
+        self.assertEqual(
+            _code_of(lambda: ta.bind_action_from_json(
+                _TYPE_ID, _VERSION, b'{"amount": ', reg)),
+            "typed-action-malformed")
+        bound = ta.bind_action_from_json(
+            _TYPE_ID, _VERSION,
+            '{"amount": 100, "recipient": "alice"}', reg)
+        self.assertTrue(ta.verify_typed_action(bound, reg))
+
+    def test_semantics_drift_between_bind_and_verify(self):
+        binder = ta.TypeRegistry()
+        binder.register(ta.ActionType.build(
+            "wire", 1, ["amount"],
+            field_types={"amount": "int"}, max_depth=1))
+        bound = ta.bind_action("wire", 1, {"amount": 100}, binder)
+        verifier = ta.TypeRegistry()
+        verifier.register(ta.ActionType.build(
+            "wire", 1, ["amount"],
+            field_types={"amount": "str"}, max_depth=9))
+        self.assertEqual(
+            _code_of(lambda: ta.verify_typed_action(bound, verifier)),
+            "action-semantics-drift")
+
+    def test_swapped_defsha_in_binding_refuses(self):
+        reg = _sem_registry()
+        bound = ta.bind_action(_TYPE_ID, _VERSION, dict(_MATERIAL),
+                               reg)
+        swapped = dict(bound)
+        swapped["definition_sha256"] = "0" * 64
+        self.assertEqual(
+            _code_of(lambda: ta.verify_typed_action(swapped, reg)),
+            "action-semantics-drift")
+
+    def test_legacy_binding_verifies_unwidened(self):
+        # A pre-semantics binding (no definition_sha256 field,
+        # wave-228 digest formula) verifies under the original rule.
+        reg = _sem_registry()
+        definition = reg.lookup(_TYPE_ID, _VERSION)
+        material = dict(_MATERIAL)
+        legacy_body = {"type_id": _TYPE_ID, "version": _VERSION,
+                       "type_digest": definition.type_digest,
+                       "material": material}
+        legacy = dict(legacy_body)
+        legacy["v"] = 1
+        legacy["bound_digest"] = hashlib.sha256(
+            _canon(legacy_body)).hexdigest()
+        self.assertTrue(ta.verify_typed_action(legacy, reg))
+        # ... but it does NOT gain semantics enforcement: a legacy
+        # binding is verified exactly as wave-228 verified it.
+        self.assertNotIn("definition_sha256", legacy)
 
 
 if __name__ == "__main__":

@@ -72,6 +72,20 @@ def _decision_codes():
     return mod
 
 
+def _deny_receipts():
+    """Lazy handle on gov/deny_receipts (wave-230).
+
+    Imported lazily -- and only on the deny_receipt path -- so the
+    legacy standalone story is unchanged: a packet builder that never
+    attaches a receipt never needs the receipt module.
+    """
+    try:
+        from . import deny_receipts as mod
+    except ImportError:  # standalone/offline: deny_receipts.py beside
+        import deny_receipts as mod  # this file
+    return mod
+
+
 DECISION_PACKET_VERSION = 1
 
 DECISIONS = ("allow", "deny", "queue")
@@ -103,6 +117,10 @@ PRODUCER_VERSIONS = {
     # Wave-228 (decision codes): the decision_code section is produced
     # by gov/decision_codes.py at producer_version "1".
     "gov/decision_codes.py": "1",
+    # Wave-230 (signed denial receipts): the deny_receipt_evidence
+    # section is produced by gov/deny_receipts.py at producer_version
+    # "1".
+    "gov/deny_receipts.py": "1",
     # Wave-229 (policy-revision-pinned replay): the policy_revision
     # section is produced by gov/policy_revisions.py at
     # producer_version "1".
@@ -578,7 +596,8 @@ def build_decision_packet(*, decision, boundary_declared,
                           issued_at=None, bill_of_materials=None,
                           policy_bundle_digest=None, identity_token=None,
                           rule_labels=None, decision_code=None,
-                          policy_rev_id=None, policy_digest=None):
+                          policy_rev_id=None, policy_digest=None,
+                          deny_receipt=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -640,6 +659,18 @@ def build_decision_packet(*, decision, boundary_declared,
     legacy packet: no ``policy_revision`` section is added and the
     body is byte-identical to a build without the kwargs. The pinned
     revision is evidence for replay, never authority.
+
+    ``deny_receipt`` (wave-230) is the OPTIONAL signed denial (or
+    permit) receipt dict produced by gov/deny_receipts.emit. The
+    packet stores its digest-linked evidence record (see
+    gov/deny_receipts.receipt_evidence), signature-covered like every
+    other section (it is part of the body before sign_packet runs),
+    so a swapped digest breaks the packet signature. The full signed
+    receipt travels out of band; an auditor re-verifies it against
+    the digest committed here. ``None`` (the default) builds a legacy
+    packet: no ``deny_receipt_evidence`` section is added and the
+    body is byte-identical to a build without the kwarg. The receipt
+    is evidence of the decision, never authority.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -816,6 +847,20 @@ def build_decision_packet(*, decision, boundary_declared,
         body["policy_revision"] = _wrap(
             {"rev_id": policy_rev_id, "digest": policy_digest},
             "gov/policy_revisions.py")
+    if deny_receipt is not None:
+        # Wave-230 (signed denial receipts): the optional
+        # digest-linked receipt evidence. The module validates the
+        # receipt shape itself (never a caller-supplied digest), and
+        # the evidence record is signature-covered like every other
+        # section, so a swapped digest breaks the packet signature.
+        _dr = _deny_receipts()
+        try:
+            ev = _dr.receipt_evidence(deny_receipt)
+        except _dr.DenyReceiptError as e:
+            raise PacketError(
+                "deny_receipt refused by gov/deny_receipts: %s" % e)
+        body["deny_receipt_evidence"] = _wrap(
+            ev, "gov/deny_receipts.py")
     return body
 
 
@@ -995,6 +1040,44 @@ def _verify(packet, entries, token_claims):
                 or set(digest) - set("0123456789abcdef"):
             return False, "policy_revision digest must be a 64-char " \
                 "hex digest"
+    dr_section = packet.get("deny_receipt_evidence")
+    if dr_section is not None:
+        # Wave-230 (signed denial receipts): optional evidence
+        # section. When present it must be well-formed and
+        # producer-attributed; the receipt digest is
+        # signature-covered, so a swapped digest fails the signature
+        # check below. The evidence record is checked for shape
+        # (digest + verdict + class) -- the full signed receipt is
+        # re-verified by the auditor out of band against the committed
+        # digest. The receipt is evidence of the decision, never
+        # authority.
+        if not isinstance(dr_section, dict):
+            return False, "deny_receipt_evidence section is not a dict"
+        if "value" not in dr_section:
+            return False, "deny_receipt_evidence section has no value"
+        if dr_section.get("producer") != "gov/deny_receipts.py":
+            return False, "deny_receipt_evidence section producer must be " \
+                "'gov/deny_receipts.py'"
+        if dr_section.get("producer_version") != \
+                PRODUCER_VERSIONS["gov/deny_receipts.py"]:
+            return False, "deny_receipt_evidence section producer_version " \
+                "must be %r" % (PRODUCER_VERSIONS["gov/deny_receipts.py"],)
+        dr_value = dr_section.get("value")
+        if not isinstance(dr_value, dict):
+            return False, "deny_receipt_evidence section value is not a dict"
+        if dr_value.get("kind") != "deny-receipt-evidence":
+            return False, "deny_receipt_evidence kind mismatch"
+        digest = dr_value.get("digest")
+        if not isinstance(digest, str) or len(digest) != 64 \
+                or set(digest) - set("0123456789abcdef"):
+            return False, "deny_receipt_evidence digest must be a 64-char " \
+                "hex digest"
+        if dr_value.get("verdict") not in ("PERMIT", "DENY"):
+            return False, "deny_receipt_evidence verdict must be " \
+                "PERMIT or DENY"
+        if dr_value.get("class") not in ("ok", "violation", "unavailable"):
+            return False, "deny_receipt_evidence class must be ok, " \
+                "violation or unavailable"
     if packet["decision"]["value"] not in DECISIONS:
         return False, "decision %r not in %r" % (
             packet["decision"]["value"], DECISIONS)

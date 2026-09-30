@@ -68,12 +68,25 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 546)
-        # 546 = 530 (524 wave-228 + 6 wave-229 lane-B lifecycle codes)
-        # + 16 wave-229 merge checkpoint (8) and policy-replay (8) codes,
-        # added at merge by the coordinator (lane closed over pre-wave-229
-        # tree), pin updated here to match.
-        # pin updated by the lane that added them, taxonomy untouched
+        self.assertEqual(len(dc.TAXONOMY), 567)
+        # 567 = 546 (wave-229 merge: 530 + 16 checkpoint/policy-replay)
+        # + 6 wave-230 lane-A signed-deny-receipt codes
+        # (deny-receipt-refused, taxonomy-receipt-missing,
+        # deny-receipt-malformed, deny-receipt-signature-invalid,
+        # deny-receipt-unavailable-as-permit,
+        # deny-receipt-not-authorization)
+        # + 6 wave-230 lane-B definition_sha256 codes
+        # (action-semantics-drift, action-depth-exceeded,
+        # action-value-count-exceeded, action-duplicate-key,
+        # action-material-type-mismatch, action-value-too-long)
+        # + 9 wave-230 lane-C decision-effect agreement codes
+        # (decision-effect-{refused,malformed,decision-drift,effect-drift,
+        # disagreement,effect-absent,extra-effect,time-inversion,
+        # not-authorization}),
+        # composed at merge from the three lane commits by direct
+        # byte-verification (each lane diff was add-only, zero deletions,
+        # zero key collisions), pin updated here to match.
+        # pin updated by the lanes that added them, taxonomy untouched
         # otherwise.
 
     def test_self_errors_are_mapped(self):
