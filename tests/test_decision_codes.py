@@ -1,0 +1,251 @@
+#!/usr/bin/env python3
+"""Unit tests for gov/decision_codes.py (wave-228).
+
+Stdlib + gov.decision_codes / gov.decision_packet only. The vocabulary
+inventory is imported from the wave-228 battery (evals/w228_codes_probes.py),
+which re-implements the audited refusal idioms from source -- never the
+module under test.
+"""
+
+import copy
+import json
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import decision_codes as dc  # noqa: E402
+from gov import decision_packet as dp  # noqa: E402
+from gov import decision_bom as _bom_mod  # noqa: E402
+
+_EVALS = os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), "evals")
+sys.path.insert(0, _EVALS)
+import importlib.util as _ilu  # noqa: E402
+
+_spec = _ilu.spec_from_file_location(
+    "w228_codes_probes", os.path.join(_EVALS, "w228_codes_probes.py"))
+_probes = _ilu.module_from_spec(_spec)
+# The battery only runs main() under `if __name__ == "__main__"`, so
+# importing it here executes just the module level (incl. VOCAB).
+_spec.loader.exec_module(_probes)
+VOCAB = getattr(_probes, "VOCAB", None)
+
+SEED = bytes.fromhex("22" * 32)
+GOOD_DIGESTS = ["ab" * 32, "cd" * 32]
+
+
+def _minimal_kwargs(**over):
+    kw = dict(decision="deny", boundary_declared=False,
+              authority_proof=None, evidence_head_digest="GENESIS",
+              policy_id="default", policy_version="unversioned",
+              issued_at="2026-09-28T00:00:00+00:00")
+    kw.update(over)
+    if "bill_of_materials" not in over:
+        kw["bill_of_materials"] = _bom_mod.build_bom(
+            policy_id=kw["policy_id"],
+            policy_version=kw["policy_version"],
+            policy_digest="ab" * 32,
+            evidence_head_digest=kw["evidence_head_digest"],
+            principal={"agent_id": None, "role": None,
+                       "principal": None, "run_id": None})
+    return kw
+
+
+def _packet(decision_code=None):
+    body = dp.build_decision_packet(
+        **_minimal_kwargs(decision_code=decision_code))
+    return dp.sign_packet(body, SEED)
+
+
+class VocabularyCoverageTest(unittest.TestCase):
+    def test_509_vocabulary_fully_mapped(self):
+        self.assertIsNotNone(VOCAB, "battery vocabulary not importable")
+        missing = [c for c in VOCAB if c not in dc.TAXONOMY]
+        self.assertEqual(missing, [],
+                         "unmapped refusal strings: %r" % (missing[:8],))
+        self.assertEqual(len(dc.TAXONOMY), 524)
+        # 524 = wave-228 lane-C 509 + 15 wave-228 lane-A/B refusal codes
+
+    def test_self_errors_are_mapped(self):
+        for code in ("decision-code-unmapped", "decision-code-malformed",
+                     "decision-code-digest-malformed",
+                     "decision-code-not-authorization",
+                     "decision-code-digest-mismatch"):
+            self.assertIn(code, dc.TAXONOMY)
+
+    def test_no_fallback_prose(self):
+        for code, entry in dc.TAXONOMY.items():
+            self.assertNotIn("refused (%s)" % code, entry["human"],
+                             code)
+            for field in ("domain", "code", "human", "severity",
+                          "evidence_kinds_required", "reverify_steps"):
+                self.assertIn(field, entry, code)
+            self.assertIn(entry["severity"],
+                          ("low", "medium", "high", "critical"), code)
+            self.assertTrue(entry["evidence_kinds_required"], code)
+            self.assertTrue(entry["reverify_steps"], code)
+
+
+class FailClosedTest(unittest.TestCase):
+    def test_unknown_fails_closed(self):
+        with self.assertRaises(dc.DecisionCodeError) as ctx:
+            dc.code_for("no-such-refusal-xyz")
+        self.assertEqual(ctx.exception.code, "decision-code-unmapped")
+
+    def test_malformed_inputs_fail_closed(self):
+        for bad in ("", "   ", "UPPER-CASE-NOT-LOWER", "has space",
+                    "a" * 200, "code!", None, 123, ["x"]):
+            with self.assertRaises(dc.DecisionCodeError, msg=repr(bad)):
+                dc.emit(bad)
+
+    def test_malformed_digest_fails_closed(self):
+        with self.assertRaises(dc.DecisionCodeError) as ctx:
+            dc.emit("permit-revoked", evidence_digests=["not-a-digest"])
+        self.assertEqual(ctx.exception.code,
+                         "decision-code-digest-malformed")
+
+
+class EmitReplayTest(unittest.TestCase):
+    def test_emit_carries_reevaluate_pointer(self):
+        mc = dc.emit("permit-revoked", evidence_digests=GOOD_DIGESTS)
+        ree = mc["reevaluate"]
+        self.assertEqual(ree["evidence_digests"], GOOD_DIGESTS)
+        self.assertTrue(ree["reverify_steps"])
+        self.assertEqual(mc["domain"], "permit")
+        self.assertEqual(mc["severity"], "high")
+
+    def test_replay_is_exact(self):
+        mc = dc.emit("receipt-pair-decision-drift",
+                     evidence_digests=GOOD_DIGESTS)
+        mc2 = dc.replay(mc)
+        self.assertEqual(mc, mc2)
+
+    def test_replay_rejects_tampered_claim(self):
+        mc = dc.emit("permit-revoked", evidence_digests=GOOD_DIGESTS)
+        mc = copy.deepcopy(mc)
+        mc["severity"] = "low"
+        with self.assertRaises(dc.DecisionCodeError):
+            dc.replay(mc)
+
+    def test_machine_code_digest_stable(self):
+        mc = dc.emit("permit-revoked", evidence_digests=GOOD_DIGESTS)
+        d1 = dc.machine_code_digest(mc)
+        d2 = dc.machine_code_digest(mc)
+        self.assertEqual(d1, d2)
+        self.assertRegex(d1, r"^[0-9a-f]{64}$")
+        other = dc.emit("lease_expired", evidence_digests=GOOD_DIGESTS)
+        self.assertNotEqual(d1, dc.machine_code_digest(other))
+
+
+class AuthorityRefusalTest(unittest.TestCase):
+    def test_authority_shaped_use_refused(self):
+        mc = dc.emit("permit-revoked")
+        mc = copy.deepcopy(mc)
+        mc["authority"] = True
+        with self.assertRaises(dc.DecisionCodeError) as ctx:
+            dc.require_evidence_only(mc)
+        self.assertEqual(ctx.exception.code,
+                         "decision-code-not-authorization")
+
+    def test_evidence_use_passes(self):
+        mc = dc.emit("permit-revoked")
+        self.assertTrue(dc.require_evidence_only(mc))
+
+
+class CapsuleLinkageTest(unittest.TestCase):
+    def _sealed(self, refusal):
+        from gov import action_capsule as ac
+        return ac.seal_capsule(
+            {"attempt": {"tool": "t", "args": {}},
+             "effect": {"status": "refused", "code": refusal,
+                        "evidence": "evidence-bundle"}})
+
+    def test_attach_and_verify(self):
+        mc = dc.emit("receipt-pair-decision-drift",
+                     evidence_digests=GOOD_DIGESTS)
+        linked = dc.attach_decision_code(
+            self._sealed("receipt-pair-decision-drift"), mc)
+        got = dc.verify_capsule_decision_code(linked, mc)
+        self.assertEqual(got, dc.machine_code_digest(mc))
+
+    def test_tampered_code_breaks_link(self):
+        mc = dc.emit("receipt-pair-decision-drift",
+                     evidence_digests=GOOD_DIGESTS)
+        linked = dc.attach_decision_code(
+            self._sealed("receipt-pair-decision-drift"), mc)
+        alt = dc.emit("permit-revoked", evidence_digests=GOOD_DIGESTS)
+        with self.assertRaises(dc.DecisionCodeError) as ctx:
+            dc.verify_capsule_decision_code(linked, alt)
+        self.assertEqual(ctx.exception.code,
+                         "decision-code-digest-mismatch")
+
+
+class PacketIntegrationTest(unittest.TestCase):
+    def test_signature_covers_attached_code(self):
+        pkt = _packet(decision_code="permit-revoked")
+        self.assertIn("decision_code", pkt)
+        ok, _reason = dp.verify_decision_packet(pkt)
+        self.assertTrue(ok, _reason)
+        # Mutate the claim: signature must break.
+        tampered = copy.deepcopy(pkt)
+        tampered["decision_code"]["value"]["refusal"] = "lease_expired"
+        tampered["decision_code"]["value"]["code"] = "lease_expired"
+        ok2, _reason2 = dp.verify_decision_packet(tampered)
+        self.assertFalse(ok2)
+
+    def test_legacy_bytes_identical(self):
+        legacy = dp.build_decision_packet(**_minimal_kwargs())
+        explicit = dp.build_decision_packet(
+            **_minimal_kwargs(decision_code=None))
+        self.assertEqual(dp._canonical(legacy), dp._canonical(explicit))
+
+    def test_lazy_legacy_verify_without_taxonomy(self):
+        # A legacy packet must verify standalone even when
+        # gov/decision_codes.py is unavailable (lazy import path).
+        pkt = _packet()
+        saved_mod = sys.modules.pop("gov.decision_codes", None)
+        import builtins
+        real_import = builtins.__import__
+
+        def _blocked(name, *args, **kwargs):
+            if name in ("gov.decision_codes", "decision_codes"):
+                raise ImportError("blocked for test")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = _blocked
+        try:
+            ok, reason = dp.verify_decision_packet(pkt)
+            self.assertTrue(ok, reason)
+        finally:
+            builtins.__import__ = real_import
+            if saved_mod is not None:
+                sys.modules["gov.decision_codes"] = saved_mod
+
+    def test_unmapped_code_in_section_rejected(self):
+        pkt = _packet(decision_code="permit-revoked")
+        forged = copy.deepcopy(pkt)
+        forged["decision_code"]["value"]["refusal"] = \
+            "no-such-refusal-code-xyz"
+        forged["decision_code"]["value"]["code"] = \
+            "no-such-refusal-code-xyz"
+        # Re-sign: signature valid, but taxonomy replay must still
+        # refuse the unmapped claim.
+        sigless = {k: v for k, v in forged.items() if k != "signature"}
+        resigned = dp.sign_packet(sigless, SEED)
+        ok, _reason = dp.verify_decision_packet(resigned)
+        self.assertFalse(ok)
+
+    def test_invalid_code_refused_at_build(self):
+        with self.assertRaises(dp.InvalidDecisionCode):
+            _packet(decision_code="no-such-refusal-xyz")
+        with self.assertRaises(dp.InvalidDecisionCode):
+            _packet(decision_code="")
+
+
+if __name__ == "__main__":
+    unittest.main()

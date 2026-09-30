@@ -15,7 +15,9 @@ configured, and says "no boundary configured" otherwise.
 Every field is wrapped as {"value", "producer", "producer_version"} so an
 offline auditor can see exactly which component produced each claim --
 the packet is verifiable WITHOUT the engine (see verify_decision_packet;
-the offline probe copies decision_packet.py + decision_bom.py + ed25519.py).
+the offline probe copies decision_packet.py + decision_bom.py +
+ed25519.py, plus decision_codes.py when verifying packets that carry a
+decision_code section -- the taxonomy replay needs the taxonomy).
 
 Stdlib only. Deterministic: no clock (issued_at is injectable), no
 randomness (RFC 8032 deterministic nonces), no I/O, no env reads in the
@@ -52,6 +54,24 @@ try:
 except ImportError:  # standalone/offline: decision_bom.py beside this file
     import decision_bom as _bom
 
+
+def _decision_codes():
+    """Lazy handle on gov/decision_codes (wave-228).
+
+    Imported lazily -- and only on the decision_code path -- so the
+    legacy standalone story is unchanged: a verifier that never sees a
+    decision_code section never needs the taxonomy module. Packets that
+    DO carry a decision_code section require decision_codes.py beside
+    this file for offline verification (the verifier replays the
+    claim against the live taxonomy instead of trusting the section).
+    """
+    try:
+        from . import decision_codes as mod
+    except ImportError:  # standalone/offline: decision_codes.py beside
+        import decision_codes as mod  # this file
+    return mod
+
+
 DECISION_PACKET_VERSION = 1
 
 DECISIONS = ("allow", "deny", "queue")
@@ -80,6 +100,9 @@ PRODUCER_VERSIONS = {
     "gov/log.py": "1",
     "gov/decision_packet.py": "1",
     "gov/decision_bom.py": "1",
+    # Wave-228 (decision codes): the decision_code section is produced
+    # by gov/decision_codes.py at producer_version "1".
+    "gov/decision_codes.py": "1",
     # Wave-191 (identity token): the identity_token section is produced
     # by gov/identity.py at producer_version "2", leaving room for a
     # sibling identity_cert section without revving the packet.
@@ -102,6 +125,21 @@ class InvalidLabels(PacketError):
     """
 
     code = "decision-labels-invalid"
+
+
+class InvalidDecisionCode(PacketError):
+    """decision_code failed taxonomy mapping (wave-228).
+
+    Raised by build_decision_packet when the decision_code refusal
+    string cannot be emitted by gov/decision_codes (unmapped or
+    malformed). The taxonomy's machine ``code`` (e.g.
+    ``decision-code-unmapped``) is set on the instance's ``.code`` so
+    callers can match on it.
+    """
+
+    def __init__(self, message, taxonomy_code):
+        super().__init__(message)
+        self.code = taxonomy_code
 
 
 class NoPacketKeyError(Exception):
@@ -535,7 +573,7 @@ def build_decision_packet(*, decision, boundary_declared,
                           decision_seq=None, policy_reason=None,
                           issued_at=None, bill_of_materials=None,
                           policy_bundle_digest=None, identity_token=None,
-                          rule_labels=None):
+                          rule_labels=None, decision_code=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -569,6 +607,23 @@ def build_decision_packet(*, decision, boundary_declared,
     a build without the kwarg. When present the section is
     signature-covered like every other section, so a swapped label
     breaks the packet signature.
+
+    ``decision_code`` (wave-228) is the OPTIONAL machine decision-code
+    refusal string (see gov/decision_codes.py) naming the refusal the
+    packet records, e.g. ``"capsule-count-mismatch"``. Only a mapped
+    refusal string is accepted: the builder emits the machine claim
+    through the taxonomy itself (``decision_codes.emit``), so a
+    caller-supplied claim dict can never be smuggled in; an unmapped
+    or malformed string raises :class:`InvalidDecisionCode`
+    (carrying the taxonomy's ``decision-code-unmapped`` /
+    ``decision-code-malformed`` on ``.code``). ``None`` (the default)
+    builds a legacy packet: no ``decision_code`` section is added and
+    the body is byte-identical to a build without the kwarg. When
+    present the section is signature-covered like every other section,
+    so a swapped code breaks the packet signature; the verifier
+    additionally replays the claim against the live taxonomy. The
+    attached code is EVIDENCE, never authority: it records which
+    refusal fired and how to re-verify it, and confers no permission.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -704,6 +759,26 @@ def build_decision_packet(*, decision, boundary_declared,
         # label breaks the packet signature. A copy is stored so the
         # caller's dict is never aliased.
         body["rule_labels"] = _wrap(dict(labels), "gov/decision_packet.py")
+    if decision_code is not None:
+        # Wave-228 (decision codes): the optional machine decision-code
+        # section. Only a mapped refusal STRING is accepted -- the
+        # builder emits the claim through the taxonomy itself, never
+        # trusting a caller-supplied claim dict. Unmapped/malformed
+        # strings refuse at construction via InvalidDecisionCode.
+        # Signature-covered like every other section (it is part of
+        # the body before sign_packet runs), so a swapped code breaks
+        # the packet signature; the verifier replays the claim
+        # against the live taxonomy. The attached code is evidence,
+        # never authority.
+        _dc = _decision_codes()
+        try:
+            machine_claim = _dc.emit(decision_code)
+        except _dc.DecisionCodeError as e:
+            raise InvalidDecisionCode(
+                "decision_code %r refused by the taxonomy: %s"
+                % (decision_code, e), e.code)
+        body["decision_code"] = _wrap(machine_claim,
+                                      "gov/decision_codes.py")
     return body
 
 
@@ -754,7 +829,10 @@ def verify_decision_packet(packet, entries=None, token_claims=None):
     boundary/proof consistency rule (a declared boundary MUST carry a
     proof; an undeclared boundary MUST NOT), authority well-formedness
     (32-byte pubkey, kid == sha256(pub)[:16]), the Ed25519 signature over
-    the domain-separated canonical body, the BOM cross-checks (including
+    the domain-separated canonical body, the decision_code replay
+    against the live taxonomy (when a decision_code section is
+    present -- an unmapped or mutated refusal is refused at the
+    taxonomy seam, never trusted), the BOM cross-checks (including
     the wave-191 token_digest agreement when both sides record one),
     the optional token-consistency check (see ``token_claims``), and --
     when ``entries`` (audit entries) are supplied -- the digest linkage:
@@ -830,6 +908,26 @@ def _verify(packet, entries, token_claims):
                     or not lval.isprintable()):
                 return False, \
                     "rule_labels entries must be non-empty printable strings"
+    code_section = packet.get("decision_code")
+    if code_section is not None:
+        # Wave-228 (decision codes): optional evidence section. When
+        # present it must be well-formed and producer-attributed; the
+        # claim value is signature-covered, so a tampered claim fails
+        # the signature check below -- and the verifier replays the
+        # claim against the live taxonomy after the signature (a
+        # well-signed section naming an unmapped or mutated refusal is
+        # refused at the taxonomy seam, never trusted).
+        if not isinstance(code_section, dict):
+            return False, "decision_code section is not a dict"
+        if "value" not in code_section:
+            return False, "decision_code section has no value"
+        if code_section.get("producer") != "gov/decision_codes.py":
+            return False, "decision_code section producer must be " \
+                "'gov/decision_codes.py'"
+        if code_section.get("producer_version") != \
+                PRODUCER_VERSIONS["gov/decision_codes.py"]:
+            return False, "decision_code section producer_version " \
+                "must be %r" % (PRODUCER_VERSIONS["gov/decision_codes.py"],)
     if packet["decision"]["value"] not in DECISIONS:
         return False, "decision %r not in %r" % (
             packet["decision"]["value"], DECISIONS)
@@ -867,6 +965,18 @@ def _verify(packet, entries, token_claims):
     body = {k: v for k, v in packet.items() if k != "signature"}
     if not _ed.verify(pub, signing_input(body), sig):
         return False, "Ed25519 packet signature does not verify"
+    # Wave-228 (decision codes): replay the attached machine claim
+    # against the live taxonomy. The claim is signature-covered, so a
+    # swapped claim already fails above; this rejects a well-signed
+    # packet whose section names an unmapped refusal, carries a
+    # mutated claim, or was built under a drifted taxonomy -- the
+    # verifier trusts the taxonomy, never the section.
+    if packet.get("decision_code") is not None:
+        _dc = _decision_codes()
+        try:
+            _dc.replay(packet["decision_code"]["value"])
+        except _dc.DecisionCodeError as e:
+            return False, "decision_code replay refused: %s" % (e,)
     # Wave-180 (Decision BOM): the BOM section is signature-covered,
     # so a tampered BOM already fails above; these checks catch a
     # well-signed packet whose BOM disagrees with the packet's own
