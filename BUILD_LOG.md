@@ -1,3 +1,19 @@
+## 2026-09-30 — Wave-219 lane A: compile-everything-at-registration (sigstore policy-controller STEAL)
+
+**Scope.** Extends the wave-217 compile-once discipline to the three remaining policy types in `gov/policy_compile.py` (stdlib-only, no legacy module touched — `gov/quorum_policy.py`, `gov/arap.py`, `gov/jail_policy.py` are byte-identical): (1) `compile_quorum_step(spec, audit=None)` → `CompiledQuorumStep` with `verify(link_records, keyset)` delegating to `verify_quorum` (agreeing-record discipline preserved); (2) `compile_arap_context(context, *, key, audit=None)` → `CompiledArapContext` with `.declared`/`.binding`, `verify_binding(key=)`, `check_cited(cited_fields)`, `scope()`; (3) `compile_jail_policy(body, audit=None)` → `CompiledJailPolicy` with `check(request)` and `check_backend(features=None)`. New diagnostic taxonomy: `FieldError` (path/expected/got/detail, `to_dict()` JSON-serializable, `via_field`/`via_index` nesting — the knative *shape* reimplemented natively, no upstream prose copied) aggregated into `PolicyCompilationError` (code `policy-compile-refused`, subclasses `identity_policy.PolicyAuthoringError`, optional `audit=` callback emitting `policy_compiled` / `policy_compile_refused` events with fingerprint + serialized errors). Contract enforced by construction: compiled evaluation methods take no spec/policy/body/rules argument and contain no authoring validation — data failures at evaluation raise the modules' own codes (`QuorumPolicyError`, `ArapError` e.g. `context-key-mismatch`, `JailPolicyError` e.g. `invocation-*` / `policy-needs-unimplemented-feature`), never the compile code. ARAP key discipline pinned: key bytes-like ≥ 16 bytes is a COMPILE error; domain separation stays under the existing `sasanam-arap-context/v1:` binding domain; the compiled form stores only sha256(key) (`key_fingerprint`) — the secret never enters the object, the fingerprint pin, or audit events; `fingerprint()` covers declared digests only. `compile_policy` now dispatches quorum spec dicts, jail bodies, and `QuorumStep` instances alongside the wave-217 identity/ruleset shapes; garbage still raises `PolicyAuthoringError`. New HMAC call sites: NONE — no new custody-audit surface (wave-218 registry entries untouched).
+
+**Red-first.** `evals/w219_regcompile_probes.py` (new, 15 probes + green check, fixed seeds, `GOV_DEPLOYMENT_MODE=staging` with `env -u` verification, depth-1 green check honoring `GOV_SKIP_GREEN`): pristine `7548a27` shows genuine red — **0 HELD / 16 GAP / 0 BREAK / 0 ERROR** (required names absent). Fixed tree: **16 HELD / 0 GAP / 0 BREAK / 0 ERROR ×3** (staging ×2 with determinism PASS 15/15, plus `env -u GOV_DEPLOYMENT_MODE` with full green check PASS). Covers: FieldError machine-readability/JSON/prefixing; aggregated multi-error quorum refusal (5 FieldErrors with paths `authorized_keyids[1]`, `authorized_keyids[2]`, `spec.unknown_key`, `step_name`, `threshold`); 7 malformed quorum specs / 10 malformed jail bodies / 5 malformed ARAP contexts refused at compile; quorum 100/100 + jail 100/100 report parity with legacy; ARAP declaration/verify/check_cited parity; 16-byte key minimum at compile + wrong-key-at-eval is a `context-key-mismatch` data error; fingerprints stable 64-hex and ARAP pin excludes the key; compile code disjoint from evaluation codes; `compile_policy` dispatch (identity/garbage behavior unchanged); legacy loaders byte-identical in behavior.
+
+**Tests.** `tests/test_policy_registration_compile.py` (new): **30/30 OK** (FieldError shape/JSON/repr-safety/prefixing; `PolicyCompilationError` code/errors/audit on success+refusal/subclassing; quorum gate/loaded-step/garbage-constructor/aggregation/duplicates/eval-data-only; ARAP gate/keyless-pin/short-key-compile-error/wrong-eval-key-data-error/binding-ok/key-fingerprint; jail gate/garbage-constructor/refused-fields-pinned/check parity/backend named gap; dispatch for quorum dict/QuorumStep/jail/identity/garbage). Adjacent: `test_policy_compile` + `test_quorum_policy` + `test_arap` + `test_jail_policy` + new **145/145 OK**.
+
+**Two-axis review (done, all findings addressed).** Standards: PASS — `posixpath` import hoisted to top level; module docstring coverage paragraph updated for wave-219; no lines >79; error-vocabulary conventions kept (module-owned codes at evaluation, compile code only at registration); `__all__` covers all new names; docstring honestly labels the ARAP pin as policy-identifying, not key-identifying. Spec: PASS — all 10 brief properties hold; the constructor path (`CompiledX(...)` directly) runs the same gate as the named function; `_load_*_validated` backstop converts any loader refusal the field gate missed into `PolicyCompilationError` fail-closed; identity-policy dispatch ordering prevents quorum-key misclassification (single-key predicate dicts can't match the quorum key set; checked empirically).
+
+**Findings:** none filed. Next free: F209. Open findings: none (carried).
+
+**Honest residuals.** (1) The field-error gates mirror the loaders' rules by hand — if a loader's closed vocabulary changes without a matching gate update, the gate may pass a spec the loader then refuses; that path fails closed via the `_load_*_validated` backstop (converted to `PolicyCompilationError`), but diagnostics degrade to a coarse loader message. (2) `CompiledQuorumStep.verify` inherits `verify_quorum`'s agreeing-record requirement verbatim; no new consensus semantics. (3) ARAP `verify_binding` requires the *same* deployment key per call — key rotation means recompiling the context (custody stays deployment-owned by design). (4) Full canonical suite not run in-lane (only `gov/policy_compile.py` + new files touched, additively; deferred to push-clone gates).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
 
 ## 2026-09-29 — Wave-211 lane A: trust-config wiring into `verify_skill_manifest` (residual closure)
 
@@ -11656,3 +11672,177 @@ Wave-218 merge (wave-218-merge):
   anti-rollback ADAPT (monotonic version floors, atomic version manifests,
   distinct rollback-refusal codes); COAZ-MCP no drift; Firecracker 1.17.0
   mild/additive; EMILIA Rust interop clean-room pending.
+
+## Wave-219 lane B: named unsafe-noop disclosure discipline (2026-09-30)
+
+Lane work on base 7548a27 (wave-218). evidentia ADAPT (idea only -- no
+evidentia source vendored, no conformance claimed): every unsafe/no-op
+fallback path in the tree is now reachable only through a named,
+greppable, auditable warning code.
+
+- New `gov/unsafe_paths.py`: central registry of 17 codes
+  (`gov.<module>.<unsafe_noop_name>`) across 4 postures
+  (CONSULT_TELEMETRY / EXPLICIT_OPT_IN / LEGACY_ADVISORY / FAIL_CLOSED).
+  `emit()` raises `UnknownUnsafePathError` on unregistered codes
+  (fail-closed registry); every emission also issues a loud
+  `UnsafePathWarning`. Every code is greppable in its defining module
+  AND the registry.
+- Wiring (all additive, keyword-only `audit=None`; behavior otherwise
+  byte-identical): `artifacts.check_egress`
+  (`gov.artifacts.egress_unreadable_tamper_check_skipped`),
+  `artifact_inventory_manifest.check_manifest`
+  (`gov.artifact_inventory_manifest.manifest_unreadable_failopen`),
+  `artifact_sweep._sweep_tree`/`sweep_run_dir` (aggregated per tree:
+  `gov.artifact_sweep.unreadable_file_skipped`),
+  `credential_manifest.check_egress`
+  (`gov.credential_manifest.no_session_identity_binding_skipped`),
+  `scan_verdicts.ScanGate.check`/`check_bytes`
+  (`gov.scan_verdicts.empty_policy_no_scans_required`),
+  `identity_policy.UnsafeAllow` (warning message now carries
+  `gov.identity_policy.unsafe_allow_vacuous_pass`; `check_admission`
+  emits at the vacuous-pass seam; non-empty reason still required),
+  `attested_identity.degraded_attester`
+  (`gov.attested_identity.tier2_only_degradation`),
+  `capability_manifests.verify_skill_manifest`
+  (`gov.capability_manifests.no_store_advisory`). Absorbed with
+  comment-level greppability (no behavior change): executor
+  no_binding_no_ack / invocation_receipts_disabled /
+  decision_packet_disabled, anchorer NoAnchorKeyError, decision_packet
+  no-key, evidence_verify SELF_CONSISTENT, authority_proof no-boundary,
+  capability_manifests manifest-absent alias.
+- New fail-closed: `gov/policy_compile.py` closes the wave-217 residual --
+  `_freeze_policy` snapshots the live policy object graph at compile and
+  re-checks at every verify/admit/evaluate; drift raises
+  `PolicyViolation("gov.policy_compile.post_compile_mutation_refused")`
+  (catches mutations `describe()` is blind to, e.g. `ClaimIn.values`).
+  `CompiledArtifactRuleset.evaluate` re-pins the rule tuple.
+- Red-first battery `evals/w219_unsafe_paths_probes.py`: pristine 0/18
+  (all FAIL on base), fixed 18/18 HELD (also under
+  `env -u GOV_DEPLOYMENT_MODE`); depth-1 green check honoring
+  GOV_SKIP_GREEN. New `tests/test_unsafe_paths.py`: 13/13 OK.
+- Adjacent: artifacts+manifest+sweep+policy_compile+identity_policy
+  174/174; attested+capability_manifests+decision_packet+authority_proof
+  132/132; scan_verdicts 32/32; w217 battery 21/21 HELD (no regression).
+  credential_manifest+evidence_verify+anchoring 51/52 with
+  `test_ed25519_vendoring_drift_guard` failing -- CONFIRMED pre-existing
+  at base 7548a27 (canonical known-6), not lane-caused.
+- Two-axis self-review (code-review skill): Standards clean (no hard
+  violations); Spec review surfaced 4 findings, all addressed:
+  (1) absorbed pre-existing paths carried codes only in comments -- now
+  every one of the 17 codes rides its audit-path artifact (executor
+  "code" keys on the 3 events; anchorer/decision-packet codes in the
+  exception messages; evidence_verify summary["unsafe_path_code"];
+  authority_proof detail; skill_watch manifest-absent event code kwarg);
+  (2) degraded_attester emitted only at construction -- now also on
+  EVERY tier-2 credential registration; (3) artifact_sweep aggregation
+  documented in the registry (per-tree event with count, every sweep
+  execution); (4) policy_compile freeze judged in-scope (mission: fail
+  closed for genuine unsafe paths; the wave-217 residual was a
+  documented unsafe path, convertible, so F209 does not apply).
+  Battery grew to 20/20 HELD; unit tests 14/14 OK.
+- F209 DRAFT (LOW) written for merge-coordinator adjudication
+  (`~/workspace/teams/wave219-noop/F209_draft.md`): the LEGACY_ADVISORY
+  class cannot be converted to fail-closed without breaking documented
+  public contracts; retained byte-identical but now named + loud on every
+  execution. Open findings: none (F209 is a draft, not filed). F208 stays
+  CLOSED. Next free: F209.
+
+## Wave-219 lane C (2026-09-30): anti-rollback beyond expiry (in-toto/TUF ADAPT)
+- New gov/version_manifest.py (stdlib only): durable SeenVersionRegistry
+  with atomic version manifests pinning {policy_name: {version, digest}}
+  (all-or-nothing; partial/rogue-signed manifests refused as
+  manifest-refused, committing nothing); distinct refusal codes
+  rollback-detected vs policy-expired vs policy-unknown (+ digest-mismatch,
+  bootstrap-required, already-bootstrapped, manifest-downgrade-refused);
+  seen-version floor is monotonic; same-version replay accepted only on
+  digest match; explicit audited bootstrap ceremony (second bootstrap
+  refused); atomic audited manifest updates (lowering an expected version
+  refused distinctly). Manifests Ed25519-signed under a deployment-pinned
+  manifest key, domain-separated signing bytes. No HMAC call sites added
+  (hashlib/ed25519 only) -- wave-70 chokepoint allowlist untouched.
+- Tighten-only opt-in wiring (absent guard = legacy byte-identical):
+  JailPolicyRegistry.activate(..., rollback_guard=None) -- guard consulted
+  after the signature check (attacker probes cannot poison history);
+  MeasurementPolicyRegistry.activate(..., rollback_guard=None) -- same;
+  promote(..., quorum_policy_version=None, quorum_rollback_guard=None) --
+  binds "quorum:<step_name>" to the declared version and the canonical
+  step-spec digest (no expiry window for quorum steps in v1, documented);
+  guard refusals surface with the guard's own codes (rollback-detected /
+  policy-expired / policy-unknown), audited as promotion-denied.
+- Red-first: evals/w219_rollback_probes.py 16/16 HELD x2 (staging + clean
+  env -u GOV_DEPLOYMENT_MODE), pristine 16/16 GAP, determinism PASS,
+  depth-1 green checks PASS (w217 quorum + w218 admissibility batteries).
+  Probes cover cross-restart rollback via fresh registries (the gap the
+  in-memory floors cannot see), code distinctness, manifest atomicity,
+  rogue keys, bootstrap audit, digest tamper, upgrade-then-downgrade,
+  and legacy byte-identical pins.
+- tests/test_version_manifest.py 32/32 OK; adjacent: test_jail_policy
+  33/33, test_measurement_policy 19/19, test_quorum_policy 24/24,
+  test_sign_deploy_namespaces 18/18. Full canonical not run in-lane per
+  memory-contention convention (merge coordinator owns it).
+- Findings: none filed. F208 stays CLOSED (wave-216). Open findings: none.
+  Next free: F209.
+- Residuals: seen-version persistence across restarts is the deployment's
+  job (registry object holds history); authorize_activation records the
+  version even if the caller's later checks refuse the candidate
+  (documented); quorum steps carry no validity window in v1; manifest
+  updates may add names but a dropped name fails closed as policy-unknown.
+
+
+## Wave-219 merge (wave-219-merge, 2026-09-30)
+
+Integrated lanes A (regcompile `8fcdd03`), B (noop `a09a235`), C
+(rollback `8b7fbfb`) by direct copy (no git am); lane D recorded as
+BUILD_LOG only. `gov/policy_compile.py` touched by lanes A and B in
+non-overlapping regions: lane A's file taken whole, lane B's freeze
+hunks applied on top via the exact lane diff (`git apply` clean);
+every other lane file byte-identical to its lane commit.
+
+**Lane B adjudications.** (1) F209 draft read and verified at the public
+seams on the merged tree: 5 of the 10 listed legacy-advisory paths
+smoke-verified (contracts byte-identical AND named code emitted on every
+execution). Filed as F209 (LOW) and CLOSED the same wave per the
+draft's own close-when criterion 2: the 20/20 break-first battery pins
+the emission of all 17 codes, and the residual is explicitly accepted
+as permanent advisory posture (converting these paths to fail-closed
+would break documented public contracts). Open findings: none. Next
+free: F210. (2) The CompiledPolicy post-compile mutation freeze was
+INCLUDED: it refuses evaluation fail-closed with
+`gov.policy_compile.post_compile_mutation_refused` on drift (compile
+refuses unfreezable attributes at authoring time); 324 + 180 tests OK
+across all affected modules with zero regressions — strictly
+tighten-only.
+
+**Merge-coordinator integration fix (not a lane change):** lane B added
+`summary["unsafe_path_code"]` to `gov/evidence_verify.py`, which broke
+the two byte-identical drift guards (`test_tools_evidence_verify_in_sync`,
+`test_verifier_copy_drift_guard`). Fixed by syncing the vendored
+`tools/evidence-verify` to the updated module (byte copy; the field is
+additive stdlib-only); both guards green. No lane semantics altered.
+
+**Red-first audit (merged tree):** regcompile 16/16 HELD; unsafe-paths
+20/20 HELD; rollback 16/16 HELD / 0 BREAK / 0 ERROR; no breaks, no new
+findings, nothing quiet-patched.
+
+**Gates:** canonical merged 7797 tests 6F/10E vs pristine 7721 tests
+6F/10E — sorted FAIL/ERROR lists BYTE-IDENTICAL (the 16 are
+pre-existing/environmental, identical in both, incl.
+`test_ed25519_vendoring_drift_guard`; settles the pre-existing claim);
+F75 supply-chain preflight PASS (35 distributions). Registry GREEN.
+Matrix 3216/3216 SHIP-GATE GREEN. Realistic 7/7. AMSB 90.00 / FINAL C /
+FP 0.0%. Stratified-100 100/100 (hash `c7931f68fdf85014`).
+`battery_100_results.json` gate-rewrite reverted, never committed; AMSB
+scorecards left uncommitted.
+
+**Prospecting (lane D) recorded:** mandatum STEAL narrow (four-stage
+ordering, dual-channel Deny+error, unknown-tool-denies, Apache-2.0 Go);
+in-toto inspections ADAPT (verifier attribution + halt-on-nonzero, do
+NOT copy bare-exec trust model); sigstore policy-controller STEAL
+vocabulary (FieldError + .ViaField/.ViaFieldIndex + .At/.Filter
+warn/error split); key custody ADAPT (sigstore hashivault shape, OpenBao
+lifecycle — MPL-2.0, do NOT vendor); ARAP mission-bound
+`parameter_digest` + no-downgrade + one-use permit leases ADAPT; EMILIA
+presentation-attack close STEAL + recourse-reference digest ADAPT;
+drift: Dex v2.46.0 still pseudo-tag only, COAZ-MCP unchanged, Firecracker
+1.17.0 + CVE-2026-5747 (keep PCI off → propose as jail-policy default
+for wave-220).

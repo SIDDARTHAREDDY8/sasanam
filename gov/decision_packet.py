@@ -406,8 +406,10 @@ def resolve_packet_key(explicit=None):
                 "key_id": hashlib.sha256(pub).digest()[:16].hex(),
                 "pubkey_hex": pub.hex()}
     raise NoPacketKeyError(
+        # Wave-219 unsafe-path registry: gov.decision_packet.packets_disabled_no_key
         "no packet-signing key configured (GOV_DECISION_PACKET_KEY / "
-        "GOV_DECISION_PACKET_KEY_FILE); decision packets are disabled")
+        "GOV_DECISION_PACKET_KEY_FILE); decision packets are disabled "
+        "[gov.decision_packet.packets_disabled_no_key]")
 
 
 def _wrap(value, producer):

@@ -727,9 +727,9 @@ def _capability_gate_construction_check(run_id, log, policy_store,
     """
     from .keys import NoKeyConfiguredError
 
-    def _refuse(cause, detail):
+    def _refuse(cause, detail, code=None):
         try:
-            log.append({
+            event = {
                 "event": "capability_gate_unconfigured_refused",
                 "run_id": run_id,
                 "agent_id": "system",
@@ -738,7 +738,12 @@ def _capability_gate_construction_check(run_id, log, policy_store,
                 "policy_id": "capability-gate",
                 "refusal_cause": cause,
                 "reason": detail,
-            })
+            }
+            if code is not None:
+                # Wave-219: the registered unsafe-path code rides the
+                # audit event itself, not just a source comment.
+                event["code"] = code
+            log.append(event)
         except NoKeyConfiguredError:
             raise
         except Exception:
@@ -776,6 +781,7 @@ def _capability_gate_construction_check(run_id, log, policy_store,
     if capability_ungoverned_ack is None:
         if core_installed:
             _refuse(
+                # Wave-219 unsafe-path registry: gov.executor.capability_gate_unconfigured_refused
                 "no_binding_no_ack",
                 "REFUSED: no capability gate configured -- this executor "
                 "has the governed core (policy_store + delegation_context) "
@@ -789,7 +795,8 @@ def _capability_gate_construction_check(run_id, log, policy_store,
                 "explicitly acknowledge ungoverned capability mode with "
                 "capability_ungoverned_ack='<reason>' (a non-blank "
                 "reason; refused in production; the declaration is "
-                "chained into the audit log).")
+                "chained into the audit log).",
+                code="gov.executor.capability_gate_unconfigured_refused")
         # Raw pipeline: the wave-85 ungoverned_ack already declares this
         # run ungoverned; the capability gate does not pretend otherwise.
         return None, None, None
@@ -1232,7 +1239,9 @@ class ToolExecutor:
                 raise
             self._receipt_key = None
             self.log.append({
+                # Wave-219 unsafe-path registry: gov.executor.invocation_receipts_disabled
                 "event": "invocation_receipts_disabled",
+                "code": "gov.executor.invocation_receipts_disabled",
                 "run_id": self.run_id,
                 "agent_id": "system",
                 "role": "system",
@@ -1281,7 +1290,9 @@ class ToolExecutor:
                 raise
             self._packet_key = None
             self.log.append({
+                # Wave-219 unsafe-path registry: gov.executor.decision_packet_disabled
                 "event": "decision_packet_disabled",
+                "code": "gov.executor.decision_packet_disabled",
                 "run_id": self.run_id,
                 "agent_id": "system",
                 "role": "system",

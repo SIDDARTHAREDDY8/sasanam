@@ -342,7 +342,8 @@ class NamespaceRegistry(object):
     # -- promotion ceremony ----------------------------------------------
     def promote(self, name, *, operator_ids, materials=None, products=None,
                 identity_policy=None, identity_claims=None,
-                quorum_policy=None, quorum_links=None):
+                quorum_policy=None, quorum_links=None,
+                quorum_policy_version=None, quorum_rollback_guard=None):
         """Promote a signed staged bundle into the enforced namespace.
 
         Requires the two-operator ceremony AND a fresh signature
@@ -379,6 +380,17 @@ class NamespaceRegistry(object):
         closed; without a policy the legacy path is byte-identical.
         The keyset is the registry's own pinned verifier set -- a
         record naming a keyid not pinned here is refused.
+
+        When ``quorum_rollback_guard`` (a
+        ``gov.version_manifest.SeenVersionRegistry``) is supplied
+        alongside ``quorum_policy``, the caller must also supply
+        ``quorum_policy_version`` (int >= 1): the quorum step is
+        authorized against the durable seen-version history as
+        ``quorum:<step_name>`` before the quorum gate runs. A
+        rollback, unknown step name, or digest mismatch DENIES the
+        promotion (``quorum-rollback-refused``), audited as
+        ``promotion-denied``. Without the guard the legacy path is
+        byte-identical.
         """
         _check_name(name)
         record = self._staging.get(name)
@@ -427,6 +439,56 @@ class NamespaceRegistry(object):
                 raise NamespaceError(
                     "bad-quorum-policy",
                     "quorum_policy must be a gov.quorum_policy.QuorumStep")
+            if quorum_rollback_guard is not None:
+                # Tighten-only opt-in: durable anti-rollback for the
+                # quorum step itself, beyond the in-memory checks.
+                # The step's version is deployment-declared (quorum steps
+                # carry no issuer version in v1); the guard binds
+                # "quorum:<step_name>" to that version and to the digest
+                # of the canonical step spec. Guard refusals deny the
+                # promotion as quorum-rollback-refused (audited as
+                # promotion-denied). Quorum steps have no validity
+                # window in v1, so no expiry bound is configured.
+                from gov import version_manifest as _vm
+                if not isinstance(quorum_rollback_guard,
+                                  _vm.SeenVersionRegistry):
+                    raise NamespaceError(
+                        "bad-quorum-rollback-guard",
+                        "quorum_rollback_guard must be a "
+                        "gov.version_manifest.SeenVersionRegistry")
+                if isinstance(quorum_policy_version, bool) or not \
+                        isinstance(quorum_policy_version, int) or \
+                        quorum_policy_version < 1:
+                    self._log("promotion-denied",
+                              "quorum-gate: rollback guard configured but "
+                              "quorum_policy_version absent or invalid",
+                              name=name, digest=record["digest"])
+                    raise NamespaceError(
+                        "quorum-rollback-refused",
+                        "quorum rollback guard configured but "
+                        "quorum_policy_version absent or invalid")
+                _step_spec = {
+                    "step_name": quorum_policy.step_name,
+                    "authorized_keyids": list(
+                        quorum_policy.authorized_keyids),
+                    "threshold": quorum_policy.threshold,
+                }
+                _step_digest = "sha256:" + hashlib.sha256(json.dumps(
+                    _step_spec, sort_keys=True, separators=(",", ":"),
+                    ensure_ascii=True).encode("utf-8")).hexdigest()
+                try:
+                    _rb_report = quorum_rollback_guard.authorize_activation(
+                        "quorum:" + quorum_policy.step_name,
+                        quorum_policy_version, digest=_step_digest,
+                        not_after=None, now=None)
+                except _vm.VersionManifestError as exc:
+                    self._log("promotion-denied",
+                              "quorum-gate: rollback guard: %s" % exc,
+                              name=name, digest=record["digest"])
+                    raise NamespaceError("quorum-rollback-refused",
+                                         str(exc))
+                gate_suffix += ("; quorum_rollback=v%d"
+                                % _rb_report["version"])
             if not isinstance(quorum_links, (list, tuple)):
                 self._log("promotion-denied",
                           "quorum-gate: policy configured but no link "

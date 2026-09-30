@@ -628,11 +628,18 @@ class ScanGate:
         unpinned)."""
         return self._keysets.get(scanner_name)
 
-    def check(self, scan_target_digest, verdicts, *, now=None):
+    def check(self, scan_target_digest, verdicts, *, now=None, audit=None):
         """Consult the gate for promoting ``scan_target_digest``.
 
         ``verdicts`` is a list of presented scan-verdict DSSE envelopes.
         Returns ``{"ok": True, "checked": [...], "required": [...]}``.
+
+        Wave-219: a policy with empty ``required_scans`` passes
+        vacuously (scan gating is opt-in). The vacuity is a registered
+        unsafe path --
+        ``gov.scan_verdicts.empty_policy_no_scans_required`` -- emitted
+        through the audit path (``audit``: list or callable) on EVERY
+        execution, so the vacuous pass is never implicit.
 
         Refusals (all ScanVerdictError, all fail-closed):
 
@@ -653,6 +660,14 @@ class ScanGate:
         if not isinstance(verdicts, (list, tuple)):
             raise ScanVerdictError("scan_gate: verdicts must be a list "
                                    "of envelopes")
+        if not self._policy.required_scans:
+            from . import unsafe_paths as _up
+            _up.emit(
+                "gov.scan_verdicts.empty_policy_no_scans_required",
+                audit=audit,
+                detail=("scan gate consulted with an empty required_scans "
+                        "policy: nothing is required, so the gate passes "
+                        "vacuously (scan gating is opt-in)"))
         verified_by_name = {}
         for i, envelope in enumerate(verdicts):
             try:
@@ -692,7 +707,7 @@ class ScanGate:
                 "checked": checked,
                 "required": list(self._policy.required_scans)}
 
-    def check_bytes(self, scan_bytes, verdicts, *, now=None):
+    def check_bytes(self, scan_bytes, verdicts, *, now=None, audit=None):
         """Consult the gate for promoting the exact BYTES held.
 
         The digest context is derived here, from the bytes themselves,
@@ -710,4 +725,5 @@ class ScanGate:
         :meth:`check` with the computed digest, so every refusal code
         and the legacy string API are unchanged.
         """
-        return self.check(digest_of_bytes(scan_bytes), verdicts, now=now)
+        return self.check(digest_of_bytes(scan_bytes), verdicts, now=now,
+                          audit=audit)

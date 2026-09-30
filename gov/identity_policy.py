@@ -439,7 +439,13 @@ class UnsafeAllow(Policy):
     for testing only, and WARNS ON EVERY USE. The name must start with
     ``Unsafe`` and a non-empty reason is required at construction -- an
     unsafe policy without a stated reason is itself an authoring error.
-    Passes carry the declared ``pass-vacuous`` code, never a silent pass."""
+    Passes carry the declared ``pass-vacuous`` code, never a silent pass.
+
+    Wave-219: the hatch is a registered unsafe path --
+    ``gov.identity_policy.unsafe_allow_vacuous_pass`` -- and every use
+    emits that code through the audit path (at the ``check_admission``
+    seam) as well as the loud ``UnsafePolicyWarning``.
+    """
 
     is_vacuous = True
 
@@ -448,8 +454,9 @@ class UnsafeAllow(Policy):
 
     def verify(self, claims):
         warnings.warn(
-            "UnsafeAllow policy used (%s): this policy passes ANY identity "
-            "and is fundamentally insecure; testing only" % (self.reason,),
+            "gov.identity_policy.unsafe_allow_vacuous_pass: UnsafeAllow "
+            "policy used (%s): this policy passes ANY identity and is "
+            "fundamentally insecure; testing only" % (self.reason,),
             UnsafePolicyWarning,
             stacklevel=3)
         return PolicyVerdict(_PASS, "pass-vacuous",
@@ -511,15 +518,28 @@ def parse_policy(spec):
 # -- fail-closed admission seam ------------------------------------------------
 
 
-def check_admission(claims, policy):
+def check_admission(claims, policy, *, audit=None):
     """Fail-closed admission: returns ``{"verdict": "pass", "code": ...,
     "vacuous": ...}`` on pass; raises :class:`PolicyViolation` on fail
-    OR error. A wrong-typed policy is a loud ``PolicyAuthoringError``."""
+    OR error. A wrong-typed policy is a loud ``PolicyAuthoringError``.
+
+    Wave-219: a vacuous pass (e.g. ``UnsafeAllow``) is a registered
+    unsafe path -- ``gov.identity_policy.unsafe_allow_vacuous_pass``
+    -- and is emitted through the audit path (``audit``: list or
+    callable) on EVERY admission, so the escape hatch is never silent.
+    """
     if not isinstance(policy, Policy):
         raise PolicyAuthoringError(
             "policy must be a gov.identity_policy.Policy instance")
     verdict = policy.verify(claims)
     if verdict.verdict == _PASS:
+        if verdict.vacuous:
+            from . import unsafe_paths as _up
+            _up.emit(
+                "gov.identity_policy.unsafe_allow_vacuous_pass",
+                audit=audit,
+                detail=("admission passed vacuously via %s"
+                        % (policy.describe(),)))
         return {"verdict": "pass", "code": verdict.code,
                 "vacuous": verdict.vacuous,
                 "policy": policy.describe()}

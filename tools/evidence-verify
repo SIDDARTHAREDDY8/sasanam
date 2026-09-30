@@ -2208,6 +2208,7 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
         verdict = "FAILED"
     elif not pins:
         code = 2
+        # Wave-219 unsafe-path registry: gov.evidence_verify.unpinned_self_consistent
         verdict = "SELF_CONSISTENT"
     else:
         code = 0
@@ -2238,6 +2239,11 @@ def verify_bundle(bundle_dir, pins=(), pinned_cp_key_ids=None,
         },
         "what_this_does_not_prove": HONESTY_FOOTER_LIST,
     }
+    if verdict == "SELF_CONSISTENT":
+        # Wave-219: the registered unsafe-path code rides the summary
+        # itself on the unpinned path, not just a source comment.
+        summary["unsafe_path_code"] = \
+            "gov.evidence_verify.unpinned_self_consistent"
     return code, checks, summary
 
 

@@ -1261,6 +1261,9 @@ class SkillWatch:
                 self._record_event(
                     "capability_manifest_absent", skill_id,
                     pinned_digest=rec["pinned_digest"],
+                    # Wave-219 unsafe-path registry alias:
+                    # gov.capability_manifests.manifest_absent_advisory
+                    code="gov.capability_manifests.manifest_absent_advisory",
                     reason=("skill %r has no signed capability manifest: "
                             "capability surface unchecked (advisory)" %
                             (skill_id,)))

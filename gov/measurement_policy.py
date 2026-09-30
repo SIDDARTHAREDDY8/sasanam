@@ -277,7 +277,7 @@ class MeasurementPolicyRegistry(object):
         except Exception:
             return False
 
-    def activate(self, body, signature, *, now=None):
+    def activate(self, body, signature, *, now=None, rollback_guard=None):
         """Verify and activate a policy.
 
         Raises :class:`MeasurementPolicyError` (fail-closed) when the
@@ -288,6 +288,16 @@ class MeasurementPolicyRegistry(object):
         the version is not newer than the highest activated version
         for this name (``policy-version-downgrade``). A failed
         candidate never displaces anything already activated.
+
+        When ``rollback_guard`` (a
+        ``gov.version_manifest.SeenVersionRegistry``) is supplied, the
+        candidate is additionally authorized against the durable
+        seen-version history AFTER the signature check (so attacker
+        probes cannot poison history). Guard refusals surface with the
+        guard's own distinct codes (``rollback-detected``,
+        ``policy-expired``, ``policy-unknown``, ``digest-mismatch``,
+        ``bootstrap-required``). With ``rollback_guard=None`` (the
+        default) the legacy path is byte-identical.
         """
         moment = int(now) if now is not None else int(time.time())
         if not isinstance(signature, (bytes, bytearray)) \
@@ -301,6 +311,22 @@ class MeasurementPolicyRegistry(object):
         if not self._verify_sig(body, signature):
             self._fail("policy-signature-invalid",
                        "policy is not signed by the pinned issuer key")
+        if rollback_guard is not None:
+            # Tighten-only opt-in: durable anti-rollback beyond the
+            # in-memory floor. Guard codes surface unchanged.
+            from gov import version_manifest as _vm
+            if not isinstance(rollback_guard, _vm.SeenVersionRegistry):
+                self._fail("registry-malformed",
+                           "rollback_guard must be a "
+                           "gov.version_manifest.SeenVersionRegistry")
+            _digest = "sha256:" + hashlib.sha256(
+                policy_signing_bytes(body)).hexdigest()
+            try:
+                rollback_guard.authorize_activation(
+                    body["policy_name"], body["version"], digest=_digest,
+                    not_after=body["not_after"], now=moment)
+            except _vm.VersionManifestError as exc:
+                self._fail(exc.code, exc.detail)
         if moment >= body["not_after"]:
             self._fail("policy-stale",
                        "policy already expired at %d (not_after)"

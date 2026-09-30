@@ -48,6 +48,7 @@ class AnchorerError(Exception):
     """Fatal (non-retryable) anchorer failure."""
 
 
+# Wave-219 unsafe-path registry: gov.anchorer.unconfigured_anchoring_disabled
 class NoAnchorKeyError(AnchorerError):
     """No anchor-signing key configured (production refuses loud)."""
 
@@ -146,8 +147,10 @@ def resolve_anchor_key(explicit=None):
     from . import keyprovider as _kp
     mode = _kp.resolve_deployment_mode()
     raise NoAnchorKeyError(
+        # Wave-219 unsafe-path registry: gov.anchorer.unconfigured_anchoring_disabled
         "no anchor-signing key configured (GOV_ANCHOR_KEY / "
-        "GOV_ANCHOR_KEY_FILE); refusing to anchor in %r mode" % (mode,))
+        "GOV_ANCHOR_KEY_FILE); refusing to anchor in %r mode "
+        "[gov.anchorer.unconfigured_anchoring_disabled]" % (mode,))
 
 
 def _utcnow_iso():

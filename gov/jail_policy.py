@@ -588,7 +588,8 @@ class JailPolicyRegistry:
         return bool(_ed.verify(self._issuer, policy_signing_bytes(body),
                                bytes(signature)))
 
-    def activate(self, signed, *, now=None, features=None):
+    def activate(self, signed, *, now=None, features=None,
+                 rollback_guard=None):
         """Activate a signed policy envelope
         ``{"body": <body dict>, "signature": <64 bytes>}``.
 
@@ -597,7 +598,21 @@ class JailPolicyRegistry:
         pinned issuer by construction), version at or below the floor
         for this name (no silent downgrade), a policy already expired
         at ``now`` (stale at birth), or a backend coverage gap (named).
-        Returns the normalized body."""
+        Returns the normalized body.
+
+        When ``rollback_guard`` (a
+        ``gov.version_manifest.SeenVersionRegistry``) is supplied, the
+        candidate is additionally authorized against the durable
+        seen-version history AFTER the signature check (so attacker
+        probes cannot poison history) and before the in-memory floor
+        check. Guard refusals surface with the guard's own distinct
+        codes (``rollback-detected``, ``policy-expired``,
+        ``policy-unknown``, ``digest-mismatch``,
+        ``bootstrap-required``) -- triage must not confuse them with
+        the in-memory ``policy-version-downgrade``. With
+        ``rollback_guard=None`` (the default) the legacy path is
+        byte-identical.
+        """
         if not isinstance(signed, dict):
             raise JailPolicyError(
                 "policy-envelope-malformed", "envelope is not a dict")
@@ -612,15 +627,36 @@ class JailPolicyRegistry:
                 "policy-signature-invalid",
                 "policy %r v%d is not signed by the pinned issuer"
                 % (body["policy_name"], body["version"]))
+        epoch = int(time.time()) if now is None else now
+        if not isinstance(epoch, int) or isinstance(epoch, bool):
+            raise JailPolicyError("registry-malformed", "now must be int")
+        if rollback_guard is not None:
+            # Tighten-only opt-in: durable anti-rollback beyond the
+            # in-memory floor. Runs after the signature check so only
+            # issuer-signed candidates can move the seen history.
+            from gov import version_manifest as _vm
+            if not isinstance(rollback_guard, _vm.SeenVersionRegistry):
+                raise JailPolicyError(
+                    "registry-malformed",
+                    "rollback_guard must be a "
+                    "gov.version_manifest.SeenVersionRegistry")
+            _digest = "sha256:" + hashlib.sha256(
+                policy_signing_bytes(body)).hexdigest()
+            try:
+                rollback_guard.authorize_activation(
+                    body["policy_name"], body["version"], digest=_digest,
+                    not_after=body["not_after"], now=epoch)
+            except _vm.VersionManifestError as exc:
+                # Guard codes surface unchanged: rollback-detected /
+                # policy-expired / policy-unknown / digest-mismatch /
+                # bootstrap-required stay distinct by design.
+                raise JailPolicyError(exc.code, exc.detail)
         floor = self._floor.get(body["policy_name"], 0)
         if body["version"] <= floor:
             raise JailPolicyError(
                 "policy-version-downgrade",
                 "version %d <= activated floor %d for %r"
                 % (body["version"], floor, body["policy_name"]))
-        epoch = int(time.time()) if now is None else now
-        if not isinstance(epoch, int) or isinstance(epoch, bool):
-            raise JailPolicyError("registry-malformed", "now must be int")
         if not (body["not_before"] <= epoch < body["not_after"]):
             raise JailPolicyError(
                 "policy-stale",

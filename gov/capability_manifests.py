@@ -531,14 +531,15 @@ def verify_manifest(manifest, store, *, expected_skill_id=None,
 
 def verify_skill_manifest(skill_id, content, store, *, threshold=1,
                           trust_registry=None, pack_class=None,
-                          trust_now=None):
+                          trust_now=None, audit=None):
     """Full load-time check for one skill's artifact bytes.
 
     Returns ``(ok, detail)`` — never raises for well-formed inputs:
 
-      * store is None -> ``(True, "no-store")`` (today's behavior).
+      * store is None -> ``(True, "no-store")`` (today's behavior;
+        wave-219: emits ``gov.capability_manifests.no_store_advisory``).
       * no manifest for skill_id -> ``(True, "manifest-absent")``
-        (advisory; the caller emits ``capability_manifest_absent``).
+        (advisory; the caller emits ``capability_manifest_absent``; wave-219 registry alias ``gov.capability_manifests.manifest_absent_advisory``).
       * bad signature / unknown kid / jku / ... ->
         ``(False, "manifest-<code>")``.
       * fewer than ``threshold`` distinct valid signatures ->
@@ -610,6 +611,16 @@ def verify_skill_manifest(skill_id, content, store, *, threshold=1,
     behavior (explicit opt-in, never silent).
     """
     if store is None:
+        # Wave-219: the unwired-registry advisory is a registered
+        # unsafe path -- gov.capability_manifests.no_store_advisory --
+        # emitted on every execution so it is never silent.
+        from . import unsafe_paths as _up
+        _up.emit(
+            "gov.capability_manifests.no_store_advisory",
+            audit=audit,
+            detail=("skill %r verified with no ManifestStore: the trust "
+                    "registry is unwired; returning advisory (True, "
+                    "'no-store')" % (skill_id,)))
         return True, "no-store"
     if not isinstance(store, ManifestStore):
         raise TypeError("store must be a ManifestStore or None")

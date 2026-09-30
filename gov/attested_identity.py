@@ -1113,6 +1113,16 @@ class Attester(object):
         self.audit.append({"event": "tier2_registered",
                            "credential_digest": ident.credential_digest(),
                            "at": int(time.time())})
+        # Wave-219: every tier-2 credential minted is an execution of the
+        # degraded path -- the registry code rides the audit trail on
+        # EVERY registration, not just at attester construction.
+        from . import unsafe_paths as _up
+        _up.emit(
+            "gov.attested_identity.tier2_only_degradation",
+            audit=self.audit,
+            detail=("tier-2 kernel-fact credential minted without "
+                    "attestation (digest %s)"
+                    % ident.credential_digest()))
         return ident
 
     # -- authorization (pinned issuer key) ------------------------------
@@ -1175,8 +1185,21 @@ def degraded_attester(issuer_signer, *, credential_ttl_s=600):
     For hosts where attestation is unavailable: tier-1 bootstrap
     methods refuse loudly, tier-2 registration and authorization keep
     working, and tier-1 authority stays unreachable by construction.
+
+    Wave-219: the degradation is a registered unsafe path --
+    ``gov.attested_identity.tier2_only_degradation`` -- and its
+    construction emits that code into the attester's audit trail, so
+    the weaker posture is never silent.
     """
-    return Attester(issuer_signer, credential_ttl_s=credential_ttl_s)
+    attester = Attester(issuer_signer, credential_ttl_s=credential_ttl_s)
+    from . import unsafe_paths as _up
+    _up.emit(
+        "gov.attested_identity.tier2_only_degradation",
+        audit=attester.audit,
+        detail=("attester constructed with no TPM/cloud verifiers: "
+                "tier-1 attestation is unreachable; tier-2 kernel-fact "
+                "credentials only"))
+    return attester
 
 
 # ------------------------------------------------- evidence-path wiring

@@ -282,7 +282,7 @@ class CredentialManifest:
         now = int(time.time()) if now is None else int(now)
         return int(entry["expires_at"]) <= now
 
-    def check_egress(self, args, session_principal):
+    def check_egress(self, args, session_principal, *, audit=None):
         """Identity-bind one egress call's credential use.
 
         Returns True when the call is bound to the session identity,
@@ -301,8 +301,21 @@ class CredentialManifest:
           3. explicit ``credential_owner`` arg -> compared directly.
         No session identity provisioned -> True (nothing to bind to;
         documented: the rule requires a provisioned session identity).
+
+        Wave-219: the no-identity pass is a registered unsafe path --
+        ``gov.credential_manifest.no_session_identity_binding_skipped``
+        -- emitted through the audit path (``audit``: list or callable)
+        on EVERY execution.
         """
         if session_principal is None:
+            from . import unsafe_paths as _up
+            _up.emit(
+                "gov.credential_manifest."
+                "no_session_identity_binding_skipped",
+                audit=audit,
+                detail=("egress credential check passed with no session "
+                        "identity provisioned: nothing was bound (the "
+                        "rule requires a provisioned session identity)"))
             return True
         args = args or {}
         for value in args.values():

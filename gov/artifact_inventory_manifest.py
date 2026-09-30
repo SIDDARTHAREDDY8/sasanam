@@ -321,7 +321,7 @@ def verify_manifest_pin(pinned, *, hmac_key=None, ttl_seconds=None):
 
 
 def check_manifest(path, sha256_now, pinned, *, hmac_key=None,
-                   ttl_seconds=None):
+                   ttl_seconds=None, audit=None):
     """Consult the deployment manifest for one egress file reference.
 
     Returns a dict with ``status`` (manifest_mismatch /
@@ -334,6 +334,11 @@ def check_manifest(path, sha256_now, pinned, *, hmac_key=None,
     fail-open on unreadable, exactly like the run inventory's
     discipline). Never raises: consult is defense-in-depth and must
     not break egress on its own errors.
+
+    Wave-219: the unreadable skip is a registered unsafe path --
+    ``gov.artifact_inventory_manifest.manifest_unreadable_failopen``
+    -- emitted through the audit path (``audit``: list or callable)
+    on EVERY execution.
     """
     key = normalize_path(path)
     try:
@@ -360,6 +365,13 @@ def check_manifest(path, sha256_now, pinned, *, hmac_key=None,
                 "detail": "Path %r is not in the deployment manifest."
                           % (key,)}
     if sha256_now is None:
+        from . import unsafe_paths as _up
+        _up.emit(
+            "gov.artifact_inventory_manifest.manifest_unreadable_failopen",
+            audit=audit,
+            detail=("Path %r is manifest-pinned but its bytes could not "
+                    "be read; comparison skipped (fail-open on "
+                    "unreadable)." % (key,)))
         return {"status": "manifest_unreadable", "flag": None,
                 "path": key,
                 "detail": ("Path %r is manifest-pinned but its bytes "

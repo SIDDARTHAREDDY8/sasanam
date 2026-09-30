@@ -310,7 +310,8 @@ class ArtifactInventory(object):
             return False, "head digest does not match the last event"
         return True, "%d events, chain intact" % len(self._chain)
 
-    def check_egress(self, path, *, sha256_now=None, current_label=None):
+    def check_egress(self, path, *, sha256_now=None, current_label=None,
+                     audit=None):
         """Verdict for an egress that references ``path``.
 
         Returns a dict with ``status`` (unknown/tampered/restricted/
@@ -322,6 +323,11 @@ class ArtifactInventory(object):
         deployment's *current* label for the path; the verdict uses
         the more restrictive of the registration-time and current
         labels (a label added after the write still gates).
+
+        Wave-219: the unreadable skip is a registered unsafe path --
+        ``gov.artifacts.egress_unreadable_tamper_check_skipped`` -- and
+        is emitted through the audit path (``audit``: list or callable)
+        on EVERY execution, so the fail-open is never silent.
 
         Row-12: when a deployment manifest is attached, the verdict
         also carries ``manifest_status``/``manifest_detail`` (None
@@ -336,6 +342,15 @@ class ArtifactInventory(object):
         """
         key = normalize_path(path)
         rec = self._records.get(key)
+        if sha256_now is None and rec is not None:
+            from . import unsafe_paths as _up
+            _up.emit(
+                "gov.artifacts.egress_unreadable_tamper_check_skipped",
+                audit=audit,
+                detail=("egress references registered artifact %r but the "
+                        "bytes on disk are unreadable: the tamper "
+                        "comparison was skipped (fail-open on unreadable)"
+                        % (key,)))
         if rec is None:
             verdict = {
                 "status": "unknown",

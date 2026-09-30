@@ -361,13 +361,19 @@ def register_watch_root(root, inventory, *, agent_id="", run_id=""):
     return inventory
 
 
-def _sweep_tree(tree_root, inventory, root_label):
+def _sweep_tree(tree_root, inventory, root_label, *, audit=None):
     """Walk one tree and diff against its inventory.
 
     Shared by the run-sandbox walk and every watch root. Returns
     ``(findings, stats)`` with the same finding shape as
     ``sweep_run_dir``; every finding carries ``"root"`` =
     ``root_label`` (the resolved directory that was walked).
+
+    Wave-219: unreadable files/directories are skipped fail-open per
+    file (counted in ``stats["skipped_unreadable"]``) -- the registered
+    unsafe path ``gov.artifact_sweep.unreadable_file_skipped``, emitted
+    once per call (aggregated with the count) through the audit path
+    (``audit``: list or callable) whenever anything was skipped.
     """
     findings = []
     stats = {"files_seen": 0, "files_compared": 0, "findings": 0,
@@ -424,11 +430,22 @@ def _sweep_tree(tree_root, inventory, root_label):
                               rec.sha256[:12])),
             })
     stats["findings"] = len(findings)
+    if stats["skipped_unreadable"]:
+        # Wave-219: the fail-open skip is never silent -- one aggregated
+        # emission per tree walked, carrying the count.
+        from . import unsafe_paths as _up
+        _up.emit(
+            "gov.artifact_sweep.unreadable_file_skipped",
+            audit=audit,
+            detail=("%d unreadable file(s)/director(ies) under watched "
+                    "root %r were skipped fail-open (counted, not "
+                    "compared)" % (stats["skipped_unreadable"],
+                                   root_label)))
     return findings, stats
 
 
 def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
-                  watch_roots=()):
+                  watch_roots=(), audit=None):
     """Walk the run's sandbox (and any watch roots) and compare
     against the artifact inventory.
 
@@ -436,6 +453,10 @@ def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
     ``gov.artifacts.ArtifactInventory`` (or any object with
     ``lookup(normalized_path)`` returning a record with ``.sha256``,
     or None).
+
+    ``audit``: optional list/callable receiving the wave-219 unsafe-path
+    emissions (``gov.artifact_sweep.unreadable_file_skipped``, one
+    aggregated event per walked tree that skipped anything).
 
     ``watch_roots``: optional iterable of ``(root, baseline)``
     tuples, where ``root`` is an operator-owned directory and
@@ -507,13 +528,14 @@ def sweep_run_dir(run_dir, inventory, *, sandbox_subdir=_SANDBOX_SUBDIR,
 
     if os.path.isdir(sandbox):
         stats["sandbox"] = sandbox
-        sf, ss = _sweep_tree(sandbox_resolved, inventory, sandbox_resolved)
+        sf, ss = _sweep_tree(sandbox_resolved, inventory, sandbox_resolved,
+                             audit=audit)
         findings.extend(sf)
         for k in ("files_seen", "files_compared", "skipped_unreadable"):
             stats[k] += ss[k]
 
     for resolved, baseline in validated:
-        rf, rs = _sweep_tree(resolved, baseline, resolved)
+        rf, rs = _sweep_tree(resolved, baseline, resolved, audit=audit)
         findings.extend(rf)
         stats["watch_roots"].append(rs)
         for k in ("files_seen", "files_compared", "skipped_unreadable"):

@@ -1177,6 +1177,7 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
     if not isinstance(tool, str):
         tool = ""
 
+    # Wave-219 unsafe-path registry: gov.authority_proof.no_boundary_advisory
     if boundary is None:
         return AuthorityProof(
             verdict=INCONCLUSIVE,
@@ -1187,7 +1188,8 @@ def check(action: Mapping[str, Any], ctx: Mapping[str, Any],
             boundary_version=None,
             resolution_source="none",
             detail=("no operator-declared authority boundary: coverage "
-                    "cannot be proven; advisory only"),
+                    "cannot be proven; advisory only "
+                    "[gov.authority_proof.no_boundary_advisory]"),
         )
     if not isinstance(boundary, AuthorityBoundary):
         # A programming error at the seam, not a hostile action: fail
