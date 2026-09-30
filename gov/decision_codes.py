@@ -4616,6 +4616,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['credential', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest'],
     },
+    'uri-host-invalid': {
+        "domain": 'uri-normalize',
+        "code": 'uri-host-invalid',
+        "human": 'shared host normalizer: the hostname is empty after '
+                 'stripping, is not a string, or fails IDNA encoding; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'uri-host-unparseable': {
+        "domain": 'uri-normalize',
+        "code": 'uri-host-unparseable',
+        "human": 'shared host normalizer: the URL has no parseable '
+                 'hostname or the address has no @ separator; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
     'unknown-action-label': {
         "domain": 'c2pa',
         "code": 'unknown-action-label',

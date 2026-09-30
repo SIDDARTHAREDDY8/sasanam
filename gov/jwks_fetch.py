@@ -58,15 +58,22 @@ class JwksFetchError(Exception):
 
 
 def _normalize_host(host):
-    # Case-insensitive DNS name: lowercase, strip a single trailing
-    # dot, IDNA-encode so unicode labels compare correctly.
-    host = host.lower().rstrip(".")
-    return host.encode("idna").decode("ascii")
+    # Wave-247: delegate to the shared gov/uri_normalize canonicalizer
+    # (strip/lower/dot-strip/IDNA). Stricter than the old inline form:
+    # empty or un-normalizable hosts now raise instead of passing
+    # through as "".
+    from gov import uri_normalize as _un
+    return _un.normalize_host(host)
 
 
 def _normalize_origin(scheme, host, port):
     scheme = scheme.lower()
-    host = _normalize_host(host)
+    try:
+        host = _normalize_host(host)
+    except Exception as exc:
+        raise JwksFetchError(URL_MALFORMED,
+                             "pinned origin host un-normalizable: %s"
+                             % (exc,))
     if port is None:
         port = _DEFAULT_PORTS[scheme]
     return (scheme, host, int(port))

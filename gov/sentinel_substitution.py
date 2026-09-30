@@ -201,7 +201,17 @@ class SentinelTripHalt(Exception):
 
 
 def _normalize_host(host):
-    return host.strip().lower().rstrip(".")
+    # Wave-247: delegate to the shared gov/uri_normalize canonicalizer
+    # so sentinel host bindings see the byte-identical string the auth
+    # and IoC paths see. UriNormalizeError is converted to
+    # SentinelError to preserve this module's error contract.
+    from gov import uri_normalize as _un
+    try:
+        return _un.normalize_host(host)
+    except _un.UriNormalizeError as exc:
+        raise SentinelError(
+            "inject_hosts entries must be valid hostnames, got %r "
+            "(%s)" % (host, exc.code))
 
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")

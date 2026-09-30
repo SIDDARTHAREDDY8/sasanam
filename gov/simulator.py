@@ -228,28 +228,43 @@ def _reconstruct_context(entry, counters, policy):
 
 
 def _domain_allowlisted_new_policy(policy, action):
-    """Recompute domain allowlisting under the NEW policy's egress config."""
-    from urllib.parse import urlparse
+    """Recompute domain allowlisting under the NEW policy's egress config.
+
+    Wave-247: mirrors gov.executor.ToolExecutor._domain_allowlisted via
+    the shared gov/uri_normalize canonicalizer (see that method for the
+    documented behavior flips).
+    """
+    from gov import uri_normalize as _un
     tool, args = action["tool"], action["args"] or {}
     allow = (policy.egress or {}).get("domain_allowlist") or []
     host = None
     try:
         if tool == "http_post":
-            host = (urlparse(args.get("url") or "").hostname or "").lower()
+            host = _un.normalize_url_host(args.get("url") or "")
         elif tool == "send_email":
             to = args.get("to") or ""
-            host = to.rsplit("@", 1)[-1].lower() if "@" in to else None
+            host = _un.normalize_email_host(to) if "@" in to else None
         elif tool == "api_call":
             # F94: api_call destinations are allowlisted by policy —
             # evaluate its ``endpoint`` like http_post's ``url``.
-            host = (urlparse(args.get("endpoint") or "").hostname
-                    or "").lower()
-    except Exception:
+            host = _un.normalize_url_host(args.get("endpoint") or "")
+    except _un.UriNormalizeError:
         host = None
     if not host:
         return False
-    return any(host == d.lower() or host.endswith("." + d.lower())
-               for d in allow)
+
+    def _norm_allow(entry):
+        try:
+            return _un.normalize_host(entry)
+        except _un.UriNormalizeError:
+            return None
+
+    return any(
+        host == normed or host.endswith("." + normed)
+        for entry in allow
+        for normed in (_norm_allow(entry),)
+        if normed
+    )
 
 
 def _old_effect(entry):

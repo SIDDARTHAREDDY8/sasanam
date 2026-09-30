@@ -5810,28 +5810,49 @@ class ToolExecutor:
         return False
 
     def _domain_allowlisted(self, tool, args):
+        # Wave-247: all host derivation goes through the shared
+        # gov/uri_normalize canonicalizer, so the auth path and the
+        # IoC path see the byte-identical host string (W246-4
+        # divergence closed). Allowlist entries are normalized through
+        # the same function, so unicode/punycode and trailing-dot
+        # variants compare correctly. Explicit flips vs. pre-W247 are
+        # pinned by evals/w247_uri_normalize_probes.py.
+        from gov import uri_normalize as _un
         allow = (self.policy.egress or {}).get("domain_allowlist") or []
         host = None
         if tool == "http_post":
             try:
-                host = (urlparse(args.get("url") or "").hostname or "").lower()
-            except Exception:
+                host = _un.normalize_url_host(args.get("url") or "")
+            except _un.UriNormalizeError:
                 host = None
         elif tool == "send_email":
             to = args.get("to") or ""
-            host = to.rsplit("@", 1)[-1].lower() if "@" in to else None
+            try:
+                host = _un.normalize_email_host(to) if "@" in to else None
+            except _un.UriNormalizeError:
+                host = None
         elif tool == "api_call":
             # F94: api_call is egress-scoped like the other outbound
             # tools — its destination comes from the ``endpoint`` arg.
             try:
-                host = (urlparse(args.get("endpoint") or "").hostname
-                        or "").lower()
-            except Exception:
+                host = _un.normalize_url_host(args.get("endpoint") or "")
+            except _un.UriNormalizeError:
                 host = None
         if not host:
             return False
-        return any(host == d.lower() or host.endswith("." + d.lower())
-                   for d in allow)
+
+        def _norm_allow(entry):
+            try:
+                return _un.normalize_host(entry)
+            except _un.UriNormalizeError:
+                return None
+
+        return any(
+            host == normed or host.endswith("." + normed)
+            for entry in allow
+            for normed in (_norm_allow(entry),)
+            if normed
+        )
 
     def _credential_identity_mismatch(self, args):
         """F111 (wave-34): is a credential on this egress call bound to

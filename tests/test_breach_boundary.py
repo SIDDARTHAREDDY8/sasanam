@@ -306,7 +306,7 @@ class TaxonomyTest(unittest.TestCase):
         # Wave-246 lane 8 (W246-8): 895 + 11 additive breach-boundary
         # codes, zero collisions, add-only.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 906); additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 936)
+        self.assertEqual(len(decision_codes.TAXONOMY), 938)
 
 
 if __name__ == "__main__":

@@ -562,7 +562,16 @@ class CanaryRegistry:
             self._by_value[c["value"]] = c
             self._by_value_norm[normalize_canary_text(c["value"])] = c
             if c["kind"] == "hostname":
-                self._by_host[c["value"].lower()] = c
+                # Wave-247: index by the shared canonical form so
+                # match_host (which normalizes its input) always
+                # agrees; fall back to plain lowercase if the minted
+                # value ever fails normalization.
+                try:
+                    from gov import uri_normalize as _un
+                    _host_key = _un.normalize_host(c["value"])
+                except Exception:
+                    _host_key = c["value"].lower()
+                self._by_host[_host_key] = c
             self._fragments[c["value"]] = _derive_fragments(
                 c["value"], kind=c.get("kind"))
 
@@ -655,10 +664,18 @@ class CanaryRegistry:
         ``metrics-04.prod.internal`` — suffix/lookalike matching is a
         false-positive and attacker-confusion hazard, so it is refused
         by construction.
+
+        Wave-247: normalizes through the shared gov/uri_normalize
+        canonicalizer, so the IoC path sees the byte-identical string
+        the auth path sees (W246-4 divergence closed).
         """
         if not isinstance(host, str):
             return None
-        norm = host.strip().lower().rstrip(".")
+        try:
+            from gov import uri_normalize as _un
+            norm = _un.normalize_host(host)
+        except Exception:
+            return None
         hit = self._by_host.get(norm)
         return dict(hit) if hit is not None else None
 

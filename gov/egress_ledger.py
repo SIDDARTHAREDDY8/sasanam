@@ -202,13 +202,17 @@ def registered_domain(endpoint):
     unchanged. Only the campaign KEY normalizes; the exact endpoint
     string stays in the ledger record for forensics. Residual: the
     built-in suffix table is small, not a full public-suffix list.
+
+    Wave-247: host canonicalization goes through the shared
+    gov/uri_normalize module (strip/lower/dot-strip/IDNA), so the
+    ledger buckets by the same string the auth and IoC paths see.
     """
     try:
-        host = (urlparse(endpoint or "").hostname or "")
+        from gov import uri_normalize as _un
+        host = _un.normalize_url_host(endpoint or "")
+    except _un.UriNormalizeError:
+        return ""
     except Exception:
-        host = ""
-    host = host.strip().lower().rstrip(".")
-    if not host:
         return ""
     try:
         ipaddress.ip_address(host)

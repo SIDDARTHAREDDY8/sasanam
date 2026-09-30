@@ -29,7 +29,7 @@ class SchemaRefGuardContractTest(unittest.TestCase):
         # (external, depth-exceeded, budget-exhausted, malformed,
         # resolved) on the wave-245 pin of 895.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 900); additive only.
-        self.assertEqual(len(dc.TAXONOMY), 936)
+        self.assertEqual(len(dc.TAXONOMY), 938)
 
     def test_new_codes_mapped(self):
         for code in ("schema-ref-external",
