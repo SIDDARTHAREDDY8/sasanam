@@ -68,7 +68,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 567)
+        self.assertEqual(len(dc.TAXONOMY), 575)
         # 567 = 546 (wave-229 merge: 530 + 16 checkpoint/policy-replay)
         # + 6 wave-230 lane-A signed-deny-receipt codes
         # (deny-receipt-refused, taxonomy-receipt-missing,
@@ -86,6 +86,14 @@ class VocabularyCoverageTest(unittest.TestCase):
         # composed at merge from the three lane commits by direct
         # byte-verification (each lane diff was add-only, zero deletions,
         # zero key collisions), pin updated here to match.
+        # + 2 wave-231 lane-A reconcile-agreement codes
+        # (agreement-input-unmapped, agreement-not-authorization)
+        # + 6 wave-231 lane-B seeded-denial codes
+        # (seeded-denial-{refused,malformed,digest-mismatch,
+        # not-authorization}, denial-anchored-in-denied-transaction,
+        # denial-evidence-lost), composed at merge from the two lane
+        # commits by direct byte-verification (each lane diff add-only,
+        # zero deletions, zero key collisions), pin updated here to match.
         # pin updated by the lanes that added them, taxonomy untouched
         # otherwise.
 
