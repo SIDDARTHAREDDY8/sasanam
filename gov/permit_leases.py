@@ -46,6 +46,13 @@ Rules (all fail closed, all refusals carry machine-readable codes):
 * In-memory only. Registry history dying with the process is a
   documented deployment boundary, same as the wave-219 seen-version
   floors: persistence across restarts is the deployer's job.
+* Optional exact-target revocation (wave-222, ``gov/revocation.py``):
+  ``PermitRegistry(..., revocation_registry=rl)`` checks the lease's
+  recorded parameter digest on every redeem, AFTER the digest check
+  (no revocation oracle for wrong digests) and BEFORE the scope
+  check; a revoked digest refuses ``permit-revoked`` even when the
+  lease is otherwise valid, without consuming the lease. When the
+  registry is absent, redeem behaves exactly as before.
 
 Stdlib only. No network. $0.
 """
@@ -95,6 +102,13 @@ class PermitUnknownError(PermitError):
     """No permit with this id was ever issued by this registry."""
 
     code = "permit-unknown"
+
+
+class PermitRevokedError(PermitError):
+    """The lease's parameter digest was revoked by exact-target
+    revocation (``gov/revocation.py``) before redemption."""
+
+    code = "permit-revoked"
 
 
 class PermitDowngradeRefusedError(PermitError):
@@ -306,11 +320,20 @@ class PermitLease:
         _audit_refused(self._audit, self.permit_id, exc.code)
         raise exc
 
-    def redeem(self, presented_digest, *, request_scope=None, now=None):
+    def redeem(self, presented_digest, *, request_scope=None, now=None,
+               revocation_registry=None):
         """Consume the lease for the exact recorded parameters.
 
-        Check order is fixed — used, expired, digest, scope — so a
-        consumed or expired permit never confirms or denies a digest.
+        Check order is fixed — used, expired, digest, revocation,
+        scope — so a consumed or expired permit never confirms or
+        denies a digest, and revocation is checked only after the
+        presented digest proved correct (no revocation oracle for
+        wrong digests). ``revocation_registry`` is an optional
+        exact-target revocation source (``gov/revocation.py`` or any
+        object with ``check(digest) -> "revoked" | "active"``); when
+        None the legacy path runs exactly as before. A revoked lease
+        refuses ``permit-revoked`` even when otherwise valid, and the
+        refused redeem does not consume the lease.
         On success the lease is marked used and a grant record is
         returned; the grant is the only proof of redemption.
         """
@@ -329,6 +352,13 @@ class PermitLease:
             self._refuse(PermitDigestMismatchError(
                 "permit-digest-mismatch: presented parameters do not match "
                 "the parameters this permit was issued for"))
+        if (revocation_registry is not None
+                and revocation_registry.check(self.parameter_digest)
+                != "active"):
+            self._refuse(PermitRevokedError(
+                "permit-revoked: permit %r targets a revoked digest; the "
+                "approval it bound is no longer good"
+                % (self.permit_id,)))
         if request_scope is not None:
             try:
                 self.check_scope(request_scope, self.grant_scope)
@@ -355,13 +385,17 @@ class PermitRegistry:
 
     ``now`` is an injectable clock (seconds since epoch) for
     determinism; ``audit`` receives the permit_issued / permit_redeemed
-    / permit_redeem_refused entries.
+    / permit_redeem_refused entries. ``revocation_registry`` is an
+    optional exact-target revocation source (``gov/revocation.py`` or
+    any object with ``check(digest) -> "revoked" | "active"``) checked
+    on every redeem; when None, redeem behaves exactly as before.
     """
 
-    def __init__(self, *, audit=None, now=None):
+    def __init__(self, *, audit=None, now=None, revocation_registry=None):
         self._leases = {}
         self._audit = audit
         self._now = now or time.time
+        self._revocation_registry = revocation_registry
 
     def issue(self, permit_id, *, params_digest, grant_scope,
               ttl_s=3600):
@@ -394,7 +428,8 @@ class PermitRegistry:
             _audit_refused(self._audit, permit_id, exc.code)
             raise exc
         return lease.redeem(presented_digest, request_scope=request_scope,
-                            now=self._now)
+                            now=self._now,
+                            revocation_registry=self._revocation_registry)
 
 
 # ----------------------------------------------------------------------
