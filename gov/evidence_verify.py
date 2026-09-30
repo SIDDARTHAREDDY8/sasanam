@@ -94,6 +94,13 @@ Implementation status -- read before deploying:
   PyNaCl) behind the same function signatures -- no wire-format change.
 * Deterministic nonces per RFC 8032 section 5.1.6 (no RNG at sign
   time); key generation uses :mod:`secrets`.
+* Ed25519ph (RFC 8032 section 5.1, ``sign_ph``/``verify_ph``): the
+  prehashed variant. Real Rekor v1.5.x's ``hashedrekord`` type only
+  accepts Ed25519ph (SHA-512) for Ed25519 keys (F203) -- raw Ed25519
+  is rejected server-side. The domain separator differs from pure
+  Ed25519 (flag octet 0x01), so ph signatures are NOT interchangeable
+  with pure signatures: ``verify`` rejects ``sign_ph`` output and
+  ``verify_ph`` rejects ``sign`` output, by construction.
 
 ``verify`` never raises on malformed inputs: malformed is False, never
 an exception (fail-closed for verifiers).
@@ -243,6 +250,135 @@ def verify(pub, msg, sig):
     lhs = _scalarmult(_B, s)
     rhs = _add(R, _scalarmult(A, k))
     return _encode_point(lhs) == _encode_point(rhs)
+
+
+# ---------------------------------------------------------------------------
+# Ed25519ph (RFC 8032, section 5.1) -- prehashed Ed25519.
+#
+# PH(M) = SHA-512(M); the domain separator is
+#   dom2(F, C) = "SigEd25519 no Ed25519 collisions" || 0x01 || C
+# with the prehash flag octet 0x01 and context C (empty here, matching
+# sigstore's WithED25519ph() default). hashedrekord is the reason this
+# exists: Rekor v1.5.x constructs the entry's signature verifier with
+# signature.LoadVerifier(... WithED25519ph()) and rejects raw Ed25519
+# (F203). The empty-context default matches what Rekor expects.
+
+_PH_DOM_PREFIX = b"SigEd25519 no Ed25519 collisions"
+
+
+def _ph_dom(context):
+    if not isinstance(context, (bytes, bytearray)):
+        raise TypeError("context must be bytes")
+    if len(context) > 255:
+        raise ValueError("context must be at most 255 bytes")
+    context = bytes(context)
+    # RFC 8032, section 2: dom2(x, y) = "SigEd25519 no Ed25519
+    # collisions" || octet(x) || octet(OLEN(y)) || y, with x = 1
+    # (prehash flag) for Ed25519ph.
+    return (_PH_DOM_PREFIX + b"\x01" + bytes([len(context)]) + context)
+
+
+def sign_ph(seed, msg, context=b""):
+    """Sign ``msg`` with Ed25519ph (RFC 8032 5.1). Returns 64 bytes.
+
+    The message is prehashed with SHA-512 internally; callers pass the
+    original message (for hashedrekord, the 32-byte artifact digest).
+    Deterministic like :func:`sign`. Byte-exact against the RFC 8032
+    section 7.3 TEST 1 vector (see ``rfc8032_ph_selftest``).
+    """
+    if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
+        raise ValueError("seed must be 32 bytes")
+    seed = bytes(seed)
+    if not isinstance(msg, (bytes, bytearray)):
+        raise TypeError("msg must be bytes")
+    msg = bytes(msg)
+    dom = _ph_dom(context)
+    h = hashlib.sha512(seed).digest()
+    a = _clamp(int.from_bytes(h[:32], "little"))
+    prefix = h[32:]
+    A = _encode_point(_scalarmult(_B, a))
+    ph = hashlib.sha512(msg).digest()
+    r = int.from_bytes(hashlib.sha512(dom + prefix + ph).digest(),
+                       "little") % _L
+    R = _encode_point(_scalarmult(_B, r))
+    k = int.from_bytes(hashlib.sha512(dom + R + A + ph).digest(),
+                       "little") % _L
+    S = (r + k * a) % _L
+    return R + S.to_bytes(32, "little")
+
+
+def verify_ph(pub, msg, sig, context=b""):
+    """Verify an Ed25519ph signature (RFC 8032 5.1).
+
+    Returns True/False; never raises on malformed inputs (fail-closed
+    for verifiers: malformed is False, never an exception).
+    """
+    if (not isinstance(pub, (bytes, bytearray)) or len(pub) != 32
+            or not isinstance(sig, (bytes, bytearray)) or len(sig) != 64):
+        return False
+    if not isinstance(msg, (bytes, bytearray)):
+        return False
+    try:
+        dom = _ph_dom(context)
+    except (TypeError, ValueError):
+        return False
+    pub, sig, msg = bytes(pub), bytes(sig), bytes(msg)
+    try:
+        A = _decode_point(pub)
+        R = _decode_point(sig[:32])
+    except ValueError:
+        return False
+    s = int.from_bytes(sig[32:], "little")
+    if s >= _L:
+        return False
+    ph = hashlib.sha512(msg).digest()
+    k = int.from_bytes(hashlib.sha512(dom + sig[:32] + pub + ph).digest(),
+                       "little") % _L
+    lhs = _scalarmult(_B, s)
+    rhs = _add(R, _scalarmult(A, k))
+    return _encode_point(lhs) == _encode_point(rhs)
+
+
+# ---------------------------------------------------------------------------
+# RFC 8032, section 7.3, TEST 1 for Ed25519ph (empty context).
+# (Values cross-checked against the RFC text; the ph self-test below
+# pins them byte-exact.)
+RFC8032_PH_VECTORS = (
+    {
+        "sk": "833fe62409237b9d62ec77587520911e"
+              "9a759cec1d19755b7da901b96dca3d42",
+        "pk": "ec172b93ad5e563bf4932c70e1245034"
+              "c35467ef2efd4d64ebf819683467e2bf",
+        "msg": "616263",
+        "sig": "98a70222f0b8121aa9d30f813d683f80"
+               "9e462b469c7ff87639499bb94e6dae41"
+               "31f85042463c2a355a2003d062adf5aa"
+               "a10b8c61e636062aaad11c2a26083406",
+    },
+)
+
+
+def rfc8032_ph_selftest():
+    """Validate sign_ph/verify_ph against the RFC 8032 section 7.3
+    TEST 1 vector: pubkey derivation, byte-exact deterministic
+    signature, and verification (plus a wrong-context refusal)."""
+    for i, v in enumerate(RFC8032_PH_VECTORS, 1):
+        sk = bytes.fromhex(v["sk"])
+        pk = bytes.fromhex(v["pk"])
+        msg = bytes.fromhex(v["msg"])
+        sig = bytes.fromhex(v["sig"])
+        assert publickey(sk) == pk, "PH TEST %d: pubkey mismatch" % i
+        got = sign_ph(sk, msg)
+        assert got == sig, "PH TEST %d: signature mismatch" % i
+        assert verify_ph(pk, msg, sig), "PH TEST %d: verify failed" % i
+        # Domain separation is real: a non-empty context must NOT verify
+        # a signature minted with the empty context.
+        assert not verify_ph(pk, msg, sig, context=b"other"), \
+            "PH TEST %d: context not separated" % i
+        # ... and ph signatures are not pure signatures.
+        assert not verify(pk, msg, sig), \
+            "PH TEST %d: pure verifier accepted ph sig" % i
+    return True
 
 
 # ---------------------------------------------------------------------------

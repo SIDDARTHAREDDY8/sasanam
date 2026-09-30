@@ -1143,11 +1143,32 @@ class TestExecutorWarnDigest(unittest.TestCase):
         # denies must carry its (non-empty) mode history in the
         # executor-produced decision BOM -- the deny was earned, not
         # just declared. Mode-absent rules stay ladder-free (P8).
+        #
+        # Wave-245 triage: this test MUST be hermetic. It previously used
+        # os.environ.setdefault() without cleanup, which (a) left
+        # GOV_DECISION_PACKET_KEY set for all subsequent tests in the
+        # suite, enabling decision packets where other tests expected
+        # them disabled (broke test_secret_path_read_is_denied,
+        # test_tail_truncation_detected, test_wrong_key_fails_verification
+        # in the full canonical run), and (b) inherited a polluted value
+        # when a prior test had already set the key. Explicit set +
+        # try/finally restore fixes both directions.
         import secrets
-        os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
-        os.environ.setdefault("GOV_LOG_KEY_EPOCH", "grad-ladder-ut")
-        os.environ.setdefault("GOV_DECISION_PACKET_KEY",
-                              secrets.token_hex(32))
+        _old_env = {k: os.environ.get(k) for k in (
+            "GOV_LOG_KEY", "GOV_LOG_KEY_EPOCH", "GOV_DECISION_PACKET_KEY")}
+        os.environ["GOV_LOG_KEY"] = secrets.token_hex(32)
+        os.environ["GOV_LOG_KEY_EPOCH"] = "grad-ladder-ut"
+        os.environ["GOV_DECISION_PACKET_KEY"] = secrets.token_hex(32)
+        try:
+            self._graduated_deny_bom_body()
+        finally:
+            for _k, _v in _old_env.items():
+                if _v is None:
+                    os.environ.pop(_k, None)
+                else:
+                    os.environ[_k] = _v
+
+    def _graduated_deny_bom_body(self):
         eng = _engine(
             "version: 1\n"
             "approvals:\n"
