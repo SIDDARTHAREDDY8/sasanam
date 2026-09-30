@@ -12019,3 +12019,39 @@ presentation-attack close STEAL + recourse-reference digest ADAPT;
 drift: Dex v2.46.0 still pseudo-tag only, COAZ-MCP unchanged, Firecracker
 1.17.0 + CVE-2026-5747 (keep PCI off → propose as jail-policy default
 for wave-220).
+
+## 2026-09-30 — Wave-226 lane A: KMS-resident signing for evidence records
+
+ADAPT of Dex v2.45.0's KMS-backed JWT signer direction (re-derived): signing happens INSIDE the KMS; private key material never crosses the boundary.
+
+**New `gov/kms_signer.py` (stdlib only):** `KmsSigner.sign(key_ref, message)` → signature bytes. `KeyRef {provider, key_id, algorithm}` validated: unknown algorithm → `kms-signer-algorithm-refused`; >1 MiB message → `kms-signer-message-too-large`. `sign_labeled` returns receipts honestly labeled (`non_repudiation=False` for MAC-tier entries per gov/alg_registry — the KMS does not upgrade evidence semantics). `verify(key_ref_or_pubkey, message, signature)` dispatches by the named algorithm; raw pubkeys require keyword-only `algorithm=`, fail closed. **New `gov/kms_signer_loopback.py` (dev/test only):** module docstring states "NEVER a production KMS substitute"; seeds held inside the instance store with no public exfil path; backed by vendored Ed25519/HMAC. **Additive `gov/alg_registry.py`:** `register_signer_backend` / `clear_signer_backend` / `has_signer_backend` / `sign_via_backend`; default registries carry no backends; legacy `sign()`/`verify()` byte-identical (pinned).
+
+**Battery `evals/w226_kms_probes.py`:** genuine red on base (2 HELD / 12 GAP). **14/14 HELD / 0 BREAK / 0 ERROR ×2** (staging + `env -u GOV_DEPLOYMENT_MODE`), determinism PASS; three mid-green failures were probe-harness-side (corrected), none product defects. **Units `tests/test_kms_signer.py`:** 23/23 OK; combined adjacent 112 OK. Two-axis self-review PASS. No findings; F210 stays free.
+
+Commit `22ede1c3f507bbc99dbf901cd950eaaade8bd07f` (parent `0fb51624e6162c1846501e93b9ab3dd2127f7873`), trailer present, not pushed (merge coordinator pushes).
+
+## 2026-09-30 — Wave-226 lane B: sanitized git config for all agent subprocesses
+
+ADAPT of the GitSpawn hostile-`.git/config` exec-sink class (CVE-2026-19592/45033/55607 per the wave-225 prospecting sweep): hostile repo-local config naming command-executing keys auto-executes attacker commands the moment ANY git command runs against that repo. This lane is the single hardened helper docs/DEPLOYMENT.md §5.7 prescribes; wave-224 had hardened only the eval batteries.
+
+**New `gov/git_sanitize.py` (stdlib only):** `sanitized_git_env(repo_path)` neutralizes global/system config (`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_CONFIG_NOSYSTEM=1`) and allowlists `safe.directory` for EXACTLY repo_path via `GIT_CONFIG_COUNT/KEY_0/VALUE_0`. `deny_config_keys(repo_path)` scans repo-local config (plus include/includeIf chains, cycle-safe, worktree `gitdir:` pointers) for exec-sink keys — exact (`core.fsmonitor`, `core.sshCommand`, `core.pager`, `core.editor`, `core.hooksPath`, `gpg.program`, `diff.external`, ...), wildcards (`diff/merge.*.command`, `filter.*.smudge/clean/process`, `mergetool/difftool.*.cmd`), and `!`-shell `alias.*` / `credential.*.helper` — and refuses `gitspawn-hostile-config` BEFORE any spawn, listing offending keys. Unparseable config fails closed (`gitspawn-config-unparseable`). `run_git_sanitized(args, repo_path, spawn=None)` is the deny-first blessed entry point; `spawn=None` (default) refuses `gitspawn-in-repo-git-refused` per the wave-36 zero-in-repo-git invariant — the actual spawn belongs in the deployer's harness outside the scanned tree.
+
+**Migration grep:** zero literal `git` subprocess call sites in gov/evals/tests — nothing to migrate, nothing behavior-changed.
+
+**Battery `evals/w226_gitsan_probes.py`:** genuine red on base (10 GAP, module absent). 20/20 HELD ×2 (staging + `env -u GOV_DEPLOYMENT_MODE`), 0 BREAK, 0 ERROR, determinism PASS. Focused w36 gitspawn situation stays green. **Units `tests/test_git_sanitize.py`:** 20/20 OK. Two-axis self-review PASS. No findings; F210 stays free.
+
+Commit `46ec082` (parent `0fb5162`), trailer present, not pushed (merge coordinator pushes).
+
+## 2026-09-30 — Wave-226 lane C: single-use attestations + fail-closed incomplete evidence
+
+**Scope.** New `gov/single_use.py` (stdlib only; zero existing files modified): `SingleUseRegistry` issues attestation records binding (attestation_digest, issuer, nonce) into a derived jti (domain-separated SHA-256); nonces are single-use — reuse with a different digest still refuses `single-use-replay-refused`. `consume()` check order: shape → jti recompute → registry membership → consumed (replay) → issuer revocation: second consume → `single-use-replay-refused`, unknown jti → `single-use-unknown`, tampered record → `single-use-malformed`, issuer key revoked (attached `gov/revocation.py` registry, via the issuer_pubkey_digest bound at issuance) → `single-use-issuer-revoked`. `EvidenceChecker.require_complete(evidence_items, required_kinds)`: missing kind → `evidence-incomplete`; present-but-unverifiable item → `evidence-unverifiable-item` (never downgraded to incomplete); consumed attestations compose as kind `single-use-attestation` via `attestation_evidence_verifier()`. Red-first: pristine 0/9 GAP → fixed **10/10 HELD / 0 BREAK / 0 ERROR ×2** (staging + `env -u GOV_DEPLOYMENT_MODE`), determinism PASS; adjacent green. Unit `tests/test_single_use.py` 26/26 OK; adjacent suites 173/173. Two-axis self-review: Standards PASS, Spec PASS. Residual: consumed-jti set is in-memory — deployments MUST persist it before they are replay-safe across restarts. No findings filed; F210 stays free. `evals/w226_singleuse_probes.py` (10 probes) is the lane battery.
+
+Commit `de3c56a` (parent `0fb5162`), trailer present, not pushed (merge coordinator pushes).
+
+## 2026-09-30 — Wave-226 lane D: prospecting verdicts recorded
+
+Headlines (full: ~/workspace/teams/wave226-prospect/PROSPECTUS.md): Vaara receipt -12 (STEAL — recomputable decision↔execution pairs, backLink binding); Checkpointed local log -01 (STEAL pattern — MMR-backed append-only log + signed checkpoints, direct audit-log upgrade path); draft-das-agentic-adaptive-authorization-00 (ADAPT — escalation must reach the effect point); in-toto v1.2.0 released (STEAL — adds SVR v0.2; wave-225 "tops at 1.1.1" stale); policy-controller v0.15.1 IS upstream (wave-225 D11 stale); three real single-use implementations (fissible/verdict MIT atomic single-use approval receipts; draft-kroehl-agentic-trust-aae-02 MUST-reject single_use; keelapi/keel-permit Apache-2.0 registered-key resolution); Sabey corpus verified real (OpenTimestamps, 3-valued verdicts); cosign docs officially bless openbao:// (ADAPT); AIP hybrid Ed25519+ML-DSA-65 shipped (ADAPT pattern, license unverified); nelson delegation receipts -10 DRP Denial Reason Codes Registry (ADAPT/watchlist); Harbor cosign-cherry-pick claim DEBUNKED (do not cite). Corrections: MJWT -06 expiry = 7 March 2027 (doc header, not 11); AAuth SSF correction stands; Dex v2.45.0 = #4512 signer + #4520 conformance (no v2.46.0 shipped); OPA rule_labels shipped in v1.17.0 — no adopter, Sasanam can still be first. License updates: fissible/verdict MIT, keel-permit Apache-2.0, Sabey corpus Apache-2.0, AIP/timelordraps/authproof-sdk unverified (pattern-only). 10 wave-227 proposals recorded in prospectus. F210 stays free.
+
+## 2026-09-30 — Wave-226 merge (direct-copy, no git am)
+
+Lane files byte-verified against lane commits (kms 22ede1c, gitsan 46ec082/59bfc5c, singleuse de3c56a); all lanes pure-additive (existing-file diffs additions-only: gov/alg_registry.py +54). Merge tree = union. Red-first audit on merged tree before gates. Documentation correction from lane D: none new this wave. Findings: open = none; F210 free.

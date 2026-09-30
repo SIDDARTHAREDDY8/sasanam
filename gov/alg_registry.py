@@ -197,6 +197,11 @@ class AlgorithmRegistry:
     def __init__(self):
         self._algorithms = {}
         self._domains = {}
+        # KMS signer backends (wave-226, additive): algorithm name ->
+        # a KMS-style signer object exposing ``sign(key_ref, message)
+        # -> bytes`` (see gov/kms_signer.py). Default: none registered;
+        # ``sign``/``verify`` behavior is unchanged when empty.
+        self._signer_backends = {}
 
     def register(self, name, *, sign_fn, verify_fn, keygen,
                  domain_separator, non_repudiation=True):
@@ -310,6 +315,55 @@ class AlgorithmRegistry:
                 "a signature — it cannot serve as non-repudiation "
                 "evidence" % (alg,))
         return True
+
+    # -- KMS signer backends (wave-226; additive, default empty) -------
+
+    def register_signer_backend(self, alg, signer):
+        """Bind a KMS-style signer backend to a registered algorithm.
+
+        ``signer`` must expose a callable ``sign(key_ref, message)``
+        (the ``gov/kms_signer.KmsSigner`` surface): signing happens
+        inside the KMS and only signatures return. ``alg`` must be
+        registered — ``alg-unregistered`` otherwise (fail closed).
+        Replacing an existing backend is allowed; clearing it is
+        ``clear_signer_backend``.
+        """
+        self._entry(alg)  # alg-unregistered when unknown
+        sign = getattr(signer, "sign", None)
+        if not callable(sign):
+            raise AlgRegistrationError(
+                "alg-registration-refused: signer backend for %r must "
+                "expose a callable sign(key_ref, message)" % (alg,))
+        self._signer_backends[alg] = signer
+
+    def clear_signer_backend(self, alg):
+        """Remove the backend for ``alg`` (if any). Unknown ``alg``
+        refuses ``alg-unregistered`` — fail closed, never silently
+        no-op on a typo'd name."""
+        self._entry(alg)
+        self._signer_backends.pop(alg, None)
+
+    def has_signer_backend(self, alg):
+        """Whether a KMS signer backend is bound for ``alg``."""
+        return alg in self._signer_backends
+
+    def sign_via_backend(self, alg, message, key_ref):
+        """Sign ``message`` through the backend bound to ``alg``.
+
+        Unknown ``alg`` refuses ``alg-unregistered``; an ``alg``
+        with no backend refuses ``alg-unregistered`` too — no
+        silent fallback to local signing, ever. Backends enforce
+        their own input validation (see ``gov/kms_signer.py``).
+        """
+        backend = self._signer_backends.get(alg)
+        if backend is None:
+            # Reuse alg-unregistered: from the caller's view there is
+            # no signer scheme available for this algorithm.
+            self._entry(alg)  # raises alg-unregistered when unknown
+            raise AlgUnregisteredError(
+                "alg-unregistered: no signer backend bound for %r"
+                % (alg,))
+        return backend.sign(key_ref, message)
 
     def negotiate(self, preferred, acceptable):
         """Return the highest-preference mutually acceptable
