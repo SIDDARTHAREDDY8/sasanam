@@ -291,7 +291,11 @@ class ScanTest(unittest.TestCase):
         # 4 attested-vs-asserted + 6 independent-corroboration
         # codes), composed from the four lane commits by direct
         # byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 695)
+        # Wave-239 merge: re-pointed 695 -> 718 (8 AAuth R3
+        # vocabulary grant + 6 claim-at-dispatch + 3 refusal-oracle
+        # guard + 6 AER-1 provenance non-upgrade codes), composed
+        # from the four lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 718)
 
 
 if __name__ == "__main__":

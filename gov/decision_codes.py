@@ -5933,12 +5933,254 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence-envelope'],
         "reverify_steps": ['recompute'],
     },
+    'r3-unknown-operation': {
+        "domain": 'r3',
+        "code": 'r3-unknown-operation',
+        "human": 'AAuth R3 grant token: an operation is not well-formed in '
+                 'the registered vocabulary (unknown field, missing '
+                 'required field, non-string value)',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-vocabulary-unknown': {
+        "domain": 'r3',
+        "code": 'r3-vocabulary-unknown',
+        "human": 'AAuth R3 grant token: a vocabulary URI the consumer does '
+                 'not register; closed vocabulary refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-malformed': {
+        "domain": 'r3',
+        "code": 'r3-malformed',
+        "human": 'AAuth R3 grant token: the token, R3 document, or per-call '
+                 'proposal is the wrong shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-s256-mismatch': {
+        "domain": 'r3',
+        "code": 'r3-s256-mismatch',
+        "human": 'AAuth R3 grant token: the token-pinned r3_s256 does not '
+                 'match the recomputed hash of the presented R3 document; '
+                 'the approval-time binding is broken',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-grant-hash-mismatch': {
+        "domain": 'r3',
+        "code": 'r3-grant-hash-mismatch',
+        "human": 'AAuth R3 grant token: the token-pinned r3_grant_hash does '
+                 'not match the recomputed hash of the presented grant '
+                 'lists; the lists were edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-per-call-binding-broken': {
+        "domain": 'r3',
+        "code": 'r3-per-call-binding-broken',
+        "human": 'AAuth R3 per-call challenge: the challenged call is not '
+                 'byte-equal to the content-addressed proposal operation; '
+                 'parameters were edited after addressing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-no-match': {
+        "domain": 'r3',
+        "code": 'r3-no-match',
+        "human": 'AAuth R3 grant token: the operation matches neither '
+                 'r3_granted nor r3_per_call; the reject decision',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-grant-beyond-document': {
+        "domain": 'r3',
+        "code": 'r3-grant-beyond-document',
+        "human": 'AAuth R3 grant token: the grant authorizes an operation '
+                 'the R3 document itself does not define; the issuer may '
+                 'narrow, never widen',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-239 lane-A (W239-1 AAuth R3 vocabulary grant tokens): 695 + 8
+    # = 703, additive only, zero key collisions. Codes: r3-unknown-operation,
+    # r3-vocabulary-unknown, r3-malformed, r3-s256-mismatch,
+    # r3-grant-hash-mismatch, r3-per-call-binding-broken, r3-no-match,
+    # r3-grant-beyond-document.
+    # Wave-239 lane B: 695 + 6 = 701 (6 claim-at-dispatch codes:
+    # claim-malformed, claim-invalid-grant, claim-not-presented,
+    # claim-not-releasable, claim-replay, claim-lease-expired;
+    # domain claim), additive only, zero key collisions, zero deletions.
+    'claim-malformed': {
+        "domain": 'claim',
+        "code": 'claim-malformed',
+        "human": 'claim-at-dispatch: the grant, claim, or an argument is '
+                 'the wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-invalid-grant': {
+        "domain": 'claim',
+        "code": 'claim-invalid-grant',
+        "human": 'claim-at-dispatch: the grant seal does not recompute, '
+                 'or the claim binds another payload digest; tampered or '
+                 'foreign grants claim nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-not-presented': {
+        "domain": 'claim',
+        "code": 'claim-not-presented',
+        "human": 'claim-at-dispatch: dispatch attempted without a claim '
+                 'presented at the authority; a locally verified grant '
+                 'alone authorizes nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-not-releasable': {
+        "domain": 'claim',
+        "code": 'claim-not-releasable',
+        "human": 'claim-at-dispatch: a second claim against an '
+                 'already-consumed grant; consumed grants are never '
+                 'released, never retried',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-replay': {
+        "domain": 'claim',
+        "code": 'claim-replay',
+        "human": 'claim-at-dispatch: the same claim presented twice; one '
+                 'claim, one dispatch attempt',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-lease-expired': {
+        "domain": 'claim',
+        "code": 'claim-lease-expired',
+        "human": 'claim-at-dispatch: the claim lease elapsed on the '
+                 'monotonic clock before presentation; a slow upstream '
+                 'cannot outlive the permission',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-239 lane C: 695 + 3 = 698 (3 oracle-domain refusal-oracle
+    # guard codes: evaluated-and-refused, could-not-evaluate,
+    # verifier-misconfigured), additive only, zero key collisions.
+    'oracle-evaluated-and-refused': {
+        "domain": 'oracle',
+        "code": 'oracle-evaluated-and-refused',
+        "human": 'refusal-oracle guard: every authorization path was '
+                 'evaluated and refused; the refusal names no path, '
+                 'grant, or issuer standing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'oracle-could-not-evaluate': {
+        "domain": 'oracle',
+        "code": 'oracle-could-not-evaluate',
+        "human": 'refusal-oracle guard: an authorization dependency was '
+                 'unavailable so a path could not be evaluated; distinct '
+                 'from evaluated-and-refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'oracle-verifier-misconfigured': {
+        "domain": 'oracle',
+        "code": 'oracle-verifier-misconfigured',
+        "human": 'refusal-oracle guard: the verifier configuration is '
+                 'invalid; refusing loudly fail-closed instead of '
+                 'authorizing',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-239 lane D: AER-1 provenance non-upgrade (ADAPT, pattern-only):
+    # 6 ``provenance``-domain codes. 695 + 6 = 701, additive only, zero
+    # key collisions.
+    'provenance-class-missing': {
+        "domain": 'provenance',
+        "code": 'provenance-class-missing',
+        "human": 'provenance non-upgrade: emission named no provenance '
+                 'class; a receipt must name exactly one class',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-class-unknown': {
+        "domain": 'provenance',
+        "code": 'provenance-class-unknown',
+        "human": 'provenance non-upgrade: unknown provenance class '
+                 '(case-exact LOGGED/EXECUTED vocabulary)',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-upgraded': {
+        "domain": 'provenance',
+        "code": 'provenance-upgraded',
+        "human": 'provenance non-upgrade: a receipt presented at an '
+                 'authority weight above its own class (report posed as '
+                 'observation); refused, never re-graded',
+        "severity": 'critical',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-chain-class-mismatch': {
+        "domain": 'provenance',
+        "code": 'provenance-chain-class-mismatch',
+        "human": 'provenance non-upgrade: a chain entry failed class or '
+                 'linkage verification; chain validity never promotes '
+                 'provenance',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-digest-mismatch': {
+        "domain": 'provenance',
+        "code": 'provenance-digest-mismatch',
+        "human": 'provenance non-upgrade: receipt bytes differ from the '
+                 'emission digest (no silent re-grade)',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-step-break': {
+        "domain": 'provenance',
+        "code": 'provenance-step-break',
+        "human": 'provenance non-upgrade: workflow step sequence does not '
+                 'match the committed order (deletion or reorder); the '
+                 'break is named, surviving classes are unchanged',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-commitment'],
+        "reverify_steps": ['recompute'],
+    },
     # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
     # gate-rule + 3 lane-B edited-approval refusal +
     # 5 lane-C canonical-record + 8 lane-D closure-scoped
     # approval codes), additive only, zero key collisions,
     # composed from the four lane commits by direct
     # byte-verification.
+    # Wave-239 merge: 695 + 23 = 718 (8 lane-A AAuth R3 vocabulary
+    # grant + 6 lane-B claim-at-dispatch + 3 lane-C refusal-oracle
+    # guard + 6 lane-D AER-1 provenance non-upgrade codes), additive
+    # only, zero key collisions, composed from the four lane commits
+    # by direct byte-verification.
 }
 
 

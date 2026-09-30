@@ -205,7 +205,12 @@ class TaxonomyTests(unittest.TestCase):
         # Wave-238 merge: re-pointed 667 -> 695 (28 new codes across
         # four lanes), composed from the four lane commits by direct
         # byte-verification.
-        self.assertEqual(len(decision_codes.TAXONOMY), 695)
+        # Wave-239 merge: re-pointed 695 -> 718 (23 new codes across
+        # four lanes: 8 AAuth R3 + 6 claim-at-dispatch + 3
+        # refusal-oracle guard + 6 AER-1 provenance non-upgrade),
+        # composed from the four lane commits by direct
+        # byte-verification.
+        self.assertEqual(len(decision_codes.TAXONOMY), 718)
 
 
 if __name__ == "__main__":

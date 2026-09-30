@@ -68,7 +68,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 695)
+        self.assertEqual(len(dc.TAXONOMY), 718)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
@@ -146,6 +146,23 @@ class VocabularyCoverageTest(unittest.TestCase):
         # additive, zero deletions, zero key collisions, composed from
         # the four lane commits by direct byte-verification, pin
         # updated here to match.
+        # Wave-239 merge: 695 + 23 = 718 (8 lane-A AAuth R3
+        # vocabulary grant codes: r3-unknown-operation,
+        # r3-vocabulary-unknown, r3-malformed, r3-s256-mismatch,
+        # r3-grant-hash-mismatch, r3-per-call-binding-broken,
+        # r3-no-match, r3-grant-beyond-document; 6 lane-B
+        # claim-at-dispatch codes: claim-malformed,
+        # claim-invalid-grant, claim-not-presented,
+        # claim-not-releasable, claim-replay, claim-lease-expired;
+        # 3 lane-C refusal-oracle guard codes:
+        # oracle-evaluated-and-refused, oracle-could-not-evaluate,
+        # oracle-verifier-misconfigured; 6 lane-D AER-1
+        # provenance non-upgrade codes: provenance-class-missing,
+        # provenance-class-unknown, provenance-upgraded,
+        # provenance-chain-class-mismatch, provenance-digest-mismatch,
+        # provenance-step-break), additive, zero deletions, zero key
+        # collisions, composed from the four lane commits by direct
+        # byte-verification, pin updated here to match.
         # 585 = wave-232 merge pin; + 9 wave-233 lane-A evaluation-function
         # codes (evaluation-{malformed,incomplete-details,
         # key-role-conflation,input-swapped,non-reproducible,
