@@ -5294,6 +5294,181 @@ TAXONOMY = {
     # Wave-235 merge: 617 + 14 = 631 (4 lane-A trust-material + 7 lane-B bound-permit
     # + 3 lane-C grant-attenuation), additive only, zero key collisions, composed from
     # the three lane commits by direct byte-verification.
+    # codes), additive.
+    'close-signer-mismatch': {
+        "domain": 'close',
+        "code": 'close-signer-mismatch',
+        "human": 'close binding: the close record\u2019s signer id differs '
+                 'from the chain-root session-start signer id; being a '
+                 'listed key does not excuse a different signer',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-trust-repointed': {
+        "domain": 'close',
+        "code": 'close-trust-repointed',
+        "human": 'close binding: the close record re-points a trust id '
+                 '-- the same key-id label with key material differing '
+                 'from the external trust root\u2019s pinned material',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'trust-config', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-unsigned-scope': {
+        "domain": 'close',
+        "code": 'close-unsigned-scope',
+        "human": 'close binding: verification was asked to rely on a '
+                 'scope/authority field outside the close record\u2019s '
+                 'signature-covered body; unsigned scope is never '
+                 'consulted, refusing fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-chain-digest-mismatch': {
+        "domain": 'close',
+        "code": 'close-chain-digest-mismatch',
+        "human": 'close binding: the close record\u2019s chain digest '
+                 'does not match the recomputed digest over the chain; '
+                 'a chain record was rewritten',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-record-malformed': {
+        "domain": 'close',
+        "code": 'close-record-malformed',
+        "human": 'close binding: the chain or the close record is not a '
+                 'well-formed record mapping, or a record digest is '
+                 'missing/malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-signer-absent': {
+        "domain": 'close',
+        "code": 'close-signer-absent',
+        "human": 'close binding: the chain\u2019s first record carries no '
+                 'signer identity, so no session-start signer can be '
+                 'pinned; binding to nothing is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-signature-invalid': {
+        "domain": 'close',
+        "code": 'close-signature-invalid',
+        "human": 'close binding: the close record\u2019s signature fails '
+                 'against the trust root\u2019s pinned key material; the '
+                 'record\u2019s signer id is claimed, not authenticated',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    # added after the spec review authenticated the close record's
+    # (4 new denial-domain codes naming the exact refusal in
+    # gov.denial_capsule's sealed-capsule and selective-disclosure
+    # seams).
+    'denial-unsealed': {
+        "domain": 'denial',
+        "code": 'denial-unsealed',
+        "human": 'denial capsules: a denial was emitted without a '
+                 'sealed denial capsule; a denial must be sealed or '
+                 'the action never ran; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-capsule-malformed': {
+        "domain": 'denial',
+        "code": 'denial-capsule-malformed',
+        "human": 'denial capsules: the presented denial capsule, its '
+                 'disclosure record, or a seal-time input is not '
+                 'well-formed; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-capsule-signature-invalid': {
+        "domain": 'denial',
+        "code": 'denial-capsule-signature-invalid',
+        "human": 'denial capsules: the denial capsule seal does not '
+                 'verify against the presented key; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-disclosure-mismatch': {
+        "domain": 'denial',
+        "code": 'denial-disclosure-mismatch',
+        "human": 'denial capsules: a disclosed field does not match '
+                 'its salted commitment in the sealed capsule, or the '
+                 'disclosure binds a different capsule; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    # gov/permit_closure.py codes), additive.
+    'permit-binding-mismatch': {
+        "domain": 'permit',
+        "code": 'permit-binding-mismatch',
+        "human": 'permit/closure: the dispatched request bytes do not '
+                 'match the canonical request bytes bound in the '
+                 'permit; the permit refuses the dispatch',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dispatch-without-permit': {
+        "domain": 'permit',
+        "code": 'dispatch-without-permit',
+        "human": 'permit/closure: dispatch attempted with no permit; '
+                 'the permit must be issued pre-dispatch',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-permit-absent': {
+        "domain": 'permit',
+        "code": 'closure-permit-absent',
+        "human": 'permit/closure: a closure presented without its '
+                 'matching permit; the two halves must be presented '
+                 'together',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-permit-mismatch': {
+        "domain": 'permit',
+        "code": 'closure-permit-mismatch',
+        "human": 'permit/closure: the closure binds a different permit '
+                 'digest than the presented permit; the two halves '
+                 'disagree',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-scope-widened': {
+        "domain": 'permit',
+        "code": 'closure-scope-widened',
+        "human": 'permit/closure: the closure claims effects outside '
+                 'the permit\'s scope; a closure may narrow, never '
+                 'widen',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # permit-malformed and permit-tampered are REUSED from the existing
+    # taxonomy (permit domain): malformed shapes and edited-after-issue
+    # records at this seam are the same structural failures. Additive-
+    # only: no redefinition.
+    # only, zero key collisions, verified by direct byte-inspection of
+    # the taxonomy.
+    # Wave-236 merge: 631 + 16 = 647 (7 lane-A close-record signer binding
+    # + 4 lane-B denial capsules + 5 lane-C permit/closure), additive only,
+    # zero key collisions, composed from the three lane commits by
+    # direct byte-verification.
 }
 
 

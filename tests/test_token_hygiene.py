@@ -276,7 +276,13 @@ class ScanTest(unittest.TestCase):
         # canonical pin is asserted in tests/test_decision_codes.py).
         # Wave-235 merge: re-pointed 617 -> 631 (4 trust-material + 7
         # bound-permit + 3 grant-attenuation codes).
-        self.assertEqual(len(dc.TAXONOMY), 631)
+        # Wave-236 lane B: re-pointed 631 -> 635 (4 denial-capsule
+        # codes: denial-unsealed, denial-capsule-malformed,
+        # denial-capsule-signature-invalid, denial-disclosure-mismatch).
+        # Wave-236 merge: re-pointed 635 -> 647 (7 close-record signer
+        # binding + 5 permit/closure codes), composed from the three lane
+        # commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 647)
 
 
 if __name__ == "__main__":

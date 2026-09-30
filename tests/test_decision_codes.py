@@ -68,7 +68,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 631)
+        self.assertEqual(len(dc.TAXONOMY), 647)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
@@ -92,6 +92,23 @@ class VocabularyCoverageTest(unittest.TestCase):
         # grant-revoked and grant-malformed REUSED from the existing
         # taxonomy, no redefinition), additive, zero deletions,
         # zero key collisions.
+        # + 7 wave-236 lane-A close-record signer binding codes
+        # (close-signer-mismatch, close-trust-repointed,
+        # close-unsigned-scope, close-chain-digest-mismatch,
+        # close-record-malformed, close-signer-absent,
+        # close-signature-invalid, domain close),
+        # additive, zero deletions, zero key collisions.
+        # + 4 wave-236 lane-B denial-capsule codes (denial-unsealed,
+        # denial-capsule-malformed, denial-capsule-signature-invalid,
+        # denial-disclosure-mismatch, domain denial), additive, zero
+        # deletions, zero key collisions.
+        # + 5 wave-236 lane-C permit/closure codes (permit-binding-mismatch,
+        # dispatch-without-permit, closure-permit-absent,
+        # closure-permit-mismatch, closure-scope-widened; domain permit;
+        # permit-malformed/permit-tampered reused), additive, zero
+        # deletions, zero key collisions.
+        # Wave-236 merge: 631 + 16 = 647, composed from the three lane
+        # commits by direct byte-verification, pin updated here to match.
         # 585 = wave-232 merge pin; + 9 wave-233 lane-A evaluation-function
         # codes (evaluation-{malformed,incomplete-details,
         # key-role-conflation,input-swapped,non-reproducible,

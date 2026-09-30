@@ -194,6 +194,15 @@ def _dsse():
     return mod
 
 
+def _denial_capsule_module():
+    """Lazy import of gov.denial_capsule (wave-236 additive wiring)."""
+    try:
+        from . import denial_capsule as mod
+    except ImportError:  # standalone: module beside this file
+        import denial_capsule as mod  # noqa: N812
+    return mod
+
+
 def _check_envelope_shape(envelope):
     """Shape-check an attached DSSE envelope (wave-232).
 
@@ -243,17 +252,25 @@ def _check_receipt_shape(receipt):
     expected = {"v", "kind", "verdict", "class", "rule_path",
                 "token_digest", "policy_bundle_digest", "intent_digest",
                 "jurisdiction_profile", "alg", "key_id",
-                "non_repudiation", "signature", "envelope"}
+                "non_repudiation", "signature", "envelope",
+                "denial_capsule"}
     unknown = set(receipt) - expected
     if unknown:
         raise DenyReceiptMalformed(
             "unknown receipt fields: %s" % ",".join(sorted(unknown)))
-    missing = expected - {"envelope"} - set(receipt)
+    missing = expected - {"envelope", "denial_capsule"} - set(receipt)
     if missing:
         raise DenyReceiptMalformed(
             "missing receipt fields: %s" % ",".join(sorted(missing)))
     if "envelope" in receipt:
         _check_envelope_shape(receipt["envelope"])
+    if "denial_capsule" in receipt:
+        # Wave-236: an attached denial capsule is re-shape-checked at
+        # verify time (recompute, never trust); a malformed one
+        # refuses denial-capsule-malformed. The default path (no
+        # capsule) is untouched.
+        _denial_capsule_module().check_capsule_shape(
+            receipt["denial_capsule"])
     if receipt.get("v") != DENY_RECEIPT_VERSION:
         raise DenyReceiptMalformed("bad receipt version")
     if receipt.get("kind") != _RECEIPT_KIND:
@@ -263,7 +280,8 @@ def _check_receipt_shape(receipt):
 
 # -- public API ---------------------------------------------------------
 
-def emit(decision_record, *, signer, registry=None, envelope=None):
+def emit(decision_record, *, signer, registry=None, envelope=None,
+         denial_capsule=None):
     """Emit a signed denial (or permit) receipt for a decision.
 
     ``decision_record`` needs ``verdict`` (permit|deny), an optional
@@ -353,6 +371,16 @@ def emit(decision_record, *, signer, registry=None, envelope=None):
         "key_id": signer.key_id,
         "non_repudiation": bool(entry_alg["non_repudiation"]),
     }
+    # Wave-236: optional sealed denial capsule (additive). When
+    # attached it becomes part of the signature-covered body, so the
+    # receipt seal binds the capsule; the default path (no capsule)
+    # is byte-identical to the legacy path.
+    if denial_capsule is not None:
+        if not isinstance(denial_capsule, dict):
+            raise DenyReceiptMalformed(
+                "denial capsule must be a dict")
+        _denial_capsule_module().check_capsule_shape(denial_capsule)
+        body["denial_capsule"] = denial_capsule
     # Wave-233: honest-claim discipline. Additive only: a receipt is a
     # rendered evidence artifact, so it must never emit a reserved
     # claim token (rule_path / jurisdiction_profile are

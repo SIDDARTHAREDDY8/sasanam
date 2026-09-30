@@ -1394,7 +1394,32 @@ def _verify_octet_links(path):
     return None
 
 
-def _verify(path, _skip_malformed=False, require_octet_digest=False):
+def _verify_close_binding_postpass(entries, close_record, trust_root,
+                                     relied_scope_fields):
+    """Close-record signer binding post-pass (wave-236), opt-in only.
+
+    Thin hook: all binding logic lives in
+    ``gov.close_signer_binding`` (lazy import here so ``gov.log``
+    never hard-depends on it). Runs AFTER the main walk, so the
+    binding never upgrades a broken chain -- a chain that fails MACs,
+    seq continuity, epochs, or checkpoints fails closed before this
+    post-pass is reached. Returns None when the binding holds, else
+    the refusal error string naming the close-domain taxonomy code.
+    """
+    from gov import close_signer_binding as _cb
+    try:
+        records = _cb.adapt_log_entries(entries)
+        _cb.verify_close_record(
+            records, close_record, trust_root=trust_root,
+            relied_scope_fields=relied_scope_fields or ())
+    except _cb.CloseSignerBindingError as exc:
+        return "%s: %s" % (exc.code, exc.detail) if exc.detail else exc.code
+    return None
+
+
+def _verify(path, _skip_malformed=False, require_octet_digest=False,
+            require_close_binding=False, close_record=None,
+            close_trust_root=None, close_relied_scope_fields=()):
     """Full verification. Returns a verdict dict.
 
     Never raises on file CONTENT problems (F28): corrupt log lines and
@@ -1439,6 +1464,21 @@ def _verify(path, _skip_malformed=False, require_octet_digest=False):
     ``OCTET_DIGEST_GENESIS``). A pre-pass failure fails closed with
     the named chain-domain refusal code; otherwise the walk below
     runs exactly as before. The default (``False``) is unchanged.
+
+    Wave-236: ``require_close_binding=True`` runs a close-record
+    signer-binding post-pass AFTER the walk above: the caller-supplied
+    ``close_record`` must be sealed by the chain-root session-start
+    signer (first entry's ``sig_key_id``), its ``chain_digest`` must
+    match the recomputed digest over the chain, an optional
+    ``close_trust_root`` binds the close record's key material to the
+    external root (re-pointed trust ids refuse
+    ``close-trust-repointed``), and ``close_relied_scope_fields``
+    must be inside the close record's signature-covered fields
+    (unsigned scope reliance refuses ``close-unsigned-scope``).
+    ``close_record`` is REQUIRED when ``require_close_binding`` is
+    True. Plain HMAC logs carry no signer identity, so the post-pass
+    fails closed with ``close-signer-absent`` on them -- documented,
+    never silently bound. The default (``False``) is unchanged.
     """
     key, epoch = _active_key()
     p = Path(path)
@@ -1600,10 +1640,20 @@ def _verify(path, _skip_malformed=False, require_octet_digest=False):
                          "(log rewritten after checkpoint)"
                          % latest["seq"], broken_seq=latest["seq"],
                          checked=checked)
-    return {"ok": True, "entries": len(entries), "broken_seq": None,
-            "checkpoints_checked": checked, "malformed_skipped": n_skipped,
-            "key_epoch": epoch,
-            "format_version": FORMAT_VERSION, "error": None}
+    verdict = {"ok": True, "entries": len(entries), "broken_seq": None,
+               "checkpoints_checked": checked,
+               "malformed_skipped": n_skipped,
+               "key_epoch": epoch, "format_version": FORMAT_VERSION,
+               "error": None}
+    if require_close_binding:
+        # Wave-236: close-record signer binding is a post-pass on an
+        # already-verified chain; it never upgrades a broken chain.
+        bind_err = _verify_close_binding_postpass(
+            entries, close_record, close_trust_root,
+            close_relied_scope_fields)
+        if bind_err is not None:
+            return _fail(entries, bind_err)
+    return verdict
 
 
 def require_verified(path):
@@ -1619,7 +1669,9 @@ def require_verified(path):
     return v
 
 
-def verify_chain(path, require_octet_digest=False):
+def verify_chain(path, require_octet_digest=False, *,
+                 require_close_binding=False, close_record=None,
+                 close_trust_root=None, close_relied_scope_fields=()):
     """Replay the chain. Returns (ok, broken_seq_or_None, entry_count).
 
     Wave-234: ``require_octet_digest=True`` additionally verifies every
@@ -1630,8 +1682,25 @@ def verify_chain(path, require_octet_digest=False):
     ``chain-octet-digest-absent``, and ``chain-record-truncated`` in
     the verdict's error string. The default (``False``) keeps all
     existing behavior.
+
+    Wave-236: ``require_close_binding=True`` additionally requires a
+    caller-supplied ``close_record`` sealed by the chain-root
+    session-start signer (first entry's ``sig_key_id``), with
+    ``chain_digest`` matching the recomputed chain digest; an optional
+    ``close_trust_root`` binds the close record's key material to the
+    external root, and ``close_relied_scope_fields`` must be inside
+    the close record's signature-covered fields. Refusals name the
+    close-domain taxonomy codes (``close-signer-mismatch``,
+    ``close-trust-repointed``, ``close-unsigned-scope``,
+    ``close-chain-digest-mismatch``, ``close-record-malformed``,
+    ``close-signer-absent``). The default (``False``) keeps all
+    existing behavior, byte-identical.
     """
-    v = _verify(path, require_octet_digest=require_octet_digest)
+    v = _verify(path, require_octet_digest=require_octet_digest,
+                require_close_binding=require_close_binding,
+                close_record=close_record,
+                close_trust_root=close_trust_root,
+                close_relied_scope_fields=close_relied_scope_fields)
     return v["ok"], v["broken_seq"], v["entries"]
 
 
