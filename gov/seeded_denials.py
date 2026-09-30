@@ -54,6 +54,7 @@ head -- a deployment that passes a stale or interior digest weakens
 the rollback-safety guarantee this module enforces the exclusion
 half of (anchor must not be inside the denied chain) but the
 deployment owns the positive half (anchor really is the head).
+Wave-233 honest-claim discipline (NON-CLAIMS.md): a seeded denial record proves the denial was anchored, not that the denied action was absent. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import hashlib

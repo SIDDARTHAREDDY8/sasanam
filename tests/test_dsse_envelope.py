@@ -379,5 +379,166 @@ class TestCallbackEnvelope(unittest.TestCase):
         self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
 
 
+class TestOneSignatureDiscipline(unittest.TestCase):
+    """Wave-233: exactly-one-signature rule, expected_type binding, and
+    cross-module transplant naming at the verify_envelope seam."""
+
+    def setUp(self):
+        self.secret = hashlib.sha256(b"unit-one-sig").digest()
+        self.sign = _w232_signer(self.secret)
+        self.verify = _w232_verifier(self.secret)
+        self.pt = _W232_PT
+        self.pt_other = "application/vnd.sasanam.decision-packet+json"
+        self.pt_free = "application/vnd.sasanam.unclaimed+json"
+
+    def _env(self, payload_type=None):
+        return dsse.envelope(_W232_PAYLOAD,
+                             payload_type=payload_type or self.pt,
+                             sign=self.sign)
+
+    def _two_sig_env(self, bad_second=False):
+        env = dict(self._env())
+        second = ("00" * 32 if bad_second else hmac.new(
+            self.secret, dsse.pae(self.pt, _W232_PAYLOAD),
+            hashlib.sha256).digest().hex())
+        env["signatures"] = list(env["signatures"]) + [
+            {"keyid": "k2", "sig": second}]
+        return env
+
+    def test_zero_signatures_refused(self):
+        env = dict(self._env())
+        env["signatures"] = []
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(env, verify=self.verify,
+                                 expect_payload_type=self.pt)
+        self.assertIn("dsse-envelope-no-signature", ctx.exception.reason)
+
+    def test_two_signatures_default_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._two_sig_env(), verify=self.verify,
+                                 expect_payload_type=self.pt)
+        self.assertIn("dsse-envelope-multi-signature", ctx.exception.reason)
+
+    def test_opt_in_two_valid_signatures_verifies(self):
+        out = dsse.verify_envelope(self._two_sig_env(), verify=self.verify,
+                                   expect_payload_type=self.pt,
+                                   expected_signatures=2)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["payload"], _W232_PAYLOAD)
+
+    def test_opt_in_no_partial_acceptance(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._two_sig_env(bad_second=True),
+                                 verify=self.verify,
+                                 expect_payload_type=self.pt,
+                                 expected_signatures=2)
+        self.assertIn("dsse-signature-invalid", ctx.exception.reason)
+
+    def test_opt_in_count_mismatch_refused(self):
+        # expected_signatures=2 but the envelope carries 1.
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._env(), verify=self.verify,
+                                 expect_payload_type=self.pt,
+                                 expected_signatures=2)
+        self.assertIn("dsse-envelope-multi-signature", ctx.exception.reason)
+        # expected_signatures=1 but the envelope carries 2.
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._two_sig_env(), verify=self.verify,
+                                 expect_payload_type=self.pt,
+                                 expected_signatures=1)
+        self.assertIn("dsse-envelope-multi-signature", ctx.exception.reason)
+
+    def test_expected_signatures_must_be_positive_int(self):
+        # None is the valid no-opt-in sentinel (default exactly-one).
+        for bad in (0, -1, "2", 2.0, True):
+            with self.assertRaises(dsse.EnvelopeError) as ctx:
+                dsse.verify_envelope(self._env(), verify=self.verify,
+                                     expect_payload_type=self.pt,
+                                     expected_signatures=bad)
+            self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_expected_type_match_verifies(self):
+        out = dsse.verify_envelope(self._env(), verify=self.verify,
+                                   expected_type=self.pt)
+        self.assertTrue(out["ok"])
+
+    def test_expected_type_mismatch_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._env(), verify=self.verify,
+                                 expected_type=self.pt_free)
+        self.assertIn("dsse-payloadtype-mismatch", ctx.exception.reason)
+
+    def test_legacy_expect_payload_type_unchanged(self):
+        # The wave-232 path keeps its refusal code and behavior.
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._env(), verify=self.verify,
+                                 expect_payload_type=self.pt_free)
+        self.assertIn("dsse-payload-type-refused", ctx.exception.reason)
+
+    def test_transplant_refused(self):
+        # Throwaway vendored types, never the real module constants:
+        # these tests must not overwrite (or delete) legitimate domain
+        # registrations when run in the full suite alongside
+        # test_decision_packet / test_deny_receipts.
+        type_a = "application/vnd.sasanam.test-domain-a+json"
+        type_b = "application/vnd.sasanam.test-domain-b+json"
+        dsse.register_envelope_domain("domain-a", type_a)
+        dsse.register_envelope_domain("domain-b", type_b)
+        try:
+            env = dsse.envelope(_W232_PAYLOAD, payload_type=type_b,
+                                sign=self.sign)
+            with self.assertRaises(dsse.EnvelopeError) as ctx:
+                dsse.verify_envelope(env, verify=self.verify,
+                                     expected_domain="domain-a")
+            self.assertIn("dsse-envelope-transplant", ctx.exception.reason)
+        finally:
+            dsse._ENVELOPE_DOMAIN_TYPES.pop(type_a, None)
+            dsse._ENVELOPE_DOMAIN_TYPES.pop(type_b, None)
+            dsse._ENVELOPE_DOMAINS.pop("domain-a", None)
+            dsse._ENVELOPE_DOMAINS.pop("domain-b", None)
+
+    def test_unregistered_type_is_not_transplant(self):
+        type_a = "application/vnd.sasanam.test-domain-a+json"
+        type_free = "application/vnd.sasanam.test-unclaimed+json"
+        dsse.register_envelope_domain("domain-a", type_a)
+        try:
+            # type_free is vendored but registered to no domain:
+            # not a transplant -- falls through to the type binding.
+            env = dsse.envelope(_W232_PAYLOAD, payload_type=type_free,
+                                sign=self.sign)
+            with self.assertRaises(dsse.EnvelopeError) as ctx:
+                dsse.verify_envelope(
+                    env, verify=self.verify,
+                    expected_domain="domain-a",
+                    expected_type=type_a)
+            self.assertIn("dsse-payloadtype-mismatch", ctx.exception.reason)
+        finally:
+            dsse._ENVELOPE_DOMAIN_TYPES.pop(type_a, None)
+            dsse._ENVELOPE_DOMAINS.pop("domain-a", None)
+
+    def test_register_domain_idempotent_and_lookup(self):
+        type_a = "application/vnd.sasanam.test-domain-a+json"
+        dsse.register_envelope_domain("domain-a", type_a)
+        try:
+            dsse.register_envelope_domain("domain-a", type_a)
+            self.assertEqual(dsse.envelope_domain_of(type_a), "domain-a")
+            self.assertIsNone(dsse.envelope_domain_of(self.pt_free))
+        finally:
+            dsse._ENVELOPE_DOMAIN_TYPES.pop(type_a, None)
+            dsse._ENVELOPE_DOMAINS.pop("domain-a", None)
+
+    def test_register_domain_rejects_bad_inputs(self):
+        with self.assertRaises(dsse.EnvelopeError):
+            dsse.register_envelope_domain("", self.pt)
+        with self.assertRaises(dsse.EnvelopeError):
+            dsse.register_envelope_domain("d", "application/json")
+
+    def test_expected_domain_must_be_non_empty_str(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(self._env(), verify=self.verify,
+                                 expected_domain="")
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+
 if __name__ == "__main__":
     unittest.main()

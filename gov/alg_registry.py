@@ -65,6 +65,7 @@ the record modules. ``default_registry()`` returns the shared
 instance carrying the two built-ins.
 
 Stdlib only. No network. $0.
+Wave-233 honest-claim discipline (NON-CLAIMS.md): HMAC evidence proves shared-secret authenticity, not non-repudiation. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import hashlib

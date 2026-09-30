@@ -43,6 +43,7 @@ Issuer key custody is deployment-owned (the ``seed`` is held by the
 issuing deployment, exactly like the permit-lease and ARAP issuers).
 
 Stdlib only. No network. $0.
+Wave-233 honest-claim discipline (NON-CLAIMS.md): signed negative outcomes classify absence, not that a search occurred. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import json

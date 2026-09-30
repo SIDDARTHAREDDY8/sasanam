@@ -45,6 +45,7 @@ Honest residuals (do not silently rely on more than this):
     shape only.
   - Physical attacks, covert channels, and post-bootstrap key
     exfiltration are out of scope.
+Wave-233 honest-claim discipline (NON-CLAIMS.md): attested identity has no live TPM round trip. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import base64

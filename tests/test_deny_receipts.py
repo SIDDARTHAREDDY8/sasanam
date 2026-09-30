@@ -200,6 +200,12 @@ class EnvelopeTest(unittest.TestCase):
         self.assertIn("dsse-signature-invalid", str(ctx.exception))
 
     def test_envelope_wrong_expected_type_refused(self):
+        # Wave-233: a receipt envelope re-typed under the decision-packet
+        # payloadType is a cross-module transplant, so verify() now names
+        # it dsse-envelope-transplant (the wave-232 pin
+        # dsse-payload-type-refused is obsolete: that code still exists
+        # for the legacy expect_payload_type path, but the receipt
+        # verifier binds the expected module domain).
         import copy
         signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
         r = dr.emit(_decision(), signer=signer,
@@ -209,7 +215,7 @@ class EnvelopeTest(unittest.TestCase):
             "application/vnd.sasanam.decision-packet+json"
         with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
             dr.verify(bad, key=signer.secret)
-        self.assertIn("dsse-payload-type-refused", str(ctx.exception))
+        self.assertIn("dsse-envelope-transplant", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -54,6 +54,7 @@ from datetime import datetime, timezone
 
 from gov import log as _log
 from gov import claim_bounds as _claim_bounds
+from gov import honest_claims as _honest_claims
 from gov.discovery import DiscoveryLedger, LedgerCorruptError
 from gov.safeguard_bundle import (
     compute_bundle_digest as _compute_bundle_digest,
@@ -372,6 +373,15 @@ class EvidenceBundle:
         # loudly -- a bundle whose attestation contradicts the live
         # config is worse than no bundle.
         self._bind_live_config(payload)
+        # Wave-233: honest-claim discipline. Additive only: the fully
+        # assembled payload is a rendered evidence artifact, so it must
+        # never emit a reserved claim token (proves-execution,
+        # tamper-proof, non-repudiation, ...). Refuses
+        # honest-claim-reserved-token naming the token. Runs after
+        # every section (including kms_attestation) is attached, and
+        # honestly declaring non-proof (does_not_prove) is exempt from
+        # the scan. The import is unconditional (fail closed).
+        _honest_claims.assert_no_reserved_claims(payload)
         # Deterministic identity: hash of the payload without bundle_id.
         body = canonical(payload)
         payload["bundle_meta"]["bundle_id"] = (

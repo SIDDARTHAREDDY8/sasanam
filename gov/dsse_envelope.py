@@ -412,6 +412,41 @@ _DS_SIG_FIELDS = frozenset({"keyid", "sig"})
 _MAX_PAE_LEN_DIGITS = 12
 _MAX_PAE_FIELD_BYTES = 4 * 1024 * 1024
 
+# Wave-233: verifier-domain registry. payloadType -> domain and
+# domain -> {payloadType}. Populated by consumer modules (deny_receipts,
+# decision_packet) through register_envelope_domain(); a payloadType
+# registered to no domain is not a transplant.
+_ENVELOPE_DOMAIN_TYPES = {}
+_ENVELOPE_DOMAINS = {}
+
+
+def register_envelope_domain(domain, payload_type):
+    """Bind a vendored ``payloadType`` to a verifier module domain.
+
+    Domains let :func:`verify_envelope` name a cross-module transplant:
+    an envelope whose payloadType is registered to a DIFFERENT domain
+    than the verifier expects refuses ``dsse-envelope-transplant``.
+    Registration is idempotent. A payloadType registered to no domain
+    is not a transplant -- it falls through to the payloadType binding.
+
+    Honest residual: registration is import-time and in-memory. A
+    domain whose module was never imported has no registered types, so
+    a transplant from it degrades to ``dsse-payloadtype-mismatch`` --
+    the refusal code degrades, the verdict (refuse) never does.
+    """
+    if not isinstance(domain, str) or not domain:
+        raise EnvelopeError("envelope domain must be a non-empty str, "
+                            "got %r" % (domain,))
+    check_payload_type_namespace(payload_type)
+    _ENVELOPE_DOMAIN_TYPES[payload_type] = domain
+    _ENVELOPE_DOMAINS.setdefault(domain, set()).add(payload_type)
+    return payload_type
+
+
+def envelope_domain_of(payload_type):
+    """Return the domain a payloadType is registered to, or None."""
+    return _ENVELOPE_DOMAIN_TYPES.get(payload_type)
+
 
 def check_payload_type_namespace(payload_type):
     """Refuse any payloadType outside ``application/vnd.sasanam.*+json``.
@@ -535,19 +570,32 @@ def envelope(payload, *, payload_type, sign, key_id=None):
     }
 
 
-def verify_envelope(env, *, verify, expect_payload_type=None):
+def verify_envelope(env, *, verify, expect_payload_type=None,
+                    expected_type=None, expected_domain=None,
+                    expected_signatures=None):
     """Verify a strict envelope dict with a plain
     ``verify(pae_bytes, sig_bytes) -> bool`` callback.
 
     Checks, in order: strict shape (``dsse-envelope-malformed`` on any
     ambiguity); vendored payloadType namespace
-    (``dsse-payload-type-refused``); optional ``expect_payload_type``
-    binding (a signature over a payload presented under the wrong type
-    fails here -- ``dsse-payload-type-refused``, never a silent pass);
-    ``signing_input_digest`` binding (the envelope fields must describe
-    exactly the bytes the signature covers); then the callback over the
-    PAE bytes for EVERY listed signature
+    (``dsse-payload-type-refused``); legacy ``expect_payload_type``
+    binding (``dsse-payload-type-refused``, unchanged); cross-module
+    domain binding -- an envelope whose payloadType is registered to a
+    different domain than ``expected_domain`` refuses
+    ``dsse-envelope-transplant``; ``expected_type`` binding -- a
+    payloadType that differs from the expected one refuses
+    ``dsse-payloadtype-mismatch``; signature-count discipline --
+    zero signatures refuse ``dsse-envelope-no-signature``, and more
+    than one signature refuses ``dsse-envelope-multi-signature``
+    UNLESS the caller opts in with keyword-only
+    ``expected_signatures=N`` (N>=1 int), in which case the envelope
+    must carry exactly N signatures and EVERY listed signature must
+    verify (no partial acceptance); ``signing_input_digest`` binding;
+    then the callback over the PAE bytes for EVERY listed signature
     (``dsse-signature-invalid`` on any failure).
+
+    Defaults (no new kwargs) are unchanged from wave-232: exactly one
+    signature is required, as before.
 
     Returns ``{"ok": True, "payload": bytes, "payload_type": str,
     "key_id": ...}`` on success.
@@ -567,10 +615,55 @@ def verify_envelope(env, *, verify, expect_payload_type=None):
             "dsse-payload-type-refused: envelope carries payloadType %r, "
             "expected %r" % (got_type, expect_payload_type),
             code="dsse-payload-type-refused")
+    # Wave-233: cross-module transplant is named before the plain
+    # type binding, so a decision-packet envelope presented to a
+    # denial-receipt verifier refuses dsse-envelope-transplant rather
+    # than the generic mismatch code.
+    if expected_domain is not None:
+        if not isinstance(expected_domain, str) or not expected_domain:
+            _malformed("expected_domain must be a non-empty str, got %r"
+                       % (expected_domain,))
+        home_domain = _ENVELOPE_DOMAIN_TYPES.get(got_type)
+        if home_domain is not None and home_domain != expected_domain:
+            raise EnvelopeError(
+                "dsse-envelope-transplant: envelope payloadType %r is "
+                "registered to domain %r, not the expected domain %r "
+                "(cross-module transplant)" % (got_type, home_domain,
+                                               expected_domain),
+                code="dsse-envelope-transplant")
+    if expected_type is not None and got_type != expected_type:
+        raise EnvelopeError(
+            "dsse-payloadtype-mismatch: envelope carries payloadType %r, "
+            "expected %r" % (got_type, expected_type),
+            code="dsse-payloadtype-mismatch")
+    if expected_signatures is not None:
+        if (isinstance(expected_signatures, bool)
+                or not isinstance(expected_signatures, int)
+                or expected_signatures < 1):
+            _malformed("expected_signatures must be an int >= 1, got %r"
+                       % (expected_signatures,))
     payload = _b64_decode(env["payload"], "payload")
     sig_entries = env["signatures"]
-    if not isinstance(sig_entries, list) or not sig_entries:
-        _malformed("signatures must be a non-empty list")
+    if not isinstance(sig_entries, list):
+        _malformed("signatures must be a list")
+    # Wave-233: exactly-one-signature discipline. A zero-signature
+    # envelope was previously refused as malformed; the shape is now
+    # named. Default (no opt-in) requires exactly one signature.
+    n_sigs = len(sig_entries)
+    if n_sigs == 0:
+        raise EnvelopeError(
+            "dsse-envelope-no-signature: envelope carries no signatures",
+            code="dsse-envelope-no-signature")
+    want = 1 if expected_signatures is None else expected_signatures
+    if n_sigs != want:
+        raise EnvelopeError(
+            "dsse-envelope-multi-signature: envelope carries %d "
+            "signature(s), %s requires exactly %d"
+            % (n_sigs,
+               "the default discipline" if expected_signatures is None
+               else "expected_signatures=%d" % expected_signatures,
+               want),
+            code="dsse-envelope-multi-signature")
     parsed_sigs = []
     for i, entry in enumerate(sig_entries):
         where = "signatures[%d]" % i
@@ -624,4 +717,6 @@ __all__ = __all__ + [
     "pae_decode",
     "envelope",
     "verify_envelope",
+    "register_envelope_domain",
+    "envelope_domain_of",
 ]

@@ -60,6 +60,7 @@ machine-readable ``code``):
   authorization.
 
 Stdlib only. No network. $0.
+Wave-233 honest-claim discipline (NON-CLAIMS.md): a checkpoint proves commitment and order, not content authenticity. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import hashlib

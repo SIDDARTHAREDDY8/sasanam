@@ -33,6 +33,7 @@ it verifies the seal against the live record first and only then
 decides.
 
 $0 spend. stdlib only. No network.
+Wave-233 honest-claim discipline (NON-CLAIMS.md): render attestations prove bytes and determinism, not that a human understood the display. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import hmac

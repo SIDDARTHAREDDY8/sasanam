@@ -425,6 +425,11 @@ class EnvelopeOptIn(unittest.TestCase):
         self.assertIn("dsse-signature-invalid", why)
 
     def test_envelope_wrong_type_refused(self):
+        # Wave-233: a packet envelope re-typed under the denial-receipt
+        # payloadType is a cross-module transplant, so the verifier now
+        # names it dsse-envelope-transplant (the wave-232 pin
+        # dsse-payload-type-refused is obsolete for this path: the
+        # packet verifier binds the expected module domain).
         body = dp.build_decision_packet(**_minimal_kwargs())
         p = dp.sign_packet(body, SEED, envelope=True)
         bad = copy.deepcopy(p)
@@ -432,7 +437,7 @@ class EnvelopeOptIn(unittest.TestCase):
             "application/vnd.sasanam.denial-receipt+json"
         ok, why = dp.verify_decision_packet(bad)
         self.assertFalse(ok)
-        self.assertIn("dsse-payload-type-refused", why)
+        self.assertIn("dsse-envelope-transplant", why)
 
 
     def test_envelope_unknown_field_refused(self):

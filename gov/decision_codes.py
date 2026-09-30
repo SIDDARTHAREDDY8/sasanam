@@ -4814,6 +4814,154 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'evaluation-malformed': {
+        "domain": 'evaluation',
+        "code": 'evaluation-malformed',
+        "human": 'evaluation function: the frozen call or evaluation '
+                 'record is not well-formed (empty or misshapen '
+                 'authorization_details, half-pinned policy revision, '
+                 'non-UTC instant)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-incomplete-details': {
+        "domain": 'evaluation',
+        "code": 'evaluation-incomplete-details',
+        "human": 'evaluation function: an authorization_details entry '
+                 'was never evaluated (skipped, failed, or its '
+                 'per-entry verdict is missing from the record); the '
+                 'whole call is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-key-role-conflation': {
+        "domain": 'evaluation',
+        "code": 'evaluation-key-role-conflation',
+        "human": 'evaluation function: the evidence key and the '
+                 'adjudication key are the same key; the freezer and '
+                 'the adjudicator must be different roles',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-input-swapped': {
+        "domain": 'evaluation',
+        "code": 'evaluation-input-swapped',
+        "human": 'evaluation function: the call_digest or verdict_digest '
+                 'does not match the recomputed digest of the frozen '
+                 'input; the input or verdict was swapped after '
+                 'freezing/evaluation',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-non-reproducible': {
+        "domain": 'evaluation',
+        "code": 'evaluation-non-reproducible',
+        "human": 'evaluation function: replay of the frozen input under '
+                 'the pinned revision produced a different verdict than '
+                 'the record claims',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-policy-drift': {
+        "domain": 'evaluation',
+        "code": 'evaluation-policy-drift',
+        "human": 'evaluation function: replay against the current engine '
+                 'would change the verdict; the pinned revision is '
+                 'reproducible but the live policy has drifted',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-revision-unknown': {
+        "domain": 'evaluation',
+        "code": 'evaluation-revision-unknown',
+        "human": 'evaluation function: the pinned policy_rev_id is not '
+                 'registered in the revision registry',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-policy-digest-mismatch': {
+        "domain": 'evaluation',
+        "code": 'evaluation-policy-digest-mismatch',
+        "human": 'evaluation function: the registry digest for the '
+                 'pinned policy_rev_id disagrees with the record\'s '
+                 'pinned digest; digests are recomputed from ruleset '
+                 'bytes, never trusted from claims',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-not-authorization': {
+        "domain": 'evaluation',
+        "code": 'evaluation-not-authorization',
+        "human": 'evaluation function: an evaluation record is evidence, '
+                 'never authority; presenting one as authority refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-233 lane B (exactly-one-signature DSSE + binding): additive, 4 codes.
+    'dsse-envelope-no-signature': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-no-signature',
+        "human": 'DSSE envelope: the envelope carries zero signatures; '
+                 'the exactly-one-signature discipline refuses a '
+                 'signature-less envelope fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-envelope-multi-signature': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-multi-signature',
+        "human": 'DSSE envelope: the envelope carries more than one '
+                 'signature without an explicit expected_signatures '
+                 'opt-in, or the signature count does not match the '
+                 'opted-in count; signature-count ambiguity is refused, '
+                 'never silently accepted',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-payloadtype-mismatch': {
+        "domain": 'dsse',
+        "code": 'dsse-payloadtype-mismatch',
+        "human": 'DSSE envelope: the envelope payloadType differs from '
+                 'the caller-bound expected type; transplant across '
+                 'evidence kinds is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-envelope-transplant': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-transplant',
+        "human": 'DSSE envelope: the envelope payloadType is registered '
+                 'to a different verifier module domain than the one '
+                 'verifying (cross-module transplant)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-233 lane C (honest-claim discipline): additive; merged pin 585 -> 599 (lane-local 586).
+    'honest-claim-reserved-token': {
+        "domain": 'honest_claims',
+        "code": 'honest-claim-reserved-token',
+        "human": 'honest claims: a rendered evidence artifact emitted a '
+                 'reserved claim token (proves-execution, tamper-proof, '
+                 'non-repudiation, formally-verified, ...); the artifact '
+                 'was refused before signing or sealing, naming the token',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-233 merge: 585 + 14 = 599 (9 lane-A evaluation + 4 lane-B dsse + 1 lane-C honest_claims), additive only.
 }
 
 

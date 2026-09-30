@@ -54,10 +54,13 @@ about a decision; it does not prove the underlying decision was
 correct or that the described execution occurred (same honest
 boundary as the decision codes and receipts this module composes
 with).
+Wave-233 honest-claim discipline (NON-CLAIMS.md): a receipt proves the emitter's signed claim, not that the decision was correct. This phrase is machine-checked by evals/doc_truth.py.
 """
 
 import hashlib
 import json
+
+from gov import honest_claims as _honest_claims
 
 DENY_RECEIPT_VERSION = 1
 
@@ -170,6 +173,24 @@ def _dsse():
         from . import dsse_envelope as mod
     except ImportError:  # standalone: module beside this file
         import dsse_envelope as mod  # this file
+    # Wave-233: register the receipt domain (and the decision-packet
+    # domain, so a transplanted packet envelope names its home domain)
+    # with the shared envelope-domain registry. Registration is
+    # idempotent; if decision_packet was never imported, a packet
+    # envelope degrades to dsse-payloadtype-mismatch -- the refusal
+    # code degrades, the verdict (refuse) never does.
+    mod.register_envelope_domain("deny_receipts",
+                                 DENY_RECEIPT_ENVELOPE_TYPE)
+    try:
+        from . import decision_packet as _dp
+    except ImportError:
+        try:
+            import decision_packet as _dp
+        except ImportError:
+            _dp = None
+    if _dp is not None:
+        mod.register_envelope_domain("decision_packet",
+                                     _dp.DECISION_PACKET_ENVELOPE_TYPE)
     return mod
 
 
@@ -332,6 +353,14 @@ def emit(decision_record, *, signer, registry=None, envelope=None):
         "key_id": signer.key_id,
         "non_repudiation": bool(entry_alg["non_repudiation"]),
     }
+    # Wave-233: honest-claim discipline. Additive only: a receipt is a
+    # rendered evidence artifact, so it must never emit a reserved
+    # claim token (rule_path / jurisdiction_profile are
+    # operator-supplied prose). Refuses
+    # honest-claim-reserved-token naming the token, before signing.
+    # The import is unconditional (fail closed): a missing honesty
+    # vocabulary breaks the import, never silently skips enforcement.
+    _honest_claims.assert_no_reserved_claims(body)
     sig = reg.sign(signer.alg, _signing_input(body), signer.secret)
     receipt = dict(body)
     receipt["signature"] = sig.hex()
@@ -415,7 +444,8 @@ def verify(receipt, *, key, expect_alg=None, registry=None):
         try:
             got = mod.verify_envelope(
                 env, verify=_verify,
-                expect_payload_type=DENY_RECEIPT_ENVELOPE_TYPE)
+                expected_type=DENY_RECEIPT_ENVELOPE_TYPE,
+                expected_domain="deny_receipts")
         except mod.EnvelopeError as exc:
             raise DenyReceiptInvalid("%s" % (exc.reason,)) from exc
         if got["payload"] != _signing_input(body):

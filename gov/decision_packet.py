@@ -84,6 +84,23 @@ def _dsse_envelope():
         from . import dsse_envelope as mod
     except ImportError:  # standalone/offline: dsse_envelope.py beside
         import dsse_envelope as mod  # this file
+    # Wave-233: register the packet domain (and the denial-receipt
+    # domain, so a transplanted receipt envelope names its home
+    # domain) with the shared envelope-domain registry. Registration
+    # is idempotent; a transplant from an unregistered domain degrades
+    # to dsse-payloadtype-mismatch -- code degrades, verdict never.
+    mod.register_envelope_domain("decision_packet",
+                                 DECISION_PACKET_ENVELOPE_TYPE)
+    try:
+        from . import deny_receipts as _dr
+    except ImportError:
+        try:
+            import deny_receipts as _dr
+        except ImportError:
+            _dr = None
+    if _dr is not None:
+        mod.register_envelope_domain("deny_receipts",
+                                     _dr.DENY_RECEIPT_ENVELOPE_TYPE)
     return mod
 
 
@@ -1181,7 +1198,8 @@ def _verify(packet, entries, token_claims):
         try:
             got = mod.verify_envelope(
                 packet["envelope"], verify=_verify_envelope,
-                expect_payload_type=DECISION_PACKET_ENVELOPE_TYPE)
+                expected_type=DECISION_PACKET_ENVELOPE_TYPE,
+                expected_domain="decision_packet")
         except mod.EnvelopeError as exc:
             return False, exc.reason
         if got["payload"] != signing_input(body):
