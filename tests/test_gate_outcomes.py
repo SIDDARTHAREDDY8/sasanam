@@ -88,7 +88,19 @@ class GateDecideTest(unittest.TestCase):
     def test_all_vocabulary_reasons_refuse_undecidable(self):
         self.assertEqual(go.UNDECIDABLE_REASONS,
                          {"trust-root-missing", "algorithm-unknown",
-                          "evidence-truncated", "evidence-incomplete"})
+                          "evidence-truncated", "evidence-incomplete",
+                          # Wave-240 lane B (APS -04 axis/result model):
+                          # "unsupported-profile" folds the per-axis
+                          # UNSUPPORTED term into UNDECIDABLE; the
+                          # verifier does not implement the receipt's
+                          # profile -- could not verify, not tampered.
+                          # "verifier-limit-reached" folds a
+                          # ceiling-induced indeterminate (depth/wire/
+                          # chain limits are verifier properties) into
+                          # UNDECIDABLE. Additive only; all four
+                          # wave-237 reasons keep their behavior.
+                          "unsupported-profile",
+                          "verifier-limit-reached"})
         for reason in go.UNDECIDABLE_REASONS:
             with self.assertRaises(go.GateOutcomeError) as ctx:
                 go.gate_decide(go.Verdict(outcome="undecidable",

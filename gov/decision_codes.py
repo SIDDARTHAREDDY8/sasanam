@@ -6170,6 +6170,226 @@ TAXONOMY = {
         "evidence_kinds_required": ['workflow-commitment'],
         "reverify_steps": ['recompute'],
     },
+    'honesty-baseline-tampered': {
+        "domain": 'honesty',
+        "code": 'honesty-baseline-tampered',
+        "human": 'forcing-honesty: a baseline JSON not written by --sync '
+                 '(checksum mismatch); the gate refuses to use it',
+        "severity": 'high',
+        "evidence_kinds_required": ['forcing-honesty-baseline'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-baseline-unforced': {
+        "domain": 'honesty',
+        "code": 'honesty-baseline-unforced',
+        "human": 'forcing-honesty: a condition that was forced in the '
+                 'baseline stopped being forced; tighten-only ratchet '
+                 'refuses unless the condition is named to --accept-unforced',
+        "severity": 'high',
+        "evidence_kinds_required": ['forcing-honesty-baseline'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-condition-silent': {
+        "domain": 'honesty',
+        "code": 'honesty-condition-silent',
+        "human": 'forcing-honesty: a mutation changed observations without '
+                 'failing any probe; the battery does not observe what the '
+                 'condition claims to force (filed finding)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-tautology-suspect': {
+        "domain": 'honesty',
+        "code": 'honesty-tautology-suspect',
+        "human": 'forcing-honesty: a probe vector killed zero mutations '
+                 'across the campaign; it cannot disagree with the code',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-mutant-invalid': {
+        "domain": 'honesty',
+        "code": 'honesty-mutant-invalid',
+        "human": 'forcing-honesty: the requested mutation site is absent '
+                 'from the target module',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-mutant-inconclusive': {
+        "domain": 'honesty',
+        "code": 'honesty-mutant-inconclusive',
+        "human": 'forcing-honesty: the mutant did not build or run '
+                 '(syntax/import failure); never folded into gaps',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-unestablished': {
+        "domain": 'axis',
+        "code": 'axis-unestablished',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is not valid because an axis was unestablished; '
+                 'unestablished axes never contribute to valid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-ceiling-hit': {
+        "domain": 'axis',
+        "code": 'axis-ceiling-hit',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is indeterminate because a verifier ceiling was hit; '
+                 'the limit is named, never treated as invalid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-indeterminate': {
+        "domain": 'axis',
+        "code": 'axis-indeterminate',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is indeterminate for a non-ceiling reason; '
+                 'indeterminate never reads as valid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-invalid': {
+        "domain": 'axis',
+        "code": 'axis-invalid',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'aggregates to invalid; invalid chains never read as '
+                 'valid',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-state-unknown': {
+        "domain": 'axis',
+        "code": 'revocation-state-unknown',
+        "human": 'axis/result model: the revocation state is unknown, so '
+                 'the credential is classified not-active (fail-closed); '
+                 'unknown is never active',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-category-error': {
+        "domain": 'axis',
+        "code": 'revocation-category-error',
+        "human": 'axis/result model: a non-revocation state (suspension '
+                 'or expiry) was presented as revocation; refusing the '
+                 'category error',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-consume-store-not-durable': {
+        "domain": 'permit',
+        "code": 'permit-consume-store-not-durable',
+        "human": 'bound permit: the consume store is not durable; the saha admission gate refuses permits unless the deployment explicitly opts into the single-node contract',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-consume-store-unavailable': {
+        "domain": 'permit',
+        "code": 'permit-consume-store-unavailable',
+        "human": 'bound permit: the consume store is unavailable; could-not-check names the consume-store dependency',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-idempotency-conflict': {
+        "domain": 'permit',
+        "code": 'permit-idempotency-conflict',
+        "human": 'bound permit: same (iss, jti) re-presented with a different content digest; refused, never a second release',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-in-progress': {
+        "domain": 'permit',
+        "code": 'permit-in-progress',
+        "human": 'bound permit: the effect for (iss, jti) is in progress elsewhere; the presentation is retryable, nothing consumed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-no-effect-unattested': {
+        "domain": 'permit',
+        "code": 'permit-no-effect-unattested',
+        "human": 'bound permit: an unsigned no_effect refusal does not establish no effect; the budget stays committed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-no-fallback': {
+        "domain": 'permit',
+        "code": 'permit-no-fallback',
+        "human": 'bound permit: permit absence is malformed; never a reason to accept another credential',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-rate-budget-unreleasable': {
+        "domain": 'permit',
+        "code": 'permit-rate-budget-unreleasable',
+        "human": 'bound permit: rate budgets are never released once committed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-registry-unavailable': {
+        "domain": 'permit',
+        "code": 'permit-registry-unavailable',
+        "human": 'bound permit: a re-issue binding cannot be checked without the permit registry; could-not-check names the permit-registry dependency',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'witness-config-cwd-autoload': {
+        "domain": 'witness',
+        "code": 'witness-config-cwd-autoload',
+        "human": 'witness config rule: refusing a config discovered by '
+                 'CWD auto-load in a CI or untrusted-repo context; the '
+                 'repo under attestation must not ship its own verifier '
+                 'configuration',
+        "severity": 'critical',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-config-filter-downgrade': {
+        "domain": 'witness',
+        "code": 'witness-config-filter-downgrade',
+        "human": 'witness config rule: refusing a sensitive-values filter '
+                 'change that drops patterns; filters are tighten-only',
+        "severity": 'high',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-config-upload-ungated': {
+        "domain": 'witness',
+        "code": 'witness-config-upload-ungated',
+        "human": 'witness config rule: refusing an upload-destination '
+                 'change presented without explicit confirmation',
+        "severity": 'high',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'witness-intermediates-missing': {
+        "domain": 'witness',
+        "code": 'witness-intermediates-missing',
+        "human": 'witness completeness rule: a chain-verify entry point '
+                 'that never loaded intermediate CAs refuses; '
+                 'intermediate-CA completeness is asserted before '
+                 'verification',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain-bundle'],
+        "reverify_steps": ['recompute'],
+    },
     # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
     # gate-rule + 3 lane-B edited-approval refusal +
     # 5 lane-C canonical-record + 8 lane-D closure-scoped
@@ -6181,6 +6401,12 @@ TAXONOMY = {
     # guard + 6 lane-D AER-1 provenance non-upgrade codes), additive
     # only, zero key collisions, composed from the four lane commits
     # by direct byte-verification.
+    # Wave-240 merge: 718 + 24 = 742 (6 lane-A forcing-honesty +
+    # 6 lane-B APS -04 axis/result-model + 8 lane-C saha
+    # bound-permit follow-through + 4 lane-D witness config /
+    # intermediate-CA completeness codes), additive only, zero key
+    # collisions, composed from the four lane commits by direct
+    # byte-verification.
 }
 
 

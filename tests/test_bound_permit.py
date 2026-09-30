@@ -7,6 +7,7 @@ in the wave-234 consumption ledger; unknown outcomes reconcile via jti,
 never re-mint. Deterministic; no network; stdlib only.
 """
 
+import copy
 import hashlib
 import json
 import unittest
@@ -157,31 +158,74 @@ class LegRefusalTest(unittest.TestCase):
                          "permit-leg-refusal-unmapped")
 
 
+def _store(ledger, durable=True):
+    # Wave-240: consumption runs through the recipient-side consume
+    # store; the admission gate requires a durable store unless the
+    # deployment explicitly opts into the single-node contract.
+    return bp.InMemoryConsumeStore(ledger, durable=durable)
+
+
 class ConsumeExecuteTest(unittest.TestCase):
     def test_consume_returns_receipt(self):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
         permit = _issue(reg, jti="jti-consume")
-        receipt = bp.consume_permit(permit, ledger)
-        self.assertEqual(receipt["outcome"], "consumed")
-        self.assertEqual(receipt["instance_digest"],
+        record = bp.consume_permit(permit, ledger, consume_store=store)
+        self.assertEqual(record["outcome"], "consumed")
+        self.assertEqual(record["step"], 13)
+        self.assertIsNone(record["reason"])
+        self.assertEqual(record["receipt"]["instance_digest"],
                          permit["instance_digest"])
         self.assertTrue(ledger.is_consumed(permit["instance_digest"]))
 
-    def test_double_consume_named_outcome(self):
+    def test_double_consume_replays_stored_receipt(self):
+        # Wave-240 (saha S12): a replay returns the STORED receipt and
+        # is recorded as a repeat -- never a second release. The old
+        # "previously-consumed" raise is superseded at this seam (the
+        # ledger still raises it underneath; the store translates).
+        # Note: replay requires a recorded result; a re-present of a
+        # claimed-but-incomplete permit is in-progress -> retryable
+        # (see test_in_progress_is_retryable_not_replay).
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
         permit = _issue(reg, jti="jti-double")
-        first = bp.consume_permit(permit, ledger)
-        with self.assertRaises(cl.ConsumptionError) as ctx:
-            bp.consume_permit(permit, ledger)
-        self.assertEqual(ctx.exception.code, "previously-consumed")
-        self.assertEqual(ctx.exception.receipt["receipt_digest"],
-                         first["receipt_digest"])
+        first = bp.consume_permit(permit, ledger, consume_store=store)
+        store.record_result("permit-authority", "jti-double",
+                            {"executed": True})
+        second = bp.consume_permit(permit, ledger, consume_store=store)
+        self.assertEqual(second["outcome"], "replayed")
+        self.assertTrue(second["repeat_recorded"])
+        self.assertEqual(second["receipt"]["receipt_digest"],
+                         first["receipt"]["receipt_digest"])
+
+    def test_conflict_on_different_digest(self):
+        # Wave-240 (saha S12, vector V08): same (iss, jti), different
+        # content digest -> permit-idempotency-conflict, 409-style.
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        permit = _issue(reg, jti="jti-conflict")
+        bp.consume_permit(permit, ledger, consume_store=store)
+        forged = copy.deepcopy(permit)
+        forged["decision_digest"] = "ab" * 32
+        forged["instance_digest"] = bp._instance_digest(
+            forged["iss"], forged["jti"], forged["decision_digest"],
+            forged["mandate_digest"], forged["policy_digest"],
+            forged["reconciliation_digest"])
+        body = {k: forged[k] for k in bp._PERMIT_FIELDS}
+        forged["permit_digest"] = bp._body_digest(body)
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            bp.consume_permit(forged, ledger, consume_store=store)
+        self.assertEqual(ctx.exception.code, "permit-idempotency-conflict")
+        self.assertEqual(ctx.exception.verification_record["http_status"],
+                         409)
 
     def test_execute_exactly_once(self):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
         permit = _issue(reg, jti="jti-exec")
         calls = []
 
@@ -189,26 +233,34 @@ class ConsumeExecuteTest(unittest.TestCase):
             calls.append(p["jti"])
             return {"executed": p["jti"]}
 
-        receipt, out = bp.execute_permit(
-            permit, ledger, execute=_execute)
-        self.assertEqual(receipt["outcome"], "consumed")
+        record, out = bp.execute_permit(
+            permit, ledger, execute=_execute, consume_store=store)
+        self.assertEqual(record["outcome"], "consumed")
         self.assertEqual(out, {"executed": "jti-exec"})
-        with self.assertRaises(cl.ConsumptionError) as ctx:
-            bp.execute_permit(permit, ledger, execute=_execute)
-        self.assertEqual(ctx.exception.code, "previously-consumed")
+        # Replay: the STORED result returns, the executor is not
+        # called again (wave-240 saha S12; supersedes the old
+        # previously-consumed raise at this seam).
+        record2, out2 = bp.execute_permit(
+            permit, ledger, execute=_execute, consume_store=store)
+        self.assertEqual(record2["outcome"], "replayed")
+        self.assertTrue(record2["repeat_recorded"])
+        self.assertEqual(out2, {"executed": "jti-exec"})
         self.assertEqual(calls, ["jti-exec"])
 
     def test_tampered_permit_never_executes(self):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
         permit = _issue(reg, jti="jti-tamp")
         tampered = dict(permit)
         tampered["mandate_digest"] = "00" * 32
         calls = []
         with self.assertRaises(bp.BoundPermitError) as ctx:
-            bp.execute_permit(tampered, ledger,
+            bp.execute_permit(tampered, ledger, consume_store=store,
                               execute=lambda p: calls.append(p))
         self.assertEqual(ctx.exception.code, "permit-tampered")
+        # The crypto step (6) fires before the state step (13).
+        self.assertEqual(ctx.exception.verification_record["step"], 6)
         self.assertEqual(calls, [])
         self.assertFalse(ledger.is_consumed(permit["instance_digest"]))
 
@@ -256,7 +308,7 @@ class ReconcileTest(unittest.TestCase):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
         permit = _issue(reg, jti="jti-rec")
-        bp.consume_permit(permit, ledger)
+        bp.consume_permit(permit, ledger, consume_store=_store(ledger))
         rec = bp.reconcile_unknown_outcome(permit, ledger, reg)
         self.assertEqual(rec["state"], "unknown")
         self.assertEqual(rec["jti"], "jti-rec")
@@ -277,7 +329,7 @@ class ReconcileTest(unittest.TestCase):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
         permit = _issue(reg, jti="jti-recc")
-        bp.consume_permit(permit, ledger)
+        bp.consume_permit(permit, ledger, consume_store=_store(ledger))
         evidence = {"iss": "permit-authority", "jti": "jti-recc",
                     "executed_at": "2026-09-30T00:00:00+00:00"}
         rec = bp.reconcile_unknown_outcome(
@@ -312,7 +364,7 @@ class ReconcileTest(unittest.TestCase):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
         permit = _issue(reg, jti="jti-recm")
-        bp.consume_permit(permit, ledger)
+        bp.consume_permit(permit, ledger, consume_store=_store(ledger))
         before = json.dumps(reg.lookup("permit-authority", "jti-recm"),
                             sort_keys=True)
         rec = bp.reconcile_unknown_outcome(permit, ledger, reg)
@@ -340,14 +392,40 @@ class ReconcileTest(unittest.TestCase):
         self.assertNotEqual(fresh["instance_digest"],
                             permit["instance_digest"])
         self.assertTrue(bp.verify_permit(fresh))
-        receipt = bp.consume_permit(fresh, ledger)
-        self.assertEqual(receipt["outcome"], "consumed")
+        record = bp.consume_permit(fresh, ledger, consume_store=_store(ledger),
+                                 registry=reg)
+        self.assertEqual(record["outcome"], "consumed")
+
+    def test_reissue_without_registry_could_not_check(self):
+        # Wave-240 (saha S8.3): a re-issue binding that cannot be
+        # checked fails closed -- never a partial record. The
+        # permit-registry is the named dependency.
+        reg = bp.PermitRegistry()
+        permit = _issue(reg, jti="jti-rei-nr")
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        rec = bp.reconcile_unknown_outcome(permit, ledger, reg)
+        fresh = bp.issue_permit(
+            _decision(), _mandate(), _policy(), reg,
+            iss="permit-authority", jti="jti-rei-nr",
+            verify_decision=_accept, verify_mandate=_accept,
+            verify_policy=_accept, reconciliation=rec)
+        record = bp.verify_presentation(fresh, consume_store=store)
+        self.assertEqual(record["outcome"], "could-not-check")
+        self.assertEqual(record["step"], 8)
+        self.assertEqual(record["reason"], "permit-registry-unavailable")
+        self.assertEqual(record["dependency"], "permit-registry")
+        self.assertEqual(record["http_status"], 503)
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            bp.consume_permit(fresh, ledger, consume_store=_store(ledger))
+        self.assertEqual(ctx.exception.code,
+                         "permit-registry-unavailable")
 
     def test_reissue_after_completed_refused(self):
         reg = bp.PermitRegistry()
         ledger = cl.ConsumptionLedger()
         permit = _issue(reg, jti="jti-reic")
-        bp.consume_permit(permit, ledger)
+        bp.consume_permit(permit, ledger, consume_store=_store(ledger))
         rec = bp.reconcile_unknown_outcome(
             permit, ledger, reg,
             execution_evidence={"iss": "permit-authority",
@@ -390,6 +468,230 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "permit-tampered")
 
 
+class VerifyPresentationTest(unittest.TestCase):
+    """Wave-240: the 13-step verification order and its record."""
+
+    def test_record_never_partial(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        permit = _issue(reg, jti="jti-vp")
+        record = bp.verify_presentation(permit, consume_store=store)
+        self.assertEqual(
+            (record["outcome"], record["step"], record["reason"]),
+            ("verified", 13, None))
+        self.assertIsNotNone(record["receipt"])
+        self.assertEqual(record["iss"], "permit-authority")
+
+    def test_absence_is_no_fallback(self):
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        record = bp.verify_presentation(None, consume_store=store)
+        self.assertEqual(record["outcome"], "refused")
+        self.assertEqual(record["step"], 1)
+        self.assertEqual(record["reason"], "permit-no-fallback")
+
+    def test_store_unavailable_could_not_check(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        dead = bp.InMemoryConsumeStore(ledger, durable=True,
+                                       available=False)
+        permit = _issue(reg, jti="jti-vc")
+        record = bp.verify_presentation(permit, consume_store=dead)
+        self.assertEqual(record["outcome"], "could-not-check")
+        self.assertEqual(record["step"], 9)
+        self.assertEqual(record["reason"],
+                         "permit-consume-store-unavailable")
+        self.assertEqual(record["dependency"], "consume-store")
+        self.assertEqual(record["http_status"], 503)
+
+    def test_admission_gate_refuses_non_durable(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        flimsy = bp.InMemoryConsumeStore(cl.ConsumptionLedger())
+        permit = _issue(reg, jti="jti-vg")
+        record = bp.verify_presentation(permit, consume_store=flimsy)
+        self.assertEqual(record["outcome"], "refused")
+        self.assertEqual(record["step"], 10)
+        self.assertEqual(record["reason"],
+                         "permit-consume-store-not-durable")
+        # Explicit single-node opt-out documents the contract.
+        ok = bp.verify_presentation(permit, consume_store=flimsy,
+                                    require_durable_store=False)
+        self.assertEqual(ok["outcome"], "verified")
+
+    def test_local_policy_denial_never_consumes(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        permit = _issue(reg, jti="jti-vl")
+
+        def _deny(record):
+            raise _LegRefused("local-policy")
+
+        record = bp.verify_presentation(permit, consume_store=store,
+                                        local_policy_verifier=_deny)
+        self.assertEqual(record["outcome"], "refused")
+        self.assertEqual(record["step"], 11)
+        self.assertEqual(record["reason"], "local-policy")
+        self.assertIsNone(store.lookup("permit-authority", "jti-vl"))
+        self.assertFalse(ledger.is_consumed(permit["instance_digest"]))
+
+    def test_consume_permit_raises_typed_refusal(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        dead = bp.InMemoryConsumeStore(ledger, durable=True,
+                                       available=False)
+        permit = _issue(reg, jti="jti-vr")
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            bp.consume_permit(permit, ledger, consume_store=dead)
+        self.assertEqual(ctx.exception.code,
+                         "permit-consume-store-unavailable")
+        self.assertEqual(
+            ctx.exception.verification_record["outcome"],
+            "could-not-check")
+
+    def test_in_progress_is_retryable_not_replay(self):
+        # Wave-240 (saha S12): same (iss, jti) + same digest while
+        # the effect is in flight elsewhere -> retryable, never a
+        # replay of a result that does not exist yet.
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        permit = _issue(reg, jti="jti-vp-ip")
+        outcome, _slot = store.claim(permit)
+        self.assertEqual(outcome, "claimed")
+        record = bp.verify_presentation(permit, consume_store=store)
+        self.assertEqual(record["outcome"], "retryable")
+        self.assertEqual(record["step"], 13)
+        self.assertEqual(record["reason"], "permit-in-progress")
+        self.assertEqual(record["http_status"], 503)
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            bp.consume_permit(permit, ledger, consume_store=store)
+        self.assertEqual(ctx.exception.code, "permit-in-progress")
+        self.assertEqual(
+            ctx.exception.verification_record["outcome"], "retryable")
+        # Once the first holder records its result, the same
+        # presentation replays the stored result.
+        store.record_result("permit-authority", "jti-vp-ip",
+                            {"done": True})
+        record2, out2 = bp.execute_permit(
+            permit, ledger, execute=lambda p: {"nope": True},
+            consume_store=store)
+        self.assertEqual(record2["outcome"], "replayed")
+        self.assertEqual(out2, {"done": True})
+
+
+class BudgetLedgerTest(unittest.TestCase):
+    """Wave-240: outcome-tied budget accounting (saha S13)."""
+
+    def test_commit_on_success(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bs")
+        bp.execute_permit(permit, ledger, execute=lambda p: "ok",
+                          consume_store=store, budget=budget)
+        state = budget.state("permit-authority", "jti-bs")
+        self.assertEqual(state,
+                         {"kind": "spend", "committed": True,
+                          "released": False})
+
+    def test_commit_on_timeout(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bt")
+
+        def _execute(p):
+            raise TimeoutError("timed out")
+
+        with self.assertRaises(TimeoutError):
+            bp.execute_permit(permit, ledger, execute=_execute,
+                              consume_store=store, budget=budget)
+        state = budget.state("permit-authority", "jti-bt")
+        self.assertTrue(state["committed"])
+        self.assertFalse(state["released"])
+
+    def test_commit_on_any_execute_exception(self):
+        # Wave-240: the attempt consumed budget for ANY execute
+        # exception, not only timeout. saha S13's release causes
+        # (not_attempted, signed no_effect) do not cover a failed
+        # attempt, so the budget stays committed.
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bg")
+
+        def _execute(p):
+            raise ValueError("deterministic business failure")
+
+        with self.assertRaises(ValueError):
+            bp.execute_permit(permit, ledger, execute=_execute,
+                              consume_store=store, budget=budget)
+        state = budget.state("permit-authority", "jti-bg")
+        self.assertTrue(state["committed"])
+        self.assertFalse(state["released"])
+
+    def test_release_on_not_attempted(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bn")
+        record = bp.reconcile_unknown_outcome(permit, ledger, reg,
+                                              budget=budget)
+        self.assertEqual(record["state"], "not-executed")
+        self.assertTrue(
+            budget.state("permit-authority", "jti-bn")["released"])
+
+    def test_unsigned_no_effect_refused(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bu")
+        bp.consume_permit(permit, ledger, consume_store=store)
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            bp.reconcile_unknown_outcome(
+                permit, ledger, reg, budget=budget,
+                no_effect_refusal={"no_effect": True},
+                verify_refusal_signature=None)
+        self.assertEqual(ctx.exception.code, "permit-no-effect-unattested")
+        state = budget.state("permit-authority", "jti-bu")
+        self.assertFalse(state["released"])
+
+    def test_signed_no_effect_releases(self):
+        reg = bp.PermitRegistry()
+        ledger = cl.ConsumptionLedger()
+        store = _store(ledger)
+        budget = bp.BudgetLedger()
+        permit = _issue(reg, jti="jti-bsg")
+        bp.consume_permit(permit, ledger, consume_store=store)
+        refusal = {"no_effect": True, "sig": "recipient-sig"}
+        record = bp.reconcile_unknown_outcome(
+            permit, ledger, reg, budget=budget,
+            no_effect_refusal=refusal,
+            verify_refusal_signature=lambda r: r.get("sig") ==
+            "recipient-sig")
+        self.assertEqual(record["state"], "not-executed")
+        self.assertTrue(
+            budget.state("permit-authority", "jti-bsg")["released"])
+
+    def test_rate_budget_never_released(self):
+        budget = bp.BudgetLedger()
+        budget.commit("permit-authority", "jti-br", kind="rate")
+        with self.assertRaises(bp.BoundPermitError) as ctx:
+            budget.release("permit-authority", "jti-br",
+                           on="not_attempted")
+        self.assertEqual(ctx.exception.code,
+                         "permit-rate-budget-unreleasable")
+        self.assertFalse(
+            budget.state("permit-authority", "jti-br")["released"])
+
+
 class TrustTierTest(unittest.TestCase):
     def test_trust_tier_binds_instance(self):
         reg = bp.PermitRegistry()
@@ -398,9 +700,9 @@ class TrustTierTest(unittest.TestCase):
         self.assertNotEqual(high["instance_digest"],
                             low["instance_digest"])
         ledger = cl.ConsumptionLedger()
-        bp.consume_permit(high, ledger)
-        receipt = bp.consume_permit(low, ledger)
-        self.assertEqual(receipt["outcome"], "consumed")
+        bp.consume_permit(high, ledger, consume_store=_store(ledger))
+        record = bp.consume_permit(low, ledger, consume_store=_store(ledger))
+        self.assertEqual(record["outcome"], "consumed")
 
 
 if __name__ == "__main__":

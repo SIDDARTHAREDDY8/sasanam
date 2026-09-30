@@ -10,8 +10,10 @@ Attack shapes at the public seams (break-first, red-first on base):
   without a policy binding ``permit-policy-absent``; without a decision
   ``permit-decision-absent``;
 * consumption is atomic in the wave-234 consumption-ledger semantics:
-  double-submit of a consumed permit yields exactly one execution and
-  the named ``previously-consumed`` outcome;
+  double-submit of a consumed permit yields exactly one execution.
+  Wave-240 (saha S12) supersedes the old named ``previously-consumed``
+  RAISE at this seam: the replay now returns the stored result and is
+  recorded as a repeat (probe p2 pins the new semantics);
 * unknown outcomes reconcile via jti: ``reconcile_unknown_outcome``
   never re-mints a permit and never retries execution -- it returns a
   reconciliation record naming (iss, jti) and its state
@@ -153,9 +155,14 @@ def _p1_happy(results):
 
 
 def _p2_double_submit(results):
+    # Wave-240 NOTE (saha S12 supersedes the wave-235 raise): the
+    # replay now returns the STORED result and is recorded as a
+    # repeat -- the exactly-once invariant is the executor running
+    # exactly once, not a raise.
     try:
         reg = _bp.PermitRegistry()
         ledger = _cl.ConsumptionLedger()
+        store = _bp.InMemoryConsumeStore(ledger, durable=True)
         permit = _issue(reg, jti="jti-002")
         calls = []
 
@@ -163,17 +170,23 @@ def _p2_double_submit(results):
             calls.append(p["jti"])
             return {"executed": True}
 
-        receipt, out = _bp.execute_permit(permit, ledger, execute=_execute)
+        receipt, out = _bp.execute_permit(permit, ledger,
+                                          execute=_execute,
+                                          consume_store=store)
         assert receipt["outcome"] == "consumed", receipt
         assert out == {"executed": True}, out
-        # Second submit: previously-consumed BEFORE the executor runs.
-        v, detail = _expect_code(
-            lambda: _bp.execute_permit(permit, ledger, execute=_execute),
-            "previously-consumed")
-        assert v == "HELD", detail
+        # Second submit: stored result, executor NOT re-run, repeat
+        # recorded -- before the executor runs.
+        record2, out2 = _bp.execute_permit(permit, ledger,
+                                           execute=_execute,
+                                           consume_store=store)
+        assert record2["outcome"] == "replayed", record2
+        assert record2["repeat_recorded"] is True, record2
+        assert out2 == {"executed": True}, out2
         assert calls == ["jti-002"], calls  # exactly one execution
         _rec(results, PROBE_NAMES[1], "HELD",
-             "executor ran exactly once; replay named previously-consumed")
+             "executor ran exactly once; replay returns stored result, "
+             "recorded as repeat (wave-240 saha S12)")
     except AssertionError as exc:
         _rec(results, PROBE_NAMES[1], "BREAK", str(exc)[:200])
     except Exception:  # noqa: BLE001
@@ -251,8 +264,9 @@ def _p6_unknown_outcome(results):
         reg = _bp.PermitRegistry()
         ledger = _cl.ConsumptionLedger()
         permit = _issue(reg, jti="jti-006")
+        store = _bp.InMemoryConsumeStore(ledger, durable=True)
         # Consume but never execute: the outcome is unknown.
-        receipt = _bp.consume_permit(permit, ledger)
+        receipt = _bp.consume_permit(permit, ledger, consume_store=store)
         assert receipt["outcome"] == "consumed", receipt
         rec = _bp.reconcile_unknown_outcome(permit, ledger, reg)
         assert rec["state"] == "unknown", rec
@@ -277,7 +291,8 @@ def _p6_unknown_outcome(results):
             permit2b
         assert permit2b["instance_digest"] != permit2["instance_digest"], \
             "re-issued permit must be a distinct consumable instance"
-        receipt2b = _bp.consume_permit(permit2b, ledger)
+        receipt2b = _bp.consume_permit(permit2b, ledger,
+                                     consume_store=store, registry=reg)
         assert receipt2b["outcome"] == "consumed", receipt2b
         _rec(results, PROBE_NAMES[5], "HELD",
              "unknown -> reconciliation record; duplicate refused; "
@@ -306,9 +321,10 @@ def _p7_trust_tier(results):
             verify_policy=_accept)
         assert pa["instance_digest"] != pb["instance_digest"], \
             "trust tier must bind into the frozen instance"
-        _bp.consume_permit(pa, ledger)
+        store = _bp.InMemoryConsumeStore(ledger, durable=True)
+        _bp.consume_permit(pa, ledger, consume_store=store)
         # The low-tier permit is a different instance: still consumable.
-        receipt_b = _bp.consume_permit(pb, ledger)
+        receipt_b = _bp.consume_permit(pb, ledger, consume_store=store)
         assert receipt_b["outcome"] == "consumed", receipt_b
         # Reconciliation of one jti never touches the other.
         rec_a = _bp.reconcile_unknown_outcome(pa, ledger, reg)
@@ -335,9 +351,11 @@ def _p8_tampered(results):
         assert v == "HELD", detail
         # A tampered permit never reaches the executor.
         calls = []
+        store = _bp.InMemoryConsumeStore(ledger, durable=True)
         v, detail = _expect_code(
             lambda: _bp.execute_permit(
-                tampered, ledger, execute=lambda p: calls.append(p)),
+                tampered, ledger, execute=lambda p: calls.append(p),
+                consume_store=store),
             "permit-tampered")
         assert v == "HELD", detail
         assert calls == [], calls

@@ -210,7 +210,11 @@ class TaxonomyTests(unittest.TestCase):
         # refusal-oracle guard + 6 AER-1 provenance non-upgrade),
         # composed from the four lane commits by direct
         # byte-verification.
-        self.assertEqual(len(decision_codes.TAXONOMY), 718)
+        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
+        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
+        # config/intermediate-CA), additive only, composed from the four lane
+        # commits by direct byte-verification.
+        self.assertEqual(len(decision_codes.TAXONOMY), 742)
 
 
 if __name__ == "__main__":

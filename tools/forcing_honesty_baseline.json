@@ -1,0 +1,21 @@
+{
+  "checksum": "f509ec0fd0609097c70ed235550a6e844cf8ae4a44b763139c96419080139659",
+  "conditions": {
+    "fc-edit-01": {
+      "dead": 13,
+      "forced": true,
+      "inconclusive": 0,
+      "killed": 26,
+      "silent": 0
+    },
+    "fc-gate-01": {
+      "dead": 11,
+      "forced": true,
+      "inconclusive": 0,
+      "killed": 14,
+      "silent": 0
+    }
+  },
+  "generator": "tools/forcing_honesty.py sync",
+  "version": 1
+}

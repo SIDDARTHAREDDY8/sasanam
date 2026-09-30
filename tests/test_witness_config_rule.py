@@ -1,0 +1,174 @@
+"""Unit tests for gov/witness_config_rule.py (wave-240 lane D).
+
+W240-7 (GHSA-ggg4): .witness.yaml auto-load rule + upload-destination
+confirmation gating + tighten-only sensitive filtering.
+W240-8 (GHSA-6xq9/GHSA-88v8): intermediate-CA completeness at every
+chain-verify entry point.
+"""
+
+import unittest
+
+from gov import witness_config_rule as wr
+from gov import decision_codes as dc
+
+
+class ConfigLoadTest(unittest.TestCase):
+    def test_cwd_autoload_refused_in_ci(self):
+        with self.assertRaises(wr.WitnessConfigError) as cm:
+            wr.load_config({"a": 1}, source="cwd/.witness.yaml",
+                           context=wr.CONTEXT_CI, auto_discovered=True)
+        self.assertEqual(cm.exception.code, "witness-config-cwd-autoload")
+
+    def test_cwd_autoload_refused_in_untrusted_repo(self):
+        with self.assertRaises(wr.WitnessConfigError) as cm:
+            wr.load_config({"a": 1}, source="cwd/.witness.yaml",
+                           context=wr.CONTEXT_UNTRUSTED, auto_discovered=True)
+        self.assertEqual(cm.exception.code, "witness-config-cwd-autoload")
+
+    def test_explicit_path_trusted_loads(self):
+        cfg = wr.load_config({"a": 1}, source="/etc/sasanam/witness.yaml",
+                             context=wr.CONTEXT_TRUSTED,
+                             auto_discovered=False)
+        self.assertEqual(cfg, {"a": 1})
+
+    def test_explicit_path_in_ci_loads(self):
+        # An explicit path is not auto-load; CI refusal applies to
+        # discovery, not to the context alone.
+        cfg = wr.load_config({"a": 1}, source="/etc/sasanam/witness.yaml",
+                             context=wr.CONTEXT_CI, auto_discovered=False)
+        self.assertEqual(cfg, {"a": 1})
+
+    def test_unknown_context_fails_closed(self):
+        with self.assertRaises(wr.WitnessConfigError):
+            wr.load_config({"a": 1}, source="x",
+                           context="somewhere-else", auto_discovered=False)
+
+    def test_non_mapping_fails_closed(self):
+        with self.assertRaises(wr.WitnessConfigError):
+            wr.load_config(["not", "a", "mapping"], source="x",
+                           context=wr.CONTEXT_TRUSTED, auto_discovered=False)
+
+
+class UploadDestinationTest(unittest.TestCase):
+    def test_ungated_change_refused(self):
+        with self.assertRaises(wr.WitnessConfigError) as cm:
+            wr.apply_upload_destination("s3://a", "s3://b", confirmed=False)
+        self.assertEqual(cm.exception.code, "witness-config-upload-ungated")
+
+    def test_confirmed_change_applies(self):
+        self.assertEqual(
+            wr.apply_upload_destination("s3://a", "s3://b", confirmed=True),
+            "s3://b")
+
+    def test_unchanged_is_noop(self):
+        self.assertEqual(
+            wr.apply_upload_destination("s3://a", "s3://a", confirmed=False),
+            "s3://a")
+
+
+class SensitiveFilterTest(unittest.TestCase):
+    def test_downgrade_refused(self):
+        with self.assertRaises(wr.WitnessConfigError) as cm:
+            wr.set_sensitive_filter(["AKIA", "token="], ["token="])
+        self.assertEqual(cm.exception.code, "witness-config-filter-downgrade")
+
+    def test_disable_refused(self):
+        with self.assertRaises(wr.WitnessConfigError):
+            wr.set_sensitive_filter(["AKIA"], [])
+
+    def test_tighten_applies(self):
+        self.assertEqual(
+            wr.set_sensitive_filter(["a"], ["a", "b"]), ["a", "b"])
+
+    def test_unchanged_applies(self):
+        self.assertEqual(
+            wr.set_sensitive_filter(["a"], ["a"]), ["a"])
+
+
+class IntermediateCompletenessTest(unittest.TestCase):
+    def _fragment(self):
+        return [
+            {"subject": "leaf", "issuer": "intermediate"},
+            {"subject": "root", "issuer": "root"},
+        ]
+
+    def test_fragment_without_intermediates_refused(self):
+        for inter in (None, []):
+            with self.assertRaises(wr.WitnessConfigError) as cm:
+                wr.assert_intermediates_loaded(self._fragment(),
+                                               intermediates=inter)
+            self.assertEqual(cm.exception.code,
+                             "witness-intermediates-missing")
+            self.assertIn("completeness", cm.exception.detail)
+
+    def test_fragment_with_intermediates_ok(self):
+        inter = [{"subject": "intermediate", "issuer": "root"}]
+        self.assertTrue(
+            wr.assert_intermediates_loaded(self._fragment(),
+                                           intermediates=inter))
+
+    def test_self_contained_chain_needs_no_intermediates(self):
+        # A complete in-chain hierarchy needs no loaded intermediates.
+        chain = [
+            {"subject": "leaf", "issuer": "intermediate"},
+            {"subject": "intermediate", "issuer": "root"},
+            {"subject": "root", "issuer": "root"},
+        ]
+        self.assertTrue(
+            wr.assert_intermediates_loaded(chain, intermediates=None))
+
+    def test_single_self_signed_ok(self):
+        chain = [{"subject": "root", "issuer": "root"}]
+        self.assertTrue(
+            wr.assert_intermediates_loaded(chain, intermediates=None))
+
+    def test_empty_chain_fails_closed(self):
+        with self.assertRaises(wr.WitnessConfigError) as cm:
+            wr.assert_intermediates_loaded([], intermediates=None)
+        self.assertEqual(cm.exception.code, "witness-intermediates-missing")
+
+    def test_every_entry_point_enforces(self):
+        points = wr.chain_entry_points()
+        self.assertGreaterEqual(len(points), 1)
+        fragment = self._fragment()
+        for entry in points:
+            with self.assertRaises(wr.WitnessConfigError) as cm:
+                wr.verify_chain_entry(fragment, intermediates=None,
+                                      entry_point=entry)
+            self.assertEqual(cm.exception.code,
+                             "witness-intermediates-missing")
+
+    def test_entry_point_with_intermediates_verifies(self):
+        fragment = self._fragment()
+        inter = [{"subject": "intermediate", "issuer": "root"}]
+        for entry in wr.chain_entry_points():
+            v = wr.verify_chain_entry(fragment, intermediates=inter,
+                                      entry_point=entry)
+            self.assertTrue(v["ok"])
+            self.assertEqual(v["completeness"], "intermediates-loaded")
+            self.assertIn("deployment-owned", v["note"])
+
+    def test_unknown_entry_point_fails_closed(self):
+        fragment = self._fragment()
+        inter = [{"subject": "intermediate", "issuer": "root"}]
+        with self.assertRaises(wr.WitnessConfigError):
+            wr.verify_chain_entry(fragment, intermediates=inter,
+                                  entry_point="bogus")
+
+
+class TaxonomyTest(unittest.TestCase):
+    def test_witness_codes_mapped(self):
+        for code in ("witness-config-cwd-autoload",
+                     "witness-config-upload-ungated",
+                     "witness-config-filter-downgrade",
+                     "witness-intermediates-missing"):
+            self.assertIsNotNone(dc.code_for(code), code)
+        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
+        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
+        # config/intermediate-CA), additive only, composed from the four lane
+        # commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 742)
+
+
+if __name__ == "__main__":
+    unittest.main()

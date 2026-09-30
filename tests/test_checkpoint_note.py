@@ -361,7 +361,11 @@ class TaxonomyPinTest(unittest.TestCase):
         from gov import decision_codes as dc
         for code in cn.CHECKPOINT_CODES:
             self.assertIn(code, dc.TAXONOMY)
-        self.assertEqual(len(dc.TAXONOMY), 718)
+        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
+        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
+        # config/intermediate-CA), additive only, composed from the four lane
+        # commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 742)
         # Wave-239 merge: re-pointed 695 -> 718 (23 new codes
         # across four lanes: 8 AAuth R3 + 6 claim-at-dispatch +
         # 3 refusal-oracle guard + 6 AER-1 provenance non-upgrade),

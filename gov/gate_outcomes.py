@@ -75,11 +75,24 @@ GATE_UNDECIDABLE_ALLOWED = "gate-undecidable-allowed"
 # "evidence-incomplete" covers declared-missing pieces the verifier
 # could name; anything outside this set is a contract failure, not
 # a new meaning the gate will invent.
+#
+# Wave-240 (APS -04 axis/result model): "unsupported-profile" folds the
+# per-axis UNSUPPORTED term into UNDECIDABLE -- the verifier does not
+# implement the receipt's profile, so it could not verify; this is not
+# tamper. "verifier-limit-reached" folds a ceiling-induced
+# indeterminate (depth/wire/chain limits are verifier properties) into
+# UNDECIDABLE. The limit itself is named in the caller's chain result
+# (the axis verdict reason, "ceiling:<limit-name>"): the gate reason
+# only identifies the fold family, since the wave-237 gate Verdict
+# carries (outcome, reason) and no detail slot. Both additions are
+# additive: every previously valid reason stays valid.
 UNDECIDABLE_REASONS = frozenset((
     "trust-root-missing",
     "algorithm-unknown",
     "evidence-truncated",
     "evidence-incomplete",
+    "unsupported-profile",
+    "verifier-limit-reached",
 ))
 
 

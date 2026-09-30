@@ -1,53 +1,118 @@
 #!/usr/bin/env python3
-"""Bound-permit conjunction: a permit is decision AND mandate AND local policy.
+"""Bound-permit conjunction + saha follow-through verification order.
 
-Re-derived (nothing copied) from the convergent industry direction
-(draft-saha-aadp-bound-permit -00 "bound permit", at-most-once
-consumption consensus): a permit is issued only when three legs verify
-independently -- the decision record, the mandate record, and the local
-policy binding. Each leg can refuse; none overrules another: a refusal
-in any leg refuses the permit carrying the leg's EXACT refusal code.
-A permit issued without a mandate refuses ``permit-mandate-absent``;
-without a policy binding ``permit-policy-absent``; without a decision
-``permit-decision-absent``.
+The conjunction (wave-235): a permit is issued only when three legs
+verify independently -- the decision record, the mandate record, and
+the local policy binding. Each leg can refuse; none overrules another:
+a refusal in any leg refuses the permit carrying the leg's EXACT
+refusal code. A permit issued without a mandate refuses
+``permit-mandate-absent``; without a policy binding
+``permit-policy-absent``; without a decision ``permit-decision-absent``.
 
 The permit is frozen at issue time: the permit's (iss, jti) and the
-three leg records are digested into an ``instance_digest`` -- consumption
-is atomic in (iss, jti), each permit its own consumable instance.
-Consumption is atomic in the wave-234 consumption-ledger semantics
-(``gov/consumption_ledger.py`` is used, never modified): double-submit
-of a consumed permit yields exactly one execution and the named
-``previously-consumed`` outcome.
+three leg records are digested into an ``instance_digest`` -- each
+permit its own consumable instance.
 
-Unknown outcomes reconcile via jti, never by re-minting:
-``reconcile_unknown_outcome`` never issues a permit and never retries
-execution. It returns a reconciliation record naming (iss, jti) and its
-state -- ``completed`` (execution evidence verified and bound),
-``not-executed`` (never consumed), or ``unknown`` (consumed, no
-execution evidence). A fresh permit under an already-claimed (iss, jti)
-refuses ``permit-jti-duplicate`` until a reconciliation record exists;
-re-issue is then allowed only when the outcome settled as
-``not-executed``, and the new permit binds the reconciliation digest,
-so the re-issued permit is a DISTINCT consumable instance (it can never
-re-release the reconciled one). An outcome settled as ``completed`` or
-``unknown`` keeps refusing ``permit-jti-duplicate``: re-issuing there
-would risk a second execution.
+The follow-through (wave-240, re-derived -- nothing copied -- from
+draft-saha-aadp-bound-permit-00, IETF Trust prose re-derive): the
+recipient verifies a presented permit in a fixed 13-step order.
+Cheap structural checks come BEFORE crypto, crypto BEFORE state, and
+state is consumed LAST, so a request refused for any other reason
+does not consume its permit. The order adapts saha S8.1 Table 3 to
+this module's checks (our permit is a record, not a JWT; the
+mandate/currentness/signature steps the draft names are caller-held
+here -- legs verify at issue, the recipient re-checks the frozen
+conjunction via digests):
+
+ 1. permit present and parses (absence is ``permit-no-fallback``:
+    absence is malformed -- never a reason to accept another
+    credential, saha S8.2)
+ 2. required fields present (``permit-malformed``)
+ 3. version supported (``permit-malformed``)
+ 4. iss/jti non-empty strings (``permit-malformed``)
+ 5. digest formats and record shapes (``permit-malformed``)
+ 6. instance digest recomputes -- crypto (``permit-tampered``)
+ 7. permit digest recomputes -- crypto (``permit-tampered``)
+ 8. reconciliation binding for re-issued permits
+    (``permit-malformed``; ``could-not-check`` naming the
+    permit-registry when no registry is available to check it)
+ 9. consume store available (``permit-consume-store-unavailable``:
+    could-not-check naming the consume-store dependency, 503-style)
+ 10. admission gate: the store is durable/atomic/shared, or the
+    deployment explicitly opts into single-node
+    (``permit-consume-store-not-durable``)
+ 11. recipient-local policy permits -- BEFORE state, so a denial
+    never consumes the permit (a leg-style verifier; the permit is
+    not consumed on denial)
+ 12. (iss, jti) prior-consumption lookup: same content digest ->
+    ``replayed``; different content digest ->
+    ``permit-idempotency-conflict`` (409-style), never a second
+    execution
+ 13. atomically consume (iss, jti) -- state consumed LAST.
+
+``verify_presentation`` runs the order and returns the verification
+record -- ``verified`` / ``refused`` (+reason+step) /
+``could-not-check`` (+dependency) / ``replayed`` -- never partial
+(saha S8.3). Refusal reasons carry the saha S9 advisory HTTP mapping
+(403; 409 for idempotency-conflict; 503 for could-not-check).
+
+Repeat semantics (saha S12): same (iss, jti) + same content digest
+after completion returns the STORED result and records the
+presentation as a repeat -- no fresh execution. A different content
+digest under the same (iss, jti) refuses
+``permit-idempotency-conflict``.
+
+Admission gate (saha S12): a recipient that cannot keep a durable,
+atomic, shared-across-every-node consume store MUST NOT accept bound
+permits. ``verify_presentation`` / ``consume_permit`` /
+``execute_permit`` refuse ``permit-consume-store-not-durable`` unless
+the deployment passes ``require_durable_store=False`` -- the
+explicit single-node deployment contract. The default in-memory
+store (``InMemoryConsumeStore``) is single-node only: shared
+atomicity and durability beyond one process are deployment-owned.
+
+Budget accounting (saha S13, outcome-tied): ``BudgetLedger`` commits
+the reservation on success AND on timeout (unknown outcome);
+releases on ``not_attempted`` and on signed failure with
+``no_effect: true``. An UNSIGNED refusal does NOT establish no
+effect -- the presenter MUST NOT set ``no_effect`` on its strength:
+unsigned claims refuse ``permit-no-effect-unattested`` and the
+budget stays committed. Rate budgets are never released
+(``permit-rate-budget-unreleasable``).
+
+Reconciliation (saha S12): ``reconcile_unknown_outcome`` never mints
+a permit and never retries execution. An unknown-outcome presenter
+reconciles by ``jti`` (or the recipient action id it recorded),
+never by obtaining a new permit.
 
 Leg verifiers are caller-supplied callables ``verifier(record)``: a
-verifier accepts by returning (the return value is ignored); it refuses
-by raising. A raised refusal carrying a string ``code`` attribute
-propagates with that exact code; a refusal naming no code refuses
-``permit-leg-refusal-unmapped`` (fail closed: an unnamed refusal is
-unauditable). The original exception is chained onto the refusal, so
-a verifier that crashes on a programming error stays visible in the
-traceback instead of being masked by the refusal.
+verifier accepts by returning (the return value is ignored); it
+refuses by raising. A raised refusal carrying a string ``code``
+attribute propagates with that exact code; a refusal naming no code
+refuses ``permit-leg-refusal-unmapped`` (fail closed: an unnamed
+refusal is unauditable). The original exception is chained onto the
+refusal, so a verifier that crashes on a programming error stays
+visible in the traceback instead of being masked by the refusal.
 
-Honest residuals: legs, verifiers, execution evidence, and the registry
-are caller-supplied; the module pins digests of what it commits to, it
-does not establish the caller's claims. The registry is in-memory:
-shared atomicity and durability are deployment-owned. The ledger
-detects edits to presented digests, not lies told consistently from
-the start (the frozen legs are caller-supplied).
+Honest residuals: legs, verifiers, execution evidence, refusal
+signatures, and the registry are caller-supplied; the module pins
+digests of what it commits to, it does not establish the caller's
+claims. The ledger detects edits to presented digests, not lies told
+consistently from the start (the frozen legs are caller-supplied).
+The in-memory consume store and budget ledger are single-node:
+shared atomicity, durability, and cross-node budget coherence are
+deployment-owned; durable store implementations MUST persist
+(iss, jti) -> (content digest, stored result) or replays cannot
+return stored results after a restart. In-progress (async)
+presentations are modeled at the claim layer: a second presentation
+of a claimed-but-uncompleted (iss, jti) raises
+``permit-in-progress`` and verifies as ``retryable`` (503-style) --
+the permit is not consumed and no result exists yet, so the caller
+retries the presentation later. Once the first holder records its
+result, the same presentation replays the stored result. The recipient-signed
+confirmation (saha S10) has no wire form in this module. A
+``no_effect`` signature proves the refuser signed the claim, not
+that the claim is true.
 
 Stdlib only. No network. $0.
 """
@@ -57,6 +122,8 @@ import hmac
 import json
 import time
 from datetime import datetime, timezone
+
+from gov import consumption_ledger as _consumption_ledger
 
 # ----------------------------------------------------------------------
 # Error vocabulary. The base class carries no string ``code`` (deliberate:
@@ -100,6 +167,50 @@ class _PermitMalformed(BoundPermitError):
 
 class _PermitTampered(BoundPermitError):
     code = "permit-tampered"
+
+
+class _PermitIdempotencyConflict(BoundPermitError):
+    code = "permit-idempotency-conflict"
+
+
+class _PermitInProgress(BoundPermitError):
+    code = "permit-in-progress"
+
+    def __init__(self, message, verification_record=None):
+        super().__init__(message)
+        self.verification_record = verification_record
+
+
+class _PermitConsumeStoreUnavailable(BoundPermitError):
+    code = "permit-consume-store-unavailable"
+
+    def __init__(self, message, verification_record=None):
+        super().__init__(message)
+        self.verification_record = verification_record
+
+
+class _PermitConsumeStoreNotDurable(BoundPermitError):
+    code = "permit-consume-store-not-durable"
+
+
+class _PermitRegistryUnavailable(BoundPermitError):
+    code = "permit-registry-unavailable"
+
+    def __init__(self, message, verification_record=None):
+        super().__init__(message)
+        self.verification_record = verification_record
+
+
+class _PermitNoFallback(BoundPermitError):
+    code = "permit-no-fallback"
+
+
+class _PermitNoEffectUnattested(BoundPermitError):
+    code = "permit-no-effect-unattested"
+
+
+class _PermitRateBudgetUnreleasable(BoundPermitError):
+    code = "permit-rate-budget-unreleasable"
 
 
 class _PermitLegRefused(BoundPermitError):
@@ -244,6 +355,205 @@ class PermitRegistry:
 
 
 # ----------------------------------------------------------------------
+# Consume store: recipient-side (iss, jti) consumption state (saha S12).
+# ----------------------------------------------------------------------
+
+
+class ConsumeStore:
+    """Recipient-side (iss, jti) consume state.
+
+    The atomic claim primitive is ``claim(permit)``: it returns
+    ``("claimed", slot)`` on first presentation, ``("replayed", slot)``
+    when the same (iss, jti) presents the same content digest again,
+    raises ``_PermitIdempotencyConflict`` when the slot is already
+    bound to a DIFFERENT content digest, and raises
+    ``_PermitConsumeStoreUnavailable`` when the store is down.
+
+    A slot records the content digest, the consumption receipt, and
+    the stored execution result (``record_result``): a replay returns
+    the stored result, never a fresh execution.
+
+    ``durable`` is True only when the store is durable, atomic, and
+    shared across every node that can serve the endpoint. The
+    in-memory implementation below is single-node: the admission gate
+    (``require_durable_store=True``) refuses it.
+    """
+
+    def __init__(self, ledger, *, durable=False, available=True):
+        self._ledger = ledger
+        self.durable = bool(durable)
+        self._available = bool(available)
+        # (iss, jti, reconciliation_digest) -> slot. The
+        # reconciliation digest is part of the key: a re-issued permit
+        # (after a not-executed reconciliation) is a DISTINCT
+        # consumable instance and can never re-release the reconciled
+        # one.
+        self._slots = {}
+
+    def is_available(self):
+        """False simulates a store outage -> could-not-check."""
+        return self._available
+
+    def set_available(self, available):
+        """Ops/test hook: simulate a store outage or recovery."""
+        self._available = bool(available)
+
+    @staticmethod
+    def _slot_key(iss, jti, reconciliation_digest):
+        return (iss, jti, reconciliation_digest or "")
+
+    def lookup(self, iss, jti, reconciliation_digest=""):
+        """The consumption slot for (iss, jti), or None. Copies: the
+        store owns its slots."""
+        slot = self._slots.get(
+            self._slot_key(iss, jti, reconciliation_digest))
+        return dict(slot) if slot is not None else None
+
+    def _unavailable_record(self, iss, jti, content_digest):
+        return _verification_record(
+            "could-not-check", 9, "permit-consume-store-unavailable",
+            iss=iss, jti=jti, content_digest=content_digest,
+            dependency="consume-store", http_status=503)
+
+    def claim(self, permit):
+        """Atomically consume (iss, jti): saha S8.1 step 13 -- state
+        consumed LAST. The wave-234 consumption ledger is used, never
+        modified: its entity-bound idempotency key already refuses a
+        different instance under one (iss, jti) key, which is
+        translated here into the bound-permit-named
+        ``permit-idempotency-conflict``."""
+        iss, jti = permit["iss"], permit["jti"]
+        content_digest = permit["instance_digest"]
+        recon = permit.get("reconciliation_digest") or ""
+        if not self.is_available():
+            raise _PermitConsumeStoreUnavailable(
+                "permit-consume-store-unavailable: the consume store "
+                "is unavailable; could-not-check names the "
+                "consume-store dependency",
+                self._unavailable_record(iss, jti, content_digest))
+        parts = ("bound-permit", iss, jti)
+        if recon:
+            parts = parts + (recon,)
+        try:
+            receipt = self._ledger.consume(content_digest, parts)
+        except _consumption_ledger._PreviouslyConsumed as exc:
+            slot = self._slots.get(self._slot_key(iss, jti, recon))
+            if slot is None:
+                # The ledger (e.g. via journal replay) knows a
+                # consumption this store object never saw: rebuild the
+                # slot from the original receipt. No result was
+                # recorded here, so the effect is in progress.
+                slot = {"iss": iss, "jti": jti,
+                        "content_digest": content_digest,
+                        "receipt": exc.receipt, "result": None,
+                        "executed": False,
+                        "claimed_at": exc.receipt.get("consumed_at")}
+                self._slots[self._slot_key(iss, jti, recon)] = slot
+            if not slot.get("executed"):
+                # Same (iss, jti) + same content digest, but the
+                # effect has not completed: in-progress -> retryable
+                # (saha S12). This is NOT a replay: no stored result
+                # exists yet, and reporting one would misread an
+                # in-flight effect as complete.
+                raise _PermitInProgress(
+                    "permit-in-progress: (iss, jti) %r/%r is "
+                    "in progress elsewhere; retry the presentation "
+                    "later" % (iss, jti))
+            return ("replayed", dict(slot))
+        except _consumption_ledger._IdempotencyReused as exc:
+            raise _PermitIdempotencyConflict(
+                "permit-idempotency-conflict: (iss, jti) %r/%r is "
+                "already bound to a different content digest; "
+                "refusing (409-style), never a second execution"
+                % (iss, jti)) from exc
+        slot = {"iss": iss, "jti": jti,
+                "content_digest": content_digest,
+                "receipt": dict(receipt), "result": None,
+                "executed": False,
+                "claimed_at": receipt.get("consumed_at")}
+        self._slots[self._slot_key(iss, jti, recon)] = slot
+        return ("claimed", dict(slot))
+
+    def record_result(self, iss, jti, result, reconciliation_digest=""):
+        """Store the execution result for a claimed slot, so a replay
+        returns it instead of executing again."""
+        key = self._slot_key(iss, jti, reconciliation_digest)
+        slot = self._slots.get(key)
+        if slot is None:
+            raise _PermitMalformed(
+                "permit-malformed: no claimed (iss, jti) slot to "
+                "record a result for")
+        slot["result"] = result
+        slot["executed"] = True
+
+
+class InMemoryConsumeStore(ConsumeStore):
+    """Single-node consume store. ``durable`` is False: shared
+    atomicity and durability beyond this process are
+    deployment-owned. Multi-node deployments MUST supply a durable
+    shared store; the admission gate (``require_durable_store=True``)
+    refuses this one."""
+
+
+# ----------------------------------------------------------------------
+# Budget ledger: outcome-tied budget accounting (saha S13).
+# ----------------------------------------------------------------------
+
+
+class BudgetLedger:
+    """Outcome-tied budget accounting, re-derived from saha S13.
+
+    The reservation is committed on "success" AND on "timeout"
+    (unknown outcome); released on "not_attempted" and on signed
+    failure with "no_effect": true. An unsigned refusal does NOT
+    establish no effect. Rate budgets are never released.
+
+    In-memory: shared accounting across nodes is deployment-owned.
+    """
+
+    _KINDS = ("spend", "rate")
+    _RELEASE_ON = ("not_attempted", "signed_no_effect")
+
+    def __init__(self):
+        self._entries = {}  # (iss, jti) -> entry
+
+    def commit(self, iss, jti, *, kind="spend"):
+        """Commit the budget: called on success and on timeout."""
+        if kind not in self._KINDS:
+            raise _PermitMalformed(
+                "permit-malformed: unknown budget kind %r" % (kind,))
+        entry = self._entries.setdefault(
+            (iss, jti),
+            {"kind": kind, "committed": False, "released": False})
+        entry["kind"] = kind
+        entry["committed"] = True
+        return dict(entry)
+
+    def release(self, iss, jti, *, on):
+        """Release the budget: only on "not_attempted" or
+        "signed_no_effect". Releasing an uncommitted entry records
+        the release (nothing was spent), never an error."""
+        if on not in self._RELEASE_ON:
+            raise _PermitMalformed(
+                "permit-malformed: unknown budget release cause %r"
+                % (on,))
+        entry = self._entries.setdefault(
+            (iss, jti),
+            {"kind": "spend", "committed": False, "released": False})
+        if entry["kind"] == "rate":
+            raise _PermitRateBudgetUnreleasable(
+                "permit-rate-budget-unreleasable: rate budgets are "
+                "never released")
+        entry["released"] = True
+        return dict(entry)
+
+    def state(self, iss, jti):
+        """The budget entry for (iss, jti), or None. Copies."""
+        entry = self._entries.get((iss, jti))
+        return dict(entry) if entry is not None else None
+
+
+# ----------------------------------------------------------------------
 # Verification of presented records.
 # ----------------------------------------------------------------------
 
@@ -343,6 +653,210 @@ def verify_reconciliation(record):
             "permit-tampered: reconciliation digest does not "
             "recompute; the record was edited after reconciliation")
     return True
+
+
+# ----------------------------------------------------------------------
+# The 13-step recipient verification order (saha S8.1, adapted).
+# ----------------------------------------------------------------------
+
+
+def _verification_record(outcome, step, reason=None, *, iss="", jti="",
+                         content_digest="", dependency=None,
+                         http_status=None, receipt=None,
+                         repeat_recorded=False, result=None, leg=None):
+    """One verification record (saha S8.3): ``verified`` /
+    ``refused`` (+reason+step) / ``could-not-check`` (+dependency) /
+    ``replayed`` -- never partial. ``http_status`` carries the saha
+    S9 advisory mapping (403; 409 for idempotency-conflict; 503 for
+    could-not-check)."""
+    return {
+        "outcome": outcome,
+        "step": step,
+        "reason": reason,
+        "iss": iss,
+        "jti": jti,
+        "content_digest": content_digest,
+        "dependency": dependency,
+        "http_status": http_status,
+        "receipt": receipt,
+        "repeat_recorded": repeat_recorded,
+        "result": result,
+        "leg": leg,
+    }
+
+
+def verify_presentation(permit, *, consume_store,
+                        require_durable_store=True,
+                        local_policy_verifier=None, registry=None):
+    """Verify a presented permit in the 13-step order and -- only at
+    step 13 -- atomically consume (iss, jti).
+
+    Returns the verification record (never partial): ``verified``
+    (every step passed; the receipt is attached), ``refused`` (with
+    the reason code and the step at which it stopped), ``replayed``
+    (same (iss, jti) + same content digest: the stored result is
+    returned and the presentation is recorded as a repeat), or
+    ``could-not-check`` (with the unavailable dependency named).
+
+    ``consume_store`` is required: the recipient-side (iss, jti)
+    state. ``require_durable_store`` (default True) is the saha S12
+    admission gate: a non-durable store refuses
+    ``permit-consume-store-not-durable`` unless the deployment
+    explicitly opts into the single-node contract.
+    ``local_policy_verifier`` is an optional leg-style verifier run
+    at step 11 -- before state, so a denial never consumes the
+    permit. ``registry`` is the optional issuer-side PermitRegistry
+    used at step 8 to check a re-issue binding.
+
+    This function never raises for verification outcomes; only a
+    missing consume_store (caller error) raises.
+    """
+    # Step 1: permit present and parses. Absence is malformed -- never
+    # a reason to accept another credential (saha S8.2).
+    if permit is None:
+        return _verification_record("refused", 1, "permit-no-fallback",
+                                    http_status=403)
+    if consume_store is None:
+        raise _PermitMalformed(
+            "permit-malformed: verify_presentation requires a "
+            "consume_store")
+    if not isinstance(permit, dict):
+        return _verification_record("refused", 1, "permit-malformed",
+                                    http_status=403)
+    # Step 2: required fields.
+    for field in _PERMIT_FIELDS + ("permit_digest",):
+        if field not in permit:
+            return _verification_record("refused", 2, "permit-malformed",
+                                        http_status=403)
+    # Step 3: version.
+    if permit.get("version") != _PERMIT_VERSION:
+        return _verification_record("refused", 3, "permit-malformed",
+                                    http_status=403)
+    # Step 4: iss/jti.
+    for field in ("iss", "jti"):
+        if not isinstance(permit[field], str) or not permit[field]:
+            return _verification_record("refused", 4, "permit-malformed",
+                                        http_status=403)
+    iss, jti = permit["iss"], permit["jti"]
+    # Step 5: digest formats and record shapes (cheap structural).
+    for field in ("decision_digest", "mandate_digest", "policy_digest",
+                  "instance_digest", "permit_digest"):
+        if not _is_bare_digest(permit[field]):
+            return _verification_record("refused", 5, "permit-malformed",
+                                        iss=iss, jti=jti, http_status=403)
+    recon = permit["reconciliation_digest"]
+    if recon != "" and not _is_bare_digest(recon):
+        return _verification_record("refused", 5, "permit-malformed",
+                                    iss=iss, jti=jti, http_status=403)
+    if not isinstance(permit["legs_verified"], list):
+        return _verification_record("refused", 5, "permit-malformed",
+                                    iss=iss, jti=jti, http_status=403)
+    # Step 6: instance digest recomputes (crypto).
+    if _instance_digest(iss, jti, permit["decision_digest"],
+                        permit["mandate_digest"],
+                        permit["policy_digest"],
+                        recon) != permit["instance_digest"]:
+        return _verification_record("refused", 6, "permit-tampered",
+                                    iss=iss, jti=jti,
+                                    content_digest=permit[
+                                        "instance_digest"],
+                                    http_status=403)
+    content_digest = permit["instance_digest"]
+    # Step 7: permit digest recomputes (crypto).
+    body = {k: permit[k] for k in _PERMIT_FIELDS}
+    if not hmac.compare_digest(_body_digest(body),
+                               permit["permit_digest"]):
+        return _verification_record("refused", 7, "permit-tampered",
+                                    iss=iss, jti=jti,
+                                    content_digest=content_digest,
+                                    http_status=403)
+    # Step 8: reconciliation binding for re-issued permits.
+    if recon:
+        if registry is None:
+            # The binding cannot be checked: fail closed, never a
+            # partial record. The permit-registry is the dependency.
+            return _verification_record(
+                "could-not-check", 8, "permit-registry-unavailable",
+                iss=iss, jti=jti, content_digest=content_digest,
+                dependency="permit-registry", http_status=503)
+        if not isinstance(registry, PermitRegistry):
+            return _verification_record("refused", 8, "permit-malformed",
+                                        iss=iss, jti=jti,
+                                        content_digest=content_digest,
+                                        http_status=403)
+        entry = registry.lookup(iss, jti)
+        registered = entry["reconciliation"] if entry else None
+        if registered is None or \
+                registered.get("record_digest") != recon:
+            return _verification_record("refused", 8, "permit-malformed",
+                                        iss=iss, jti=jti,
+                                        content_digest=content_digest,
+                                        http_status=403)
+    # Step 9: consume store available -- could-not-check names the
+    # dependency and is distinguished from a policy denial (saha S8.2).
+    if not consume_store.is_available():
+        return _verification_record(
+            "could-not-check", 9, "permit-consume-store-unavailable",
+            iss=iss, jti=jti, content_digest=content_digest,
+            dependency="consume-store", http_status=503)
+    # Step 10: admission gate -- durable, atomic, shared store, or an
+    # explicit single-node deployment contract.
+    if require_durable_store and not consume_store.durable:
+        return _verification_record(
+            "refused", 10, "permit-consume-store-not-durable",
+            iss=iss, jti=jti, content_digest=content_digest,
+            http_status=403)
+    # Step 11: recipient-local policy permits -- BEFORE state, so a
+    # denial never consumes the permit.
+    if local_policy_verifier is not None:
+        try:
+            _verify_leg("local-policy", permit, local_policy_verifier)
+        except BoundPermitError as exc:
+            return _verification_record(
+                "refused", 11,
+                exc.code or "permit-leg-refusal-unmapped",
+                iss=iss, jti=jti, content_digest=content_digest,
+                http_status=403, leg="local-policy")
+    # Step 12: (iss, jti) prior-consumption lookup -- the
+    # replay-vs-conflict decision on the last-known state. A raced
+    # claim between here and step 13 is still reported at this step:
+    # the atomic claim enforces the decision made here.
+    prior = consume_store.lookup(iss, jti, recon)
+    if prior is not None and \
+            prior.get("content_digest") != content_digest:
+        return _verification_record(
+            "refused", 12, "permit-idempotency-conflict",
+            iss=iss, jti=jti, content_digest=content_digest,
+            http_status=409)
+    # Step 13: atomically consume (iss, jti) -- state consumed LAST.
+    try:
+        outcome, slot = consume_store.claim(permit)
+    except _PermitIdempotencyConflict:
+        return _verification_record(
+            "refused", 12, "permit-idempotency-conflict",
+            iss=iss, jti=jti, content_digest=content_digest,
+            http_status=409)
+    except _PermitInProgress:
+        # Same (iss, jti) + same content digest, but the effect is
+        # in flight elsewhere: retryable (saha S12), 503-style. The
+        # permit is not consumed and no result exists yet.
+        return _verification_record(
+            "retryable", 13, "permit-in-progress",
+            iss=iss, jti=jti, content_digest=content_digest,
+            http_status=503)
+    except _PermitConsumeStoreUnavailable as exc:
+        # Backstop: step 9 checks first; a store that dies mid-step
+        # reports could-not-check, not a denial.
+        return exc.verification_record
+    receipt = slot.get("receipt")
+    if outcome == "replayed":
+        return _verification_record(
+            "replayed", 13, None, iss=iss, jti=jti,
+            content_digest=content_digest, receipt=receipt,
+            repeat_recorded=True, result=slot.get("result"))
+    return _verification_record("verified", 13, None, iss=iss, jti=jti,
+                                content_digest=content_digest,
+                                receipt=receipt)
 
 
 # ----------------------------------------------------------------------
@@ -477,39 +991,147 @@ def issue_permit(decision_record, mandate_record, local_policy_binding,
 
 
 # ----------------------------------------------------------------------
-# Consumption and execution (wave-234 ledger, used additively).
+# Consumption and execution (the 13-step order; state consumed LAST).
 # ----------------------------------------------------------------------
 
 
-def consume_permit(permit, ledger):
-    """Consume a permit in the consumption ledger (write-ahead by the
-    ledger). Returns the consumption receipt. A repeat raises the
-    ledger's ``previously-consumed`` carrying the ORIGINAL receipt:
-    replay is an explicit named outcome, never a silent release. A
-    tampered permit is refused before the ledger is touched."""
-    verify_permit(permit)
-    parts = ("bound-permit", permit["iss"], permit["jti"])
-    if permit.get("reconciliation_digest"):
-        parts = parts + (permit["reconciliation_digest"],)
-    return ledger.consume(permit["instance_digest"], parts)
+_REFUSAL_CLASSES = {
+    "permit-no-fallback": _PermitNoFallback,
+    "permit-registry-unavailable": _PermitRegistryUnavailable,
+    "permit-malformed": _PermitMalformed,
+    "permit-tampered": _PermitTampered,
+    "permit-consume-store-unavailable": _PermitConsumeStoreUnavailable,
+    "permit-consume-store-not-durable": _PermitConsumeStoreNotDurable,
+    "permit-idempotency-conflict": _PermitIdempotencyConflict,
+    "permit-in-progress": _PermitInProgress,
+}
 
 
-def execute_permit(permit, ledger, *, execute):
-    """Consume (write-ahead) then execute exactly once.
+def _exception_for_record(record):
+    """Operationalize a non-verified record as a typed refusal
+    carrying the record on ``.verification_record``."""
+    reason = record["reason"]
+    cls = _REFUSAL_CLASSES.get(reason)
+    if cls is _PermitConsumeStoreUnavailable:
+        return cls(
+            "permit-consume-store-unavailable: the consume store is "
+            "unavailable; could-not-check names the consume-store "
+            "dependency (503-style)",
+            verification_record=record)
+    if cls is _PermitRegistryUnavailable:
+        return cls(
+            "permit-registry-unavailable: the re-issue binding cannot "
+            "be checked without the permit registry; could-not-check "
+            "names the permit-registry dependency (503-style)",
+            verification_record=record)
+    if cls is _PermitInProgress:
+        # Not a refusal: the effect is in flight elsewhere. The
+        # caller should retry the presentation later; nothing was
+        # consumed and no result exists yet.
+        return cls(
+            "permit-in-progress: the effect for (iss, jti) is in "
+            "progress elsewhere; retry the presentation later "
+            "(503-style)",
+            verification_record=record)
+    if cls is not None:
+        exc = cls("%s: verification stopped at step %d"
+                  % (reason, record["step"]))
+    else:
+        # A leg-style (caller-named) code, e.g. from the step-11
+        # local-policy verifier.
+        exc = _PermitLegRefused(
+            record.get("leg") or "local-policy", reason,
+            "%s refused the presentation at step %d"
+            % (reason, record["step"]))
+    exc.verification_record = record
+    return exc
 
-    Returns ``(receipt, execution_result)``. The permit is consumed
-    BEFORE ``execute`` runs: a double-submit raises
-    ``previously-consumed`` before the executor is called, so the
-    executor runs exactly once per permit. If ``execute`` raises after
-    consumption, the outcome is unknown -- reconcile it via jti; the
-    permit itself never re-releases.
+
+def consume_permit(permit, ledger, *, consume_store=None,
+                   require_durable_store=True, local_policy_verifier=None,
+                   registry=None):
+    """Verify (13 steps, state consumed LAST) and consume a permit.
+
+    Returns the verification record: ``outcome`` is ``"consumed"``
+    (fresh; the receipt is attached) or ``"replayed"`` (same (iss,
+    jti) + same content digest: the ORIGINAL receipt is returned and
+    the presentation is recorded as a repeat -- never a second
+    release). A different content digest under the same (iss, jti)
+    refuses ``permit-idempotency-conflict``.
+
+    ``consume_store`` is the recipient-side (iss, jti) state; when
+    omitted a single-node in-memory store is built over ``ledger``.
+    ``require_durable_store`` (default True) is the saha S12
+    admission gate: pass False only for an explicit single-node
+    deployment contract.
+    """
+    store = consume_store if consume_store is not None \
+        else InMemoryConsumeStore(ledger)
+    record = verify_presentation(
+        permit, consume_store=store,
+        require_durable_store=require_durable_store,
+        local_policy_verifier=local_policy_verifier, registry=registry)
+    if record["outcome"] in ("refused", "could-not-check", "retryable"):
+        raise _exception_for_record(record)
+    record = dict(record)
+    if record["outcome"] == "verified":
+        record["outcome"] = "consumed"
+    return record
+
+
+def execute_permit(permit, ledger, *, execute, consume_store=None,
+                   require_durable_store=True, budget=None,
+                   budget_kind="spend", local_policy_verifier=None,
+                   registry=None):
+    """Verify (13 steps), consume write-ahead, then execute exactly once.
+
+    Returns ``(record, result)``. The permit is consumed at step 13
+    BEFORE ``execute`` runs. A replay (same (iss, jti) + same content
+    digest) returns the STORED result without calling the executor --
+    recorded as a repeat. An in-progress presentation (another holder
+    claimed first) raises ``permit-in-progress``: retryable, nothing
+    reserved. If ``execute`` raises after consumption, the outcome is
+    unknown: the budget is committed -- for ANY exception, not only
+    timeout. The attempt consumed budget, and saha S13's release
+    causes (not_attempted, signed no_effect) do not cover a failed
+    attempt; timeout is the named case. The caller reconciles via
+    jti; the permit itself never re-releases.
+
+    ``budget`` is an optional ``BudgetLedger``: the reservation is
+    committed on success AND on timeout, never on refusal (a refused
+    permit is never consumed, so nothing was reserved against).
     """
     if not callable(execute):
         raise _PermitMalformed(
             "permit-malformed: execute must be callable")
-    receipt = consume_permit(permit, ledger)
-    result = execute(permit)
-    return receipt, result
+    store = consume_store if consume_store is not None \
+        else InMemoryConsumeStore(ledger)
+    record = verify_presentation(
+        permit, consume_store=store,
+        require_durable_store=require_durable_store,
+        local_policy_verifier=local_policy_verifier, registry=registry)
+    if record["outcome"] in ("refused", "could-not-check", "retryable"):
+        raise _exception_for_record(record)
+    iss, jti = record["iss"], record["jti"]
+    recon = permit.get("reconciliation_digest") or ""
+    if record["outcome"] == "replayed":
+        # The stored result -- the executor is NOT called again.
+        return record, record.get("result")
+    # Fresh: consumed at step 13; perform the effect exactly once.
+    try:
+        result = execute(permit)
+    except Exception:
+        # Unknown outcome (timeout and friends): commit the budget,
+        # do not refund (saha S13); reconcile by jti.
+        if budget is not None:
+            budget.commit(iss, jti, kind=budget_kind)
+        raise
+    store.record_result(iss, jti, result, recon)
+    if budget is not None:
+        budget.commit(iss, jti, kind=budget_kind)
+    record = dict(record)
+    record["outcome"] = "consumed"
+    return record, result
 
 
 # ----------------------------------------------------------------------
@@ -519,22 +1141,76 @@ def execute_permit(permit, ledger, *, execute):
 
 def reconcile_unknown_outcome(permit, ledger, registry, *,
                               execution_evidence=None,
-                              verify_execution=None):
+                              verify_execution=None,
+                              budget=None,
+                              budget_kind="spend",
+                              no_effect_refusal=None,
+                              verify_refusal_signature=None,
+                              consume_store=None):
     """Reconcile an unknown outcome. NEVER mints a permit, never
     retries execution.
 
     Returns a reconciliation record naming (iss, jti) and its state:
     ``completed`` (execution evidence verified and bound to this
-    permit), ``not-executed`` (the instance was never consumed), or
-    ``unknown`` (consumed, no execution evidence). The record is
-    registered in the registry, which unblocks the re-issue path only
-    for a ``not-executed`` settlement.
+    permit), ``not-executed`` (the instance was never consumed, or a
+    SIGNED refusal established no_effect), or ``unknown`` (consumed,
+    no execution evidence). The record is registered in the
+    registry, which unblocks the re-issue path only for a
+    ``not-executed`` settlement.
+
+    ``no_effect_refusal`` + ``verify_refusal_signature`` implement
+    saha S13's signed-failure release: the refusal must be SIGNED by
+    the recipient (``verify_refusal_signature`` returns True); an
+    unsigned refusal refuses ``permit-no-effect-unattested`` and the
+    budget stays committed -- the presenter MUST NOT set no_effect
+    on its strength. ``budget`` (a ``BudgetLedger``) is released on
+    ``not_attempted`` and on signed no_effect. ``budget_kind``
+    labels the conservative commit for a missing entry.
     """
     verify_permit(permit)
     iss = permit["iss"]
     jti = permit["jti"]
     instance_digest = permit["instance_digest"]
-    if execution_evidence is not None:
+    recon = permit.get("reconciliation_digest") or ""
+    if no_effect_refusal is not None and execution_evidence is not None:
+        raise _PermitMalformed(
+            "permit-malformed: cannot claim both execution evidence "
+            "and no_effect for one reconciliation")
+    # From here on the outcome is not provably not-attempted: the
+    # effect was budgeted and its outcome is unknown, so a missing
+    # budget entry is committed conservatively. Only not_attempted
+    # and a signed no_effect release it (saha S13); an unsigned
+    # refusal leaves it committed.
+    if budget is not None and budget.state(iss, jti) is None:
+        budget.commit(iss, jti, kind=budget_kind)
+    if no_effect_refusal is not None:
+        if not isinstance(no_effect_refusal, dict):
+            raise _PermitMalformed(
+                "permit-malformed: no_effect refusal must be a dict")
+        if verify_refusal_signature is None or \
+                not callable(verify_refusal_signature):
+            raise _PermitNoEffectUnattested(
+                "permit-no-effect-unattested: no_effect claimed "
+                "without a refusal-signature verifier; an unsigned "
+                "refusal does not establish no effect")
+        try:
+            signed = verify_refusal_signature(no_effect_refusal)
+        except Exception as exc:
+            raise _PermitNoEffectUnattested(
+                "permit-no-effect-unattested: the refusal-signature "
+                "verifier failed") from exc
+        if not signed:
+            raise _PermitNoEffectUnattested(
+                "permit-no-effect-unattested: the no_effect refusal "
+                "is not signed by the recipient; the presenter MUST "
+                "NOT set no_effect on its strength")
+        if budget is not None:
+            budget.release(iss, jti, on="signed_no_effect")
+        state = "not-executed"
+        evidence_digest = hashlib.sha256(
+            _canonical_dumps(no_effect_refusal).encode("utf-8")
+        ).hexdigest()
+    elif execution_evidence is not None:
         if verify_execution is None:
             raise _PermitMalformed(
                 "permit-malformed: execution evidence supplied "
@@ -556,9 +1232,20 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
         evidence_digest = hashlib.sha256(
             _canonical_dumps(execution_evidence).encode("utf-8")
         ).hexdigest()
+    elif consume_store is not None:
+        if consume_store.lookup(iss, jti, recon) is None:
+            state = "not-executed"
+            evidence_digest = ""
+            if budget is not None:
+                budget.release(iss, jti, on="not_attempted")
+        else:
+            state = "unknown"
+            evidence_digest = ""
     elif not ledger.is_consumed(instance_digest):
         state = "not-executed"
         evidence_digest = ""
+        if budget is not None:
+            budget.release(iss, jti, on="not_attempted")
     else:
         state = "unknown"
         evidence_digest = ""
