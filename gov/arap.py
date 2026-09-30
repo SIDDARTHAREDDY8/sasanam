@@ -60,6 +60,8 @@ import secrets
 import time
 from hashlib import sha256
 
+from gov import permit_leases as _permit_leases
+
 # ----------------------------------------------------------------------
 # Error vocabulary.
 # ----------------------------------------------------------------------
@@ -290,7 +292,8 @@ def new_request(request_id, subject, resource, action, *, context=None,
     }
 
 
-def transition(req, new_status, *, by, audit=None):
+def transition(req, new_status, *, by, audit=None, lease_registry=None,
+               lease_ttl_s=3600):
     """Move a request to a new lifecycle status.
 
     Only forward transitions from a non-terminal status are allowed:
@@ -299,6 +302,15 @@ def transition(req, new_status, *, by, audit=None):
     target statuses are an authoring bug (ValueError). Every accepted
     transition is appended to ``history`` and, when ``audit`` is
     supplied, emitted as an ``arap_status_transition`` audit entry.
+
+    When ``lease_registry`` (a ``gov.permit_leases.PermitRegistry``) is
+    supplied and the transition is to ``"approved"``, a one-use,
+    mission-bound permit lease is issued for the request's
+    integrity-bound parameters and its id is recorded as
+    ``req["permit_id"]``. Requests without a ``context_binding`` get no
+    permit (the skip is audited as ``arap_permit_skipped``). With
+    ``lease_registry=None`` (the default) the record shape and behavior
+    are exactly the legacy ones.
     """
     if new_status not in ALL_STATUSES:
         raise ValueError("unknown ARAP status %r" % (new_status,))
@@ -318,6 +330,9 @@ def transition(req, new_status, *, by, audit=None):
                "request_id": req.get("request_id"),
                "from": old, "to": new_status, "by": by,
                "at": entry["at"]})
+    if lease_registry is not None and new_status == "approved":
+        _permit_leases.maybe_issue_for_transition(
+            req, lease_registry, ttl_s=lease_ttl_s, audit=audit)
     return req
 
 

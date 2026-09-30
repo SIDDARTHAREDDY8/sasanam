@@ -580,6 +580,8 @@ class JailPolicyRegistry:
         self._issuer = bytes(issuer_public_key)
         self._active = {}   # (name, version) -> (normalized body, signature)
         self._floor = {}    # name -> highest activated version
+        self._pci = {}      # (name, version) -> CompiledPCIAllowlist
+        self._pci_floor = {}  # name -> frozenset of pins (tighten-only)
 
     def _signature_ok(self, body, signature):
         if not isinstance(signature, (bytes, bytearray)) \
@@ -589,7 +591,7 @@ class JailPolicyRegistry:
                                bytes(signature)))
 
     def activate(self, signed, *, now=None, features=None,
-                 rollback_guard=None):
+                 rollback_guard=None, pci_allowlist=None):
         """Activate a signed policy envelope
         ``{"body": <body dict>, "signature": <64 bytes>}``.
 
@@ -612,6 +614,17 @@ class JailPolicyRegistry:
         the in-memory ``policy-version-downgrade``. With
         ``rollback_guard=None`` (the default) the legacy path is
         byte-identical.
+
+        When ``pci_allowlist`` (a
+        ``gov.jail_pci.CompiledPCIAllowlist``) is supplied, it is
+        stored for this (name, version) after the signature check and
+        ``authorize_pci_attach`` consults it for device-attachment
+        decisions. Updates across versions are tighten-only: new pins
+        must be a subset of the pins already allowed for the policy
+        name (``pci-allowlist-widening-refused``). With
+        ``pci_allowlist=None`` (the default) the legacy path is
+        byte-identical and any attach attempt is refused
+        ``pci-attach-refused`` (deny-by-default).
         """
         if not isinstance(signed, dict):
             raise JailPolicyError(
@@ -657,6 +670,29 @@ class JailPolicyRegistry:
                 "policy-version-downgrade",
                 "version %d <= activated floor %d for %r"
                 % (body["version"], floor, body["policy_name"]))
+        # PCI posture is validated BEFORE any state commits: a refused
+        # activation (widening, wrong type) must not move the floor or
+        # leave a half-stored allowlist.
+        pci_new_pins = None
+        if pci_allowlist is not None:
+            from gov import jail_pci as _jpci
+            if not isinstance(pci_allowlist, _jpci.CompiledPCIAllowlist):
+                raise JailPolicyError(
+                    "registry-malformed",
+                    "pci_allowlist must be a "
+                    "gov.jail_pci.CompiledPCIAllowlist")
+            new_pins = frozenset(pci_allowlist.pins())
+            old_pins = self._pci_floor.get(body["policy_name"])
+            if old_pins is not None and not new_pins <= old_pins:
+                raise JailPolicyError(
+                    _jpci.CODE_WIDENING_REFUSED,
+                    "policy %r v%d allowlist pins %s beyond the "
+                    "tighten-only floor %s (wider posture needs a new "
+                    "policy name)"
+                    % (body["policy_name"], body["version"],
+                       sorted(new_pins - old_pins),
+                       sorted(old_pins)))
+            pci_new_pins = new_pins
         if not (body["not_before"] <= epoch < body["not_after"]):
             raise JailPolicyError(
                 "policy-stale",
@@ -666,6 +702,16 @@ class JailPolicyRegistry:
         self._active[(body["policy_name"], body["version"])] = (
             body, bytes(signature))
         self._floor[body["policy_name"]] = body["version"]
+        if pci_allowlist is not None:
+            # Tighten-only opt-in, committed atomically with the
+            # activation above: the allowlist is stored only after the
+            # signature check, so a forged policy cannot smuggle
+            # device posture. Updates across versions already passed
+            # the subset check above -- a wider device posture is a
+            # new confinement claim and needs a new policy name.
+            self._pci_floor[body["policy_name"]] = pci_new_pins
+            self._pci[(body["policy_name"], body["version"])] = \
+                pci_allowlist
         return body
 
     def get(self, policy_name, version, *, now=None):
@@ -698,3 +744,27 @@ class JailPolicyRegistry:
         report on success, raises JailPolicyError otherwise."""
         body = self.get(policy_name, version, now=now)
         return check_invocation(body, request)
+
+    def authorize_pci_attach(self, policy_name, version, device_name,
+                             device_digest, *, now=None):
+        """Authorize one PCI device attach against the stored
+        allowlist for (policy_name, version).
+
+        The policy signature and validity window are re-checked first
+        (``get()``), then the allowlist stored at activation is
+        consulted. With no stored allowlist the attach is refused
+        ``pci-attach-refused`` -- deny-by-default, never silently
+        allowed. Returns the audit-visible grant on success.
+        """
+        self.get(policy_name, version, now=now)
+        from gov import jail_pci as _jpci
+        allowlist = self._pci.get((policy_name, version))
+        if allowlist is None:
+            raise JailPolicyError(
+                _jpci.CODE_ATTACH_REFUSED,
+                "policy %r v%s has no PCI allowlist: device attachment "
+                "is denied by default" % (policy_name, version))
+        try:
+            return allowlist.authorize(device_name, device_digest)
+        except _jpci.JailPCIError as exc:
+            raise JailPolicyError(exc.code, exc.detail)

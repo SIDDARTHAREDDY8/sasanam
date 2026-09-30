@@ -843,14 +843,29 @@ class CompiledJailPolicy(CompiledPolicy):
     construction. Data refusals raise ``jail_policy.JailPolicyError``
     with the module's own evaluation codes (``invocation-*``,
     ``policy-needs-unimplemented-feature``), never the compile code.
+
+    ``pci_allowlist`` (a ``gov.jail_pci.CompiledPCIAllowlist``) is the
+    tighten-only opt-in for PCI device attachment: stored at compile
+    and consulted by ``authorize_pci``. With ``None`` (the default)
+    the compiled policy is byte-identical to legacy and
+    ``authorize_pci`` refuses ``pci-attach-refused`` (deny-by-default).
     """
 
-    def __init__(self, body):
+    def __init__(self, body, pci_allowlist=None):
         if not isinstance(body, dict):
             raise PolicyCompilationError(
                 "jail", [FieldError("spec", "a jail policy body dict",
                                    type(body).__name__)])
         self._body = _load_jail_body_validated(body)
+        if pci_allowlist is not None:
+            from . import jail_pci as _jpci
+            if not isinstance(pci_allowlist, _jpci.CompiledPCIAllowlist):
+                raise PolicyCompilationError(
+                    "jail", [FieldError(
+                        "pci_allowlist",
+                        "a gov.jail_pci.CompiledPCIAllowlist",
+                        type(pci_allowlist).__name__)])
+        self._pci_allowlist = pci_allowlist
 
     @property
     def body(self):
@@ -869,19 +884,37 @@ class CompiledJailPolicy(CompiledPolicy):
         implement the compiled policy."""
         return _jp.check_backend(self._body, features=features)
 
+    def authorize_pci(self, device_name, device_digest):
+        """Authorize one PCI device attach against the compiled
+        allowlist. With no allowlist stored the attach is refused
+        ``pci-attach-refused`` (deny-by-default)."""
+        from . import jail_pci as _jpci
+        if self._pci_allowlist is None:
+            raise _jp.JailPolicyError(
+                _jpci.CODE_ATTACH_REFUSED,
+                "compiled jail policy has no PCI allowlist: device "
+                "attachment is denied by default")
+        try:
+            return self._pci_allowlist.authorize(device_name, device_digest)
+        except _jpci.JailPCIError as exc:
+            raise _jp.JailPolicyError(exc.code, exc.detail)
+
     # No body/policy parameter anywhere on the evaluation path.
 
 
-def compile_jail_policy(body, audit=None):
+def compile_jail_policy(body, audit=None, pci_allowlist=None):
     """Compile-time front gate for a jail policy body.
 
     Validates the WHOLE body ONCE against the closed vocabulary;
     authoring failures raise ``PolicyCompilationError`` (audited when
     ``audit`` is supplied). Returns a ``CompiledJailPolicy`` -- one
-    compiled policy serves many invocation checks.
+    compiled policy serves many invocation checks. ``pci_allowlist``
+    (a ``gov.jail_pci.CompiledPCIAllowlist``) is the tighten-only
+    opt-in for PCI device attachment; ``None`` (the default) leaves
+    the compiled policy byte-identical to legacy.
     """
     try:
-        compiled = CompiledJailPolicy(body)
+        compiled = CompiledJailPolicy(body, pci_allowlist=pci_allowlist)
     except PolicyCompilationError as exc:
         if audit is not None:
             audit({"event": "policy_compile_refused",
