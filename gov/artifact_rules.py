@@ -303,10 +303,24 @@ def verify_artifacts(materials, products, rule_specs, context=""):
     ``load_rules``). ``context``: optional label echoed in the report
     and in error messages (which step / promotion this check is for).
     """
-    ctx = ("[%s] " % context) if context else ""
     materials = _check_artifact_map(materials, "materials")
     products = _check_artifact_map(products, "products")
     rules = load_rules(rule_specs)
+    return _evaluate(materials, products, rules, context)
+
+
+def _evaluate(materials, products, rules, context=""):
+    """Evaluate already-loaded (normalized) rules against checked
+    artifact maps. ``rules`` must be the output of ``load_rules`` --
+    every rule-shape authoring error was refused at load time, so
+    nothing in this path can raise on a rule authoring problem. Only
+    artifact DATA problems and rule violations raise here.
+
+    This is the compile-once seam: :func:`verify_artifacts` loads and
+    evaluates in one call; a compiled ruleset (see
+    ``gov.policy_compile``) loads once and calls this per evaluation.
+    """
+    ctx = ("[%s] " % context) if context else ""
     queue = _build_queue(materials, products)
     per_rule = []
 

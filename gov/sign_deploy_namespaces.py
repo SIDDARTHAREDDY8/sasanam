@@ -341,7 +341,8 @@ class NamespaceRegistry(object):
 
     # -- promotion ceremony ----------------------------------------------
     def promote(self, name, *, operator_ids, materials=None, products=None,
-                identity_policy=None, identity_claims=None):
+                identity_policy=None, identity_claims=None,
+                quorum_policy=None, quorum_links=None):
         """Promote a signed staged bundle into the enforced namespace.
 
         Requires the two-operator ceremony AND a fresh signature
@@ -364,6 +365,20 @@ class NamespaceRegistry(object):
         (``identity-policy-refused``), audited as ``promotion-denied``.
         A configured policy with absent claims fails closed; without a
         policy the legacy path is byte-identical.
+
+        When ``quorum_policy`` (a ``gov.quorum_policy.QuorumStep``) is
+        supplied, the caller must also supply ``quorum_links``: a list
+        of functionary link records for the step (see
+        ``gov.quorum_policy.make_link_record``). A THRESHOLD of the
+        records must AGREE on the asserted statement digest --
+        records that disagree do not count toward the threshold, and
+        conflicting or ambiguous quorums DENY the promotion
+        (``quorum-gate-refused``), audited as ``promotion-denied``.
+        The gate runs after the identity gate, so it is strictly
+        tighten-only. A configured policy with absent links fails
+        closed; without a policy the legacy path is byte-identical.
+        The keyset is the registry's own pinned verifier set -- a
+        record naming a keyid not pinned here is refused.
         """
         _check_name(name)
         record = self._staging.get(name)
@@ -406,6 +421,31 @@ class NamespaceRegistry(object):
                           name=name, digest=record["digest"])
                 raise NamespaceError("identity-policy-refused", str(exc))
             gate_suffix += ("; identity_policy=%s" % admission["code"])
+        if quorum_policy is not None:
+            from gov import quorum_policy as _quorum_policy
+            if not isinstance(quorum_policy, _quorum_policy.QuorumStep):
+                raise NamespaceError(
+                    "bad-quorum-policy",
+                    "quorum_policy must be a gov.quorum_policy.QuorumStep")
+            if not isinstance(quorum_links, (list, tuple)):
+                self._log("promotion-denied",
+                          "quorum-gate: policy configured but no link "
+                          "records supplied",
+                          name=name, digest=record["digest"])
+                raise NamespaceError(
+                    "quorum-gate-refused",
+                    "quorum policy configured but quorum_links absent")
+            try:
+                quorum_report = _quorum_policy.verify_quorum(
+                    quorum_policy, quorum_links,
+                    {v.key_id: v for v in self._verifiers})
+            except _quorum_policy.QuorumPolicyError as exc:
+                self._log("promotion-denied", "quorum-gate: %s" % exc,
+                          name=name, digest=record["digest"])
+                raise NamespaceError("quorum-gate-refused", str(exc))
+            gate_suffix += ("; quorum=%s/%d"
+                            % (quorum_report["statement_digest"][:12],
+                               quorum_report["distinct_signers"]))
         promoted = dict(record, content=bytes(record["content"]))
         promoted["status"] = "promoted"
         promoted["signed_by"] = list(key_ids)
