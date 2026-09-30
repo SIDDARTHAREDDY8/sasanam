@@ -8336,6 +8336,351 @@ TAXONOMY = {
         "evidence_kinds_required": ['key-reference'],
         "reverify_steps": ['recompute'],
     },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-issuer-unbound': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-issuer-unbound',
+        "human": "the token endpoint's origin is not the bound "
+                 "authorization server's origin nor a "
+                 "deployment-declared alternate; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'endpoint'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-issuer-unverified': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-issuer-unverified',
+        "human": 'the issuer hint or server metadata names a different '
+                 'issuer than the sealed authorization-server binding; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'metadata'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-metadata-malformed': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-metadata-malformed',
+        "human": 'a presented runtime input (binding wrapper, endpoint, '
+                 'issuer hint, metadata, flag) is malformed; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-credential-misbound': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-credential-misbound',
+        "human": 'a credential stored under one authorization server is '
+                 'presented at another authorization server\'s token '
+                 'endpoint; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'credential-label'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-fix-gap-refused': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-fix-gap-refused',
+        "human": 'issuer was omitted for a provider that requires it '
+                 '(patched-but-vulnerable-by-configuration); refused '
+                 'fail-closed, never silent fallback',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-key-missing': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-key-missing',
+        "human": 'no deployment key supplied for the OAuth binding; '
+                 'failing closed (no dev-key fallback)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-binding-tampered': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-binding-tampered',
+        "human": "the sealed authorization-server binding's MAC does "
+                 'not cover its bytes; refused as tamper, never as a '
+                 'shape gap',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
+    'mcp-oauth-verdict-mismatched': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-verdict-mismatched',
+        "human": 'an OAuth verdict presented for a different token '
+                 'endpoint than it was granted for; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verdict', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
+    'spawn-context-record-malformed': {
+        "domain": 'spawn-context',
+        "code": 'spawn-context-record-malformed',
+        "human": 'the spawn/egress/persistence record is not the expected '
+                 'shape (unknown spawn context, non-string flags, bad '
+                 'ownership class); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['spawn-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
+    'tool-spawn-context-untrusted': {
+        "domain": 'spawn-context',
+        "code": 'tool-spawn-context-untrusted',
+        "human": 'permission-bypass flags presented through a postinstall '
+                 'spawn context, or through an unvouched context claiming '
+                 'to be user-invoked; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['spawn-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
+    'spawn-context-declared-risk': {
+        "domain": 'spawn-context',
+        "code": 'spawn-context-declared-risk',
+        "human": 'permission-bypass flags in a user-invoked, '
+                 'deployment-vouched, explicitly authorized context; '
+                 'allowed-but-declared, never silent',
+        "severity": 'low',
+        "evidence_kinds_required": ['spawn-record', 'provenance'],
+        "reverify_steps": ['recompute', 'authority-check'],
+    },
+    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
+    'egress-destination-exemption-refused': {
+        "domain": 'spawn-context',
+        "code": 'egress-destination-exemption-refused',
+        "human": 'a review exemption claimed on destination-ownership '
+                 'grounds, or deployment-pinned status claimed for a '
+                 'destination the pinned map does not vouch; '
+                 'destination-ownership never exempts review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['egress-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
+    'persistence-modification-refused': {
+        "domain": 'spawn-context',
+        "code": 'persistence-modification-refused',
+        "human": 'a shell-rc target written by an unvouched source; only '
+                 'deployment-vouched admin sources may modify rc files; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['persistence-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    # Wave-245 lane: from wave245-registry-adversary
+    'package-signer-compromised': {
+        "domain": 'registry-acceptance',
+        "code": 'package-signer-compromised',
+        "human": 'a counted signature key is in the revocation set; the '
+                 'signature verifies but the signer is known-compromised '
+                 '(tamper-window shape); refused',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'signature', 'revocation'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane: from wave245-registry-adversary
+    'package-identity-name-untrusted': {
+        "domain": 'registry-acceptance',
+        "code": 'package-identity-name-untrusted',
+        "human": 'policy declares trust by name (account/publisher/name '
+                 'allowlist); trust is by pinned key identity, never by '
+                 'name; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane: from wave245-registry-adversary
+    'package-digest-first-seen-mismatch': {
+        "domain": 'registry-acceptance',
+        "code": 'package-digest-first-seen-mismatch',
+        "human": 'package digest differs from the first-seen digest for '
+                 'this name+version; the registry substituted bytes after '
+                 'first observation; refused',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'package-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane-5: delegation freshness gate
+    # (gov/delegation_freshness.py; yunaremaia/agent-capability-attestation
+    # ADAPT, patterns only, MIT).
+    'delegation-ttl-missing': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-ttl-missing',
+        "human": 'delegation freshness: the capability attestation carries '
+                 'no usable TTL (missing, zero, negative, non-integer, or '
+                 'boolean); treated as expired and refused fail-closed, '
+                 'never an infinite-life attestation',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-freshness-expired': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-freshness-expired',
+        "human": 'delegation freshness: the attestation TTL has elapsed at '
+                 'check time (inclusive of the exact expiry instant); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'freshness-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-monotonicity-violated': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-monotonicity-violated',
+        "human": 'delegation freshness: a hop delegates a capability entry '
+                 'not covered by the parent set (exact entry, "*", or '
+                 '"<prefix>:*"); widening refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'parent-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-state-mismatch': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-state-mismatch',
+        "human": 'delegation freshness: the attestation state_hash does '
+                 'not equal the digest of its presented capability set; '
+                 'the hop swapped its set or never bound it; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-attestation-malformed': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-attestation-malformed',
+        "human": 'delegation freshness: the attestation record is not the '
+                 'expected shape (non-string fields, non-sequence or '
+                 'non-string capabilities, unparseable or timezone-naive '
+                 'timestamps); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ttl-excessive': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-ttl-excessive',
+        "human": 'delegation freshness: the attestation TTL exceeds the '
+                 'deployment max_ttl cap; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'deployment-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-chain-broken': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-chain-broken',
+        "human": 'delegation freshness: the delegation chain is empty, not '
+                 'a sequence, or a hop issuer does not equal its parent '
+                 "subject; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 8: from wave245-egress-propagation
+    'egress-injection-propagation': {
+        "domain": 'egress',
+        "code": 'egress-injection-propagation',
+        "human": 'outbound public-channel content reproduces an injected '
+                 'instruction span observed from untrusted input; refused '
+                 'at hop 1',
+        "severity": 'high',
+        "evidence_kinds_required": ['egress', 'span'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 8: from wave245-egress-propagation
+    'instruction-provenance-public-channel': {
+        "domain": 'egress',
+        "code": 'instruction-provenance-public-channel',
+        "human": 'instruction authority requested for public-channel '
+                 'provenance; public channels are untrusted input and can '
+                 'never become instruction authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 8: from wave245-egress-propagation
+    'instruction-provenance-untrusted': {
+        "domain": 'egress',
+        "code": 'instruction-provenance-untrusted',
+        "human": 'instruction authority requested for provenance outside '
+                 'the trusted set; untrusted input can never become '
+                 'instruction authority',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 8: from wave245-egress-propagation
+    'egress-propagation-malformed': {
+        "domain": 'egress',
+        "code": 'egress-propagation-malformed',
+        "human": 'the egress-propagation guard input is not the shape the '
+                 'seam speaks; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-245 lane 10: JWKS redirect-poisoning guard (GHSA-9v7f-9g4p-ffgj)
+    'jwks-redirect-refused': {
+        "domain": 'jwks',
+        "code": 'jwks-redirect-refused',
+        "human": 'a JWKS fetch response carried a redirect (3xx status or '
+                 'Location header); refused without contacting the redirect '
+                 'destination -- redirects are never followed for key '
+                 'material',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-origin-mismatch': {
+        "domain": 'jwks',
+        "code": 'jwks-origin-mismatch',
+        "human": 'the JWKS request URL origin does not match the pinned '
+                 'issuer origin; refused before any transport call',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-url-malformed': {
+        "domain": 'jwks',
+        "code": 'jwks-url-malformed',
+        "human": 'the JWKS request URL or pinned origin is not a '
+                 'well-formed absolute http(s) URL; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-issuer-unpinned': {
+        "domain": 'jwks',
+        "code": 'jwks-issuer-unpinned',
+        "human": 'no pinned issuer origin supplied for a JWKS fetch; '
+                 'refused rather than fetching unpinned key material',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-transport-failed': {
+        "domain": 'jwks',
+        "code": 'jwks-transport-failed',
+        "human": 'the deployment transport raised, returned a malformed '
+                 'response, or returned a non-2xx status; refused rather '
+                 'than treating it as key material',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
 }
 
 

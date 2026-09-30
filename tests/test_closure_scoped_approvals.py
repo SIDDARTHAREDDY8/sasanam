@@ -205,8 +205,8 @@ class TaxonomyPinTest(unittest.TestCase):
         # + 6 attested-channel + 2 outcome-vocabulary + 5 verifier-failclosed
         # + 10 effect-agreement/registry/mcp), additive only, composed from the
         # eight lane commits by direct byte-verification.
-        # Wave-244 merge: re-pointed to 863 (35 additive wave-244 codes), additive only, comment + assert.
-        self.assertEqual(len(dc.TAXONOMY), 863)
+        # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
+        self.assertEqual(len(dc.TAXONOMY), 895)
 
 
 if __name__ == "__main__":

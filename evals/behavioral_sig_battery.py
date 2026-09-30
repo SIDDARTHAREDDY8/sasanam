@@ -166,6 +166,49 @@ def approval_benign(t0, principal="user-1"):
                principal) for i in range(2)]
 
 
+def divd_narrative_tp(t0, principal="svc-shadow-7"):
+    """DIVD 2026-09: machine-speed burst + self-commenting narrative."""
+    out = [ev(t0 + i * 0.6, "api_call", "api_call", principal,
+              session="s1") for i in range(14)]
+    out += [ev(t0 + 0.5 + i * 1.1, "log_write", "decision_note",
+               principal, session="s1") for i in range(15)]
+    return out
+
+
+def quiet_logger_benign(t0, principal="user-1"):
+    """Routine operator logging: terse, few narratives.
+
+    Actions use irregular gaps on purpose: this fixture isolates the
+    narrative signature (which keys on note count + ratio, never
+    cadence), so it must not exercise burst_cadence's documented
+    machine-regular confound.
+    """
+    out, t = [], t0
+    for i in range(14):
+        out.append(ev(t, "api_call", "api_call", principal,
+                      session="s1"))
+        t += 0.2 if i % 3 else 7.0
+    out += [ev(t0 + 0.5 + i * 30.0, "log_write", "decision_note",
+               principal, session="s1") for i in range(3)]
+    return out
+
+
+def self_interference_tp(t0, principal="svc-shadow-7"):
+    """DIVD 2026-09: password spray breaking the agent's own AiTM."""
+    return [
+        ev(t0, "net_probe", "aitm_establish", principal,
+           target="segment-dmz", session="s1"),
+        ev(t0 + 4.0, "auth_try", "password_spray", principal,
+           target="sso-portal", session="s1"),
+    ]
+
+
+def spray_alone_benign(t0, principal="user-1"):
+    """Password spray with no prior established capability."""
+    return [ev(t0 + i, "auth_try", "password_spray", principal,
+               target="sso-portal", session="s1") for i in range(3)]
+
+
 HINTS = [r"secret", r"credential", r"ssh-key", r"token"]
 
 
@@ -252,6 +295,28 @@ def main():
           not matched_id(f, "approval_queue_spam"),
           "2 requests must not match")
 
+    # p18 self_narrated_trajectory (DIVD wave-245): self-commenting
+    # narrative volume; 3 terse notes must not match.
+    f = bs.scan(divd_narrative_tp(t0))
+    check("p18_self_narrated_trajectory_tp",
+          matched_id(f, "self_narrated_trajectory"),
+          "noisy machine-speed self-commentary must match")
+    f = bs.scan(quiet_logger_benign(t0))
+    check("p18_self_narrated_trajectory_benign",
+          not matched_id(f, "self_narrated_trajectory"),
+          "3 terse notes must not match")
+
+    # p19 self_interference (DIVD wave-245): spray after own AiTM;
+    # spray alone is not self-interference.
+    f = bs.scan(self_interference_tp(t0))
+    check("p19_self_interference_tp",
+          matched_id(f, "self_interference"),
+          "spray after own AiTM establishment must match")
+    f = bs.scan(spray_alone_benign(t0))
+    check("p19_self_interference_benign",
+          not matched_id(f, "self_interference"),
+          "spray with no prior establishment must not match")
+
     # p13 registry shape / versioning
     sigs = bs.SIGNATURES
     pinned = all(s.signature_id and s.version and s.name and s.desc
@@ -287,6 +352,10 @@ def main():
                                for i in range(8)],
         "approval_queue_spam": [approval_spam_tp(BASE + i * 10000)
                                 for i in range(8)],
+        "self_narrated_trajectory": [divd_narrative_tp(BASE + i * 10000)
+                                    for i in range(8)],
+        "self_interference": [self_interference_tp(BASE + i * 10000)
+                              for i in range(8)],
     }
     bens = []
     for i in range(4):
@@ -295,6 +364,8 @@ def main():
         bens.append(paste_burst_benign(BASE + 500000 + i * 10000))
         bens.append(memwrite_benign(BASE + 500000 + i * 10000))
         bens.append(approval_benign(BASE + 500000 + i * 10000))
+        bens.append(quiet_logger_benign(BASE + 500000 + i * 10000))
+        bens.append(spray_alone_benign(BASE + 500000 + i * 10000))
     per_sig = {}
     for sig_id in sigs:
         tps = tp_sets[sig_id]

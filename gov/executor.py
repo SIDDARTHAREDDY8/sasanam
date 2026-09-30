@@ -982,6 +982,14 @@ class ToolExecutor:
                  # allow without touching anything; note_propagation_input
                  # is a no-op).
                  propagation_tracker=None,
+                 # Public-channel propagation refusal (Row 19, wave-245
+                 # lane 8): appended LAST for the same
+                 # positional-misalignment reason. Opt-in: None
+                 # (default) = zero behavior change
+                 # (check_public_channel_egress returns a silent allow
+                 # without touching anything; note_public_channel_input
+                 # is a no-op).
+                 propagation_guard=None,
                  # Deployment-pinned artifact manifest (row 12,
                  # wave-158): appended LAST for the same
                  # positional-misalignment reason. DEFAULT-ON: the
@@ -1540,6 +1548,11 @@ class ToolExecutor:
         # (check_output_propagation returns a silent allow without
         # touching anything; note_propagation_input is a no-op).
         self.propagation_tracker = propagation_tracker
+        # Wave-245 lane 8 (Row 19): public-channel propagation guard,
+        # operator-supplied. Opt-in: None = zero behavior change
+        # (check_public_channel_egress returns a silent allow without
+        # touching anything; note_public_channel_input is a no-op).
+        self.propagation_guard = propagation_guard
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -4072,6 +4085,24 @@ class ToolExecutor:
         return self.propagation_tracker.observe_input(agent_id, source_id,
                                                       text)
 
+    def note_public_channel_input(self, agent_id, source_id, text,
+                                  provenance):
+        """Wave-245 lane 8 (Row 19): observe one input-context segment
+        WITH its provenance for the public-channel propagation guard.
+
+        Unlike ``note_propagation_input`` this records where the input
+        came from; only trusted provenance (user / operator /
+        deployment-policy / deployer) can ever exempt a reproduced
+        span from the hop-1 refusal or grant instruction authority.
+        With no guard installed this is a no-op returning
+        ``{"observed": False}`` (zero behavior change).
+        """
+        if self.propagation_guard is None:
+            return {"observed": False, "agent_id": str(agent_id),
+                    "source_id": str(source_id)}
+        return self.propagation_guard.observe_input(agent_id, source_id,
+                                                    text, provenance)
+
     def check_output_propagation(self, agent_id, channel, output_text,
                                  user_request=None):
         """Wave-151 (Row 19): output-boundary injection-propagation check.
@@ -4117,6 +4148,55 @@ class ToolExecutor:
             "detail": detail,
             "reason": ("injection-propagation suspect (triage-only, "
                        "execution proceeds; never a block): %s" % detail),
+        })
+        return res
+
+    def check_public_channel_egress(self, agent_id, channel, content,
+                                    user_request=None):
+        """Wave-245 lane 8 (Row 19): hop-1 refusal for public-channel
+        injection propagation.
+
+        When a ``propagation_guard`` was installed at construction
+        (opt-in), reviews one boundary-crossing output destined for a
+        PUBLIC channel (email reply, shared doc, public comment, ...).
+        On ``refuse`` a LOUD ``egress_propagation_refused`` audit
+        event is appended (flag "egress_propagation", decision code,
+        reproduced span(s), untrusted source ids, channel) and the
+        verdict is returned -- the deployment must NOT let the send
+        proceed. This is the hop-1 block the wave-151/152 triage seam
+        deliberately does not do: non-public channels stay with the
+        triage tier.
+
+        With no guard installed this returns a silent ``allow`` result
+        and does nothing (zero behavior change).
+        """
+        silent = {"verdict": "allow", "channel": str(channel),
+                  "agent_id": str(agent_id),
+                  "reason": "no_propagation_guard"}
+        if self.propagation_guard is None:
+            return silent
+        res = self.propagation_guard.review_outbound(agent_id, channel,
+                                                     content,
+                                                     user_request=user_request)
+        if res.get("verdict") != "refuse":
+            return res
+        detail = ("channel=%s code=%s spans=%d sources=%s" % (
+            res.get("channel"), res.get("code"),
+            len(res.get("spans", [])),
+            ",".join(res.get("sources", []))))
+        self.log.append({
+            "event": "egress_propagation_refused",
+            "flag": "egress_propagation",
+            "run_id": self.run_id,
+            "agent_id": str(agent_id),
+            "channel": res.get("channel"),
+            "code": res.get("code"),
+            "spans": res.get("spans", []),
+            "sources": res.get("sources", []),
+            "detail": detail,
+            "reason": ("public-channel injection-propagation REFUSED "
+                       "at hop 1 (execution of the send must not "
+                       "proceed): %s" % detail),
         })
         return res
 

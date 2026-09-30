@@ -284,6 +284,16 @@ ALLOWED_HMAC_SITES = {
     # binding for scope grants, not a credential.
     ("gov/token_scope_enforcement.py", "_mac", 0):
         "token-scope grant/policy MAC; scope key (required explicit pass, fail-closed when absent), domain-separated",
+    # gov/mcp_oauth_binding.py (wave-245, lane 1): the MCP OAuth
+    # authorization-server binding seal. The key is the deployment-owned
+    # AS binding key, REQUIRED explicitly by seal_binding
+    # (_key_or_refuse fail-closes mcp-oauth-key-missing when absent or
+    # empty; no dev-key fallback, never derived in-repo).
+    # Domain-separated via _BINDING_DOMAIN over the canonical binding
+    # body (v, issuer, client_id, token_endpoint_allowlist); an integrity
+    # binding for the deployment's AS binding, not a credential.
+    ("gov/mcp_oauth_binding.py", "_mac", 0):
+        "MCP OAuth AS binding seal MAC; deployment-owned key (required explicit pass, fail-closed when absent), domain-separated",
 }
 
 

@@ -54,7 +54,8 @@ class TestNormalize(unittest.TestCase):
 class TestRegistry(unittest.TestCase):
     def test_version_pinned(self):
         self.assertEqual(REGISTRY_VERSION, "1")
-        self.assertEqual(len(SIGNATURES), 6)
+        # Wave-245 (DIVD): self_narrated_trajectory + self_interference.
+        self.assertEqual(len(SIGNATURES), 8)
 
     def test_every_signature_versioned_and_documented(self):
         for sig_id, sig in SIGNATURES.items():
@@ -157,6 +158,150 @@ class TestDiscoveryAdapter(unittest.TestCase):
 
     def test_no_match_no_signals(self):
         self.assertEqual(to_discovery_signals(scan([ev(T0)])), [])
+
+
+class TestSelfNarratedTrajectory(unittest.TestCase):
+    """Wave-245 (DIVD): self-commenting decision narratives."""
+
+    def test_version_pinned(self):
+        sig = SIGNATURES["self_narrated_trajectory"]
+        self.assertEqual(sig.version, "v1")
+        self.assertEqual(sig.params["min_notes"], 12)
+        self.assertEqual(sig.params["min_note_ratio"], 0.4)
+
+    def _entries(self, n_notes, n_actions=14):
+        entries = [ev(T0 + i * 0.6) for i in range(n_actions)]
+        for i in range(n_notes):
+            e = ev(T0 + 0.5 + i * 1.1, tool="log_write",
+                   event="decision_note")
+            entries.append(e)
+        return entries
+
+    def _matched(self, entries):
+        return [f for f in scan(entries)
+                if f.signature_id == "self_narrated_trajectory"
+                and f.matched]
+
+    def test_true_positive(self):
+        m = self._matched(self._entries(15))
+        self.assertEqual(len(m), 1)
+        self.assertGreater(m[0].strength, 0.0)
+        self.assertLessEqual(m[0].strength, 1.0)
+
+    def test_quiet_logging_silent(self):
+        self.assertEqual(self._matched(self._entries(3)), [])
+
+    def test_boundary_twelve_notes(self):
+        # Exactly 12 notes at >=40% ratio -> matched (boundary).
+        entries = [ev(T0 + i * 0.6) for i in range(12)]
+        for i in range(12):
+            entries.append(ev(T0 + 0.5 + i * 1.1, tool="log_write",
+                              event="decision_note"))
+        self.assertEqual(len(self._matched(entries)), 1)
+
+    def test_eleven_notes_silent(self):
+        entries = [ev(T0 + i * 0.6) for i in range(11)]
+        for i in range(11):
+            entries.append(ev(T0 + 0.5 + i * 1.1, tool="log_write",
+                              event="decision_note"))
+        self.assertEqual(self._matched(entries), [])
+
+    def test_many_notes_low_ratio_silent(self):
+        # 15 notes drowned in 60 terse events: ratio 0.2 < 0.4.
+        entries = [ev(T0 + i * 0.6) for i in range(60)]
+        for i in range(15):
+            entries.append(ev(T0 + 0.5 + i * 1.1, tool="log_write",
+                              event="decision_note"))
+        self.assertEqual(self._matched(entries), [])
+
+    def test_malformed_entries_skipped_not_trusted(self):
+        entries = self._entries(15)
+        entries.append({"ts": "garbage", "principal": "p",
+                        "event": "decision_note"})
+        m = self._matched(entries)
+        self.assertEqual(len(m), 1)
+
+    def test_noisy_trajectory_still_flagged(self):
+        # Maximally noisy (30 notes) must be flagged, never excluded.
+        m = self._matched(self._entries(30, n_actions=30))
+        self.assertEqual(len(m), 1)
+        signals = to_discovery_signals(scan(self._entries(30)))
+        kinds = {s["signal_kind"] for s in signals}
+        self.assertIn("self_narrated_trajectory", kinds)
+
+
+class TestSelfInterference(unittest.TestCase):
+    """Wave-245 (DIVD): same-session capability self-interference."""
+
+    def _matched(self, entries):
+        return [f for f in scan(entries)
+                if f.signature_id == "self_interference" and f.matched]
+
+    def test_version_pinned(self):
+        sig = SIGNATURES["self_interference"]
+        self.assertEqual(sig.version, "v1")
+
+    def test_spray_after_aitm_tripwire(self):
+        entries = [
+            ev(T0, tool="net_probe", event="aitm_establish",
+               target="segment-dmz"),
+            ev(T0 + 4, tool="auth_try", event="password_spray",
+               target="sso-portal"),
+        ]
+        m = self._matched(entries)
+        self.assertEqual(len(m), 1)
+        self.assertEqual(m[0].strength, 1.0)
+        self.assertEqual(m[0].signature_version, "v1")
+        self.assertIn("aitm_establish", m[0].detail)
+        self.assertIn("password_spray", m[0].detail)
+
+    def test_spray_before_aitm_silent(self):
+        # Order matters: spray BEFORE establishment is not a
+        # contradiction of an established capability.
+        entries = [
+            ev(T0, tool="auth_try", event="password_spray",
+               target="sso-portal"),
+            ev(T0 + 4, tool="net_probe", event="aitm_establish",
+               target="segment-dmz"),
+        ]
+        self.assertEqual(self._matched(entries), [])
+
+    def test_spray_alone_silent(self):
+        entries = [ev(T0 + i, tool="auth_try", event="password_spray",
+                      target="sso-portal")
+                   for i in range(3)]
+        self.assertEqual(self._matched(entries), [])
+
+    def test_aitm_alone_silent(self):
+        entries = [
+            ev(T0, tool="net_probe", event="aitm_establish",
+               target="segment-dmz"),
+            ev(T0 + 30, tool="api_call", event="data_read"),
+        ]
+        self.assertEqual(self._matched(entries), [])
+
+    def test_cross_session_silent(self):
+        a = ev(T0, tool="net_probe", event="aitm_establish",
+               target="segment-dmz", session="sA")
+        b = ev(T0 + 4, tool="auth_try", event="password_spray",
+               target="sso-portal", session="sB")
+        self.assertEqual(self._matched([a, b]), [])
+
+    def test_cross_principal_silent(self):
+        a = ev(T0, tool="net_probe", event="aitm_establish",
+               target="segment-dmz", principal="p1")
+        b = ev(T0 + 4, tool="auth_try", event="password_spray",
+               target="sso-portal", principal="p2")
+        self.assertEqual(self._matched([a, b]), [])
+
+    def test_discovery_signal_adapter(self):
+        entries = [
+            ev(T0, tool="net_probe", event="aitm_establish"),
+            ev(T0 + 4, tool="auth_try", event="password_spray"),
+        ]
+        signals = to_discovery_signals(scan(entries))
+        kinds = {s["signal_kind"] for s in signals}
+        self.assertIn("self_interference", kinds)
 
 
 if __name__ == "__main__":

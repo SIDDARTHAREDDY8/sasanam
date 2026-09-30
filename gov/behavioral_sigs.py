@@ -309,6 +309,85 @@ def _match_approval_queue_spam(events, hints):
             "max %d submissions in %ds window" % (best, p["window_s"]))
 
 
+def _is_decision_note(e):
+    """True when the entry is a self-commenting decision narrative."""
+    return e["event"] == "decision_note"
+
+
+def _match_self_narrated_trajectory(events, hints):
+    # DIVD 2026-09 (case DIVD-2026-00014): the attacker-side agent
+    # extensively commented on its own decisions inside system logs,
+    # producing an anomalous volume of forensic recordings. This
+    # signature flags self-narration by volume AND ratio: count alone
+    # would flag chatty-but-legitimate operators; the ratio gate keeps
+    # the signature to trajectories dominated by self-commentary.
+    p = {"window_s": 600, "min_notes": 12, "min_note_ratio": 0.4,
+         "strength_scale": 24}
+    note_times = [e["_t"] for e in events if _is_decision_note(e)]
+    if len(note_times) < p["min_notes"]:
+        return (False, 0.0, "too few decision narratives (%d)" %
+                len(note_times))
+    best = 0
+    all_times = [e["_t"] for e in events]
+    for anchor in note_times:
+        window_end = anchor + p["window_s"]
+        notes = [t for t in note_times
+                 if anchor <= t <= window_end]
+        total = [t for t in all_times
+                 if anchor <= t <= window_end]
+        ratio = len(notes) / len(total) if total else 0.0
+        if len(notes) >= p["min_notes"] and ratio >= p["min_note_ratio"]:
+            best = max(best, len(notes))
+    if best:
+        return (True, min(1.0, best / p["strength_scale"]),
+                "%d self-commenting decision narratives (>=%.0f%% of %d "
+                "events) in %ds window" %
+                (best, p["min_note_ratio"] * 100, len(events),
+                 p["window_s"]))
+    return (False, 0.0,
+            "%d decision narratives, none reaching %d notes at %.0f%% "
+            "ratio in %ds" %
+            (len(note_times), p["min_notes"], p["min_note_ratio"] * 100,
+             p["window_s"]))
+
+
+def _match_self_interference(events, hints):
+    # DIVD 2026-09: the agent "interfered with its own
+    # adversary-in-the-middle attack via password spraying" -- a later
+    # action that invalidates a capability an earlier action of the
+    # SAME session established. The tripwire must fire even though the
+    # attacker's own action degraded its own capability: competence
+    # never gates detection.
+    #
+    # The establish/invalidate vocabulary is a closed, versioned table
+    # (adding a pair is a new signature version, never a silent edit).
+    establishes = {"aitm_establish": ("network_interception",)}
+    invalidates = {"password_spray": ("network_interception",)}
+    # Group by (principal, session): entries with no session_id are
+    # grouped per-principal only, never mixed across principals.
+    buckets = {}
+    for e in events:
+        bucket = (e["principal"], e.get("session_id"))
+        buckets.setdefault(bucket, []).append(e)
+    for bucket, seq in buckets.items():
+        # seq is already time-sorted (normalize_entries sorts).
+        established = {}
+        for e in seq:
+            for cap in establishes.get(e["event"], ()):
+                established.setdefault(cap, (e["event"], e["_t"]))
+            for cap in invalidates.get(e["event"], ()):
+                if cap in established:
+                    est_event, est_t = established[cap]
+                    return (True, 1.0,
+                            "same-session self-interference: %s "
+                            "established '%s' at %.0f, invalidated by %s "
+                            "at %.0f (principal=%s session=%s)" %
+                            (est_event, cap, est_t, e["event"], e["_t"],
+                             bucket[0], bucket[1]))
+    return (False, 0.0,
+            "no same-session establishment -> invalidation pair")
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -431,6 +510,44 @@ SIGNATURES = {
         evasion_note="Stay under 8 submissions per 300 s, or batch "
                      "requests into fewer submissions.",
         match_fn=_match_approval_queue_spam),
+    "self_narrated_trajectory": _sig(
+        "self_narrated_trajectory", "v1",
+        "Self-commenting decision narrative (DIVD)",
+        "Anomalous volume of self-commenting decision narratives in "
+        "logs — the DIVD 2026-09 agent shape (case DIVD-2026-00014): "
+        "the attacker-side agent extensively commented on its own "
+        "decisions, letting investigators reconstruct the incident "
+        "from its own explanations. Entry CVEs CVE-2026-102489 and "
+        "CVE-2026-102490 (Zammad zero-days).",
+        ("narration", "agent-shaped", "divd"),
+        {"window_s": 600, "min_notes": 12, "min_note_ratio": 0.4,
+         "strength_scale": 24},
+        fp_control="Benign control: routine automation logging (health "
+                   "checks, heartbeats) emits terse machine fields, not "
+                   "decision narratives; 3-5 narrative notes per 600 s "
+                   "stay below the count and ratio gates.",
+        evasion_note="Write fewer than 12 decision narratives per "
+                     "600 s, or keep narratives below 40% of logged "
+                     "events.",
+        match_fn=_match_self_narrated_trajectory),
+    "self_interference": _sig(
+        "self_interference", "v1",
+        "Same-session capability self-interference (DIVD)",
+        "A later action by the same principal+session invalidates a "
+        "capability an earlier action established — the DIVD 2026-09 "
+        "shape of password spraying that broke the agent's own "
+        "adversary-in-the-middle attack. The tripwire fires on the "
+        "contradiction, never on the attacker's competence.",
+        ("contradiction", "agent-shaped", "divd"),
+        {"establishes": {"aitm_establish": ["network_interception"]},
+         "invalidates": {"password_spray": ["network_interception"]}},
+        fp_control="Benign control: password spray with no prior "
+                   "AiTM establishment in the session stays silent; "
+                   "AiTM establishment with no later self-invalidation "
+                   "stays silent.",
+        evasion_note="Avoid establishing interception before spraying, "
+                     "or run the spray in a different session.",
+        match_fn=_match_self_interference),
 }
 
 

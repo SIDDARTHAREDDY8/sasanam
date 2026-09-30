@@ -159,8 +159,8 @@ class TestTokenScope(unittest.TestCase):
 
     def test_pin(self):
         from gov import decision_codes as dc
-        # Wave-244 merge: re-pointed to 863 (35 additive wave-244 codes), additive only, comment + assert.
-        self.assertEqual(len(dc.TAXONOMY), 863)
+        # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
+        self.assertEqual(len(dc.TAXONOMY), 895)
 
 
 if __name__ == "__main__":
