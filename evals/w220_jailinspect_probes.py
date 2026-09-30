@@ -3,8 +3,9 @@
 verifier-attribution battery.
 
 Seam 1 — gov/jail_pci.py: PCI device attachment is a confinement
-hole (wave-221 merge: CVE-2026-5747 attribution unverified, not
-claimed; deny-by-default stands as defense-in-depth). New module: a compiled
+hole (wave-223 merge: CVE-2026-5747 CONFIRMED real via AWS Security
+Bulletin 2026-015-AWS; PCI-off is the vendor-stated workaround;
+deny-by-default stands with vendor precedent). New module: a compiled
 PCI-device allowlist with a deny-by-default stance. No device attaches
 unless explicitly pinned by (device_name, sha256 digest). Tighten-only
 opt-in wiring into JailPolicyRegistry.activate(...,

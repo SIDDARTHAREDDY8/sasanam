@@ -161,11 +161,44 @@ class RevocationList:
     ``check(target_digest)`` returns ``"revoked"`` or ``"active"`` and
     is the seam other registries consume (duck-typed: any object with
     ``check(digest) -> "revoked" | "active"`` works).
+
+    ``signal_issuer`` is an optional additive hook: when it is
+    ``(issuer_id, seed, scope)``, every ``revoke()`` also signs a
+    posture signal (``gov/posture.py``) about the revoked digest and
+    hands it to ``signal_sink`` (a callable taking the signal dict);
+    the signal also rides this list's audit trail. Without both
+    configured, ``revoke()`` behaves exactly as before — the hook is
+    opt-in and fail-silent-free: no configuration, no signal, no
+    behavior change.
+
+    Note: the signal is emitted AFTER the revocation is recorded and
+    audited, so if ``signal_sink`` raises, the exception propagates
+    but the revocation itself stands. Deploy the hook with a sink
+    that does not raise if you need revoke() to stay total.
     """
 
-    def __init__(self, audit=None):
+    def __init__(self, audit=None, signal_issuer=None, signal_sink=None):
         self._entries = {}
         self._audit = audit
+        if signal_issuer is not None:
+            # Fail loud at construction, not at the first revoke():
+            # the hook needs exactly (issuer_id, seed, scope).
+            try:
+                issuer_id, seed, scope = signal_issuer
+            except (TypeError, ValueError):
+                raise ValueError(
+                    "signal_issuer must be (issuer_id, seed, scope)")
+            if not isinstance(issuer_id, str) or not issuer_id \
+                    or not isinstance(seed, (bytes, bytearray)) \
+                    or len(seed) != 32 \
+                    or not isinstance(scope, str) or not scope:
+                raise ValueError(
+                    "signal_issuer must be (issuer_id, seed, scope)")
+        if signal_issuer is not None and signal_sink is not None \
+                and not callable(signal_sink):
+            raise ValueError("signal_sink must be callable")
+        self._signal_issuer = signal_issuer
+        self._signal_sink = signal_sink
 
     def revoke(self, target_digest, *, issuer_id, seed, now=None):
         """Pin and sign the revocation of an EXACT digest.
@@ -200,7 +233,25 @@ class RevocationList:
                          "target_digest": target_digest,
                          "issuer_id": issuer_id,
                          "revoked_at": entry["revoked_at"]})
+        self._emit_revocation_signal(target_digest, now)
         return dict(entry)
+
+    def _emit_revocation_signal(self, target_digest, now):
+        """Optional additive hook: sign a posture signal about the
+        revocation and hand it to the configured sink. No
+        configuration — no signal, no behavior change."""
+        if self._signal_issuer is None or self._signal_sink is None:
+            return
+        issuer_id, seed, scope = self._signal_issuer
+        # Lazy import: revocation stays importable and byte-identical
+        # in behavior without gov/posture; the hook is opt-in.
+        from . import posture as _posture
+        signal = _posture.emit_signal(
+            "revocation", target_digest, scope, seed,
+            issuer_id=issuer_id,
+            now=time.time() if now is None else now,
+            audit=self._audit)
+        self._signal_sink(signal)
 
     def check(self, target_digest):
         """Return ``"revoked"`` when the exact digest is listed,

@@ -1,11 +1,19 @@
 """PCI device-attachment deny-by-default for jail policies.
 
 Design input (ADAPT, not vendored): PCI device-passthrough is a
-confinement attack surface. NOTE (wave-221 merge adjudication): wave-219
+confinement attack surface. NOTE (wave-223 merge adjudication): wave-219
 prospecting attributed this direction to Firecracker's CVE-2026-5747;
-wave-221 prospecting could not verify that attribution (zero hits in the
-firecracker tree), so it is NOT claimed here. The deny-by-default
-direction stands on its own as defense-in-depth. A tool
+wave-221 prospecting could not verify that attribution in the source
+tree and reframed it as unclaimed, but wave-223 prospecting read the
+primary source (AWS Security Bulletin 2026-015-AWS, 2026-04-07;
+NVD 2026-04-08): CVE-2026-5747 is REAL (OOB write in Firecracker's
+virtio-pci transport 1.13.0-1.14.3, 1.15.0; CVSS v4 8.7; patched
+1.14.4/1.15.1), and PCI-off ("revert to MMIO by removing the
+--enable-pci flag") is verbatim the vendor's stated workaround
+(throughput/latency tradeoff noted). The deny-by-default direction
+stands with vendor precedent as defense-in-depth; the primary fix
+remains upgrading to 1.14.4/1.15.1. No Firecracker version floor is
+codified. A tool
 jail that silently permits PCI device attachment lets an agent widen
 its confinement by naming a device at runtime. This module makes
 device attachment explicit and pinned:

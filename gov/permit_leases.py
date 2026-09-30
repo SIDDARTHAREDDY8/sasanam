@@ -53,6 +53,18 @@ Rules (all fail closed, all refusals carry machine-readable codes):
   check; a revoked digest refuses ``permit-revoked`` even when the
   lease is otherwise valid, without consuming the lease. When the
   registry is absent, redeem behaves exactly as before.
+* Optional per-request attenuation (wave-223, ``gov/attenuation.py``):
+  ``PermitLease.redeem(..., attenuation=None,
+  require_attenuation=False)`` — a requester-signed block with a
+  <=600s TTL that may only narrow the grant. A missing block under a
+  required policy refuses ``attenuation-missing``; a presented block
+  binds (``attenuation-unverifiable`` / ``attenuation-lease-mismatch``
+  / ``attenuation-ttl-refused`` / ``attenuation-expired`` /
+  ``attenuation-widening-refused``) BEFORE the scope check, and
+  additionally constrains ``request_scope`` to the narrowed scope.
+  No policy and no block behaves exactly as before: the block is a
+  sealed constraint, never a credential, and never upgrades
+  authority.
 
 Stdlib only. No network. $0.
 """
@@ -321,24 +333,46 @@ class PermitLease:
         raise exc
 
     def redeem(self, presented_digest, *, request_scope=None, now=None,
-               revocation_registry=None):
+               revocation_registry=None, attenuation=None,
+               require_attenuation=False):
         """Consume the lease for the exact recorded parameters.
 
-        Check order is fixed — used, expired, digest, revocation,
-        scope — so a consumed or expired permit never confirms or
-        denies a digest, and revocation is checked only after the
-        presented digest proved correct (no revocation oracle for
-        wrong digests). ``revocation_registry`` is an optional
-        exact-target revocation source (``gov/revocation.py`` or any
-        object with ``check(digest) -> "revoked" | "active"``); when
-        None the legacy path runs exactly as before. A revoked lease
-        refuses ``permit-revoked`` even when otherwise valid, and the
-        refused redeem does not consume the lease.
+        Check order is fixed — attenuation-missing, used, expired,
+        digest, revocation, attenuation-bind, scope — so a caller that
+        never presented a block learns nothing about the lease, a
+        consumed or expired permit never confirms or denies a digest,
+        and revocation/attenuation are checked only after the
+        presented digest proved correct (no revocation or attenuation
+        oracle for wrong digests). ``revocation_registry`` is an
+        optional exact-target revocation source
+        (``gov/revocation.py`` or any object with
+        ``check(digest) -> "revoked" | "active"``); when None the
+        legacy path runs exactly as before. ``attenuation`` is an
+        optional requester-signed attenuation block
+        (``gov/attenuation.py``); when ``require_attenuation`` is set
+        and no block is presented, redeem refuses
+        ``attenuation-missing``. A bound block additionally constrains
+        ``request_scope`` to its narrowed scope — inside the grant
+        but outside the narrowed scope refuses
+        ``attenuation-widening-refused``. A revoked lease refuses
+        ``permit-revoked`` even when otherwise valid, and the refused
+        redeem does not consume the lease.
         On success the lease is marked used and a grant record is
-        returned; the grant is the only proof of redemption.
+        returned; the grant is the only proof of redemption. The
+        grant carries an ``attenuation`` sub-record only when a block
+        was bound — the no-attenuation grant is byte-identical to the
+        legacy shape.
         """
         now_fn = now or time.time
         at = float(now_fn())
+        narrowed = None
+        _att = None
+        if attenuation is not None or require_attenuation:
+            from . import attenuation as _att  # lazy: circular import
+            if attenuation is None:
+                self._refuse(_att.AttenuationMissingError(
+                    "attenuation-missing: this redeem policy requires a "
+                    "requester-signed attenuation block"))
         if self._used:
             self._refuse(PermitReusedError(
                 "permit-reused: permit %r was already consumed; one-use "
@@ -359,15 +393,38 @@ class PermitLease:
                 "permit-revoked: permit %r targets a revoked digest; the "
                 "approval it bound is no longer good"
                 % (self.permit_id,)))
+        if _att is not None and attenuation is not None:
+            # Bound only after the digest proved correct: a block can
+            # never be used as a digest oracle (no attenuation validity
+            # signal for wrong digests).
+            narrowed = _att.bind(attenuation, self, now=now_fn)
+            if self._audit is not None:
+                self._audit({"event": "attenuation_bound",
+                             "permit_id": self.permit_id,
+                             "requester_id": attenuation["requester_id"],
+                             "narrowed_scope":
+                                 attenuation["narrowed_scope"]})
         if request_scope is not None:
             try:
                 self.check_scope(request_scope, self.grant_scope)
             except PermitDowngradeRefusedError as exc:
                 self._refuse(exc)
+            if narrowed is not None:
+                try:
+                    self.check_scope(request_scope, narrowed)
+                except PermitDowngradeRefusedError as exc:
+                    self._refuse(_att.AttenuationWideningRefusedError(
+                        "attenuation-widening-refused: request scope %r "
+                        "exceeds the attenuation's narrowed scope" % (
+                            request_scope,)))
         self._used = True
         grant = {"permit_id": self.permit_id,
                  "parameter_digest": self.parameter_digest,
                  "granted_at": at}
+        if narrowed is not None:
+            grant["attenuation"] = {
+                "requester_id": attenuation["requester_id"],
+                "narrowed_scope": attenuation["narrowed_scope"]}
         if self._audit is not None:
             self._audit({"event": "permit_redeemed",
                          "permit_id": self.permit_id,
@@ -419,7 +476,8 @@ class PermitRegistry:
         self._leases[lease.permit_id] = lease
         return lease
 
-    def redeem(self, permit_id, presented_digest, *, request_scope=None):
+    def redeem(self, permit_id, presented_digest, *, request_scope=None,
+               attenuation=None, require_attenuation=False):
         lease = self._leases.get(permit_id)
         if lease is None:
             exc = PermitUnknownError(
@@ -429,7 +487,9 @@ class PermitRegistry:
             raise exc
         return lease.redeem(presented_digest, request_scope=request_scope,
                             now=self._now,
-                            revocation_registry=self._revocation_registry)
+                            revocation_registry=self._revocation_registry,
+                            attenuation=attenuation,
+                            require_attenuation=require_attenuation)
 
 
 # ----------------------------------------------------------------------
