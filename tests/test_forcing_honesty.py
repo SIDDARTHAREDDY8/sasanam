@@ -363,7 +363,8 @@ class PinTests(unittest.TestCase):
         # + 6 attested-channel + 2 outcome-vocabulary + 5 verifier-failclosed
         # + 10 effect-agreement/registry/mcp), additive only, composed from the
         # eight lane commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 828)
+        # Wave-244 merge: re-pointed to 863 (35 additive wave-244 codes), additive only, comment + assert.
+        self.assertEqual(len(dc.TAXONOMY), 863)
         for code in ("honesty-baseline-tampered",
                      "honesty-baseline-unforced",
                      "honesty-condition-silent",

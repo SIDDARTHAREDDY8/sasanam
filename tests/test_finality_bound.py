@@ -235,7 +235,8 @@ class TestTaxonomyPin(unittest.TestCase):
         # + 6 attested-channel + 2 outcome-vocabulary + 5 verifier-failclosed
         # + 10 effect-agreement/registry/mcp), additive only, composed from the
         # eight lane commits by direct byte-verification.
-        self.assertEqual(len(decision_codes.TAXONOMY), 828)
+        # Wave-244 merge: re-pointed to 863 (35 additive wave-244 codes), additive only, comment + assert.
+        self.assertEqual(len(decision_codes.TAXONOMY), 863)
 
     def test_new_codes_mapped(self):
         for code in ("revocation-applicable", "revocation-basis-malformed",

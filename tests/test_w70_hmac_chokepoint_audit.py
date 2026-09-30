@@ -263,6 +263,27 @@ ALLOWED_HMAC_SITES = {
     # a credential.
     ("gov/action_bound_permits.py", "_binding_digest", 0):
         "action-bound permit binding MAC; issuer key (required explicit pass), fail-closed when absent",
+    # gov/surface_defaults.py (wave-244, lane G): the secure-defaults
+    # attestation MAC. The key is the deployment ISSUER key, REQUIRED
+    # explicitly by audit_surface (fail-closed
+    # surface-attestation-key-missing when absent); never a default,
+    # never derived in-repo. Domain-separated via _ATTESTATION_DOMAIN
+    # ("gov-surface-attestation/v1\\x00") over the canonical
+    # attestation body (v, surface, config_digest); an integrity
+    # binding for the audited config, not a credential.
+    ("gov/surface_defaults.py", "_attestation_mac", 0):
+        "secure-defaults attestation MAC; issuer key (required explicit pass), domain-separated",
+    # gov/token_scope_enforcement.py (wave-244, lane B): the token-scope
+    # grant/policy MAC. The key is the deployment-supplied SCOPE key,
+    # REQUIRED explicitly by the caller (_key_or_refuse fail-closes
+    # scope-key-missing when absent); never a default, never derived
+    # in-repo. Domain-separated via _GRANT_DOMAIN
+    # ("gov-token-grant/v1\\x00") over the canonical grant body and
+    # _POLICY_DOMAIN ("gov-seal-policy/v1\\x00") over the canonical
+    # policy body; binds each grant to sha256(token mac). An integrity
+    # binding for scope grants, not a credential.
+    ("gov/token_scope_enforcement.py", "_mac", 0):
+        "token-scope grant/policy MAC; scope key (required explicit pass, fail-closed when absent), domain-separated",
 }
 
 
