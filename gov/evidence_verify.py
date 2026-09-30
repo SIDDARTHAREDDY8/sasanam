@@ -2002,6 +2002,28 @@ class Ctx:
     pass
 
 
+# Wave-238 lane B: bundle-verification invariant (witness GHSA-2v4r
+# steal, pattern-only). Runs only when the manifest carries an
+# ``attestations`` section, so bundles without one keep the legacy
+# check list byte-identical (no check is appended at all).
+def v20_bundle_invariants(ctx):
+    c = Check("V20", "V20 bundle-verification invariant (v1 extension)")
+    # The standalone verifier (tools/evidence-verify) runs without the
+    # repository installed: the import fails there and the check records
+    # not-applicable rather than breaking offline verification. The
+    # engine path (repository importable) enforces the invariant.
+    try:
+        from gov.bundle_verify_invariant import run_bundle_invariants
+    except ImportError:
+        return c.na("attestation invariant module unavailable in "
+                    "standalone mode")
+    attestations = (ctx.manifest or {}).get("attestations")
+    ok, code, detail = run_bundle_invariants(attestations)
+    if not ok:
+        return c.fail("bundle invariant %s: %s" % (code, detail))
+    return c.ok(detail)
+
+
 def _run_checks_v4_v18(ctx, run, checks):
     """V4–V18 in spec order (V14–V18 are v1 extensions). Returns False when V4 fails (remaining
     checks are meaningless without the payload); True otherwise. Any
@@ -2028,6 +2050,11 @@ def _run_checks_v4_v18(ctx, run, checks):
     run(v16_retention)
     run(v17_invocation_receipts)
     run(v18_claim_bounds)
+    # V20 (wave-238 lane B): bundle-verification invariant. Only
+    # appended when the manifest carries an attestation section, so
+    # legacy bundles keep the check list byte-identical.
+    if (ctx.manifest or {}).get("attestations") is not None:
+        run(v20_bundle_invariants)
     return True
 
 

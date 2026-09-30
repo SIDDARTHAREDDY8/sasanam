@@ -12524,3 +12524,8 @@ Commit `6d9e939d8e1b2a01634875c8cbf7146f9c19a2ab` (parent `9a725ce5fac37b95a2502
 **Two-axis self-review:** Standards -- 0 hard violations (error-class naming and docstring conventions match, diff additive-only, digest binding compared via hmac.compare_digest, line length <=79); 2 line-length nits fixed pre-commit. Spec -- SHIP on all 4 bullets (1 documented adjudication: no named requester/identity mismatch codes). Residuals: digest-binding detects edits, not forgery -- authenticated minting is deployment-owned; settlement/consumption state is in-memory on the caller's packet -- shared atomicity across processes/hosts is deployment-owned; the `apply` effect is caller-supplied -- the receipt evidences the recheck, not the write; no wall-clock expiry -- liveness is deployment-owned (cf. wave-234 IR 8587). No finding filed -- F210 stays free.
 
 **Merge candidate:** `gov/closure_scoped_approvals.py`, `evals/w237_closescoped_probes.py`, `tests/test_closure_scoped_approvals.py`, `gov/decision_codes.py`, `tests/test_decision_codes.py`, `BUILD_LOG.md` (lane entry appended). Base `9a725ce5fac37b95a2502eaebebfc33e7a8fb0d0`. No push -- merge coordinator pushes. Open findings: none. Next free: F210.
+
+## 2026-09-30 — Wave-238 merge: C2SP tlog-checkpoint wire format + bundle-verification invariant + attested-vs-asserted field column + independent-corroboration consumption (4 lanes, base dcfd52d2)
+
+Taxonomy pin 667 -> 695 (28 new codes, additive only, zero key collisions), composed from the four lane commits by direct byte-verification. Lane commits: A f8ec74f (checkpoint), B ccaaad6 (bundle_verify_invariant), C b5ff1cf (attestation_column), D 681e49d (corroborated_consumption, incl. fix-up c6706e6->681e49d). Full lane entries below, unedited.
+

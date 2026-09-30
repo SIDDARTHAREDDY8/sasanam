@@ -202,7 +202,10 @@ class TaxonomyTests(unittest.TestCase):
     def test_pin(self):
         # Wave-237 merge: re-pointed 650 -> 667 (lane-local 647 + 3;
         # the merge composes 20 new codes: 647 -> 667).
-        self.assertEqual(len(decision_codes.TAXONOMY), 667)
+        # Wave-238 merge: re-pointed 667 -> 695 (28 new codes across
+        # four lanes), composed from the four lane commits by direct
+        # byte-verification.
+        self.assertEqual(len(decision_codes.TAXONOMY), 695)
 
 
 if __name__ == "__main__":

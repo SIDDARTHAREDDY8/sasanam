@@ -5665,6 +5665,274 @@ TAXONOMY = {
         "evidence_kinds_required": ['approval-packet'],
         "reverify_steps": ['recompute'],
     },
+    'checkpoint-origin-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-origin-empty',
+        "human": 'C2SP checkpoint: origin line empty or carries '
+                 'spaces/plus',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-size-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-size-malformed',
+        "human": 'C2SP checkpoint: tree size is not ASCII decimal '
+                 'without leading zeros',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-root-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-root-malformed',
+        "human": 'C2SP checkpoint: root hash is not base64 of 32 bytes',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-extension-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-extension-empty',
+        "human": 'C2SP checkpoint: an extension line is empty',
+        "severity": 'low',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-note-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-note-malformed',
+        "human": 'C2SP checkpoint: bytes are not a valid signed note',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-not-c2sp': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-not-c2sp',
+        "human": 'C2SP checkpoint: signed note body is not the '
+                 'checkpoint format; bespoke notes stay internal',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-known-signature-invalid': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-known-signature-invalid',
+        "human": 'C2SP checkpoint: a known key signature failed; '
+                 'whole note rejected',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-no-trusted-signature': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-no-trusted-signature',
+        "human": 'C2SP checkpoint: no signature from a known key '
+                 'verified',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-log-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-log-empty',
+        "human": 'C2SP checkpoint: log tree is empty; no checkpoint '
+                 'can be emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-inconsistent': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-inconsistent',
+        "human": 'C2SP checkpoint: journal refused a different root '
+                 'for an already-signed (origin, size)',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-238 lane B: bundle-verification invariant (witness
+    # GHSA-2v4r steal, pattern-only): 8 ``verify``-domain codes.
+    # 667 + 8 = 675, additive only, zero key collisions.
+    'verify-signature-failed': {
+        "domain": 'verify',
+        "code": 'verify-signature-failed',
+        "human": 'bundle verification: a signature verify attempt matched '
+                 'the identity constraints but its signature never '
+                 'verified (forged-policy shape); refused, never trusted',
+        "severity": 'critical',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-no-clean-verifier': {
+        "domain": 'verify',
+        "code": 'verify-no-clean-verifier',
+        "human": 'bundle verification: no signature verify attempt passed '
+                 'cleanly; failed attempts confer no trust',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-symlink-escape': {
+        "domain": 'verify',
+        "code": 'verify-symlink-escape',
+        "human": 'bundle verification: an artifact symlink resolves '
+                 'outside the attested root',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-artifactsfrom-empty': {
+        "domain": 'verify',
+        "code": 'verify-artifactsfrom-empty',
+        "human": 'bundle verification: an artifactsFrom edge carries zero '
+                 'shared digests (no genuine artifact flow)',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-timestamp-eku-missing': {
+        "domain": 'verify',
+        "code": 'verify-timestamp-eku-missing',
+        "human": 'bundle verification: the timestamp signer does not '
+                 'carry the sole critical id-kp-timeStamping EKU',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-attestor-shadowed': {
+        "domain": 'verify',
+        "code": 'verify-attestor-shadowed',
+        "human": 'bundle verification: an attestor type has an instance '
+                 'that was never evaluated (shadowing)',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-collection-empty-match': {
+        "domain": 'verify',
+        "code": 'verify-collection-empty-match',
+        "human": 'bundle verification: an empty collection name matched a '
+                 'step, or a step is not in the claimed collection',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-hash-downgrade': {
+        "domain": 'verify',
+        "code": 'verify-hash-downgrade',
+        "human": 'bundle verification: a digest comparison used a weak '
+                 'hash while a stronger shared digest existed',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-class-inflation': {
+        "domain": 'attested',
+        "code": 'attestation-class-inflation',
+        "human": 'attested-vs-asserted field column: a caller-declared or '
+                 'caller-asserted field was presented as issuer-verified; '
+                 'refusing instead of conferring verification it never had',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-class-unlabeled': {
+        "domain": 'attested',
+        "code": 'attestation-class-unlabeled',
+        "human": 'attested-vs-asserted field column: a record field has no '
+                 'attestation class; refusing at emit instead of inventing '
+                 'one',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-outcome-misread': {
+        "domain": 'attested',
+        "code": 'attestation-outcome-misread',
+        "human": 'attested-vs-asserted field column: the decision outcome '
+                 'was presented as proof of execution; ALLOWED attests the '
+                 'decision only, proof of execution needs issuer-attested '
+                 'effect evidence',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-record-malformed': {
+        "domain": 'attested',
+        "code": 'attestation-record-malformed',
+        "human": 'attested-vs-asserted field column: the record is the '
+                 'wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-238 lane D: 667 + 6 = 673 (6 independent-corroboration
+    # consumption codes: corroboration-malformed,
+    # corroboration-unattested, corroboration-untrusted-source,
+    # corroboration-signature-invalid, corroboration-key-inequality,
+    # corroboration-uncorroborated; domain corroboration), additive
+    # only, zero key collisions, zero deletions.
+    'corroboration-malformed': {
+        "domain": 'corroboration',
+        "code": 'corroboration-malformed',
+        "human": 'independent corroboration: the envelope or an evidence '
+                 'item is the wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-unattested': {
+        "domain": 'corroboration',
+        "code": 'corroboration-unattested',
+        "human": 'independent corroboration: the item provenance resolves '
+                 'to the gated runtime itself; self-attested evidence is '
+                 'never corroboration',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-untrusted-source': {
+        "domain": 'corroboration',
+        "code": 'corroboration-untrusted-source',
+        "human": 'independent corroboration: the item key_id is not in '
+                 'the consumer\u2019s own trust policy; the consumer '
+                 'cannot corroborate against key material it does not '
+                 'independently hold',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-signature-invalid': {
+        "domain": 'corroboration',
+        "code": 'corroboration-signature-invalid',
+        "human": 'independent corroboration: the Ed25519 signature fails '
+                 'under the policy-held key; the item was edited after '
+                 'signing',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-key-inequality': {
+        "domain": 'corroboration',
+        "code": 'corroboration-key-inequality',
+        "human": 'independent corroboration: two items presented as '
+                 'distinct sources share one key_id; not key-independent',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-uncorroborated': {
+        "domain": 'corroboration',
+        "code": 'corroboration-uncorroborated',
+        "human": 'independent corroboration: a required dimension has '
+                 'fewer than two key-inequal corroborating sources; a '
+                 'lone source cannot corroborate itself',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
     # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
     # gate-rule + 3 lane-B edited-approval refusal +
     # 5 lane-C canonical-record + 8 lane-D closure-scoped

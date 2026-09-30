@@ -68,7 +68,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 667)
+        self.assertEqual(len(dc.TAXONOMY), 695)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
@@ -120,6 +120,29 @@ class VocabularyCoverageTest(unittest.TestCase):
         # approval codes: approval-{run,sandbox,route}-mismatch,
         # approval-capability-dead, approval-state-stale,
         # scoped-approval-{malformed,tampered,capability-unknown}),
+        # additive, zero deletions, zero key collisions, composed from
+        # the four lane commits by direct byte-verification, pin
+        # updated here to match.
+        # Wave-238 merge: 667 + 28 = 695 (10 lane-A C2SP
+        # tlog-checkpoint codes: checkpoint-origin-empty,
+        # checkpoint-size-malformed, checkpoint-root-malformed,
+        # checkpoint-extension-empty, checkpoint-log-empty,
+        # checkpoint-not-c2sp, checkpoint-note-malformed,
+        # checkpoint-no-trusted-signature,
+        # checkpoint-known-signature-invalid, checkpoint-inconsistent;
+        # 8 lane-B bundle-verification invariant codes:
+        # verify-signature-failed, verify-no-clean-verifier,
+        # verify-symlink-escape, verify-artifactsfrom-empty,
+        # verify-timestamp-eku-missing, verify-attestor-shadowed,
+        # verify-collection-empty-match, verify-hash-downgrade;
+        # 4 lane-C attested-vs-asserted codes:
+        # attestation-class-unlabeled, attestation-class-inflation,
+        # attestation-outcome-misread, attestation-record-malformed;
+        # 6 lane-D independent-corroboration codes:
+        # corroboration-malformed, corroboration-unattested,
+        # corroboration-untrusted-source,
+        # corroboration-signature-invalid,
+        # corroboration-key-inequality, corroboration-uncorroborated),
         # additive, zero deletions, zero key collisions, composed from
         # the four lane commits by direct byte-verification, pin
         # updated here to match.

@@ -286,7 +286,12 @@ class ScanTest(unittest.TestCase):
         # gate-rule + 3 edited-approval refusal + 5 canonical-record +
         # 8 closure-scoped approval codes), composed from the four lane
         # commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 667)
+        # Wave-238 merge: re-pointed 667 -> 695 (10 C2SP
+        # tlog-checkpoint + 8 bundle-verification invariant +
+        # 4 attested-vs-asserted + 6 independent-corroboration
+        # codes), composed from the four lane commits by direct
+        # byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 695)
 
 
 if __name__ == "__main__":

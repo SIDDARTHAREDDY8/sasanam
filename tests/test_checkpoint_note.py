@@ -1,0 +1,380 @@
+#!/usr/bin/env python3
+"""Unit tests for gov/checkpoint_note.py (wave-238 lane A).
+
+C2SP tlog-checkpoint wire format: emission, strict parsing, key-ID
+derivation and collision rules, verifier-key handling, whole-note
+verification, the equivocation journal, and the hermetic-log adapter.
+Includes the C2SP spec's own example verifier key and signed note as a
+third-party test vector (it verifies under our parser).
+Stdlib + gov.checkpoint_note (+ gov.ed25519 as the raw primitive) only.
+"""
+
+import base64
+import hashlib
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+
+from gov import checkpoint_note as cn  # noqa: E402
+from gov import ed25519 as ed  # noqa: E402
+
+ORIGIN = "sasanam.test/hermetic-log"
+
+# Third-party test vector straight from c2sp.org/signed-note (fetched
+# 2026-09-30): the spec's example verifier key and example signed note.
+SPEC_VKEY = ("example.com/foo+530d903a+"
+             "AekyeRrm56hApGFkyQR4ZCbV54Id2LKaANYcrnKv3U2k")
+SPEC_NOTE = (
+    "This is an example message.\n"
+    "\n"
+    "\u2014 example.com/foo "
+    "Uw2QOkn8srV1yJGh2VYRlL1Tnagv1YEq6TfXppzi2ONncAlTgK7Ztg1ERYNZXsYjOBH3mFXm"
+    "RKuwHjG1Yu72IneyaQM=\n"
+).encode("utf-8")
+
+
+def _keypair():
+    seed = ed.generate_seed()
+    return seed, ed.publickey(seed)
+
+
+def _vkey_for(name, pub):
+    kid = cn.derive_key_id(name, cn.SIG_TYPE_ED25519, pub)
+    return cn.vkey_string(name, kid, cn.SIG_TYPE_ED25519, pub)
+
+
+def _emit(name=ORIGIN, size=3, root=None, key_name=ORIGIN, seed=None):
+    if root is None:
+        root = hashlib.sha256(b"root").digest()
+    if seed is None:
+        seed, _ = _keypair()
+    return seed, cn.emit_checkpoint(name, size, root, key_name, seed)
+
+
+class SpecVectorTest(unittest.TestCase):
+    def test_spec_example_vkey_parses_and_key_id_recomputes(self):
+        # Independent recomputation of the spec's key-ID formula.
+        parsed = cn.parse_vkey(SPEC_VKEY)
+        expect = hashlib.sha256(
+            b"example.com/foo" + b"\x0a" + b"\x01"
+            + parsed["public_key"]).digest()[:4]
+        self.assertEqual(parsed["key_id"], expect)
+        self.assertEqual(parsed["key_id"].hex(), "530d903a")
+
+    def test_spec_example_note_parses_and_verifies(self):
+        # The spec's own signed note verifies under our implementation:
+        # byte-compat with C2SP, not self-attestation.
+        text, sigs = cn._split_note(SPEC_NOTE)
+        self.assertEqual(text, b"This is an example message.\n")
+        self.assertEqual(len(sigs), 1)
+        self.assertEqual(sigs[0]["key_name"], "example.com/foo")
+        self.assertEqual(sigs[0]["key_id"].hex(), "530d903a")
+        parsed = cn.parse_vkey(SPEC_VKEY)
+        self.assertTrue(ed.verify(parsed["public_key"], text,
+                                 sigs[0]["signature"]))
+
+    def test_spec_example_note_is_not_a_checkpoint(self):
+        # A validly-signed note that is not the checkpoint format is
+        # refused by the checkpoint path.
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            cn.parse_checkpoint(SPEC_NOTE)
+        self.assertEqual(ctx.exception.code, "checkpoint-not-c2sp")
+
+
+class KeyIdTest(unittest.TestCase):
+    def test_derivation_matches_spec_formula(self):
+        seed, pub = _keypair()
+        got = cn.derive_key_id("example.com/log42", 0x01, pub)
+        expect = hashlib.sha256(
+            b"example.com/log42" + b"\x0a" + b"\x01" + pub).digest()[:4]
+        self.assertEqual(got, expect)
+        self.assertEqual(len(got), 4)
+
+    def test_name_change_changes_id(self):
+        _seed, pub = _keypair()
+        a = cn.derive_key_id("a.example/log", 0x01, pub)
+        b = cn.derive_key_id("b.example/log", 0x01, pub)
+        self.assertNotEqual(a, b)
+
+    def test_vkey_round_trip(self):
+        _seed, pub = _keypair()
+        vkey = _vkey_for("example.com/log42", pub)
+        parsed = cn.parse_vkey(vkey)
+        self.assertEqual(parsed["name"], "example.com/log42")
+        self.assertEqual(parsed["public_key"], pub)
+
+    def test_vkey_with_tampered_key_id_is_config_error(self):
+        _seed, pub = _keypair()
+        vkey = _vkey_for("example.com/log42", pub)
+        name, kid, rest = vkey.split("+", 2)
+        bad = "%s+%s+%s" % (name, "00000000", rest)
+        with self.assertRaises(ValueError):
+            cn.parse_vkey(bad)
+
+    def test_vkey_unsupported_sigtype_is_config_error(self):
+        _seed, pub = _keypair()
+        kid = cn.derive_key_id("example.com/log42", 0x02, pub)
+        vkey = cn.vkey_string("example.com/log42", kid, 0x02, pub)
+        with self.assertRaises(ValueError):
+            cn.parse_vkey(vkey)
+
+
+class EmissionTest(unittest.TestCase):
+    def test_emit_is_deterministic(self):
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        a = cn.emit_checkpoint(ORIGIN, 3, root, ORIGIN, seed)
+        b = cn.emit_checkpoint(ORIGIN, 3, root, ORIGIN, seed)
+        self.assertEqual(a, b)
+
+    def test_emit_wire_shape(self):
+        seed, _pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 20852163, root, ORIGIN, seed)
+        lines = note.decode("utf-8").split("\n")
+        self.assertEqual(lines[0], ORIGIN)
+        self.assertEqual(lines[1], "20852163")
+        self.assertEqual(lines[2], base64.b64encode(root).decode())
+        self.assertEqual(lines[3], "")
+        self.assertTrue(lines[4].startswith("\u2014 " + ORIGIN + " "))
+        sig = base64.b64decode(lines[4].split(" ")[2], validate=True)
+        self.assertEqual(len(sig), 4 + 64)  # key ID + Ed25519 sig
+
+    def test_emit_empty_origin_refused(self):
+        seed, _pub = _keypair()
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            cn.emit_checkpoint("", 1, hashlib.sha256(b"r").digest(),
+                               ORIGIN, seed)
+        self.assertEqual(ctx.exception.code, "checkpoint-origin-empty")
+
+    def test_emit_origin_with_space_refused(self):
+        seed, _pub = _keypair()
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            cn.emit_checkpoint("has space.example/log", 1,
+                               hashlib.sha256(b"r").digest(),
+                               ORIGIN, seed)
+        self.assertEqual(ctx.exception.code, "checkpoint-origin-empty")
+
+    def test_emit_bad_key_name_is_config_error(self):
+        # The key name is signer configuration, not a checkpoint
+        # field: a bad key name is a programming error, the same
+        # convention as derive_key_id / vkey_string / parse_vkey.
+        seed, _pub = _keypair()
+        with self.assertRaises(ValueError):
+            cn.emit_checkpoint(ORIGIN, 1, hashlib.sha256(b"r").digest(),
+                               "", seed)
+        with self.assertRaises(ValueError):
+            cn.emit_checkpoint(ORIGIN, 1, hashlib.sha256(b"r").digest(),
+                               "has space", seed)
+
+
+    def test_emit_bad_size_refused(self):
+        seed, _pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        for bad in (-1, "3", 3.0, True):
+            with self.assertRaises(cn.CheckpointNoteError) as ctx:
+                cn.emit_checkpoint(ORIGIN, bad, root, ORIGIN, seed)
+            self.assertEqual(ctx.exception.code,
+                             "checkpoint-size-malformed")
+
+    def test_emit_bad_root_refused(self):
+        seed, _pub = _keypair()
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            cn.emit_checkpoint(ORIGIN, 1, b"short", ORIGIN, seed)
+        self.assertEqual(ctx.exception.code, "checkpoint-root-malformed")
+
+
+class ParseVerifyTest(unittest.TestCase):
+    def test_round_trip(self):
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 7, root, ORIGIN, seed)
+        fields = cn.parse_checkpoint(note)
+        self.assertEqual(fields["origin"], ORIGIN)
+        self.assertEqual(fields["tree_size"], 7)
+        self.assertEqual(fields["root_hash"], root)
+        self.assertEqual(fields["extensions"], ())
+        verified = cn.verify_checkpoint(note, [_vkey_for(ORIGIN, pub)])
+        self.assertEqual(verified["verified_by"], [ORIGIN])
+
+    def test_unknown_signature_ignored_when_known_verifies(self):
+        # Unknown sigs are IGNORED, never failures: a note with one
+        # unknown sig and one good known sig verifies.
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 2, root, ORIGIN, seed)
+        lines = note.decode("utf-8").split("\n")
+        sig_idx = next(i for i, ln in enumerate(lines)
+                       if ln.startswith("\u2014"))
+        body = lines[:sig_idx]
+        text = ("\n".join(body) + "\n").encode("utf-8")
+        evil_seed, evil_pub = _keypair()
+        evil_id = cn.derive_key_id("evil.example/x",
+                                  cn.SIG_TYPE_ED25519, evil_pub)
+        evil_line = ("\u2014 evil.example/x " + base64.b64encode(
+            evil_id + ed.sign(evil_seed, text)).decode())
+        mixed = ("\n".join(body + [evil_line, lines[sig_idx], ""])
+                 ).encode("utf-8")
+        verified = cn.verify_checkpoint(mixed, [_vkey_for(ORIGIN, pub)])
+        self.assertEqual(verified["verified_by"], [ORIGIN])
+
+    def test_malformed_notes(self):
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 3, root, ORIGIN, seed)
+        vkey = _vkey_for(ORIGIN, pub)
+        bad_cases = [
+            b"\xff\xfe binary",                       # not UTF-8
+            b"line\x01with control\n\nsig\n",         # control char
+            b"no trailing newline",                   # no final newline
+            b"body only, no blank line\n"
+            b"\u2014 name AQIDBA==\n",                # no separator
+        ]
+        for bad in bad_cases:
+            with self.assertRaises(cn.CheckpointNoteError) as ctx:
+                cn.parse_checkpoint(bad)
+            self.assertEqual(ctx.exception.code,
+                             "checkpoint-note-malformed",
+                             "case %r" % (bad[:20],))
+
+    def test_bad_field_grammar(self):
+        seed, _pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 3, root, ORIGIN, seed)
+        lines = note.decode("utf-8").split("\n")
+        sig_idx = next(i for i, ln in enumerate(lines)
+                       if ln.startswith("\u2014"))
+        head, tail = lines[:sig_idx], lines[sig_idx:]
+
+        def rebuild(body_lines):
+            # Keep the blank separator line between body and sigs.
+            return ("\n".join(body_lines + [""] + tail)).encode("utf-8")
+
+        cases = [
+            (["", "3", base64.b64encode(root).decode()],
+             "checkpoint-origin-empty"),
+            (["", "", ""], "checkpoint-origin-empty"),
+            ([ORIGIN, "03", base64.b64encode(root).decode()],
+             "checkpoint-size-malformed"),
+            ([ORIGIN, "-1", base64.b64encode(root).decode()],
+             "checkpoint-size-malformed"),
+            ([ORIGIN, "3x", base64.b64encode(root).decode()],
+             "checkpoint-size-malformed"),
+            ([ORIGIN, "3", "not-base64!!"],
+             "checkpoint-root-malformed"),
+            ([ORIGIN, "3", base64.b64encode(b"short").decode()],
+             "checkpoint-root-malformed"),
+            ([ORIGIN, "3", base64.b64encode(root).decode(), ""],
+             "checkpoint-extension-empty"),
+        ]
+        for body_lines, code in cases:
+            with self.assertRaises(cn.CheckpointNoteError) as ctx:
+                cn.parse_checkpoint(rebuild(body_lines))
+            self.assertEqual(ctx.exception.code, code,
+                             "body %r" % (body_lines,))
+
+    def test_extension_lines_accepted_but_surfaced(self):
+        # Extensions are legal per the spec but NOT RECOMMENDED and
+        # not auditable: the parser surfaces them explicitly.
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 3, root, ORIGIN, seed)
+        lines = note.decode("utf-8").split("\n")
+        sig_idx = next(i for i, ln in enumerate(lines)
+                       if ln.startswith("\u2014"))
+        head, tail = lines[:sig_idx], lines[sig_idx:]
+        forged = ("\n".join(head[:3] + ["ext: 1", ""] + tail)).encode()
+        # The hand-added extension breaks the signature (expected):
+        # parse still works and surfaces the extension.
+        fields = cn.parse_checkpoint(forged)
+        self.assertEqual(fields["extensions"], ("ext: 1",))
+
+    def test_size_zero_round_trips(self):
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        note = cn.emit_checkpoint(ORIGIN, 0, root, ORIGIN, seed)
+        fields = cn.verify_checkpoint(note, [_vkey_for(ORIGIN, pub)])
+        self.assertEqual(fields["tree_size"], 0)
+
+
+class JournalTest(unittest.TestCase):
+    def test_idempotent_reissue(self):
+        journal = cn.CheckpointJournal()
+        seed, _pub = _keypair()
+        root = hashlib.sha256(b"r").digest()
+        a = journal.issue(ORIGIN, 3, root, ORIGIN, seed)
+        b = journal.issue(ORIGIN, 3, root, ORIGIN, seed)
+        self.assertEqual(a, b)
+
+    def test_equivocation_refused(self):
+        journal = cn.CheckpointJournal()
+        seed, _pub = _keypair()
+        journal.issue(ORIGIN, 3, hashlib.sha256(b"r1").digest(),
+                      ORIGIN, seed)
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            journal.issue(ORIGIN, 3, hashlib.sha256(b"r2").digest(),
+                          ORIGIN, seed)
+        self.assertEqual(ctx.exception.code, "checkpoint-inconsistent")
+
+    def test_different_size_may_advance(self):
+        journal = cn.CheckpointJournal()
+        seed, _pub = _keypair()
+        journal.issue(ORIGIN, 3, hashlib.sha256(b"r1").digest(),
+                      ORIGIN, seed)
+        note = journal.issue(ORIGIN, 4, hashlib.sha256(b"r2").digest(),
+                             ORIGIN, seed)
+        self.assertEqual(cn.parse_checkpoint(note)["tree_size"], 4)
+
+
+class LogAdapterTest(unittest.TestCase):
+    class _StubLog(object):
+        def __init__(self, size, root):
+            self._size = size
+            self._root = root
+
+        def current_root(self):
+            return {"tree_size": self._size,
+                    "root_hash": self._root.hex()}
+
+    def test_checkpoint_binds_current_tree_head(self):
+        seed, pub = _keypair()
+        root = hashlib.sha256(b"real-tree").digest()
+        note = cn.checkpoint_for_log(self._StubLog(9, root), ORIGIN,
+                                     ORIGIN, seed)
+        fields = cn.verify_checkpoint(note, [_vkey_for(ORIGIN, pub)])
+        self.assertEqual(fields["tree_size"], 9)
+        self.assertEqual(fields["root_hash"], root)
+
+    def test_empty_log_refused(self):
+        seed, _pub = _keypair()
+        log = self._StubLog(0, hashlib.sha256(b"x").digest())
+        with self.assertRaises(cn.CheckpointNoteError) as ctx:
+            cn.checkpoint_for_log(log, ORIGIN, ORIGIN, seed)
+        self.assertEqual(ctx.exception.code, "checkpoint-log-empty")
+
+
+class TaxonomyPinTest(unittest.TestCase):
+    def test_checkpoint_codes_mapped(self):
+        from gov import decision_codes as dc
+        for code in cn.CHECKPOINT_CODES:
+            self.assertIn(code, dc.TAXONOMY)
+        self.assertEqual(len(dc.TAXONOMY), 695)
+        # 667 = wave-237 merge pin; + 28 wave-238 merge codes (10 lane-A
+        # C2SP checkpoint, 8 lane-B bundle-verify invariant,
+        # 4 lane-C attested-vs-asserted, 6 lane-D corroboration);
+        # re-pointed at merge. Lane-local lane-A pin was 677
+        # (= 667 + 10 lane-A C2SP
+        # checkpoint codes (checkpoint-origin-empty,
+        # checkpoint-size-malformed, checkpoint-root-malformed,
+        # checkpoint-extension-empty, checkpoint-note-malformed,
+        # checkpoint-not-c2sp, checkpoint-known-signature-invalid,
+        # checkpoint-no-trusted-signature, checkpoint-log-empty,
+        # checkpoint-inconsistent), additive, zero deletions, zero
+        # key collisions.
+
+
+if __name__ == "__main__":
+    unittest.main()
