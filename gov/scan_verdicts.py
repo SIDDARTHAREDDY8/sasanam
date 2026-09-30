@@ -92,6 +92,7 @@ seams. Unwired callers see byte-identical behavior.
 Stdlib only. $0 spend. Synthetic/local testing.
 """
 
+import hashlib
 import json
 import time
 
@@ -108,6 +109,7 @@ __all__ = [
     "MAX_VERDICT_TTL_SECONDS",
     "ScanVerdictError",
     "default_scan_bounds",
+    "digest_of_bytes",
     "emit_scan_verdict",
     "verify_scan_verdict",
     "peek_scan_verdict",
@@ -154,6 +156,31 @@ class ScanVerdictError(ValueError):
 
 def _now():
     return int(time.time())
+
+
+def digest_of_bytes(data):
+    """The canonical digest pin for exact bytes: ``sha256:`` + the
+    64-char lowercase hex SHA-256 digest (stdlib hashlib, no third
+    party).
+
+    This is the digest-binding primitive (wave-216, npm/PyPI
+    attestation DIGEST-BINDING steal -- idea only): a scan verdict
+    binds to the digest of the bytes the scanner actually scanned, and
+    a consumer binds to the digest of the bytes it is actually about
+    to promote. A digest CLAIM from a manifest is never hashed here --
+    only bytes the caller holds. Non-bytes-like input (str, None,
+    int) is refused LOUDLY, never coerced: a digest string passed
+    where bytes belong would silently re-bind the verdict to the
+    claim.
+    """
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        raw = bytes(data)
+    else:
+        raise ScanVerdictError(
+            "scan_verdict_bad_bytes: digest_of_bytes requires a "
+            "bytes-like object, got %s -- digest strings are never "
+            "accepted where bytes belong" % type(data).__name__)
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
 
 
 def _canonical_json(obj):
@@ -664,3 +691,23 @@ class ScanGate:
         return {"ok": True,
                 "checked": checked,
                 "required": list(self._policy.required_scans)}
+
+    def check_bytes(self, scan_bytes, verdicts, *, now=None):
+        """Consult the gate for promoting the exact BYTES held.
+
+        The digest context is derived here, from the bytes themselves,
+        via :func:`digest_of_bytes` -- never from a caller-supplied
+        digest string. This is the digest-binding consumption seam
+        (wave-216): a deployment that hashes the claimant's manifest
+        digest claim instead of the promoted bytes collapses the
+        verdict binding (the npm/PyPI lesson -- "an attestation for one
+        file must not verify for a different file in the same
+        release"). Callers that hold the bytes promote through here;
+        callers that only hold a digest claim they did not hash must
+        not use :meth:`check` with it.
+
+        Tighten-only and purely additive: this delegates to
+        :meth:`check` with the computed digest, so every refusal code
+        and the legacy string API are unchanged.
+        """
+        return self.check(digest_of_bytes(scan_bytes), verdicts, now=now)

@@ -11399,3 +11399,46 @@ Red-first battery `evals/w215_c2pa24_probes.py`: pristine 19/19 GAP -> fixed 19/
 **Findings:** F208 filed OPEN this wave (MEDIUM — homegrown DSSE/bundle verifier vs GHSA-fx35-mq7g-6g98 key-substitution class; break-first audit not yet run — future closure lane). Next free: F209. Open findings: F208.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-216 lane A (2026-09-29) — F208 break-first audit: GHSA-fx35-mq7g-6g98 class ("unexpected public key in a legacy bundle") vs homegrown DSSE/bundle verifier
+- New permanent battery: `evals/w216_f208_probes.py`. 20 attack probes at the public seams + green check; deterministic (fixed key seeds, each probe run twice, verdict-compare). Conventions: `GOV_DEPLOYMENT_MODE=staging` at module level, `GOV_SKIP_GREEN=1` honored depth-1, standalone under `env -u GOV_DEPLOYMENT_MODE`.
+- Seams probed: `gov/dsse_envelope.open_envelope/open_statement` (attacker keyid, spoofed PINNED keyid, keyid-less sigs, threshold=2 with one spoofed sig, same-key double-count, extra junk sig honored), `gov/signature_envelope_v2` (attacker keyid, key_id label lie, `open_any` migration), `gov/scan_verdicts` (attacker-signed, spoofed pinned keyid), `gov/invocation_receipts` countersignature pins, and full end-to-end evidence bundles (attacker-sealed operator vs trusted pin, unpinned residual, trusted control).
+- Result on pristine wave-215 HEAD (eb66966651a93d026c2731d11afe51e6ea801dae): **21 HELD / 0 BREAK / 0 RESIDUAL / 0 ERROR** — every key-hint / key-substitution / legacy-swap shape fails closed. Vacuous close per F208 criterion; no product-code change was needed and none was made.
+- Mechanism confirmed by inspection: DSSE resolves verifiers ONLY from the caller-supplied pinned keyset (`_resolve_signature_verifier`/`_match_verifiers`); v2 binds key_id in the signed body; V6 pins the operator pubkey out-of-band (V7 skips verification after a pin mismatch); receipts self-consistency is loudly labeled, never verified-authorship.
+- F208 CLOSED 2026-09-29. Open findings: none. Next free: F209. Canonical suite and adjacent battery results in REPORT.md.
+Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-216 lane B — jail-policy taxonomy ADAPT (gVisor recipe shape) — 2026-09-29
+
+**Lane:** wave216-jail (lane B). Base `eb66966651a93d026c2731d11afe51e6ea801dae` (wave-215). Commit local-only, never pushed.
+
+**What:** new `gov/jail_policy.py` — named, versioned, Ed25519-signed jail policies re-expressing gVisor's runsc taxonomy (platform/network/no-new-privs, ro rootfs + explicit rw mounts, timeout budgets) and the `examples/sandboxexec/python` recipe (ro rootfs + one rw `/output` + network none + timeout + empty capabilities + no_new_privs), plus Firecracker swagger schema disciplines (whole-update semantics, machine-readable error codes, graceful versioning). Apache-2.0 ideas re-implemented natively; no gVisor/Firecracker source vendored; gVisor NOT adopted (no KVM). `JailPolicyRegistry` activates per (name, version) against a pinned issuer key (signature + strict shape + backend coverage + version floor + validity window, all fail-closed); `check()` is the audit-visible invocation conformance check (writable-dir escape/normpath-traversal, network-request-under-none, timeout-over-budget refused with distinct codes; conforming invocations return a digest-pinned report; signature + window re-checked at every use). `check_backend` names coverage gaps (`policy-needs-unimplemented-feature`) instead of silently degrading. `to_sandbox_kwargs` maps a policy to exact `gov.sandbox.Sandbox(...)` kwargs with all `require_*` fail-closed twins ON and `cage_mode="strict"` — tighten-only opt-in; `gov/sandbox.py` untouched (defaults byte-identical, pinned by battery). Honest boundaries: the policy describes a jail, it does not prove the jail ran; resource-exhaustion defense is the RLIMIT_* budget layer (the same seam gVisor defers to cgroups); v1 syscall vocabulary has one profile; network is `none` only in v1.
+
+**Red-first:** pristine 16/16 GAP (module absent) → fixed 33/33 HELD ×2 runs (16 probes + 16 determinism + green unit check), 0 BREAK / 0 ERROR, plus clean-env standalone 33/33. Battery `evals/w216_jail_policy_probes.py`. Unit `tests/test_jail_policy.py` 33/33 OK. Adjacent `test_sandbox` 59/59 OK, `test_sandbox_hardened` 44 OK (3 skipped). Full canonical not run in-lane (memory convention; merge coordinator owns it).
+
+**Findings:** none filed. F208 OPEN (wave-215). Next free: F209. Open findings: F208.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+
+## 2026-09-29 — Wave-216 lane C: scan-verdict digest binding (npm/PyPI attestation DIGEST-BINDING STEAL, idea only)
+
+Shipped the digest-binding consumption seam for scan verdicts. New `gov.scan_verdicts.digest_of_bytes(data)` — the canonical `sha256:` + 64-hex digest pin over the exact bytes held (stdlib hashlib); non-bytes-like input (str, None, int) is refused LOUDLY (`scan_verdict_bad_bytes`), never coerced, so a digest string can never be hashed into a new binding. New `ScanGate.check_bytes(scan_bytes, verdicts, *, now=None)` — derives the digest context from the promoted bytes themselves and delegates to the unchanged `check()`; purely additive and tighten-only (same refusal codes, legacy string API byte-identical). Rationale: the gate's `check(scan_target_digest, ...)` takes the digest as a caller-supplied string; a deployment that hashes the CLAIMANT's manifest digest claim instead of the promoted bytes collapses the verdict binding ("an attestation for one file must not verify for a different file in the same release"). Callers that hold the bytes promote through `check_bytes`; callers holding only an unhashed digest claim must not use `check()` with it. The SkillLoader seam needed no change: it already passes `verified.digest`, which is provably `sha256()` of the fetched bytes (`digest_mismatch` refuses otherwise).
+
+Red-first battery `evals/w216_verdict_binding_probes.py` (10 probes): pristine 3 HELD / 7 GAP / 0 BREAK (replay shapes already refused via `scan_verdict_target_mismatch`; the consumption seam was a GAP — no bytes-binding API) -> fixed 10/10 HELD x2 (staging + clean `env -u GOV_DEPLOYMENT_MODE`), determinism PASS, depth-1 green check PASS (w213 battery 13/13, test_scan_verdicts OK). Unit `tests/test_verdict_binding.py` 11/11. Adjacent `tests/test_scan_verdicts.py` 32/32, `evals/w213_scan_gate_probes.py` 16/16. No breaks found at the public seams, so no finding filed (F209 stays free). Two-axis self-review: no violations; the green-check pytest invocation was fixed to the repo's script-runner convention (venv has no pytest).
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-216 merge (2026-09-29) — F208 closed + jail-policy taxonomy + scan-verdict digest binding
+
+**Merge of wave-216 lanes A–D on base `eb66966` (wave-215).** Direct byte-copy integration (no git am); every copied file cmp-verified against its lane worktree HEAD. Lane hygiene: none beyond the lane-A BUILD_LOG file-head repair (already done in-lane).
+
+**Lane A (F208 closure)** — `evals/w216_f208_probes.py` (20 attack probes + green check at public seams, deterministic key seeds, `env -u` standalone). Pristine run: **21 HELD / 0 BREAK / 0 RESIDUAL / 0 ERROR** → **F208 CLOSED via vacuous close** per its own criterion (verifier already refuses every GHSA-fx35-mq7g-6g98 key-substitution shape). No product-code change was needed and none was made; the battery is the permanent regression pin and closure evidence. Mechanism confirmed: DSSE `_resolve_signature_verifier`/`_match_verifiers` resolve ONLY from the caller-supplied pinned keyset (`keyid` selects a matching pinned verifier, never constructs one from bundle content); v2 binds key_id in the signed body; evidence_verify V6 pins the operator pubkey out-of-band. Open findings: none. Next free: F209.
+
+**Lane B (jail-policy taxonomy ADAPT)** — new `gov/jail_policy.py` + battery + 33 unit tests. Named/versioned/Ed25519-signed jail policies (gVisor recipe shape, no gVisor source); tighten-only opt-in via `to_sandbox_kwargs`; `gov/sandbox.py` untouched. Pristine 16/16 GAP → fixed 33/33 HELD ×2. No findings filed.
+
+**Lane C (scan-verdict digest binding)** — `gov/scan_verdicts.py` +47 lines purely additive (`digest_of_bytes`, `ScanGate.check_bytes`); legacy string API byte-identical. Pristine 3 HELD/7 GAP/0 BREAK → fixed 10/10 HELD ×2; 11 unit tests; no findings filed (F209 stays free).
+
+**Lane D (prospecting, research only)** — standing notes, NOT dispatched: AuthZEN upgraded to STEAL/ADAPT (OpenID Final Jan 2026; ARAP re-evaluation-at-enforcement maps onto the approval queue; COAZ-MCP binding draft to track); EMILIA ADAPT (three-digests-three-jobs authorization receipts as SCITT Signed Statements); in-toto STEAL pattern (step-scoped quorum, expected-command demoted to diagnostic); sigstore compile-policy-once + strict-xfail battery discipline; npm/PyPI publisher-identity-projection; NIST IR 8587 final drift noted.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
