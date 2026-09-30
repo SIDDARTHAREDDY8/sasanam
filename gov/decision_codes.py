@@ -47,7 +47,10 @@ codes): ``envelope``, ``jail``, ``quorum``, ``arap-context``,
 ``user`` / ``agent_action`` (intent-slice step kinds);
 ``lifecycle`` (discovery event kind); ``warm_retired``
 (evidence-tier journal event kind); ``ceremony-tip-manifest`` /
-``signer-share-store`` (custody document kinds).
+``signer-share-store`` (custody document kinds);
+``verify_chain`` / ``evidence_digest`` (wave-229 merge: pre-colon location
+labels in gov/checkpoints.py human exception messages, not emitted machine
+refusal codes).
 
 Severity semantics (triage guidance, not authority):
 - critical: recomputed evidence disagrees with the claim -- treat as
@@ -3698,6 +3701,54 @@ TAXONOMY = {
         "evidence_kinds_required": ['attestation', 'revocation-registry'],
         "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
     },
+    'single-use-lifecycle-refused': {
+        "domain": 'single_use',
+        "code": 'single-use-lifecycle-refused',
+        "human": 'single-use lifecycle: refused by policy (generic lifecycle refusal)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['reservation'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-reserve-conflict': {
+        "domain": 'single_use',
+        "code": 'single-use-reserve-conflict',
+        "human": 'single-use lifecycle: atomic reserve of the (approval digest, step id, input digest) triple lost the race; the second consumer was refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'approval-digest'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-not-reserved': {
+        "domain": 'single_use',
+        "code": 'single-use-not-reserved',
+        "human": 'single-use lifecycle: execution was attempted with no live reservation for the (approval digest, step id, input digest) triple',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'approval-digest'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-reservation-mismatch': {
+        "domain": 'single_use',
+        "code": 'single-use-reservation-mismatch',
+        "human": 'single-use lifecycle: the presented step id, input digest, or consumption binding does not match the reservation',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'consumption-record'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-reservation-unknown': {
+        "domain": 'single_use',
+        "code": 'single-use-reservation-unknown',
+        "human": 'single-use lifecycle: the approval digest, reservation, or admission is not known to this registry',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'approval-digest'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-reconcile-replayed': {
+        "domain": 'single_use',
+        "code": 'single-use-reconcile-replayed',
+        "human": 'single-use lifecycle: reconcile was called on an already-reconciled reservation',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'consumption-record'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
     'skill-id-mismatch': {
         "domain": 'capability',
         "code": 'skill-id-mismatch',
@@ -4288,6 +4339,139 @@ TAXONOMY = {
         "human": 'approval and delegation: the run identity is wrong',
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-229 merge (integration fix): the wave-228 taxonomy was closed
+    # over the wave-228 tree; the battery's independent whole-tree scanner
+    # found 16 new wave-229 lane-A/C refusal strings unmapped. Added here in
+    # the module's own conventions; severities follow the documented
+    # triage guide (critical = recomputed evidence disagrees with the claim).
+    'checkpoint-refused': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-refused',
+        "human": 'audit checkpoints: generic checkpoint refusal',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-malformed': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-malformed',
+        "human": 'audit checkpoints: the checkpoint or its inputs are structurally malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-signature-invalid': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-signature-invalid',
+        "human": 'audit checkpoints: the checkpoint signature does not verify',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'checkpoint-log-incomplete': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-log-incomplete',
+        "human": 'audit checkpoints: the log is truncated against the checkpoint (fewer entries than committed)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-count-mismatch': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-count-mismatch',
+        "human": 'audit checkpoints: the log has more entries than the checkpoint commits to',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-log-reordered': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-log-reordered',
+        "human": 'audit checkpoints: the recomputed MMR peaks disagree with the committed peaks (reorder or silent content substitution)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-chain-broken': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-chain-broken',
+        "human": 'audit checkpoints: a checkpoint prev_digest link does not match its predecessor',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-evidence-not-authorization': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-evidence-not-authorization',
+        "human": 'audit checkpoints: checkpoint evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-refused': {
+        "domain": 'policy_replay',
+        "code": 'replay-refused',
+        "human": 'policy replay: generic replay refusal',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute', 'replay-claim'],
+    },
+    'replay-policy-malformed': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-malformed',
+        "human": 'policy replay: the revision record or evidence envelope is structurally malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-revision-unknown': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-revision-unknown',
+        "human": 'policy replay: the pinned revision is not registered',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-revision-conflict': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-revision-conflict',
+        "human": 'policy replay: the same rev_id was registered with different ruleset bytes',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-digest-mismatch': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-digest-mismatch',
+        "human": 'policy replay: a caller-supplied digest disagrees with the digest recomputed from the ruleset bytes',
+        "severity": 'critical',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-evidence-tampered': {
+        "domain": 'policy_replay',
+        "code": 'replay-evidence-tampered',
+        "human": 'policy replay: the captured evidence digest does not match its contents',
+        "severity": 'critical',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-drift': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-drift',
+        "human": 'policy replay: the live policy revision differs from the pinned revision and would change the verdict',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute', 'replay-claim'],
+    },
+    'replay-policy-not-authorization': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-not-authorization',
+        "human": 'policy replay: replay evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision'],
         "reverify_steps": ['recompute'],
     },
 }

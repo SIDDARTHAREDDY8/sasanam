@@ -103,6 +103,10 @@ PRODUCER_VERSIONS = {
     # Wave-228 (decision codes): the decision_code section is produced
     # by gov/decision_codes.py at producer_version "1".
     "gov/decision_codes.py": "1",
+    # Wave-229 (policy-revision-pinned replay): the policy_revision
+    # section is produced by gov/policy_revisions.py at
+    # producer_version "1".
+    "gov/policy_revisions.py": "1",
     # Wave-191 (identity token): the identity_token section is produced
     # by gov/identity.py at producer_version "2", leaving room for a
     # sibling identity_cert section without revving the packet.
@@ -573,7 +577,8 @@ def build_decision_packet(*, decision, boundary_declared,
                           decision_seq=None, policy_reason=None,
                           issued_at=None, bill_of_materials=None,
                           policy_bundle_digest=None, identity_token=None,
-                          rule_labels=None, decision_code=None):
+                          rule_labels=None, decision_code=None,
+                          policy_rev_id=None, policy_digest=None):
     """Build the UNSIGNED decision-packet body (dict, no ``signature``).
 
     ``decision`` is "allow" | "deny" | "queue" (the executor maps
@@ -624,6 +629,17 @@ def build_decision_packet(*, decision, boundary_declared,
     additionally replays the claim against the live taxonomy. The
     attached code is EVIDENCE, never authority: it records which
     refusal fired and how to re-verify it, and confers no permission.
+
+    ``policy_rev_id`` / ``policy_digest`` (wave-229) are the OPTIONAL
+    pinned policy revision (see gov/policy_revisions.py): ``rev_id``
+    like ``"policy:1"`` and the recomputed sha256 digest of the exact
+    ruleset bytes. Both must be supplied together (half-pinned
+    refuses :class:`PacketError`); the section is digest-bound and
+    signature-covered like every other section, so a swapped digest
+    breaks the packet signature. ``None`` (the default) builds a
+    legacy packet: no ``policy_revision`` section is added and the
+    body is byte-identical to a build without the kwargs. The pinned
+    revision is evidence for replay, never authority.
     """
     if decision not in DECISIONS:
         raise PacketError(
@@ -779,6 +795,27 @@ def build_decision_packet(*, decision, boundary_declared,
                 % (decision_code, e), e.code)
         body["decision_code"] = _wrap(machine_claim,
                                       "gov/decision_codes.py")
+    if (policy_rev_id is None) != (policy_digest is None):
+        raise PacketError(
+            "policy_rev_id and policy_digest must be supplied "
+            "together: a half-pinned revision misstates the replay "
+            "posture")
+    if policy_rev_id is not None:
+        # Wave-229 (policy-revision-pinned replay): the optional
+        # digest-bound pinned policy revision. The value is stored
+        # verbatim as digest-linked evidence; signature-covered like
+        # every other section (it is part of the body before
+        # sign_packet runs), so a swapped digest breaks the packet
+        # signature. The producer pins the revision via
+        # gov/policy_revisions -- the packet never trusts a bare
+        # claim without the digest.
+        if not isinstance(policy_rev_id, str) or not policy_rev_id:
+            raise PacketError("policy_rev_id must be a non-empty string")
+        if not isinstance(policy_digest, str) or len(policy_digest) != 64:
+            raise PacketError("policy_digest must be a 64-char hex digest")
+        body["policy_revision"] = _wrap(
+            {"rev_id": policy_rev_id, "digest": policy_digest},
+            "gov/policy_revisions.py")
     return body
 
 
@@ -928,6 +965,36 @@ def _verify(packet, entries, token_claims):
                 PRODUCER_VERSIONS["gov/decision_codes.py"]:
             return False, "decision_code section producer_version " \
                 "must be %r" % (PRODUCER_VERSIONS["gov/decision_codes.py"],)
+    rev_section = packet.get("policy_revision")
+    if rev_section is not None:
+        # Wave-229 (policy-revision-pinned replay): optional
+        # evidence section. When present it must be well-formed and
+        # producer-attributed; the pinned digest is signature-covered,
+        # so a tampered digest fails the signature check below. The
+        # digest is evidence for replay, never authority.
+        if not isinstance(rev_section, dict):
+            return False, "policy_revision section is not a dict"
+        if "value" not in rev_section:
+            return False, "policy_revision section has no value"
+        if rev_section.get("producer") != "gov/policy_revisions.py":
+            return False, "policy_revision section producer must be " \
+                "'gov/policy_revisions.py'"
+        if rev_section.get("producer_version") != \
+                PRODUCER_VERSIONS["gov/policy_revisions.py"]:
+            return False, "policy_revision section producer_version " \
+                "must be %r" % (PRODUCER_VERSIONS["gov/policy_revisions.py"],)
+        rev_value = rev_section.get("value")
+        if not isinstance(rev_value, dict):
+            return False, "policy_revision section value is not a dict"
+        if not isinstance(rev_value.get("rev_id"), str) \
+                or not rev_value.get("rev_id"):
+            return False, "policy_revision rev_id must be a non-empty " \
+                "string"
+        digest = rev_value.get("digest")
+        if not isinstance(digest, str) or len(digest) != 64 \
+                or set(digest) - set("0123456789abcdef"):
+            return False, "policy_revision digest must be a 64-char " \
+                "hex digest"
     if packet["decision"]["value"] not in DECISIONS:
         return False, "decision %r not in %r" % (
             packet["decision"]["value"], DECISIONS)

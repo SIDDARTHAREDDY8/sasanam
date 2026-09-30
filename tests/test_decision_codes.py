@@ -68,8 +68,13 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 524)
-        # 524 = wave-228 lane-C 509 + 15 wave-228 lane-A/B refusal codes
+        self.assertEqual(len(dc.TAXONOMY), 546)
+        # 546 = 530 (524 wave-228 + 6 wave-229 lane-B lifecycle codes)
+        # + 16 wave-229 merge checkpoint (8) and policy-replay (8) codes,
+        # added at merge by the coordinator (lane closed over pre-wave-229
+        # tree), pin updated here to match.
+        # pin updated by the lane that added them, taxonomy untouched
+        # otherwise.
 
     def test_self_errors_are_mapped(self):
         for code in ("decision-code-unmapped", "decision-code-malformed",

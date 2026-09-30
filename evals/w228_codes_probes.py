@@ -104,6 +104,9 @@ except ImportError:
 #   warm_retired              -- evidence_tiers.py journal event kind
 #   ceremony-tip-manifest     -- custody.py manifest document kind
 #   signer-share-store        -- custody.py store document kind
+#   verify_chain,             -- checkpoints.py location label in a human
+#   evidence_digest              exception message, not a machine code
+#                                (wave-229 merge: audited, non-refusal)
 # ---------------------------------------------------------------------------
 
 _CLASS_ATTR_RE = re.compile(
@@ -146,6 +149,7 @@ _NON_CODES = frozenset([
     "envelope", "jail", "quorum", "arap-context", "read", "write",
     "user", "agent_action", "lifecycle", "warm_retired",
     "ceremony-tip-manifest", "signer-share-store",
+    "verify_chain", "evidence_digest",
 ])
 
 

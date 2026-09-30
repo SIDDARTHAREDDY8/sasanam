@@ -203,11 +203,40 @@ def default_policy_path():
 class PolicyDecision:
     def __init__(self, effect, reason, policy_id=None, flag=None,
                  matched_rules=None, diagnostics=None,
-                 nominal_effect=None, mode="deny", warnings=None):
+                 nominal_effect=None, mode="deny", warnings=None,
+                 policy_rev_id=None, policy_digest=None):
         self.effect = effect          # "allow" | "require_approval" | "deny"
         self.reason = reason
         self.policy_id = policy_id
         self.flag = flag
+        # Wave-229 (policy-revision-pinned replay): the immutable
+        # policy revision in force when this decision was made. Both
+        # are keyword-only and optional; None means "not pinned"
+        # (legacy decisions serialize byte-identically -- the fields
+        # are omitted from to_dict() unless set). PolicyEngine
+        # .evaluate() always stamps both; the digest is the digest of
+        # the exact bytes the engine parsed (engine.policy_hash).
+        # Half-pinned refuses: a rev_id without its digest (or vice
+        # versa) misstates the replay posture (same rule as
+        # build_decision_packet).
+        if (policy_rev_id is None) != (policy_digest is None):
+            raise ValueError(
+                "PolicyDecision.policy_rev_id and policy_digest must "
+                "be supplied together")
+        if policy_rev_id is not None:
+            if not isinstance(policy_rev_id, str) or not policy_rev_id:
+                raise ValueError(
+                    "PolicyDecision.policy_rev_id must be a non-empty "
+                    "string, got %r" % (policy_rev_id,))
+        if policy_digest is not None:
+            if not isinstance(policy_digest, str) \
+                    or len(policy_digest) != 64 \
+                    or set(policy_digest) - set("0123456789abcdef"):
+                raise ValueError(
+                    "PolicyDecision.policy_digest must be a 64-char "
+                    "hex digest, got %r" % (policy_digest,))
+        self.policy_rev_id = policy_rev_id
+        self.policy_digest = policy_digest
         # Wave-79 (totality): the rules that fired, in evaluation order.
         # The engine evaluates deny -> require_approval -> allow with
         # first-match-wins per pass, so at most one rule determines the
@@ -274,6 +303,12 @@ class PolicyDecision:
             out["nominal_effect"] = self.nominal_effect
             out["mode"] = self.mode
             out["warnings"] = list(self.warnings)
+        # Wave-229: the pinned policy revision rides along only when
+        # stamped -- unpinned (legacy) decisions keep their
+        # byte-identical serialized shape.
+        if self.policy_rev_id is not None:
+            out["policy_rev_id"] = self.policy_rev_id
+            out["policy_digest"] = self.policy_digest
         return out
 
 
@@ -1131,9 +1166,20 @@ class PolicyEngine:
         callers pass False so hypothetical matches never enter the
         mode ledger's evidence base.
         """
-        return self.decide(Request.from_action(action, context),
-                           record_telemetry=record_telemetry
-                           ).to_policy_decision()
+        decision = self.decide(Request.from_action(action, context),
+                               record_telemetry=record_telemetry
+                               ).to_policy_decision()
+        # Wave-229 (policy-revision-pinned replay): every decision that
+        # passes through the engine pins the immutable revision in
+        # force -- the digest is the digest of the exact bytes the
+        # engine parsed (self.policy_hash), recomputed, never trusted
+        # from caller claims. The rev_id convention ("policy:" +
+        # policy_version) is the registry key
+        # gov/policy_revisions.RevisionRegistry pins under (see
+        # pin_engine_bytes).
+        decision.policy_rev_id = "policy:" + self.policy_version
+        decision.policy_digest = self.policy_hash
+        return decision
 
     # -------------------------------------------------- graduation ladder
     # Wave-198: operator-tooling seams over the mode ledger. The
