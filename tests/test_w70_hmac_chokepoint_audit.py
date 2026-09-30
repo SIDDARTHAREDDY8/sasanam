@@ -242,6 +242,27 @@ ALLOWED_HMAC_SITES = {
     # evidence (require_non_repudiation refuses the tier outright).
     ("gov/alg_registry.py", "_hmac_sign", 0):
         "alg-registry MAC tier sign; deployment-owned 32-byte key (explicit pass), domain-separated, non-repudiable=False",
+    # gov/transactional_tokens.py (wave-243, lane C): the per-transaction
+    # token MAC. The key is the TransactionalTokenIssuer's DEPLOYMENT
+    # key, supplied explicitly at construction as non-empty bytes; a
+    # missing/invalid key fails closed (transaction-key-missing) with
+    # NO dev-key fallback. The MAC is domain-separated via
+    # _TOKEN_DOMAIN ("gov-txn-token/v1\\x00") over the canonical token
+    # body (txn_id, rs_audience, issued/expires); it is an integrity
+    # binding for same-transaction authorization context, not a
+    # credential.
+    ("gov/transactional_tokens.py", "_mac", 0):
+        "per-transaction token MAC; deployment key (explicit pass, fail-closed no fallback), domain-separated",
+    # gov/action_bound_permits.py (wave-243, lane D): the action-bound
+    # permit binding MAC. The key is the permit ISSUER's key, REQUIRED
+    # explicitly by bind_permit/verify_permit (fail-closed
+    # permit-malformed when absent); never a default, never derived
+    # in-repo. It binds (recipient, key_ref, request_digest,
+    # action_instance, currentness_mode, base_permit_digest) so the
+    # record cannot be edited after issue; an integrity binding, not
+    # a credential.
+    ("gov/action_bound_permits.py", "_binding_digest", 0):
+        "action-bound permit binding MAC; issuer key (required explicit pass), fail-closed when absent",
 }
 
 

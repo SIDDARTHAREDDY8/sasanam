@@ -6877,6 +6877,403 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    # Wave-243 merge: from wave243-verifier
+    'authority-stale': {
+        "domain": 'authority',
+        "code": 'authority-stale',
+        "human": 'proof != authority fail-safe: the proof verified but '
+                 'the authority is revoked, expired, or lapsed; refused '
+                 'fail-safe, never proof pass-through',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-verifier
+    'authority-unavailable': {
+        "domain": 'authority',
+        "code": 'authority-unavailable',
+        "human": 'proof != authority fail-safe: the authority source is '
+                 'unavailable; deterministic named fail-safe, not a '
+                 'timeout-retry loop',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-verifier
+    'chain-source-stale': {
+        "domain": 'authority',
+        "code": 'chain-source-stale',
+        "human": 'verifier-side fail-closed: the delegation-chain source '
+                 'input is stale; explicit stale verdict, never a '
+                 'silent pass',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain-source-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-verifier
+    'chain-source-unavailable': {
+        "domain": 'authority',
+        "code": 'chain-source-unavailable',
+        "human": 'verifier-side fail-closed: the delegation-chain source '
+                 'is unavailable; fail closed, never allow',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain-source-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'channel-identity-unattested': {
+        "domain": 'attested-channel',
+        "code": 'channel-identity-unattested',
+        "human": 'self-reported principal with no attested peer identity; refused, never downgraded',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'channel-peer-mismatch': {
+        "domain": 'attested-channel',
+        "code": 'channel-peer-mismatch',
+        "human": 'attested peer identity names a different principal than the self-reported one',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'channel-record-malformed': {
+        "domain": 'attested-channel',
+        "code": 'channel-record-malformed',
+        "human": 'emitter claim or attested peer block is not the shape the admission layer speaks',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'channel-sequence-break': {
+        "domain": 'attested-channel',
+        "code": 'channel-sequence-break',
+        "human": 'claim sequence does not follow the peer last admitted sequence',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'channel-timestamp-divergence': {
+        "domain": 'attested-channel',
+        "code": 'channel-timestamp-divergence',
+        "human": 'emitter ts_emit diverges from daemon time beyond the forgery bound',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'effect-decision-contradicted': {
+        "domain": 'effect-agreement',
+        "code": 'effect-decision-contradicted',
+        "human": 'observed effect contradicts the recorded decision',
+        "severity": 'high',
+        "evidence_kinds_required": ['decision-record', 'effect-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'effect-decision-missing': {
+        "domain": 'effect-agreement',
+        "code": 'effect-decision-missing',
+        "human": 'no decision recorded for this action id',
+        "severity": 'medium',
+        "evidence_kinds_required": ['decision-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'effect-not-bound': {
+        "domain": 'effect-agreement',
+        "code": 'effect-not-bound',
+        "human": 'effect bytes do not digest to the recorded effect digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['effect-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-attested-channel
+    'key-in-agent-process': {
+        "domain": 'attested-channel',
+        "code": 'key-in-agent-process',
+        "human": 'emitting context declares direct key access inside the agent process',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-vocabulary
+    'lineage-gap': {
+        "domain": 'evaluation',
+        "code": 'lineage-gap',
+        "human": 'evaluation lineage: a link skips its predecessor '
+                 'challenge or the genesis does not bind the expected '
+                 'anchor; the chain is broken, not shortened',
+        "severity": 'high',
+        "evidence_kinds_required": ['lineage-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'package-digest-mismatch': {
+        "domain": 'registry-acceptance',
+        "code": 'package-digest-mismatch',
+        "human": 'package bytes do not digest to the signed manifest digest',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'package-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'package-manifest-malformed': {
+        "domain": 'registry-acceptance',
+        "code": 'package-manifest-malformed',
+        "human": 'registry manifest is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'package-signature-invalid': {
+        "domain": 'registry-acceptance',
+        "code": 'package-signature-invalid',
+        "human": 'manifest signature does not verify or is not from a trusted key',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'package-stale': {
+        "domain": 'registry-acceptance',
+        "code": 'package-stale',
+        "human": 'manifest is outside its freshness window',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-bound-permits
+    'permit-currentness-violated': {
+        "domain": 'permit',
+        "code": 'permit-currentness-violated',
+        "human": 'action-bound permit: the declared currentness mode '
+                 '(e.g. fresh-at-use) was not satisfied at presentation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record', 'freshness-evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-bound-permits
+    'permit-instance-replay': {
+        "domain": 'permit',
+        "code": 'permit-instance-replay',
+        "human": 'action-bound permit: the permit was replayed for a '
+                 'different action instance than the bound one',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record', 'binding-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-bound-permits
+    'permit-presenter-mismatch': {
+        "domain": 'permit',
+        "code": 'permit-presenter-mismatch',
+        "human": 'action-bound permit: the presenter key is not the bound key; '
+                 'the permit names exactly one recipient key',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record', 'binding-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-bound-permits
+    'permit-refusal-vocabulary-invalid': {
+        "domain": 'permit',
+        "code": 'permit-refusal-vocabulary-invalid',
+        "human": 'action-bound permit: a refusal was raised (or declared) '
+                 'with a reason outside the registered refusal vocabulary; '
+                 'no ad-hoc refusal vocabulary is permitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'registry-threshold-unmet': {
+        "domain": 'registry-acceptance',
+        "code": 'registry-threshold-unmet',
+        "human": 'fewer valid trusted signatures than the registry policy threshold',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'resource-server-mismatch': {
+        "domain": 'transaction',
+        "code": 'resource-server-mismatch',
+        "human": 'transactional token presented to a resource server it was '
+                 'not issued for; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-finality-bound
+    'revocation-applicable': {
+        "domain": 'revocation',
+        "code": 'revocation-applicable',
+        "human": 'finality-bound revocation: the authorization\'s revocation '
+                 'basis is revoked at commit time; the Finality Sink refuses '
+                 'check-and-commit and the protected consequence must not '
+                 'commit',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization', 'revocation-registry',
+                                   'digest'],
+        "reverify_steps": ['recompute-digest', 'check-revocation'],
+    },
+    # Wave-243 merge: from wave243-finality-bound
+    'revocation-basis-malformed': {
+        "domain": 'revocation',
+        "code": 'revocation-basis-malformed',
+        "human": 'finality-bound revocation: the revocation basis or the '
+                 'authorization record is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-finality-bound
+    'revocation-basis-tampered': {
+        "domain": 'revocation',
+        "code": 'revocation-basis-tampered',
+        "human": 'finality-bound revocation: the recomputed binding digest '
+                 'disagrees with the claimed binding; the binding was not '
+                 're-derived from issuer trust',
+        "severity": 'critical',
+        "evidence_kinds_required": ['authorization', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    # Wave-243 merge: from wave243-finality-bound
+    'revocation-check-unsealed': {
+        "domain": 'revocation',
+        "code": 'revocation-check-unsealed',
+        "human": 'finality-bound revocation: the revocation store mutated '
+                 'between the check and the commit decision (TOCTOU); the '
+                 'check-and-commit was not atomic and is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization', 'revocation-registry'],
+        "reverify_steps": ['check-revocation'],
+    },
+    # Wave-243 merge: from wave243-finality-bound
+    'revocation-sink-nonatomic': {
+        "domain": 'revocation',
+        "code": 'revocation-sink-nonatomic',
+        "human": 'finality-bound revocation: the revocation store does not '
+                 'implement the atomic check protocol; the Finality Sink '
+                 'fails closed rather than check-then-act',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-vocabulary
+    'satisfied-missing': {
+        "domain": 'evaluation',
+        "code": 'satisfied-missing',
+        "human": 'evidence presented below grade SATISFIED as '
+                 'authorization or as satisfied: VERIFIED (crypto '
+                 'measured true) is not authorization; sufficiency '
+                 'is never asserted without the requirements met',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-record', 'gate-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-cosign-interop
+    'signer-digest-length-mismatch': {
+        "domain": 'signer-interop',
+        "code": 'signer-digest-length-mismatch',
+        "human": 'caller-supplied digest length does not match the stated hash digest size (the cosign sign-side loud failure shape)',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-cosign-interop
+    'signer-hash-downshift-refused': {
+        "domain": 'signer-interop',
+        "code": 'signer-hash-downshift-refused',
+        "human": 'curve/hash pairing reproduces the cosign sign-side SHA-256 hardcode shape; refused loudly, never silently downshifted',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'tool-definition-malformed': {
+        "domain": 'mcp-surface',
+        "code": 'tool-definition-malformed',
+        "human": 'tool definition is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['tool-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-effect-agreement
+    'tool-executable-content': {
+        "domain": 'mcp-surface',
+        "code": 'tool-executable-content',
+        "human": 'tool definition carries executable content; quarantined',
+        "severity": 'high',
+        "evidence_kinds_required": ['tool-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'transaction-expired': {
+        "domain": 'transaction',
+        "code": 'transaction-expired',
+        "human": 'transactional token presented at or after its per-token '
+                 'expiry; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'transaction-id-mismatch': {
+        "domain": 'transaction',
+        "code": 'transaction-id-mismatch',
+        "human": 'transactional token presented for a transaction it was '
+                 'not issued for; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'transaction-key-missing': {
+        "domain": 'transaction',
+        "code": 'transaction-key-missing',
+        "human": 'transactional token operation attempted without a '
+                 'deployment key; refused fail-closed (no dev fallback)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'transaction-malformed': {
+        "domain": 'transaction',
+        "code": 'transaction-malformed',
+        "human": 'transactional token or issuance request is malformed; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-txn-tokens
+    'transaction-signature-invalid': {
+        "domain": 'transaction',
+        "code": 'transaction-signature-invalid',
+        "human": 'transactional token MAC does not cover the presented '
+                 'bytes; possible tampering',
+        "severity": 'critical',
+        "evidence_kinds_required": ['token', 'key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-243 merge: from wave243-verifier
+    'verifier-input-malformed': {
+        "domain": 'authority',
+        "code": 'verifier-input-malformed',
+        "human": 'verifier fail-closed check: the chain, verifier policy, '
+                 'or authority store is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
 }
 
 

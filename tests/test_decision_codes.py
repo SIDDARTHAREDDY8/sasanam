@@ -72,7 +72,12 @@ class VocabularyCoverageTest(unittest.TestCase):
         # aggregate-budget/no-effect + 6 stale-authority/containment
         # + 1 exception-TTL + 10 absence-epoch), additive only, composed
         # from the five lane commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 788)
+        # Wave-243 merge: re-pointed 788 -> 828 (40 additive codes: 2 cosign-interop
+        # + 5 finality-bound + 6 transactional-tokens + 4 action-bound-permits
+        # + 6 attested-channel + 2 outcome-vocabulary + 5 verifier-failclosed
+        # + 10 effect-agreement/registry/mcp), additive only, composed from the
+        # eight lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 828)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
