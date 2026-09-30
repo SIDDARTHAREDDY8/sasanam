@@ -432,6 +432,13 @@ def verify(receipt, *, key, expect_alg=None, registry=None):
     On success returns the verified claim (verdict, class, rule
     path, key id, non_repudiation, digest). Receipts are evidence,
     never authority.
+
+    Algorithm-confusion guard (CWE-347): a receipt that *claims* a
+    symmetric (MAC) tier refuses unless ``expect_alg`` is pinned to
+    that tier — pinning declares "this key is a shared secret, not
+    a public key". Without the pin, a MAC-tier receipt presented
+    against a public key refuses: the public key is attacker-known
+    and would make the MAC forgeable.
     """
     _check_receipt_shape(receipt)
     reg = _registry(registry)
@@ -454,7 +461,12 @@ def verify(receipt, *, key, expect_alg=None, registry=None):
         raise DenyReceiptMalformed("receipt signature is not hex")
     body = {k: v for k, v in receipt.items()
             if k not in ("signature", "envelope")}
-    if not reg.verify(receipt["alg"], _signing_input(body), sig, key):
+    # Algorithm-confusion opt-in: only a caller that pinned
+    # expect_alg to a symmetric tier declares the key a secret.
+    for_secret = expect_alg is not None \
+        and reg.is_symmetric(expect_alg)
+    if not reg.verify(receipt["alg"], _signing_input(body), sig, key,
+                      for_symmetric_key=for_secret):
         raise DenyReceiptInvalid(
             "deny-receipt-signature-invalid: signature does not verify")
     # Wave-232: when an envelope rides along, it is verified too --
@@ -466,8 +478,9 @@ def verify(receipt, *, key, expect_alg=None, registry=None):
         env = receipt["envelope"]  # shape already checked at verify start
 
         def _verify(pae_bytes, sig_bytes, _reg=reg, _alg=receipt["alg"],
-                    _key=key):
-            return bool(_reg.verify(_alg, pae_bytes, sig_bytes, _key))
+                    _key=key, _for_secret=for_secret):
+            return bool(_reg.verify(_alg, pae_bytes, sig_bytes, _key,
+                                    for_symmetric_key=_for_secret))
 
         try:
             got = mod.verify_envelope(

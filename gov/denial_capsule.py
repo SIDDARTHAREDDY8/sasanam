@@ -384,6 +384,13 @@ def verify_capsule(capsule, *, key, expect_alg=None, registry=None):
     On success returns the verified claim (commitments, key id,
     non_repudiation). A capsule proves the emitter's signed claim
     about a denial, never authority.
+
+    Algorithm-confusion guard (CWE-347): a capsule that *claims* a
+    symmetric (MAC) tier refuses unless ``expect_alg`` is pinned to
+    that tier — pinning declares "this key is a shared secret, not
+    a public key". Without the pin, a MAC-tier capsule presented
+    against a public key refuses: the public key is attacker-known
+    and would make the MAC forgeable.
     """
     check_capsule_shape(capsule)
     reg = _registry(registry)
@@ -403,8 +410,12 @@ def verify_capsule(capsule, *, key, expect_alg=None, registry=None):
         raise DenialCapsuleMalformed(
             "denial-capsule-malformed: capsule signature is not hex")
     body = {k: v for k, v in capsule.items() if k != "signature"}
+    # Algorithm-confusion opt-in: only a caller that pinned
+    # expect_alg to a symmetric tier declares the key a secret.
+    for_secret = expect_alg is not None \
+        and reg.is_symmetric(expect_alg)
     if not reg.verify(capsule["alg"], _signing_input(body), sig,
-                      bytes(key)):
+                      bytes(key), for_symmetric_key=for_secret):
         raise DenialCapsuleInvalid(
             "denial-capsule-signature-invalid: capsule seal does not "
             "verify")
@@ -459,7 +470,8 @@ def disclose_fields(capsule, material, field_names):
     }
 
 
-def verify_disclosure(capsule, disclosure, *, key, registry=None):
+def verify_disclosure(capsule, disclosure, *, key, registry=None,
+                      expect_alg=None):
     """Verify a disclosure record against the sealed capsule.
 
     Fail-closed order: the capsule SEAL is verified first (a
@@ -470,9 +482,15 @@ def verify_disclosure(capsule, disclosure, *, key, registry=None):
     ``denial-disclosure-mismatch``. Also refuses when the disclosure
     binds a different capsule digest. ``key`` is mandatory: there is
     no anonymous disclosure verification.
+
+    ``expect_alg`` pins the capsule's signature tier (see
+    :func:`verify_capsule`); a capsule that claims a symmetric
+    (MAC) tier refuses unless ``expect_alg`` is pinned to it
+    (algorithm-confusion guard, CWE-347).
     """
     # Seal first: authenticate the commitments before trusting them.
-    verify_capsule(capsule, key=key, registry=registry)
+    verify_capsule(capsule, key=key, registry=registry,
+                   expect_alg=expect_alg)
     if not isinstance(disclosure, dict) or \
             not isinstance(disclosure.get("disclosed"), dict) or \
             not isinstance(disclosure.get("salts"), dict):

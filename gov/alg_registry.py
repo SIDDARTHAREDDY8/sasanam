@@ -205,7 +205,8 @@ class AlgorithmRegistry:
         self._signer_backends = {}
 
     def register(self, name, *, sign_fn, verify_fn, keygen,
-                 domain_separator, non_repudiation=True):
+                 domain_separator, non_repudiation=True,
+                 symmetric=False):
         """Register ``name`` with its signing primitives.
 
         ``sign_fn(secret, message) -> bytes``,
@@ -215,6 +216,12 @@ class AlgorithmRegistry:
         the algorithm's domain claim and no two algorithms may
         share it. ``non_repudiation`` must be ``False`` for MAC
         tiers (symmetric); asymmetric signatures leave it ``True``.
+        ``symmetric`` must be ``True`` for MAC tiers: their
+        verification key is a shared secret, never a public key.
+        A symmetric tier verified with an attacker-known key (for
+        example a victim's public key) is forgeable by anyone —
+        the classic algorithm-confusion shape (CWE-347). See
+        :meth:`verify` for the ``for_symmetric_key`` guard.
         """
         if not isinstance(name, str) or not name:
             raise AlgRegistrationError(
@@ -247,6 +254,7 @@ class AlgorithmRegistry:
             "keygen": keygen,
             "domain_separator": bytes(domain_separator),
             "non_repudiation": bool(non_repudiation),
+            "symmetric": bool(symmetric),
         }
         self._domains[bytes(domain_separator)] = name
 
@@ -263,7 +271,18 @@ class AlgorithmRegistry:
                 "alg-unregistered: %r is not registered" % (name,))
         return {"name": entry["name"],
                 "domain_separator": entry["domain_separator"],
-                "non_repudiation": entry["non_repudiation"]}
+                "non_repudiation": entry["non_repudiation"],
+                "symmetric": entry["symmetric"]}
+
+    def is_symmetric(self, name):
+        """Whether ``name`` is a symmetric (MAC) tier.
+
+        Unknown ``name`` refuses ``alg-unregistered`` (fail closed).
+        Record modules use this to refuse a record that *claims* a
+        symmetric tier unless the caller explicitly opted into
+        symmetric verification (see :meth:`verify`).
+        """
+        return bool(self._entry(name)["symmetric"])
 
     def _entry(self, name):
         entry = self._algorithms.get(name)
@@ -281,15 +300,28 @@ class AlgorithmRegistry:
             raise ValueError("secret must be non-empty bytes")
         return self._entry(alg)["sign_fn"](bytes(secret), bytes(message))
 
-    def verify(self, alg, message, signature, key):
+    def verify(self, alg, message, signature, key, *,
+               for_symmetric_key=False):
         """Verify ``signature`` over ``message`` under ``alg``.
 
         Returns True/False — never raises raw on malformed input.
         Unknown ``alg`` refuses ``alg-unregistered`` (fail closed).
+
+        Algorithm-confusion guard (CWE-347): when ``alg`` is a
+        symmetric (MAC) tier, verification returns False unless
+        ``for_symmetric_key`` is True. A MAC verified with a key
+        the attacker knows — for example a victim's *public* key
+        presented as the HMAC secret — is forgeable by anyone, so
+        the caller must explicitly declare "this key is a shared
+        secret, not a public key". Record modules thread this
+        from an explicit caller opt-in (pinning ``expect_alg`` to
+        the symmetric tier); the default refuses.
         """
         if not isinstance(message, (bytes, bytearray)):
             return False
         entry = self._entry(alg)
+        if entry["symmetric"] and not for_symmetric_key:
+            return False
         try:
             return bool(entry["verify_fn"](bytes(key), bytes(message),
                                            bytes(signature)))
@@ -427,7 +459,8 @@ def default_registry():
                      verify_fn=_hmac_verify,
                      keygen=_symmetric_keygen,
                      domain_separator=_HMAC_DOMAIN,
-                     non_repudiation=False)
+                     non_repudiation=False,
+                     symmetric=True)
         _DEFAULT = reg
     return _DEFAULT
 

@@ -243,6 +243,13 @@ def verify_negative(negative, pubkey, *, expect_alg=None):
     (no "alg") verify as ``ed25519-rfc8032``. Unknown names refuse
     ``alg-unregistered``; a pinned ``expect_alg`` that differs
     refuses ``alg-mismatch``.
+
+    Algorithm-confusion guard (CWE-347): a record that *claims* a
+    symmetric (MAC) tier refuses unless ``expect_alg`` is pinned to
+    that tier — pinning declares "this key is a shared secret, not
+    a public key". Without the pin, a MAC-tier record presented
+    against a public key refuses: the public key is attacker-known
+    and would make the MAC forgeable.
     """
     if not isinstance(negative, dict):
         raise AbsenceUnverifiableError(
@@ -287,7 +294,21 @@ def verify_negative(negative, pubkey, *, expect_alg=None):
         # failure becomes absence-unverifiable") while preserving the
         # machine-readable agility code.
         raise AbsenceUnverifiableError(str(exc), code=exc.code)
-    if not _ALGS.verify(alg, _negative_body(negative), sig, pubkey):
+    # Algorithm-confusion opt-in (CWE-347): only a caller that pinned
+    # expect_alg to a symmetric tier declares the key a shared secret.
+    # A MAC-tier record presented without that pin refuses outright --
+    # the key might be a public key the attacker knows (the exact
+    # RS256->HS256 confusion shape) -- instead of falling through to a
+    # generic signature check.
+    for_secret = expect_alg is not None \
+        and _ALGS.is_symmetric(expect_alg)
+    if _ALGS.is_symmetric(alg) and not for_secret:
+        raise AbsenceUnverifiableError(
+            "absence-unverifiable: algorithm-confusion refused: "
+            "MAC-tier record presented without expect_alg pin; the key "
+            "is not declared a shared secret")
+    if not _ALGS.verify(alg, _negative_body(negative), sig, pubkey,
+                        for_symmetric_key=for_secret):
         raise AbsenceUnverifiableError(
             "absence-unverifiable: signature does not verify against the "
             "pinned issuer key")

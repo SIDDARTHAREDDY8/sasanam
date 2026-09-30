@@ -188,7 +188,8 @@ class TaxonomyTest(unittest.TestCase):
         # + 10 effect-agreement/registry/mcp), additive only, composed from the
         # eight lane commits by direct byte-verification.
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
-        self.assertEqual(len(decision_codes.TAXONOMY), 895)
+        # Wave-246 merge: re-pointed to 936 (41 additive wave-246 codes: 11 policy-delta + 5 schema-ref + 1 advisory-input-malformed + 6 did-key/reputation + 11 breach-boundary + 3 mcp-discovery + 4 attested-identity), additive only, composed from the twelve lane commits by direct byte-verification.
+        self.assertEqual(len(decision_codes.TAXONOMY), 936)
 
     def test_new_codes_mapped(self):
         for code in abp.registered_refusals():

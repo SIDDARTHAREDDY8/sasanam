@@ -445,7 +445,15 @@ def verify_signal(signal, issuer_pubkeys, *, require_scope=None,
     except (TypeError, ValueError):
         raise SignalUnverifiableError(
             "signal-unverifiable: malformed signature")
-    if not _ALGS.verify(alg, _signal_body(signal), sig, pub):
+    # Algorithm-confusion opt-in (CWE-347): only a caller that pinned
+    # expect_alg to a symmetric tier declares the key a shared secret.
+    # This function is documented "public keys only"; a MAC-tier
+    # signal without the pin refuses (the registry guard returns
+    # False) instead of HMACing with an attacker-known public key.
+    for_secret = expect_alg is not None \
+        and _ALGS.is_symmetric(expect_alg)
+    if not _ALGS.verify(alg, _signal_body(signal), sig, pub,
+                        for_symmetric_key=for_secret):
         raise SignalUnverifiableError(
             "signal-unverifiable: signature does not verify against "
             "the pinned issuer key")

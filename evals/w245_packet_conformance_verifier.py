@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""W245-7: draft-farley-acta-signed-receipts-03 verifier adapter for the
-probityai/agent-evidence-vectors `vectors-receipt-signature` corpus (v0.13.0).
+"""W245-7 / W246-11: draft-farley-acta-signed-receipts-03 verifier adapter
+for the probityai/agent-evidence-vectors `vectors-receipt-signature` corpus
+(v0.13.0: 13 members; v0.15.0: 25 members).
 
 Implements the verifier contract in that corpus's README from the draft text
 itself (vendored at vectors-receipt-signature/spec-vendored/
@@ -8,6 +9,7 @@ draft-farley-acta-signed-receipts-03.txt), NOT by copying the corpus's
 reference reader:
 
     <verifier> <receipt-path>          with AEV_RECEIPT_JWKS=<key-set path>
+    (and AEV_RECEIPT_CONTEXT=<context json> for chain members)
 
 Answers in the two places the contract requires (which must agree):
   - exit status: 0 valid, 1 invalid, 2 undecidable
@@ -18,15 +20,21 @@ RFC 8032 PureEdDSA, bool contract pinned `is True`); the RFC 8785 (JCS)
 canonicalization is an independent from-spec implementation in this file.
 
 Check order mirrors the reference verification (Sections 2.1, 5.2, 6.6,
-9.2, 9.5) so the emitted refusal code matches the corpus codeRegistry
-(signature_invalid, key_outside_validity_window, signature_in_signing_input)
-where the draft defines one.
+6.7, 9.2, 9.5) so the emitted refusal code matches the corpus codeRegistry
+(signature_invalid, key_outside_validity_window, signature_in_signing_input,
+chain_link_mismatch) where the draft defines one.
+
+Gaps (RS-G-001 key revocation, RS-G-002 commitment timing) are answered
+with the DRAFT's verdicts -- the draft does not decide them, so a verifier
+that answers the draft's verdicts passes. This adapter reads neither
+revoked_at nor a commitment's logged time.
 
 Stdlib only. No I/O except argv/env/stdout. Never raises on malformed
 input: malformed is undecidable/invalid, never a traceback.
 """
 
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -289,6 +297,89 @@ def verify(body, keys):
     return _window(payload["issued_at"], key)
 
 
+# --- chain context (Section 6.7; v0.15.0 members). The harness hands
+# --- AEV_RECEIPT_CONTEXT=<json file> with {"chain": [<abs path>, ...],
+# --- "commitment": <abs path>, "commitmentLoggedAt": <str>} -- commitment
+# --- keys present together or not at all. The link is
+# --- previousReceiptHash == "sha256:" + hex(SHA-256(JCS(previous receipt))).
+# --- Order mirrors the corpus reference rail: receipt alone, then each
+# --- chain element must verify, then each pairwise link, then (gaps open)
+# --- the draft's verdict. RS-G-002 (commitment timing) is NOT applied: the
+# --- draft does not decide it, and answering the draft's verdict passes.
+
+
+def _load_context():
+    path = os.environ.get("AEV_RECEIPT_CONTEXT")
+    if not path:
+        return None
+    try:
+        with open(path, "rb") as handle:
+            data = json.loads(handle.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    chain = data.get("chain")
+    if not isinstance(chain, list) or not chain:
+        return None
+    bodies = []
+    for rel in chain:
+        if not isinstance(rel, str):
+            return None
+        try:
+            with open(rel, "rb") as handle:
+                bodies.append(handle.read())
+        except OSError:
+            return None
+    return bodies
+
+
+def _receipt_link(body):
+    try:
+        top = json.loads(body, object_pairs_hook=_object_pairs)
+    except ValueError:
+        return None
+    if not isinstance(top, dict):
+        return None
+    try:
+        canonical = jcs_dumps(top)
+    except _JcsError:
+        return None
+    return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def _payload_link(body):
+    try:
+        top = json.loads(body, object_pairs_hook=_object_pairs)
+    except ValueError:
+        return None
+    if not isinstance(top, dict):
+        return None
+    payload = top.get("payload")
+    if not isinstance(payload, dict):
+        return None
+    link = payload.get("previousReceiptHash")
+    return link if isinstance(link, str) else None
+
+
+def verify_in_context(body, keys, chain_bodies):
+    verdict, code = verify(body, keys)
+    if verdict != VALID:
+        return verdict, code
+    for element in chain_bodies:
+        verdict, code = verify(element, keys)
+        if verdict != VALID:
+            return UNDECIDABLE, "chain_element_not_valid"
+    receipts = list(chain_bodies) + [body]
+    for previous, current in zip(receipts, receipts[1:]):
+        expected = _receipt_link(previous)
+        if expected is None or _payload_link(current) != expected:
+            return INVALID, "chain_link_mismatch"
+    # Gaps stay open: RS-G-002 (commitment timing) is not applied, so the
+    # draft's verdict (valid) is answered for commitment members.
+    return VALID, None
+
+
 def main(argv):
     if len(argv) != 2:
         sys.stderr.write("usage: w245_packet_conformance_verifier.py <receipt>\n")
@@ -302,7 +393,11 @@ def main(argv):
             body = handle.read()
     except OSError:
         _answer(UNDECIDABLE, "receipt_unreadable")
-    verdict, code = verify(body, keys)
+    chain = _load_context()
+    if chain is None:
+        verdict, code = verify(body, keys)
+    else:
+        verdict, code = verify_in_context(body, keys, chain)
     _answer(verdict, code)
 
 

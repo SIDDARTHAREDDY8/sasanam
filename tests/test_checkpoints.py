@@ -99,7 +99,10 @@ class TestCheckpointRoundTrip(unittest.TestCase):
         for d in digests:
             mmr.append(d)
         checkpoint = mmr.checkpoint(MAC, secret, "k-mac")
-        out = cp.verify_checkpoint(checkpoint, digests, secret)
+        # expect_alg pins the symmetric tier: the caller declares the
+        # key a shared secret (algorithm-confusion guard, CWE-347).
+        out = cp.verify_checkpoint(checkpoint, digests, secret,
+                                   expect_alg=MAC)
         self.assertTrue(out["ok"])
         self.assertFalse(out["non_repudiation"])
 

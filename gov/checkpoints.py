@@ -270,9 +270,17 @@ def _checkpoint_digest(checkpoint):
             "utf-8")).hexdigest()
 
 
-def _verify_signature(checkpoint, key):
+def _verify_signature(checkpoint, key, *, expect_alg=None):
     """Verify shape + signature; raise on any failure. Does NOT touch
-    the log — forgery fails before state lookups."""
+    the log — forgery fails before state lookups.
+
+    Algorithm-confusion guard (CWE-347): a checkpoint that *claims*
+    a symmetric (MAC) tier refuses unless ``expect_alg`` is pinned
+    to that tier — pinning declares "this key is a shared secret,
+    not a public key". Without the pin, a MAC-tier checkpoint
+    presented against a public key refuses: the public key is
+    attacker-known and would make the MAC forgeable.
+    """
     if not _is_checkpoint(checkpoint):
         raise _Malformed("verify: checkpoint shape invalid")
     if not isinstance(key, (bytes, bytearray)) or not key:
@@ -283,13 +291,26 @@ def _verify_signature(checkpoint, key):
     except Exception as exc:  # noqa: BLE001
         raise _Malformed("verify: unknown algorithm %r"
                          % (checkpoint["alg"],)) from exc
+    if expect_alg is not None and checkpoint["alg"] != expect_alg:
+        raise _Malformed("verify: alg %r != pinned %r"
+                         % (checkpoint["alg"], expect_alg))
     try:
         sig = bytes.fromhex(checkpoint["signature"])
     except ValueError as exc:
         raise _Malformed("verify: signature not hex") from exc
+    # Algorithm-confusion opt-in (CWE-347): a MAC-tier checkpoint
+    # presented without expect_alg pinned to it refuses outright --
+    # the key might be a public key the attacker knows -- instead of
+    # falling through to a generic signature check.
+    for_secret = expect_alg is not None and reg.is_symmetric(expect_alg)
+    if reg.is_symmetric(checkpoint["alg"]) and not for_secret:
+        raise _SigInvalid(
+            "verify: algorithm-confusion refused: MAC-tier checkpoint "
+            "presented without expect_alg pin; the key is not declared "
+            "a shared secret")
     ok = reg.verify(checkpoint["alg"],
                     _signature_body(checkpoint).encode("utf-8"),
-                    sig, bytes(key))
+                    sig, bytes(key), for_symmetric_key=for_secret)
     if not ok:
         raise _SigInvalid("checkpoint signature does not verify under "
                           "the caller's key")
@@ -298,14 +319,20 @@ def _verify_signature(checkpoint, key):
                          "the registry tier")
 
 
-def verify_checkpoint(checkpoint, entry_digests, key):
+def verify_checkpoint(checkpoint, entry_digests, key, *,
+                      expect_alg=None):
     """Verify a checkpoint against a supplied digest list.
 
     ``entry_digests`` is a list of 64-hex entry digests in log order.
     Returns ``{"ok": True, "count": n, "non_repudiation": bool}``.
     Refusals name the exact failure (see module docstring).
+
+    ``expect_alg`` pins the signature tier; a checkpoint that
+    claims a symmetric (MAC) tier refuses unless ``expect_alg`` is
+    pinned to it (algorithm-confusion guard, CWE-347 — the pin
+    declares the key a shared secret, not a public key).
     """
-    _verify_signature(checkpoint, key)
+    _verify_signature(checkpoint, key, expect_alg=expect_alg)
     if not isinstance(entry_digests, list) or not all(
             _hex64(d) for d in entry_digests):
         raise _Malformed("verify: entry_digests must be a list of "

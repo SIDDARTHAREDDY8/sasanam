@@ -316,6 +316,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['envelope', 'inspection', 'policy'],
         "reverify_steps": ['replay-admission'],
     },
+    'advisory-input-malformed': {
+        "domain": 'advisory',
+        "code": 'advisory-input-malformed',
+        "human": 'caller-supplied flaw-level advisory data is malformed '
+                 '(bad flaw shape, bad CVE id, bad version spec, or flaw '
+                 'list not inside the signed canonical bytes); refused '
+                 'fail-closed, never silently',
+        "severity": 'high',
+        "evidence_kinds_required": ['advisory', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'alg-mismatch': {
         "domain": 'alg',
         "code": 'alg-mismatch',
@@ -876,6 +887,116 @@ TAXONOMY = {
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'breach-boundary-budget-exceeded': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-budget-exceeded',
+        "human": 'a declared component exceeded its consequence budget '
+                 'for the deployment window; the circuit breaker tripped '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record', 'spend-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'breach-boundary-circuit-tripped': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-circuit-tripped',
+        "human": 'the circuit breaker is tripped for this component; '
+                 'ingest, verify, spend, and use are refused fail-closed '
+                 'until a deployment-vouched reset',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record', 'breach-signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'breach-boundary-compromised-source': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-compromised-source',
+        "human": 'the component is marked compromised; its outputs are '
+                 'refused until a deployment-vouched rotation (the '
+                 'instance-as-compromised rotation doctrine)',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record',
+                                    'compromise-record'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'breach-boundary-external-untrusted': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-external-untrusted',
+        "human": 'an output arrived from an external-untrusted component; '
+                 'it sits outside the boundary and is refused outright, '
+                 'never quarantined',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'breach-boundary-quarantined': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-quarantined',
+        "human": 'informational: an assumed-breachable component output '
+                 'was quarantined with containment metadata; use is '
+                 'allowed only after deployment-vouched verification',
+        "severity": 'low',
+        "evidence_kinds_required": ['boundary-record',
+                                    'quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'breach-boundary-record-malformed': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-record-malformed',
+        "human": 'a boundary record (declaration, signal, verifier, '
+                 'reset, rotation, or quarantine record) is malformed; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['boundary-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'breach-boundary-reset-unvouched': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-reset-unvouched',
+        "human": 'a circuit-breaker reset was not deployment-vouched; a '
+                 'self-asserted reset never clears a trip',
+        "severity": 'medium',
+        "evidence_kinds_required": ['boundary-record', 'vouch-map'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'breach-boundary-rotation-unvouched': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-rotation-unvouched',
+        "human": 'a compromise rotation was not deployment-vouched; a '
+                 'self-asserted rotation never clears a compromise mark',
+        "severity": 'medium',
+        "evidence_kinds_required": ['boundary-record', 'vouch-map'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'breach-boundary-unknown-component': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-unknown-component',
+        "human": 'the component was never declared to the boundary; '
+                 'undeclared components have no containment posture',
+        "severity": 'medium',
+        "evidence_kinds_required": ['boundary-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'breach-boundary-unverified-use-refused': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-unverified-use-refused',
+        "human": 'a quarantined output was used without '
+                 'deployment-vouched verification; containment means '
+                 'never trusted downstream unverified',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record',
+                                    'quarantine-record'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'breach-boundary-verifier-unvouched': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-verifier-unvouched',
+        "human": 'the verifier that approved a quarantined output was '
+                 'not deployment-vouched; agent-asserted verification '
+                 'never unwraps quarantine',
+        "severity": 'medium',
+        "evidence_kinds_required": ['boundary-record', 'vouch-map'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
     'bundle-inspection-malformed': {
         "domain": 'bundle',
         "code": 'bundle-inspection-malformed',
@@ -1412,6 +1533,35 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'did-key-binding-invalid': {
+        "domain": 'identity',
+        "code": 'did-key-binding-invalid',
+        "human": 'a signature did not verify against the public key '
+                 'resolved from the did:key identifier (forged binding or '
+                 'reporter/key mismatch); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'did-key-malformed': {
+        "domain": 'identity',
+        "code": 'did-key-malformed',
+        "human": 'a did:key identifier failed structural validation (bad '
+                 'multibase, bad multicodec, wrong payload length); no key '
+                 'was derived, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'did-key-method-unsupported': {
+        "domain": 'identity',
+        "code": 'did-key-method-unsupported',
+        "human": 'an identifier used a DID method other than did:key; only '
+                 'the key-derived method is supported, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'digest-bad-input': {
         "domain": 'authorization_receipt',
         "code": 'digest-bad-input',
@@ -1483,6 +1633,35 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
+    },
+    'discovery-identity-mismatch': {
+        "domain": 'mcp-discovery',
+        "code": 'discovery-identity-mismatch',
+        "human": 'a discovery result claims a pinned server name with an '
+                 'identity that does not match the deployment pin; '
+                 'refused fail-closed as an impersonation/forgery signal',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discovery-result-malformed': {
+        "domain": 'mcp-discovery',
+        "code": 'discovery-result-malformed',
+        "human": 'a discovery result or pin set is malformed; refused '
+                 'fail-closed, never silently admitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discovery-unpinned': {
+        "domain": 'mcp-discovery',
+        "code": 'discovery-unpinned',
+        "human": 'a discovery result names a server with no deployment '
+                 'pin; the discovery plane is untrusted, so explicit '
+                 'pinning is required; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'gate-record'],
+        "reverify_steps": ['recompute'],
     },
     'display-attestation-error': {
         "domain": 'display',
@@ -1939,6 +2118,46 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['policy'],
         "reverify_steps": ['recompute-digest'],
+    },
+    'identity-anchor-unknown': {
+        "domain": 'attested-identity',
+        "code": 'identity-anchor-unknown',
+        "human": 'the attestation references an anchor key the '
+                 'deployment did not provision (or the provisioned key '
+                 'is malformed); refused rather than trusting an '
+                 'unprovisioned anchor',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-attestation-malformed': {
+        "domain": 'attested-identity',
+        "code": 'identity-attestation-malformed',
+        "human": 'the attestation (or check input) presented for the '
+                 'agent-identity cross-check failed structural '
+                 'validation; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-attestation-unverifiable': {
+        "domain": 'attested-identity',
+        "code": 'identity-attestation-unverifiable',
+        "human": 'the anchor Ed25519 signature over the attested '
+                 'principal failed verification (forged or corrupt); '
+                 'refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-claim-mismatch': {
+        "domain": 'attested-identity',
+        "code": 'identity-claim-mismatch',
+        "human": 'the anchor-attested principal does not match the '
+                 "peer's claimed principal; refused",
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
     },
     'identity-mismatch': {
         "domain": 'agent_card',
@@ -2748,6 +2967,111 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-delta-allow-modified': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-allow-modified',
+        "human": 'policy delta changes an allow (or require_approval) '
+                 'rule match without provable widening; flagged for review, '
+                 'verdict stays pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-allow-unforbidden': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-allow-unforbidden',
+        "human": 'policy delta adds an allow rule no deny rule covers '
+                 '(no tool overlap); flagged for review, verdict stays pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-check-removed': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-check-removed',
+        "human": 'policy delta removes a require_approval rule; the human '
+                 'check it imposed no longer applies; flagged for review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-effect-weakened': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-effect-weakened',
+        "human": 'policy delta moves a rule effect up the deny < '
+                 'require_approval < allow ladder; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-forbid-modified': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-forbid-modified',
+        "human": 'policy delta changes a deny rule match without provable '
+                 'narrowing; flagged for review, verdict stays pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-forbid-narrowed': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-forbid-narrowed',
+        "human": 'policy delta provably narrows a deny rule match, so '
+                 'previously-forbidden actions escape the forbid; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-forbid-removed': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-forbid-removed',
+        "human": 'policy delta removes a deny (forbid) rule outright; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-malformed': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-malformed',
+        "human": 'policy delta input is malformed (unparseable, non-mapping '
+                 'policy, duplicate rule id, unknown effect); refused '
+                 'fail-closed, never passed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-role-added': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-role-added',
+        "human": 'policy delta adds a new role carrying tools: a new '
+                 'capability surface; flagged for review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-section-changed': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-section-changed',
+        "human": 'policy delta changes an unclassified section whose risk '
+                 'direction cannot be assessed from policy text alone; '
+                 'flagged for review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-widening': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-widening',
+        "human": 'policy delta widens capability: a role gained tools, a '
+                 'budget grew, the egress allowlist gained domains, an '
+                 'allow match widened, or approval delegation was enabled; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-envelope-malformed': {
         "domain": 'jail',
         "code": 'policy-envelope-malformed',
@@ -3252,6 +3576,36 @@ TAXONOMY = {
         "evidence_kinds_required": ['identity-policy', 'claim'],
         "reverify_steps": ['recompute'],
     },
+    'reputation-entry-malformed': {
+        "domain": 'reputation',
+        "code": 'reputation-entry-malformed',
+        "human": 'a reputation ledger entry failed schema validation '
+                 '(missing fields, bad types, non-canonical JSON); never '
+                 'appended, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'reputation-event-kind-unknown': {
+        "domain": 'reputation',
+        "code": 'reputation-event-kind-unknown',
+        "human": 'a reputation event carried a kind outside the fixed '
+                 'weight table; the closed kind vocabulary is load-bearing '
+                 'for deterministic scoring, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'reputation-ledger-tampered': {
+        "domain": 'reputation',
+        "code": 'reputation-ledger-tampered',
+        "human": 'ledger re-validation failed: broken hash chain, bad '
+                 'reporter signature, sequence gap, or head digest '
+                 'mismatch; the ledger is not recomputable as presented',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'requester_target': {
         "domain": 'approval',
         "code": 'requester_target',
@@ -3691,6 +4045,56 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
+    },
+    'schema-record-malformed': {
+        "domain": 'schema-ref',
+        "code": 'schema-record-malformed',
+        "human": 'the tool schema is not a dict, carries a non-string '
+                 '$ref, a dangling in-document pointer, or a cyclic '
+                 'container; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record', 'schema'],
+        "reverify_steps": ['recompute'],
+    },
+    'schema-ref-budget-exhausted': {
+        "domain": 'schema-ref',
+        "code": 'schema-ref-budget-exhausted',
+        "human": 'tool-schema $ref resolutions exhausted '
+                 'max_resolution_steps (event-loop freeze bound); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record', 'schema'],
+        "reverify_steps": ['recompute'],
+    },
+    'schema-ref-depth-exceeded': {
+        "domain": 'schema-ref',
+        "code": 'schema-ref-depth-exceeded',
+        "human": 'in-document $ref resolution exceeded max_ref_depth or '
+                 'revisited a pointer already on the resolution chain '
+                 '(cycle); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record', 'schema'],
+        "reverify_steps": ['recompute'],
+    },
+    'schema-ref-external': {
+        "domain": 'schema-ref',
+        "code": 'schema-ref-external',
+        "human": 'a tool-schema $ref ($recursiveRef/$dynamicRef) does '
+                 'not start with # and is therefore out-of-document; '
+                 'refused fail-closed and never fetched',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record', 'schema'],
+        "reverify_steps": ['recompute'],
+    },
+    'schema-refs-resolved': {
+        "domain": 'schema-ref',
+        "code": 'schema-refs-resolved',
+        "human": 'every $ref in the tool schema resolved in-document, '
+                 'acyclically, and within budget; allowed with '
+                 'resolution statistics',
+        "severity": 'low',
+        "evidence_kinds_required": ['schema'],
+        "reverify_steps": ['recompute'],
     },
     'scope_amplification': {
         "domain": 'approval',
@@ -7272,714 +7676,6 @@ TAXONOMY = {
                  'never a silent pass',
         "severity": 'medium',
         "evidence_kinds_required": ['policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane A (wave244-gitspawn-trust): session-startup trust
-    # ordering -- no shell-out against a workspace before the trust
-    # decision is recorded (GitSpawn class, pre-trust-prompt execution).
-    'repo-hook-pretrust-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-pretrust-refused',
-        "human": 'git/subprocess attempt against a workspace with no '
-                 'recorded trust decision; refused fail-closed before any '
-                 'repo-supplied configuration could execute',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-trust-denied': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-trust-denied',
-        "human": 'git/subprocess attempt against a workspace whose trust '
-                 'was explicitly denied; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-escape-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-escape-refused',
-        "human": 'repo-local git material (.git, .git/config) resolves '
-                 'outside the canonical workspace root via symlink; hook '
-                 'resolution never follows escapes; refused fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'session-trust-malformed': {
-        "domain": 'session-trust',
-        "code": 'session-trust-malformed',
-        "human": 'trust record malformed: unknown trust state or unnamed '
-                 'deciding principal; refused fail-closed, never a silent '
-                 'accept',
-        "severity": 'medium',
-        "evidence_kinds_required": ['trust-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-exceeded': {
-        "domain": 'token-scope',
-        "code": 'token-scope-exceeded',
-        "human": 'the scope grant does not cover the (tool, action) being '
-                 'invoked; also covers alias-not-granted anti-widening; '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token', 'grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-unparseable': {
-        "domain": 'token-scope',
-        "code": 'token-scope-unparseable',
-        "human": 'a presented scope-check input (grant, sealed policy '
-                 'wrapper, tool name, action, epoch) is malformed; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'tool-scope-undeclared': {
-        "domain": 'token-scope',
-        "code": 'tool-scope-undeclared',
-        "human": 'the tool or action is absent from the sealed scope '
-                 'policy; fail closed, authority never auto-expands',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-policy-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-policy-tampered',
-        "human": 'the sealed scope policy MAC does not cover its spec '
-                 'bytes, or the spec fails shape validation; refused '
-                 'fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['policy-declaration', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-tampered',
-        "human": 'the scope grant MAC does not cover the presented bytes; '
-                 'tamper is reported as tamper, never as a scope gap',
-        "severity": 'critical',
-        "evidence_kinds_required": ['grant', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-unbound': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-unbound',
-        "human": 'the scope grant is bound to a different token than the '
-                 'one presented (e.g. scope narrowed mid-session); a new '
-                 'grant is required',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-verdict-mismatched': {
-        "domain": 'token-scope',
-        "code": 'scope-verdict-mismatched',
-        "human": 'a scope verdict presented to the executor for different '
-                 '(tool, action) parameters than it was granted for; the '
-                 'call never runs',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-key-missing': {
-        "domain": 'token-scope',
-        "code": 'scope-key-missing',
-        "human": 'no deployment key supplied for scope policy/grant '
-                 'cryptography; fails closed (no dev-key fallback)',
-        "severity": 'high',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-amplified': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-amplified',
-        "human": 'host-measured guest consumption exceeded declared '
-                 'envelope plus the declared accounting slack; guest '
-                 'terminated fail-closed, never re-budgeted',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-envelope-malformed': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-envelope-malformed',
-        "human": 'guest budget envelope declaration or measurement is not '
-                 'the expected shape; envelopes are never renegotiated',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-deadline-fired': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-deadline-fired',
-        "human": 'guest blew its declared wall-clock bound; guest '
-                 'terminated fail-closed; in-flight effects are not '
-                 'committed',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-scope-undeclared': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-scope-undeclared',
-        "human": 'measurement or commit presented for a guest scope with '
-                 'no declared envelope; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-authority-claim-refused': {
-        "domain": 'config',
-        "code": 'config-authority-claim-refused',
-        "human": 'agent-trusts-config: agent-observed config claims a privilege with no matching grant in the deployment-pinned authority; config never self-attests into authority; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'authority-source', 'provenance'],
-        "reverify_steps": ['authority-check', 'recompute'],
-    },
-    'config-provenance-agent-asserted': {
-        "domain": 'config',
-        "code": 'config-provenance-agent-asserted',
-        "human": 'agent-trusts-config: the config asserts its own provenance trust; provenance is deployment-vouched, never agent-asserted; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-provenance-untrusted': {
-        "domain": 'config',
-        "code": 'config-provenance-untrusted',
-        "human": 'agent-trusts-config: the config carries privilege claims with no provenance block; provenance absence is not trust; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-record-malformed': {
-        "domain": 'config',
-        "code": 'config-record-malformed',
-        "human": 'agent-trusts-config: the config record or authority source failed structural validation; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-rewritten-privilege': {
-        "domain": 'config',
-        "code": 'config-rewritten-privilege',
-        "human": 'agent-trusts-config: the config was rewritten mid-run adding privileges; the rewrite is audit-logged and the privileged action fails closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'audit-journal', 'provenance'],
-        "reverify_steps": ['recompute', 'authority-check'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-key-material-in-process': {
-        "domain": 'kms-signer',
-        "code": 'signer-key-material-in-process',
-        "human": 'raw private-key bytes in an input path (signer '
-                 'argument, declaration config, env-derived value); '
-                 'the signing key is never in-process',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-adapter-tampered': {
-        "domain": 'kms-signer',
-        "code": 'signer-adapter-tampered',
-        "human": 'a declared KMS adapter handle wraps in-process key '
-                 'material; refused for production receipts',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-unavailable': {
-        "domain": 'kms-signer',
-        "code": 'signer-unavailable',
-        "human": 'the KMS adapter could not be used (unreachable, '
-                 'misconfigured, declared-but-unconnected); failed '
-                 'closed with no fallback to in-process signing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-identity-mismatch': {
-        "domain": 'kms-signer',
-        "code": 'signer-identity-mismatch',
-        "human": 'a signed receipt verified against a different adapter '
-                 'identity than the one that signed it',
-        "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-malformed': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-malformed',
-        "human": 'the receipt or signed record is not the shape the '
-                 'discipline speaks; includes post-signing mutation '
-                 'detected via the canonical digest',
-        "severity": 'medium',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-signature-invalid': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-signature-invalid',
-        "human": 'the consumer-pinned verifier did not return True for '
-                 'the retained bytes; never verified',
-        "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'package-advisory-flagged': {
-        "domain": 'advisory',
-        "code": 'package-advisory-flagged',
-        "human": 'advisory flags a package whose signature verifies; '
-                 'refused (a signature proves who signed, never safety)',
-        "severity": 'high',
-        "evidence_kinds_required": ['advisory', 'manifest', 'signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'pin-scope-insufficient': {
-        "domain": 'advisory',
-        "code": 'pin-scope-insufficient',
-        "human": 'unscoped agent_cert pin grades asserted at most; '
-                 're-pin with agent scope for verification evidence',
-        "severity": 'medium',
-        "evidence_kinds_required": ['pin'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-default-credentials': {
-        "domain": 'mcp-surface',
-        "code": 'surface-default-credentials',
-        "human": 'surface credentials are missing, empty, or a well-known '
-                 'placeholder/default value; refused fail-closed, never '
-                 'auto-remediated',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-admin-unauthenticated': {
-        "domain": 'mcp-surface',
-        "code": 'surface-admin-unauthenticated',
-        "human": 'an admin endpoint declares no auth mechanism; refused '
-                 'fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-public-unguarded': {
-        "domain": 'mcp-surface',
-        "code": 'surface-public-unguarded',
-        "human": 'a public endpoint declares no execution guard / per-call '
-                 'authorization; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-transport-bypass': {
-        "domain": 'mcp-surface',
-        "code": 'surface-transport-bypass',
-        "human": 'a stdio/unmediated transport carries traffic outside the '
-                 'mediated auth path; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-config-malformed': {
-        "domain": 'mcp-surface',
-        "code": 'surface-config-malformed',
-        "human": 'the surface config is not the expected shape; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-attestation-key-missing': {
-        "domain": 'mcp-surface',
-        "code": 'surface-attestation-key-missing',
-        "human": 'no deployment issuer key supplied for the secure-'
-                 'defaults attestation; refused rather than issuing an '
-                 'unsigned attestation',
-        "severity": 'medium',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane A (wave244-gitspawn-trust): session-startup trust
-    # ordering -- no shell-out against a workspace before the trust
-    # decision is recorded (GitSpawn class, pre-trust-prompt execution).
-    'repo-hook-pretrust-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-pretrust-refused',
-        "human": 'git/subprocess attempt against a workspace with no '
-                 'recorded trust decision; refused fail-closed before any '
-                 'repo-supplied configuration could execute',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-trust-denied': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-trust-denied',
-        "human": 'git/subprocess attempt against a workspace whose trust '
-                 'was explicitly denied; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-escape-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-escape-refused',
-        "human": 'repo-local git material (.git, .git/config) resolves '
-                 'outside the canonical workspace root via symlink; hook '
-                 'resolution never follows escapes; refused fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'session-trust-malformed': {
-        "domain": 'session-trust',
-        "code": 'session-trust-malformed',
-        "human": 'trust record malformed: unknown trust state or unnamed '
-                 'deciding principal; refused fail-closed, never a silent '
-                 'accept',
-        "severity": 'medium',
-        "evidence_kinds_required": ['trust-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-exceeded': {
-        "domain": 'token-scope',
-        "code": 'token-scope-exceeded',
-        "human": 'the scope grant does not cover the (tool, action) being '
-                 'invoked; also covers alias-not-granted anti-widening; '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token', 'grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-unparseable': {
-        "domain": 'token-scope',
-        "code": 'token-scope-unparseable',
-        "human": 'a presented scope-check input (grant, sealed policy '
-                 'wrapper, tool name, action, epoch) is malformed; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'tool-scope-undeclared': {
-        "domain": 'token-scope',
-        "code": 'tool-scope-undeclared',
-        "human": 'the tool or action is absent from the sealed scope '
-                 'policy; fail closed, authority never auto-expands',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-policy-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-policy-tampered',
-        "human": 'the sealed scope policy MAC does not cover its spec '
-                 'bytes, or the spec fails shape validation; refused '
-                 'fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['policy-declaration', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-tampered',
-        "human": 'the scope grant MAC does not cover the presented bytes; '
-                 'tamper is reported as tamper, never as a scope gap',
-        "severity": 'critical',
-        "evidence_kinds_required": ['grant', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-unbound': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-unbound',
-        "human": 'the scope grant is bound to a different token than the '
-                 'one presented (e.g. scope narrowed mid-session); a new '
-                 'grant is required',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-verdict-mismatched': {
-        "domain": 'token-scope',
-        "code": 'scope-verdict-mismatched',
-        "human": 'a scope verdict presented to the executor for different '
-                 '(tool, action) parameters than it was granted for; the '
-                 'call never runs',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-key-missing': {
-        "domain": 'token-scope',
-        "code": 'scope-key-missing',
-        "human": 'no deployment key supplied for scope policy/grant '
-                 'cryptography; fails closed (no dev-key fallback)',
-        "severity": 'high',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-amplified': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-amplified',
-        "human": 'host-measured guest consumption exceeded declared '
-                 'envelope plus the declared accounting slack; guest '
-                 'terminated fail-closed, never re-budgeted',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-envelope-malformed': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-envelope-malformed',
-        "human": 'guest budget envelope declaration or measurement is not '
-                 'the expected shape; envelopes are never renegotiated',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-deadline-fired': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-deadline-fired',
-        "human": 'guest blew its declared wall-clock bound; guest '
-                 'terminated fail-closed; in-flight effects are not '
-                 'committed',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-scope-undeclared': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-scope-undeclared',
-        "human": 'measurement or commit presented for a guest scope with '
-                 'no declared envelope; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-authority-claim-refused': {
-        "domain": 'config',
-        "code": 'config-authority-claim-refused',
-        "human": 'agent-trusts-config: agent-observed config claims a privilege with no matching grant in the deployment-pinned authority; config never self-attests into authority; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'authority-source', 'provenance'],
-        "reverify_steps": ['authority-check', 'recompute'],
-    },
-    'config-provenance-agent-asserted': {
-        "domain": 'config',
-        "code": 'config-provenance-agent-asserted',
-        "human": 'agent-trusts-config: the config asserts its own provenance trust; provenance is deployment-vouched, never agent-asserted; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-provenance-untrusted': {
-        "domain": 'config',
-        "code": 'config-provenance-untrusted',
-        "human": 'agent-trusts-config: the config carries privilege claims with no provenance block; provenance absence is not trust; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-record-malformed': {
-        "domain": 'config',
-        "code": 'config-record-malformed',
-        "human": 'agent-trusts-config: the config record or authority source failed structural validation; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-rewritten-privilege': {
-        "domain": 'config',
-        "code": 'config-rewritten-privilege',
-        "human": 'agent-trusts-config: the config was rewritten mid-run adding privileges; the rewrite is audit-logged and the privileged action fails closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'audit-journal', 'provenance'],
-        "reverify_steps": ['recompute', 'authority-check'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-key-material-in-process': {
-        "domain": 'kms-signer',
-        "code": 'signer-key-material-in-process',
-        "human": 'raw private-key bytes in an input path (signer '
-                 'argument, declaration config, env-derived value); '
-                 'the signing key is never in-process',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-adapter-tampered': {
-        "domain": 'kms-signer',
-        "code": 'signer-adapter-tampered',
-        "human": 'a declared KMS adapter handle wraps in-process key '
-                 'material; refused for production receipts',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-unavailable': {
-        "domain": 'kms-signer',
-        "code": 'signer-unavailable',
-        "human": 'the KMS adapter could not be used (unreachable, '
-                 'misconfigured, declared-but-unconnected); failed '
-                 'closed with no fallback to in-process signing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-identity-mismatch': {
-        "domain": 'kms-signer',
-        "code": 'signer-identity-mismatch',
-        "human": 'a signed receipt verified against a different adapter '
-                 'identity than the one that signed it',
-        "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-malformed': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-malformed',
-        "human": 'the receipt or signed record is not the shape the '
-                 'discipline speaks; includes post-signing mutation '
-                 'detected via the canonical digest',
-        "severity": 'medium',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-signature-invalid': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-signature-invalid',
-        "human": 'the consumer-pinned verifier did not return True for '
-                 'the retained bytes; never verified',
-        "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'package-advisory-flagged': {
-        "domain": 'advisory',
-        "code": 'package-advisory-flagged',
-        "human": 'advisory flags a package whose signature verifies; '
-                 'refused (a signature proves who signed, never safety)',
-        "severity": 'high',
-        "evidence_kinds_required": ['advisory', 'manifest', 'signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'pin-scope-insufficient': {
-        "domain": 'advisory',
-        "code": 'pin-scope-insufficient',
-        "human": 'unscoped agent_cert pin grades asserted at most; '
-                 're-pin with agent scope for verification evidence',
-        "severity": 'medium',
-        "evidence_kinds_required": ['pin'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-default-credentials': {
-        "domain": 'mcp-surface',
-        "code": 'surface-default-credentials',
-        "human": 'surface credentials are missing, empty, or a well-known '
-                 'placeholder/default value; refused fail-closed, never '
-                 'auto-remediated',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-admin-unauthenticated': {
-        "domain": 'mcp-surface',
-        "code": 'surface-admin-unauthenticated',
-        "human": 'an admin endpoint declares no auth mechanism; refused '
-                 'fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-public-unguarded': {
-        "domain": 'mcp-surface',
-        "code": 'surface-public-unguarded',
-        "human": 'a public endpoint declares no execution guard / per-call '
-                 'authorization; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-transport-bypass': {
-        "domain": 'mcp-surface',
-        "code": 'surface-transport-bypass',
-        "human": 'a stdio/unmediated transport carries traffic outside the '
-                 'mediated auth path; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-config-malformed': {
-        "domain": 'mcp-surface',
-        "code": 'surface-config-malformed',
-        "human": 'the surface config is not the expected shape; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-attestation-key-missing': {
-        "domain": 'mcp-surface',
-        "code": 'surface-attestation-key-missing',
-        "human": 'no deployment issuer key supplied for the secure-'
-                 'defaults attestation; refused rather than issuing an '
-                 'unsigned attestation',
-        "severity": 'medium',
-        "evidence_kinds_required": ['key-reference'],
         "reverify_steps": ['recompute'],
     },
     # Wave-244 lane A (wave244-gitspawn-trust): session-startup trust

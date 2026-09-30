@@ -55,7 +55,8 @@ class RegistryBuiltinsTest(unittest.TestCase):
         info = ar.default_registry().info(_ED)
         self.assertNotIn("sign_fn", info)
         self.assertEqual(set(info),
-                         {"name", "domain_separator", "non_repudiation"})
+                         {"name", "domain_separator", "non_repudiation",
+                          "symmetric"})
 
     def test_info_unknown_refuses(self):
         with self.assertRaises(ar.AlgError) as ctx:
@@ -150,15 +151,32 @@ class PrimitiveRoundtripTest(unittest.TestCase):
         reg = ar.default_registry()
         key = _mac_key()
         tag = reg.sign(_MAC, b"hello", key)
-        self.assertTrue(reg.verify(_MAC, b"hello", tag, key))
-        self.assertFalse(reg.verify(_MAC, b"tampered", tag, key))
-        self.assertFalse(reg.verify(_MAC, b"hello", tag, _mac_key()))
+        # for_symmetric_key=True: the caller declares this key a shared
+        # secret (algorithm-confusion guard, CWE-347 — see verify()).
+        self.assertTrue(reg.verify(_MAC, b"hello", tag, key,
+                                   for_symmetric_key=True))
+        self.assertFalse(reg.verify(_MAC, b"tampered", tag, key,
+                                    for_symmetric_key=True))
+        self.assertFalse(reg.verify(_MAC, b"hello", tag, _mac_key(),
+                                    for_symmetric_key=True))
+
+    def test_hmac_without_secret_flag_refuses(self):
+        # Algorithm-confusion guard: a symmetric tier verified without
+        # for_symmetric_key refuses even with the correct secret — the
+        # caller must declare the key a secret, never a public key.
+        reg = ar.default_registry()
+        key = _mac_key()
+        tag = reg.sign(_MAC, b"hello", key)
+        self.assertFalse(reg.verify(_MAC, b"hello", tag, key))
+        self.assertTrue(reg.is_symmetric(_MAC))
+        self.assertFalse(reg.is_symmetric(_ED))
 
     def test_verify_malformed_never_raises_raw(self):
         reg = ar.default_registry()
         seed, pub = _ed_keypair()
         self.assertFalse(reg.verify(_ED, "not-bytes", b"x", pub))
-        self.assertFalse(reg.verify(_MAC, b"m", None, _mac_key()))
+        self.assertFalse(reg.verify(_MAC, b"m", None, _mac_key(),
+                                    for_symmetric_key=True))
 
     def test_keygen_shapes(self):
         reg = ar.default_registry()
@@ -235,7 +253,7 @@ class PostureAgilityTest(unittest.TestCase):
         sig = po.emit_signal("revocation", _DIGEST_A, "permit", key,
                              issuer_id="i", now=1700000000.0, alg=_MAC)
         self.assertEqual(sig["alg"], _MAC)
-        rec = po.verify_signal(sig, {"i": key})
+        rec = po.verify_signal(sig, {"i": key}, expect_alg=_MAC)
         self.assertEqual(rec["sub"], _DIGEST_A)
 
     def test_legacy_record_verifies(self):
@@ -305,7 +323,9 @@ class AbsenceAgilityTest(unittest.TestCase):
         self.assertIsNone(issuer.public_key)  # symmetric: no pubkey
         neg = issuer.attest_absence(_DIGEST_A, now=1700000000.0)
         self.assertEqual(neg["alg"], _MAC)
-        rec = ab.verify_negative(neg, key)
+        # expect_alg pins the symmetric tier: the caller declares the
+        # key a shared secret (algorithm-confusion guard, CWE-347).
+        rec = ab.verify_negative(neg, key, expect_alg=_MAC)
         self.assertEqual(rec["claim"], "never-advertised")
 
     def test_per_record_override(self):
@@ -350,9 +370,10 @@ class RevocationAgilityTest(unittest.TestCase):
         entry = rl.revoke(_DIGEST_A, issuer_id="i", seed=key,
                           now=1700000000.0, alg=_MAC)
         self.assertEqual(entry["alg"], _MAC)
-        self.assertTrue(rl.verify({"i": key}))
+        self.assertTrue(rl.verify({"i": key}, expect_alg=_MAC))
         fresh = rv.RevocationList()
-        fresh.import_entries([entry], {"i": key})
+        fresh.import_entries([entry], {"i": key},
+                             expect_alg=_MAC)
         self.assertEqual(fresh.check(_DIGEST_A), "revoked")
 
     def test_expect_alg_mismatch_refused(self):
@@ -401,7 +422,7 @@ class AbsenceSignalCompositionTest(unittest.TestCase):
         sig = po.emit_absence_signal(issuer, _DIGEST_A, "admission",
                                      now=1700000000.0)
         self.assertEqual(sig["alg"], _MAC)
-        rec = po.verify_signal(sig, {"i": key})
+        rec = po.verify_signal(sig, {"i": key}, expect_alg=_MAC)
         kinds = [p.get("kind") for p in rec["events"].values()]
         self.assertEqual(kinds, ["never-advertised"])
 

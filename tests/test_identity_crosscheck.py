@@ -1,0 +1,143 @@
+"""Unit tests for gov.identity_crosscheck (wave-246 lane 10, W246-10).
+
+PTV attested-agent-identity cross-check: a peer's claimed identity is
+graded against an attestation and a deployment-supplied anchor.
+Unverified anchor yields asserted-only, never attested.
+"""
+
+import os
+import unittest
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import identity_crosscheck as ic
+from gov import decision_codes as dc
+from gov import ed25519 as _ed25519
+
+
+def _anchor(key_id="anchor-1", principal="agent-7"):
+    seed = _ed25519.generate_seed()
+    pub = _ed25519.publickey(seed)
+    anchor = {"keys": {key_id: pub}}
+    att = ic.make_attestation(seed, key_id=key_id,
+                              attested_principal=principal)
+    return anchor, att
+
+
+class VerdictTest(unittest.TestCase):
+    def test_attested(self):
+        anchor, att = _anchor()
+        r = ic.check({"principal": "agent-7"}, att, anchor)
+        self.assertEqual(r["verdict"], "attested")
+        self.assertIsNone(r["code"])
+
+    def test_no_attestation_asserted_only(self):
+        anchor, _att = _anchor()
+        r = ic.check({"principal": "agent-7"}, None, anchor)
+        self.assertEqual(r["verdict"], "asserted-only")
+        self.assertIsNone(r["code"])
+
+    def test_no_anchor_asserted_only_never_attested(self):
+        _anchor_map, att = _anchor()
+        for anchor in (None, {}, {"keys": {}}, {"keys": "nope"},
+                       "blob"):
+            r = ic.check({"principal": "agent-7"}, att, anchor)
+            self.assertEqual(r["verdict"], "asserted-only",
+                             "anchor %r must never attest" % (anchor,))
+
+    def test_claim_mismatch_refused(self):
+        anchor, att = _anchor(principal="agent-7")
+        r = ic.check({"principal": "agent-9"}, att, anchor)
+        self.assertEqual(r["verdict"], "refused")
+        self.assertEqual(r["code"], "identity-claim-mismatch")
+
+    def test_unknown_key_id_refused(self):
+        anchor, _att = _anchor()
+        seed = _ed25519.generate_seed()
+        att = ic.make_attestation(seed, key_id="anchor-9",
+                                  attested_principal="agent-7")
+        r = ic.check({"principal": "agent-7"}, att, anchor)
+        self.assertEqual(r["verdict"], "refused")
+        self.assertEqual(r["code"], "identity-anchor-unknown")
+
+    def test_forged_signature_refused(self):
+        anchor, att = _anchor()
+        bad = dict(att)
+        sig = bytearray(bad["signature"])
+        sig[-1] ^= 0xFF
+        bad["signature"] = bytes(sig)
+        r = ic.check({"principal": "agent-7"}, bad, anchor)
+        self.assertEqual(r["verdict"], "refused")
+        self.assertEqual(r["code"], "identity-attestation-unverifiable")
+
+    def test_malformed_attestation_refused(self):
+        anchor, _att = _anchor()
+        for bad in ({}, {"attested_principal": "agent-7"},
+                    {"attested_principal": "agent-7", "key_id": "a",
+                     "signature": b"\x00"},
+                    "blob", 42):
+            r = ic.check({"principal": "agent-7"}, bad, anchor)
+            self.assertEqual(r["verdict"], "refused", "input %r" % (bad,))
+            self.assertEqual(r["code"], "identity-attestation-malformed")
+
+    def test_malformed_claim_refused(self):
+        anchor, att = _anchor()
+        for bad_claim in (None, "agent-7", {}, {"principal": ""},
+                          {"principal": 7}):
+            r = ic.check(bad_claim, att, anchor)
+            self.assertEqual(r["verdict"], "refused",
+                             "claim %r" % (bad_claim,))
+
+    def test_malformed_anchor_key_refused(self):
+        _anchor_map, att = _anchor()
+        anchor = {"keys": {"anchor-1": b"short"}}
+        r = ic.check({"principal": "agent-7"}, att, anchor)
+        self.assertEqual(r["verdict"], "refused")
+        self.assertEqual(r["code"], "identity-anchor-unknown")
+
+    def test_verify_contract_pinned(self):
+        # gov.ed25519.verify returns True/False and never raises; the
+        # check requires ``is True`` (wave-243 lesson). Pin the contract
+        # at this seam: good sig True, forged sig False.
+        seed = _ed25519.generate_seed()
+        pub = _ed25519.publickey(seed)
+        msg = b"contract-pin"
+        sig = _ed25519.sign(seed, msg)
+        self.assertIs(_ed25519.verify(pub, msg, sig), True)
+        bad = bytearray(sig)
+        bad[0] ^= 0x01
+        self.assertIs(_ed25519.verify(pub, msg, bytes(bad)), False)
+
+    def test_make_attestation_rejects_bad_inputs(self):
+        seed = _ed25519.generate_seed()
+        for args in ((b"short", "k", "p"),
+                     (seed, "", "p"),
+                     (seed, "k", "")):
+            with self.assertRaises(ValueError):
+                ic.make_attestation(*args)
+
+    def test_result_shape(self):
+        anchor, att = _anchor()
+        r = ic.check({"principal": "agent-7"}, att, anchor)
+        self.assertEqual(set(r), {"verdict", "code", "detail"})
+        self.assertIsInstance(r["detail"], str)
+
+
+class TaxonomyTest(unittest.TestCase):
+    def test_pin_899(self):
+        # Wave-246 lane 10: 895 + 4 identity-crosscheck codes, additive
+        # only, comment + assert.
+        # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 899); additive only.
+        self.assertEqual(len(dc.TAXONOMY), 936)
+
+    def test_codes_mapped(self):
+        for code in ("identity-attestation-malformed",
+                     "identity-anchor-unknown",
+                     "identity-attestation-unverifiable",
+                     "identity-claim-mismatch"):
+            rec = dc.code_for(code)
+            self.assertEqual(rec["code"], code)
+
+
+if __name__ == "__main__":
+    unittest.main()

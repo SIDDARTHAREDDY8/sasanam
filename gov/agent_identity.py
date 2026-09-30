@@ -349,3 +349,161 @@ def verify_message(envelope, registry, replay_cache, log=None, run_id=""):
         _reject(e.reason, e.detail, envelope, log, run_id)
     return {"agent_id": sender, "key_id": key_id, "seq": seq,
             "nonce": nonce, "body": msg_body}
+
+
+# ---------------------------------------------------------------------------
+# did:key-style self-sovereign identity (Wave-246 lane 7).
+#
+# The registry above is deployment-issued: the governance layer mints keys
+# and binds agent_ids. This section is the complement, ADAPTED (patterns
+# only) from the did:key shape: an identifier DERIVED FROM the public key
+# itself, so an agent can present a stable, self-sovereign identity that
+# any verifier can resolve to a key without a registry lookup:
+#
+#     did:key:z<base58btc(0xed01 || ed25519-pubkey)>
+#
+#   - ``0xed 0x01`` is the multicodec prefix for an Ed25519 public key.
+#   - the leading ``z`` is the multibase tag for base58-btc.
+#
+# resolve() is key -> id and is deterministic. verify_binding() checks an
+# (id, message, signature) triple and returns a bool -- never raises, and
+# pins gov.ed25519.verify's bool contract with ``is True`` (wave-243
+# lesson: never assume a verifier raises).
+#
+# HONEST RESIDUALS:
+# * A did:key id proves key possession, not good behavior and not
+#   uniqueness: one operator can mint arbitrarily many keys (Sybil).
+#   Reputation (gov/reputation_ledger.py) is computed over signed
+#   events, not over id scarcity.
+# * This does not replace the deployment-issued registry above for the
+#   messaging path; it is an additional, opt-in primitive for
+#   cross-deployment identity.
+# ---------------------------------------------------------------------------
+
+_DID_KEY_METHOD = "did:key:"
+_MULTIBASE_B58BTC = "z"
+_ED25519_PUB_MULTICODEC = b"\xed\x01"
+_B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+class DidKeyError(Exception):
+    """Malformed did:key input. Fail-closed: parse errors raise, never
+    return a guessed key. ``code`` is the taxonomy refusal code."""
+
+    def __init__(self, code, detail=""):
+        super(DidKeyError, self).__init__(
+            "%s%s" % (code, (": %s" % detail) if detail else ""))
+        self.code = code
+        self.detail = detail
+
+
+def b58encode(data):
+    """base58-btc encode (stdlib). Leading zero bytes -> leading '1's."""
+    if not isinstance(data, (bytes, bytearray)):
+        raise DidKeyError(
+            "did-key-malformed",
+            "b58encode needs bytes, got %s" % type(data).__name__)
+    data = bytes(data)
+    num = int.from_bytes(data, "big") if data else 0
+    out = ""
+    while num > 0:
+        num, rem = divmod(num, 58)
+        out = _B58_ALPHABET[rem] + out
+    leading = 0
+    for byte in data:
+        if byte == 0:
+            leading += 1
+        else:
+            break
+    # NB: when data is all zero bytes, num == 0 and out == "": the
+    # leading '1's carry the value. No extra fallback '1' -- b"\x00"
+    # encodes as "1", not "11".
+    return "1" * leading + out
+
+
+def b58decode(text):
+    """base58-btc decode (stdlib). Bad alphabet -> DidKeyError."""
+    if not isinstance(text, str):
+        raise DidKeyError("did-key-malformed",
+                          "b58decode needs str, got %s" % type(text).__name__)
+    num = 0
+    for char in text:
+        idx = _B58_ALPHABET.find(char)
+        if idx < 0:
+            raise DidKeyError("did-key-malformed",
+                              "bad base58 character %r" % (char,))
+        num = num * 58 + idx
+    raw = num.to_bytes((num.bit_length() + 7) // 8, "big") if num else b""
+    leading = 0
+    for char in text:
+        if char == "1":
+            leading += 1
+        else:
+            break
+    return b"\x00" * leading + raw
+
+
+def did_key_from_pubkey(pubkey):
+    """Derive the did:key identifier for a 32-byte Ed25519 public key."""
+    if not isinstance(pubkey, (bytes, bytearray)) or len(pubkey) != 32:
+        raise DidKeyError("did-key-malformed",
+                          "pubkey must be 32 bytes, got %s"
+                          % (type(pubkey).__name__ if not isinstance(
+                              pubkey, (bytes, bytearray))
+                             else "len %d" % len(pubkey)))
+    payload = _ED25519_PUB_MULTICODEC + bytes(pubkey)
+    return _DID_KEY_METHOD + _MULTIBASE_B58BTC + b58encode(payload)
+
+
+def resolve(pubkey):
+    """key -> did:key identifier. Deterministic: same key, same id."""
+    return did_key_from_pubkey(pubkey)
+
+
+def pubkey_from_did_key(did):
+    """Parse a did:key identifier back to its 32-byte Ed25519 public key.
+
+    Raises DidKeyError with a taxonomy code: ``did-key-method-unsupported``
+    for a non-did:key method, ``did-key-malformed`` for anything else
+    malformed (bad multibase, bad multicodec, wrong payload length).
+    """
+    if not isinstance(did, str):
+        raise DidKeyError("did-key-malformed",
+                          "did must be str, got %s" % type(did).__name__)
+    if not did.startswith("did:"):
+        raise DidKeyError("did-key-malformed",
+                          "not a DID: %r" % (did[:24],))
+    if not did.startswith(_DID_KEY_METHOD):
+        raise DidKeyError("did-key-method-unsupported",
+                          "only did:key is supported, got %r" % (did[:24],))
+    body = did[len(_DID_KEY_METHOD):]
+    if len(body) < 2 or not body.startswith(_MULTIBASE_B58BTC):
+        raise DidKeyError("did-key-malformed",
+                          "did:key body must use z/base58-btc multibase")
+    payload = b58decode(body[1:])
+    if not payload.startswith(_ED25519_PUB_MULTICODEC):
+        raise DidKeyError("did-key-malformed",
+                          "not an Ed25519 public-key multicodec payload")
+    pubkey = payload[len(_ED25519_PUB_MULTICODEC):]
+    if len(pubkey) != 32:
+        raise DidKeyError("did-key-malformed",
+                          "payload holds %d key bytes, need 32" % len(pubkey))
+    return pubkey
+
+
+def verify_binding(did, message, signature):
+    """Verify an (id, message, signature) binding. Returns bool, never
+    raises: malformed ids, wrong types, and bad signatures are False.
+
+    Pins gov.ed25519.verify's contract with ``is True`` -- the verifier
+    returns True/False and never raises on malformed input.
+    """
+    try:
+        pubkey = pubkey_from_did_key(did)
+    except DidKeyError:
+        return False
+    if not isinstance(message, (bytes, bytearray)):
+        return False
+    if not isinstance(signature, (bytes, bytearray)):
+        return False
+    return _ed.verify(pubkey, bytes(message), bytes(signature)) is True

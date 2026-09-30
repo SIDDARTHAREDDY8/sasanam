@@ -1103,7 +1103,12 @@ class TestExecutorWarnDigest(unittest.TestCase):
         log = ActionLog(log_path)
         from gov.approvals import ApprovalQueue
         queue = ApprovalQueue(run_dir, log)
+        # Wave-246 merge: isolate the egress ledger to this test's run_dir.
+        # The default (run_dir.parent / "egress_ledger.jsonl") shares the
+        # TMPDIR root across tests; a prior test's ledger key causes
+        # LedgerUnverifiableError here in the full canonical.
         ex = ToolExecutor(run_dir, engine, log, queue,
+                          ledger_path=os.path.join(run_dir, "egress_ledger.jsonl"),
                           ungoverned_ack=("synthetic wave-198 unit test: "
                                           "raw pipeline by design"))
         return ex, lambda: read_entries(log_path)

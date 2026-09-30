@@ -174,7 +174,14 @@ def _verify_entry_signature(entry, pubkey, expect_alg=None):
         # machine-readable agility code.
         raise RevocationEntryUnverifiableError(str(exc),
                                                code=exc.code)
-    if not _ALGS.verify(alg, _entry_body(entry), sig, pubkey):
+    # Algorithm-confusion opt-in (CWE-347): only a caller that pinned
+    # expect_alg to a symmetric tier declares the key a shared secret.
+    # Otherwise a MAC-tier entry refuses instead of HMACing with an
+    # attacker-known public key.
+    for_secret = expect_alg is not None \
+        and _ALGS.is_symmetric(expect_alg)
+    if not _ALGS.verify(alg, _entry_body(entry), sig, pubkey,
+                        for_symmetric_key=for_secret):
         raise RevocationEntryUnverifiableError(
             "revocation-entry-unverifiable: entry signature does not "
             "verify against the pinned issuer key")

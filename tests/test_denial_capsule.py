@@ -131,7 +131,8 @@ class SealDenialTests(unittest.TestCase):
 class VerifyCapsuleTests(unittest.TestCase):
     def test_01_verify_ok(self):
         capsule, _ = _seal()
-        claim = dcap.verify_capsule(capsule, key=_SECRET)
+        claim = dcap.verify_capsule(capsule, key=_SECRET,
+                            expect_alg="hmac-sha256-mac")
         self.assertTrue(claim["ok"])
         self.assertEqual(claim["key_id"], _KEYID)
 
@@ -140,14 +141,16 @@ class VerifyCapsuleTests(unittest.TestCase):
         bad = copy.deepcopy(capsule)
         bad["commitments"]["authority"] = "00" * 32
         with self.assertRaises(dcap.DenialCapsuleInvalid) as cm:
-            dcap.verify_capsule(bad, key=_SECRET)
+            dcap.verify_capsule(bad, key=_SECRET,
+                            expect_alg="hmac-sha256-mac")
         self.assertEqual(cm.exception.code,
                          "denial-capsule-signature-invalid")
 
     def test_03_wrong_key_refuses(self):
         capsule, _ = _seal()
         with self.assertRaises(dcap.DenialCapsuleInvalid):
-            dcap.verify_capsule(capsule, key=b"wrong" + _SECRET[5:])
+            dcap.verify_capsule(capsule, key=b"wrong" + _SECRET[5:],
+                            expect_alg="hmac-sha256-mac")
 
     def test_04_expect_alg_pins(self):
         capsule, _ = _seal()
@@ -159,7 +162,8 @@ class VerifyCapsuleTests(unittest.TestCase):
 
     def test_05_malformed_shape_refuses(self):
         with self.assertRaises(dcap.DenialCapsuleMalformed):
-            dcap.verify_capsule({"v": 1}, key=_SECRET)
+            dcap.verify_capsule({"v": 1}, key=_SECRET,
+                            expect_alg="hmac-sha256-mac")
 
 
 class DisclosureTests(unittest.TestCase):
@@ -179,7 +183,8 @@ class DisclosureTests(unittest.TestCase):
         capsule, material = _seal()
         disc = dcap.disclose_fields(capsule, material,
                                     ["refusal_code"])
-        res = dcap.verify_disclosure(capsule, disc, key=_SECRET)
+        res = dcap.verify_disclosure(capsule, disc, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
         self.assertTrue(res["ok"])
         self.assertEqual(res["disclosed"], ["refusal_code"])
 
@@ -190,7 +195,8 @@ class DisclosureTests(unittest.TestCase):
         bad = copy.deepcopy(disc)
         bad["disclosed"]["authority"] = "forged-authority"
         with self.assertRaises(dcap.DenialCapsuleDisclosure) as cm:
-            dcap.verify_disclosure(capsule, bad, key=_SECRET)
+            dcap.verify_disclosure(capsule, bad, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
         self.assertEqual(cm.exception.code,
                          "denial-disclosure-mismatch")
 
@@ -201,7 +207,8 @@ class DisclosureTests(unittest.TestCase):
         bad = copy.deepcopy(disc)
         bad["salts"]["authority"] = "ff" * 32
         with self.assertRaises(dcap.DenialCapsuleDisclosure):
-            dcap.verify_disclosure(capsule, bad, key=_SECRET)
+            dcap.verify_disclosure(capsule, bad, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
 
     def test_05_uncommitted_field_refuses(self):
         capsule, material = _seal()
@@ -211,7 +218,8 @@ class DisclosureTests(unittest.TestCase):
         bad["disclosed"]["note"] = "x"
         bad["salts"]["note"] = "ff" * 32
         with self.assertRaises(dcap.DenialCapsuleDisclosure):
-            dcap.verify_disclosure(capsule, bad, key=_SECRET)
+            dcap.verify_disclosure(capsule, bad, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
 
     def test_06_capsule_digest_binding(self):
         capsule, material = _seal()
@@ -222,7 +230,8 @@ class DisclosureTests(unittest.TestCase):
         bad["capsule_digest"] = dcap.disclose_fields(
             other, material, ["authority"])["capsule_digest"]
         with self.assertRaises(dcap.DenialCapsuleDisclosure):
-            dcap.verify_disclosure(capsule, bad, key=_SECRET)
+            dcap.verify_disclosure(capsule, bad, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
 
     def test_07_empty_field_list_refuses(self):
         capsule, material = _seal()
@@ -251,7 +260,8 @@ class EmitDenialTests(unittest.TestCase):
             signer=_Signer(secret=b"attacker-secret-0000000000000012"))
         disc = dcap.disclose_fields(capsule, material, ["authority"])
         with self.assertRaises(dcap.DenialCapsuleInvalid) as cm:
-            dcap.verify_disclosure(capsule, disc, key=_SECRET)
+            dcap.verify_disclosure(capsule, disc, key=_SECRET,
+                                   expect_alg="hmac-sha256-mac")
         self.assertEqual(cm.exception.code,
                          "denial-capsule-signature-invalid")
 
@@ -271,7 +281,8 @@ class EvidenceAndReceiptTests(unittest.TestCase):
         receipt = dr.emit(copy.deepcopy(decision), signer=signer,
                           denial_capsule=capsule)
         self.assertEqual(receipt["denial_capsule"], capsule)
-        claim = dr.verify(receipt, key=_SECRET)
+        claim = dr.verify(receipt, key=_SECRET,
+                          expect_alg="hmac-sha256-mac")
         self.assertTrue(claim["ok"])
 
     def test_03_receipt_legacy_bytes_identical(self):
@@ -292,7 +303,8 @@ class EvidenceAndReceiptTests(unittest.TestCase):
              "token_digest", "policy_bundle_digest", "intent_digest",
              "jurisdiction_profile", "alg", "key_id",
              "non_repudiation", "signature"})
-        dr.verify(receipt, key=_SECRET)
+        dr.verify(receipt, key=_SECRET,
+                  expect_alg="hmac-sha256-mac")
 
     def test_04_receipt_capsule_tamper_breaks_receipt(self):
         capsule, _ = _seal()
@@ -310,7 +322,8 @@ class EvidenceAndReceiptTests(unittest.TestCase):
         bad = copy.deepcopy(receipt)
         bad["denial_capsule"]["commitments"]["authority"] = "00" * 32
         with self.assertRaises(Exception):
-            dr.verify(bad, key=_SECRET)
+            dr.verify(bad, key=_SECRET,
+                      expect_alg="hmac-sha256-mac")
 
     def test_05_receipt_malformed_capsule_refuses(self):
         signer = dr.Signer("hmac-sha256-mac", _SECRET, _KEYID)

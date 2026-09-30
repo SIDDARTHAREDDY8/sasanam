@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""W245-7 regression pin: decision-packet signature discipline vs the
-probityai/agent-evidence-vectors `vectors-receipt-signature` corpus.
+"""W245-7 / W246-11 regression pin: decision-packet signature discipline
+vs the probityai/agent-evidence-vectors `vectors-receipt-signature` corpus.
 
 Runs the corpus's own harness (packaging/agent_evidence_vectors/
 receiptsignature.py) with our draft-03 verifier adapter
@@ -9,13 +9,18 @@ primitive gov/ed25519.py plus a from-spec RFC 8785 canonicalizer) and
 asserts the full corpus passes.
 
 The corpus lives OUTSIDE this repo. Set AEV_CORPUS_DIR to the
-agent-evidence-vectors checkout (v0.13.0) to run; otherwise this probe
+agent-evidence-vectors checkout (v0.15.0) to run; otherwise this probe
 records a skip -- it never fails closed on a missing external corpus.
 
-Baseline recorded 2026-09-30 (wave-245 lane 7): 13/13 vectors PASS,
-0 not-honouring, 0 fail (26/26 member x pass judgments correct,
-including the window SHOULD and the null-signature-member MUST that
-@veritasacta/verify 0.10.19 failed).
+Baseline recorded 2026-09-30 (wave-245 lane 7): 13/13 vectors PASS on
+v0.13.0, 0 not-honouring, 0 fail.
+Baseline recorded 2026-09-30 (wave-246 lane 11): 25/25 vectors PASS on
+v0.15.0 (50/50 member x pass judgments), 0 not-honouring, 0 fail --
+including the Section 6.7 chain-link members (chain_link_mismatch on the
+wrong-previous-receipt member), the Section 6.6 signing-input family
+(empty/null/string signature members refused), and the two gap members
+answered with the draft's verdicts (RS-G-001 revocation, RS-G-002
+commitment timing).
 """
 
 import json
@@ -23,8 +28,8 @@ import os
 import subprocess
 import sys
 
-EXPECTED_PASS = 13
-EXPECTED_VECTORS = 13
+EXPECTED_PASS = 25
+EXPECTED_VECTORS = 25
 
 
 def main():

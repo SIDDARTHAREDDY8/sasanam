@@ -152,7 +152,9 @@ class EnvelopeTest(unittest.TestCase):
                     envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
         self.assertEqual(r["envelope"]["payloadType"],
                          dr.DENY_RECEIPT_ENVELOPE_TYPE)
-        out = dr.verify(r, key=signer.secret)
+        # Wave-246 lane 5 (CWE-347): pin expect_alg to the HMAC tier — the signer is a legitimate shared secret, not a public key.
+        out = dr.verify(r, key=signer.secret,
+                                     expect_alg=ar.HMAC_SHA256_MAC)
         self.assertTrue(out["ok"])
 
     def test_envelope_absent_by_default(self):
@@ -185,7 +187,9 @@ class EnvelopeTest(unittest.TestCase):
         r2x = dict(r2)
         r2x["envelope"] = r1["envelope"]
         with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
-            dr.verify(r2x, key=signer.secret)
+            # Wave-246 lane 5 (CWE-347): pin expect_alg to the HMAC tier — the signer is a legitimate shared secret, not a public key.
+            dr.verify(r2x, key=signer.secret,
+                                         expect_alg=ar.HMAC_SHA256_MAC)
         self.assertIn("dsse-signature-invalid", str(ctx.exception))
 
     def test_envelope_forgery_refused(self):
@@ -196,7 +200,9 @@ class EnvelopeTest(unittest.TestCase):
         bad = copy.deepcopy(r)
         bad["envelope"]["signatures"][0]["sig"] = "00" * 64
         with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
-            dr.verify(bad, key=signer.secret)
+            # Wave-246 lane 5 (CWE-347): pin expect_alg to the HMAC tier — the signer is a legitimate shared secret, not a public key.
+            dr.verify(bad, key=signer.secret,
+                                         expect_alg=ar.HMAC_SHA256_MAC)
         self.assertIn("dsse-signature-invalid", str(ctx.exception))
 
     def test_envelope_wrong_expected_type_refused(self):
@@ -214,7 +220,9 @@ class EnvelopeTest(unittest.TestCase):
         bad["envelope"]["payloadType"] = \
             "application/vnd.sasanam.decision-packet+json"
         with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
-            dr.verify(bad, key=signer.secret)
+            # Wave-246 lane 5 (CWE-347): pin expect_alg to the HMAC tier — the signer is a legitimate shared secret, not a public key.
+            dr.verify(bad, key=signer.secret,
+                                         expect_alg=ar.HMAC_SHA256_MAC)
         self.assertIn("dsse-envelope-transplant", str(ctx.exception))
 
 

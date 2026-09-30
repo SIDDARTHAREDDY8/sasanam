@@ -1,0 +1,210 @@
+"""Unit tests for gov.schema_ref_guard (W246-3).
+
+Red-first at the public seam: check_tool_schema raises
+SchemaRefGuardError (with .code) on hostile/malformed schemas and
+returns an allow verdict with resolution statistics on clean ones.
+"""
+
+import copy
+import os
+import unittest
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import decision_codes as dc
+from gov import schema_ref_guard as srg
+
+
+def _refusal(schema, **kw):
+    try:
+        srg.check_tool_schema(schema, **kw)
+    except srg.SchemaRefGuardError as exc:
+        return exc.code
+    raise AssertionError("expected refusal, got allow")
+
+
+class SchemaRefGuardContractTest(unittest.TestCase):
+    def test_taxonomy_pin_900(self):
+        # Wave-246 lane 3 (W246-3): 5 additive schema-ref codes
+        # (external, depth-exceeded, budget-exhausted, malformed,
+        # resolved) on the wave-245 pin of 895.
+        # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 900); additive only.
+        self.assertEqual(len(dc.TAXONOMY), 936)
+
+    def test_new_codes_mapped(self):
+        for code in ("schema-ref-external",
+                     "schema-ref-depth-exceeded",
+                     "schema-ref-budget-exhausted",
+                     "schema-record-malformed",
+                     "schema-refs-resolved"):
+            rec = dc.code_for(code)
+            self.assertEqual(rec["code"], code)
+            self.assertEqual(rec["domain"], "schema-ref")
+
+    def test_error_carries_code(self):
+        try:
+            srg.check_tool_schema({"$ref": "https://x.example/"})
+        except srg.SchemaRefGuardError as exc:
+            self.assertEqual(exc.code, "schema-ref-external")
+            self.assertTrue(str(exc))
+        else:
+            self.fail("expected SchemaRefGuardError")
+
+    def test_allow_verdict_shape(self):
+        verdict = srg.check_tool_schema({"type": "string"})
+        self.assertEqual(verdict["decision"], "allow")
+        self.assertEqual(verdict["code"], "schema-refs-resolved")
+        self.assertEqual(verdict["refs_resolved"], 0)
+        self.assertEqual(verdict["max_depth_seen"], 0)
+
+
+class SchemaRefGuardRefusalTest(unittest.TestCase):
+    def test_external_absolute(self):
+        self.assertEqual(
+            _refusal({"$ref": "https://attacker.example/schema"}),
+            "schema-ref-external")
+
+    def test_external_with_fragment(self):
+        self.assertEqual(
+            _refusal({"$ref": "bundle.json#/definitions/x"}),
+            "schema-ref-external")
+
+    def test_external_bare_path(self):
+        self.assertEqual(
+            _refusal({"$ref": "other.json"}),
+            "schema-ref-external")
+
+    def test_recursive_ref_external(self):
+        self.assertEqual(
+            _refusal({"$recursiveRef": "https://attacker.example/r"}),
+            "schema-ref-external")
+
+    def test_dynamic_ref_external(self):
+        self.assertEqual(
+            _refusal({"$dynamicRef": "https://attacker.example/d"}),
+            "schema-ref-external")
+
+    def test_cycle(self):
+        schema = {"definitions": {
+            "a": {"$ref": "#/definitions/b"},
+            "b": {"$ref": "#/definitions/a"}},
+            "$ref": "#/definitions/a"}
+        self.assertEqual(_refusal(schema), "schema-ref-depth-exceeded")
+
+    def test_self_root(self):
+        self.assertEqual(_refusal({"$ref": "#"}),
+                         "schema-ref-depth-exceeded")
+
+    def test_empty_ref_is_external(self):
+        # "" does not start with "#": out-of-document by the crisp
+        # rule, refused without any base-URI resolution.
+        self.assertEqual(_refusal({"$ref": ""}),
+                         "schema-ref-external")
+
+    def test_deep_chain_bound(self):
+        defs = {"n%d" % i: {"$ref": "#/definitions/n%d" % (i + 1)}
+                for i in range(10)}
+        schema = {"definitions": defs, "$ref": "#/definitions/n0"}
+        self.assertEqual(_refusal(schema, max_ref_depth=4),
+                         "schema-ref-depth-exceeded")
+
+    def test_budget_bound(self):
+        schema = {"properties":
+                  {"p%d" % i: {"$ref": "#/definitions/s"}
+                   for i in range(50)},
+                  "definitions": {"s": {"type": "string"}}}
+        self.assertEqual(_refusal(schema, max_resolution_steps=10),
+                         "schema-ref-budget-exhausted")
+
+    def test_dangling_pointer(self):
+        self.assertEqual(_refusal({"$ref": "#/definitions/nope"}),
+                         "schema-record-malformed")
+
+    def test_non_dict(self):
+        for bad in (["$ref"], "x", 42, None, True):
+            self.assertEqual(_refusal(bad), "schema-record-malformed")
+
+    def test_non_string_ref(self):
+        self.assertEqual(
+            _refusal({"properties": {"x": {"$ref": 42}}}),
+            "schema-record-malformed")
+
+    def test_bad_bounds_rejected(self):
+        for kw in ({"max_ref_depth": 0}, {"max_ref_depth": -1},
+                   {"max_resolution_steps": 0},
+                   {"max_ref_depth": True}, {"max_ref_depth": "16"}):
+            self.assertEqual(_refusal({"type": "string"}, **kw),
+                             "schema-record-malformed")
+
+    def test_cyclic_python_container(self):
+        d = {}
+        d["self"] = d
+        self.assertEqual(_refusal(d), "schema-record-malformed")
+
+
+class SchemaRefGuardAllowTest(unittest.TestCase):
+    def test_valid_refs(self):
+        schema = {"definitions": {"s": {"type": "string"}},
+                  "properties": {"x": {"$ref": "#/definitions/s"}}}
+        verdict = srg.check_tool_schema(schema)
+        self.assertEqual(verdict["decision"], "allow")
+        self.assertEqual(verdict["refs_resolved"], 1)
+        self.assertEqual(verdict["max_depth_seen"], 1)
+
+    def test_sibling_keys_scanned(self):
+        # $ref siblings (2020-12) are validated too: the nested
+        # external ref must still refuse.
+        schema = {"$ref": "#/definitions/ok",
+                  "definitions": {
+                      "ok": {"properties":
+                             {"evil": {"$ref": "https://x.example/"}}}}}
+        self.assertEqual(_refusal(schema), "schema-ref-external")
+
+    def test_pointer_unescape(self):
+        schema = {"definitions": {"a/b": {"type": "string"},
+                                  "c~d": {"type": "integer"}},
+                  "properties": {
+                      "x": {"$ref": "#/definitions/a~1b"},
+                      "y": {"$ref": "#/definitions/c~0d"}}}
+        verdict = srg.check_tool_schema(schema)
+        self.assertEqual(verdict["refs_resolved"], 2)
+
+    def test_list_pointer(self):
+        schema = {"allOf": [{"type": "string"}],
+                  "$ref": "#/allOf/0"}
+        verdict = srg.check_tool_schema(schema)
+        self.assertEqual(verdict["decision"], "allow")
+
+    def test_diamond_refs_allowed(self):
+        schema = {"definitions": {"s": {"type": "string"}},
+                  "properties": {
+                      "a": {"$ref": "#/definitions/s"},
+                      "b": {"$ref": "#/definitions/s"}}}
+        verdict = srg.check_tool_schema(schema)
+        self.assertEqual(verdict["refs_resolved"], 2)
+
+    def test_no_mutation(self):
+        schema = {"definitions": {"s": {"type": "string"}},
+                  "properties": {"x": {"$ref": "#/definitions/s"}}}
+        before = copy.deepcopy(schema)
+        srg.check_tool_schema(schema)
+        self.assertEqual(schema, before)
+
+    def test_no_network_imports(self):
+        # Static complement to the battery's runtime no-fetch proof:
+        # the module must not import any network client. Check
+        # import statements, not prose (the docstring names them).
+        import inspect  # noqa: PLC0415
+        import re  # noqa: PLC0415
+        src = inspect.getsource(srg)
+        imports = re.findall(r"^\s*(?:import|from)\s+(\S+)",
+                             src, re.M)
+        for mod in imports:
+            top = mod.split(".")[0]
+            self.assertNotIn(top, ("urllib", "socket", "http",
+                                   "requests", "httpx", "aiohttp"),
+                             "network import: %s" % (mod,))
+
+
+if __name__ == "__main__":
+    unittest.main()
