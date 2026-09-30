@@ -11505,3 +11505,23 @@ Red-first battery `evals/w217_receipt_probes.py` (13 probes): pristine 14 GAP / 
 **Gates (g217m, canonical interpreter ~/workspace/.gov-venv/bin/python):** see red-first audit section.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-217 gates (final, 2026-09-30)
+
+Merge commit `8776f6d` (fast-forward of 2d5b927, pushed, remote HEAD verified `8776f6d9a1fcc5bcf2c40f9fb707713a0c6011dc`).
+
+**Red-first closure audit on the merged tree:** `evals/w217_quorum_probes.py` **17 HELD / 0 BREAK**; `evals/w217_compile_once_probes.py` **21 HELD / 0 BREAK**; `evals/w217_receipt_probes.py` **15 HELD / 0 BREAK / 0 ERROR**. Legacy pins: `gov/artifact_rules.py` `verify_artifacts` report output byte-identical to base 2d5b927 across 8 cases incl. 4 error shapes (independent merge-side pin script); `gov/approvals.py` untouched (zero diff); `promote()` legacy path 18/18 pre-existing tests OK on merged tree.
+
+**Gates (all under ~/workspace/.gov-venv/bin/python, fresh unique TMPDIRs, serialized):**
+- Canonical merged: **7639 tests, 6 failures + 10 errors**; pristine base 2d5b927: **7561 tests, same 6F/10E**; sorted FAIL/ERROR lists **BYTE-IDENTICAL** (pre-existing executor/sandbox/MCP environment flakiness; one pristine run initially showed 9F/13E from missing workstream symlinks — resolved by adding sibling symlinks, not a product delta).
+- F75 preflight: PASS (supply-chain audit OK: 35 distributions checked against requirements.lock).
+- Registry: **GREEN** (`evals/run_evals.py --registry-gate`).
+- Matrix: **3216/3216** SHIP-GATE GREEN (provisional 1608/1608, real 1608/1608).
+- Realistic: **7/7** (`tests/run_realistic.py`).
+- AMSB: **90.00 / FINAL C / FP 0.0%** (36/40 weight, 1 critical breach — standing baseline).
+- Stratified-100 claim: verifier tests 5/5 OK (genuine 100/100 run), config hash `c7931f68fdf85014`.
+- `evals/artifacts/wave23_b2/battery_100_results.json` never committed rewritten.
+
+**Findings:** none filed. F208 remains CLOSED (wave-216 lane A, vacuous close). Open findings: none. Next free: **F209**.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
