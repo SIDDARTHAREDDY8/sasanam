@@ -6407,6 +6407,262 @@ TAXONOMY = {
     # intermediate-CA completeness codes), additive only, zero key
     # collisions, composed from the four lane commits by direct
     # byte-verification.
+    # Wave-241 lane A: 742 + 5 = 747 (5 hostid mint-once refusal
+    # codes: hostname-not-identity, hostname-digest-not-identity,
+    # symlink-at-id-path, id-file-corrupt, malformed-identity),
+    # additive only, zero key collisions.
+    'hostid-hostname-not-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-hostname-not-identity',
+        "human": 'host identity rule: a receipt claimed the machine '
+                 'hostname itself as host identity; hostnames are '
+                 'observable and non-random, they are not identities',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-hostname-digest-not-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-hostname-digest-not-identity',
+        "human": 'host identity rule: a receipt claimed a digest of the '
+                 'machine hostname as host identity; a digest with no '
+                 'secret reverses from a short guess list of common '
+                 'machine names',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-symlink-at-id-path': {
+        "domain": 'hostid',
+        "code": 'hostid-symlink-at-id-path',
+        "human": 'host identity rule: refusing to mint through or read '
+                 'a symlink at the id path; the persisted id must be a '
+                 'regular file',
+        "severity": 'critical',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-id-file-corrupt': {
+        "domain": 'hostid',
+        "code": 'hostid-id-file-corrupt',
+        "human": 'host identity rule: the persisted id file is missing, '
+                 'not a regular file, holds a value that is not a '
+                 'valid host identity, or could not be minted '
+                 'atomically (short write)',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-malformed-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-malformed-identity',
+        "human": 'host identity rule: the claimed host identity is not '
+                 'host_[0-9a-f]{16}; only minted random ids validate',
+        "severity": 'medium',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+
+    # Wave-241 lane B: 742 + 6 = 748 (Vaara recomputability
+    # recompute-check codes), additive only, zero key collisions.
+    'recompute-malformed': {
+        "domain": 'recompute',
+        "code": 'recompute-malformed',
+        "human": 'recompute check: receipt is structurally malformed '
+                 '(unknown kind, bad version, non-hex digests, or '
+                 'unsupported value in the canonical form)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-digest-mismatch': {
+        "domain": 'recompute',
+        "code": 'recompute-digest-mismatch',
+        "human": 'recompute check: the digest recomputed over the '
+                 'JCS-canonical receipt body does not match the claimed '
+                 'receipt_digest -- possible tampering, escalate',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-signature-invalid': {
+        "domain": 'recompute',
+        "code": 'recompute-signature-invalid',
+        "human": 'recompute check: the Ed25519 signature does not verify '
+                 'over the canonical receipt bytes with the checker-supplied '
+                 'public key',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-backlink-mismatch': {
+        "domain": 'recompute',
+        "code": 'recompute-backlink-mismatch',
+        "human": 'recompute check: the execution receipt backLink does not '
+                 'name the decision receipt digest+nonce -- the pair is '
+                 'not linked',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-no-execution-link': {
+        "domain": 'recompute',
+        "code": 'recompute-no-execution-link',
+        "human": 'recompute check: an allow decision with no linked '
+                 'execution receipt proves nothing about whether '
+                 'anything ran',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-absent-refusal-no-coverage': {
+        "domain": 'recompute',
+        "code": 'recompute-absent-refusal-no-coverage',
+        "human": 'recompute check: an absent refusal outside the declared '
+                 'coverage boundary is not evidence -- absence is evidence '
+                 'only where something promised to record',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
+    # Wave-241 lane C: 742 + 5 = 747 (5 aauth-egress fail-closed
+    # primitive codes: aauth-scheme-not-allowed, aauth-aud-mismatch,
+    # aauth-stale-created, aauth-egress-blocked, aauth-iss-mismatch),
+    # additive only, zero key collisions.
+    'aauth-scheme-not-allowed': {
+        "domain": 'aauth',
+        "code": 'aauth-scheme-not-allowed',
+        "human": 'aauth egress rule: scheme resolution without an '
+                 'explicitly allowing policy refuses; policy precedes '
+                 'discovery',
+        "severity": 'high',
+        "evidence_kinds_required": ['scheme-resolution'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-aud-mismatch': {
+        "domain": 'aauth',
+        "code": 'aauth-aud-mismatch',
+        "human": 'aauth egress rule: token audience does not match the '
+                 'expected audience, or the audience is missing; failing '
+                 'closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-stale-created': {
+        "domain": 'aauth',
+        "code": 'aauth-stale-created',
+        "human": 'aauth egress rule: RFC 9421 created timestamp is more '
+                 'than 60s from the verifier clock (past or future); '
+                 'failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-egress-blocked': {
+        "domain": 'aauth',
+        "code": 'aauth-egress-blocked',
+        "human": 'aauth egress rule: HTTPS-only default-deny egress '
+                 'refuses loopback, RFC1918, link-local, localhost, or '
+                 'non-https targets',
+        "severity": 'high',
+        "evidence_kinds_required": ['egress-target'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-iss-mismatch': {
+        "domain": 'aauth',
+        "code": 'aauth-iss-mismatch',
+        "human": 'aauth egress rule: token issuer does not match the '
+                 'expected issuer, or the issuer is missing; confused '
+                 'deputy prevention',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+
+    # Wave-241 lane D: 742 + 8 = 750 (2 obligation-binding ND-038 +
+    # 2 parameter-canonicalization ND-048 + 4 expected-participants
+    # audit codes), additive only, zero key collisions.
+    'obligation-unfulfilled': {
+        "domain": 'obligation',
+        "code": 'obligation-unfulfilled',
+        "human": 'obligation binding: a permit obligation declared at '
+                 'issue has no fulfillment evidence at settlement; '
+                 'obligations silently ignored at execution are refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['execution-evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'obligation-malformed': {
+        "domain": 'obligation',
+        "code": 'obligation-malformed',
+        "human": 'obligation binding: malformed obligation declaration '
+                 'or fulfillment evidence; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'parameter-obfuscation': {
+        "domain": 'parameter',
+        "code": 'parameter-obfuscation',
+        "human": 'parameter canonicalization: the canonical command '
+                 'form contains a denied parameter the raw string '
+                 'comparison would have missed; the canonical '
+                 'comparison is authoritative',
+        "severity": 'high',
+        "evidence_kinds_required": ['command-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    'parameter-malformed': {
+        "domain": 'parameter',
+        "code": 'parameter-malformed',
+        "human": 'parameter canonicalization: malformed command or '
+                 'allowlist/denylist input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'expected-participant-missing': {
+        "domain": 'participants',
+        "code": 'expected-participant-missing',
+        "human": 'expected-participants audit: a participant declared '
+                 'expected for the workload has no signed hop in the '
+                 'delegation chain; omission is not detectable without '
+                 'the declared policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation-chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'unexpected-participant-signed': {
+        "domain": 'participants',
+        "code": 'unexpected-participant-signed',
+        "human": 'expected-participants audit: a signed hop names a '
+                 'participant not declared expected for the workload',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation-chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'expected-participants-undeclared': {
+        "domain": 'participants',
+        "code": 'expected-participants-undeclared',
+        "human": 'expected-participants audit: no declared '
+                 'expected-participants policy for the workload; the '
+                 'chain is not verifiable and refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'expected-participants-malformed': {
+        "domain": 'participants',
+        "code": 'expected-participants-malformed',
+        "human": 'expected-participants audit: malformed policy or '
+                 'chain input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+
 }
 
 

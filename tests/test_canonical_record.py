@@ -216,21 +216,11 @@ class TaxonomyMappingTest(unittest.TestCase):
                      "record-opaque-bytes"):
             entry = dc.code_for(code)
             self.assertEqual(entry["domain"], "canonical")
-        # Wave-237 merge: re-pointed 652 -> 667 (lane-local 647 + 5;
-        # the merge composes 20 new codes: 647 -> 667).
-        # Wave-238 merge: re-pointed 667 -> 695 (28 new codes across
-        # four lanes), composed from the four lane commits by direct
-        # byte-verification.
-        # Wave-239 merge: re-pointed 695 -> 718 (23 new codes across
-        # four lanes: 8 AAuth R3 + 6 claim-at-dispatch + 3
-        # refusal-oracle guard + 6 AER-1 provenance non-upgrade),
-        # composed from the four lane commits by direct
-        # byte-verification.
-        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
-        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
-        # config/intermediate-CA), additive only, composed from the four lane
-        # commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 742)
+        # Wave-241 merge: re-pointed 742 -> 766 (24 new codes: 5 hostid
+        # + 6 recompute-check + 5 aauth-egress + 8 obligation/
+        # parameter/expected-participants), additive only, composed
+        # from the four lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 766)
 
 
 if __name__ == "__main__":

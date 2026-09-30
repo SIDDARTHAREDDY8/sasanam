@@ -271,35 +271,11 @@ class ScanTest(unittest.TestCase):
             self.assertIn(code, dc.TAXONOMY, code)
             self.assertEqual(dc.TAXONOMY[code]["domain"], "token_hygiene",
                              code)
-        # Wave-234 merge: lane-local pin 606 -> 617 (3 lane-A octet-digest
-        # chain codes + 8 lane-C consumption-ledger codes added at merge;
-        # canonical pin is asserted in tests/test_decision_codes.py).
-        # Wave-235 merge: re-pointed 617 -> 631 (4 trust-material + 7
-        # bound-permit + 3 grant-attenuation codes).
-        # Wave-236 lane B: re-pointed 631 -> 635 (4 denial-capsule
-        # codes: denial-unsealed, denial-capsule-malformed,
-        # denial-capsule-signature-invalid, denial-disclosure-mismatch).
-        # Wave-236 merge: re-pointed 635 -> 647 (7 close-record signer
-        # binding + 5 permit/closure codes), composed from the three lane
-        # commits by direct byte-verification.
-        # Wave-237 merge: re-pointed 647 -> 667 (4 three-outcome
-        # gate-rule + 3 edited-approval refusal + 5 canonical-record +
-        # 8 closure-scoped approval codes), composed from the four lane
-        # commits by direct byte-verification.
-        # Wave-238 merge: re-pointed 667 -> 695 (10 C2SP
-        # tlog-checkpoint + 8 bundle-verification invariant +
-        # 4 attested-vs-asserted + 6 independent-corroboration
-        # codes), composed from the four lane commits by direct
-        # byte-verification.
-        # Wave-239 merge: re-pointed 695 -> 718 (8 AAuth R3
-        # vocabulary grant + 6 claim-at-dispatch + 3 refusal-oracle
-        # guard + 6 AER-1 provenance non-upgrade codes), composed
+        # Wave-241 merge: re-pointed 742 -> 766 (24 new codes: 5 hostid
+        # + 6 recompute-check + 5 aauth-egress + 8 obligation/
+        # parameter/expected-participants), additive only, composed
         # from the four lane commits by direct byte-verification.
-        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
-        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
-        # config/intermediate-CA), additive only, composed from the four lane
-        # commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 742)
+        self.assertEqual(len(dc.TAXONOMY), 766)
 
 
 if __name__ == "__main__":

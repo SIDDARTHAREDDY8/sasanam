@@ -354,11 +354,11 @@ class CoverageTests(unittest.TestCase):
 class PinTests(unittest.TestCase):
     def test_taxonomy_pin(self):
         from gov import decision_codes as dc
-        # Wave-240 merge: re-pointed 718 -> 742 (24 new codes: 6 forcing-honesty
-        # + 6 APS axis/result-model + 8 bound-permit follow-through + 4 witness
-        # config/intermediate-CA), additive only, composed from the four lane
-        # commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 742)
+        # Wave-241 merge: re-pointed 742 -> 766 (24 new codes: 5 hostid
+        # + 6 recompute-check + 5 aauth-egress + 8 obligation/
+        # parameter/expected-participants), additive only, composed
+        # from the four lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 766)
         for code in ("honesty-baseline-tampered",
                      "honesty-baseline-unforced",
                      "honesty-condition-silent",
