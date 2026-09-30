@@ -25,6 +25,17 @@ against the pinned keyset and refuses
 ``revocation-entry-unverifiable`` on the first bad entry — the whole
 import aborts, nothing is half-trusted.
 
+Algorithm agility (see ``gov/alg_registry.py``): ``revoke`` takes an
+optional ``alg`` naming the signing tier. The default
+``ed25519-rfc8032`` emits byte-identical entries to the pre-agility
+format (no "alg" field); non-default tiers carry their "alg" name in
+the signed entry. ``verify`` / ``import_entries`` dispatch by the
+entry's named algorithm, resolve legacy entries (no "alg") as
+``ed25519-rfc8032``, and accept an ``expect_alg`` pin that refuses
+``alg-mismatch`` when the entry's tier differs. MAC-tier entries
+prove authenticity only to key-holders — never treat them as
+non-repudiation evidence.
+
 Ed25519 comes from the repo's vendored RFC 8032 ``gov/ed25519.py``.
 Issuer seed custody is deployment-owned. The list itself is
 in-memory; persistence is the deployer's job, same as the
@@ -38,8 +49,9 @@ import re
 import time
 from datetime import datetime, timezone
 
-from .ed25519 import sign as _ed_sign
-from .ed25519 import verify as _ed_verify
+from . import alg_registry as _algs
+
+_ALGS = _algs.default_registry()
 
 # ----------------------------------------------------------------------
 # Error vocabulary.
@@ -138,13 +150,31 @@ def _check_entry_shape(entry):
             "revocation-entry-unverifiable: malformed issuer_id")
 
 
-def _verify_entry_signature(entry, pubkey):
+def _verify_entry_signature(entry, pubkey, expect_alg=None):
+    """Verify the entry's signature under its named algorithm.
+
+    Legacy entries carry no "alg" field and verify as
+    ``ed25519-rfc8032``. Unknown names refuse ``alg-unregistered``;
+    a pinned ``expect_alg`` that differs refuses ``alg-mismatch``.
+    """
     try:
         sig = bytes.fromhex(entry["signature"])
     except (TypeError, ValueError):
         raise RevocationEntryUnverifiableError(
             "revocation-entry-unverifiable: malformed signature")
-    if not _ed_verify(pubkey, _entry_body(entry), sig):
+    try:
+        alg = _algs.extract_record_alg(
+            entry, expect_alg,
+            lambda: RevocationEntryUnverifiableError(
+                "revocation-entry-unverifiable: malformed alg field %r"
+                % (entry.get("alg"),)))
+    except _algs.AlgError as exc:
+        # Keep the module's error contract (a bad entry refuses
+        # revocation-entry-unverifiable) while preserving the
+        # machine-readable agility code.
+        raise RevocationEntryUnverifiableError(str(exc),
+                                               code=exc.code)
+    if not _ALGS.verify(alg, _entry_body(entry), sig, pubkey):
         raise RevocationEntryUnverifiableError(
             "revocation-entry-unverifiable: entry signature does not "
             "verify against the pinned issuer key")
@@ -200,12 +230,20 @@ class RevocationList:
         self._signal_issuer = signal_issuer
         self._signal_sink = signal_sink
 
-    def revoke(self, target_digest, *, issuer_id, seed, now=None):
+    def revoke(self, target_digest, *, issuer_id, seed, now=None,
+               alg=_algs.DEFAULT_ALG):
         """Pin and sign the revocation of an EXACT digest.
 
         Refuses ``revocation-inexact-target-refused`` for anything but
-        a full canonical digest. Idempotent: revoking an already-listed
-        digest keeps the original entry.
+        a full canonical digest, and ``alg-unregistered`` for an
+        unknown signing algorithm. Idempotent: revoking an
+        already-listed digest keeps the original entry.
+
+        ``alg`` names the signing tier (see ``gov/alg_registry.py``);
+        the default tier emits byte-identical entries to the
+        pre-agility format (no "alg" field). MAC-tier entries prove
+        authenticity only to key-holders — never treat them as
+        non-repudiation evidence.
         """
         if not is_exact_digest(target_digest):
             raise RevocationInexactTargetError(
@@ -216,6 +254,10 @@ class RevocationList:
             raise ValueError("issuer_id must be a non-empty string")
         if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
             raise ValueError("seed must be 32 bytes")
+        try:
+            _ALGS.info(alg)  # alg-unregistered for unknown tiers
+        except _algs.AlgError as exc:
+            raise RevocationError(str(exc), code=exc.code)
         existing = self._entries.get(target_digest)
         if existing is not None:
             return dict(existing)
@@ -225,8 +267,9 @@ class RevocationList:
             "issuer_id": issuer_id,
             "revoked_at": _iso(time.time() if now is None else now),
         }
-        entry["signature"] = _ed_sign(bytes(seed),
-                                      _entry_body(entry)).hex()
+        _algs.stamp_record_alg(entry, alg)
+        entry["signature"] = _ALGS.sign(alg, _entry_body(entry),
+                                        bytes(seed)).hex()
         self._entries[target_digest] = entry
         if self._audit is not None:
             self._audit({"event": "revoked",
@@ -258,11 +301,14 @@ class RevocationList:
         ``"active"`` otherwise."""
         return ("revoked" if target_digest in self._entries else "active")
 
-    def verify(self, issuer_pubkeys):
+    def verify(self, issuer_pubkeys, *, expect_alg=None):
         """Verify every local entry against the pinned issuer keyset.
 
         Raises :class:`RevocationEntryUnverifiableError` on the first
-        bad entry.
+        bad entry. ``expect_alg`` pins the expected signing tier:
+        unknown tiers refuse ``alg-unregistered`` and a differing
+        tier refuses ``alg-mismatch``. Legacy entries (no "alg")
+        verify as ``ed25519-rfc8032``.
         """
         for entry in self._entries.values():
             _check_entry_shape(entry)
@@ -271,20 +317,23 @@ class RevocationList:
                 raise RevocationEntryUnverifiableError(
                     "revocation-entry-unverifiable: issuer %r not in the "
                     "pinned keyset" % (entry["issuer_id"],))
-            _verify_entry_signature(entry, pub)
+            _verify_entry_signature(entry, pub, expect_alg=expect_alg)
         return True
 
     def export(self):
         """Portable copy of the signed entries."""
         return [dict(entry) for entry in self._entries.values()]
 
-    def import_entries(self, entries, issuer_pubkeys):
+    def import_entries(self, entries, issuer_pubkeys, *,
+                       expect_alg=None):
         """Import signed entries from another deployment.
 
         Every entry is shape-checked and its signature verified against
         the pinned keyset BEFORE anything is stored: the first bad
         entry aborts the whole import with
         ``revocation-entry-unverifiable`` and nothing is half-trusted.
+        ``expect_alg`` pins the expected signing tier (see
+        :meth:`verify`).
         """
         if not isinstance(entries, list):
             raise RevocationEntryUnverifiableError(
@@ -297,7 +346,7 @@ class RevocationList:
                 raise RevocationEntryUnverifiableError(
                     "revocation-entry-unverifiable: issuer %r not in the "
                     "pinned keyset" % (entry["issuer_id"],))
-            _verify_entry_signature(entry, pub)
+            _verify_entry_signature(entry, pub, expect_alg=expect_alg)
             staged.append(dict(entry))
         for entry in staged:
             self._entries.setdefault(entry["target_digest"], entry)

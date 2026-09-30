@@ -229,6 +229,19 @@ ALLOWED_HMAC_SITES = {
     # material; nothing production flows through this site.
     ("gov/tee_attest.py", "make_synthetic_local_tdreport", 0):
         "synthetic local-TDREPORT fixture MAC; ephemeral random key per call, remote-unverifiable by design",
+    # gov/alg_registry.py (wave-224): the hmac-sha256-mac tier of the
+    # algorithm registry. The key is a 32-byte DEPLOYMENT-OWNED
+    # symmetric key supplied by the caller to the issuer (never
+    # hard-coded, never derived in-repo, never the log key); MAC-tier
+    # verifiers hold the same shared key (public_key is None). Every
+    # MAC is domain-separated via the registry's per-algorithm domain
+    # separator ("sasanam-alg/hmac-sha256-mac:") so the tag cannot be
+    # replayed into any other MAC domain. The tier is honestly labeled
+    # non_repudiation=False -- a MAC proves authenticity only to
+    # key-holders and must never be treated as non-repudiation
+    # evidence (require_non_repudiation refuses the tier outright).
+    ("gov/alg_registry.py", "_hmac_sign", 0):
+        "alg-registry MAC tier sign; deployment-owned 32-byte key (explicit pass), domain-separated, non-repudiable=False",
 }
 
 

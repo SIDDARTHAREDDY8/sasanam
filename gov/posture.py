@@ -53,6 +53,17 @@ Ed25519 comes from the repo's vendored RFC 8032 ``gov/ed25519.py``;
 ``verify`` there is fail-closed and this module keeps that property:
 every verification failure becomes ``signal-unverifiable``.
 
+Algorithm agility (see ``gov/alg_registry.py``): ``emit_signal``
+takes an optional ``alg`` naming the signing algorithm. The default
+``ed25519-rfc8032`` emits byte-identical records to the pre-agility
+format (no "alg" field); non-default tiers carry their "alg" name in
+the signed record. ``verify_signal`` dispatches by the record's
+named algorithm, resolves legacy records (no "alg") as
+``ed25519-rfc8032``, and accepts an ``expect_alg`` pin that refuses
+``alg-mismatch`` when the record's tier differs. MAC-tier signals
+prove authenticity only to key-holders — never treat them as
+non-repudiation evidence.
+
 Issuer seed custody is deployment-owned, same as the absence and
 revocation issuers. The module is in-memory; persistence is the
 deployer's job.
@@ -65,8 +76,7 @@ import json
 import time
 from datetime import datetime, timezone
 
-from .ed25519 import sign as _ed_sign
-from .ed25519 import verify as _ed_verify
+from . import alg_registry as _algs
 
 # ----------------------------------------------------------------------
 # Error vocabulary.
@@ -158,6 +168,12 @@ _EVENT_KINDS = {
 _SIGNAL_FIELDS = ("v", "iss", "jti", "iat", "sub", "events",
                   "scope", "signature")
 
+# Records minted with the default algorithm carry no "alg" field:
+# they are byte-identical to the pre-agility records, and legacy
+# records without one verify as ed25519-rfc8032. Only non-default
+# tiers name their algorithm.
+_ALGS = _algs.default_registry()
+
 
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True,
@@ -219,6 +235,29 @@ def _looks_like_signal_fragment(record):
 # ----------------------------------------------------------------------
 
 
+def _resolve_alg(record, expect_alg):
+    """Resolve and validate the record's algorithm name.
+
+    The "alg" field is optional: records minted with the default
+    algorithm (and all legacy records) carry none and resolve to
+    ``ed25519-rfc8032``. Unknown names refuse ``alg-unregistered``
+    and a pinned ``expect_alg`` that differs refuses
+    ``alg-mismatch`` — both wrapped as
+    :class:`SignalUnverifiableError` so the module's error contract
+    holds while the machine-readable code is preserved. A
+    non-string "alg" field is a malformed record and refuses
+    ``signal-unverifiable``.
+    """
+    try:
+        return _algs.extract_record_alg(
+            record, expect_alg,
+            lambda: SignalUnverifiableError(
+                "signal-unverifiable: malformed alg field %r"
+                % (record.get("alg"),)))
+    except _algs.AlgError as exc:
+        raise SignalUnverifiableError(str(exc), code=exc.code)
+
+
 def _check_kind(event, kind):
     allowed = _EVENT_KINDS[event]
     if not allowed:
@@ -239,22 +278,36 @@ def _check_kind(event, kind):
 
 
 def emit_signal(event, subject_digest, scope, issuer_seed, *,
-                issuer_id, now=None, audit=None, kind=None):
+                issuer_id, now=None, audit=None, kind=None,
+                alg=_algs.DEFAULT_ALG):
     """Sign and return a posture signal for ``event`` about
     ``subject_digest``.
 
     Refuses ``signal-unknown-event`` for anything outside the closed
     vocabulary, ``signal-kind-required`` when the event demands a
-    kind and none was given, and ``signal-unknown-kind`` for a kind
-    outside the event's closed set. When ``audit`` is supplied, the
-    signal also rides the audit trail as a ``posture_signal`` entry
-    (in-band, never as a decision).
+    kind and none was given, ``signal-unknown-kind`` for a kind
+    outside the event's closed set, and ``alg-unregistered`` when
+    ``alg`` is not a registered algorithm. When ``audit`` is
+    supplied, the signal also rides the audit trail as a
+    ``posture_signal`` entry (in-band, never as a decision).
+
+    ``alg`` names the signing algorithm (see ``gov/alg_registry.py``).
+    It defaults to ``ed25519-rfc8032`` and the default emit is
+    byte-identical to the pre-agility records: no "alg" field is
+    added. Non-default tiers (e.g. the ``hmac-sha256-mac`` MAC tier)
+    carry their "alg" name in the signed record. MAC-tier signals
+    are authenticity-only evidence — they must never be treated as
+    non-repudiation; see ``AlgorithmRegistry.require_non_repudiation``.
     """
     if event not in _EVENTS:
         raise SignalUnknownEventError(
             "signal-unknown-event: %r is outside the closed "
             "posture-signal vocabulary" % (event,))
     kind = _check_kind(event, kind)
+    try:
+        _ALGS.info(alg)  # alg-unregistered for unknown algorithms
+    except _algs.AlgError as exc:
+        raise PostureError(str(exc), code=exc.code)
     if not isinstance(subject_digest, str) or not subject_digest:
         raise ValueError("subject_digest must be a non-empty string")
     if not isinstance(scope, str) or not scope:
@@ -278,8 +331,9 @@ def emit_signal(event, subject_digest, scope, issuer_seed, *,
         "events": events,
         "scope": scope,
     }
-    signal["signature"] = _ed_sign(bytes(issuer_seed),
-                                   _signal_body(signal)).hex()
+    _algs.stamp_record_alg(signal, alg)
+    signal["signature"] = _ALGS.sign(alg, _signal_body(signal),
+                                     bytes(issuer_seed)).hex()
     if audit is not None:
         audit({"event": "posture_signal",
                "jti": signal["jti"],
@@ -293,7 +347,8 @@ def emit_signal(event, subject_digest, scope, issuer_seed, *,
 
 
 def emit_absence_signal(issuer, subject_digest, scope, *,
-                        revocation=None, now=None, audit=None):
+                        revocation=None, now=None, audit=None,
+                        alg=None):
     """Compose with ``gov/absence.py``: attest the absence through
     the issuer's own absence machinery, then sign a posture signal
     whose kind is the absence claim.
@@ -302,8 +357,24 @@ def emit_absence_signal(issuer, subject_digest, scope, *,
     claim (never-advertised / advertised-but-missing / revoked) rides
     the signal's events payload — never the outcome itself, and never
     authorization.
+
+    ``alg`` names the signal's signing tier and defaults to the
+    absence issuer's own tier (``issuer.alg``), so the same key is
+    never used under two different algorithms. Passing an ``alg``
+    that differs from the issuer's tier refuses ``alg-mismatch``:
+    signing one key's bytes under a different algorithm is key-role
+    confusion, not composition.
     """
     from . import absence as _absence
+    issuer_alg = getattr(issuer, "alg", _algs.DEFAULT_ALG)
+    if alg is None:
+        alg = issuer_alg
+    if alg != issuer_alg:
+        raise PostureError(
+            "alg-mismatch: signal tier %r differs from the absence "
+            "issuer's tier %r — one key must not sign under two "
+            "algorithms" % (alg, issuer_alg),
+            code="alg-mismatch")
     negative = issuer.attest_absence(subject_digest,
                                      revocation=revocation, now=now)
     if not isinstance(negative, dict) or \
@@ -314,7 +385,7 @@ def emit_absence_signal(issuer, subject_digest, scope, *,
             "negative outcome")
     return emit_signal("absence-attribution", subject_digest, scope,
                        issuer.seed, issuer_id=issuer.issuer_id,
-                       now=now, audit=audit,
+                       now=now, audit=audit, alg=alg,
                        kind=negative["claim"])
 
 
@@ -323,13 +394,21 @@ def emit_absence_signal(issuer, subject_digest, scope, *,
 # ----------------------------------------------------------------------
 
 
-def verify_signal(signal, issuer_pubkeys, *, require_scope=None):
+def verify_signal(signal, issuer_pubkeys, *, require_scope=None,
+                  expect_alg=None):
     """Verify a signed posture signal against a public keyset.
 
     Returns a copy of the signal on success. Raises
     :class:`SignalUnverifiableError` for anything unsigned, forged,
-    tampered, or malformed, and :class:`SignalScopeMismatchError`
-    when ``require_scope`` is pinned and the signal's scope differs.
+    tampered, or malformed, :class:`SignalScopeMismatchError` when
+    ``require_scope`` is pinned and the signal's scope differs,
+    ``alg-unregistered`` when the signal names an unknown algorithm,
+    and ``alg-mismatch`` when ``expect_alg`` is pinned and the
+    signal's algorithm differs.
+
+    Legacy records carry no "alg" field and verify as
+    ``ed25519-rfc8032`` — no backward break. The signature check
+    dispatches by the record's named algorithm.
 
     A verified signal is STILL not authorization — it is evidence for
     the audit trail. Call :func:`signal_carries_no_authority` at
@@ -360,12 +439,13 @@ def verify_signal(signal, issuer_pubkeys, *, require_scope=None):
     if not isinstance(signal["events"], dict) or not signal["events"]:
         raise SignalUnverifiableError(
             "signal-unverifiable: malformed events map")
+    alg = _resolve_alg(signal, expect_alg)
     try:
         sig = bytes.fromhex(signal["signature"])
     except (TypeError, ValueError):
         raise SignalUnverifiableError(
             "signal-unverifiable: malformed signature")
-    if not _ed_verify(pub, _signal_body(signal), sig):
+    if not _ALGS.verify(alg, _signal_body(signal), sig, pub):
         raise SignalUnverifiableError(
             "signal-unverifiable: signature does not verify against "
             "the pinned issuer key")

@@ -27,6 +27,18 @@ Ed25519 comes from the repo's vendored RFC 8032 ``gov/ed25519.py``;
 exception), and this module keeps that property: every verification
 failure becomes ``absence-unverifiable``.
 
+Algorithm agility (see ``gov/alg_registry.py``): ``AbsenceIssuer``
+takes an optional ``alg`` naming its signing tier, and
+``attest_absence`` accepts a per-record override. The default
+``ed25519-rfc8032`` emits byte-identical negatives to the pre-agility
+format (no "alg" field); non-default tiers carry their "alg" name in
+the signed record. ``verify_negative`` dispatches by the record's
+named algorithm, resolves legacy records (no "alg") as
+``ed25519-rfc8032``, and accepts an ``expect_alg`` pin that refuses
+``alg-mismatch`` when the record's tier differs. MAC-tier negatives
+prove authenticity only to key-holders — never treat them as
+non-repudiation evidence.
+
 Issuer key custody is deployment-owned (the ``seed`` is held by the
 issuing deployment, exactly like the permit-lease and ARAP issuers).
 
@@ -37,9 +49,10 @@ import json
 import time
 from datetime import datetime, timezone
 
+from . import alg_registry as _algs
 from .ed25519 import publickey as _ed_pub
-from .ed25519 import sign as _ed_sign
-from .ed25519 import verify as _ed_verify
+
+_ALGS = _algs.default_registry()
 
 # ----------------------------------------------------------------------
 # Error vocabulary.
@@ -122,21 +135,35 @@ def _iso(now):
 class AbsenceIssuer:
     """Signs absence attributions for subjects it tracks.
 
-    ``seed`` is the issuer's 32-byte Ed25519 seed (deployment-owned
-    key custody). ``advertise(subject_digest)`` records a subject the
-    issuer publishes; ``attest_absence`` then distinguishes
-    never-advertised from advertised-but-missing, and consults an
-    optional exact-target revocation list for the revoked claim.
+    ``seed`` is the issuer's 32-byte secret (deployment-owned key
+    custody): an Ed25519 seed for the default tier, a symmetric MAC
+    key for the ``hmac-sha256-mac`` tier. ``alg`` names the issuer's
+    signing tier (see ``gov/alg_registry.py``); it defaults to
+    ``ed25519-rfc8032``. Symmetric (MAC-tier) issuers have NO public
+    key — ``public_key`` is None and verifiers hold the shared key.
+    MAC-tier negatives prove authenticity only to key-holders and
+    must never be treated as non-repudiation evidence.
+
+    ``advertise(subject_digest)`` records a subject the issuer
+    publishes; ``attest_absence`` then distinguishes never-advertised
+    from advertised-but-missing, and consults an optional
+    exact-target revocation list for the revoked claim.
     """
 
-    def __init__(self, issuer_id, seed):
+    def __init__(self, issuer_id, seed, *, alg="ed25519-rfc8032"):
         if not isinstance(issuer_id, str) or not issuer_id:
             raise ValueError("issuer_id must be a non-empty string")
         if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
             raise ValueError("seed must be 32 bytes")
+        try:
+            _ALGS.info(alg)  # alg-unregistered for unknown tiers
+        except _algs.AlgError as exc:
+            raise AbsenceError(str(exc), code=exc.code)
         self.issuer_id = issuer_id
         self.seed = bytes(seed)
-        self.public_key = _ed_pub(self.seed)
+        self.alg = alg
+        self.public_key = (_ed_pub(self.seed)
+                           if alg == _algs.DEFAULT_ALG else None)
         self._advertised = set()
 
     def advertise(self, subject_digest):
@@ -146,17 +173,30 @@ class AbsenceIssuer:
                              "non-empty string without wildcards")
         self._advertised.add(subject_digest)
 
-    def attest_absence(self, subject_digest, *, revocation=None, now=None):
+    def attest_absence(self, subject_digest, *, revocation=None,
+                       now=None, alg=None):
         """Sign a negative outcome for ``subject_digest``.
 
         Claim selection: revoked (when ``revocation`` is supplied and
         reports the digest revoked) -> advertised-but-missing (the
         issuer advertised it) -> never-advertised. The revoked claim
         carries the exact revoked digest in ``revocation_target``.
+
+        ``alg`` names the signing tier and defaults to the issuer's
+        own tier (``self.alg``); pass it explicitly to override
+        per-record. The default tier emits byte-identical records to
+        the pre-agility format (no "alg" field); non-default tiers
+        carry their "alg" name in the signed record.
         """
         if not _subject_ok(subject_digest):
             raise ValueError("attest_absence: subject_digest must be a "
                              "non-empty string without wildcards")
+        if alg is None:
+            alg = self.alg
+        try:
+            _ALGS.info(alg)  # alg-unregistered for unknown tiers
+        except _algs.AlgError as exc:
+            raise AbsenceError(str(exc), code=exc.code)
         revoked = (revocation is not None
                    and revocation.check(subject_digest) == "revoked")
         if revoked:
@@ -176,8 +216,9 @@ class AbsenceIssuer:
             "issued_at": _iso(time.time() if now is None else now),
             "issuer_id": self.issuer_id,
         }
-        negative["signature"] = _ed_sign(self.seed,
-                                         _negative_body(negative)).hex()
+        _algs.stamp_record_alg(negative, alg)
+        negative["signature"] = _ALGS.sign(alg, _negative_body(negative),
+                                           self.seed).hex()
         return negative
 
 
@@ -189,12 +230,18 @@ _NEGATIVE_FIELDS = ("v", "subject_digest", "claim", "revocation_target",
                     "issued_at", "issuer_id", "signature")
 
 
-def verify_negative(negative, pubkey):
+def verify_negative(negative, pubkey, *, expect_alg=None):
     """Verify a signed negative outcome against a public key.
 
     Returns a copy of the negative record on success. Raises
     :class:`AbsenceUnverifiableError` for anything unsigned, forged,
     or malformed — verification never trusts, never raises raw.
+
+    Algorithm agility (see ``gov/alg_registry.py``): the signature
+    check dispatches by the record's named "alg"; legacy records
+    (no "alg") verify as ``ed25519-rfc8032``. Unknown names refuse
+    ``alg-unregistered``; a pinned ``expect_alg`` that differs
+    refuses ``alg-mismatch``.
     """
     if not isinstance(negative, dict):
         raise AbsenceUnverifiableError(
@@ -228,7 +275,18 @@ def verify_negative(negative, pubkey):
     except (TypeError, ValueError):
         raise AbsenceUnverifiableError(
             "absence-unverifiable: malformed signature")
-    if not _ed_verify(pubkey, _negative_body(negative), sig):
+    try:
+        alg = _algs.extract_record_alg(
+            negative, expect_alg,
+            lambda: AbsenceUnverifiableError(
+                "absence-unverifiable: malformed alg field %r"
+                % (negative.get("alg"),)))
+    except _algs.AlgError as exc:
+        # Keep the module's error contract ("every verification
+        # failure becomes absence-unverifiable") while preserving the
+        # machine-readable agility code.
+        raise AbsenceUnverifiableError(str(exc), code=exc.code)
+    if not _ALGS.verify(alg, _negative_body(negative), sig, pubkey):
         raise AbsenceUnverifiableError(
             "absence-unverifiable: signature does not verify against the "
             "pinned issuer key")
