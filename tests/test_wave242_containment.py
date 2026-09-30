@@ -1,0 +1,169 @@
+"""Unit tests for wave-242 lane B: stale-authority probe class (W242-2)
+and delegation containment + policy currentness (W242-5).
+
+Stdlib unittest only. Deterministic.
+"""
+
+import sys
+import os
+import unittest
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from gov import stale_authority as sa
+from gov import delegation_containment as dcnt
+from gov import decision_codes
+
+
+def _utc(year, month, day):
+    return datetime(year, month, day, tzinfo=timezone.utc)
+
+
+class StaleAuthorityTest(unittest.TestCase):
+    def test_post_lapse_refuses_with_cause(self):
+        with self.assertRaises(sa.StaleAuthorityError) as ctx:
+            sa.check_authority("draft-emirdag-scitt-ai-agent-execution-00",
+                               _utc(2026, 10, 14))
+        self.assertEqual(ctx.exception.code, "stale-authority")
+        self.assertIn("2026-10-13", ctx.exception.detail)
+        self.assertIn("cause", ctx.exception.detail.lower())
+
+    def test_lapse_instant_boundary_refuses(self):
+        # minted exactly at the lapse instant is post-lapse.
+        with self.assertRaises(sa.StaleAuthorityError):
+            sa.check_authority("draft-emirdag-scitt-ai-agent-execution-00",
+                               sa.EMIRDAG_LAPSE_UTC)
+
+    def test_pre_expiry_accepts_with_downgraded_annotation(self):
+        verdict = sa.check_authority(
+            "draft-emirdag-scitt-ai-agent-execution-00", _utc(2026, 10, 1))
+        self.assertEqual(verdict["status"], "accepted")
+        self.assertEqual(verdict["provenance"], "downgraded")
+        self.assertEqual(verdict["annotation"],
+                         "authority-expired-2026-10-13")
+
+    def test_live_draft_has_no_flag(self):
+        verdict = sa.check_authority("draft-saha-bound-permit-00",
+                                     _utc(2026, 10, 14))
+        self.assertEqual(verdict, {"status": "accepted"})
+
+    def test_prestaged_omp_lapse_refuses(self):
+        with self.assertRaises(sa.StaleAuthorityError) as ctx:
+            sa.check_authority("draft-veridom-omp-02", _utc(2026, 11, 20))
+        self.assertEqual(ctx.exception.code, "stale-authority")
+        self.assertIn("2026-11-14", ctx.exception.detail)
+
+    def test_prestaged_omp_pre_lapse_accepts(self):
+        verdict = sa.check_authority("draft-veridom-omp-02",
+                                     _utc(2026, 10, 1))
+        self.assertEqual(verdict["status"], "accepted")
+        self.assertEqual(verdict["annotation"],
+                         "authority-expired-2026-11-14")
+
+    def test_prestaged_sharif_attp_refuses(self):
+        with self.assertRaises(sa.StaleAuthorityError):
+            sa.check_authority("draft-sharif-attp-01", _utc(2026, 12, 20))
+
+    def test_naive_datetime_treated_as_utc(self):
+        with self.assertRaises(sa.StaleAuthorityError):
+            sa.check_authority("draft-emirdag-scitt-ai-agent-execution-00",
+                               datetime(2026, 10, 14))
+
+    def test_malformed_minted_at_refuses(self):
+        with self.assertRaises(sa.StaleAuthorityError) as ctx:
+            sa.check_authority("draft-emirdag-scitt-ai-agent-execution-00",
+                               "yesterday")
+        self.assertEqual(ctx.exception.code, "stale-authority-malformed")
+
+    def test_empty_authority_refuses_malformed(self):
+        with self.assertRaises(sa.StaleAuthorityError) as ctx:
+            sa.check_authority("", _utc(2026, 10, 1))
+        self.assertEqual(ctx.exception.code, "stale-authority-malformed")
+
+    def test_lapse_registry_has_three_entries(self):
+        self.assertEqual(len(sa.LAPSED_AUTHORITIES), 3)
+
+
+class DelegationContainmentTest(unittest.TestCase):
+    def test_parent_permit_refused_at_admission(self):
+        with self.assertRaises(dcnt.ContainmentError) as ctx:
+            dcnt.declare_permit("p1", bounds={"spend": 100},
+                                parent_permit="p0")
+        self.assertEqual(ctx.exception.code, "permit-parent-named")
+        self.assertEqual(ctx.exception.step, "admission")
+        self.assertIn("p0", ctx.exception.detail)
+
+    def test_parentless_permit_admitted(self):
+        permit = dcnt.declare_permit("p1", bounds={"spend": 100})
+        self.assertTrue(permit["admitted"])
+        self.assertIsNone(permit["parent_permit"])
+
+    def test_empty_permit_id_refuses(self):
+        with self.assertRaises(dcnt.ContainmentError) as ctx:
+            dcnt.declare_permit("", bounds={"spend": 100})
+        self.assertEqual(ctx.exception.code, "permit-containment-malformed")
+
+    def test_currentness_unwired_is_could_not_check(self):
+        verdict = dcnt.check_currentness()
+        self.assertEqual(verdict["status"], "could-not-check")
+        self.assertEqual(verdict["dependency"],
+                         "policy-currentness-authority")
+        self.assertEqual(verdict["code"],
+                         "permit-currentness-could-not-check")
+
+    def test_currentness_wired_is_still_could_not_check(self):
+        verdict = dcnt.check_currentness(policy_authority={"name": "ops"})
+        self.assertEqual(verdict["status"], "could-not-check")
+        self.assertNotIn("verified", verdict["status"])
+
+    def test_containment_violation_refuses_naming_key(self):
+        with self.assertRaises(dcnt.ContainmentError) as ctx:
+            dcnt.verify_containment(parent_bounds={"spend": 100},
+                                    child_bounds={"spend": 101})
+        self.assertEqual(ctx.exception.code,
+                         "delegation-containment-violated")
+        self.assertIn("spend", ctx.exception.detail)
+
+    def test_containment_unknown_key_is_violation_under_strict(self):
+        with self.assertRaises(dcnt.ContainmentError) as ctx:
+            dcnt.verify_containment(parent_bounds={"spend": 100},
+                                    child_bounds={"spend": 50,
+                                                  "blast": 1})
+        self.assertEqual(ctx.exception.code,
+                         "delegation-containment-violated")
+        self.assertIn("blast", ctx.exception.detail)
+
+    def test_containment_within_parent_ok(self):
+        verdict = dcnt.verify_containment(
+            parent_bounds={"spend": 100, "depth": 3},
+            child_bounds={"spend": 100, "depth": 3})
+        self.assertTrue(verdict["ok"])
+        self.assertEqual(verdict["violated"], [])
+
+    def test_malformed_bounds_refuse(self):
+        with self.assertRaises(dcnt.ContainmentError) as ctx:
+            dcnt.verify_containment(parent_bounds={"spend": "lots"},
+                                    child_bounds={"spend": 1})
+        self.assertEqual(ctx.exception.code, "permit-containment-malformed")
+
+
+class TaxonomyTest(unittest.TestCase):
+    def test_new_codes_mapped(self):
+        for code in ("stale-authority", "stale-authority-malformed",
+                     "permit-parent-named",
+                     "permit-currentness-could-not-check",
+                     "delegation-containment-violated",
+                     "permit-containment-malformed"):
+            rec = decision_codes.code_for(code)
+            self.assertEqual(rec["code"], code)
+
+    def test_pin(self):
+        # Wave-242 merge: re-pointed to composed pin 788 (22 new codes:
+        # 5 aggregate-budget/no-effect + 6 stale-authority/containment
+        # + 1 exception-TTL + 10 absence-epoch), additive only.
+        self.assertEqual(len(decision_codes.TAXONOMY), 788)
+
+
+if __name__ == "__main__":
+    unittest.main()

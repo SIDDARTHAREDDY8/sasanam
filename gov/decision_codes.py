@@ -6663,6 +6663,220 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    # Wave-242 lane A: 766 + 5 = 771 (4 aggregate-budget codes +
+    # 1 no-effect-asserted-and-ignored detail marker), additive
+    # only, zero key collisions.
+    'aggregate-budget-exhausted': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-exhausted',
+        "human": 'aggregate budget: charging the amount would push '
+                 'the scope aggregate past its declared cap; the '
+                 'individual act is permitted but the composition is '
+                 'not',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-scope-undeclared': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-scope-undeclared',
+        "human": 'aggregate budget: the scope was never declared; '
+                 'charging an undeclared scope refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-malformed': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-malformed',
+        "human": 'aggregate budget: malformed scope declaration or '
+                 'charge (non-positive cap/window, non-positive or '
+                 'non-numeric amount); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-already-charged': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-already-charged',
+        "human": 'aggregate budget: this (iss, jti) was already '
+                 'charged in this scope; a permit is never '
+                 're-chargeable',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'no-effect-asserted-and-ignored': {
+        "domain": 'permit',
+        "code": 'no-effect-asserted-and-ignored',
+        "human": 'bound permit: a signed no_effect on a non-failure '
+                 'outcome was accepted and ignored (not a budget '
+                 'release); named in the reconciliation record detail',
+        "severity": 'medium',
+        "evidence_kinds_required": ['reconciliation-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # -- wave-242 containment lane: stale-authority (W242-2) and
+    # delegation-containment / policy-currentness (W242-5) codes.
+    'stale-authority': {
+        "domain": 'authority',
+        "code": 'stale-authority',
+        "human": 'stale-authority probe class: a receipt minted after the '
+                 'cited authority lapsed cites it as normative authority; '
+                 'passing such a receipt is the green-on-lapsed-authority '
+                 'defect',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-citation', 'receipt-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'stale-authority-malformed': {
+        "domain": 'authority',
+        "code": 'stale-authority-malformed',
+        "human": 'stale-authority check: the authority citation or the '
+                 'receipt timestamp is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authority-citation'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-parent-named': {
+        "domain": 'containment',
+        "code": 'permit-parent-named',
+        "human": 'delegation containment: a permit naming a parent_permit '
+                 'reference is refused outright at admission; containment '
+                 'must be proved against the parent bounds, not merely '
+                 'claimed by reference',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-currentness-could-not-check': {
+        "domain": 'containment',
+        "code": 'permit-currentness-could-not-check',
+        "human": 'policy currentness: presentation-time currentness is '
+                 'recognized in the claim vocabulary but the mechanism is '
+                 'unavailable, so the claim reports could-not-check naming '
+                 'the policy-currentness-authority dependency; never a '
+                 'refusal, never "verified"',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-currentness'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-containment-violated': {
+        "domain": 'containment',
+        "code": 'delegation-containment-violated',
+        "human": 'delegation containment: a child grant bound exceeds the '
+                 "parent's bound on a named key (wei §13 Contains)",
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'parent-permit-bounds'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-containment-malformed': {
+        "domain": 'containment',
+        "code": 'permit-containment-malformed',
+        "human": 'delegation containment: the permit record or the bound '
+                 'caps are malformed; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit'],
+        "reverify_steps": ['recompute'],
+    },
+
+    # Wave-242 lane-C codes: operational exception declarations with a
+    # mandatory TTL (gov/exception_ttl.py).
+    'gate-exception-malformed': {
+        "domain": 'gate',
+        "code": 'gate-exception-malformed',
+        "human": 'gate exception path: the exception declaration is '
+                 'malformed -- it requires a numeric valid_until '
+                 'horizon, a non-empty reason, and a non-empty scope; '
+                 'a horizon-less exception cannot shield an '
+                 'undecidable verdict',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    # Wave-242 lane D (W242-9, TACET signed-absence-epoch, ADAPT pattern).
+    'absence-epoch-beacon-unsigned': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-beacon-unsigned',
+        "human": 'epoch beacon or close signature does not verify',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-not-open': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-not-open',
+        "human": 'no beacon record for the claimed epoch',
+        "severity": 'high',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-not-closed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-not-closed',
+        "human": 'epoch has no close record; unclosed epochs verify nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-closed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-closed',
+        "human": 'new observation refused: the epoch is already closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-malformed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-malformed',
+        "human": 'absence-epoch record or bundle is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-backdated': {
+        "domain": 'absence-epoch',
+        "code": 'absence-backdated',
+        "human": 'observation time is outside the closed epoch window',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-root-mismatch': {
+        "domain": 'absence-epoch',
+        "code": 'absence-root-mismatch',
+        "human": 'ledger does not recompute to the closed Merkle root',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record', 'merkle-root'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-disclosure-recorded': {
+        "domain": 'absence-epoch',
+        "code": 'absence-disclosure-recorded',
+        "human": 'a disclosure is recorded for this cell; the absence claim is forged',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record', 'disclosure-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-not-observed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-not-observed',
+        "human": 'no absence observation recorded for this cell',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-observation-unsigned': {
+        "domain": 'absence-epoch',
+        "code": 'absence-observation-unsigned',
+        "human": 'absence observation signature invalid or not bound to the beacon',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+
 }
 
 

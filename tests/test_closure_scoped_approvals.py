@@ -196,11 +196,11 @@ class TaxonomyPinTest(unittest.TestCase):
                      "scoped-approval-tampered",
                      "scoped-approval-capability-unknown"):
             self.assertIn(code, dc.TAXONOMY)
-        # Wave-241 merge: re-pointed 742 -> 766 (24 new codes: 5 hostid
-        # + 6 recompute-check + 5 aauth-egress + 8 obligation/
-        # parameter/expected-participants), additive only, composed
-        # from the four lane commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 766)
+        # Wave-242 merge: re-pointed 766 -> 788 (22 new codes: 5
+        # aggregate-budget/no-effect + 6 stale-authority/containment
+        # + 1 exception-TTL + 10 absence-epoch), additive only, composed
+        # from the five lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 788)
 
 
 if __name__ == "__main__":

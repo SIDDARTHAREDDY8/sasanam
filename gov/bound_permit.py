@@ -236,7 +236,8 @@ _PERMIT_FIELDS = ("version", "iss", "jti", "issued_at", "decision_digest",
                   "mandate_digest", "policy_digest", "instance_digest",
                   "reconciliation_digest", "legs_verified")
 _RECONCILIATION_FIELDS = ("version", "iss", "jti", "instance_digest",
-                          "state", "reconciled_at", "evidence_digest")
+                          "state", "reconciled_at", "evidence_digest",
+                          "detail")
 _RECONCILIATION_STATES = ("completed", "unknown", "not-executed")
 _LEGS = ("decision", "mandate", "policy")
 
@@ -1146,7 +1147,8 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
                               budget_kind="spend",
                               no_effect_refusal=None,
                               verify_refusal_signature=None,
-                              consume_store=None):
+                              consume_store=None,
+                              refusal_outcome=None):
     """Reconcile an unknown outcome. NEVER mints a permit, never
     retries execution.
 
@@ -1166,6 +1168,13 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
     on its strength. ``budget`` (a ``BudgetLedger``) is released on
     ``not_attempted`` and on signed no_effect. ``budget_kind``
     labels the conservative commit for a missing entry.
+
+    ``refusal_outcome`` names the outcome the signed no_effect
+    attests to ("failure", "success", "timeout"; default None means
+    "failure" for pre-W242 callers). A signed no_effect on a
+    non-failure outcome is accepted and IGNORED (draft-saha-aadp-03
+    section 4.1, adapted): no budget release, state "unknown", and
+    the record's ``detail`` names "no-effect-asserted-and-ignored".
     """
     verify_permit(permit)
     iss = permit["iss"]
@@ -1183,6 +1192,7 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
     # refusal leaves it committed.
     if budget is not None and budget.state(iss, jti) is None:
         budget.commit(iss, jti, kind=budget_kind)
+    detail = ""
     if no_effect_refusal is not None:
         if not isinstance(no_effect_refusal, dict):
             raise _PermitMalformed(
@@ -1204,9 +1214,43 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
                 "permit-no-effect-unattested: the no_effect refusal "
                 "is not signed by the recipient; the presenter MUST "
                 "NOT set no_effect on its strength")
-        if budget is not None:
-            budget.release(iss, jti, on="signed_no_effect")
-        state = "not-executed"
+        # Wave-242 (draft-saha-aadp-03 section 4.1, adapted): a SIGNED
+        # no_effect on a NON-failure outcome is accepted and IGNORED --
+        # recorded in the record's detail, never a budget release.
+        # The outcome the refusal pertains to is named by
+        # ``refusal_outcome`` ("failure", "success", "timeout"); the
+        # default None keeps the pre-W242 behavior (release) for
+        # callers that predate the outcome vocabulary. Deployments
+        # conforming to draft-saha-aadp-03 section 4.1 MUST pass
+        # refusal_outcome explicitly. A signed refusal that names its
+        # own outcome contradicting the caller's claim refuses
+        # malformed -- contradictory claims fail closed.
+        outcome = refusal_outcome if refusal_outcome is not None \
+            else "failure"
+        if outcome not in ("failure", "success", "timeout"):
+            raise _PermitMalformed(
+                "permit-malformed: refusal_outcome must be one of "
+                "failure, success, timeout; got %r" % (refusal_outcome,))
+        claimed = no_effect_refusal.get("outcome")
+        if claimed is not None and claimed != outcome:
+            raise _PermitMalformed(
+                "permit-malformed: the signed no_effect refusal names "
+                "outcome %r but the caller claims %r; contradictory "
+                "outcome claims fail closed"
+                % (claimed, outcome))
+        detail = ""
+        if outcome == "failure":
+            if budget is not None:
+                budget.release(iss, jti, on="signed_no_effect")
+            state = "not-executed"
+        else:
+            # Accepted and ignored: the budget stays committed
+            # (outcome-tied: committed on success and on timeout),
+            # the record names the ignored assertion in its detail,
+            # and the re-issue path stays closed (state unknown, not
+            # not-executed).
+            detail = "no-effect-asserted-and-ignored"
+            state = "unknown"
         evidence_digest = hashlib.sha256(
             _canonical_dumps(no_effect_refusal).encode("utf-8")
         ).hexdigest()
@@ -1257,6 +1301,7 @@ def reconcile_unknown_outcome(permit, ledger, registry, *,
         "state": state,
         "reconciled_at": _iso(time.time()),
         "evidence_digest": evidence_digest,
+        "detail": detail,
     }
     record = dict(body)
     record["record_digest"] = _body_digest(body)

@@ -1,0 +1,56 @@
+{
+ "probes": [
+  {
+   "name": "reference_rebaseline",
+   "status": "pass",
+   "detail": {
+    "pin_checks": {
+     "pin_states_272_vectors": true,
+     "pin_states_unchanged_checker_build": true,
+     "pin_labels_run_directed": true,
+     "pin_records_spec_pin_0dbe10bc": true,
+     "pin_records_refusal_rule_unexercised": true
+    },
+    "run_report": {
+     "total": 272,
+     "all_parity_true": true,
+     "accept": "61/61",
+     "reject": "209/209",
+     "indeterminate": "2/2"
+    },
+    "run_label": "directed (pre-registered; pin committed before the run)",
+    "corpus_spec_pin": "0dbe10bc",
+    "open_question": "head refusal-set rule exercised by no vector"
+   }
+  },
+  {
+   "name": "refusal_set_authored",
+   "status": "pass",
+   "detail": {
+    "checks": {
+     "verdict_invalid": true,
+     "names_only_posture_conjunct": true,
+     "does_not_name_still_armed": true,
+     "does_not_name_drop_count": true,
+     "does_not_name_carried_operand_set": true
+    },
+    "reason": "observationRecords[2] is a sealed record binding to this run whose clean-row conjuncts do not hold: aeePostureDigest differs from the pinned networkPosture digest",
+    "run_label": "directed (authored before reading the head spec text)"
+   }
+  },
+  {
+   "name": "refusal_set_corpus_sweep",
+   "status": "pass",
+   "detail": {
+    "sealed_conjunct_refusals_examined": 5,
+    "mismatches": [],
+    "note": "the corpus exercises the refusal discipline on carried vectors; the head rule itself is exercised by no vector (open compliance question, see reference_rebaseline)"
+   }
+  },
+  {
+   "name": "sasanam_parity_precondition",
+   "status": "not-applicable",
+   "detail": "no Sasanam from-spec AEE checker exists in gov/evals/tools/tests; no parity number can be claimed. The blind-equivalent score question is unanswerable until a checker is built; this probe is the gate that must pass first."
+  }
+ ]
+}

@@ -68,11 +68,11 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        # Wave-241 merge: re-pointed 742 -> 766 (24 new codes: 5 hostid
-        # + 6 recompute-check + 5 aauth-egress + 8 obligation/
-        # parameter/expected-participants), additive only, composed
-        # from the four lane commits by direct byte-verification.
-        self.assertEqual(len(dc.TAXONOMY), 766)
+        # Wave-242 merge: re-pointed 766 -> 788 (22 new codes: 5
+        # aggregate-budget/no-effect + 6 stale-authority/containment
+        # + 1 exception-TTL + 10 absence-epoch), additive only, composed
+        # from the five lane commits by direct byte-verification.
+        self.assertEqual(len(dc.TAXONOMY), 788)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes
