@@ -12808,3 +12808,16 @@ Open findings: none (F210 filed by triage, RETRACTED at merge as misdiagnosis �
 - W248-7 (`cb1197e`): `gov/artifact_pack.py` — ORAS/OCI-shaped artifact packaging (digest-is-identity, stdlib only, no network). +7 codes.
 
 **Red-first audit:** F210 closure re-verified break-first (10/10); no other closures claimed; no overstatements.
+
+## Wave-249 merge (base `7e188755073e7de8b13aed60cb7f9a282ba3f853`, pin 979)
+
+**Merge** (base `7e188755073e7de8b13aed60cb7f9a282ba3f853`, pin 979). Integrated two wave-249 lane commits by direct file copy + byte-verification (lane worktrees, exact parents, exact trailers verified pre-merge). No taxonomy change (979 unique keys, zero duplicates). No `gov/decision_codes.py` change.
+
+**Lane commits:**
+- W249-1 (`066ddbeb819373bf821b85dc752c0b0f831e7a75`): wiring/integration — DSSE envelope → offline_bundle export (opt-in `envelope_seal_key`, `ledger.enveloped.jsonl` + sealed manifest, legacy ledger byte-identical); combiner → executor (`ToolExecutor(policy_set=...)`, structural forbid-overrides-permit in verdict path); TUF pin → BundleRefresher (`pin_from_refresher`). +0 codes. Red-first: `evals/w249_wiring_probes.py` 0/5 → 5/5 HELD ×2. Units: `tests/test_wiring.py` 12/12.
+- W249-2 (`bbed2bd4216dc413c43d8755a774089b5bc356f9`): red-team battery for the 7 wave-248 modules — `evals/w249_redteam_probes.py` 14 HELD / 1 BREAK. Filed **F211 (LOW, OPEN)**: `SkillUpdateClient.install()` allows same-version reinstall with a different digest (installed map tracks `{name: version}` only, not the digest; docstring promises "identical bytes"). Close-when: track installed digests and refuse same-version-digest-change, OR document as allowed-by-design. +0 codes.
+- W249-3: prospecting (research only, no integration). PROSPECTUS.md with wave-249/250 directions: RFC 6962 decision log (merkle), event-sourced permit journal (Temporal), evidence graph (GUAC), posture cards + VSA (Scorecard + SLSA), fixture harness (conftest).
+
+**Red-first audit:** no closures claimed this wave (F211 filed OPEN). No overstatements.
+
+**F211 (LOW, OPEN):** same-version digest substitution in skill_update. Next free: F212.

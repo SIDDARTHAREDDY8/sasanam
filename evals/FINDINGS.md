@@ -6445,3 +6445,19 @@ behavior beyond this finding's scope; the seal without epoch fully
 closes both F210 shapes.
 
 Next free finding: **F211**. **Open findings: none.** (F209 filed and closed 2026-09-30, wave-219 merge; F210 filed 2026-09-30, wave-247 lane 3 red-team, closed 2026-09-30, wave-248 lane 1.)
+
+## F211: SkillUpdateClient allows same-version reinstall with different digest — "identical bytes" not enforced (LOW)
+
+**Cells:** wave-249 lane 2 red-team, 2026-09-30. Standing regression pin: `evals/w249_redteam_probes.py` (15 probes: 1 BREAK / 14 HELD, deterministic, synthetic/local, standalone under `env -u GOV_DEPLOYMENT_MODE`), preserved as the permanent pin.
+
+**Defect:** `gov/skill_update.py`'s `SkillUpdateClient.install()` docstring promises "Same-version reinstall of identical bytes is allowed (idempotent)". The implementation does not enforce "identical bytes": the `installed` map tracks only `{name: version}`, not the installed digest. A same-version reinstall with a DIFFERENT digest (and different bundle bytes) is allowed as long as the new digest matches the current chain pin (`probe_update_same_version_digest_substitution`).
+
+Concretely: install skill v1 with digest A (pin A). Then present record v1 with digest B, bundle with digest B, pin updated to B. All checks pass — `digest == pinned` (B==B), `actual == digest` (B==B), `version < installed` is False (1<1). The malicious v1 overwrites the legitimate v1. The module has no memory of what digest was previously installed, so it cannot detect the substitution.
+
+**Severity rationale:** LOW. Exploitation requires the attacker to get a malicious digest into the chain pin (chain compromise or pin confusion) — if the chain is fully compromised, this is the least of the problems. The pin is the trusted chain's binding, and the module correctly refuses anything that doesn't match the pin. This is a defense-in-depth gap between the documented "identical bytes" guarantee and the implementation, not a direct bypass of the pin check. Scoped below MEDIUM because the primary security boundary (pin matching) holds; this is about the module's own idempotency promise.
+
+**Close-when criteria:** (1) the installed map tracks the installed digest per skill (e.g., `{name: (version, digest)}`), and same-version reinstall with a different digest is refused (new code, e.g., `skill-update-digest-changed`); OR the docstring is amended to explicitly document that same-version-digest-change is allowed by design (with the security rationale that the pin is the authority); (2) a break-first battery at the public seam demonstrating the chosen behavior (pristine BREAK on the old code, fixed HELD or documented-allowed); (3) adjacent suites green.
+
+**Status: OPEN.**
+
+Next free finding: **F212**. **Open findings: F211 (LOW).**

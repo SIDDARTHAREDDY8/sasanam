@@ -225,3 +225,23 @@ class SkillUpdateClient(object):
                     % (name, version, installed))
         self._installed[name] = version
         return {"name": name, "version": version, "digest": digest}
+
+
+def pin_from_refresher(refresher, name):
+    """Build the install pin for ``name`` from a ``BundleRefresher``.
+
+    This is the deployment's one-liner wiring the wave-206 refresh
+    chain to the install gate: the refresher vouches the digest, the
+    gate enforces the ``"trusted"`` policy.
+
+    Returns ``{"digest": hex, "chain_state": refresher.state}``.
+    Raises ``bundle_refresh.SuspendedError`` when the refresher cannot
+    serve and ``KeyError`` for an unbound skill name (both propagate;
+    the install gate refuses fail-closed on a missing pin).
+
+    A ``"stale"`` chain_state flows through to :meth:`SkillUpdateClient.install`,
+    which refuses it as ``skill-update-index-untrusted`` — the install
+    path never serves stale, even though the refresh path may.
+    """
+    digest, _length = refresher.target_digest(name)
+    return {"digest": digest, "chain_state": refresher.state}

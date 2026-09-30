@@ -148,7 +148,8 @@ def export_offline_bundle(log_path, bundle_dir, adapter, *,
                           from_seq=None, to_seq=None,
                           redact_fields=(), bundle_id=None,
                           entry_signer_pubkey=None,
-                          anchor_pubkey=None):
+                          anchor_pubkey=None,
+                          envelope_seal_key=None):
     """Export an offline-verifiable evidence bundle.
 
     ``log_path``: the audit-log JSONL file. ``adapter``: a
@@ -157,6 +158,13 @@ def export_offline_bundle(log_path, bundle_dir, adapter, *,
     field names dropped from every entry (never chain bookkeeping).
     ``entry_signer_pubkey``: the 32-byte Ed25519 pubkey that signed the
     window's entries (REQUIRED — the bundle must be self-contained).
+    ``envelope_seal_key``: optional 32-byte Ed25519 seed. When
+    provided, each export entry is additionally sealed in a DSSE
+    envelope (``gov/evidence_envelope.py``) and written to
+    ``ledger.enveloped.jsonl`` alongside the sealed manifest
+    (``manifest.enveloped.json``). The legacy ``ledger.jsonl`` is
+    always written unchanged — existing verifiers ignore the new
+    files, so this is backward-compatible by construction.
 
     Returns the bundle directory path. Raises ``OfflineBundleError``
     fail-closed on any honesty violation.
@@ -366,7 +374,135 @@ def export_offline_bundle(log_path, bundle_dir, adapter, *,
     with open(os.path.join(bundle_dir, "BUNDLE_DIGEST.sha256"), "w",
               encoding="utf-8") as f:
         f.write(digest + "\n")
+
+    # 8. Optional DSSE-enveloped ledger (wave-249 wiring). The legacy
+    # ledger.jsonl above is always written unchanged; the enveloped
+    # files are additive, so existing verifiers are unaffected.
+    if envelope_seal_key is not None:
+        _write_enveloped_ledger(bundle_dir, export_entries, manifest,
+                                envelope_seal_key)
+
     return os.path.abspath(bundle_dir)
+
+
+def _write_enveloped_ledger(bundle_dir, export_entries, manifest,
+                            seal_key):
+    """Write the DSSE-enveloped ledger + sealed manifest.
+
+    ``seal_key``: 32-byte Ed25519 seed. Writes
+    ``ledger.enveloped.jsonl`` (one DSSE envelope per export entry, in
+    seq order) and ``manifest.enveloped.json`` (the sealed manifest),
+    plus ``ENVELOPE_PUBKEY.hex`` (the pubkey the verifier needs).
+    """
+    from gov import evidence_envelope as _ee
+    from gov import ed25519 as _ed
+    seed = bytes(seal_key)
+    if len(seed) != 32:
+        raise OfflineBundleError("envelope_seal_key is not 32 bytes")
+    envelopes = _ee.seal_records(export_entries, seed)
+    with open(os.path.join(bundle_dir, "ledger.enveloped.jsonl"), "w",
+              encoding="utf-8") as f:
+        for env in envelopes:
+            f.write(json.dumps(env, sort_keys=True) + "\n")
+    manifest_env = _ee.seal_manifest(manifest, seed)
+    with open(os.path.join(bundle_dir, "manifest.enveloped.json"), "w",
+              encoding="utf-8") as f:
+        f.write(json.dumps(manifest_env, sort_keys=True) + "\n")
+    pub = _ed.publickey(seed)
+    with open(os.path.join(bundle_dir, "ENVELOPE_PUBKEY.hex"), "w",
+              encoding="utf-8") as f:
+        f.write(bytes(pub).hex() + "\n")
+
+
+def verify_enveloped_ledger(bundle_dir, envelope_pubkey=None):
+    """Verify the DSSE-enveloped ledger of an exported bundle.
+
+    ``envelope_pubkey``: the 32-byte Ed25519 pubkey that sealed the
+    envelopes. When None, it is read from the bundle's
+    ``ENVELOPE_PUBKEY.hex`` (written by :func:`export_offline_bundle`
+    when ``envelope_seal_key`` was provided).
+
+    Checks: every envelope in ``ledger.enveloped.jsonl`` opens under
+    the pubkey; every opened record matches the corresponding legacy
+    ``ledger.jsonl`` entry (by seq, full dict equality); the sealed
+    manifest opens and matches ``manifest.json``. Returns True.
+    Raises ``OfflineBundleError`` fail-closed on any mismatch.
+    """
+    from gov import evidence_envelope as _ee
+    bundle_dir = str(bundle_dir)
+    env_ledger = os.path.join(bundle_dir, "ledger.enveloped.jsonl")
+    if not os.path.isfile(env_ledger):
+        raise OfflineBundleError(
+            "bundle has no ledger.enveloped.jsonl: it was exported "
+            "without envelope_seal_key")
+    if envelope_pubkey is None:
+        pub_path = os.path.join(bundle_dir, "ENVELOPE_PUBKEY.hex")
+        if not os.path.isfile(pub_path):
+            raise OfflineBundleError(
+                "bundle has no ENVELOPE_PUBKEY.hex and no pubkey was "
+                "provided")
+        with open(pub_path, encoding="utf-8") as f:
+            envelope_pubkey = bytes.fromhex(f.read().strip())
+    pub = bytes(envelope_pubkey)
+    if len(pub) != 32:
+        raise OfflineBundleError("envelope pubkey is not 32 bytes")
+
+    # Open and verify every envelope.
+    envelopes = []
+    with open(env_ledger, encoding="utf-8") as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                envelopes.append(json.loads(line))
+            except ValueError:
+                raise OfflineBundleError(
+                    "ledger.enveloped.jsonl line %d is not JSON"
+                    % (lineno,))
+    try:
+        records = _ee.open_records(envelopes, pub)
+    except _ee.EvidenceEnvelopeError as exc:
+        raise OfflineBundleError(
+            "enveloped ledger failed to open: %s" % (exc,))
+
+    # Every opened record must match the legacy ledger entry.
+    legacy_path = os.path.join(bundle_dir, "ledger.jsonl")
+    legacy = []
+    with open(legacy_path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                legacy.append(json.loads(line))
+    if len(records) != len(legacy):
+        raise OfflineBundleError(
+            "enveloped ledger has %d records, legacy ledger has %d"
+            % (len(records), len(legacy)))
+    for rec, leg in zip(records, legacy):
+        if rec != leg:
+            raise OfflineBundleError(
+                "enveloped record seq %r does not match the legacy "
+                "ledger entry" % (rec.get("seq"),))
+
+    # The sealed manifest must open and match manifest.json.
+    manifest_env_path = os.path.join(bundle_dir,
+                                     "manifest.enveloped.json")
+    if not os.path.isfile(manifest_env_path):
+        raise OfflineBundleError("bundle has no manifest.enveloped.json")
+    with open(manifest_env_path, encoding="utf-8") as f:
+        manifest_env = json.load(f)
+    try:
+        opened_manifest = _ee.open_manifest(manifest_env, pub)
+    except _ee.EvidenceEnvelopeError as exc:
+        raise OfflineBundleError(
+            "sealed manifest failed to open: %s" % (exc,))
+    with open(os.path.join(bundle_dir, "manifest.json"),
+              encoding="utf-8") as f:
+        legacy_manifest = json.load(f)
+    if opened_manifest != legacy_manifest:
+        raise OfflineBundleError(
+            "sealed manifest does not match manifest.json")
+    return True
 
 
 def _render_redaction_report(manifest, bundle_id):

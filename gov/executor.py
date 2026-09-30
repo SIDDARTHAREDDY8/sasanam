@@ -1061,7 +1061,15 @@ class ToolExecutor:
                  # behavior for host-only credentials; attestation-
                  # mandatory credentials REFUSE without one (no silent
                  # fallback to host-only).
-                 attestation_config=None):
+                 attestation_config=None,
+                 # Cross-policy-set combination (wave-249 wiring):
+                 # tuple of additional PolicyEngine instances evaluated
+                 # alongside the primary policy, combined with the
+                 # forbid-overrides-permit guarantee
+                 # (gov/policy_combine.py). Appended LAST so no existing
+                 # positional caller can misalign. Opt-in: empty
+                 # (default) = pre-wave-249 behavior, zero change.
+                 policy_set=()):
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -1089,6 +1097,9 @@ class ToolExecutor:
         self.policy = policy
         self.log = log
         self.approvals = approvals
+        # Wave-249 wiring: cross-policy-set combination. Empty tuple =
+        # pre-wave-249 behavior (single-policy verdict, zero change).
+        self._policy_set = tuple(policy_set or ())
         # Wave-89 (S2, inter-agent messaging): the governed message bus
         # (gov/messaging.MessageBus), constructed by the deployment in the
         # operator trust domain. Opt-in: None = pre-wave-89 behavior, zero
@@ -9880,6 +9891,22 @@ class ToolExecutor:
 
         _decision_full = policy.decide(Request.from_action(action, ctx))
         decision = _decision_full.to_policy_decision()
+
+        # Wave-249 wiring: cross-policy-set combination
+        # (gov/policy_combine.py). When the deployment supplies
+        # additional policy engines via policy_set, each is evaluated
+        # on the SAME request and the decisions are combined with the
+        # structural forbid-overrides-permit guarantee: any forbid in
+        # any policy denies, regardless of permits elsewhere. Empty
+        # policy_set = pre-wave-249 single-policy verdict, zero change.
+        if self._policy_set:
+            from gov import policy_combine as _pc
+            _set_decisions = [_decision_full]
+            for _eng in self._policy_set:
+                _set_decisions.append(
+                    _eng.decide(Request.from_action(action, ctx)))
+            _combined = _pc.combine(_set_decisions)
+            decision = _combined.to_policy_decision()
 
         # Wave-198 (graduation ladder, R1 warn-fatigue): warn-mode
         # decisions carry operator telemetry. Aggregate it into the
