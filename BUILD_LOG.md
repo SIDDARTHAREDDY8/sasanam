@@ -11525,3 +11525,134 @@ Merge commit `8776f6d` (fast-forward of 2d5b927, pushed, remote HEAD verified `8
 **Findings:** none filed. F208 remains CLOSED (wave-216 lane A, vacuous close). Open findings: none. Next free: **F209**.
 
 - Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+## Wave-218 lane A: ARAP hardening (2026-09-30)
+
+Lane work on base aa92522 (wave-217). New module `gov/arap.py` — the
+AuthZEN ARAP (Access Request and Approval profile) STEAL/ADAPT from the
+wave-217 prospectus, natively reimplemented (no upstream source vendored,
+no spec conformance claimed), tighten-only opt-in over gov/approvals
+(which is untouched):
+1. Authorization-relevant context: `declare_context` pins per-field
+   sha256 digests under a deployment key (hmac-sha256-v1 binding);
+   `check_cited_context` refuses approvals citing undeclared fields;
+   undeclared context binds only the subject/resource/action triple.
+   Context offered without a key is dropped from the binding (loud
+   triple-only), never silently treated as bound.
+2. Terminal lifecycle: pending is the only non-terminal status;
+   terminal set approved|denied|expired|cancelled|failed|partial.
+   `transition` is explicit, audited (arap_status_transition), and
+   monotonic — terminal->anything and no-ops refused fail-closed.
+   `aggregate_statuses` folds terminal bulks (mixed approve/deny ->
+   partial), refusing non-terminal input by construction.
+3. Idempotency: `IdempotencyRegistry` — same key + identical body
+   replays the ORIGINAL decision (never re-decided); same key +
+   different body -> DuplicateRequestError duplicate_request (409
+   shape) on check AND record (key-reuse/re-pointing refused).
+4. Cancellation: `cancel_request` requires the canceller in the
+   request's pinned authorized_cancellers set (empty = nobody);
+   `HandleRegistry` issues opaque handles that carry no authority —
+   resolve checks presenter authority first (handle-not-authority),
+   unknown handles refused distinctly (handle-unknown).
+Red-first: `evals/w218_arap_probes.py` pristine 17 GAP / 0 BREAK (module
+absent, genuine red) -> fixed 19 HELD / 0 BREAK / 0 ERROR x2 (staging +
+clean env -u GOV_DEPLOYMENT_MODE), determinism PASS, depth-1 green check
+(w217_quorum + w217_receipt batteries green). Unit `tests/test_arap.py`
+29/29 OK. Two genuine lane bugs caught red (per-instance refusal codes
+missing on verify_context_binding/handle-unknown) and fixed. No findings
+filed; F208 CLOSED; open findings none; next free F209.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+
+## Wave-218 lane B (COAZ-MCP invocation-authorization, 2026-09-30)
+
+Native reimplementation of the COAZ-MCP binding draft ideas (individual draft, not adopted; no upstream source vendored, no conformance claimed): new `gov/mcp_invocation_authz.py` — TOCTOU permit-message binding (`authorize` binds sha256 of canonical JSON; `apply_permit` re-verifies, mutation -> `permit-message-mismatch`), trust-anchored subject.id (top-level `authz_context["subject"]["id"]` only; nested subject-shaped claims are untrusted input, disagreeing claim -> `subject-smuggling-attempt`; missing/mismatch -> `subject-unanchored`), tighten-only server-advertised-mapping pin (absent pin -> `mapping-unpinned`, drift -> `mapping-drift`; re-pin is the only widening path). `authorize`/`apply_permit` never raise on hostile input (bounded cycle-safe scan; malformed -> named refusals); `build_policy` raises `McpInvocationAuthzError` on authoring errors at build. Zero existing files modified; `gov/authority_proof.py` remains the allowlist gate. Battery `evals/w218_coaz_probes.py`: pristine 14/14 GAP -> fixed 14/14 HELD x2 (staging + clean env -u), 0 BREAK/0 ERROR, determinism PASS, depth-1 green PASS. Unit `tests/test_mcp_invocation_authz.py` 31/31. Adjacent: test_authority_proof 30/30, test_authority_proof_mcp_graphql 26/26, test_mcp_annotations 54/54. test_adapters_mcp 62 standalone errors reproduce byte-identically on pristine base (environment/harness, not lane-caused). No findings filed; F208 stays CLOSED; open findings none; next free F209.
+
+- Signed-off-by: SIDDARTHA REDDY <75976672+SIDDARTHAREDDY8@users.noreply.github.com>
+
+
+## Wave-218 lane C (2026-09-30): bundle admissibility + replay binding
+
+New `gov/bundle_admissibility.py` — EMILIA-style admissibility discipline,
+natively reimplemented (idea only; no EMILIA source vendored, no
+conformance claimed). Classifies evidence-bundle verification into
+`admissible | missing_evidence | stale | conflicted | unverifiable` on
+top of the untouched `gov/evidence_verify.py` check list; relying-party
+`AdmissibilityPolicy` (auditor-strict / monitor-lax presets) decides
+admission with named codes; `conflicted`/`missing_evidence` require
+explicit `acknowledge_risk=True` (never silently pass). Replay-digest
+binding seals each verification to `{policy_fingerprint,
+normalized_facts, as_of}` under domain
+`bundle-admissibility-replay/v1`; rotated policy / altered facts /
+different as_of replay as `unverifiable`; records older than
+max_age_seconds replay as `stale`.
+
+Red-first: pristine 16 GAP -> fixed 16 HELD / 0 BREAK (staging + clean
+env, determinism PASS, depth-1 green check). The battery caught one
+genuine lane bug red: classify() read failed checks from the summary
+dict, but verify_bundle returns an EMPTY summary on early V1/V2/V3
+failure -- a missing required file classified as "admissible". Fixed
+to use the returned Check objects; missing-required-file probe now
+HELD.
+
+Unit `tests/test_bundle_admissibility.py`: 22/22 OK. Adjacent:
+test_evidence_bundle 44/44 OK; test_evidence_verify 23/24 (one
+PRE-EXISTING failure: test_ed25519_vendoring_drift_guard -- vendored
+Ed25519 in evidence_verify.py drifted from gov/ed25519.py at base
+aa92522; zero tracked files modified by this lane, confirmed via
+`git diff HEAD --stat`).
+
+New files: gov/bundle_admissibility.py,
+evals/w218_admissibility_probes.py, tests/test_bundle_admissibility.py.
+No existing files modified. No findings filed. Open findings: none.
+Next free: F209.
+
+
+Wave-218 merge (wave-218-merge):
+- Lane A (ARAP hardening; lane commit 31f18b5 in ~/workspace/teams/wave218-arap):
+  new gov/arap.py (authorization-relevant context w/ HMAC-SHA256 per-field
+  digests + check_cited_context; terminal statuses approved|denied|expired|
+  cancelled|failed|partial w/ explicit audited monotonic transition;
+  Idempotency-Key: identical-body replay returns ORIGINAL decision, body
+  mismatch -> duplicate_request 409; independent cancellation auth via
+  pinned authorized_cancellers; HandleRegistry opaque handles carry no
+  authority; gov/approvals.py untouched). New evals/w218_arap_probes.py
+  (19/19 HELD x2; pristine 17 GAP), tests/test_arap.py (29/29 OK).
+- Lane B (COAZ-MCP; lane commit c5ef0a1 in ~/workspace/teams/wave218-coaz):
+  new gov/mcp_invocation_authz.py (TOCTOU: authorize binds permit to
+  sha256(canonical-JSON message), apply_permit re-verifies; trust-anchored
+  subject.id from top-level authz_context only; server-advertised-mapping
+  pin tighten-only: absent pin -> mapping-unpinned, drift -> mapping-drift).
+  New evals/w218_coaz_probes.py (14/14 HELD x2; pristine 14 GAP),
+  tests/test_mcp_invocation_authz.py (31/31 OK); adjacent authority_proof
+  30/30, mcp_graphql 26/26, mcp_annotations 54/54. test_adapters_mcp's 62
+  standalone errors CONFIRMED pre-existing at base aa92522 (merged-vs-
+  pristine FAIL/ERROR lists byte-identical).
+- Lane C (bundle admissibility; lane commit 91a82c2 in ~/workspace/teams/wave218-admiss):
+  new gov/bundle_admissibility.py (classified outcomes
+  admissible|missing_evidence|stale|conflicted|unverifiable; AdmissibilityPolicy
+  auditor_strict/monitor_lax; conflicted/missing_evidence need
+  acknowledge_risk; replay-digest binds {policy_fingerprint, normalized_facts,
+  as_of}; gov/evidence_verify.py and tools/evidence-verify untouched).
+  New evals/w218_admissibility_probes.py (16/16 HELD x2; pristine 16 GAP),
+  tests/test_bundle_admissibility.py (22/22 OK); adjacent test_evidence_bundle
+  44/44; test_evidence_verify 23/24 w/ test_ed25519_vendoring_drift_guard
+  failing at BASE aa92522 pre-lane (confirmed in merged-vs-pristine
+  comparison, not lane-caused).
+- Merge-side integration fix (real lane-caused regression caught by the
+  canonical gate): lane A's gov/arap.py introduced two new HMAC call sites
+  outside the wave-70 custody audit allowlist; registered both in
+  tests/test_w70_hmac_chokepoint_audit.py ALLOWED_HMAC_SITES per the audit's
+  own procedure with an honest custody story (deployment-owned key, explicit
+  pass, >=16 bytes enforced, domain-separated). No product semantics changed.
+- Findings: none filed. F208 stays CLOSED (wave-216). Open findings: none.
+  Next free: F209.
+- Prospecting (wave-218 lane D, PROSPECTUS.md; not dispatched): sigstore
+  policy-controller STEAL pattern (named Compile->Verifier API, knative
+  FieldError taxonomy, compile-everything-at-registration); evidentia ADAPT
+  (implement what their docs-only unsafe_noop documented); AuthZEN: mandatum
+  STEAL narrow (Apache-2.0), sanction/authzen-coaz ADAPT, rest DROP; in-toto/TUF
+  anti-rollback ADAPT (monotonic version floors, atomic version manifests,
+  distinct rollback-refusal codes); COAZ-MCP no drift; Firecracker 1.17.0
+  mild/additive; EMILIA Rust interop clean-room pending.

@@ -72,6 +72,18 @@ ALLOWED_HMAC_SITES = {
         "reconcile marker-verdict cache MAC; key = active log key",
     ("gov/approvals.py", "_delegation_grant_mac", 0):
         "delegation-grant MAC; key = active log key (same epochs)",
+    # gov/arap.py (wave-218): the ARAP authorization-relevant-context
+    # integrity binding. The key is a DEPLOYMENT-OWNED key passed
+    # explicitly to declare_context() (never a default, never derived
+    # in-repo; >=16 bytes enforced, fail closed otherwise). The MAC
+    # is domain-separated (sasanam-arap-context/v1:) and binds the
+    # approver-visible context map; verify_context_binding recomputes
+    # the same binding and refuses mismatch loudly. A context binding
+    # is an integrity attestation, not a credential.
+    ("gov/arap.py", "declare_context", 0):
+        "ARAP context binding MAC; deployment-owned key (explicit pass)",
+    ("gov/arap.py", "verify_context_binding", 0):
+        "ARAP context re-verification MAC; deployment-owned key (explicit pass)",
     # gov/egress_ledger.py: the egress ledger chain, keyed by the same
     # log key epochs via gov.log._active_key().
     ("gov/egress_ledger.py", "_ledger_mac", 0):
