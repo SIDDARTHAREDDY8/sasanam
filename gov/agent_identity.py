@@ -65,9 +65,12 @@ HONEST RESIDUALS (never claimed away):
 $0 spend, synthetic/local only. No credentials, no network.
 """
 
+import base64
 import hashlib
+import hmac
 import json
 import secrets
+import time
 from collections import OrderedDict
 
 from . import ed25519 as _ed
@@ -507,3 +510,415 @@ def verify_binding(did, message, signature):
     if not isinstance(signature, (bytes, bytearray)):
         return False
     return _ed.verify(pubkey, bytes(message), bytes(signature)) is True
+
+
+# ---------------------------------------------------------------------------
+# Federated agent identity: dex-shaped claim normalization + short-lived
+# identity tokens (Wave-248 lane 5).
+#
+# ADAPTED (patterns only) from dex's connector model (dexidp/dex,
+# Apache-2.0, CNCF, Go -- not vendored). The steals:
+#   (1) connector abstraction: upstream IdPs normalize into ONE claim set
+#       {subject, email, email_verified, groups, connector_id} regardless
+#       of which upstream vouched for the agent;
+#   (2) short-lived identity tokens + refresh-token rotation for
+#       non-interactive agents (no long-lived agent secrets --
+#       key-custody-friendly);
+#   (3) the groups claim rides on the normalized identity so the grant
+#       graph can consume it (wiring is the grant-graph owner's job).
+# What is NOT stolen: the SAML connector is explicitly refused --
+# upstream flags it unmaintained with a likely auth-bypass discussion
+# open (dexidp/dex #1884). Unknown connectors fail closed too.
+#
+# HONEST RESIDUALS:
+# * The connector inputs are deployment-supplied: this module normalizes
+#   and refuses, it does not verify the upstream IdP's own signatures.
+#   Trusting a lying connector is a deployment configuration question
+#   (same trust model as the registry's deployment trust domain above).
+# * Refresh secrets are bearer secrets: this module stores only their
+#   sha256. Leak of live refresh secrets is issuance power until the
+#   refresh token expires or its chain is revoked.
+# * Identity tokens are stateless bearer tokens: revocation lands only
+#   via short lifetimes. A stolen identity token is valid until exp --
+#   the 5-minute default bounds the exposure, it does not eliminate it.
+# ---------------------------------------------------------------------------
+
+_IDENTITY_CLAIM_FIELDS = ("subject", "email", "email_verified",
+                          "groups", "connector_id")
+
+# Connector name -> claim-field mapping. subject_fields is ordered: the
+# first present field wins; two present fields with DIFFERENT values is
+# ambiguous and refuses (identity-claims-ambiguous) -- we never guess
+# which upstream claim is authoritative.
+_CONNECTORS = {
+    "oidc": {"subject_fields": ("sub", "uid"),
+             "email_field": "email",
+             "email_verified_field": "email_verified",
+             "groups_field": "groups"},
+    "static": {"subject_fields": ("username", "user_id"),
+               "email_field": "email",
+               "email_verified_field": None,  # static never vouches email
+               "groups_field": "groups"},
+}
+
+_DISABLED_CONNECTORS = {
+    "saml": "the SAML connector is disabled (unmaintained upstream; "
+            "see dexidp/dex #1884)",
+}
+
+_IDENTITY_TOKEN_VERSION = 1
+_TOKEN_TYPE = "identity-token"
+_TOKEN_DOMAIN = b"gov-identity-token/v1\x00"
+_DEFAULT_IDENTITY_LIFETIME = 300
+_MAX_IDENTITY_LIFETIME = 3600
+_TOKEN_LEEWAY = 60
+_DEFAULT_REFRESH_LIFETIME = 86400
+
+
+class ClaimNormalizationError(Exception):
+    """Upstream claim set refused. ``code`` is the taxonomy refusal code."""
+
+    def __init__(self, code, detail=""):
+        super(ClaimNormalizationError, self).__init__(
+            "%s%s" % (code, (": %s" % detail) if detail else ""))
+        self.code = code
+        self.detail = detail
+
+
+class IdentityTokenRejection(Exception):
+    """Identity token or refresh flow refused. ``code`` is the taxonomy
+    refusal code. Fail-closed: callers must treat this as
+    unauthenticated."""
+
+    def __init__(self, code, detail=""):
+        super(IdentityTokenRejection, self).__init__(
+            "%s%s" % (code, (": %s" % detail) if detail else ""))
+        self.code = code
+        self.detail = detail
+
+
+def normalize_claims(raw_claims, connector):
+    """Normalize an upstream IdP claim set into one identity shape.
+
+    Returns ``{"subject", "email", "email_verified", "groups",
+    "connector_id"}`` -- the same shape regardless of which upstream
+    vouched for the agent. Refuses (ClaimNormalizationError) on:
+    unknown or disabled connector (identity-connector-unsupported),
+    wrong-typed claims (identity-claims-malformed), missing subject
+    (identity-claims-missing-subject), or two subject-candidate claims
+    that disagree (identity-claims-ambiguous).
+    """
+    if connector in _DISABLED_CONNECTORS:
+        raise ClaimNormalizationError(
+            "identity-connector-unsupported",
+            _DISABLED_CONNECTORS[connector])
+    mapping = _CONNECTORS.get(connector)
+    if mapping is None:
+        raise ClaimNormalizationError(
+            "identity-connector-unsupported",
+            "unknown connector %r" % (connector,))
+    if not isinstance(raw_claims, dict):
+        raise ClaimNormalizationError(
+            "identity-claims-malformed",
+            "claims must be a dict, got %s" % type(raw_claims).__name__)
+    subjects = []
+    for field in mapping["subject_fields"]:
+        if field in raw_claims:
+            value = raw_claims[field]
+            if not isinstance(value, str) or not value.strip():
+                raise ClaimNormalizationError(
+                    "identity-claims-malformed",
+                    "subject field %r must be a non-empty string"
+                    % (field,))
+            subjects.append(value.strip())
+    if not subjects:
+        raise ClaimNormalizationError(
+            "identity-claims-missing-subject",
+            "no subject claim among %s"
+            % (", ".join(mapping["subject_fields"]),))
+    if len(set(subjects)) > 1:
+        raise ClaimNormalizationError(
+            "identity-claims-ambiguous",
+            "subject candidates disagree: %r" % (sorted(set(subjects)),))
+    subject = subjects[0]
+    email = None
+    email_field = mapping["email_field"]
+    if email_field is not None and email_field in raw_claims:
+        email = raw_claims[email_field]
+        if email is not None and not isinstance(email, str):
+            raise ClaimNormalizationError(
+                "identity-claims-malformed",
+                "email must be a string or absent")
+    email_verified = False
+    ev_field = mapping["email_verified_field"]
+    if ev_field is not None and ev_field in raw_claims:
+        email_verified = raw_claims[ev_field]
+        if not isinstance(email_verified, bool):
+            raise ClaimNormalizationError(
+                "identity-claims-malformed",
+                "email_verified must be a bool")
+    groups = []
+    groups_field = mapping["groups_field"]
+    if groups_field in raw_claims:
+        groups = raw_claims[groups_field]
+        if not isinstance(groups, list) or not all(
+                isinstance(g, str) for g in groups):
+            raise ClaimNormalizationError(
+                "identity-claims-malformed",
+                "groups must be a list of strings")
+        groups = list(groups)
+    return {"subject": subject, "email": email,
+            "email_verified": email_verified, "groups": groups,
+            "connector_id": connector}
+
+
+def _b64url_encode(data):
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def _b64url_decode_token_part(text):
+    if not isinstance(text, str) or not text:
+        raise IdentityTokenRejection(
+            "identity-token-malformed", "token part is not a string")
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        return base64.urlsafe_b64decode(padded.encode("ascii"))
+    except (ValueError, UnicodeError):
+        raise IdentityTokenRejection(
+            "identity-token-malformed", "token part is not base64url")
+
+
+class IdentityTokenIssuer(object):
+    """Mints and verifies short-lived HMAC-SHA256 identity tokens.
+
+    Constructed in the deployment trust domain with a 32+ byte secret --
+    the key-custody-friendly pattern: agents hold only short-lived
+    tokens, never long-lived secrets. Tokens are
+    ``b64url(canonical JSON) + "." + b64url(HMAC)``; ``verify_token``
+    raises IdentityTokenRejection on any problem and never returns a
+    forged, expired, or mis-audienced identity.
+    """
+
+    def __init__(self, key, issuer="gov-identity",
+                 max_lifetime_seconds=_MAX_IDENTITY_LIFETIME,
+                 time_fn=None):
+        if not isinstance(key, (bytes, bytearray)) or len(key) < 32:
+            raise ValueError("key must be bytes of length >= 32")
+        if max_lifetime_seconds < 1:
+            raise ValueError("max_lifetime_seconds must be >= 1")
+        self._key = bytes(key)
+        self._issuer = issuer
+        self._max_lifetime = int(max_lifetime_seconds)
+        self._time_fn = time_fn or time.time
+
+    def _now(self, now):
+        return int(now) if now is not None else int(self._time_fn())
+
+    def issue(self, identity, audience, lifetime_seconds=None,
+              now=None, jti=None):
+        """Mint a short-lived identity token for a normalized identity.
+
+        ``identity`` is a ``normalize_claims`` dict. ``lifetime_seconds``
+        defaults to 300 and is capped at ``max_lifetime_seconds`` --
+        callers cannot mint a long-lived identity token through this
+        path. ``now``/``jti`` are injectable for deterministic tests.
+        """
+        if not isinstance(identity, dict) or "subject" not in identity:
+            raise ValueError("identity must be a normalize_claims dict")
+        if not isinstance(audience, str) or not audience:
+            raise ValueError("audience must be a non-empty string")
+        if lifetime_seconds is None:
+            lifetime_seconds = _DEFAULT_IDENTITY_LIFETIME
+        lifetime = max(1, min(int(lifetime_seconds), self._max_lifetime))
+        issued_at = self._now(now)
+        claims = {"v": _IDENTITY_TOKEN_VERSION,
+                  "typ": _TOKEN_TYPE,
+                  "iss": self._issuer,
+                  "sub": identity["subject"],
+                  "aud": audience,
+                  "iat": issued_at,
+                  "exp": issued_at + lifetime,
+                  "email": identity.get("email"),
+                  "email_verified": bool(identity.get("email_verified")),
+                  "groups": list(identity.get("groups") or []),
+                  "connector_id": identity.get("connector_id"),
+                  "jti": jti if jti is not None
+                  else secrets.token_hex(16)}
+        body = _b64url_encode(_canonical_bytes(claims))
+        sig = hmac.new(self._key, _TOKEN_DOMAIN + body.encode("ascii"),
+                       hashlib.sha256).digest()
+        return body + "." + _b64url_encode(sig)
+
+    def verify_token(self, token, audience, now=None, leeway=_TOKEN_LEEWAY):
+        """Verify an identity token for an audience. Returns the identity
+        dict ``{"subject", "email", "email_verified", "groups",
+        "connector_id", "audience", "issuer", "iat", "exp", "jti"}``.
+
+        Check order is structural-first: malformed -> tampered ->
+        audience -> expiry -> not-yet-valid. Every refusal raises
+        IdentityTokenRejection with a taxonomy code.
+        """
+        if not isinstance(token, str):
+            raise IdentityTokenRejection(
+                "identity-token-malformed", "token is not a string")
+        parts = token.split(".")
+        if len(parts) != 2:
+            raise IdentityTokenRejection(
+                "identity-token-malformed",
+                "token must have exactly two dot-separated parts")
+        raw_body = _b64url_decode_token_part(parts[0])
+        raw_sig = _b64url_decode_token_part(parts[1])
+        try:
+            claims = json.loads(raw_body.decode("utf-8"))
+        except (ValueError, UnicodeError):
+            raise IdentityTokenRejection(
+                "identity-token-malformed", "token body is not JSON")
+        if not isinstance(claims, dict) or \
+                claims.get("v") != _IDENTITY_TOKEN_VERSION or \
+                claims.get("typ") != _TOKEN_TYPE:
+            raise IdentityTokenRejection(
+                "identity-token-malformed",
+                "token body is not an identity-token v1 envelope")
+        expected = hmac.new(self._key, _TOKEN_DOMAIN + parts[0].encode(
+            "ascii"), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, raw_sig):
+            raise IdentityTokenRejection(
+                "identity-token-tampered",
+                "signature does not verify over the token body")
+        if claims.get("aud") != audience:
+            raise IdentityTokenRejection(
+                "identity-token-audience-mismatch",
+                "token is for audience %r, not %r"
+                % (claims.get("aud"), audience))
+        current = self._now(now)
+        exp = claims.get("exp")
+        iat = claims.get("iat")
+        if not isinstance(exp, int) or isinstance(exp, bool):
+            raise IdentityTokenRejection(
+                "identity-token-malformed", "exp is not an int")
+        if not isinstance(iat, int) or isinstance(iat, bool):
+            raise IdentityTokenRejection(
+                "identity-token-malformed", "iat is not an int")
+        if current > exp:
+            raise IdentityTokenRejection(
+                "identity-token-expired",
+                "token expired %d seconds ago" % (current - exp,))
+        if iat > current + leeway:
+            raise IdentityTokenRejection(
+                "identity-token-not-yet-valid",
+                "token claims iat %d seconds in the future" % (iat - current,))
+        return {"subject": claims["sub"],
+                "email": claims.get("email"),
+                "email_verified": bool(claims.get("email_verified")),
+                "groups": list(claims.get("groups") or []),
+                "connector_id": claims.get("connector_id"),
+                "audience": audience,
+                "issuer": claims.get("iss"),
+                "iat": iat, "exp": exp, "jti": claims.get("jti")}
+
+
+class RefreshTokenStore(object):
+    """Server-side refresh tokens with rotation and reuse detection.
+
+    ``mint_refresh`` binds (identity, connector, raw claims) to an opaque
+    (id, secret) pair and stores only the secret's sha256. ``refresh``
+    re-normalizes the stored raw claims (a fresh identity, never the old
+    token's), issues a SHORT identity token via the supplied issuer --
+    the refresh call takes no lifetime parameter, so a refresh can never
+    silently mint a long-lived identity token -- rotates to a new
+    (id, secret), and invalidates the old one. Presenting a rotated token
+    again is treated as theft: the whole chain is revoked
+    (identity-refresh-reuse-detected, then identity-refresh-revoked).
+    """
+
+    def __init__(self, lifetime_seconds=_DEFAULT_REFRESH_LIFETIME,
+                 time_fn=None):
+        if lifetime_seconds < 1:
+            raise ValueError("lifetime_seconds must be >= 1")
+        self._lifetime = int(lifetime_seconds)
+        self._time_fn = time_fn or time.time
+        self._tokens = {}  # refresh_id -> record
+
+    def _now(self, now):
+        return int(now) if now is not None else int(self._time_fn())
+
+    @staticmethod
+    def _secret_hash(secret):
+        return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+    def mint_refresh(self, identity, connector_id, raw_claims,
+                     lifetime_seconds=None, now=None):
+        """Bind an identity to a new refresh token. Returns
+        ``(refresh_id, secret)``; the secret is shown once -- only its
+        hash is stored. The claims are re-normalized now (fail fast)."""
+        if not isinstance(identity, dict) or "subject" not in identity:
+            raise ValueError("identity must be a normalize_claims dict")
+        # Fail fast: the stored claims must normalize today, or the
+        # refresh would mint from a claim set we already refuse.
+        normalize_claims(raw_claims, connector_id)
+        if lifetime_seconds is None:
+            lifetime_seconds = self._lifetime
+        lifetime = max(1, int(lifetime_seconds))
+        issued_at = self._now(now)
+        refresh_id = "rt_" + secrets.token_hex(16)
+        secret = secrets.token_hex(32)
+        self._tokens[refresh_id] = {
+            "secret_hash": self._secret_hash(secret),
+            "subject": identity["subject"],
+            "connector_id": connector_id,
+            "raw_claims": dict(raw_claims),
+            "exp": issued_at + lifetime,
+            "rotated": False,
+            "revoked": False,
+            "chain_id": secrets.token_hex(16),
+        }
+        return refresh_id, secret
+
+    def _revoke_chain(self, chain_id):
+        for rec in self._tokens.values():
+            if rec["chain_id"] == chain_id:
+                rec["revoked"] = True
+
+    def refresh(self, issuer, refresh_id, secret, audience, now=None):
+        """Exchange a refresh token for a new SHORT identity token plus a
+        rotated refresh pair. Returns
+        ``(identity_token, new_refresh_id, new_secret)``.
+
+        The identity comes from re-normalizing the stored raw claims.
+        The identity token always uses the issuer's short default
+        lifetime -- there is no lifetime parameter here by design.
+        """
+        current = self._now(now)
+        rec = self._tokens.get(refresh_id)
+        if rec is None or not isinstance(secret, str) or not \
+                hmac.compare_digest(rec["secret_hash"],
+                                    self._secret_hash(secret)):
+            # One code, no oracle: unknown id and wrong secret are
+            # indistinguishable.
+            raise IdentityTokenRejection(
+                "identity-refresh-unknown",
+                "refresh token unknown or secret mismatch")
+        if current > rec["exp"]:
+            raise IdentityTokenRejection(
+                "identity-refresh-expired",
+                "refresh token expired %d seconds ago"
+                % (current - rec["exp"],))
+        if rec["revoked"]:
+            raise IdentityTokenRejection(
+                "identity-refresh-revoked",
+                "refresh token chain was revoked")
+        if rec["rotated"]:
+            # Reuse of a spent token: suspected theft. Revoke the whole
+            # chain (dex reuse detection), then refuse.
+            self._revoke_chain(rec["chain_id"])
+            raise IdentityTokenRejection(
+                "identity-refresh-reuse-detected",
+                "rotated refresh token presented again; chain revoked")
+        identity = normalize_claims(rec["raw_claims"], rec["connector_id"])
+        token = issuer.issue(identity, audience)
+        rec["rotated"] = True
+        new_id, new_secret = self.mint_refresh(
+            identity, rec["connector_id"], rec["raw_claims"],
+            lifetime_seconds=rec["exp"] - current, now=current)
+        self._tokens[new_id]["chain_id"] = rec["chain_id"]
+        return token, new_id, new_secret

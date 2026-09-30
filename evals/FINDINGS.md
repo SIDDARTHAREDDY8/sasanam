@@ -6420,6 +6420,28 @@ Next free finding: **F210**. **Open findings: none.** (F196 closed 2026-09-28, w
 
 **Close-when criteria:** (1) verified records are tamper-evident: either the boundary HMAC-seals verified records (seal covering output bytes, component, seq, and verifier_id) and `use()` refuses records with a missing or invalid seal, or `verify()` registers verified (seq, output-digest) pairs server-side and `use()` refuses records that do not match the registered verification; (2) a break-first battery at the public seams demonstrating REFUSAL of both the forged-verified-flag shape and the verify-then-mutate shape (pristine BREAK on unsealed paths, fixed HELD), plus the honest `ingest -> verify -> use` path still allowed; (3) adjacent suites green (no regression in the honest path or in the tripped-circuit / budget-exceeded / unknown-component refusals).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-09-30, wave-248 lane 1.** `verify()` now attaches
+a tamper-evident HMAC-SHA256 seal over (component, seq, output,
+verifier_id, evidence), keyed to the boundary instance (deployment
+may supply a stable `seal_key`; otherwise a fresh random key is
+generated and weak keys are refused at construction). `use()` refuses
+a missing or mismatched seal as `breach-boundary-seal-invalid`:
+the forged-verified-flag shape and the verify-then-mutate shape are
+both refused, plus seal-stripped, tampered-seal, and cross-instance
+(wrong-key) shapes. Honest ingest -> verify -> use stays allowed;
+pre-existing refusals (unverified-use, tripped-circuit,
+budget-exceeded, unknown-component, vouched-rotation-restores) are
+unchanged. Break-first closure battery:
+`evals/w248_f210_closure_probes.py` (10/10 HELD x2: staging and
+`env -u GOV_DEPLOYMENT_MODE`); regression tests
+`tests/test_breach_boundary_f210.py` (14/14); adjacent
+`tests/test_breach_boundary.py` (35/35) and
+`evals/w246_incident_replay_probes.py` (16/16) green. Design note:
+a rotation-epoch seal-invalidation scheme was prototyped and then
+dropped -- the wave-246 spec test `test_vouched_rotation_restores`
+deliberately requires a pre-rotation verification to survive a vouched
+rotation, so epoch invalidation would have overridden specified
+behavior beyond this finding's scope; the seal without epoch fully
+closes both F210 shapes.
 
-Next free finding: **F211**. **Open findings: F210.** (F209 filed and closed 2026-09-30, wave-219 merge; F210 filed 2026-09-30, wave-247 lane 3 red-team.)
+Next free finding: **F211**. **Open findings: none.** (F209 filed and closed 2026-09-30, wave-219 merge; F210 filed 2026-09-30, wave-247 lane 3 red-team, closed 2026-09-30, wave-248 lane 1.)

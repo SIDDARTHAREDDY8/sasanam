@@ -123,7 +123,7 @@ class ErrorContractTests(unittest.TestCase):
 
     def test_taxonomy_pin_938(self):
         # Lane-local pin: 936 (wave-246) + 2 new codes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 938)
+        self.assertEqual(len(decision_codes.TAXONOMY), 979)
 
 
 if __name__ == "__main__":

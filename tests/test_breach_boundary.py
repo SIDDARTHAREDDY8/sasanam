@@ -284,6 +284,7 @@ class TaxonomyTest(unittest.TestCase):
         "breach-boundary-external-untrusted",
         "breach-boundary-verifier-unvouched",
         "breach-boundary-quarantined",
+        "breach-boundary-seal-invalid",
     ]
 
     def test_all_codes_mapped(self):
@@ -306,7 +307,11 @@ class TaxonomyTest(unittest.TestCase):
         # Wave-246 lane 8 (W246-8): 895 + 11 additive breach-boundary
         # codes, zero collisions, add-only.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 906); additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 938)
+        # Wave-247 merge: re-pointed to the composed 938 (+2
+        # uri-normalize codes); additive only.
+        # Wave-248 lane 1 (F210 closure): 938 + 1 additive
+        # breach-boundary-seal-invalid code; additive only.
+        self.assertEqual(len(decision_codes.TAXONOMY), 979)
 
 
 if __name__ == "__main__":

@@ -78,8 +78,8 @@ class VocabularyCoverageTest(unittest.TestCase):
         # + 10 effect-agreement/registry/mcp), additive only, composed from the
         # eight lane commits by direct byte-verification.
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
-        # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
-        self.assertEqual(len(dc.TAXONOMY), 938)
+        # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes: 1 breach-boundary + 9 skill-admission + 2 evidence-envelope + 6 skill-update + 13 identity + 3 combine + 7 artifact), additive only.
+        self.assertEqual(len(dc.TAXONOMY), 979)
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
         # domain audit), + 7 wave-234 lane-B token-hygiene codes

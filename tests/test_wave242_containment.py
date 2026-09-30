@@ -169,7 +169,7 @@ class TaxonomyTest(unittest.TestCase):
         # eight lane commits by direct byte-verification.
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
         # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 938)
+        self.assertEqual(len(decision_codes.TAXONOMY), 979)
 
 
 if __name__ == "__main__":

@@ -80,7 +80,8 @@ class ContractTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 906); additive only.
-        self.assertEqual(len(dc.TAXONOMY), 938)
+        # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
+        self.assertEqual(len(dc.TAXONOMY), 979)
 
     def test_exception_carries_code(self):
         exc = pdg.PolicyDeltaError("policy-delta-malformed", "x")

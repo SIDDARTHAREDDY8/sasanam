@@ -128,7 +128,8 @@ class TaxonomyTest(unittest.TestCase):
         # Wave-246 lane 10: 895 + 4 identity-crosscheck codes, additive
         # only, comment + assert.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 899); additive only.
-        self.assertEqual(len(dc.TAXONOMY), 938)
+        # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
+        self.assertEqual(len(dc.TAXONOMY), 979)
 
     def test_codes_mapped(self):
         for code in ("identity-attestation-malformed",

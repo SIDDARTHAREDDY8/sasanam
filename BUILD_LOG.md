@@ -12789,3 +12789,22 @@ Open findings: none (F210 filed by triage, RETRACTED at merge as misdiagnosis �
 
 ## Wave-247 merge (base `fc4d8e8a2331a8bd95015f7fd74d790d0b375044`, pin 936)
 **Merge** (2026-09-30): integrated wave-247 lane 1 (`0296307f05f213922265951b0ea583ab3dd8525d`, shared `gov/uri_normalize.py` + 6 rewired URI-consuming sites: executor, simulator, canary, jwks_fetch, egress_ledger, sentinel_substitution; +2 taxonomy codes `uri-host-invalid`, `uri-host-unparseable`) and wave-247 lane 3 (`5a58becae9c1c13613bc2c25c4bcb07014119f10`, red-team battery `evals/w247_redteam_probes.py` 24 HELD / 2 BREAK, filed F210). Lane 2 was prospecting (research only, no integration). Taxonomy 936 -> 938, zero duplicates, `code_for()` verified over all keys. All 32 pin assertions repointed to 938. Intentional behavior flips from lane 1 (pinned): trailing-dot deny->allow (DNS-correct), whitespace-padded deny->allow, unicode IDNA-encodes everywhere; userinfo-evil deny, lookalike deny, no pct-decode, fail-closed refusals preserved. **F210 (MEDIUM, OPEN):** BreachBoundary quarantine bypass — `use()` trusts caller-supplied `verified` flag on plain dicts (forged flag + verify-then-mutate TOCTOU); close-when requires tamper-evident verified records + break-first refusal battery. Open findings: F210. Next free: F211.
+
+## Wave-248 merge: supply-chain + identity hardening (7 lanes) + F210 closure
+
+**Merge** (base `b7558f5972a028bac11baddaa1be61ff645bd2da`, pin 938). Integrated all seven wave-248 lane commits by direct file copy + byte-verification (lane worktrees, exact parents, exact trailers verified pre-merge).
+
+**Taxonomy:** 938 → **979** (+41 additive codes, zero duplicates, `code_for()` verified over all 979 keys, all 37 pin assertions repointed).
+
+**F210 (MEDIUM) CLOSED** — BreachBoundary quarantine bypass. The wave-248 lane 1 closure was verified break-first on the merged tree via `evals/w248_f210_closure_probes.py` (10/10 HELD): forged verified flag refused, verify-then-mutate TOCTOU refused, honest path allowed. Fix: `verify()` attaches HMAC-SHA256 seal over canonical (component, seq, output, verifier_id, evidence); `use()` refuses seal-missing/mismatched with `breach-boundary-seal-invalid`. Next free: F211. Open findings: none.
+
+**Lanes:**
+- W248-1 (`b0307fd`): F210 closure — tamper-evident verified records via HMAC seal. +1 code.
+- W248-2 (`4ed0e62`): `gov/skill_admission.py` — in-toto-inspired skill admission gate (signed layouts, exact command alignment = hard refusal, artifact rules). +9 codes.
+- W248-3 (`30991b3`): `gov/evidence_envelope.py` — DSSE per-record evidence envelope, pinned against blamejs/pki envelope-shape bugs (single-signature, bounded material). +2 codes.
+- W248-4 (`4cebe16`): `gov/skill_update.py` — TUF-inspired skill-update client (rollback/freeze/mix-and-match protection). +6 codes.
+- W248-5 (`077dff8`): `gov/agent_identity.py` federated extension — dex-inspired claim normalization + short-lived HMAC tokens + refresh rotation with reuse detection. SAML explicitly refused. +13 codes.
+- W248-6 (`8168af2`): `gov/policy_combine.py` — Cedar-inspired forbid-overrides-permit as structural evaluator guarantee. +3 codes.
+- W248-7 (`cb1197e`): `gov/artifact_pack.py` — ORAS/OCI-shaped artifact packaging (digest-is-identity, stdlib only, no network). +7 codes.
+
+**Red-first audit:** F210 closure re-verified break-first (10/10); no other closures claimed; no overstatements.

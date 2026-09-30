@@ -1,0 +1,336 @@
+"""Unit tests for gov/skill_update.py (W248-4).
+
+Install-time admission gate for skill bundles: digest match, chain-pin
+match, record expiry, version monotonicity vs installed state, and
+fail-closed refusal when the metadata chain cannot vouch.
+
+Pin: taxonomy 944 (938 + 6 skill-update codes), additive only; the
+merge coordinator recomposes.
+"""
+
+import hashlib
+import os
+import unittest
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import decision_codes as dc
+from gov import skill_update as su
+
+
+NOW = 1780000000
+FUTURE = NOW + 86400
+PAST = NOW - 86400
+
+
+def _digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _record(name="demo-skill", version=1, digest=None,
+            expires=FUTURE):
+    return {"name": name, "version": version,
+            "digest": digest or _digest(b"x"),
+            "expires": expires}
+
+
+def _pin(digest, chain_state="trusted"):
+    return {"digest": digest, "chain_state": chain_state}
+
+
+class TaxonomyPinTests(unittest.TestCase):
+    def test_taxonomy_pin(self):
+        # Wave-248 lane 4: re-pointed to 944 (938 + 6 skill-update
+        # codes: digest-mismatch, index-untrusted, malformed,
+        # metadata-expired, record-unpinned, version-rollback),
+        # additive only; merge coordinator recomposes.
+        # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
+        self.assertEqual(len(dc.TAXONOMY), 979)
+
+    def test_expected_codes_pinned(self):
+        self.assertEqual(
+            set(su.EXPECTED_CODES),
+            {"skill-update-index-untrusted",
+             "skill-update-metadata-expired",
+             "skill-update-record-unpinned",
+             "skill-update-digest-mismatch",
+             "skill-update-version-rollback",
+             "skill-update-malformed"})
+
+
+class InstallGateTests(unittest.TestCase):
+    def test_happy_path_installs(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        receipt = client.install(bundle, _record(digest=digest),
+                                 _pin(digest), NOW)
+        self.assertEqual(receipt,
+                         {"name": "demo-skill", "version": 1,
+                          "digest": digest})
+        self.assertEqual(client.installed_version("demo-skill"), 1)
+
+    def test_upgrade_advances_installed(self):
+        client = su.SkillUpdateClient(
+            installed={"demo-skill": 2})
+        bundle = b"skill-bytes-v3"
+        digest = _digest(bundle)
+        receipt = client.install(
+            bundle, _record(version=3, digest=digest),
+            _pin(digest), NOW)
+        self.assertEqual(receipt["version"], 3)
+        self.assertEqual(client.installed_version("demo-skill"), 3)
+
+    def test_reinstall_same_version_idempotent(self):
+        bundle = b"skill-bytes-v2"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient(
+            installed={"demo-skill": 2})
+        receipt = client.install(
+            bundle, _record(version=2, digest=digest),
+            _pin(digest), NOW)
+        self.assertEqual(receipt["version"], 2)
+
+    def test_version_rollback_refused(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient(
+            installed={"demo-skill": 2})
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle, _record(version=1, digest=digest),
+                           _pin(digest), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-version-rollback")
+        # Installed state untouched by the refusal.
+        self.assertEqual(client.installed_version("demo-skill"), 2)
+
+    def test_digest_mismatch_refused(self):
+        digest = _digest(b"good-bytes")
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(b"tampered-bytes",
+                           _record(digest=digest),
+                           _pin(digest), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-digest-mismatch")
+
+    def test_record_unpinned_refused(self):
+        # Bundle matches its record, but the record is not what the
+        # chain pinned: mix-and-match across versions.
+        bundle = b"bytes-v2"
+        record_digest = _digest(bundle)
+        pinned = _digest(b"pinned-bytes-v2")
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle,
+                           _record(version=2, digest=record_digest),
+                           _pin(pinned), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-record-unpinned")
+
+    def test_metadata_expired_refused(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle,
+                           _record(digest=digest, expires=PAST),
+                           _pin(digest), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-metadata-expired")
+
+    def test_expiry_boundary_exclusive(self):
+        # now == expires is expired (expiry is exclusive).
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle,
+                           _record(digest=digest, expires=NOW),
+                           _pin(digest), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-metadata-expired")
+        # One second before expiry installs fine.
+        client2 = su.SkillUpdateClient()
+        receipt = client2.install(
+            bundle, _record(digest=digest, expires=NOW),
+            _pin(digest), NOW - 1)
+        self.assertEqual(receipt["version"], 1)
+
+    def test_stale_chain_refused(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle, _record(digest=digest),
+                           _pin(digest, "stale"), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-index-untrusted")
+
+    def test_suspended_chain_refused(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle, _record(digest=digest),
+                           _pin(digest, "suspended"), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-index-untrusted")
+
+    def test_unbound_skill_refused_as_plant(self):
+        # No pin from the verified chain: the skill arrived outside
+        # the metadata chain and is refused at install.
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle, _record(digest=digest), None,
+                           NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-index-untrusted")
+
+    def test_malformed_pin_refused(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle, _record(digest=digest),
+                           {"digest": digest}, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-index-untrusted")
+
+
+class MalformedInputTests(unittest.TestCase):
+    def _client(self):
+        return su.SkillUpdateClient()
+
+    def _good(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        return bundle, _record(digest=digest), _pin(digest)
+
+    def test_record_not_dict(self):
+        bundle, _, pin = self._good()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, "not-a-dict", pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_missing_key(self):
+        bundle, record, pin = self._good()
+        del record["digest"]
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_unknown_key(self):
+        bundle, record, pin = self._good()
+        record["extra"] = "nope"
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_bad_digest_format(self):
+        bundle, record, pin = self._good()
+        record["digest"] = "ZZZ"
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_negative_version(self):
+        bundle, record, pin = self._good()
+        record["version"] = -1
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_bool_version(self):
+        bundle, record, pin = self._good()
+        record["version"] = True
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_record_empty_name(self):
+        bundle, record, pin = self._good()
+        record["name"] = ""
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_bundle_not_bytes(self):
+        _, record, pin = self._good()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install("not-bytes", record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_bundle_empty(self):
+        _, record, pin = self._good()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(b"", record, pin, NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_now_not_int(self):
+        bundle, record, pin = self._good()
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            self._client().install(bundle, record, pin, "now")
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_installed_map_validated(self):
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            su.SkillUpdateClient(installed={"demo-skill": -1})
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+
+    def test_error_carries_code_and_detail(self):
+        bundle = b"x"
+        client = su.SkillUpdateClient()
+        try:
+            client.install(bundle, {}, None, NOW)
+        except su.SkillUpdateError as exc:
+            self.assertIn(exc.code, su.EXPECTED_CODES)
+            self.assertTrue(exc.detail)
+            self.assertIn(exc.code, str(exc))
+        else:
+            self.fail("expected SkillUpdateError")
+
+
+class InstalledStateTests(unittest.TestCase):
+    def test_unknown_skill_has_no_version(self):
+        self.assertIsNone(
+            su.SkillUpdateClient().installed_version("nope"))
+
+    def test_failed_install_does_not_advance(self):
+        bundle = b"skill-bytes-v1"
+        digest = _digest(bundle)
+        client = su.SkillUpdateClient()
+        try:
+            client.install(b"wrong", _record(digest=digest),
+                           _pin(digest), NOW)
+        except su.SkillUpdateError:
+            pass
+        self.assertIsNone(client.installed_version("demo-skill"))
+
+    def test_multiple_skills_independent(self):
+        b1, b2 = b"skill-one", b"skill-two"
+        d1, d2 = _digest(b1), _digest(b2)
+        client = su.SkillUpdateClient(installed={"one": 5})
+        client.install(b1, _record(name="one", version=6,
+                                   digest=d1), _pin(d1), NOW)
+        client.install(b2, _record(name="two", version=1,
+                                   digest=d2), _pin(d2), NOW)
+        self.assertEqual(client.installed_version("one"), 6)
+        self.assertEqual(client.installed_version("two"), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

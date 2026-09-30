@@ -8,7 +8,11 @@ containment even when they are breached:
 1. Quarantine. Outputs ingested from an assumed-breachable component
    are wrapped with containment metadata. Using a quarantined output
    without a deployment-vouched verification step is refused
-   ``breach-boundary-unverified-use-refused``. Verified outputs are
+   ``breach-boundary-unverified-use-refused``. Verified outputs carry a
+   tamper-evident HMAC seal over (component, seq, output, verifier_id,
+   evidence); use() refuses a missing or mismatched seal as
+   ``breach-boundary-seal-invalid``, so a forged verified flag or a
+   post-verification mutation cannot pass. Verified outputs are
    allowed-but-marked (``breach-boundary-quarantined``), never silent.
 
 2. Consequence budgets. Each declared component may carry a budget of
@@ -47,10 +51,19 @@ Honest residuals:
   declaration to the live component is deployment-owned.
 - Verification evidence is caller-supplied; the boundary checks the
   verifier's vouch, never the verifier's judgment.
+- Verification seals are bound to the boundary instance's seal key.
+  Unless the deployment supplies a stable ``seal_key``, a fresh random
+  key is generated and verified records do not survive boundary
+  reconstruction (persistence, process restart). Seal *values* are
+  therefore instance-keyed; allow/refuse behavior is deterministic.
 
 Stdlib only. Deterministic. No env reads, no I/O, no wall clock.
 Fail-closed on malformed input.
 """
+
+import hashlib
+import hmac
+import secrets
 
 # Machine codes (all registered in gov/decision_codes.py TAXONOMY).
 BREACH_BOUNDARY_RECORD_MALFORMED = "breach-boundary-record-malformed"
@@ -65,6 +78,7 @@ BREACH_BOUNDARY_ROTATION_UNVOUCHED = "breach-boundary-rotation-unvouched"
 BREACH_BOUNDARY_EXTERNAL_UNTRUSTED = "breach-boundary-external-untrusted"
 BREACH_BOUNDARY_VERIFIER_UNVOUCHED = "breach-boundary-verifier-unvouched"
 BREACH_BOUNDARY_QUARANTINED = "breach-boundary-quarantined"
+BREACH_BOUNDARY_SEAL_INVALID = "breach-boundary-seal-invalid"
 
 # Closed trust-class vocabulary. Unknown classes are malformed, never
 # treated as benign.
@@ -79,6 +93,66 @@ _TRUST_CLASSES = frozenset([
 VOUCHED = "deployment-vouched"
 
 _QUARANTINE_MARKER = "_breach_boundary_quarantined"
+
+# Seal field attached by verify(); checked by use(). Leading
+# underscore keeps it out of the deployment-visible record shape.
+_SEAL_FIELD = "_verification_seal"
+
+# Domain separator for the seal HMAC input.
+_SEAL_DOMAIN = b"sasanam/breach-boundary/verify/v1"
+
+# Minimum deployment-supplied seal key length (bytes). Shorter keys
+# are refused at construction -- fail closed on weak keys.
+_SEAL_KEY_MIN_BYTES = 16
+
+
+def _canonical(value):
+    """Total deterministic canonicalization to bytes.
+
+    Type-tagged and length-prefixed so concatenation is unambiguous.
+    Handles arbitrary values without raising: unknown types fall back
+    to their type name plus repr. Dict key order is normalized."""
+    if value is None:
+        return b"n"
+    if value is True:
+        return b"b1"
+    if value is False:
+        return b"b0"
+    if isinstance(value, int):
+        return b"i" + str(value).encode("ascii")
+    if isinstance(value, float):
+        return b"f" + repr(value).encode("ascii")
+    if isinstance(value, str):
+        raw = value.encode("utf-8")
+        return b"s" + str(len(raw)).encode("ascii") + b":" + raw
+    if isinstance(value, bytes):
+        return b"y" + str(len(value)).encode("ascii") + b":" + value
+    if isinstance(value, dict):
+        parts = [b"d"]
+        for key in sorted(value.keys(),
+                          key=lambda k: (type(k).__name__, repr(k))):
+            parts.append(_canonical(key))
+            parts.append(_canonical(value[key]))
+        return b"".join(parts)
+    if isinstance(value, (list, tuple)):
+        return b"l" + b"".join(_canonical(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        items = sorted((_canonical(item) for item in value))
+        return b"t" + b"".join(items)
+    return (b"o" + type(value).__name__.encode("ascii", "replace")
+            + b":" + repr(value).encode("utf-8", "replace"))
+
+
+def _seal_input(component, seq, output, verifier_id, evidence):
+    """The exact bytes sealed by verify() and re-checked by use()."""
+    return b"\x00".join([
+        _SEAL_DOMAIN,
+        _canonical(component),
+        _canonical(seq),
+        _canonical(output),
+        _canonical(verifier_id),
+        _canonical(evidence),
+    ])
 
 
 class BreachBoundaryError(Exception):
@@ -109,11 +183,57 @@ def _require_str(value, what):
 
 
 class BreachBoundary:
-    """The assume-breach boundary. Deployment-constructed, deterministic."""
+    """The assume-breach boundary. Deployment-constructed, deterministic.
 
-    def __init__(self):
+    ``seal_key`` is the HMAC key binding verified records to this
+    boundary instance. Deployments that need verified records to
+    survive boundary reconstruction (persistence, process restart)
+    MUST supply a stable key; otherwise a fresh random key is
+    generated and seals are instance-bound. Seal *values* therefore
+    differ across instances unless the key is supplied, but
+    allow/refuse behavior is deterministic. A deployment-supplied key
+    must be bytes of at least 16 bytes; anything weaker is refused
+    at construction.
+    """
+
+    def __init__(self, seal_key=None):
+        if seal_key is None:
+            seal_key = secrets.token_bytes(32)
+        if (not isinstance(seal_key, bytes)
+                or len(seal_key) < _SEAL_KEY_MIN_BYTES):
+            _refuse(BREACH_BOUNDARY_RECORD_MALFORMED,
+                    "seal_key must be bytes of at least %d bytes"
+                    % (_SEAL_KEY_MIN_BYTES,))
+        self._seal_key = seal_key
         self._components = {}
         self._seq = 0
+
+    def _seal(self, component, seq, output, verifier_id, evidence):
+        return hmac.new(
+            self._seal_key,
+            _seal_input(component, seq, output, verifier_id, evidence),
+            hashlib.sha256).hexdigest()
+
+    def _check_seal(self, record):
+        """Fail-closed seal verification for use(). A record claiming
+        verified status without a matching seal was forged or mutated
+        after verification."""
+        component = record["component"]
+        seal = record.get(_SEAL_FIELD)
+        if not isinstance(seal, str):
+            _refuse(BREACH_BOUNDARY_SEAL_INVALID,
+                    "quarantined record from %r claims verified status "
+                    "without a verification seal" % (component,))
+        verification = record.get("verification") or {}
+        expected = self._seal(
+            component, record.get("seq"), record.get("output"),
+            verification.get("verifier_id"),
+            verification.get("evidence"))
+        if not hmac.compare_digest(expected, seal):
+            _refuse(BREACH_BOUNDARY_SEAL_INVALID,
+                    "quarantined record from %r failed seal verification: "
+                    "forged or mutated after verification" % (component,))
+        return True
 
     # -- declaration -------------------------------------------------
 
@@ -218,7 +338,12 @@ class BreachBoundary:
     def verify(self, quarantined, verifier_record, vouch_map):
         """Mark a quarantined output verified by a deployment-vouched
         verifier. Returns a NEW record; the input is not mutated. The
-        boundary checks the verifier's vouch, never its judgment."""
+        boundary checks the verifier's vouch, never its judgment.
+
+        The returned record carries a tamper-evident HMAC seal over
+        (component, seq, output, verifier_id, evidence). use() refuses
+        any record whose seal is missing or does not match the
+        record's current contents."""
         record = self._quarantined(quarantined)
         _require_dict(verifier_record, "verifier record")
         verifier_id = _require_str(verifier_record.get("verifier_id"),
@@ -230,19 +355,26 @@ class BreachBoundary:
             _refuse(BREACH_BOUNDARY_CIRCUIT_TRIPPED,
                     "circuit tripped for %r; verify refused"
                     % (record["component"],))
+        evidence = verifier_record.get("evidence")
         verified = dict(record)
         verified["verified"] = True
         verified["verification"] = {
             "verifier_id": verifier_id,
-            "evidence": verifier_record.get("evidence"),
+            "evidence": evidence,
         }
+        verified[_SEAL_FIELD] = self._seal(
+            record["component"], record["seq"], record["output"],
+            verifier_id, evidence)
         return verified
 
     # -- use ---------------------------------------------------------
 
     def use(self, quarantined):
         """Consume a quarantined output. Order: declaration, circuit,
-        compromise, verification -- every check fail-closed."""
+        compromise, verification flag, seal integrity -- every check
+        fail-closed. A record claiming verified status without a
+        valid seal (forged flag or post-verification mutation) is
+        refused."""
         record = self._quarantined(quarantined)
         comp = self._component(record["component"])
         if comp["tripped"]:
@@ -258,6 +390,7 @@ class BreachBoundary:
                     "quarantined output from %r used without "
                     "deployment-vouched verification"
                     % (record["component"],))
+        self._check_seal(record)
         return {"decision": "allow",
                 "code": BREACH_BOUNDARY_QUARANTINED,
                 "note": "verified quarantined output used; containment "

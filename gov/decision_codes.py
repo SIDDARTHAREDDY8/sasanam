@@ -101,6 +101,56 @@ class DecisionCodeError(Exception):
 
 
 TAXONOMY = {
+    'aauth-aud-mismatch': {
+        "domain": 'aauth',
+        "code": 'aauth-aud-mismatch',
+        "human": 'aauth egress rule: token audience does not match the '
+                 'expected audience, or the audience is missing; failing '
+                 'closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-egress-blocked': {
+        "domain": 'aauth',
+        "code": 'aauth-egress-blocked',
+        "human": 'aauth egress rule: HTTPS-only default-deny egress '
+                 'refuses loopback, RFC1918, link-local, localhost, or '
+                 'non-https targets',
+        "severity": 'high',
+        "evidence_kinds_required": ['egress-target'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-iss-mismatch': {
+        "domain": 'aauth',
+        "code": 'aauth-iss-mismatch',
+        "human": 'aauth egress rule: token issuer does not match the '
+                 'expected issuer, or the issuer is missing; confused '
+                 'deputy prevention',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-scheme-not-allowed': {
+        "domain": 'aauth',
+        "code": 'aauth-scheme-not-allowed',
+        "human": 'aauth egress rule: scheme resolution without an '
+                 'explicitly allowing policy refuses; policy precedes '
+                 'discovery',
+        "severity": 'high',
+        "evidence_kinds_required": ['scheme-resolution'],
+        "reverify_steps": ['recompute'],
+    },
+    'aauth-stale-created': {
+        "domain": 'aauth',
+        "code": 'aauth-stale-created',
+        "human": 'aauth egress rule: RFC 9421 created timestamp is more '
+                 'than 60s from the verifier clock (past or future); '
+                 'failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
     'absence-advertised-but-missing': {
         "domain": 'absence',
         "code": 'absence-advertised-but-missing',
@@ -109,12 +159,84 @@ TAXONOMY = {
         "evidence_kinds_required": ['negative-record', 'signature', 'revocation-registry'],
         "reverify_steps": ['recompute'],
     },
+    'absence-backdated': {
+        "domain": 'absence-epoch',
+        "code": 'absence-backdated',
+        "human": 'observation time is outside the closed epoch window',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-disclosure-recorded': {
+        "domain": 'absence-epoch',
+        "code": 'absence-disclosure-recorded',
+        "human": 'a disclosure is recorded for this cell; the absence claim is forged',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record', 'disclosure-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-beacon-unsigned': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-beacon-unsigned',
+        "human": 'epoch beacon or close signature does not verify',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-closed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-closed',
+        "human": 'new observation refused: the epoch is already closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-malformed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-malformed',
+        "human": 'absence-epoch record or bundle is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-not-closed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-not-closed',
+        "human": 'epoch has no close record; unclosed epochs verify nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-epoch-not-open': {
+        "domain": 'absence-epoch',
+        "code": 'absence-epoch-not-open',
+        "human": 'no beacon record for the claimed epoch',
+        "severity": 'high',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
     'absence-never-advertised': {
         "domain": 'absence',
         "code": 'absence-never-advertised',
         "human": 'signed negative outcome: the absence was never advertised',
         "severity": 'medium',
         "evidence_kinds_required": ['negative-record', 'signature', 'revocation-registry'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-not-observed': {
+        "domain": 'absence-epoch',
+        "code": 'absence-not-observed',
+        "human": 'no absence observation recorded for this cell',
+        "severity": 'medium',
+        "evidence_kinds_required": ['epoch-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'absence-observation-unsigned': {
+        "domain": 'absence-epoch',
+        "code": 'absence-observation-unsigned',
+        "human": 'absence observation signature invalid or not bound to the beacon',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record'],
         "reverify_steps": ['recompute'],
     },
     'absence-refused': {
@@ -133,6 +255,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['negative-record', 'signature', 'revocation-registry'],
         "reverify_steps": ['recompute'],
     },
+    'absence-root-mismatch': {
+        "domain": 'absence-epoch',
+        "code": 'absence-root-mismatch',
+        "human": 'ledger does not recompute to the closed Merkle root',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'epoch-record', 'merkle-root'],
+        "reverify_steps": ['recompute'],
+    },
     'absence-unverifiable': {
         "domain": 'absence',
         "code": 'absence-unverifiable',
@@ -149,6 +279,24 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest', 'type-definition'],
         "reverify_steps": ['recompute-digest'],
     },
+    'action-depth-exceeded': {
+        "domain": 'typed_action',
+        "code": 'action-depth-exceeded',
+        "human": 'typed action: the material nesting depth exceeds '
+                 'max_depth for the type',
+        "severity": 'medium',
+        "evidence_kinds_required": ['type-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'action-duplicate-key': {
+        "domain": 'typed_action',
+        "code": 'action-duplicate-key',
+        "human": 'typed action: the material JSON contains a duplicate '
+                 'object key',
+        "severity": 'high',
+        "evidence_kinds_required": ['type-definition'],
+        "reverify_steps": ['recompute'],
+    },
     'action-material-missing': {
         "domain": 'typed_action',
         "code": 'action-material-missing',
@@ -156,6 +304,25 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['type-definition'],
         "reverify_steps": ['recompute'],
+    },
+    'action-material-type-mismatch': {
+        "domain": 'typed_action',
+        "code": 'action-material-type-mismatch',
+        "human": 'typed action: a material field violates its declared '
+                 'type',
+        "severity": 'medium',
+        "evidence_kinds_required": ['type-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'action-semantics-drift': {
+        "domain": 'typed_action',
+        "code": 'action-semantics-drift',
+        "human": 'typed action: the registered validation semantics '
+                 'disagree with the definition_sha256 the '
+                 'binding commits to',
+        "severity": 'critical',
+        "evidence_kinds_required": ['type-definition', 'digest'],
+        "reverify_steps": ['recompute-digest'],
     },
     'action-type-drift': {
         "domain": 'typed_action',
@@ -173,48 +340,11 @@ TAXONOMY = {
         "evidence_kinds_required": ['type-registry'],
         "reverify_steps": ['recompute'],
     },
-    'action-semantics-drift': {
-        "domain": 'typed_action',
-        "code": 'action-semantics-drift',
-        "human": 'typed action: the registered validation semantics '
-                 'disagree with the definition_sha256 the '
-                 'binding commits to',
-        "severity": 'critical',
-        "evidence_kinds_required": ['type-definition', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'action-depth-exceeded': {
-        "domain": 'typed_action',
-        "code": 'action-depth-exceeded',
-        "human": 'typed action: the material nesting depth exceeds '
-                 'max_depth for the type',
-        "severity": 'medium',
-        "evidence_kinds_required": ['type-definition'],
-        "reverify_steps": ['recompute'],
-    },
     'action-value-count-exceeded': {
         "domain": 'typed_action',
         "code": 'action-value-count-exceeded',
         "human": 'typed action: the material leaf-value count exceeds '
                  'max_values for the type',
-        "severity": 'medium',
-        "evidence_kinds_required": ['type-definition'],
-        "reverify_steps": ['recompute'],
-    },
-    'action-duplicate-key': {
-        "domain": 'typed_action',
-        "code": 'action-duplicate-key',
-        "human": 'typed action: the material JSON contains a duplicate '
-                 'object key',
-        "severity": 'high',
-        "evidence_kinds_required": ['type-definition'],
-        "reverify_steps": ['recompute'],
-    },
-    'action-material-type-mismatch': {
-        "domain": 'typed_action',
-        "code": 'action-material-type-mismatch',
-        "human": 'typed action: a material field violates its declared '
-                 'type',
         "severity": 'medium',
         "evidence_kinds_required": ['type-definition'],
         "reverify_steps": ['recompute'],
@@ -327,6 +457,62 @@ TAXONOMY = {
         "evidence_kinds_required": ['advisory', 'refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'aggregate-budget-already-charged': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-already-charged',
+        "human": 'aggregate budget: this (iss, jti) was already '
+                 'charged in this scope; a permit is never '
+                 're-chargeable',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-exhausted': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-exhausted',
+        "human": 'aggregate budget: charging the amount would push '
+                 'the scope aggregate past its declared cap; the '
+                 'individual act is permitted but the composition is '
+                 'not',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-malformed': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-malformed',
+        "human": 'aggregate budget: malformed scope declaration or '
+                 'charge (non-positive cap/window, non-positive or '
+                 'non-numeric amount); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'aggregate-budget-scope-undeclared': {
+        "domain": 'budget',
+        "code": 'aggregate-budget-scope-undeclared',
+        "human": 'aggregate budget: the scope was never declared; '
+                 'charging an undeclared scope refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'agreement-input-unmapped': {
+        "domain": 'reconcile_agreement',
+        "code": 'agreement-input-unmapped',
+        "human": 'reconcile agreement: the input fell outside the closed decision.reported x effect.observed axes, or the not-exercised evidence was not digest-bound; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['validate-axes'],
+    },
+    'agreement-not-authorization': {
+        "domain": 'reconcile_agreement',
+        "code": 'agreement-not-authorization',
+        "human": 'reconcile agreement: agreement evidence presented as authority was refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['deny-authority-use'],
+    },
     'alg-mismatch': {
         "domain": 'alg',
         "code": 'alg-mismatch',
@@ -391,6 +577,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'approval-capability-dead': {
+        "domain": 'scoped',
+        "code": 'approval-capability-dead',
+        "human": 'closure-scoped approval: the packet\u2019s attempt is '
+                 'settled; capabilities die at settlement, there is no '
+                 'second execution',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
     'approval-digest-diverged': {
         "domain": 'digest_link',
         "code": 'approval-digest-diverged',
@@ -398,6 +594,35 @@ TAXONOMY = {
         "severity": 'critical',
         "evidence_kinds_required": ['digest', 'record'],
         "reverify_steps": ['recompute-digest'],
+    },
+    'approval-edited': {
+        "domain": 'approval',
+        "code": 'approval-edited',
+        "human": 'approval: the approved action bytes differ from the '
+                 'proposed action bytes; approving with edits is '
+                 'refused -- re-propose the edited action instead',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-malformed': {
+        "domain": 'approval',
+        "code": 'approval-malformed',
+        "human": 'approval: the proposal or approval record is not a '
+                 'well-formed adapter-boundary record; refusing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-rebinding': {
+        "domain": 'approval',
+        "code": 'approval-rebinding',
+        "human": 'approval: the approval is presented in a proposal '
+                 'context it does not belong to (proposal id mismatch); '
+                 'approvals are never rebound across proposals',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record', 'digest'],
+        "reverify_steps": ['recompute'],
     },
     'approval-record-digest-mismatch': {
         "domain": 'capability',
@@ -423,6 +648,46 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'approval-route-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-route-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different route than the one it is presented against; '
+                 'a pre-computed approval is never replayed at another '
+                 'route',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-run-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-run-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different run_id than the one it is presented against',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-sandbox-mismatch': {
+        "domain": 'scoped',
+        "code": 'approval-sandbox-mismatch',
+        "human": 'closure-scoped approval: the packet is sealed for a '
+                 'different sandbox_id than the one it is presented '
+                 'against',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-state-stale': {
+        "domain": 'scoped',
+        "code": 'approval-state-stale',
+        "human": 'closure-scoped approval: state moved since issuance; '
+                 'the write-time recheck refused because the approval no '
+                 'longer covers the current state',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet', 'state-digest'],
+        "reverify_steps": ['recompute'],
+    },
     'arap-error': {
         "domain": 'arap',
         "code": 'arap-error',
@@ -439,12 +704,77 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'artifact-blob-extra': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-blob-extra',
+        "human": 'artifact pack: a blob was provided that the manifest '
+                 'does not list; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'manifest', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'artifact-blob-missing': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-blob-missing',
+        "human": 'artifact pack: the manifest lists a blob that was not '
+                 'provided; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'manifest', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'artifact-blob-tampered': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-blob-tampered',
+        "human": 'artifact pack: a blob digest does not match its '
+                 'content; the blob was altered after packing; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'manifest', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
     'artifact-gate-refused': {
         "domain": 'namespace',
         "code": 'artifact-gate-refused',
         "human": 'deployment namespace: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['namespace', 'signature', 'quorum'],
+        "reverify_steps": ['recompute'],
+    },
+    'artifact-manifest-malformed': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-manifest-malformed',
+        "human": 'artifact pack: the manifest or pack input is '
+                 'structurally invalid; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['artifact', 'manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'artifact-manifest-tampered': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-manifest-tampered',
+        "human": 'artifact pack: the manifest digest does not match; '
+                 'the manifest was altered after packing; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'manifest', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'artifact-size-mismatch': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-size-mismatch',
+        "human": 'artifact pack: a manifest size field disagrees with '
+                 'the provided bytes; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'manifest', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'artifact-type-unknown': {
+        "domain": 'artifact-pack',
+        "code": 'artifact-type-unknown',
+        "human": 'artifact pack: the artifactType is not a registered '
+                 'Sasanam artifact type; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['artifact', 'manifest'],
         "reverify_steps": ['recompute'],
     },
     'artifact_unpinned': {
@@ -575,6 +905,66 @@ TAXONOMY = {
         "evidence_kinds_required": ['negative-record', 'signature', 'revocation-registry'],
         "reverify_steps": ['recompute'],
     },
+    'attestation-class-inflation': {
+        "domain": 'attested',
+        "code": 'attestation-class-inflation',
+        "human": 'attested-vs-asserted field column: a caller-declared or '
+                 'caller-asserted field was presented as issuer-verified; '
+                 'refusing instead of conferring verification it never had',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-class-unlabeled': {
+        "domain": 'attested',
+        "code": 'attestation-class-unlabeled',
+        "human": 'attested-vs-asserted field column: a record field has no '
+                 'attestation class; refusing at emit instead of inventing '
+                 'one',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-outcome-misread': {
+        "domain": 'attested',
+        "code": 'attestation-outcome-misread',
+        "human": 'attested-vs-asserted field column: the decision outcome '
+                 'was presented as proof of execution; ALLOWED attests the '
+                 'decision only, proof of execution needs issuer-attested '
+                 'effect evidence',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestation-record-malformed': {
+        "domain": 'attested',
+        "code": 'attestation-record-malformed',
+        "human": 'attested-vs-asserted field column: the record is the '
+                 'wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'authority-stale': {
+        "domain": 'authority',
+        "code": 'authority-stale',
+        "human": 'proof != authority fail-safe: the proof verified but '
+                 'the authority is revoked, expired, or lapsed; refused '
+                 'fail-safe, never proof pass-through',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'authority-unavailable': {
+        "domain": 'authority',
+        "code": 'authority-unavailable',
+        "human": 'proof != authority fail-safe: the authority source is '
+                 'unavailable; deterministic named fail-safe, not a '
+                 'timeout-retry loop',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-status'],
+        "reverify_steps": ['recompute'],
+    },
     'authorized_builders': {
         "domain": 'slsa',
         "code": 'authorized_builders',
@@ -582,6 +972,46 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['predicate', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
+    },
+    'axis-ceiling-hit': {
+        "domain": 'axis',
+        "code": 'axis-ceiling-hit',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is indeterminate because a verifier ceiling was hit; '
+                 'the limit is named, never treated as invalid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-indeterminate': {
+        "domain": 'axis',
+        "code": 'axis-indeterminate',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is indeterminate for a non-ceiling reason; '
+                 'indeterminate never reads as valid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-invalid': {
+        "domain": 'axis',
+        "code": 'axis-invalid',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'aggregates to invalid; invalid chains never read as '
+                 'valid',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'axis-unestablished': {
+        "domain": 'axis',
+        "code": 'axis-unestablished',
+        "human": 'axis/result model: require_valid refused a chain that '
+                 'is not valid because an axis was unestablished; '
+                 'unestablished axes never contribute to valid',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
     },
     'bad-artifacts': {
         "domain": 'corpus',
@@ -967,6 +1397,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['boundary-record', 'vouch-map'],
         "reverify_steps": ['recompute', 'provenance-check'],
     },
+    'breach-boundary-seal-invalid': {
+        "domain": 'breach-boundary',
+        "code": 'breach-boundary-seal-invalid',
+        "human": 'a quarantined record claimed verified status but its '
+                 'verification seal was missing or did not match: the '
+                 'record was forged or mutated after verification',
+        "severity": 'high',
+        "evidence_kinds_required": ['boundary-record', 'quarantine-record'],
+        "reverify_steps": ['recompute'],
+    },
     'breach-boundary-unknown-component': {
         "domain": 'breach-boundary',
         "code": 'breach-boundary-unknown-component',
@@ -1181,12 +1621,253 @@ TAXONOMY = {
         "evidence_kinds_required": ['namespace', 'signature', 'quorum'],
         "reverify_steps": ['recompute'],
     },
+    'chain-octet-digest-absent': {
+        "domain": 'audit',
+        "code": 'chain-octet-digest-absent',
+        "human": 'audit log: an entry carries no well-formed '
+                 'prev_record_octets_digest; refusing instead of '
+                 'silently degrading to semantic chaining',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-octet-digest-mismatch': {
+        "domain": 'audit',
+        "code": 'chain-octet-digest-mismatch',
+        "human": 'audit log: an entry\u2019s prev_record_octets_digest does '
+                 'not match the stored previous-record octets (the '
+                 'previous record was re-encoded: byte-different, '
+                 'semantically equal); refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-record-truncated': {
+        "domain": 'audit',
+        "code": 'chain-record-truncated',
+        "human": 'audit log: a record\u2019s stored bytes (or its '
+                 'predecessor\u2019s) do not decode as a JSON record; '
+                 'refusing, never silently skipping',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-source-stale': {
+        "domain": 'authority',
+        "code": 'chain-source-stale',
+        "human": 'verifier-side fail-closed: the delegation-chain source '
+                 'input is stale; explicit stale verdict, never a '
+                 'silent pass',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain-source-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'chain-source-unavailable': {
+        "domain": 'authority',
+        "code": 'chain-source-unavailable',
+        "human": 'verifier-side fail-closed: the delegation-chain source '
+                 'is unavailable; fail closed, never allow',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain-source-declaration'],
+        "reverify_steps": ['recompute'],
+    },
     'chain_broken': {
         "domain": 'approval',
         "code": 'chain_broken',
         "human": 'approval and delegation: the delegation chain is broken',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'channel-identity-unattested': {
+        "domain": 'attested-channel',
+        "code": 'channel-identity-unattested',
+        "human": 'self-reported principal with no attested peer identity; refused, never downgraded',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'channel-peer-mismatch': {
+        "domain": 'attested-channel',
+        "code": 'channel-peer-mismatch',
+        "human": 'attested peer identity names a different principal than the self-reported one',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'channel-record-malformed': {
+        "domain": 'attested-channel',
+        "code": 'channel-record-malformed',
+        "human": 'emitter claim or attested peer block is not the shape the admission layer speaks',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'channel-sequence-break': {
+        "domain": 'attested-channel',
+        "code": 'channel-sequence-break',
+        "human": 'claim sequence does not follow the peer last admitted sequence',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'channel-timestamp-divergence': {
+        "domain": 'attested-channel',
+        "code": 'channel-timestamp-divergence',
+        "human": 'emitter ts_emit diverges from daemon time beyond the forgery bound',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-chain-broken': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-chain-broken',
+        "human": 'audit checkpoints: a checkpoint prev_digest link does not match its predecessor',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-count-mismatch': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-count-mismatch',
+        "human": 'audit checkpoints: the log has more entries than the checkpoint commits to',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-evidence-not-authorization': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-evidence-not-authorization',
+        "human": 'audit checkpoints: checkpoint evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-extension-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-extension-empty',
+        "human": 'C2SP checkpoint: an extension line is empty',
+        "severity": 'low',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-inconsistent': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-inconsistent',
+        "human": 'C2SP checkpoint: journal refused a different root '
+                 'for an already-signed (origin, size)',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-known-signature-invalid': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-known-signature-invalid',
+        "human": 'C2SP checkpoint: a known key signature failed; '
+                 'whole note rejected',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-log-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-log-empty',
+        "human": 'C2SP checkpoint: log tree is empty; no checkpoint '
+                 'can be emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-log-incomplete': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-log-incomplete',
+        "human": 'audit checkpoints: the log is truncated against the checkpoint (fewer entries than committed)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-log-reordered': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-log-reordered',
+        "human": 'audit checkpoints: the recomputed MMR peaks disagree with the committed peaks (reorder or silent content substitution)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-malformed': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-malformed',
+        "human": 'audit checkpoints: the checkpoint or its inputs are structurally malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-no-trusted-signature': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-no-trusted-signature',
+        "human": 'C2SP checkpoint: no signature from a known key '
+                 'verified',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-not-c2sp': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-not-c2sp',
+        "human": 'C2SP checkpoint: signed note body is not the '
+                 'checkpoint format; bespoke notes stay internal',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-note-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-note-malformed',
+        "human": 'C2SP checkpoint: bytes are not a valid signed note',
+        "severity": 'high',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-origin-empty': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-origin-empty',
+        "human": 'C2SP checkpoint: origin line empty or carries '
+                 'spaces/plus',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-refused': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-refused',
+        "human": 'audit checkpoints: generic checkpoint refusal',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'checkpoint-root-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-root-malformed',
+        "human": 'C2SP checkpoint: root hash is not base64 of 32 bytes',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
+        "reverify_steps": ['recompute'],
+    },
+    'checkpoint-signature-invalid': {
+        "domain": 'checkpoints',
+        "code": 'checkpoint-signature-invalid',
+        "human": 'audit checkpoints: the checkpoint signature does not verify',
+        "severity": 'critical',
+        "evidence_kinds_required": ['checkpoint', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'checkpoint-size-malformed': {
+        "domain": 'checkpoint',
+        "code": 'checkpoint-size-malformed',
+        "human": 'C2SP checkpoint: tree size is not ASCII decimal '
+                 'without leading zeros',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint-note'],
         "reverify_steps": ['recompute'],
     },
     'child-refused-op': {
@@ -1197,6 +1878,64 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'claim-invalid-grant': {
+        "domain": 'claim',
+        "code": 'claim-invalid-grant',
+        "human": 'claim-at-dispatch: the grant seal does not recompute, '
+                 'or the claim binds another payload digest; tampered or '
+                 'foreign grants claim nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-lease-expired': {
+        "domain": 'claim',
+        "code": 'claim-lease-expired',
+        "human": 'claim-at-dispatch: the claim lease elapsed on the '
+                 'monotonic clock before presentation; a slow upstream '
+                 'cannot outlive the permission',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-malformed': {
+        "domain": 'claim',
+        "code": 'claim-malformed',
+        "human": 'claim-at-dispatch: the grant, claim, or an argument is '
+                 'the wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-not-presented': {
+        "domain": 'claim',
+        "code": 'claim-not-presented',
+        "human": 'claim-at-dispatch: dispatch attempted without a claim '
+                 'presented at the authority; a locally verified grant '
+                 'alone authorizes nothing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-not-releasable': {
+        "domain": 'claim',
+        "code": 'claim-not-releasable',
+        "human": 'claim-at-dispatch: a second claim against an '
+                 'already-consumed grant; consumed grants are never '
+                 'released, never retried',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'claim-replay': {
+        "domain": 'claim',
+        "code": 'claim-replay',
+        "human": 'claim-at-dispatch: the same claim presented twice; one '
+                 'claim, one dispatch attempt',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-record'],
+        "reverify_steps": ['recompute'],
+    },
     'clear_cross_run_lineage': {
         "domain": 'lineage',
         "code": 'clear_cross_run_lineage',
@@ -1204,6 +1943,136 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['lineage-record', 'signature'],
         "reverify_steps": ['replay-chain'],
+    },
+    'close-chain-digest-mismatch': {
+        "domain": 'close',
+        "code": 'close-chain-digest-mismatch',
+        "human": 'close binding: the close record\u2019s chain digest '
+                 'does not match the recomputed digest over the chain; '
+                 'a chain record was rewritten',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-record-malformed': {
+        "domain": 'close',
+        "code": 'close-record-malformed',
+        "human": 'close binding: the chain or the close record is not a '
+                 'well-formed record mapping, or a record digest is '
+                 'missing/malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-signature-invalid': {
+        "domain": 'close',
+        "code": 'close-signature-invalid',
+        "human": 'close binding: the close record\u2019s signature fails '
+                 'against the trust root\u2019s pinned key material; the '
+                 'record\u2019s signer id is claimed, not authenticated',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-signer-absent': {
+        "domain": 'close',
+        "code": 'close-signer-absent',
+        "human": 'close binding: the chain\u2019s first record carries no '
+                 'signer identity, so no session-start signer can be '
+                 'pinned; binding to nothing is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-signer-mismatch': {
+        "domain": 'close',
+        "code": 'close-signer-mismatch',
+        "human": 'close binding: the close record\u2019s signer id differs '
+                 'from the chain-root session-start signer id; being a '
+                 'listed key does not excuse a different signer',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-trust-repointed': {
+        "domain": 'close',
+        "code": 'close-trust-repointed',
+        "human": 'close binding: the close record re-points a trust id '
+                 '-- the same key-id label with key material differing '
+                 'from the external trust root\u2019s pinned material',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'trust-config', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'close-unsigned-scope': {
+        "domain": 'close',
+        "code": 'close-unsigned-scope',
+        "human": 'close binding: verification was asked to rely on a '
+                 'scope/authority field outside the close record\u2019s '
+                 'signature-covered body; unsigned scope is never '
+                 'consulted, refusing fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-permit-absent': {
+        "domain": 'permit',
+        "code": 'closure-permit-absent',
+        "human": 'permit/closure: a closure presented without its '
+                 'matching permit; the two halves must be presented '
+                 'together',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-permit-mismatch': {
+        "domain": 'permit',
+        "code": 'closure-permit-mismatch',
+        "human": 'permit/closure: the closure binds a different permit '
+                 'digest than the presented permit; the two halves '
+                 'disagree',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'closure-scope-widened': {
+        "domain": 'permit',
+        "code": 'closure-scope-widened',
+        "human": 'permit/closure: the closure claims effects outside '
+                 'the permit\'s scope; a closure may narrow, never '
+                 'widen',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'combine-default-deny': {
+        "domain": 'policy-combine',
+        "code": 'combine-default-deny',
+        "human": 'policy-set combiner: no policy in the set permitted '
+                 'the request; denied fail-closed (default deny)',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'combine-forbid-overrides': {
+        "domain": 'policy-combine',
+        "code": 'combine-forbid-overrides',
+        "human": 'policy-set combiner: at least one policy forbade the '
+                 'request; the forbid overrides all permits and the '
+                 'request is denied',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'combine-misuse': {
+        "domain": 'policy-combine',
+        "code": 'combine-misuse',
+        "human": 'policy-set combiner: the input was not a sequence of '
+                 'validated policy decisions; refused fail-closed rather '
+                 'than guessing a verdict',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
     },
     'commit-path-escape': {
         "domain": 'capability',
@@ -1245,6 +2114,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['release', 'approval-record', 'signature'],
         "reverify_steps": ['verify-signature', 'replay-chain'],
     },
+    'config-authority-claim-refused': {
+        "domain": 'config',
+        "code": 'config-authority-claim-refused',
+        "human": 'agent-trusts-config: agent-observed config claims a privilege with no matching grant in the deployment-pinned authority; config never self-attests into authority; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-record', 'authority-source', 'provenance'],
+        "reverify_steps": ['authority-check', 'recompute'],
+    },
     'config-body-malformed': {
         "domain": 'deploy',
         "code": 'config-body-malformed',
@@ -1260,6 +2137,38 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
+    },
+    'config-provenance-agent-asserted': {
+        "domain": 'config',
+        "code": 'config-provenance-agent-asserted',
+        "human": 'agent-trusts-config: the config asserts its own provenance trust; provenance is deployment-vouched, never agent-asserted; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-record', 'provenance'],
+        "reverify_steps": ['provenance-check'],
+    },
+    'config-provenance-untrusted': {
+        "domain": 'config',
+        "code": 'config-provenance-untrusted',
+        "human": 'agent-trusts-config: the config carries privilege claims with no provenance block; provenance absence is not trust; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-record', 'provenance'],
+        "reverify_steps": ['provenance-check'],
+    },
+    'config-record-malformed': {
+        "domain": 'config',
+        "code": 'config-record-malformed',
+        "human": 'agent-trusts-config: the config record or authority source failed structural validation; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'config-rewritten-privilege': {
+        "domain": 'config',
+        "code": 'config-rewritten-privilege',
+        "human": 'agent-trusts-config: the config was rewritten mid-run adding privileges; the rewrite is audit-logged and the privileged action fails closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-record', 'audit-journal', 'provenance'],
+        "reverify_steps": ['recompute', 'authority-check'],
     },
     'config-version-mismatch': {
         "domain": 'deploy',
@@ -1299,6 +2208,75 @@ TAXONOMY = {
         "human": 'platform egress: no platform consent token was presented',
         "severity": 'medium',
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-idempotency-reused': {
+        "domain": 'consumption',
+        "code": 'consumption-idempotency-reused',
+        "human": 'consumption ledger: an entity-bound idempotency key '
+                 'already consumed one frozen instance; a different '
+                 'instance cannot release under it',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-instance-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-instance-malformed',
+        "human": 'consumption ledger: the presented instance digest is '
+                 'not a bare 64-hex sha256 digest; the ledger is keyed '
+                 'to frozen-instance digests only',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-journal-unusable': {
+        "domain": 'consumption',
+        "code": 'consumption-journal-unusable',
+        "human": 'consumption ledger: the write-ahead journal cannot be '
+                 'read or fails receipt verification; the ledger refuses '
+                 'to operate rather than release against an untrustworthy '
+                 'consumed set',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-journal-write-failed': {
+        "domain": 'consumption',
+        "code": 'consumption-journal-write-failed',
+        "human": 'consumption ledger: the write-ahead commit failed; '
+                 'nothing was marked consumed and no receipt was issued',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-key-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-key-malformed',
+        "human": 'consumption ledger: idempotency key parts must be a '
+                 'tuple/list of at least two non-empty strings (key '
+                 'type + entity identifier)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-receipt-malformed': {
+        "domain": 'consumption',
+        "code": 'consumption-receipt-malformed',
+        "human": 'consumption ledger: the presented receipt is missing '
+                 'fields or carries non-digest values',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'consumption-receipt-tampered': {
+        "domain": 'consumption',
+        "code": 'consumption-receipt-tampered',
+        "human": 'consumption ledger: the receipt digest does not '
+                 'recompute over the receipt body; the receipt was '
+                 'edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
     'content-type-not-allowlisted': {
@@ -1381,6 +2359,65 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'corroboration-key-inequality': {
+        "domain": 'corroboration',
+        "code": 'corroboration-key-inequality',
+        "human": 'independent corroboration: two items presented as '
+                 'distinct sources share one key_id; not key-independent',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-malformed': {
+        "domain": 'corroboration',
+        "code": 'corroboration-malformed',
+        "human": 'independent corroboration: the envelope or an evidence '
+                 'item is the wrong shape; refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-signature-invalid': {
+        "domain": 'corroboration',
+        "code": 'corroboration-signature-invalid',
+        "human": 'independent corroboration: the Ed25519 signature fails '
+                 'under the policy-held key; the item was edited after '
+                 'signing',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-unattested': {
+        "domain": 'corroboration',
+        "code": 'corroboration-unattested',
+        "human": 'independent corroboration: the item provenance resolves '
+                 'to the gated runtime itself; self-attested evidence is '
+                 'never corroboration',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-uncorroborated': {
+        "domain": 'corroboration',
+        "code": 'corroboration-uncorroborated',
+        "human": 'independent corroboration: a required dimension has '
+                 'fewer than two key-inequal corroborating sources; a '
+                 'lone source cannot corroborate itself',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'corroboration-untrusted-source': {
+        "domain": 'corroboration',
+        "code": 'corroboration-untrusted-source',
+        "human": 'independent corroboration: the item key_id is not in '
+                 'the consumer\u2019s own trust policy; the consumer '
+                 'cannot corroborate against key material it does not '
+                 'independently hold',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence-envelope'],
+        "reverify_steps": ['recompute'],
+    },
     'cross_run_denied': {
         "domain": 'approval',
         "code": 'cross_run_denied',
@@ -1429,6 +2466,78 @@ TAXONOMY = {
         "evidence_kinds_required": ['taxonomy', 'digest'],
         "reverify_steps": ['replay-claim'],
     },
+    'decision-effect-decision-drift': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-decision-drift',
+        "human": 'decision effect: the decision receipt claim drifted from the digest recomputed from its verdict bytes',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
+        "reverify_steps": ['reseal-decision', 'recompute-decision-digest'],
+    },
+    'decision-effect-disagreement': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-disagreement',
+        "human": 'decision effect: what was executed is not what was decided (attempt digests or backlink disagree)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
+        "reverify_steps": ['recompute-attempt-digests', 'rebind-backlink'],
+    },
+    'decision-effect-effect-absent': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-effect-absent',
+        "human": 'decision effect: a decision was presented with no execution record; absence is evidence of non-execution, never acceptance',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['require-execution-record'],
+    },
+    'decision-effect-effect-drift': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-effect-drift',
+        "human": 'decision effect: the execution receipt effect drifted from the re-classified, re-sealed effect',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'verdict-record', 'observation', 'digest'],
+        "reverify_steps": ['replay-effect-classify', 'reseal-effect'],
+    },
+    'decision-effect-extra-effect': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-extra-effect',
+        "human": 'decision effect: an execution record was presented with no decision authorizing it',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['require-decision-record'],
+    },
+    'decision-effect-malformed': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-malformed',
+        "human": 'decision effect: the input failed structural validation; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['validate-shape'],
+    },
+    'decision-effect-not-authorization': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-not-authorization',
+        "human": 'decision effect: agreement evidence presented as authority was refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['deny-authority-use'],
+    },
+    'decision-effect-refused': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-refused',
+        "human": 'decision effect: refused by policy',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['validate-shape'],
+    },
+    'decision-effect-time-inversion': {
+        "domain": 'decision_effect',
+        "code": 'decision-effect-time-inversion',
+        "human": 'decision effect: the effect timestamp precedes the decision timestamp',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-time-order'],
+    },
     'decision-labels-invalid': {
         "domain": 'decision',
         "code": 'decision-labels-invalid',
@@ -1453,6 +2562,36 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-attestation-malformed': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-attestation-malformed',
+        "human": 'delegation freshness: the attestation record is not the '
+                 'expected shape (non-string fields, non-sequence or '
+                 'non-string capabilities, unparseable or timezone-naive '
+                 'timestamps); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-chain-broken': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-chain-broken',
+        "human": 'delegation freshness: the delegation chain is empty, not '
+                 'a sequence, or a hop issuer does not equal its parent '
+                 "subject; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-containment-violated': {
+        "domain": 'containment',
+        "code": 'delegation-containment-violated',
+        "human": 'delegation containment: a child grant bound exceeds the '
+                 "parent's bound on a named key (wei §13 Contains)",
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'parent-permit-bounds'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-decision-mismatch': {
         "domain": 'capability',
         "code": 'delegation-decision-mismatch',
@@ -1461,12 +2600,66 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-freshness-expired': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-freshness-expired',
+        "human": 'delegation freshness: the attestation TTL has elapsed at '
+                 'check time (inclusive of the exact expiry instant); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'freshness-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-monotonicity-violated': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-monotonicity-violated',
+        "human": 'delegation freshness: a hop delegates a capability entry '
+                 'not covered by the parent set (exact entry, "*", or '
+                 '"<prefix>:*"); widening refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'parent-attestation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-not-allowlisted': {
         "domain": 'capability',
         "code": 'delegation-not-allowlisted',
         "human": 'capability assessment: the delegation is not allowlisted',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-state-mismatch': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-state-mismatch',
+        "human": 'delegation freshness: the attestation state_hash does '
+                 'not equal the digest of its presented capability set; '
+                 'the hop swapped its set or never bound it; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ttl-excessive': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-ttl-excessive',
+        "human": 'delegation freshness: the attestation TTL exceeds the '
+                 'deployment max_ttl cap; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['capability-attestation',
+                                    'deployment-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-ttl-missing': {
+        "domain": 'delegation-freshness',
+        "code": 'delegation-ttl-missing',
+        "human": 'delegation freshness: the capability attestation carries '
+                 'no usable TTL (missing, zero, negative, non-integer, or '
+                 'boolean); treated as expired and refused fail-closed, '
+                 'never an infinite-life attestation',
+        "severity": 'high',
+        "evidence_kinds_required": ['capability-attestation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-unknown-parent': {
@@ -1500,6 +2693,103 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
+    },
+    'denial-anchored-in-denied-transaction': {
+        "domain": 'seeded_denial',
+        "code": 'denial-anchored-in-denied-transaction',
+        "human": 'seeded denials: the denial record anchors inside the '
+                 'denied transaction, so a rollback could erase the denial',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
+        "reverify_steps": ['recompute', 'check-anchor'],
+    },
+    'denial-capsule-malformed': {
+        "domain": 'denial',
+        "code": 'denial-capsule-malformed',
+        "human": 'denial capsules: the presented denial capsule, its '
+                 'disclosure record, or a seal-time input is not '
+                 'well-formed; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-capsule-signature-invalid': {
+        "domain": 'denial',
+        "code": 'denial-capsule-signature-invalid',
+        "human": 'denial capsules: the denial capsule seal does not '
+                 'verify against the presented key; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-disclosure-mismatch': {
+        "domain": 'denial',
+        "code": 'denial-disclosure-mismatch',
+        "human": 'denial capsules: a disclosed field does not match '
+                 'its salted commitment in the sealed capsule, or the '
+                 'disclosure binds a different capsule; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'denial-evidence-lost': {
+        "domain": 'seeded_denial',
+        "code": 'denial-evidence-lost',
+        "human": 'seeded denials: the committed denial record is absent from '
+                 'the post-rollback log; the denial evidence did not survive',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 'check-commit'],
+    },
+    'denial-unsealed': {
+        "domain": 'denial',
+        "code": 'denial-unsealed',
+        "human": 'denial capsules: a denial was emitted without a '
+                 'sealed denial capsule; a denial must be sealed or '
+                 'the action never ran; refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'deny-receipt-malformed': {
+        "domain": 'receipts',
+        "code": 'deny-receipt-malformed',
+        "human": 'signed receipts: the presented receipt record is not well-formed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'deny-receipt-not-authorization': {
+        "domain": 'receipts',
+        "code": 'deny-receipt-not-authorization',
+        "human": 'signed receipts: receipt evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'deny-receipt-refused': {
+        "domain": 'receipts',
+        "code": 'deny-receipt-refused',
+        "human": 'signed receipts: base refusal for signed receipt failures',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'decision'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'deny-receipt-signature-invalid': {
+        "domain": 'receipts',
+        "code": 'deny-receipt-signature-invalid',
+        "human": 'signed receipts: the receipt signature does not verify (tampered or wrong key)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature'],
+        "reverify_steps": ['recompute', 'verify-signature'],
+    },
+    'deny-receipt-unavailable-as-permit': {
+        "domain": 'receipts',
+        "code": 'deny-receipt-unavailable-as-permit',
+        "human": 'signed receipts: a permit verdict was paired with an unavailable (outage) class',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'decision'],
+        "reverify_steps": ['recompute', 'replay-claim'],
     },
     'deny_first_rules': {
         "domain": 'decision_log',
@@ -1663,6 +2953,15 @@ TAXONOMY = {
         "evidence_kinds_required": ['pin', 'gate-record'],
         "reverify_steps": ['recompute'],
     },
+    'dispatch-without-permit': {
+        "domain": 'permit',
+        "code": 'dispatch-without-permit',
+        "human": 'permit/closure: dispatch attempted with no permit; '
+                 'the permit must be issued pre-dispatch',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'display-attestation-error': {
         "domain": 'display',
         "code": 'display-attestation-error',
@@ -1711,6 +3010,77 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'dsse-envelope-malformed': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-malformed',
+        "human": 'DSSE envelope: the envelope or PAE bytes are ambiguous '
+                 'or malformed (leading-zero length, trailing bytes, '
+                 'unknown fields, digest-binding mismatch)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-envelope-multi-signature': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-multi-signature',
+        "human": 'DSSE envelope: the envelope carries more than one '
+                 'signature without an explicit expected_signatures '
+                 'opt-in, or the signature count does not match the '
+                 'opted-in count; signature-count ambiguity is refused, '
+                 'never silently accepted',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-envelope-no-signature': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-no-signature',
+        "human": 'DSSE envelope: the envelope carries zero signatures; '
+                 'the exactly-one-signature discipline refuses a '
+                 'signature-less envelope fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-envelope-transplant': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-transplant',
+        "human": 'DSSE envelope: the envelope payloadType is registered '
+                 'to a different verifier module domain than the one '
+                 'verifying (cross-module transplant)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-payload-type-refused': {
+        "domain": 'dsse',
+        "code": 'dsse-payload-type-refused',
+        "human": 'DSSE envelope: payloadType outside the vendored '
+                 'application/vnd.sasanam.*+json namespace, or an envelope '
+                 'presented under the wrong expected payloadType',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-payloadtype-mismatch': {
+        "domain": 'dsse',
+        "code": 'dsse-payloadtype-mismatch',
+        "human": 'DSSE envelope: the envelope payloadType differs from '
+                 'the caller-bound expected type; transplant across '
+                 'evidence kinds is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-signature-invalid': {
+        "domain": 'dsse',
+        "code": 'dsse-signature-invalid',
+        "human": 'DSSE envelope: the signature does not verify over the '
+                 'PAE bytes (payloadType + payload bound by length prefix)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'duplicate-trust-record': {
         "domain": 'c2pa',
         "code": 'duplicate-trust-record',
@@ -1733,6 +3103,30 @@ TAXONOMY = {
         "human": 'approval and delegation: a duplicate vote was refused',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'effect-decision-contradicted': {
+        "domain": 'effect-agreement',
+        "code": 'effect-decision-contradicted',
+        "human": 'observed effect contradicts the recorded decision',
+        "severity": 'high',
+        "evidence_kinds_required": ['decision-record', 'effect-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'effect-decision-missing': {
+        "domain": 'effect-agreement',
+        "code": 'effect-decision-missing',
+        "human": 'no decision recorded for this action id',
+        "severity": 'medium',
+        "evidence_kinds_required": ['decision-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'effect-not-bound': {
+        "domain": 'effect-agreement',
+        "code": 'effect-not-bound',
+        "human": 'effect bytes do not digest to the recorded effect digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['effect-record'],
         "reverify_steps": ['recompute'],
     },
     'effect-status-ambiguous-refused': {
@@ -1758,6 +3152,36 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['observation', 'effect-status'],
         "reverify_steps": ['replay-classify'],
+    },
+    'egress-destination-exemption-refused': {
+        "domain": 'spawn-context',
+        "code": 'egress-destination-exemption-refused',
+        "human": 'a review exemption claimed on destination-ownership '
+                 'grounds, or deployment-pinned status claimed for a '
+                 'destination the pinned map does not vouch; '
+                 'destination-ownership never exempts review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['egress-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'egress-injection-propagation': {
+        "domain": 'egress',
+        "code": 'egress-injection-propagation',
+        "human": 'outbound public-channel content reproduces an injected '
+                 'instruction span observed from untrusted input; refused '
+                 'at hop 1',
+        "severity": 'high',
+        "evidence_kinds_required": ['egress', 'span'],
+        "reverify_steps": ['recompute'],
+    },
+    'egress-propagation-malformed': {
+        "domain": 'egress',
+        "code": 'egress-propagation-malformed',
+        "human": 'the egress-propagation guard input is not the shape the '
+                 'seam speaks; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
     },
     'empty_reason': {
         "domain": 'approval',
@@ -1815,6 +3239,117 @@ TAXONOMY = {
         "evidence_kinds_required": ['approval-record', 'capsule', 'digest'],
         "reverify_steps": ['recompute-approval-digest', 'recompute-action-digest'],
     },
+    'evaluation-incomplete-details': {
+        "domain": 'evaluation',
+        "code": 'evaluation-incomplete-details',
+        "human": 'evaluation function: an authorization_details entry '
+                 'was never evaluated (skipped, failed, or its '
+                 'per-entry verdict is missing from the record); the '
+                 'whole call is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-input-swapped': {
+        "domain": 'evaluation',
+        "code": 'evaluation-input-swapped',
+        "human": 'evaluation function: the call_digest or verdict_digest '
+                 'does not match the recomputed digest of the frozen '
+                 'input; the input or verdict was swapped after '
+                 'freezing/evaluation',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-key-role-conflation': {
+        "domain": 'evaluation',
+        "code": 'evaluation-key-role-conflation',
+        "human": 'evaluation function: the evidence key and the '
+                 'adjudication key are the same key; the freezer and '
+                 'the adjudicator must be different roles',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-malformed': {
+        "domain": 'evaluation',
+        "code": 'evaluation-malformed',
+        "human": 'evaluation function: the frozen call or evaluation '
+                 'record is not well-formed (empty or misshapen '
+                 'authorization_details, half-pinned policy revision, '
+                 'non-UTC instant)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-non-reproducible': {
+        "domain": 'evaluation',
+        "code": 'evaluation-non-reproducible',
+        "human": 'evaluation function: replay of the frozen input under '
+                 'the pinned revision produced a different verdict than '
+                 'the record claims',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-not-authorization': {
+        "domain": 'evaluation',
+        "code": 'evaluation-not-authorization',
+        "human": 'evaluation function: an evaluation record is evidence, '
+                 'never authority; presenting one as authority refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-policy-digest-mismatch': {
+        "domain": 'evaluation',
+        "code": 'evaluation-policy-digest-mismatch',
+        "human": 'evaluation function: the registry digest for the '
+                 'pinned policy_rev_id disagrees with the record\'s '
+                 'pinned digest; digests are recomputed from ruleset '
+                 'bytes, never trusted from claims',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaluation-policy-drift': {
+        "domain": 'evaluation',
+        "code": 'evaluation-policy-drift',
+        "human": 'evaluation function: replay against the current engine '
+                 'would change the verdict; the pinned revision is '
+                 'reproducible but the live policy has drifted',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute', 're-evaluate'],
+    },
+    'evaluation-revision-unknown': {
+        "domain": 'evaluation',
+        "code": 'evaluation-revision-unknown',
+        "human": 'evaluation function: the pinned policy_rev_id is not '
+                 'registered in the revision registry',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-envelope-record-limit': {
+        "domain": 'evidence',
+        "code": 'evidence-envelope-record-limit',
+        "human": 'evidence envelope: record/envelope count exceeds the '
+                 'verification-work bound (refused before any signature '
+                 'verification)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-envelope-record-too-large': {
+        "domain": 'evidence',
+        "code": 'evidence-envelope-record-too-large',
+        "human": 'evidence envelope: a single record exceeds the '
+                 'per-record canonical-byte bound',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'evidence-incomplete': {
         "domain": 'evidence',
         "code": 'evidence-incomplete',
@@ -1839,6 +3374,36 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'expected-participant-missing': {
+        "domain": 'participants',
+        "code": 'expected-participant-missing',
+        "human": 'expected-participants audit: a participant declared '
+                 'expected for the workload has no signed hop in the '
+                 'delegation chain; omission is not detectable without '
+                 'the declared policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation-chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'expected-participants-malformed': {
+        "domain": 'participants',
+        "code": 'expected-participants-malformed',
+        "human": 'expected-participants audit: malformed policy or '
+                 'chain input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'expected-participants-undeclared': {
+        "domain": 'participants',
+        "code": 'expected-participants-undeclared',
+        "human": 'expected-participants audit: no declared '
+                 'expected-participants policy for the workload; the '
+                 'chain is not verifiable and refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
     'expired-card': {
         "domain": 'agent_card',
         "code": 'expired-card',
@@ -1853,6 +3418,57 @@ TAXONOMY = {
         "human": 'presentation binding: an error was detected; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['render', 'digest', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-exception-malformed': {
+        "domain": 'gate',
+        "code": 'gate-exception-malformed',
+        "human": 'gate exception path: the exception declaration is '
+                 'malformed -- it requires a numeric valid_until '
+                 'horizon, a non-empty reason, and a non-empty scope; '
+                 'a horizon-less exception cannot shield an '
+                 'undecidable verdict',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-tampered': {
+        "domain": 'gate',
+        "code": 'gate-tampered',
+        "human": 'gate: the verifier reported that the evidence was '
+                 'tampered; the gate refuses the action',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-undecidable': {
+        "domain": 'gate',
+        "code": 'gate-undecidable',
+        "human": 'gate: the verifier could not verify the evidence; '
+                 'undecidable is a failure to verify, not evidence of '
+                 'tampering; the gate refuses fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-undecidable-allowed': {
+        "domain": 'gate',
+        "code": 'gate-undecidable-allowed',
+        "human": 'gate self-check: a gate allowed an undecidable '
+                 'verdict (or crashed on the probe instead of refusing '
+                 'it); the gate is declared non-compliant',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gate-verdict-unreasoned': {
+        "domain": 'gate',
+        "code": 'gate-verdict-unreasoned',
+        "human": 'gate: the verifier returned undecidable without a '
+                 'mandatory reason from the closed vocabulary; the '
+                 'gate contract refuses the verdict itself',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
         "reverify_steps": ['recompute'],
     },
     'gitspawn-config-unparseable': {
@@ -1911,6 +3527,25 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'grant-attenuation-gap': {
+        "domain": 'grants',
+        "code": 'grant-attenuation-gap',
+        "human": 'grant attenuation: a delegation hop fails to narrow '
+                 '(a rights copy, not an attenuation), or a hop digest '
+                 'or chain continuity does not check out',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'grant-chain-required': {
+        "domain": 'grants',
+        "code": 'grant-chain-required',
+        "human": 'grant attenuation: the presented grant carries no '
+                 'attenuation chain; a leaf alone is not auditable',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
     'grant-decision-mismatch': {
         "domain": 'capability',
         "code": 'grant-decision-mismatch',
@@ -1943,6 +3578,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'grant-widened': {
+        "domain": 'grants',
+        "code": 'grant-widened',
+        "human": 'grant attenuation: a delegation attenuation widens a '
+                 'scope dimension of the parent grant (a value, dimension, '
+                 'or scalar change the parent never held); grants refine, '
+                 'never extend',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
     'grant_consumed': {
         "domain": 'approval',
         "code": 'grant_consumed',
@@ -1973,6 +3619,44 @@ TAXONOMY = {
         "human": 'approval and delegation: the grant has been revoked',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'guest-budget-amplified': {
+        "domain": 'guest-budget',
+        "code": 'guest-budget-amplified',
+        "human": 'host-measured guest consumption exceeded declared '
+                 'envelope plus the declared accounting slack; guest '
+                 'terminated fail-closed, never re-budgeted',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-envelope', 'measurement'],
+        "reverify_steps": ['recompute'],
+    },
+    'guest-budget-deadline-fired': {
+        "domain": 'guest-budget',
+        "code": 'guest-budget-deadline-fired',
+        "human": 'guest blew its declared wall-clock bound; guest '
+                 'terminated fail-closed; in-flight effects are not '
+                 'committed',
+        "severity": 'high',
+        "evidence_kinds_required": ['budget-envelope', 'measurement'],
+        "reverify_steps": ['recompute'],
+    },
+    'guest-budget-envelope-malformed': {
+        "domain": 'guest-budget',
+        "code": 'guest-budget-envelope-malformed',
+        "human": 'guest budget envelope declaration or measurement is not '
+                 'the expected shape; envelopes are never renegotiated',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-envelope'],
+        "reverify_steps": ['recompute'],
+    },
+    'guest-budget-scope-undeclared': {
+        "domain": 'guest-budget',
+        "code": 'guest-budget-scope-undeclared',
+        "human": 'measurement or commit presented for a guest scope with '
+                 'no declared envelope; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['budget-envelope'],
         "reverify_steps": ['recompute'],
     },
     'halt_refused': {
@@ -2031,6 +3715,73 @@ TAXONOMY = {
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
         "reverify_steps": ['recompute'],
     },
+    'honest-claim-reserved-token': {
+        "domain": 'honest_claims',
+        "code": 'honest-claim-reserved-token',
+        "human": 'honest claims: a rendered evidence artifact emitted a '
+                 'reserved claim token (proves-execution, tamper-proof, '
+                 'non-repudiation, formally-verified, ...); the artifact '
+                 'was refused before signing or sealing, naming the token',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-baseline-tampered': {
+        "domain": 'honesty',
+        "code": 'honesty-baseline-tampered',
+        "human": 'forcing-honesty: a baseline JSON not written by --sync '
+                 '(checksum mismatch); the gate refuses to use it',
+        "severity": 'high',
+        "evidence_kinds_required": ['forcing-honesty-baseline'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-baseline-unforced': {
+        "domain": 'honesty',
+        "code": 'honesty-baseline-unforced',
+        "human": 'forcing-honesty: a condition that was forced in the '
+                 'baseline stopped being forced; tighten-only ratchet '
+                 'refuses unless the condition is named to --accept-unforced',
+        "severity": 'high',
+        "evidence_kinds_required": ['forcing-honesty-baseline'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-condition-silent': {
+        "domain": 'honesty',
+        "code": 'honesty-condition-silent',
+        "human": 'forcing-honesty: a mutation changed observations without '
+                 'failing any probe; the battery does not observe what the '
+                 'condition claims to force (filed finding)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-mutant-inconclusive': {
+        "domain": 'honesty',
+        "code": 'honesty-mutant-inconclusive',
+        "human": 'forcing-honesty: the mutant did not build or run '
+                 '(syntax/import failure); never folded into gaps',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-mutant-invalid': {
+        "domain": 'honesty',
+        "code": 'honesty-mutant-invalid',
+        "human": 'forcing-honesty: the requested mutation site is absent '
+                 'from the target module',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
+    'honesty-tautology-suspect': {
+        "domain": 'honesty',
+        "code": 'honesty-tautology-suspect',
+        "human": 'forcing-honesty: a probe vector killed zero mutations '
+                 'across the campaign; it cannot disagree with the code',
+        "severity": 'low',
+        "evidence_kinds_required": ['forcing-honesty-campaign'],
+        "reverify_steps": ['recompute'],
+    },
     'hop_token_refs': {
         "domain": 'delegation',
         "code": 'hop_token_refs',
@@ -2038,6 +3789,57 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['token', 'signature'],
         "reverify_steps": ['verify-signature', 'check-revocation'],
+    },
+    'hostid-hostname-digest-not-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-hostname-digest-not-identity',
+        "human": 'host identity rule: a receipt claimed a digest of the '
+                 'machine hostname as host identity; a digest with no '
+                 'secret reverses from a short guess list of common '
+                 'machine names',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-hostname-not-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-hostname-not-identity',
+        "human": 'host identity rule: a receipt claimed the machine '
+                 'hostname itself as host identity; hostnames are '
+                 'observable and non-random, they are not identities',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-id-file-corrupt': {
+        "domain": 'hostid',
+        "code": 'hostid-id-file-corrupt',
+        "human": 'host identity rule: the persisted id file is missing, '
+                 'not a regular file, holds a value that is not a '
+                 'valid host identity, or could not be minted '
+                 'atomically (short write)',
+        "severity": 'high',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-malformed-identity': {
+        "domain": 'hostid',
+        "code": 'hostid-malformed-identity',
+        "human": 'host identity rule: the claimed host identity is not '
+                 'host_[0-9a-f]{16}; only minted random ids validate',
+        "severity": 'medium',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'hostid-symlink-at-id-path': {
+        "domain": 'hostid',
+        "code": 'hostid-symlink-at-id-path',
+        "human": 'host identity rule: refusing to mint through or read '
+                 'a symlink at the id path; the persisted id must be a '
+                 'regular file',
+        "severity": 'critical',
+        "evidence_kinds_required": ['host-identity'],
+        "reverify_steps": ['recompute'],
     },
     'hybrid-classical-fallback-refused': {
         "domain": 'hybrid_gate',
@@ -2159,6 +3961,45 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'identity-claims-ambiguous': {
+        "domain": 'identity',
+        "code": 'identity-claims-ambiguous',
+        "human": 'two subject-candidate claims were both present and '
+                 'disagreed (e.g. sub vs uid); the connector refuses to '
+                 'guess which is authoritative, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-claims-malformed': {
+        "domain": 'identity',
+        "code": 'identity-claims-malformed',
+        "human": 'the upstream claim set failed structural validation '
+                 '(not a dict, subject not a string, groups not a list of '
+                 'strings); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-claims-missing-subject': {
+        "domain": 'identity',
+        "code": 'identity-claims-missing-subject',
+        "human": 'the upstream claim set carried no usable subject claim; '
+                 'no identity was minted, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-connector-unsupported': {
+        "domain": 'identity',
+        "code": 'identity-connector-unsupported',
+        "human": 'the requested identity connector is unknown or '
+                 'explicitly disabled (the SAML connector stays off: '
+                 'unmaintained upstream); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'identity-mismatch': {
         "domain": 'agent_card',
         "code": 'identity-mismatch',
@@ -2173,6 +4014,91 @@ TAXONOMY = {
         "human": 'deployment namespace: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['namespace', 'signature', 'quorum'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-refresh-expired': {
+        "domain": 'identity',
+        "code": 'identity-refresh-expired',
+        "human": 'the refresh token was past its expiry; no new identity '
+                 'token was issued, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-refresh-reuse-detected': {
+        "domain": 'identity',
+        "code": 'identity-refresh-reuse-detected',
+        "human": 'a rotated (already-spent) refresh token was presented '
+                 'again: suspected theft, the whole refresh chain was '
+                 'revoked, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-refresh-revoked': {
+        "domain": 'identity',
+        "code": 'identity-refresh-revoked',
+        "human": 'the refresh token belongs to a revoked chain (reuse was '
+                 'detected earlier); no new identity token was issued, '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-refresh-unknown': {
+        "domain": 'identity',
+        "code": 'identity-refresh-unknown',
+        "human": 'the refresh token id is unknown or its secret does not '
+                 'match (one code, no oracle); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-audience-mismatch': {
+        "domain": 'identity',
+        "code": 'identity-token-audience-mismatch',
+        "human": 'the identity token was presented to an audience other '
+                 'than the one it was issued for; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-expired': {
+        "domain": 'identity',
+        "code": 'identity-token-expired',
+        "human": 'the short-lived identity token was past its exp; '
+                 'refused fail-closed (refresh for a new one)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-malformed': {
+        "domain": 'identity',
+        "code": 'identity-token-malformed',
+        "human": 'the identity token failed structural validation (not '
+                 'two parts, bad base64, bad JSON, wrong version); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-not-yet-valid': {
+        "domain": 'identity',
+        "code": 'identity-token-not-yet-valid',
+        "human": 'the identity token claims an issue time in the future '
+                 '(beyond clock leeway): pre-issued token, refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'identity-token-tampered': {
+        "domain": 'identity',
+        "code": 'identity-token-tampered',
+        "human": 'the identity token signature did not verify (payload '
+                 'forged or corrupt); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'identity_key_of': {
@@ -2221,6 +4147,26 @@ TAXONOMY = {
         "human": 'inspection: the recomputed value does not match the claimed value',
         "severity": 'critical',
         "evidence_kinds_required": ['inspection', 'bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'instruction-provenance-public-channel': {
+        "domain": 'egress',
+        "code": 'instruction-provenance-public-channel',
+        "human": 'instruction authority requested for public-channel '
+                 'provenance; public channels are untrusted input and can '
+                 'never become instruction authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance'],
+        "reverify_steps": ['recompute'],
+    },
+    'instruction-provenance-untrusted': {
+        "domain": 'egress',
+        "code": 'instruction-provenance-untrusted',
+        "human": 'instruction authority requested for provenance outside '
+                 'the trusted set; untrusted input can never become '
+                 'instruction authority',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance'],
         "reverify_steps": ['recompute'],
     },
     'insufficient_data': {
@@ -2319,6 +4265,54 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'jwks-issuer-unpinned': {
+        "domain": 'jwks',
+        "code": 'jwks-issuer-unpinned',
+        "human": 'no pinned issuer origin supplied for a JWKS fetch; '
+                 'refused rather than fetching unpinned key material',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-origin-mismatch': {
+        "domain": 'jwks',
+        "code": 'jwks-origin-mismatch',
+        "human": 'the JWKS request URL origin does not match the pinned '
+                 'issuer origin; refused before any transport call',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-redirect-refused': {
+        "domain": 'jwks',
+        "code": 'jwks-redirect-refused',
+        "human": 'a JWKS fetch response carried a redirect (3xx status or '
+                 'Location header); refused without contacting the redirect '
+                 'destination -- redirects are never followed for key '
+                 'material',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-transport-failed': {
+        "domain": 'jwks',
+        "code": 'jwks-transport-failed',
+        "human": 'the deployment transport raised, returned a malformed '
+                 'response, or returned a non-2xx status; refused rather '
+                 'than treating it as key material',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'jwks-url-malformed': {
+        "domain": 'jwks',
+        "code": 'jwks-url-malformed',
+        "human": 'the JWKS request URL or pinned origin is not a '
+                 'well-formed absolute http(s) URL; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'keep_evidence_types': {
         "domain": 'vc',
         "code": 'keep_evidence_types',
@@ -2374,6 +4368,14 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
         "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
+    },
+    'key-in-agent-process': {
+        "domain": 'attested-channel',
+        "code": 'key-in-agent-process',
+        "human": 'emitting context declares direct key access inside the agent process',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
     },
     'key-swap-refused': {
         "domain": 'authorization_receipt',
@@ -2454,6 +4456,16 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['lease', 'timestamp', 'revocation-registry'],
         "reverify_steps": ['check-expiry', 'check-revocation'],
+    },
+    'lineage-gap': {
+        "domain": 'evaluation',
+        "code": 'lineage-gap',
+        "human": 'evaluation lineage: a link skips its predecessor '
+                 'challenge or the genesis does not bind the expected '
+                 'anchor; the chain is broken, not shortened',
+        "severity": 'high',
+        "evidence_kinds_required": ['lineage-record'],
+        "reverify_steps": ['recompute'],
     },
     'lock_unavailable': {
         "domain": 'platform',
@@ -2567,6 +4579,84 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'mcp-oauth-binding-tampered': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-binding-tampered',
+        "human": "the sealed authorization-server binding's MAC does "
+                 'not cover its bytes; refused as tamper, never as a '
+                 'shape gap',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-credential-misbound': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-credential-misbound',
+        "human": 'a credential stored under one authorization server is '
+                 'presented at another authorization server\'s token '
+                 'endpoint; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'credential-label'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-fix-gap-refused': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-fix-gap-refused',
+        "human": 'issuer was omitted for a provider that requires it '
+                 '(patched-but-vulnerable-by-configuration); refused '
+                 'fail-closed, never silent fallback',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-issuer-unbound': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-issuer-unbound',
+        "human": "the token endpoint's origin is not the bound "
+                 "authorization server's origin nor a "
+                 "deployment-declared alternate; refused fail-closed",
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'endpoint'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-issuer-unverified': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-issuer-unverified',
+        "human": 'the issuer hint or server metadata names a different '
+                 'issuer than the sealed authorization-server binding; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['binding', 'metadata'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-key-missing': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-key-missing',
+        "human": 'no deployment key supplied for the OAuth binding; '
+                 'failing closed (no dev-key fallback)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-metadata-malformed': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-metadata-malformed',
+        "human": 'a presented runtime input (binding wrapper, endpoint, '
+                 'issuer hint, metadata, flag) is malformed; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mcp-oauth-verdict-mismatched': {
+        "domain": 'mcp-oauth',
+        "code": 'mcp-oauth-verdict-mismatched',
+        "human": 'an OAuth verdict presented for a different token '
+                 'endpoint than it was granted for; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['verdict', 'gate-record'],
+        "reverify_steps": ['recompute'],
+    },
     'measurement-mismatch': {
         "domain": 'measurement',
         "code": 'measurement-mismatch',
@@ -2645,6 +4735,16 @@ TAXONOMY = {
         "human": 'rule pack: no rule pack is active; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['pack', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'no-effect-asserted-and-ignored': {
+        "domain": 'permit',
+        "code": 'no-effect-asserted-and-ignored',
+        "human": 'bound permit: a signed no_effect on a non-failure '
+                 'outcome was accepted and ignored (not a budget '
+                 'release); named in the reconciliation record detail',
+        "severity": 'medium',
+        "evidence_kinds_required": ['reconciliation-record'],
         "reverify_steps": ['recompute'],
     },
     'no-trust-config': {
@@ -2759,6 +4859,25 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'obligation-malformed': {
+        "domain": 'obligation',
+        "code": 'obligation-malformed',
+        "human": 'obligation binding: malformed obligation declaration '
+                 'or fulfillment evidence; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'obligation-unfulfilled': {
+        "domain": 'obligation',
+        "code": 'obligation-unfulfilled',
+        "human": 'obligation binding: a permit obligation declared at '
+                 'issue has no fulfillment evidence at settlement; '
+                 'obligations silently ignored at execution are refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['execution-evidence'],
+        "reverify_steps": ['recompute'],
+    },
     'opt-out-consumed': {
         "domain": 'deploy',
         "code": 'opt-out-consumed',
@@ -2789,6 +4908,36 @@ TAXONOMY = {
         "human": 'deployment trust config: the opt-out proposal is not known',
         "severity": 'medium',
         "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'oracle-could-not-evaluate': {
+        "domain": 'oracle',
+        "code": 'oracle-could-not-evaluate',
+        "human": 'refusal-oracle guard: an authorization dependency was '
+                 'unavailable so a path could not be evaluated; distinct '
+                 'from evaluated-and-refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'oracle-evaluated-and-refused': {
+        "domain": 'oracle',
+        "code": 'oracle-evaluated-and-refused',
+        "human": 'refusal-oracle guard: every authorization path was '
+                 'evaluated and refused; the refusal names no path, '
+                 'grant, or issuer standing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'oracle-verifier-misconfigured': {
+        "domain": 'oracle',
+        "code": 'oracle-verifier-misconfigured',
+        "human": 'refusal-oracle guard: the verifier configuration is '
+                 'invalid; refusing loudly fail-closed instead of '
+                 'authorizing',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-request'],
         "reverify_steps": ['recompute'],
     },
     'outside_sandbox': {
@@ -2823,6 +4972,97 @@ TAXONOMY = {
         "evidence_kinds_required": ['pack', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'package-advisory-flagged': {
+        "domain": 'advisory',
+        "code": 'package-advisory-flagged',
+        "human": 'advisory flags a package whose signature verifies; '
+                 'refused (a signature proves who signed, never safety)',
+        "severity": 'high',
+        "evidence_kinds_required": ['advisory', 'manifest', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-digest-first-seen-mismatch': {
+        "domain": 'registry-acceptance',
+        "code": 'package-digest-first-seen-mismatch',
+        "human": 'package digest differs from the first-seen digest for '
+                 'this name+version; the registry substituted bytes after '
+                 'first observation; refused',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'package-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-digest-mismatch': {
+        "domain": 'registry-acceptance',
+        "code": 'package-digest-mismatch',
+        "human": 'package bytes do not digest to the signed manifest digest',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'package-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-identity-name-untrusted': {
+        "domain": 'registry-acceptance',
+        "code": 'package-identity-name-untrusted',
+        "human": 'policy declares trust by name (account/publisher/name '
+                 'allowlist); trust is by pinned key identity, never by '
+                 'name; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-manifest-malformed': {
+        "domain": 'registry-acceptance',
+        "code": 'package-manifest-malformed',
+        "human": 'registry manifest is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-signature-invalid': {
+        "domain": 'registry-acceptance',
+        "code": 'package-signature-invalid',
+        "human": 'manifest signature does not verify or is not from a trusted key',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-signer-compromised': {
+        "domain": 'registry-acceptance',
+        "code": 'package-signer-compromised',
+        "human": 'a counted signature key is in the revocation set; the '
+                 'signature verifies but the signer is known-compromised '
+                 '(tamper-window shape); refused',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest', 'signature', 'revocation'],
+        "reverify_steps": ['recompute'],
+    },
+    'package-stale': {
+        "domain": 'registry-acceptance',
+        "code": 'package-stale',
+        "human": 'manifest is outside its freshness window',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'parameter-malformed': {
+        "domain": 'parameter',
+        "code": 'parameter-malformed',
+        "human": 'parameter canonicalization: malformed command or '
+                 'allowlist/denylist input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['config-source'],
+        "reverify_steps": ['recompute'],
+    },
+    'parameter-obfuscation': {
+        "domain": 'parameter',
+        "code": 'parameter-obfuscation',
+        "human": 'parameter canonicalization: the canonical command '
+                 'form contains a denied parameter the raw string '
+                 'comparison would have missed; the canonical '
+                 'comparison is authoritative',
+        "severity": 'high',
+        "evidence_kinds_required": ['command-bytes'],
+        "reverify_steps": ['recompute'],
+    },
     'pass-vacuous': {
         "domain": 'identity',
         "code": 'pass-vacuous',
@@ -2855,6 +5095,72 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'permit-binding-mismatch': {
+        "domain": 'permit',
+        "code": 'permit-binding-mismatch',
+        "human": 'permit/closure: the dispatched request bytes do not '
+                 'match the canonical request bytes bound in the '
+                 'permit; the permit refuses the dispatch',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-consume-store-not-durable': {
+        "domain": 'permit',
+        "code": 'permit-consume-store-not-durable',
+        "human": 'bound permit: the consume store is not durable; the saha admission gate refuses permits unless the deployment explicitly opts into the single-node contract',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-consume-store-unavailable': {
+        "domain": 'permit',
+        "code": 'permit-consume-store-unavailable',
+        "human": 'bound permit: the consume store is unavailable; could-not-check names the consume-store dependency',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-containment-malformed': {
+        "domain": 'containment',
+        "code": 'permit-containment-malformed',
+        "human": 'delegation containment: the permit record or the bound '
+                 'caps are malformed; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-currentness-could-not-check': {
+        "domain": 'containment',
+        "code": 'permit-currentness-could-not-check',
+        "human": 'policy currentness: presentation-time currentness is '
+                 'recognized in the claim vocabulary but the mechanism is '
+                 'unavailable, so the claim reports could-not-check naming '
+                 'the policy-currentness-authority dependency; never a '
+                 'refusal, never "verified"',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-currentness'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-currentness-violated': {
+        "domain": 'permit',
+        "code": 'permit-currentness-violated',
+        "human": 'action-bound permit: the declared currentness mode '
+                 '(e.g. fresh-at-use) was not satisfied at presentation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record', 'freshness-evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-decision-absent': {
+        "domain": 'permit',
+        "code": 'permit-decision-absent',
+        "human": 'bound permit: issuance attempted without a decision '
+                 'record; a permit is decision AND mandate AND policy, '
+                 'so the absent leg refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'permit-digest-mismatch': {
         "domain": 'permit',
         "code": 'permit-digest-mismatch',
@@ -2879,12 +5185,141 @@ TAXONOMY = {
         "evidence_kinds_required": ['permit', 'digest', 'revocation-registry', 'timestamp'],
         "reverify_steps": ['recompute-digest', 'check-expiry', 'check-revocation'],
     },
+    'permit-idempotency-conflict': {
+        "domain": 'permit',
+        "code": 'permit-idempotency-conflict',
+        "human": 'bound permit: same (iss, jti) re-presented with a different content digest; refused, never a second release',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-in-progress': {
+        "domain": 'permit',
+        "code": 'permit-in-progress',
+        "human": 'bound permit: the effect for (iss, jti) is in progress elsewhere; the presentation is retryable, nothing consumed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-instance-replay': {
+        "domain": 'permit',
+        "code": 'permit-instance-replay',
+        "human": 'action-bound permit: the permit was replayed for a '
+                 'different action instance than the bound one',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record', 'binding-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-jti-duplicate': {
+        "domain": 'permit',
+        "code": 'permit-jti-duplicate',
+        "human": 'bound permit: (iss, jti) is already claimed and the '
+                 'outcome is not settled as not-executed; a fresh '
+                 'permit refuses until the unknown outcome is '
+                 'reconciled via jti -- never re-mint',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-leg-refusal-unmapped': {
+        "domain": 'permit',
+        "code": 'permit-leg-refusal-unmapped',
+        "human": 'bound permit: a leg verifier refused without naming '
+                 'a machine code; unnamed refusals are unauditable and '
+                 'cannot issue a permit',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-malformed': {
+        "domain": 'permit',
+        "code": 'permit-malformed',
+        "human": 'bound permit: the presented permit, reconciliation '
+                 'record, leg, or registry argument is the wrong shape; '
+                 'refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-mandate-absent': {
+        "domain": 'permit',
+        "code": 'permit-mandate-absent',
+        "human": 'bound permit: issuance attempted without a mandate '
+                 'record; the mandate leg is absent so no permit issues',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'permit-message-mismatch': {
         "domain": 'mcp',
         "code": 'permit-message-mismatch',
         "human": 'MCP invocation authorization: the recomputed value does not match the claimed value',
         "severity": 'critical',
         "evidence_kinds_required": ['message', 'permit', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-no-effect-unattested': {
+        "domain": 'permit',
+        "code": 'permit-no-effect-unattested',
+        "human": 'bound permit: an unsigned no_effect refusal does not establish no effect; the budget stays committed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-no-fallback': {
+        "domain": 'permit',
+        "code": 'permit-no-fallback',
+        "human": 'bound permit: permit absence is malformed; never a reason to accept another credential',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-parent-named': {
+        "domain": 'containment',
+        "code": 'permit-parent-named',
+        "human": 'delegation containment: a permit naming a parent_permit '
+                 'reference is refused outright at admission; containment '
+                 'must be proved against the parent bounds, not merely '
+                 'claimed by reference',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-policy-absent': {
+        "domain": 'permit',
+        "code": 'permit-policy-absent',
+        "human": 'bound permit: issuance attempted without a local '
+                 'policy binding; the policy leg is absent so no permit '
+                 'issues',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-presenter-mismatch': {
+        "domain": 'permit',
+        "code": 'permit-presenter-mismatch',
+        "human": 'action-bound permit: the presenter key is not the bound key; '
+                 'the permit names exactly one recipient key',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record', 'binding-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-rate-budget-unreleasable': {
+        "domain": 'permit',
+        "code": 'permit-rate-budget-unreleasable',
+        "human": 'bound permit: rate budgets are never released once committed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'permit-refusal-vocabulary-invalid': {
+        "domain": 'permit',
+        "code": 'permit-refusal-vocabulary-invalid',
+        "human": 'action-bound permit: a refusal was raised (or declared) '
+                 'with a reason outside the registered refusal vocabulary; '
+                 'no ad-hoc refusal vocabulary is permitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record', 'refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'permit-refused': {
@@ -2894,6 +5329,14 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['permit', 'digest', 'revocation-registry', 'timestamp'],
         "reverify_steps": ['recompute-digest', 'check-expiry', 'check-revocation'],
+    },
+    'permit-registry-unavailable': {
+        "domain": 'permit',
+        "code": 'permit-registry-unavailable',
+        "human": 'bound permit: a re-issue binding cannot be checked without the permit registry; could-not-check names the permit-registry dependency',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit', 'digest'],
+        "reverify_steps": ['recompute-digest'],
     },
     'permit-reused': {
         "domain": 'permit',
@@ -2911,6 +5354,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['permit', 'digest', 'revocation-registry', 'timestamp'],
         "reverify_steps": ['recompute-digest', 'check-expiry', 'check-revocation'],
     },
+    'permit-tampered': {
+        "domain": 'permit',
+        "code": 'permit-tampered',
+        "human": 'bound permit: a permit or reconciliation record '
+                 'digest does not recompute over its body; the record '
+                 'was edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'permit-unknown': {
         "domain": 'permit',
         "code": 'permit-unknown',
@@ -2918,6 +5371,25 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['permit', 'digest', 'revocation-registry', 'timestamp'],
         "reverify_steps": ['recompute-digest', 'check-expiry', 'check-revocation'],
+    },
+    'persistence-modification-refused': {
+        "domain": 'spawn-context',
+        "code": 'persistence-modification-refused',
+        "human": 'a shell-rc target written by an unvouched source; only '
+                 'deployment-vouched admin sources may modify rc files; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['persistence-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
+    },
+    'pin-scope-insufficient': {
+        "domain": 'advisory',
+        "code": 'pin-scope-insufficient',
+        "human": 'unscoped agent_cert pin grades asserted at most; '
+                 're-pin with agent scope for verification evidence',
+        "severity": 'medium',
+        "evidence_kinds_required": ['pin'],
+        "reverify_steps": ['recompute'],
     },
     'pin_authorship_invalid': {
         "domain": 'platform',
@@ -3192,6 +5664,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'previously-consumed': {
+        "domain": 'consumption',
+        "code": 'previously-consumed',
+        "human": 'consumption ledger: the authorization instance was '
+                 'already consumed; replay is an explicit named outcome '
+                 'carrying the original receipt, never a silent release',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
     'production': {
         "domain": 'deployment',
         "code": 'production',
@@ -3231,6 +5713,63 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['release', 'approval-record', 'signature'],
         "reverify_steps": ['verify-signature', 'replay-chain'],
+    },
+    'provenance-chain-class-mismatch': {
+        "domain": 'provenance',
+        "code": 'provenance-chain-class-mismatch',
+        "human": 'provenance non-upgrade: a chain entry failed class or '
+                 'linkage verification; chain validity never promotes '
+                 'provenance',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-class-missing': {
+        "domain": 'provenance',
+        "code": 'provenance-class-missing',
+        "human": 'provenance non-upgrade: emission named no provenance '
+                 'class; a receipt must name exactly one class',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-class-unknown': {
+        "domain": 'provenance',
+        "code": 'provenance-class-unknown',
+        "human": 'provenance non-upgrade: unknown provenance class '
+                 '(case-exact LOGGED/EXECUTED vocabulary)',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-digest-mismatch': {
+        "domain": 'provenance',
+        "code": 'provenance-digest-mismatch',
+        "human": 'provenance non-upgrade: receipt bytes differ from the '
+                 'emission digest (no silent re-grade)',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-step-break': {
+        "domain": 'provenance',
+        "code": 'provenance-step-break',
+        "human": 'provenance non-upgrade: workflow step sequence does not '
+                 'match the committed order (deletion or reorder); the '
+                 'break is named, surviving classes are unchanged',
+        "severity": 'high',
+        "evidence_kinds_required": ['workflow-commitment'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-upgraded': {
+        "domain": 'provenance',
+        "code": 'provenance-upgraded',
+        "human": 'provenance non-upgrade: a receipt presented at an '
+                 'authority weight above its own class (report posed as '
+                 'observation); refused, never re-graded',
+        "severity": 'critical',
+        "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
     },
     'provisioned_required': {
         "domain": 'approval',
@@ -3336,6 +5875,83 @@ TAXONOMY = {
         "evidence_kinds_required": ['namespace', 'signature', 'quorum'],
         "reverify_steps": ['recompute'],
     },
+    'r3-grant-beyond-document': {
+        "domain": 'r3',
+        "code": 'r3-grant-beyond-document',
+        "human": 'AAuth R3 grant token: the grant authorizes an operation '
+                 'the R3 document itself does not define; the issuer may '
+                 'narrow, never widen',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-grant-hash-mismatch': {
+        "domain": 'r3',
+        "code": 'r3-grant-hash-mismatch',
+        "human": 'AAuth R3 grant token: the token-pinned r3_grant_hash does '
+                 'not match the recomputed hash of the presented grant '
+                 'lists; the lists were edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-malformed': {
+        "domain": 'r3',
+        "code": 'r3-malformed',
+        "human": 'AAuth R3 grant token: the token, R3 document, or per-call '
+                 'proposal is the wrong shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-no-match': {
+        "domain": 'r3',
+        "code": 'r3-no-match',
+        "human": 'AAuth R3 grant token: the operation matches neither '
+                 'r3_granted nor r3_per_call; the reject decision',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-per-call-binding-broken': {
+        "domain": 'r3',
+        "code": 'r3-per-call-binding-broken',
+        "human": 'AAuth R3 per-call challenge: the challenged call is not '
+                 'byte-equal to the content-addressed proposal operation; '
+                 'parameters were edited after addressing',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-s256-mismatch': {
+        "domain": 'r3',
+        "code": 'r3-s256-mismatch',
+        "human": 'AAuth R3 grant token: the token-pinned r3_s256 does not '
+                 'match the recomputed hash of the presented R3 document; '
+                 'the approval-time binding is broken',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-unknown-operation': {
+        "domain": 'r3',
+        "code": 'r3-unknown-operation',
+        "human": 'AAuth R3 grant token: an operation is not well-formed in '
+                 'the registered vocabulary (unknown field, missing '
+                 'required field, non-string value)',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'r3-vocabulary-unknown': {
+        "domain": 'r3',
+        "code": 'r3-vocabulary-unknown',
+        "human": 'AAuth R3 grant token: a vocabulary URI the consumer does '
+                 'not register; closed vocabulary refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
     'receipt-expired': {
         "domain": 'authorization_receipt',
         "code": 'receipt-expired',
@@ -3424,100 +6040,121 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'verdict-record', 'observation', 'digest'],
         "reverify_steps": ['rebind-backlink', 'recompute-decision-digest', 'replay-effect-classify'],
     },
-    'decision-effect-decision-drift': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-decision-drift',
-        "human": 'decision effect: the decision receipt claim drifted from the digest recomputed from its verdict bytes',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
-        "reverify_steps": ['reseal-decision', 'recompute-decision-digest'],
-    },
-    'decision-effect-effect-drift': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-effect-drift',
-        "human": 'decision effect: the execution receipt effect drifted from the re-classified, re-sealed effect',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'verdict-record', 'observation', 'digest'],
-        "reverify_steps": ['replay-effect-classify', 'reseal-effect'],
-    },
-    'decision-effect-disagreement': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-disagreement',
-        "human": 'decision effect: what was executed is not what was decided (attempt digests or backlink disagree)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
-        "reverify_steps": ['recompute-attempt-digests', 'rebind-backlink'],
-    },
-    'decision-effect-effect-absent': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-effect-absent',
-        "human": 'decision effect: a decision was presented with no execution record; absence is evidence of non-execution, never acceptance',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['require-execution-record'],
-    },
-    'decision-effect-extra-effect': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-extra-effect',
-        "human": 'decision effect: an execution record was presented with no decision authorizing it',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['require-decision-record'],
-    },
-    'decision-effect-malformed': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-malformed',
-        "human": 'decision effect: the input failed structural validation; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['validate-shape'],
-    },
-    'decision-effect-not-authorization': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-not-authorization',
-        "human": 'decision effect: agreement evidence presented as authority was refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['deny-authority-use'],
-    },
-    'decision-effect-refused': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-refused',
-        "human": 'decision effect: refused by policy',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['validate-shape'],
-    },
-    'decision-effect-time-inversion': {
-        "domain": 'decision_effect',
-        "code": 'decision-effect-time-inversion',
-        "human": 'decision effect: the effect timestamp precedes the decision timestamp',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-time-order'],
-    },
-    'agreement-input-unmapped': {
-        "domain": 'reconcile_agreement',
-        "code": 'agreement-input-unmapped',
-        "human": 'reconcile agreement: the input fell outside the closed decision.reported x effect.observed axes, or the not-exercised evidence was not digest-bound; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['validate-axes'],
-    },
-    'agreement-not-authorization': {
-        "domain": 'reconcile_agreement',
-        "code": 'agreement-not-authorization',
-        "human": 'reconcile agreement: agreement evidence presented as authority was refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['deny-authority-use'],
-    },
     'receipt_unverifiable': {
         "domain": 'platform',
         "code": 'receipt_unverifiable',
         "human": 'platform egress: the evidence could not be verified',
         "severity": 'high',
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-absent-refusal-no-coverage': {
+        "domain": 'recompute',
+        "code": 'recompute-absent-refusal-no-coverage',
+        "human": 'recompute check: an absent refusal outside the declared '
+                 'coverage boundary is not evidence -- absence is evidence '
+                 'only where something promised to record',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-backlink-mismatch': {
+        "domain": 'recompute',
+        "code": 'recompute-backlink-mismatch',
+        "human": 'recompute check: the execution receipt backLink does not '
+                 'name the decision receipt digest+nonce -- the pair is '
+                 'not linked',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-digest-mismatch': {
+        "domain": 'recompute',
+        "code": 'recompute-digest-mismatch',
+        "human": 'recompute check: the digest recomputed over the '
+                 'JCS-canonical receipt body does not match the claimed '
+                 'receipt_digest -- possible tampering, escalate',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-malformed': {
+        "domain": 'recompute',
+        "code": 'recompute-malformed',
+        "human": 'recompute check: receipt is structurally malformed '
+                 '(unknown kind, bad version, non-hex digests, or '
+                 'unsupported value in the canonical form)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-no-execution-link': {
+        "domain": 'recompute',
+        "code": 'recompute-no-execution-link',
+        "human": 'recompute check: an allow decision with no linked '
+                 'execution receipt proves nothing about whether '
+                 'anything ran',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recompute-signature-invalid': {
+        "domain": 'recompute',
+        "code": 'recompute-signature-invalid',
+        "human": 'recompute check: the Ed25519 signature does not verify '
+                 'over the canonical receipt bytes with the checker-supplied '
+                 'public key',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-depth-exceeded': {
+        "domain": 'canonical',
+        "code": 'record-depth-exceeded',
+        "human": 'canonical records: nesting deeper than 128 levels; '
+                 'unbounded nesting is a parser hazard, refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-duplicate-member': {
+        "domain": 'canonical',
+        "code": 'record-duplicate-member',
+        "human": 'canonical records: a JSON record carries the same '
+                 'object member twice; duplicate keys are a '
+                 'cross-deployment canonicalization hazard, refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-malformed': {
+        "domain": 'canonical',
+        "code": 'record-malformed',
+        "human": 'canonical records: the record shape is not '
+                 'canonicalizable (non-string keys, unsupported types, '
+                 'unencodable characters); refusing',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-noncanonical-float': {
+        "domain": 'canonical',
+        "code": 'record-noncanonical-float',
+        "human": 'canonical records: a float value cannot be '
+                 'canonicalized byte-identically across deployments; '
+                 'refusing, never coercing to integer',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'record-opaque-bytes': {
+        "domain": 'canonical',
+        "code": 'record-opaque-bytes',
+        "human": 'canonical records: input is non-JSON bytes; passing '
+                 'through byte-exact with the opaque-bytes marker, '
+                 'never silently coercing',
+        "severity": 'low',
+        "evidence_kinds_required": ['audit-log'],
         "reverify_steps": ['recompute'],
     },
     'recover_torn_tail': {
@@ -3544,6 +6181,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'registry-threshold-unmet': {
+        "domain": 'registry-acceptance',
+        "code": 'registry-threshold-unmet',
+        "human": 'fewer valid trusted signatures than the registry policy threshold',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'manifest'],
+        "reverify_steps": ['recompute'],
+    },
     'release_digest': {
         "domain": 'release',
         "code": 'release_digest',
@@ -3568,12 +6213,105 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'claim', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'replay-evidence-tampered': {
+        "domain": 'policy_replay',
+        "code": 'replay-evidence-tampered',
+        "human": 'policy replay: the captured evidence digest does not match its contents',
+        "severity": 'critical',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-digest-mismatch': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-digest-mismatch',
+        "human": 'policy replay: a caller-supplied digest disagrees with the digest recomputed from the ruleset bytes',
+        "severity": 'critical',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-drift': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-drift',
+        "human": 'policy replay: the live policy revision differs from the pinned revision and would change the verdict',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute', 'replay-claim'],
+    },
+    'replay-policy-malformed': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-malformed',
+        "human": 'policy replay: the revision record or evidence envelope is structurally malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-not-authorization': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-not-authorization',
+        "human": 'policy replay: replay evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-revision-conflict': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-revision-conflict',
+        "human": 'policy replay: the same rev_id was registered with different ruleset bytes',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-policy-revision-unknown': {
+        "domain": 'policy_replay',
+        "code": 'replay-policy-revision-unknown',
+        "human": 'policy replay: the pinned revision is not registered',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-refused': {
+        "domain": 'policy_replay',
+        "code": 'replay-refused',
+        "human": 'policy replay: generic replay refusal',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute', 'replay-claim'],
+    },
     'replayed_nonce': {
         "domain": 'identity',
         "code": 'replayed_nonce',
         "human": 'identity policy: the nonce was already seen',
         "severity": 'medium',
         "evidence_kinds_required": ['identity-policy', 'claim'],
+        "reverify_steps": ['recompute'],
+    },
+    'repo-hook-escape-refused': {
+        "domain": 'session-trust',
+        "code": 'repo-hook-escape-refused',
+        "human": 'repo-local git material (.git, .git/config) resolves '
+                 'outside the canonical workspace root via symlink; hook '
+                 'resolution never follows escapes; refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workspace-root'],
+        "reverify_steps": ['recompute'],
+    },
+    'repo-hook-pretrust-refused': {
+        "domain": 'session-trust',
+        "code": 'repo-hook-pretrust-refused',
+        "human": 'git/subprocess attempt against a workspace with no '
+                 'recorded trust decision; refused fail-closed before any '
+                 'repo-supplied configuration could execute',
+        "severity": 'critical',
+        "evidence_kinds_required": ['workspace-root'],
+        "reverify_steps": ['recompute'],
+    },
+    'repo-hook-trust-denied': {
+        "domain": 'session-trust',
+        "code": 'repo-hook-trust-denied',
+        "human": 'git/subprocess attempt against a workspace whose trust '
+                 'was explicitly denied; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['workspace-root'],
         "reverify_steps": ['recompute'],
     },
     'reputation-entry-malformed': {
@@ -3620,6 +6358,15 @@ TAXONOMY = {
         "human": 'approval and delegation: the requester already voted',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'resource-server-mismatch': {
+        "domain": 'transaction',
+        "code": 'resource-server-mismatch',
+        "human": 'transactional token presented to a resource server it was '
+                 'not issued for; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
         "reverify_steps": ['recompute'],
     },
     'resume_authority_not_reissued': {
@@ -3702,6 +6449,58 @@ TAXONOMY = {
         "evidence_kinds_required": ['parent-record', 'signature', 'revocation-registry', 'timestamp'],
         "reverify_steps": ['verify-signature', 'check-revocation', 'check-liveness'],
     },
+    'revocation-applicable': {
+        "domain": 'revocation',
+        "code": 'revocation-applicable',
+        "human": 'finality-bound revocation: the authorization\'s revocation '
+                 'basis is revoked at commit time; the Finality Sink refuses '
+                 'check-and-commit and the protected consequence must not '
+                 'commit',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization', 'revocation-registry',
+                                   'digest'],
+        "reverify_steps": ['recompute-digest', 'check-revocation'],
+    },
+    'revocation-basis-malformed': {
+        "domain": 'revocation',
+        "code": 'revocation-basis-malformed',
+        "human": 'finality-bound revocation: the revocation basis or the '
+                 'authorization record is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-basis-tampered': {
+        "domain": 'revocation',
+        "code": 'revocation-basis-tampered',
+        "human": 'finality-bound revocation: the recomputed binding digest '
+                 'disagrees with the claimed binding; the binding was not '
+                 're-derived from issuer trust',
+        "severity": 'critical',
+        "evidence_kinds_required": ['authorization', 'digest'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'revocation-category-error': {
+        "domain": 'axis',
+        "code": 'revocation-category-error',
+        "human": 'axis/result model: a non-revocation state (suspension '
+                 'or expiry) was presented as revocation; refusing the '
+                 'category error',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-check-unsealed': {
+        "domain": 'revocation',
+        "code": 'revocation-check-unsealed',
+        "human": 'finality-bound revocation: the revocation store mutated '
+                 'between the check and the commit decision (TOCTOU); the '
+                 'check-and-commit was not atomic and is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization', 'revocation-registry'],
+        "reverify_steps": ['check-revocation'],
+    },
     'revocation-entry-unverifiable': {
         "domain": 'revocation',
         "code": 'revocation-entry-unverifiable',
@@ -3724,6 +6523,26 @@ TAXONOMY = {
         "human": 'revocation: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['revocation-registry', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-sink-nonatomic': {
+        "domain": 'revocation',
+        "code": 'revocation-sink-nonatomic',
+        "human": 'finality-bound revocation: the revocation store does not '
+                 'implement the atomic check protocol; the Finality Sink '
+                 'fails closed rather than check-then-act',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization'],
+        "reverify_steps": ['recompute'],
+    },
+    'revocation-state-unknown': {
+        "domain": 'axis',
+        "code": 'revocation-state-unknown',
+        "human": 'axis/result model: the revocation state is unknown, so '
+                 'the credential is classified not-active (fail-closed); '
+                 'unknown is never active',
+        "severity": 'high',
+        "evidence_kinds_required": ['verification-result'],
         "reverify_steps": ['recompute'],
     },
     'revoke_not_authorized': {
@@ -3780,6 +6599,17 @@ TAXONOMY = {
         "human": 'capability assessment: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'satisfied-missing': {
+        "domain": 'evaluation',
+        "code": 'satisfied-missing',
+        "human": 'evidence presented below grade SATISFIED as '
+                 'authorization or as satisfied: VERIFIED (crypto '
+                 'measured true) is not authorization; sufficiency '
+                 'is never asserted without the requirements met',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence-record', 'gate-verdict'],
         "reverify_steps": ['recompute'],
     },
     'scan_gate': {
@@ -4096,6 +6926,54 @@ TAXONOMY = {
         "evidence_kinds_required": ['schema'],
         "reverify_steps": ['recompute'],
     },
+    'scope-grant-tampered': {
+        "domain": 'token-scope',
+        "code": 'scope-grant-tampered',
+        "human": 'the scope grant MAC does not cover the presented bytes; '
+                 'tamper is reported as tamper, never as a scope gap',
+        "severity": 'critical',
+        "evidence_kinds_required": ['grant', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'scope-grant-unbound': {
+        "domain": 'token-scope',
+        "code": 'scope-grant-unbound',
+        "human": 'the scope grant is bound to a different token than the '
+                 'one presented (e.g. scope narrowed mid-session); a new '
+                 'grant is required',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'token'],
+        "reverify_steps": ['recompute'],
+    },
+    'scope-key-missing': {
+        "domain": 'token-scope',
+        "code": 'scope-key-missing',
+        "human": 'no deployment key supplied for scope policy/grant '
+                 'cryptography; fails closed (no dev-key fallback)',
+        "severity": 'high',
+        "evidence_kinds_required": ['key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+    'scope-policy-tampered': {
+        "domain": 'token-scope',
+        "code": 'scope-policy-tampered',
+        "human": 'the sealed scope policy MAC does not cover its spec '
+                 'bytes, or the spec fails shape validation; refused '
+                 'fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['policy-declaration', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'scope-verdict-mismatched': {
+        "domain": 'token-scope',
+        "code": 'scope-verdict-mismatched',
+        "human": 'a scope verdict presented to the executor for different '
+                 '(tool, action) parameters than it was granted for; the '
+                 'call never runs',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
     'scope_amplification': {
         "domain": 'approval',
         "code": 'scope_amplification',
@@ -4128,12 +7006,85 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'scoped-approval-capability-unknown': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-capability-unknown',
+        "human": 'closure-scoped approval: the requested capability was '
+                 'never granted by this packet',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'scoped-approval-malformed': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-malformed',
+        "human": 'closure-scoped approval: the presented packet or '
+                 'argument is the wrong shape; refusing instead of '
+                 'guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'scoped-approval-tampered': {
+        "domain": 'scoped',
+        "code": 'scoped-approval-tampered',
+        "human": 'closure-scoped approval: the packet\u2019s '
+                 'approval_digest does not recompute over its body; the '
+                 'record was edited after issuance',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-packet'],
+        "reverify_steps": ['recompute'],
+    },
+    'seeded-denial-digest-mismatch': {
+        "domain": 'seeded_denial',
+        "code": 'seeded-denial-digest-mismatch',
+        "human": 'seeded denials: the record digest does not recompute from '
+                 'its body (tampered or misbound)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'seeded-denial-malformed': {
+        "domain": 'seeded_denial',
+        "code": 'seeded-denial-malformed',
+        "human": 'seeded denials: the presented record is not well-formed, '
+                 'or silence was offered instead of a record',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'seeded-denial-not-authorization': {
+        "domain": 'seeded_denial',
+        "code": 'seeded-denial-not-authorization',
+        "human": 'seeded denials: denial evidence was used as authority',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'seeded-denial-refused': {
+        "domain": 'seeded_denial',
+        "code": 'seeded-denial-refused',
+        "human": 'seeded denials: base refusal for seeded-denial failures',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'self_delegation': {
         "domain": 'approval',
         "code": 'self_delegation',
         "human": 'approval and delegation: self-delegation was refused',
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'session-trust-malformed': {
+        "domain": 'session-trust',
+        "code": 'session-trust-malformed',
+        "human": 'trust record malformed: unknown trust state or unnamed '
+                 'deciding principal; refused fail-closed, never a silent '
+                 'accept',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
         "reverify_steps": ['recompute'],
     },
     'signal-kind-required': {
@@ -4192,12 +7143,48 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'signed-receipt-malformed': {
+        "domain": 'kms-signer',
+        "code": 'signed-receipt-malformed',
+        "human": 'the receipt or signed record is not the shape the '
+                 'discipline speaks; includes post-signing mutation '
+                 'detected via the canonical digest',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signed-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'signed-receipt-signature-invalid': {
+        "domain": 'kms-signer',
+        "code": 'signed-receipt-signature-invalid',
+        "human": 'the consumer-pinned verifier did not return True for '
+                 'the retained bytes; never verified',
+        "severity": 'high',
+        "evidence_kinds_required": ['signed-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'signer-adapter-tampered': {
+        "domain": 'kms-signer',
+        "code": 'signer-adapter-tampered',
+        "human": 'a declared KMS adapter handle wraps in-process key '
+                 'material; refused for production receipts',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
     'signer-denied': {
         "domain": 'c2pa',
         "code": 'signer-denied',
         "human": 'C2PA conformance: the signer denied the operation',
         "severity": 'high',
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'signer-digest-length-mismatch': {
+        "domain": 'signer-interop',
+        "code": 'signer-digest-length-mismatch',
+        "human": 'caller-supplied digest length does not match the stated hash digest size (the cosign sign-side loud failure shape)',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature'],
         "reverify_steps": ['recompute'],
     },
     'signer-error': {
@@ -4208,6 +7195,43 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'signer-hash-downshift-refused': {
+        "domain": 'signer-interop',
+        "code": 'signer-hash-downshift-refused',
+        "human": 'curve/hash pairing reproduces the cosign sign-side SHA-256 hardcode shape; refused loudly, never silently downshifted',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'signer-identity-mismatch': {
+        "domain": 'kms-signer',
+        "code": 'signer-identity-mismatch',
+        "human": 'a signed receipt verified against a different adapter '
+                 'identity than the one that signed it',
+        "severity": 'high',
+        "evidence_kinds_required": ['signed-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'signer-key-material-in-process': {
+        "domain": 'kms-signer',
+        "code": 'signer-key-material-in-process',
+        "human": 'raw private-key bytes in an input path (signer '
+                 'argument, declaration config, env-derived value); '
+                 'the signing key is never in-process',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'signer-unavailable': {
+        "domain": 'kms-signer',
+        "code": 'signer-unavailable',
+        "human": 'the KMS adapter could not be used (unreachable, '
+                 'misconfigured, declared-but-unconnected); failed '
+                 'closed with no fallback to in-process signing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
     'single-use-issuer-revoked': {
         "domain": 'single_use',
         "code": 'single-use-issuer-revoked',
@@ -4216,6 +7240,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['attestation', 'revocation-registry'],
         "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
     },
+    'single-use-lifecycle-refused': {
+        "domain": 'single_use',
+        "code": 'single-use-lifecycle-refused',
+        "human": 'single-use lifecycle: refused by policy (generic lifecycle refusal)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['reservation'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
     'single-use-malformed': {
         "domain": 'single_use',
         "code": 'single-use-malformed',
@@ -4223,6 +7255,22 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['attestation', 'revocation-registry'],
         "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
+    },
+    'single-use-not-reserved': {
+        "domain": 'single_use',
+        "code": 'single-use-not-reserved',
+        "human": 'single-use lifecycle: execution was attempted with no live reservation for the (approval digest, step id, input digest) triple',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'approval-digest'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-reconcile-replayed': {
+        "domain": 'single_use',
+        "code": 'single-use-reconcile-replayed',
+        "human": 'single-use lifecycle: reconcile was called on an already-reconciled reservation',
+        "severity": 'high',
+        "evidence_kinds_required": ['reservation', 'consumption-record'],
+        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
     },
     'single-use-refused': {
         "domain": 'single_use',
@@ -4240,38 +7288,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['attestation', 'revocation-registry'],
         "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
     },
-    'single-use-unknown': {
-        "domain": 'single_use',
-        "code": 'single-use-unknown',
-        "human": 'single-use attestation: the single-use attestation is not known',
-        "severity": 'medium',
-        "evidence_kinds_required": ['attestation', 'revocation-registry'],
-        "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
-    },
-    'single-use-lifecycle-refused': {
-        "domain": 'single_use',
-        "code": 'single-use-lifecycle-refused',
-        "human": 'single-use lifecycle: refused by policy (generic lifecycle refusal)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['reservation'],
-        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
-    },
-    'single-use-reserve-conflict': {
-        "domain": 'single_use',
-        "code": 'single-use-reserve-conflict',
-        "human": 'single-use lifecycle: atomic reserve of the (approval digest, step id, input digest) triple lost the race; the second consumer was refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['reservation', 'approval-digest'],
-        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
-    },
-    'single-use-not-reserved': {
-        "domain": 'single_use',
-        "code": 'single-use-not-reserved',
-        "human": 'single-use lifecycle: execution was attempted with no live reservation for the (approval digest, step id, input digest) triple',
-        "severity": 'high',
-        "evidence_kinds_required": ['reservation', 'approval-digest'],
-        "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
-    },
     'single-use-reservation-mismatch': {
         "domain": 'single_use',
         "code": 'single-use-reservation-mismatch',
@@ -4288,13 +7304,108 @@ TAXONOMY = {
         "evidence_kinds_required": ['reservation', 'approval-digest'],
         "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
     },
-    'single-use-reconcile-replayed': {
+    'single-use-reserve-conflict': {
         "domain": 'single_use',
-        "code": 'single-use-reconcile-replayed',
-        "human": 'single-use lifecycle: reconcile was called on an already-reconciled reservation',
+        "code": 'single-use-reserve-conflict',
+        "human": 'single-use lifecycle: atomic reserve of the (approval digest, step id, input digest) triple lost the race; the second consumer was refused',
         "severity": 'high',
-        "evidence_kinds_required": ['reservation', 'consumption-record'],
+        "evidence_kinds_required": ['reservation', 'approval-digest'],
         "reverify_steps": ['check-not-consumed', 'check-approval-registered'],
+    },
+    'single-use-unknown': {
+        "domain": 'single_use',
+        "code": 'single-use-unknown',
+        "human": 'single-use attestation: the single-use attestation is not known',
+        "severity": 'medium',
+        "evidence_kinds_required": ['attestation', 'revocation-registry'],
+        "reverify_steps": ['check-not-consumed', 'check-issuer-revocation'],
+    },
+    'skill-admission-artifact-rule-violated': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-artifact-rule-violated',
+        "human": 'a step link\'s materials/products violated the '
+                 'layout-authorized artifact rules (absent material, '
+                 'digest mismatch, or unconsumed leftover); a step that '
+                 'produced nothing cannot pass a REQUIRE-products rule',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'link-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-authority-is-step-signer': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-authority-is-step-signer',
+        "human": 'the layout authority key is also a step signer key; '
+                 'authorization and execution must be separate '
+                 'principals, structurally, never by convention',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'layout-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-command-mismatch': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-command-mismatch',
+        "human": 'the command a step actually ran differs from the '
+                 'layout-authorized command; command substitution is a '
+                 'hard refusal, never a warning',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'link-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-layout-malformed': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-layout-malformed',
+        "human": 'the skill layout record is malformed (bad shape, '
+                 'duplicate steps, invalid rules); refused before any '
+                 'cryptographic verification',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-layout-signature-invalid': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-layout-signature-invalid',
+        "human": 'the skill layout signature does not verify under the '
+                 'registry-known layout authority key',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'layout-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-link-malformed': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-link-malformed',
+        "human": 'a step link record is malformed (bad shape, unknown '
+                 'step, layout-id mismatch); refused before its '
+                 'signature is trusted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-link-missing': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-link-missing',
+        "human": 'a layout step has no presented link metadata; every '
+                 'authorized step must be vouched',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-link-signature-invalid': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-link-signature-invalid',
+        "human": 'a step link signature does not verify under the '
+                 'link\'s claimed signer key',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'link-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-admission-unauthorized-signer': {
+        "domain": 'skill-admission',
+        "code": 'skill-admission-unauthorized-signer',
+        "human": 'a step link was signed by a key that is not the '
+                 'layout-authorized signer for that step',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-record', 'link-record'],
+        "reverify_steps": ['recompute'],
     },
     'skill-id-mismatch': {
         "domain": 'capability',
@@ -4302,6 +7413,66 @@ TAXONOMY = {
         "human": 'capability assessment: the recomputed value does not match the claimed value',
         "severity": 'high',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-update-digest-mismatch': {
+        "domain": 'skill-update',
+        "code": 'skill-update-digest-mismatch',
+        "human": 'install gate: the bundle bytes\' sha256 does not '
+                 'match the skill record\'s digest (tampered or '
+                 'truncated download); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'digest', 'input'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'skill-update-index-untrusted': {
+        "domain": 'skill-update',
+        "code": 'skill-update-index-untrusted',
+        "human": 'install gate: no trusted metadata-chain pin for this '
+                 'skill (pin missing/malformed, chain stale or '
+                 'suspended, or skill unbound); a skill outside the '
+                 'verified chain is refused at install',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-update-malformed': {
+        "domain": 'skill-update',
+        "code": 'skill-update-malformed',
+        "human": 'install gate: the skill record, chain pin, or bundle '
+                 'input is malformed; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-update-metadata-expired': {
+        "domain": 'skill-update',
+        "code": 'skill-update-metadata-expired',
+        "human": 'install gate: the skill record is past its expiry '
+                 '(freeze protection); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'skill-update-record-unpinned': {
+        "domain": 'skill-update',
+        "code": 'skill-update-record-unpinned',
+        "human": 'install gate: the skill record\'s digest does not '
+                 'match the metadata chain\'s pinned digest '
+                 '(mix-and-match or planted record); refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'digest', 'input'],
+        "reverify_steps": ['recompute-digest'],
+    },
+    'skill-update-version-rollback': {
+        "domain": 'skill-update',
+        "code": 'skill-update-version-rollback',
+        "human": 'install gate: the skill record\'s version is older '
+                 'than the installed version (downgrade attack); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
         "reverify_steps": ['recompute'],
     },
     'skill_not_found': {
@@ -4312,12 +7483,120 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'spawn-context-declared-risk': {
+        "domain": 'spawn-context',
+        "code": 'spawn-context-declared-risk',
+        "human": 'permission-bypass flags in a user-invoked, '
+                 'deployment-vouched, explicitly authorized context; '
+                 'allowed-but-declared, never silent',
+        "severity": 'low',
+        "evidence_kinds_required": ['spawn-record', 'provenance'],
+        "reverify_steps": ['recompute', 'authority-check'],
+    },
+    'spawn-context-record-malformed': {
+        "domain": 'spawn-context',
+        "code": 'spawn-context-record-malformed',
+        "human": 'the spawn/egress/persistence record is not the expected '
+                 'shape (unknown spawn context, non-string flags, bad '
+                 'ownership class); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['spawn-record'],
+        "reverify_steps": ['recompute'],
+    },
     'spawn_failed': {
         "domain": 'platform',
         "code": 'spawn_failed',
         "human": 'platform egress: the operation failed; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
+        "reverify_steps": ['recompute'],
+    },
+    'spiffe-audience-mismatch': {
+        "domain": 'spiffe',
+        "code": 'spiffe-audience-mismatch',
+        "human": 'spiffe KMS auth: the SVID aud does not match the '
+                 'configured audience; a foreign SVID is never presented',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-audience'],
+    },
+    'spiffe-auth-refused': {
+        "domain": 'spiffe',
+        "code": 'spiffe-auth-refused',
+        "human": 'spiffe KMS auth: the JWT login failed (403 after one '
+                 're-login, other HTTP errors, transport failure, or '
+                 'malformed login response)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-jwt-login'],
+    },
+    'spiffe-permission-invalid': {
+        "domain": 'spiffe',
+        "code": 'spiffe-permission-invalid',
+        "human": 'spiffe KMS auth: the SVID file has group/other '
+                 'permission bits or is not owned by the process uid; '
+                 'never read a secret other principals could have swapped',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-permissions'],
+    },
+    'spiffe-refused': {
+        "domain": 'spiffe',
+        "code": 'spiffe-refused',
+        "human": 'spiffe KMS auth: base-class fallback code; concrete '
+                 'refusals carry a specific spiffe-* code',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'spiffe-svid-expired': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-expired',
+        "human": 'spiffe KMS auth: the SVID exp claim has passed; refused '
+                 'before any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-expiry'],
+    },
+    'spiffe-svid-malformed': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-malformed',
+        "human": 'spiffe KMS auth: the SVID is not a usable JWT (shape, '
+                 'encoding, claims) or the file is wrong; refused before '
+                 'any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-shape'],
+    },
+    'spiffe-svid-unavailable': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-unavailable',
+        "human": 'spiffe KMS auth: the SVID file is absent or unreadable '
+                 '(SPIRE agent down or volume unmounted); refused before '
+                 'any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-file'],
+    },
+    'stale-authority': {
+        "domain": 'authority',
+        "code": 'stale-authority',
+        "human": 'stale-authority probe class: a receipt minted after the '
+                 'cited authority lapsed cites it as normative authority; '
+                 'passing such a receipt is the green-on-lapsed-authority '
+                 'defect',
+        "severity": 'high',
+        "evidence_kinds_required": ['authority-citation', 'receipt-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'stale-authority-malformed': {
+        "domain": 'authority',
+        "code": 'stale-authority-malformed',
+        "human": 'stale-authority check: the authority citation or the '
+                 'receipt timestamp is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authority-citation'],
         "reverify_steps": ['recompute'],
     },
     'stale-trust': {
@@ -4400,6 +7679,62 @@ TAXONOMY = {
         "evidence_kinds_required": ['credential', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
     },
+    'surface-admin-unauthenticated': {
+        "domain": 'mcp-surface',
+        "code": 'surface-admin-unauthenticated',
+        "human": 'an admin endpoint declares no auth mechanism; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
+    'surface-attestation-key-missing': {
+        "domain": 'mcp-surface',
+        "code": 'surface-attestation-key-missing',
+        "human": 'no deployment issuer key supplied for the secure-'
+                 'defaults attestation; refused rather than issuing an '
+                 'unsigned attestation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+    'surface-config-malformed': {
+        "domain": 'mcp-surface',
+        "code": 'surface-config-malformed',
+        "human": 'the surface config is not the expected shape; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
+    'surface-default-credentials': {
+        "domain": 'mcp-surface',
+        "code": 'surface-default-credentials',
+        "human": 'surface credentials are missing, empty, or a well-known '
+                 'placeholder/default value; refused fail-closed, never '
+                 'auto-remediated',
+        "severity": 'high',
+        "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
+    'surface-public-unguarded': {
+        "domain": 'mcp-surface',
+        "code": 'surface-public-unguarded',
+        "human": 'a public endpoint declares no execution guard / per-call '
+                 'authorization; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
+    'surface-transport-bypass': {
+        "domain": 'mcp-surface',
+        "code": 'surface-transport-bypass',
+        "human": 'a stdio/unmediated transport carries traffic outside the '
+                 'mediated auth path; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
     'svr-digest-malformed': {
         "domain": 'svr',
         "code": 'svr-digest-malformed',
@@ -4472,6 +7807,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'taxonomy-receipt-missing': {
+        "domain": 'receipts',
+        "code": 'taxonomy-receipt-missing',
+        "human": 'signed receipts: the decision lacked digest-shaped evidence, so no receipt was formed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['decision'],
+        "reverify_steps": ['recompute'],
+    },
     'terminal-transition-refused': {
         "domain": 'arap',
         "code": 'terminal-transition-refused',
@@ -4488,12 +7831,113 @@ TAXONOMY = {
         "evidence_kinds_required": ['quorum', 'vote', 'signature'],
         "reverify_steps": ['recount-votes', 'check-threshold'],
     },
+    'token-audience-mismatch': {
+        "domain": 'token_hygiene',
+        "code": 'token-audience-mismatch',
+        "human": 'token hygiene: token presented outside its declared '
+                 'audience; the presentation is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-audience-missing': {
+        "domain": 'token_hygiene',
+        "code": 'token-audience-missing',
+        "human": 'token hygiene: token issued without an explicit '
+                 'audience (aud); every agent credential must declare one',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-expired': {
+        "domain": 'token_hygiene',
+        "code": 'token-expired',
+        "human": 'token hygiene: expired token presented; refused '
+                 'outright, never refreshed, never tolerated',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-in-log': {
+        "domain": 'token_hygiene',
+        "code": 'token-in-log',
+        "human": 'token hygiene: a bearer token value reached a log '
+                 'line; INCIDENT MATERIAL -- rotate the token and audit '
+                 'the leak path; lines must carry {type, issuer, scope, '
+                 'audience} metadata only',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-key-stale': {
+        "domain": 'token_hygiene',
+        "code": 'token-key-stale',
+        "human": 'token hygiene: high-impact issuing key is older than '
+                 'the 90-day rotation window; rotate before issuing',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-malformed': {
+        "domain": 'token_hygiene',
+        "code": 'token-malformed',
+        "human": 'token hygiene: agent credential claims are misshapen '
+                 '(not a dict, bad iat/exp/key fields); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-scope-exceeded': {
+        "domain": 'token-scope',
+        "code": 'token-scope-exceeded',
+        "human": 'the scope grant does not cover the (tool, action) being '
+                 'invoked; also covers alias-not-granted anti-widening; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token', 'grant', 'policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-scope-unparseable': {
+        "domain": 'token-scope',
+        "code": 'token-scope-unparseable',
+        "human": 'a presented scope-check input (grant, sealed policy '
+                 'wrapper, tool name, action, epoch) is malformed; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'token-ttl-exceeded': {
+        "domain": 'token_hygiene',
+        "code": 'token-ttl-exceeded',
+        "human": 'token hygiene: token lifetime exceeds the 1h issuance '
+                 'cap; a token must never be issued with a longer life',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
     'tool-crashed': {
         "domain": 'capability',
         "code": 'tool-crashed',
         "human": 'capability assessment: the tool crashed',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-definition-malformed': {
+        "domain": 'mcp-surface',
+        "code": 'tool-definition-malformed',
+        "human": 'tool definition is not the expected shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['tool-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-executable-content': {
+        "domain": 'mcp-surface',
+        "code": 'tool-executable-content',
+        "human": 'tool definition carries executable content; quarantined',
+        "severity": 'high',
+        "evidence_kinds_required": ['tool-definition'],
         "reverify_steps": ['recompute'],
     },
     'tool-failed-no-commit': {
@@ -4503,6 +7947,25 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
+    },
+    'tool-scope-undeclared': {
+        "domain": 'token-scope',
+        "code": 'tool-scope-undeclared',
+        "human": 'the tool or action is absent from the sealed scope '
+                 'policy; fail closed, authority never auto-expands',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'tool-spawn-context-untrusted': {
+        "domain": 'spawn-context',
+        "code": 'tool-spawn-context-untrusted',
+        "human": 'permission-bypass flags presented through a postinstall '
+                 'spawn context, or through an unvouched context claiming '
+                 'to be user-invoked; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['spawn-record', 'provenance'],
+        "reverify_steps": ['recompute', 'provenance-check'],
     },
     'tool-timed-out': {
         "domain": 'capability',
@@ -4520,11 +7983,76 @@ TAXONOMY = {
         "evidence_kinds_required": ['rating', 'digest'],
         "reverify_steps": ['recompute-digest'],
     },
+    'transaction-expired': {
+        "domain": 'transaction',
+        "code": 'transaction-expired',
+        "human": 'transactional token presented at or after its per-token '
+                 'expiry; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'transaction-id-mismatch': {
+        "domain": 'transaction',
+        "code": 'transaction-id-mismatch',
+        "human": 'transactional token presented for a transaction it was '
+                 'not issued for; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'transaction-key-missing': {
+        "domain": 'transaction',
+        "code": 'transaction-key-missing',
+        "human": 'transactional token operation attempted without a '
+                 'deployment key; refused fail-closed (no dev fallback)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'transaction-malformed': {
+        "domain": 'transaction',
+        "code": 'transaction-malformed',
+        "human": 'transactional token or issuance request is malformed; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+    'transaction-signature-invalid': {
+        "domain": 'transaction',
+        "code": 'transaction-signature-invalid',
+        "human": 'transactional token MAC does not cover the presented '
+                 'bytes; possible tampering',
+        "severity": 'critical',
+        "evidence_kinds_required": ['token', 'key-reference'],
+        "reverify_steps": ['recompute'],
+    },
     'trust-class-unknown': {
         "domain": 'deploy',
         "code": 'trust-class-unknown',
         "human": 'deployment trust config: the trust class is not known',
         "severity": 'medium',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-key-repointed': {
+        "domain": 'trust',
+        "code": 'trust-key-repointed',
+        "human": 'trust material: the key id is pinned in the external '
+                 'trust root but the record\'s key material differs from '
+                 'the pinned material; the label was re-pointed',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'trust-material-malformed': {
+        "domain": 'trust',
+        "code": 'trust-material-malformed',
+        "human": 'trust material: malformed key material presented at '
+                 'trust-root construction; a construction-time refusal, '
+                 'never emitted at verification',
+        "severity": 'low',
         "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
@@ -4616,24 +8144,13 @@ TAXONOMY = {
         "evidence_kinds_required": ['credential', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest'],
     },
-    'uri-host-invalid': {
-        "domain": 'uri-normalize',
-        "code": 'uri-host-invalid',
-        "human": 'shared host normalizer: the hostname is empty after '
-                 'stripping, is not a string, or fails IDNA encoding; '
-                 'refused fail-closed',
+    'unexpected-participant-signed': {
+        "domain": 'participants',
+        "code": 'unexpected-participant-signed',
+        "human": 'expected-participants audit: a signed hop names a '
+                 'participant not declared expected for the workload',
         "severity": 'high',
-        "evidence_kinds_required": ['refusal', 'input'],
-        "reverify_steps": ['recompute'],
-    },
-    'uri-host-unparseable': {
-        "domain": 'uri-normalize',
-        "code": 'uri-host-unparseable',
-        "human": 'shared host normalizer: the URL has no parseable '
-                 'hostname or the address has no @ separator; refused '
-                 'fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['refusal', 'input'],
+        "evidence_kinds_required": ['delegation-chain'],
         "reverify_steps": ['recompute'],
     },
     'unknown-action-label': {
@@ -4772,6 +8289,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['deployment', 'checklist', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'unsigned-field-ignored': {
+        "domain": 'trust',
+        "code": 'unsigned-field-ignored',
+        "human": 'trust material: verification was asked to rely on a '
+                 'field outside the signature-covered body; unsigned '
+                 'fields are never consulted, refusing fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'unsigned-refused': {
         "domain": 'signature',
         "code": 'unsigned-refused',
@@ -4802,6 +8329,16 @@ TAXONOMY = {
         "human": 'agent card: the JWK set URL is not trusted',
         "severity": 'high',
         "evidence_kinds_required": ['agent-card', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'untrusted-key': {
+        "domain": 'trust',
+        "code": 'untrusted-key',
+        "human": 'trust material: the record\'s signing key id is not '
+                 'pinned in the external trust root; key material '
+                 'supplied inside the record is never trusted',
+        "severity": 'high',
+        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
     'untrusted-render-error': {
@@ -4836,12 +8373,115 @@ TAXONOMY = {
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
         "reverify_steps": ['recompute'],
     },
+    'uri-host-invalid': {
+        "domain": 'uri-normalize',
+        "code": 'uri-host-invalid',
+        "human": 'shared host normalizer: the hostname is empty after '
+                 'stripping, is not a string, or fails IDNA encoding; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'uri-host-unparseable': {
+        "domain": 'uri-normalize',
+        "code": 'uri-host-unparseable',
+        "human": 'shared host normalizer: the URL has no parseable '
+                 'hostname or the address has no @ separator; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal', 'input'],
+        "reverify_steps": ['recompute'],
+    },
+    'verifier-input-malformed': {
+        "domain": 'authority',
+        "code": 'verifier-input-malformed',
+        "human": 'verifier fail-closed check: the chain, verifier policy, '
+                 'or authority store is malformed; refused fail-closed, '
+                 'never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
     'verifier-malformed': {
         "domain": 'authorization_receipt',
         "code": 'verifier-malformed',
         "human": 'authorization receipt: the input failed structural validation; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-artifactsfrom-empty': {
+        "domain": 'verify',
+        "code": 'verify-artifactsfrom-empty',
+        "human": 'bundle verification: an artifactsFrom edge carries zero '
+                 'shared digests (no genuine artifact flow)',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-attestor-shadowed': {
+        "domain": 'verify',
+        "code": 'verify-attestor-shadowed',
+        "human": 'bundle verification: an attestor type has an instance '
+                 'that was never evaluated (shadowing)',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-collection-empty-match': {
+        "domain": 'verify',
+        "code": 'verify-collection-empty-match',
+        "human": 'bundle verification: an empty collection name matched a '
+                 'step, or a step is not in the claimed collection',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-hash-downgrade': {
+        "domain": 'verify',
+        "code": 'verify-hash-downgrade',
+        "human": 'bundle verification: a digest comparison used a weak '
+                 'hash while a stronger shared digest existed',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-no-clean-verifier': {
+        "domain": 'verify',
+        "code": 'verify-no-clean-verifier',
+        "human": 'bundle verification: no signature verify attempt passed '
+                 'cleanly; failed attempts confer no trust',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-signature-failed': {
+        "domain": 'verify',
+        "code": 'verify-signature-failed',
+        "human": 'bundle verification: a signature verify attempt matched '
+                 'the identity constraints but its signature never '
+                 'verified (forged-policy shape); refused, never trusted',
+        "severity": 'critical',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-symlink-escape': {
+        "domain": 'verify',
+        "code": 'verify-symlink-escape',
+        "human": 'bundle verification: an artifact symlink resolves '
+                 'outside the attested root',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verify-timestamp-eku-missing': {
+        "domain": 'verify',
+        "code": 'verify-timestamp-eku-missing',
+        "human": 'bundle verification: the timestamp signer does not '
+                 'carry the sole critical id-kp-timeStamping EKU',
+        "severity": 'high',
+        "evidence_kinds_required": ['attestation-section'],
         "reverify_steps": ['recompute'],
     },
     'vote_already_cast': {
@@ -4875,1904 +8515,6 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
-    },
-    'wrong-keyset-purpose': {
-        "domain": 'key_identity',
-        "code": 'wrong-keyset-purpose',
-        "human": 'registered key identity: the key set was used for the wrong purpose',
-        "severity": 'high',
-        "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
-        "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
-    },
-    'wrong-purpose': {
-        "domain": 'key_identity',
-        "code": 'wrong-purpose',
-        "human": 'registered key identity: the key was used for the wrong purpose',
-        "severity": 'high',
-        "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
-        "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
-    },
-    'wrong_delegator': {
-        "domain": 'approval',
-        "code": 'wrong_delegator',
-        "human": 'approval and delegation: the delegator identity is wrong',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
-        "reverify_steps": ['recompute'],
-    },
-    'wrong_run_identity': {
-        "domain": 'approval',
-        "code": 'wrong_run_identity',
-        "human": 'approval and delegation: the run identity is wrong',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-229 merge (integration fix): the wave-228 taxonomy was closed
-    # over the wave-228 tree; the battery's independent whole-tree scanner
-    # found 16 new wave-229 lane-A/C refusal strings unmapped. Added here in
-    # the module's own conventions; severities follow the documented
-    # triage guide (critical = recomputed evidence disagrees with the claim).
-    'checkpoint-refused': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-refused',
-        "human": 'audit checkpoints: generic checkpoint refusal',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'checkpoint-malformed': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-malformed',
-        "human": 'audit checkpoints: the checkpoint or its inputs are structurally malformed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint', 'audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-signature-invalid': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-signature-invalid',
-        "human": 'audit checkpoints: the checkpoint signature does not verify',
-        "severity": 'critical',
-        "evidence_kinds_required": ['checkpoint', 'signature'],
-        "reverify_steps": ['verify-signature'],
-    },
-    'checkpoint-log-incomplete': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-log-incomplete',
-        "human": 'audit checkpoints: the log is truncated against the checkpoint (fewer entries than committed)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'checkpoint-count-mismatch': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-count-mismatch',
-        "human": 'audit checkpoints: the log has more entries than the checkpoint commits to',
-        "severity": 'critical',
-        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'checkpoint-log-reordered': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-log-reordered',
-        "human": 'audit checkpoints: the recomputed MMR peaks disagree with the committed peaks (reorder or silent content substitution)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['checkpoint', 'audit-log', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'checkpoint-chain-broken': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-chain-broken',
-        "human": 'audit checkpoints: a checkpoint prev_digest link does not match its predecessor',
-        "severity": 'critical',
-        "evidence_kinds_required": ['checkpoint', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'checkpoint-evidence-not-authorization': {
-        "domain": 'checkpoints',
-        "code": 'checkpoint-evidence-not-authorization',
-        "human": 'audit checkpoints: checkpoint evidence was used as authority',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-refused': {
-        "domain": 'policy_replay',
-        "code": 'replay-refused',
-        "human": 'policy replay: generic replay refusal',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute', 'replay-claim'],
-    },
-    'replay-policy-malformed': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-malformed',
-        "human": 'policy replay: the revision record or evidence envelope is structurally malformed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-policy-revision-unknown': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-revision-unknown',
-        "human": 'policy replay: the pinned revision is not registered',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-revision'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-policy-revision-conflict': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-revision-conflict',
-        "human": 'policy replay: the same rev_id was registered with different ruleset bytes',
-        "severity": 'high',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-policy-digest-mismatch': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-digest-mismatch',
-        "human": 'policy replay: a caller-supplied digest disagrees with the digest recomputed from the ruleset bytes',
-        "severity": 'critical',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-evidence-tampered': {
-        "domain": 'policy_replay',
-        "code": 'replay-evidence-tampered',
-        "human": 'policy replay: the captured evidence digest does not match its contents',
-        "severity": 'critical',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    'replay-policy-drift': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-drift',
-        "human": 'policy replay: the live policy revision differs from the pinned revision and would change the verdict',
-        "severity": 'high',
-        "evidence_kinds_required": ['policy-revision', 'evidence'],
-        "reverify_steps": ['recompute', 'replay-claim'],
-    },
-    'replay-policy-not-authorization': {
-        "domain": 'policy_replay',
-        "code": 'replay-policy-not-authorization',
-        "human": 'policy replay: replay evidence was used as authority',
-        "severity": 'high',
-        "evidence_kinds_required": ['policy-revision'],
-        "reverify_steps": ['recompute'],
-    },
-    'deny-receipt-refused': {
-        "domain": 'receipts',
-        "code": 'deny-receipt-refused',
-        "human": 'signed receipts: base refusal for signed receipt failures',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt', 'decision'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'taxonomy-receipt-missing': {
-        "domain": 'receipts',
-        "code": 'taxonomy-receipt-missing',
-        "human": 'signed receipts: the decision lacked digest-shaped evidence, so no receipt was formed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['decision'],
-        "reverify_steps": ['recompute'],
-    },
-    'deny-receipt-malformed': {
-        "domain": 'receipts',
-        "code": 'deny-receipt-malformed',
-        "human": 'signed receipts: the presented receipt record is not well-formed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'deny-receipt-signature-invalid': {
-        "domain": 'receipts',
-        "code": 'deny-receipt-signature-invalid',
-        "human": 'signed receipts: the receipt signature does not verify (tampered or wrong key)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'signature'],
-        "reverify_steps": ['recompute', 'verify-signature'],
-    },
-    'deny-receipt-unavailable-as-permit': {
-        "domain": 'receipts',
-        "code": 'deny-receipt-unavailable-as-permit',
-        "human": 'signed receipts: a permit verdict was paired with an unavailable (outage) class',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'decision'],
-        "reverify_steps": ['recompute', 'replay-claim'],
-    },
-    'deny-receipt-not-authorization': {
-        "domain": 'receipts',
-        "code": 'deny-receipt-not-authorization',
-        "human": 'signed receipts: receipt evidence was used as authority',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'seeded-denial-refused': {
-        "domain": 'seeded_denial',
-        "code": 'seeded-denial-refused',
-        "human": 'seeded denials: base refusal for seeded-denial failures',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'seeded-denial-malformed': {
-        "domain": 'seeded_denial',
-        "code": 'seeded-denial-malformed',
-        "human": 'seeded denials: the presented record is not well-formed, '
-                 'or silence was offered instead of a record',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'seeded-denial-digest-mismatch': {
-        "domain": 'seeded_denial',
-        "code": 'seeded-denial-digest-mismatch',
-        "human": 'seeded denials: the record digest does not recompute from '
-                 'its body (tampered or misbound)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'denial-anchored-in-denied-transaction': {
-        "domain": 'seeded_denial',
-        "code": 'denial-anchored-in-denied-transaction',
-        "human": 'seeded denials: the denial record anchors inside the '
-                 'denied transaction, so a rollback could erase the denial',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'verdict-record', 'digest'],
-        "reverify_steps": ['recompute', 'check-anchor'],
-    },
-    'denial-evidence-lost': {
-        "domain": 'seeded_denial',
-        "code": 'denial-evidence-lost',
-        "human": 'seeded denials: the committed denial record is absent from '
-                 'the post-rollback log; the denial evidence did not survive',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute', 'check-commit'],
-    },
-    'seeded-denial-not-authorization': {
-        "domain": 'seeded_denial',
-        "code": 'seeded-denial-not-authorization',
-        "human": 'seeded denials: denial evidence was used as authority',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'spiffe-refused': {
-        "domain": 'spiffe',
-        "code": 'spiffe-refused',
-        "human": 'spiffe KMS auth: base-class fallback code; concrete '
-                 'refusals carry a specific spiffe-* code',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'spiffe-svid-unavailable': {
-        "domain": 'spiffe',
-        "code": 'spiffe-svid-unavailable',
-        "human": 'spiffe KMS auth: the SVID file is absent or unreadable '
-                 '(SPIRE agent down or volume unmounted); refused before '
-                 'any network call',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-svid-file'],
-    },
-    'spiffe-svid-expired': {
-        "domain": 'spiffe',
-        "code": 'spiffe-svid-expired',
-        "human": 'spiffe KMS auth: the SVID exp claim has passed; refused '
-                 'before any network call',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-svid-expiry'],
-    },
-    'spiffe-svid-malformed': {
-        "domain": 'spiffe',
-        "code": 'spiffe-svid-malformed',
-        "human": 'spiffe KMS auth: the SVID is not a usable JWT (shape, '
-                 'encoding, claims) or the file is wrong; refused before '
-                 'any network call',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-svid-shape'],
-    },
-    'spiffe-audience-mismatch': {
-        "domain": 'spiffe',
-        "code": 'spiffe-audience-mismatch',
-        "human": 'spiffe KMS auth: the SVID aud does not match the '
-                 'configured audience; a foreign SVID is never presented',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-svid-audience'],
-    },
-    'spiffe-auth-refused': {
-        "domain": 'spiffe',
-        "code": 'spiffe-auth-refused',
-        "human": 'spiffe KMS auth: the JWT login failed (403 after one '
-                 're-login, other HTTP errors, transport failure, or '
-                 'malformed login response)',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-jwt-login'],
-    },
-    'spiffe-permission-invalid': {
-        "domain": 'spiffe',
-        "code": 'spiffe-permission-invalid',
-        "human": 'spiffe KMS auth: the SVID file has group/other '
-                 'permission bits or is not owned by the process uid; '
-                 'never read a secret other principals could have swapped',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['check-svid-permissions'],
-    },
-    # Wave-232 lane C (DSSE envelope discipline): additive, 575 -> 578.
-    'dsse-envelope-malformed': {
-        "domain": 'dsse',
-        "code": 'dsse-envelope-malformed',
-        "human": 'DSSE envelope: the envelope or PAE bytes are ambiguous '
-                 'or malformed (leading-zero length, trailing bytes, '
-                 'unknown fields, digest-binding mismatch)',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'dsse-payload-type-refused': {
-        "domain": 'dsse',
-        "code": 'dsse-payload-type-refused',
-        "human": 'DSSE envelope: payloadType outside the vendored '
-                 'application/vnd.sasanam.*+json namespace, or an envelope '
-                 'presented under the wrong expected payloadType',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'verdict-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'dsse-signature-invalid': {
-        "domain": 'dsse',
-        "code": 'dsse-signature-invalid',
-        "human": 'DSSE envelope: the signature does not verify over the '
-                 'PAE bytes (payloadType + payload bound by length prefix)',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-malformed': {
-        "domain": 'evaluation',
-        "code": 'evaluation-malformed',
-        "human": 'evaluation function: the frozen call or evaluation '
-                 'record is not well-formed (empty or misshapen '
-                 'authorization_details, half-pinned policy revision, '
-                 'non-UTC instant)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-incomplete-details': {
-        "domain": 'evaluation',
-        "code": 'evaluation-incomplete-details',
-        "human": 'evaluation function: an authorization_details entry '
-                 'was never evaluated (skipped, failed, or its '
-                 'per-entry verdict is missing from the record); the '
-                 'whole call is refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute', 're-evaluate'],
-    },
-    'evaluation-key-role-conflation': {
-        "domain": 'evaluation',
-        "code": 'evaluation-key-role-conflation',
-        "human": 'evaluation function: the evidence key and the '
-                 'adjudication key are the same key; the freezer and '
-                 'the adjudicator must be different roles',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-input-swapped': {
-        "domain": 'evaluation',
-        "code": 'evaluation-input-swapped',
-        "human": 'evaluation function: the call_digest or verdict_digest '
-                 'does not match the recomputed digest of the frozen '
-                 'input; the input or verdict was swapped after '
-                 'freezing/evaluation',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-non-reproducible': {
-        "domain": 'evaluation',
-        "code": 'evaluation-non-reproducible',
-        "human": 'evaluation function: replay of the frozen input under '
-                 'the pinned revision produced a different verdict than '
-                 'the record claims',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute', 're-evaluate'],
-    },
-    'evaluation-policy-drift': {
-        "domain": 'evaluation',
-        "code": 'evaluation-policy-drift',
-        "human": 'evaluation function: replay against the current engine '
-                 'would change the verdict; the pinned revision is '
-                 'reproducible but the live policy has drifted',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute', 're-evaluate'],
-    },
-    'evaluation-revision-unknown': {
-        "domain": 'evaluation',
-        "code": 'evaluation-revision-unknown',
-        "human": 'evaluation function: the pinned policy_rev_id is not '
-                 'registered in the revision registry',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-policy-digest-mismatch': {
-        "domain": 'evaluation',
-        "code": 'evaluation-policy-digest-mismatch',
-        "human": 'evaluation function: the registry digest for the '
-                 'pinned policy_rev_id disagrees with the record\'s '
-                 'pinned digest; digests are recomputed from ruleset '
-                 'bytes, never trusted from claims',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'evaluation-not-authorization': {
-        "domain": 'evaluation',
-        "code": 'evaluation-not-authorization',
-        "human": 'evaluation function: an evaluation record is evidence, '
-                 'never authority; presenting one as authority refuses',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-233 lane B (exactly-one-signature DSSE + binding): additive, 4 codes.
-    'dsse-envelope-no-signature': {
-        "domain": 'dsse',
-        "code": 'dsse-envelope-no-signature',
-        "human": 'DSSE envelope: the envelope carries zero signatures; '
-                 'the exactly-one-signature discipline refuses a '
-                 'signature-less envelope fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'dsse-envelope-multi-signature': {
-        "domain": 'dsse',
-        "code": 'dsse-envelope-multi-signature',
-        "human": 'DSSE envelope: the envelope carries more than one '
-                 'signature without an explicit expected_signatures '
-                 'opt-in, or the signature count does not match the '
-                 'opted-in count; signature-count ambiguity is refused, '
-                 'never silently accepted',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'dsse-payloadtype-mismatch': {
-        "domain": 'dsse',
-        "code": 'dsse-payloadtype-mismatch',
-        "human": 'DSSE envelope: the envelope payloadType differs from '
-                 'the caller-bound expected type; transplant across '
-                 'evidence kinds is refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'verdict-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'dsse-envelope-transplant': {
-        "domain": 'dsse',
-        "code": 'dsse-envelope-transplant',
-        "human": 'DSSE envelope: the envelope payloadType is registered '
-                 'to a different verifier module domain than the one '
-                 'verifying (cross-module transplant)',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt', 'verdict-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-233 lane C (honest-claim discipline): additive; merged pin 585 -> 599 (lane-local 586).
-    'honest-claim-reserved-token': {
-        "domain": 'honest_claims',
-        "code": 'honest-claim-reserved-token',
-        "human": 'honest claims: a rendered evidence artifact emitted a '
-                 'reserved claim token (proves-execution, tamper-proof, '
-                 'non-repudiation, formally-verified, ...); the artifact '
-                 'was refused before signing or sealing, naming the token',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-233 merge: 585 + 14 = 599 (9 lane-A evaluation + 4 lane-B dsse + 1 lane-C honest_claims), additive only.
-    # Wave-234 lane A (octet-digest receipt chaining: gov/log.py octet-digest pre-pass codes), additive.
-    # 599 -> 602 (3 new chain-domain codes). The codes name the exact
-    # refusal in gov.log's octet-digest pre-pass.
-    'chain-octet-digest-mismatch': {
-        "domain": 'audit',
-        "code": 'chain-octet-digest-mismatch',
-        "human": 'audit log: an entry\u2019s prev_record_octets_digest does '
-                 'not match the stored previous-record octets (the '
-                 'previous record was re-encoded: byte-different, '
-                 'semantically equal); refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'chain-octet-digest-absent': {
-        "domain": 'audit',
-        "code": 'chain-octet-digest-absent',
-        "human": 'audit log: an entry carries no well-formed '
-                 'prev_record_octets_digest; refusing instead of '
-                 'silently degrading to semantic chaining',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'chain-record-truncated': {
-        "domain": 'audit',
-        "code": 'chain-record-truncated',
-        "human": 'audit log: a record\u2019s stored bytes (or its '
-                 'predecessor\u2019s) do not decode as a JSON record; '
-                 'refusing, never silently skipping',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-234 lane B (NIST IR 8587-style token hygiene: gov/token_hygiene.py codes), additive.
-    'token-malformed': {
-        "domain": 'token_hygiene',
-        "code": 'token-malformed',
-        "human": 'token hygiene: agent credential claims are misshapen '
-                 '(not a dict, bad iat/exp/key fields); refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-ttl-exceeded': {
-        "domain": 'token_hygiene',
-        "code": 'token-ttl-exceeded',
-        "human": 'token hygiene: token lifetime exceeds the 1h issuance '
-                 'cap; a token must never be issued with a longer life',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-expired': {
-        "domain": 'token_hygiene',
-        "code": 'token-expired',
-        "human": 'token hygiene: expired token presented; refused '
-                 'outright, never refreshed, never tolerated',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-audience-missing': {
-        "domain": 'token_hygiene',
-        "code": 'token-audience-missing',
-        "human": 'token hygiene: token issued without an explicit '
-                 'audience (aud); every agent credential must declare one',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-audience-mismatch': {
-        "domain": 'token_hygiene',
-        "code": 'token-audience-mismatch',
-        "human": 'token hygiene: token presented outside its declared '
-                 'audience; the presentation is refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-key-stale': {
-        "domain": 'token_hygiene',
-        "code": 'token-key-stale',
-        "human": 'token hygiene: high-impact issuing key is older than '
-                 'the 90-day rotation window; rotate before issuing',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'token-in-log': {
-        "domain": 'token_hygiene',
-        "code": 'token-in-log',
-        "human": 'token hygiene: a bearer token value reached a log '
-                 'line; INCIDENT MATERIAL -- rotate the token and audit '
-                 'the leak path; lines must carry {type, issuer, scope, '
-                 'audience} metadata only',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-234 lane C (at-most-once consumption ledger: gov/consumption_ledger.py codes), additive.
-    'previously-consumed': {
-        "domain": 'consumption',
-        "code": 'previously-consumed',
-        "human": 'consumption ledger: the authorization instance was '
-                 'already consumed; replay is an explicit named outcome '
-                 'carrying the original receipt, never a silent release',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-idempotency-reused': {
-        "domain": 'consumption',
-        "code": 'consumption-idempotency-reused',
-        "human": 'consumption ledger: an entity-bound idempotency key '
-                 'already consumed one frozen instance; a different '
-                 'instance cannot release under it',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-instance-malformed': {
-        "domain": 'consumption',
-        "code": 'consumption-instance-malformed',
-        "human": 'consumption ledger: the presented instance digest is '
-                 'not a bare 64-hex sha256 digest; the ledger is keyed '
-                 'to frozen-instance digests only',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-key-malformed': {
-        "domain": 'consumption',
-        "code": 'consumption-key-malformed',
-        "human": 'consumption ledger: idempotency key parts must be a '
-                 'tuple/list of at least two non-empty strings (key '
-                 'type + entity identifier)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-journal-unusable': {
-        "domain": 'consumption',
-        "code": 'consumption-journal-unusable',
-        "human": 'consumption ledger: the write-ahead journal cannot be '
-                 'read or fails receipt verification; the ledger refuses '
-                 'to operate rather than release against an untrustworthy '
-                 'consumed set',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-journal-write-failed': {
-        "domain": 'consumption',
-        "code": 'consumption-journal-write-failed',
-        "human": 'consumption ledger: the write-ahead commit failed; '
-                 'nothing was marked consumed and no receipt was issued',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-receipt-malformed': {
-        "domain": 'consumption',
-        "code": 'consumption-receipt-malformed',
-        "human": 'consumption ledger: the presented receipt is missing '
-                 'fields or carries non-digest values',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'consumption-receipt-tampered': {
-        "domain": 'consumption',
-        "code": 'consumption-receipt-tampered',
-        "human": 'consumption ledger: the receipt digest does not '
-                 'recompute over the receipt body; the receipt was '
-                 'edited after issuance',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-234 merge: 599 + 18 = 617 (3 lane-A audit-chain + 7 lane-B token_hygiene + 8 lane-C consumption), additive only.
-    # Wave-235 lane A (trust-material externality: gov/trust_material.py
-    # codes), additive.
-    'untrusted-key': {
-        "domain": 'trust',
-        "code": 'untrusted-key',
-        "human": 'trust material: the record\'s signing key id is not '
-                 'pinned in the external trust root; key material '
-                 'supplied inside the record is never trusted',
-        "severity": 'high',
-        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'trust-key-repointed': {
-        "domain": 'trust',
-        "code": 'trust-key-repointed',
-        "human": 'trust material: the key id is pinned in the external '
-                 'trust root but the record\'s key material differs from '
-                 'the pinned material; the label was re-pointed',
-        "severity": 'high',
-        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'unsigned-field-ignored': {
-        "domain": 'trust',
-        "code": 'unsigned-field-ignored',
-        "human": 'trust material: verification was asked to rely on a '
-                 'field outside the signature-covered body; unsigned '
-                 'fields are never consulted, refusing fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'trust-material-malformed': {
-        "domain": 'trust',
-        "code": 'trust-material-malformed',
-        "human": 'trust material: malformed key material presented at '
-                 'trust-root construction; a construction-time refusal, '
-                 'never emitted at verification',
-        "severity": 'low',
-        "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-235 lane B (bound-permit conjunction: gov/bound_permit.py codes), additive.
-    'permit-decision-absent': {
-        "domain": 'permit',
-        "code": 'permit-decision-absent',
-        "human": 'bound permit: issuance attempted without a decision '
-                 'record; a permit is decision AND mandate AND policy, '
-                 'so the absent leg refuses',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-mandate-absent': {
-        "domain": 'permit',
-        "code": 'permit-mandate-absent',
-        "human": 'bound permit: issuance attempted without a mandate '
-                 'record; the mandate leg is absent so no permit issues',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-policy-absent': {
-        "domain": 'permit',
-        "code": 'permit-policy-absent',
-        "human": 'bound permit: issuance attempted without a local '
-                 'policy binding; the policy leg is absent so no permit '
-                 'issues',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-jti-duplicate': {
-        "domain": 'permit',
-        "code": 'permit-jti-duplicate',
-        "human": 'bound permit: (iss, jti) is already claimed and the '
-                 'outcome is not settled as not-executed; a fresh '
-                 'permit refuses until the unknown outcome is '
-                 'reconciled via jti -- never re-mint',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-leg-refusal-unmapped': {
-        "domain": 'permit',
-        "code": 'permit-leg-refusal-unmapped',
-        "human": 'bound permit: a leg verifier refused without naming '
-                 'a machine code; unnamed refusals are unauditable and '
-                 'cannot issue a permit',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-malformed': {
-        "domain": 'permit',
-        "code": 'permit-malformed',
-        "human": 'bound permit: the presented permit, reconciliation '
-                 'record, leg, or registry argument is the wrong shape; '
-                 'refusing instead of guessing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-tampered': {
-        "domain": 'permit',
-        "code": 'permit-tampered',
-        "human": 'bound permit: a permit or reconciliation record '
-                 'digest does not recompute over its body; the record '
-                 'was edited after issuance',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-235 lane C (grant anti-widening: gov/grant_attenuation.py codes), additive.
-    'grant-widened': {
-        "domain": 'grants',
-        "code": 'grant-widened',
-        "human": 'grant attenuation: a delegation attenuation widens a '
-                 'scope dimension of the parent grant (a value, dimension, '
-                 'or scalar change the parent never held); grants refine, '
-                 'never extend',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'grant-attenuation-gap': {
-        "domain": 'grants',
-        "code": 'grant-attenuation-gap',
-        "human": 'grant attenuation: a delegation hop fails to narrow '
-                 '(a rights copy, not an attenuation), or a hop digest '
-                 'or chain continuity does not check out',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'grant-chain-required': {
-        "domain": 'grants',
-        "code": 'grant-chain-required',
-        "human": 'grant attenuation: the presented grant carries no '
-                 'attenuation chain; a leaf alone is not auditable',
-        "severity": 'high',
-        "evidence_kinds_required": ['receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # grant-revoked and grant-malformed are REUSED from the existing
-    # taxonomy (authorization_receipt domain): a revoked hop is a
-    # revoked credential, and a malformed grant/hop shape is a
-    # structural validation failure. Additive-only: no redefinition.
-    # Wave-235 merge: 617 + 14 = 631 (4 lane-A trust-material + 7 lane-B bound-permit
-    # + 3 lane-C grant-attenuation), additive only, zero key collisions, composed from
-    # the three lane commits by direct byte-verification.
-    # codes), additive.
-    'close-signer-mismatch': {
-        "domain": 'close',
-        "code": 'close-signer-mismatch',
-        "human": 'close binding: the close record\u2019s signer id differs '
-                 'from the chain-root session-start signer id; being a '
-                 'listed key does not excuse a different signer',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-trust-repointed': {
-        "domain": 'close',
-        "code": 'close-trust-repointed',
-        "human": 'close binding: the close record re-points a trust id '
-                 '-- the same key-id label with key material differing '
-                 'from the external trust root\u2019s pinned material',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log', 'trust-config', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-unsigned-scope': {
-        "domain": 'close',
-        "code": 'close-unsigned-scope',
-        "human": 'close binding: verification was asked to rely on a '
-                 'scope/authority field outside the close record\u2019s '
-                 'signature-covered body; unsigned scope is never '
-                 'consulted, refusing fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log', 'signature'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-chain-digest-mismatch': {
-        "domain": 'close',
-        "code": 'close-chain-digest-mismatch',
-        "human": 'close binding: the close record\u2019s chain digest '
-                 'does not match the recomputed digest over the chain; '
-                 'a chain record was rewritten',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-record-malformed': {
-        "domain": 'close',
-        "code": 'close-record-malformed',
-        "human": 'close binding: the chain or the close record is not a '
-                 'well-formed record mapping, or a record digest is '
-                 'missing/malformed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-signer-absent': {
-        "domain": 'close',
-        "code": 'close-signer-absent',
-        "human": 'close binding: the chain\u2019s first record carries no '
-                 'signer identity, so no session-start signer can be '
-                 'pinned; binding to nothing is refused',
-        "severity": 'medium',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'close-signature-invalid': {
-        "domain": 'close',
-        "code": 'close-signature-invalid',
-        "human": 'close binding: the close record\u2019s signature fails '
-                 'against the trust root\u2019s pinned key material; the '
-                 'record\u2019s signer id is claimed, not authenticated',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    # added after the spec review authenticated the close record's
-    # (4 new denial-domain codes naming the exact refusal in
-    # gov.denial_capsule's sealed-capsule and selective-disclosure
-    # seams).
-    'denial-unsealed': {
-        "domain": 'denial',
-        "code": 'denial-unsealed',
-        "human": 'denial capsules: a denial was emitted without a '
-                 'sealed denial capsule; a denial must be sealed or '
-                 'the action never ran; refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'denial-capsule-malformed': {
-        "domain": 'denial',
-        "code": 'denial-capsule-malformed',
-        "human": 'denial capsules: the presented denial capsule, its '
-                 'disclosure record, or a seal-time input is not '
-                 'well-formed; refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'denial-capsule-signature-invalid': {
-        "domain": 'denial',
-        "code": 'denial-capsule-signature-invalid',
-        "human": 'denial capsules: the denial capsule seal does not '
-                 'verify against the presented key; refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'denial-disclosure-mismatch': {
-        "domain": 'denial',
-        "code": 'denial-disclosure-mismatch',
-        "human": 'denial capsules: a disclosed field does not match '
-                 'its salted commitment in the sealed capsule, or the '
-                 'disclosure binds a different capsule; refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    # gov/permit_closure.py codes), additive.
-    'permit-binding-mismatch': {
-        "domain": 'permit',
-        "code": 'permit-binding-mismatch',
-        "human": 'permit/closure: the dispatched request bytes do not '
-                 'match the canonical request bytes bound in the '
-                 'permit; the permit refuses the dispatch',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'dispatch-without-permit': {
-        "domain": 'permit',
-        "code": 'dispatch-without-permit',
-        "human": 'permit/closure: dispatch attempted with no permit; '
-                 'the permit must be issued pre-dispatch',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'closure-permit-absent': {
-        "domain": 'permit',
-        "code": 'closure-permit-absent',
-        "human": 'permit/closure: a closure presented without its '
-                 'matching permit; the two halves must be presented '
-                 'together',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'closure-permit-mismatch': {
-        "domain": 'permit',
-        "code": 'closure-permit-mismatch',
-        "human": 'permit/closure: the closure binds a different permit '
-                 'digest than the presented permit; the two halves '
-                 'disagree',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'closure-scope-widened': {
-        "domain": 'permit',
-        "code": 'closure-scope-widened',
-        "human": 'permit/closure: the closure claims effects outside '
-                 'the permit\'s scope; a closure may narrow, never '
-                 'widen',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # permit-malformed and permit-tampered are REUSED from the existing
-    # taxonomy (permit domain): malformed shapes and edited-after-issue
-    # records at this seam are the same structural failures. Additive-
-    # only: no redefinition.
-    # only, zero key collisions, verified by direct byte-inspection of
-    # the taxonomy.
-    # Lane A codes: three-outcome gate rule (gov/gate_outcomes.py) — undecidable is a failure to verify, never tamper.
-    'gate-tampered': {
-        "domain": 'gate',
-        "code": 'gate-tampered',
-        "human": 'gate: the verifier reported that the evidence was '
-                 'tampered; the gate refuses the action',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'gate-undecidable': {
-        "domain": 'gate',
-        "code": 'gate-undecidable',
-        "human": 'gate: the verifier could not verify the evidence; '
-                 'undecidable is a failure to verify, not evidence of '
-                 'tampering; the gate refuses fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'gate-verdict-unreasoned': {
-        "domain": 'gate',
-        "code": 'gate-verdict-unreasoned',
-        "human": 'gate: the verifier returned undecidable without a '
-                 'mandatory reason from the closed vocabulary; the '
-                 'gate contract refuses the verdict itself',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'gate-undecidable-allowed': {
-        "domain": 'gate',
-        "code": 'gate-undecidable-allowed',
-        "human": 'gate self-check: a gate allowed an undecidable '
-                 'verdict (or crashed on the probe instead of refusing '
-                 'it); the gate is declared non-compliant',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Lane B codes: edited-approval refusal at the adapter boundary (gov/approval_edit_guard.py).
-    'approval-edited': {
-        "domain": 'approval',
-        "code": 'approval-edited',
-        "human": 'approval: the approved action bytes differ from the '
-                 'proposed action bytes; approving with edits is '
-                 'refused -- re-propose the edited action instead',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-record', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-rebinding': {
-        "domain": 'approval',
-        "code": 'approval-rebinding',
-        "human": 'approval: the approval is presented in a proposal '
-                 'context it does not belong to (proposal id mismatch); '
-                 'approvals are never rebound across proposals',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-record', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-malformed': {
-        "domain": 'approval',
-        "code": 'approval-malformed',
-        "human": 'approval: the proposal or approval record is not a '
-                 'well-formed adapter-boundary record; refusing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['approval-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Lane C codes: canonical audit-record contract (gov/canonical_record.py) — RFC 8785 + I-JSON; opaque bytes never coerced.
-    'record-duplicate-member': {
-        "domain": 'canonical',
-        "code": 'record-duplicate-member',
-        "human": 'canonical records: a JSON record carries the same '
-                 'object member twice; duplicate keys are a '
-                 'cross-deployment canonicalization hazard, refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'record-depth-exceeded': {
-        "domain": 'canonical',
-        "code": 'record-depth-exceeded',
-        "human": 'canonical records: nesting deeper than 128 levels; '
-                 'unbounded nesting is a parser hazard, refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'record-noncanonical-float': {
-        "domain": 'canonical',
-        "code": 'record-noncanonical-float',
-        "human": 'canonical records: a float value cannot be '
-                 'canonicalized byte-identically across deployments; '
-                 'refusing, never coercing to integer',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'record-malformed': {
-        "domain": 'canonical',
-        "code": 'record-malformed',
-        "human": 'canonical records: the record shape is not '
-                 'canonicalizable (non-string keys, unsupported types, '
-                 'unencodable characters); refusing',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    'record-opaque-bytes': {
-        "domain": 'canonical',
-        "code": 'record-opaque-bytes',
-        "human": 'canonical records: input is non-JSON bytes; passing '
-                 'through byte-exact with the opaque-bytes marker, '
-                 'never silently coercing',
-        "severity": 'low',
-        "evidence_kinds_required": ['audit-log'],
-        "reverify_steps": ['recompute'],
-    },
-    # Lane D codes: closure-scoped approvals (gov/closure_scoped_approvals.py).
-    'approval-run-mismatch': {
-        "domain": 'scoped',
-        "code": 'approval-run-mismatch',
-        "human": 'closure-scoped approval: the packet is sealed for a '
-                 'different run_id than the one it is presented against',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-sandbox-mismatch': {
-        "domain": 'scoped',
-        "code": 'approval-sandbox-mismatch',
-        "human": 'closure-scoped approval: the packet is sealed for a '
-                 'different sandbox_id than the one it is presented '
-                 'against',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-route-mismatch': {
-        "domain": 'scoped',
-        "code": 'approval-route-mismatch',
-        "human": 'closure-scoped approval: the packet is sealed for a '
-                 'different route than the one it is presented against; '
-                 'a pre-computed approval is never replayed at another '
-                 'route',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-capability-dead': {
-        "domain": 'scoped',
-        "code": 'approval-capability-dead',
-        "human": 'closure-scoped approval: the packet\u2019s attempt is '
-                 'settled; capabilities die at settlement, there is no '
-                 'second execution',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'approval-state-stale': {
-        "domain": 'scoped',
-        "code": 'approval-state-stale',
-        "human": 'closure-scoped approval: state moved since issuance; '
-                 'the write-time recheck refused because the approval no '
-                 'longer covers the current state',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet', 'state-digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'scoped-approval-malformed': {
-        "domain": 'scoped',
-        "code": 'scoped-approval-malformed',
-        "human": 'closure-scoped approval: the presented packet or '
-                 'argument is the wrong shape; refusing instead of '
-                 'guessing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'scoped-approval-tampered': {
-        "domain": 'scoped',
-        "code": 'scoped-approval-tampered',
-        "human": 'closure-scoped approval: the packet\u2019s '
-                 'approval_digest does not recompute over its body; the '
-                 'record was edited after issuance',
-        "severity": 'high',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'scoped-approval-capability-unknown': {
-        "domain": 'scoped',
-        "code": 'scoped-approval-capability-unknown',
-        "human": 'closure-scoped approval: the requested capability was '
-                 'never granted by this packet',
-        "severity": 'medium',
-        "evidence_kinds_required": ['approval-packet'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-origin-empty': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-origin-empty',
-        "human": 'C2SP checkpoint: origin line empty or carries '
-                 'spaces/plus',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-size-malformed': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-size-malformed',
-        "human": 'C2SP checkpoint: tree size is not ASCII decimal '
-                 'without leading zeros',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-root-malformed': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-root-malformed',
-        "human": 'C2SP checkpoint: root hash is not base64 of 32 bytes',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-extension-empty': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-extension-empty',
-        "human": 'C2SP checkpoint: an extension line is empty',
-        "severity": 'low',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-note-malformed': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-note-malformed',
-        "human": 'C2SP checkpoint: bytes are not a valid signed note',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-not-c2sp': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-not-c2sp',
-        "human": 'C2SP checkpoint: signed note body is not the '
-                 'checkpoint format; bespoke notes stay internal',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-known-signature-invalid': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-known-signature-invalid',
-        "human": 'C2SP checkpoint: a known key signature failed; '
-                 'whole note rejected',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-no-trusted-signature': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-no-trusted-signature',
-        "human": 'C2SP checkpoint: no signature from a known key '
-                 'verified',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-log-empty': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-log-empty',
-        "human": 'C2SP checkpoint: log tree is empty; no checkpoint '
-                 'can be emitted',
-        "severity": 'medium',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    'checkpoint-inconsistent': {
-        "domain": 'checkpoint',
-        "code": 'checkpoint-inconsistent',
-        "human": 'C2SP checkpoint: journal refused a different root '
-                 'for an already-signed (origin, size)',
-        "severity": 'high',
-        "evidence_kinds_required": ['checkpoint-note'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-238 lane B: bundle-verification invariant (witness
-    # GHSA-2v4r steal, pattern-only): 8 ``verify``-domain codes.
-    # 667 + 8 = 675, additive only, zero key collisions.
-    'verify-signature-failed': {
-        "domain": 'verify',
-        "code": 'verify-signature-failed',
-        "human": 'bundle verification: a signature verify attempt matched '
-                 'the identity constraints but its signature never '
-                 'verified (forged-policy shape); refused, never trusted',
-        "severity": 'critical',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-no-clean-verifier': {
-        "domain": 'verify',
-        "code": 'verify-no-clean-verifier',
-        "human": 'bundle verification: no signature verify attempt passed '
-                 'cleanly; failed attempts confer no trust',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-symlink-escape': {
-        "domain": 'verify',
-        "code": 'verify-symlink-escape',
-        "human": 'bundle verification: an artifact symlink resolves '
-                 'outside the attested root',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-artifactsfrom-empty': {
-        "domain": 'verify',
-        "code": 'verify-artifactsfrom-empty',
-        "human": 'bundle verification: an artifactsFrom edge carries zero '
-                 'shared digests (no genuine artifact flow)',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-timestamp-eku-missing': {
-        "domain": 'verify',
-        "code": 'verify-timestamp-eku-missing',
-        "human": 'bundle verification: the timestamp signer does not '
-                 'carry the sole critical id-kp-timeStamping EKU',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-attestor-shadowed': {
-        "domain": 'verify',
-        "code": 'verify-attestor-shadowed',
-        "human": 'bundle verification: an attestor type has an instance '
-                 'that was never evaluated (shadowing)',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-collection-empty-match': {
-        "domain": 'verify',
-        "code": 'verify-collection-empty-match',
-        "human": 'bundle verification: an empty collection name matched a '
-                 'step, or a step is not in the claimed collection',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'verify-hash-downgrade': {
-        "domain": 'verify',
-        "code": 'verify-hash-downgrade',
-        "human": 'bundle verification: a digest comparison used a weak '
-                 'hash while a stronger shared digest existed',
-        "severity": 'high',
-        "evidence_kinds_required": ['attestation-section'],
-        "reverify_steps": ['recompute'],
-    },
-    'attestation-class-inflation': {
-        "domain": 'attested',
-        "code": 'attestation-class-inflation',
-        "human": 'attested-vs-asserted field column: a caller-declared or '
-                 'caller-asserted field was presented as issuer-verified; '
-                 'refusing instead of conferring verification it never had',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'attestation-class-unlabeled': {
-        "domain": 'attested',
-        "code": 'attestation-class-unlabeled',
-        "human": 'attested-vs-asserted field column: a record field has no '
-                 'attestation class; refusing at emit instead of inventing '
-                 'one',
-        "severity": 'medium',
-        "evidence_kinds_required": ['audit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'attestation-outcome-misread': {
-        "domain": 'attested',
-        "code": 'attestation-outcome-misread',
-        "human": 'attested-vs-asserted field column: the decision outcome '
-                 'was presented as proof of execution; ALLOWED attests the '
-                 'decision only, proof of execution needs issuer-attested '
-                 'effect evidence',
-        "severity": 'high',
-        "evidence_kinds_required": ['audit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'attestation-record-malformed': {
-        "domain": 'attested',
-        "code": 'attestation-record-malformed',
-        "human": 'attested-vs-asserted field column: the record is the '
-                 'wrong shape; refusing instead of guessing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['audit-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-238 lane D: 667 + 6 = 673 (6 independent-corroboration
-    # consumption codes: corroboration-malformed,
-    # corroboration-unattested, corroboration-untrusted-source,
-    # corroboration-signature-invalid, corroboration-key-inequality,
-    # corroboration-uncorroborated; domain corroboration), additive
-    # only, zero key collisions, zero deletions.
-    'corroboration-malformed': {
-        "domain": 'corroboration',
-        "code": 'corroboration-malformed',
-        "human": 'independent corroboration: the envelope or an evidence '
-                 'item is the wrong shape; refusing instead of guessing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'corroboration-unattested': {
-        "domain": 'corroboration',
-        "code": 'corroboration-unattested',
-        "human": 'independent corroboration: the item provenance resolves '
-                 'to the gated runtime itself; self-attested evidence is '
-                 'never corroboration',
-        "severity": 'high',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'corroboration-untrusted-source': {
-        "domain": 'corroboration',
-        "code": 'corroboration-untrusted-source',
-        "human": 'independent corroboration: the item key_id is not in '
-                 'the consumer\u2019s own trust policy; the consumer '
-                 'cannot corroborate against key material it does not '
-                 'independently hold',
-        "severity": 'medium',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'corroboration-signature-invalid': {
-        "domain": 'corroboration',
-        "code": 'corroboration-signature-invalid',
-        "human": 'independent corroboration: the Ed25519 signature fails '
-                 'under the policy-held key; the item was edited after '
-                 'signing',
-        "severity": 'high',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'corroboration-key-inequality': {
-        "domain": 'corroboration',
-        "code": 'corroboration-key-inequality',
-        "human": 'independent corroboration: two items presented as '
-                 'distinct sources share one key_id; not key-independent',
-        "severity": 'high',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'corroboration-uncorroborated': {
-        "domain": 'corroboration',
-        "code": 'corroboration-uncorroborated',
-        "human": 'independent corroboration: a required dimension has '
-                 'fewer than two key-inequal corroborating sources; a '
-                 'lone source cannot corroborate itself',
-        "severity": 'high',
-        "evidence_kinds_required": ['evidence-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-unknown-operation': {
-        "domain": 'r3',
-        "code": 'r3-unknown-operation',
-        "human": 'AAuth R3 grant token: an operation is not well-formed in '
-                 'the registered vocabulary (unknown field, missing '
-                 'required field, non-string value)',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-vocabulary-unknown': {
-        "domain": 'r3',
-        "code": 'r3-vocabulary-unknown',
-        "human": 'AAuth R3 grant token: a vocabulary URI the consumer does '
-                 'not register; closed vocabulary refuses',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-malformed': {
-        "domain": 'r3',
-        "code": 'r3-malformed',
-        "human": 'AAuth R3 grant token: the token, R3 document, or per-call '
-                 'proposal is the wrong shape',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-s256-mismatch': {
-        "domain": 'r3',
-        "code": 'r3-s256-mismatch',
-        "human": 'AAuth R3 grant token: the token-pinned r3_s256 does not '
-                 'match the recomputed hash of the presented R3 document; '
-                 'the approval-time binding is broken',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-grant-hash-mismatch': {
-        "domain": 'r3',
-        "code": 'r3-grant-hash-mismatch',
-        "human": 'AAuth R3 grant token: the token-pinned r3_grant_hash does '
-                 'not match the recomputed hash of the presented grant '
-                 'lists; the lists were edited after issuance',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-per-call-binding-broken': {
-        "domain": 'r3',
-        "code": 'r3-per-call-binding-broken',
-        "human": 'AAuth R3 per-call challenge: the challenged call is not '
-                 'byte-equal to the content-addressed proposal operation; '
-                 'parameters were edited after addressing',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-no-match': {
-        "domain": 'r3',
-        "code": 'r3-no-match',
-        "human": 'AAuth R3 grant token: the operation matches neither '
-                 'r3_granted nor r3_per_call; the reject decision',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    'r3-grant-beyond-document': {
-        "domain": 'r3',
-        "code": 'r3-grant-beyond-document',
-        "human": 'AAuth R3 grant token: the grant authorizes an operation '
-                 'the R3 document itself does not define; the issuer may '
-                 'narrow, never widen',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-token', 'r3-document'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-239 lane-A (W239-1 AAuth R3 vocabulary grant tokens): 695 + 8
-    # = 703, additive only, zero key collisions. Codes: r3-unknown-operation,
-    # r3-vocabulary-unknown, r3-malformed, r3-s256-mismatch,
-    # r3-grant-hash-mismatch, r3-per-call-binding-broken, r3-no-match,
-    # r3-grant-beyond-document.
-    # Wave-239 lane B: 695 + 6 = 701 (6 claim-at-dispatch codes:
-    # claim-malformed, claim-invalid-grant, claim-not-presented,
-    # claim-not-releasable, claim-replay, claim-lease-expired;
-    # domain claim), additive only, zero key collisions, zero deletions.
-    'claim-malformed': {
-        "domain": 'claim',
-        "code": 'claim-malformed',
-        "human": 'claim-at-dispatch: the grant, claim, or an argument is '
-                 'the wrong shape; refusing instead of guessing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'claim-invalid-grant': {
-        "domain": 'claim',
-        "code": 'claim-invalid-grant',
-        "human": 'claim-at-dispatch: the grant seal does not recompute, '
-                 'or the claim binds another payload digest; tampered or '
-                 'foreign grants claim nothing',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'claim-not-presented': {
-        "domain": 'claim',
-        "code": 'claim-not-presented',
-        "human": 'claim-at-dispatch: dispatch attempted without a claim '
-                 'presented at the authority; a locally verified grant '
-                 'alone authorizes nothing',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'claim-not-releasable': {
-        "domain": 'claim',
-        "code": 'claim-not-releasable',
-        "human": 'claim-at-dispatch: a second claim against an '
-                 'already-consumed grant; consumed grants are never '
-                 'released, never retried',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'claim-replay': {
-        "domain": 'claim',
-        "code": 'claim-replay',
-        "human": 'claim-at-dispatch: the same claim presented twice; one '
-                 'claim, one dispatch attempt',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'claim-lease-expired': {
-        "domain": 'claim',
-        "code": 'claim-lease-expired',
-        "human": 'claim-at-dispatch: the claim lease elapsed on the '
-                 'monotonic clock before presentation; a slow upstream '
-                 'cannot outlive the permission',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-239 lane C: 695 + 3 = 698 (3 oracle-domain refusal-oracle
-    # guard codes: evaluated-and-refused, could-not-evaluate,
-    # verifier-misconfigured), additive only, zero key collisions.
-    'oracle-evaluated-and-refused': {
-        "domain": 'oracle',
-        "code": 'oracle-evaluated-and-refused',
-        "human": 'refusal-oracle guard: every authorization path was '
-                 'evaluated and refused; the refusal names no path, '
-                 'grant, or issuer standing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['authorization-request'],
-        "reverify_steps": ['recompute'],
-    },
-    'oracle-could-not-evaluate': {
-        "domain": 'oracle',
-        "code": 'oracle-could-not-evaluate',
-        "human": 'refusal-oracle guard: an authorization dependency was '
-                 'unavailable so a path could not be evaluated; distinct '
-                 'from evaluated-and-refused',
-        "severity": 'medium',
-        "evidence_kinds_required": ['authorization-request'],
-        "reverify_steps": ['recompute'],
-    },
-    'oracle-verifier-misconfigured': {
-        "domain": 'oracle',
-        "code": 'oracle-verifier-misconfigured',
-        "human": 'refusal-oracle guard: the verifier configuration is '
-                 'invalid; refusing loudly fail-closed instead of '
-                 'authorizing',
-        "severity": 'high',
-        "evidence_kinds_required": ['authorization-request'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-239 lane D: AER-1 provenance non-upgrade (ADAPT, pattern-only):
-    # 6 ``provenance``-domain codes. 695 + 6 = 701, additive only, zero
-    # key collisions.
-    'provenance-class-missing': {
-        "domain": 'provenance',
-        "code": 'provenance-class-missing',
-        "human": 'provenance non-upgrade: emission named no provenance '
-                 'class; a receipt must name exactly one class',
-        "severity": 'high',
-        "evidence_kinds_required": ['provenance-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'provenance-class-unknown': {
-        "domain": 'provenance',
-        "code": 'provenance-class-unknown',
-        "human": 'provenance non-upgrade: unknown provenance class '
-                 '(case-exact LOGGED/EXECUTED vocabulary)',
-        "severity": 'high',
-        "evidence_kinds_required": ['provenance-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'provenance-upgraded': {
-        "domain": 'provenance',
-        "code": 'provenance-upgraded',
-        "human": 'provenance non-upgrade: a receipt presented at an '
-                 'authority weight above its own class (report posed as '
-                 'observation); refused, never re-graded',
-        "severity": 'critical',
-        "evidence_kinds_required": ['provenance-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'provenance-chain-class-mismatch': {
-        "domain": 'provenance',
-        "code": 'provenance-chain-class-mismatch',
-        "human": 'provenance non-upgrade: a chain entry failed class or '
-                 'linkage verification; chain validity never promotes '
-                 'provenance',
-        "severity": 'high',
-        "evidence_kinds_required": ['provenance-chain'],
-        "reverify_steps": ['recompute'],
-    },
-    'provenance-digest-mismatch': {
-        "domain": 'provenance',
-        "code": 'provenance-digest-mismatch',
-        "human": 'provenance non-upgrade: receipt bytes differ from the '
-                 'emission digest (no silent re-grade)',
-        "severity": 'high',
-        "evidence_kinds_required": ['provenance-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    'provenance-step-break': {
-        "domain": 'provenance',
-        "code": 'provenance-step-break',
-        "human": 'provenance non-upgrade: workflow step sequence does not '
-                 'match the committed order (deletion or reorder); the '
-                 'break is named, surviving classes are unchanged',
-        "severity": 'high',
-        "evidence_kinds_required": ['workflow-commitment'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-baseline-tampered': {
-        "domain": 'honesty',
-        "code": 'honesty-baseline-tampered',
-        "human": 'forcing-honesty: a baseline JSON not written by --sync '
-                 '(checksum mismatch); the gate refuses to use it',
-        "severity": 'high',
-        "evidence_kinds_required": ['forcing-honesty-baseline'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-baseline-unforced': {
-        "domain": 'honesty',
-        "code": 'honesty-baseline-unforced',
-        "human": 'forcing-honesty: a condition that was forced in the '
-                 'baseline stopped being forced; tighten-only ratchet '
-                 'refuses unless the condition is named to --accept-unforced',
-        "severity": 'high',
-        "evidence_kinds_required": ['forcing-honesty-baseline'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-condition-silent': {
-        "domain": 'honesty',
-        "code": 'honesty-condition-silent',
-        "human": 'forcing-honesty: a mutation changed observations without '
-                 'failing any probe; the battery does not observe what the '
-                 'condition claims to force (filed finding)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['forcing-honesty-campaign'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-tautology-suspect': {
-        "domain": 'honesty',
-        "code": 'honesty-tautology-suspect',
-        "human": 'forcing-honesty: a probe vector killed zero mutations '
-                 'across the campaign; it cannot disagree with the code',
-        "severity": 'low',
-        "evidence_kinds_required": ['forcing-honesty-campaign'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-mutant-invalid': {
-        "domain": 'honesty',
-        "code": 'honesty-mutant-invalid',
-        "human": 'forcing-honesty: the requested mutation site is absent '
-                 'from the target module',
-        "severity": 'low',
-        "evidence_kinds_required": ['forcing-honesty-campaign'],
-        "reverify_steps": ['recompute'],
-    },
-    'honesty-mutant-inconclusive': {
-        "domain": 'honesty',
-        "code": 'honesty-mutant-inconclusive',
-        "human": 'forcing-honesty: the mutant did not build or run '
-                 '(syntax/import failure); never folded into gaps',
-        "severity": 'low',
-        "evidence_kinds_required": ['forcing-honesty-campaign'],
-        "reverify_steps": ['recompute'],
-    },
-    'axis-unestablished': {
-        "domain": 'axis',
-        "code": 'axis-unestablished',
-        "human": 'axis/result model: require_valid refused a chain that '
-                 'is not valid because an axis was unestablished; '
-                 'unestablished axes never contribute to valid',
-        "severity": 'medium',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'axis-ceiling-hit': {
-        "domain": 'axis',
-        "code": 'axis-ceiling-hit',
-        "human": 'axis/result model: require_valid refused a chain that '
-                 'is indeterminate because a verifier ceiling was hit; '
-                 'the limit is named, never treated as invalid',
-        "severity": 'medium',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'axis-indeterminate': {
-        "domain": 'axis',
-        "code": 'axis-indeterminate',
-        "human": 'axis/result model: require_valid refused a chain that '
-                 'is indeterminate for a non-ceiling reason; '
-                 'indeterminate never reads as valid',
-        "severity": 'medium',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'axis-invalid': {
-        "domain": 'axis',
-        "code": 'axis-invalid',
-        "human": 'axis/result model: require_valid refused a chain that '
-                 'aggregates to invalid; invalid chains never read as '
-                 'valid',
-        "severity": 'high',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'revocation-state-unknown': {
-        "domain": 'axis',
-        "code": 'revocation-state-unknown',
-        "human": 'axis/result model: the revocation state is unknown, so '
-                 'the credential is classified not-active (fail-closed); '
-                 'unknown is never active',
-        "severity": 'high',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'revocation-category-error': {
-        "domain": 'axis',
-        "code": 'revocation-category-error',
-        "human": 'axis/result model: a non-revocation state (suspension '
-                 'or expiry) was presented as revocation; refusing the '
-                 'category error',
-        "severity": 'high',
-        "evidence_kinds_required": ['verification-result'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-consume-store-not-durable': {
-        "domain": 'permit',
-        "code": 'permit-consume-store-not-durable',
-        "human": 'bound permit: the consume store is not durable; the saha admission gate refuses permits unless the deployment explicitly opts into the single-node contract',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-consume-store-unavailable': {
-        "domain": 'permit',
-        "code": 'permit-consume-store-unavailable',
-        "human": 'bound permit: the consume store is unavailable; could-not-check names the consume-store dependency',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-idempotency-conflict': {
-        "domain": 'permit',
-        "code": 'permit-idempotency-conflict',
-        "human": 'bound permit: same (iss, jti) re-presented with a different content digest; refused, never a second release',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-in-progress': {
-        "domain": 'permit',
-        "code": 'permit-in-progress',
-        "human": 'bound permit: the effect for (iss, jti) is in progress elsewhere; the presentation is retryable, nothing consumed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-no-effect-unattested': {
-        "domain": 'permit',
-        "code": 'permit-no-effect-unattested',
-        "human": 'bound permit: an unsigned no_effect refusal does not establish no effect; the budget stays committed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-no-fallback': {
-        "domain": 'permit',
-        "code": 'permit-no-fallback',
-        "human": 'bound permit: permit absence is malformed; never a reason to accept another credential',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-rate-budget-unreleasable': {
-        "domain": 'permit',
-        "code": 'permit-rate-budget-unreleasable',
-        "human": 'bound permit: rate budgets are never released once committed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    'permit-registry-unavailable': {
-        "domain": 'permit',
-        "code": 'permit-registry-unavailable',
-        "human": 'bound permit: a re-issue binding cannot be checked without the permit registry; could-not-check names the permit-registry dependency',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'digest'],
-        "reverify_steps": ['recompute-digest'],
     },
     'witness-config-cwd-autoload': {
         "domain": 'witness',
@@ -6814,1587 +8556,36 @@ TAXONOMY = {
         "evidence_kinds_required": ['chain-bundle'],
         "reverify_steps": ['recompute'],
     },
-    # Wave-237 merge: 647 + 20 = 667 (4 lane-A three-outcome
-    # gate-rule + 3 lane-B edited-approval refusal +
-    # 5 lane-C canonical-record + 8 lane-D closure-scoped
-    # approval codes), additive only, zero key collisions,
-    # composed from the four lane commits by direct
-    # byte-verification.
-    # Wave-239 merge: 695 + 23 = 718 (8 lane-A AAuth R3 vocabulary
-    # grant + 6 lane-B claim-at-dispatch + 3 lane-C refusal-oracle
-    # guard + 6 lane-D AER-1 provenance non-upgrade codes), additive
-    # only, zero key collisions, composed from the four lane commits
-    # by direct byte-verification.
-    # Wave-240 merge: 718 + 24 = 742 (6 lane-A forcing-honesty +
-    # 6 lane-B APS -04 axis/result-model + 8 lane-C saha
-    # bound-permit follow-through + 4 lane-D witness config /
-    # intermediate-CA completeness codes), additive only, zero key
-    # collisions, composed from the four lane commits by direct
-    # byte-verification.
-    # Wave-241 lane A: 742 + 5 = 747 (5 hostid mint-once refusal
-    # codes: hostname-not-identity, hostname-digest-not-identity,
-    # symlink-at-id-path, id-file-corrupt, malformed-identity),
-    # additive only, zero key collisions.
-    'hostid-hostname-not-identity': {
-        "domain": 'hostid',
-        "code": 'hostid-hostname-not-identity',
-        "human": 'host identity rule: a receipt claimed the machine '
-                 'hostname itself as host identity; hostnames are '
-                 'observable and non-random, they are not identities',
+    'wrong-keyset-purpose': {
+        "domain": 'key_identity',
+        "code": 'wrong-keyset-purpose',
+        "human": 'registered key identity: the key set was used for the wrong purpose',
         "severity": 'high',
-        "evidence_kinds_required": ['host-identity'],
-        "reverify_steps": ['recompute'],
-    },
-    'hostid-hostname-digest-not-identity': {
-        "domain": 'hostid',
-        "code": 'hostid-hostname-digest-not-identity',
-        "human": 'host identity rule: a receipt claimed a digest of the '
-                 'machine hostname as host identity; a digest with no '
-                 'secret reverses from a short guess list of common '
-                 'machine names',
-        "severity": 'high',
-        "evidence_kinds_required": ['host-identity'],
-        "reverify_steps": ['recompute'],
-    },
-    'hostid-symlink-at-id-path': {
-        "domain": 'hostid',
-        "code": 'hostid-symlink-at-id-path',
-        "human": 'host identity rule: refusing to mint through or read '
-                 'a symlink at the id path; the persisted id must be a '
-                 'regular file',
-        "severity": 'critical',
-        "evidence_kinds_required": ['host-identity'],
-        "reverify_steps": ['recompute'],
-    },
-    'hostid-id-file-corrupt': {
-        "domain": 'hostid',
-        "code": 'hostid-id-file-corrupt',
-        "human": 'host identity rule: the persisted id file is missing, '
-                 'not a regular file, holds a value that is not a '
-                 'valid host identity, or could not be minted '
-                 'atomically (short write)',
-        "severity": 'high',
-        "evidence_kinds_required": ['host-identity'],
-        "reverify_steps": ['recompute'],
-    },
-    'hostid-malformed-identity': {
-        "domain": 'hostid',
-        "code": 'hostid-malformed-identity',
-        "human": 'host identity rule: the claimed host identity is not '
-                 'host_[0-9a-f]{16}; only minted random ids validate',
-        "severity": 'medium',
-        "evidence_kinds_required": ['host-identity'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-241 lane B: 742 + 6 = 748 (Vaara recomputability
-    # recompute-check codes), additive only, zero key collisions.
-    'recompute-malformed': {
-        "domain": 'recompute',
-        "code": 'recompute-malformed',
-        "human": 'recompute check: receipt is structurally malformed '
-                 '(unknown kind, bad version, non-hex digests, or '
-                 'unsupported value in the canonical form)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'recompute-digest-mismatch': {
-        "domain": 'recompute',
-        "code": 'recompute-digest-mismatch',
-        "human": 'recompute check: the digest recomputed over the '
-                 'JCS-canonical receipt body does not match the claimed '
-                 'receipt_digest -- possible tampering, escalate',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'recompute-signature-invalid': {
-        "domain": 'recompute',
-        "code": 'recompute-signature-invalid',
-        "human": 'recompute check: the Ed25519 signature does not verify '
-                 'over the canonical receipt bytes with the checker-supplied '
-                 'public key',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'recompute-backlink-mismatch': {
-        "domain": 'recompute',
-        "code": 'recompute-backlink-mismatch',
-        "human": 'recompute check: the execution receipt backLink does not '
-                 'name the decision receipt digest+nonce -- the pair is '
-                 'not linked',
-        "severity": 'critical',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'recompute-no-execution-link': {
-        "domain": 'recompute',
-        "code": 'recompute-no-execution-link',
-        "human": 'recompute check: an allow decision with no linked '
-                 'execution receipt proves nothing about whether '
-                 'anything ran',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    'recompute-absent-refusal-no-coverage': {
-        "domain": 'recompute',
-        "code": 'recompute-absent-refusal-no-coverage',
-        "human": 'recompute check: an absent refusal outside the declared '
-                 'coverage boundary is not evidence -- absence is evidence '
-                 'only where something promised to record',
-        "severity": 'medium',
-        "evidence_kinds_required": ['receipt', 'signature', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-241 lane C: 742 + 5 = 747 (5 aauth-egress fail-closed
-    # primitive codes: aauth-scheme-not-allowed, aauth-aud-mismatch,
-    # aauth-stale-created, aauth-egress-blocked, aauth-iss-mismatch),
-    # additive only, zero key collisions.
-    'aauth-scheme-not-allowed': {
-        "domain": 'aauth',
-        "code": 'aauth-scheme-not-allowed',
-        "human": 'aauth egress rule: scheme resolution without an '
-                 'explicitly allowing policy refuses; policy precedes '
-                 'discovery',
-        "severity": 'high',
-        "evidence_kinds_required": ['scheme-resolution'],
-        "reverify_steps": ['recompute'],
-    },
-    'aauth-aud-mismatch': {
-        "domain": 'aauth',
-        "code": 'aauth-aud-mismatch',
-        "human": 'aauth egress rule: token audience does not match the '
-                 'expected audience, or the audience is missing; failing '
-                 'closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    'aauth-stale-created': {
-        "domain": 'aauth',
-        "code": 'aauth-stale-created',
-        "human": 'aauth egress rule: RFC 9421 created timestamp is more '
-                 'than 60s from the verifier clock (past or future); '
-                 'failing closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    'aauth-egress-blocked': {
-        "domain": 'aauth',
-        "code": 'aauth-egress-blocked',
-        "human": 'aauth egress rule: HTTPS-only default-deny egress '
-                 'refuses loopback, RFC1918, link-local, localhost, or '
-                 'non-https targets',
-        "severity": 'high',
-        "evidence_kinds_required": ['egress-target'],
-        "reverify_steps": ['recompute'],
-    },
-    'aauth-iss-mismatch': {
-        "domain": 'aauth',
-        "code": 'aauth-iss-mismatch',
-        "human": 'aauth egress rule: token issuer does not match the '
-                 'expected issuer, or the issuer is missing; confused '
-                 'deputy prevention',
-        "severity": 'high',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-241 lane D: 742 + 8 = 750 (2 obligation-binding ND-038 +
-    # 2 parameter-canonicalization ND-048 + 4 expected-participants
-    # audit codes), additive only, zero key collisions.
-    'obligation-unfulfilled': {
-        "domain": 'obligation',
-        "code": 'obligation-unfulfilled',
-        "human": 'obligation binding: a permit obligation declared at '
-                 'issue has no fulfillment evidence at settlement; '
-                 'obligations silently ignored at execution are refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['execution-evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    'obligation-malformed': {
-        "domain": 'obligation',
-        "code": 'obligation-malformed',
-        "human": 'obligation binding: malformed obligation declaration '
-                 'or fulfillment evidence; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-source'],
-        "reverify_steps": ['recompute'],
-    },
-    'parameter-obfuscation': {
-        "domain": 'parameter',
-        "code": 'parameter-obfuscation',
-        "human": 'parameter canonicalization: the canonical command '
-                 'form contains a denied parameter the raw string '
-                 'comparison would have missed; the canonical '
-                 'comparison is authoritative',
-        "severity": 'high',
-        "evidence_kinds_required": ['command-bytes'],
-        "reverify_steps": ['recompute'],
-    },
-    'parameter-malformed': {
-        "domain": 'parameter',
-        "code": 'parameter-malformed',
-        "human": 'parameter canonicalization: malformed command or '
-                 'allowlist/denylist input; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-source'],
-        "reverify_steps": ['recompute'],
-    },
-    'expected-participant-missing': {
-        "domain": 'participants',
-        "code": 'expected-participant-missing',
-        "human": 'expected-participants audit: a participant declared '
-                 'expected for the workload has no signed hop in the '
-                 'delegation chain; omission is not detectable without '
-                 'the declared policy',
-        "severity": 'high',
-        "evidence_kinds_required": ['delegation-chain'],
-        "reverify_steps": ['recompute'],
-    },
-    'unexpected-participant-signed': {
-        "domain": 'participants',
-        "code": 'unexpected-participant-signed',
-        "human": 'expected-participants audit: a signed hop names a '
-                 'participant not declared expected for the workload',
-        "severity": 'high',
-        "evidence_kinds_required": ['delegation-chain'],
-        "reverify_steps": ['recompute'],
-    },
-    'expected-participants-undeclared': {
-        "domain": 'participants',
-        "code": 'expected-participants-undeclared',
-        "human": 'expected-participants audit: no declared '
-                 'expected-participants policy for the workload; the '
-                 'chain is not verifiable and refuses fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-source'],
-        "reverify_steps": ['recompute'],
-    },
-    'expected-participants-malformed': {
-        "domain": 'participants',
-        "code": 'expected-participants-malformed',
-        "human": 'expected-participants audit: malformed policy or '
-                 'chain input; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-source'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-242 lane A: 766 + 5 = 771 (4 aggregate-budget codes +
-    # 1 no-effect-asserted-and-ignored detail marker), additive
-    # only, zero key collisions.
-    'aggregate-budget-exhausted': {
-        "domain": 'budget',
-        "code": 'aggregate-budget-exhausted',
-        "human": 'aggregate budget: charging the amount would push '
-                 'the scope aggregate past its declared cap; the '
-                 'individual act is permitted but the composition is '
-                 'not',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-ledger'],
-        "reverify_steps": ['recompute'],
-    },
-    'aggregate-budget-scope-undeclared': {
-        "domain": 'budget',
-        "code": 'aggregate-budget-scope-undeclared',
-        "human": 'aggregate budget: the scope was never declared; '
-                 'charging an undeclared scope refuses fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-ledger'],
-        "reverify_steps": ['recompute'],
-    },
-    'aggregate-budget-malformed': {
-        "domain": 'budget',
-        "code": 'aggregate-budget-malformed',
-        "human": 'aggregate budget: malformed scope declaration or '
-                 'charge (non-positive cap/window, non-positive or '
-                 'non-numeric amount); refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-ledger'],
-        "reverify_steps": ['recompute'],
-    },
-    'aggregate-budget-already-charged': {
-        "domain": 'budget',
-        "code": 'aggregate-budget-already-charged',
-        "human": 'aggregate budget: this (iss, jti) was already '
-                 'charged in this scope; a permit is never '
-                 're-chargeable',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-ledger'],
-        "reverify_steps": ['recompute'],
-    },
-    'no-effect-asserted-and-ignored': {
-        "domain": 'permit',
-        "code": 'no-effect-asserted-and-ignored',
-        "human": 'bound permit: a signed no_effect on a non-failure '
-                 'outcome was accepted and ignored (not a budget '
-                 'release); named in the reconciliation record detail',
-        "severity": 'medium',
-        "evidence_kinds_required": ['reconciliation-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # -- wave-242 containment lane: stale-authority (W242-2) and
-    # delegation-containment / policy-currentness (W242-5) codes.
-    'stale-authority': {
-        "domain": 'authority',
-        "code": 'stale-authority',
-        "human": 'stale-authority probe class: a receipt minted after the '
-                 'cited authority lapsed cites it as normative authority; '
-                 'passing such a receipt is the green-on-lapsed-authority '
-                 'defect',
-        "severity": 'high',
-        "evidence_kinds_required": ['authority-citation', 'receipt-timestamp'],
-        "reverify_steps": ['recompute'],
-    },
-    'stale-authority-malformed': {
-        "domain": 'authority',
-        "code": 'stale-authority-malformed',
-        "human": 'stale-authority check: the authority citation or the '
-                 'receipt timestamp is malformed; refused fail-closed, '
-                 'never a silent pass',
-        "severity": 'medium',
-        "evidence_kinds_required": ['authority-citation'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-parent-named': {
-        "domain": 'containment',
-        "code": 'permit-parent-named',
-        "human": 'delegation containment: a permit naming a parent_permit '
-                 'reference is refused outright at admission; containment '
-                 'must be proved against the parent bounds, not merely '
-                 'claimed by reference',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-currentness-could-not-check': {
-        "domain": 'containment',
-        "code": 'permit-currentness-could-not-check',
-        "human": 'policy currentness: presentation-time currentness is '
-                 'recognized in the claim vocabulary but the mechanism is '
-                 'unavailable, so the claim reports could-not-check naming '
-                 'the policy-currentness-authority dependency; never a '
-                 'refusal, never "verified"',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-currentness'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-containment-violated': {
-        "domain": 'containment',
-        "code": 'delegation-containment-violated',
-        "human": 'delegation containment: a child grant bound exceeds the '
-                 "parent's bound on a named key (wei §13 Contains)",
-        "severity": 'high',
-        "evidence_kinds_required": ['permit', 'parent-permit-bounds'],
-        "reverify_steps": ['recompute'],
-    },
-    'permit-containment-malformed': {
-        "domain": 'containment',
-        "code": 'permit-containment-malformed',
-        "human": 'delegation containment: the permit record or the bound '
-                 'caps are malformed; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-242 lane-C codes: operational exception declarations with a
-    # mandatory TTL (gov/exception_ttl.py).
-    'gate-exception-malformed': {
-        "domain": 'gate',
-        "code": 'gate-exception-malformed',
-        "human": 'gate exception path: the exception declaration is '
-                 'malformed -- it requires a numeric valid_until '
-                 'horizon, a non-empty reason, and a non-empty scope; '
-                 'a horizon-less exception cannot shield an '
-                 'undecidable verdict',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-242 lane D (W242-9, TACET signed-absence-epoch, ADAPT pattern).
-    'absence-epoch-beacon-unsigned': {
-        "domain": 'absence-epoch',
-        "code": 'absence-epoch-beacon-unsigned',
-        "human": 'epoch beacon or close signature does not verify',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-epoch-not-open': {
-        "domain": 'absence-epoch',
-        "code": 'absence-epoch-not-open',
-        "human": 'no beacon record for the claimed epoch',
-        "severity": 'high',
-        "evidence_kinds_required": ['epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-epoch-not-closed': {
-        "domain": 'absence-epoch',
-        "code": 'absence-epoch-not-closed',
-        "human": 'epoch has no close record; unclosed epochs verify nothing',
-        "severity": 'high',
-        "evidence_kinds_required": ['epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-epoch-closed': {
-        "domain": 'absence-epoch',
-        "code": 'absence-epoch-closed',
-        "human": 'new observation refused: the epoch is already closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-epoch-malformed': {
-        "domain": 'absence-epoch',
-        "code": 'absence-epoch-malformed',
-        "human": 'absence-epoch record or bundle is not the expected shape',
-        "severity": 'medium',
-        "evidence_kinds_required": ['epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-backdated': {
-        "domain": 'absence-epoch',
-        "code": 'absence-backdated',
-        "human": 'observation time is outside the closed epoch window',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-root-mismatch': {
-        "domain": 'absence-epoch',
-        "code": 'absence-root-mismatch',
-        "human": 'ledger does not recompute to the closed Merkle root',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'epoch-record', 'merkle-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-disclosure-recorded': {
-        "domain": 'absence-epoch',
-        "code": 'absence-disclosure-recorded',
-        "human": 'a disclosure is recorded for this cell; the absence claim is forged',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'epoch-record', 'disclosure-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-not-observed': {
-        "domain": 'absence-epoch',
-        "code": 'absence-not-observed',
-        "human": 'no absence observation recorded for this cell',
-        "severity": 'medium',
-        "evidence_kinds_required": ['epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'absence-observation-unsigned': {
-        "domain": 'absence-epoch',
-        "code": 'absence-observation-unsigned',
-        "human": 'absence observation signature invalid or not bound to the beacon',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'epoch-record'],
-        "reverify_steps": ['recompute'],
-    },
-
-    # Wave-243 merge: from wave243-verifier
-    'authority-stale': {
-        "domain": 'authority',
-        "code": 'authority-stale',
-        "human": 'proof != authority fail-safe: the proof verified but '
-                 'the authority is revoked, expired, or lapsed; refused '
-                 'fail-safe, never proof pass-through',
-        "severity": 'high',
-        "evidence_kinds_required": ['authority-status', 'signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-verifier
-    'authority-unavailable': {
-        "domain": 'authority',
-        "code": 'authority-unavailable',
-        "human": 'proof != authority fail-safe: the authority source is '
-                 'unavailable; deterministic named fail-safe, not a '
-                 'timeout-retry loop',
-        "severity": 'high',
-        "evidence_kinds_required": ['authority-status'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-verifier
-    'chain-source-stale': {
-        "domain": 'authority',
-        "code": 'chain-source-stale',
-        "human": 'verifier-side fail-closed: the delegation-chain source '
-                 'input is stale; explicit stale verdict, never a '
-                 'silent pass',
-        "severity": 'high',
-        "evidence_kinds_required": ['chain-source-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-verifier
-    'chain-source-unavailable': {
-        "domain": 'authority',
-        "code": 'chain-source-unavailable',
-        "human": 'verifier-side fail-closed: the delegation-chain source '
-                 'is unavailable; fail closed, never allow',
-        "severity": 'high',
-        "evidence_kinds_required": ['chain-source-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'channel-identity-unattested': {
-        "domain": 'attested-channel',
-        "code": 'channel-identity-unattested',
-        "human": 'self-reported principal with no attested peer identity; refused, never downgraded',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'channel-peer-mismatch': {
-        "domain": 'attested-channel',
-        "code": 'channel-peer-mismatch',
-        "human": 'attested peer identity names a different principal than the self-reported one',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'channel-record-malformed': {
-        "domain": 'attested-channel',
-        "code": 'channel-record-malformed',
-        "human": 'emitter claim or attested peer block is not the shape the admission layer speaks',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'channel-sequence-break': {
-        "domain": 'attested-channel',
-        "code": 'channel-sequence-break',
-        "human": 'claim sequence does not follow the peer last admitted sequence',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'channel-timestamp-divergence': {
-        "domain": 'attested-channel',
-        "code": 'channel-timestamp-divergence',
-        "human": 'emitter ts_emit diverges from daemon time beyond the forgery bound',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'effect-decision-contradicted': {
-        "domain": 'effect-agreement',
-        "code": 'effect-decision-contradicted',
-        "human": 'observed effect contradicts the recorded decision',
-        "severity": 'high',
-        "evidence_kinds_required": ['decision-record', 'effect-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'effect-decision-missing': {
-        "domain": 'effect-agreement',
-        "code": 'effect-decision-missing',
-        "human": 'no decision recorded for this action id',
-        "severity": 'medium',
-        "evidence_kinds_required": ['decision-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'effect-not-bound': {
-        "domain": 'effect-agreement',
-        "code": 'effect-not-bound',
-        "human": 'effect bytes do not digest to the recorded effect digest',
-        "severity": 'high',
-        "evidence_kinds_required": ['effect-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-attested-channel
-    'key-in-agent-process': {
-        "domain": 'attested-channel',
-        "code": 'key-in-agent-process',
-        "human": 'emitting context declares direct key access inside the agent process',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-vocabulary
-    'lineage-gap': {
-        "domain": 'evaluation',
-        "code": 'lineage-gap',
-        "human": 'evaluation lineage: a link skips its predecessor '
-                 'challenge or the genesis does not bind the expected '
-                 'anchor; the chain is broken, not shortened',
-        "severity": 'high',
-        "evidence_kinds_required": ['lineage-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'package-digest-mismatch': {
-        "domain": 'registry-acceptance',
-        "code": 'package-digest-mismatch',
-        "human": 'package bytes do not digest to the signed manifest digest',
-        "severity": 'critical',
-        "evidence_kinds_required": ['manifest', 'package-bytes'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'package-manifest-malformed': {
-        "domain": 'registry-acceptance',
-        "code": 'package-manifest-malformed',
-        "human": 'registry manifest is not the expected shape',
-        "severity": 'medium',
-        "evidence_kinds_required": ['manifest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'package-signature-invalid': {
-        "domain": 'registry-acceptance',
-        "code": 'package-signature-invalid',
-        "human": 'manifest signature does not verify or is not from a trusted key',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'manifest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'package-stale': {
-        "domain": 'registry-acceptance',
-        "code": 'package-stale',
-        "human": 'manifest is outside its freshness window',
-        "severity": 'medium',
-        "evidence_kinds_required": ['manifest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-bound-permits
-    'permit-currentness-violated': {
-        "domain": 'permit',
-        "code": 'permit-currentness-violated',
-        "human": 'action-bound permit: the declared currentness mode '
-                 '(e.g. fresh-at-use) was not satisfied at presentation',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit-record', 'freshness-evidence'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-bound-permits
-    'permit-instance-replay': {
-        "domain": 'permit',
-        "code": 'permit-instance-replay',
-        "human": 'action-bound permit: the permit was replayed for a '
-                 'different action instance than the bound one',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record', 'binding-digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-bound-permits
-    'permit-presenter-mismatch': {
-        "domain": 'permit',
-        "code": 'permit-presenter-mismatch',
-        "human": 'action-bound permit: the presenter key is not the bound key; '
-                 'the permit names exactly one recipient key',
-        "severity": 'high',
-        "evidence_kinds_required": ['permit-record', 'binding-digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-bound-permits
-    'permit-refusal-vocabulary-invalid': {
-        "domain": 'permit',
-        "code": 'permit-refusal-vocabulary-invalid',
-        "human": 'action-bound permit: a refusal was raised (or declared) '
-                 'with a reason outside the registered refusal vocabulary; '
-                 'no ad-hoc refusal vocabulary is permitted',
-        "severity": 'medium',
-        "evidence_kinds_required": ['permit-record', 'refusal-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'registry-threshold-unmet': {
-        "domain": 'registry-acceptance',
-        "code": 'registry-threshold-unmet',
-        "human": 'fewer valid trusted signatures than the registry policy threshold',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature', 'manifest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'resource-server-mismatch': {
-        "domain": 'transaction',
-        "code": 'resource-server-mismatch',
-        "human": 'transactional token presented to a resource server it was '
-                 'not issued for; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-finality-bound
-    'revocation-applicable': {
-        "domain": 'revocation',
-        "code": 'revocation-applicable',
-        "human": 'finality-bound revocation: the authorization\'s revocation '
-                 'basis is revoked at commit time; the Finality Sink refuses '
-                 'check-and-commit and the protected consequence must not '
-                 'commit',
-        "severity": 'high',
-        "evidence_kinds_required": ['authorization', 'revocation-registry',
-                                   'digest'],
-        "reverify_steps": ['recompute-digest', 'check-revocation'],
-    },
-    # Wave-243 merge: from wave243-finality-bound
-    'revocation-basis-malformed': {
-        "domain": 'revocation',
-        "code": 'revocation-basis-malformed',
-        "human": 'finality-bound revocation: the revocation basis or the '
-                 'authorization record is malformed; refused fail-closed, '
-                 'never a silent pass',
-        "severity": 'medium',
-        "evidence_kinds_required": ['authorization'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-finality-bound
-    'revocation-basis-tampered': {
-        "domain": 'revocation',
-        "code": 'revocation-basis-tampered',
-        "human": 'finality-bound revocation: the recomputed binding digest '
-                 'disagrees with the claimed binding; the binding was not '
-                 're-derived from issuer trust',
-        "severity": 'critical',
-        "evidence_kinds_required": ['authorization', 'digest'],
-        "reverify_steps": ['recompute-digest'],
-    },
-    # Wave-243 merge: from wave243-finality-bound
-    'revocation-check-unsealed': {
-        "domain": 'revocation',
-        "code": 'revocation-check-unsealed',
-        "human": 'finality-bound revocation: the revocation store mutated '
-                 'between the check and the commit decision (TOCTOU); the '
-                 'check-and-commit was not atomic and is refused',
-        "severity": 'high',
-        "evidence_kinds_required": ['authorization', 'revocation-registry'],
-        "reverify_steps": ['check-revocation'],
-    },
-    # Wave-243 merge: from wave243-finality-bound
-    'revocation-sink-nonatomic': {
-        "domain": 'revocation',
-        "code": 'revocation-sink-nonatomic',
-        "human": 'finality-bound revocation: the revocation store does not '
-                 'implement the atomic check protocol; the Finality Sink '
-                 'fails closed rather than check-then-act',
-        "severity": 'high',
-        "evidence_kinds_required": ['authorization'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-vocabulary
-    'satisfied-missing': {
-        "domain": 'evaluation',
-        "code": 'satisfied-missing',
-        "human": 'evidence presented below grade SATISFIED as '
-                 'authorization or as satisfied: VERIFIED (crypto '
-                 'measured true) is not authorization; sufficiency '
-                 'is never asserted without the requirements met',
-        "severity": 'high',
-        "evidence_kinds_required": ['evidence-record', 'gate-verdict'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-cosign-interop
-    'signer-digest-length-mismatch': {
-        "domain": 'signer-interop',
-        "code": 'signer-digest-length-mismatch',
-        "human": 'caller-supplied digest length does not match the stated hash digest size (the cosign sign-side loud failure shape)',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-cosign-interop
-    'signer-hash-downshift-refused': {
-        "domain": 'signer-interop',
-        "code": 'signer-hash-downshift-refused',
-        "human": 'curve/hash pairing reproduces the cosign sign-side SHA-256 hardcode shape; refused loudly, never silently downshifted',
-        "severity": 'high',
-        "evidence_kinds_required": ['signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'tool-definition-malformed': {
-        "domain": 'mcp-surface',
-        "code": 'tool-definition-malformed',
-        "human": 'tool definition is not the expected shape',
-        "severity": 'medium',
-        "evidence_kinds_required": ['tool-definition'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-effect-agreement
-    'tool-executable-content': {
-        "domain": 'mcp-surface',
-        "code": 'tool-executable-content',
-        "human": 'tool definition carries executable content; quarantined',
-        "severity": 'high',
-        "evidence_kinds_required": ['tool-definition'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'transaction-expired': {
-        "domain": 'transaction',
-        "code": 'transaction-expired',
-        "human": 'transactional token presented at or after its per-token '
-                 'expiry; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'transaction-id-mismatch': {
-        "domain": 'transaction',
-        "code": 'transaction-id-mismatch',
-        "human": 'transactional token presented for a transaction it was '
-                 'not issued for; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'transaction-key-missing': {
-        "domain": 'transaction',
-        "code": 'transaction-key-missing',
-        "human": 'transactional token operation attempted without a '
-                 'deployment key; refused fail-closed (no dev fallback)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'transaction-malformed': {
-        "domain": 'transaction',
-        "code": 'transaction-malformed',
-        "human": 'transactional token or issuance request is malformed; '
-                 'refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-txn-tokens
-    'transaction-signature-invalid': {
-        "domain": 'transaction',
-        "code": 'transaction-signature-invalid',
-        "human": 'transactional token MAC does not cover the presented '
-                 'bytes; possible tampering',
-        "severity": 'critical',
-        "evidence_kinds_required": ['token', 'key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-243 merge: from wave243-verifier
-    'verifier-input-malformed': {
-        "domain": 'authority',
-        "code": 'verifier-input-malformed',
-        "human": 'verifier fail-closed check: the chain, verifier policy, '
-                 'or authority store is malformed; refused fail-closed, '
-                 'never a silent pass',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane A (wave244-gitspawn-trust): session-startup trust
-    # ordering -- no shell-out against a workspace before the trust
-    # decision is recorded (GitSpawn class, pre-trust-prompt execution).
-    'repo-hook-pretrust-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-pretrust-refused',
-        "human": 'git/subprocess attempt against a workspace with no '
-                 'recorded trust decision; refused fail-closed before any '
-                 'repo-supplied configuration could execute',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-trust-denied': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-trust-denied',
-        "human": 'git/subprocess attempt against a workspace whose trust '
-                 'was explicitly denied; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'repo-hook-escape-refused': {
-        "domain": 'session-trust',
-        "code": 'repo-hook-escape-refused',
-        "human": 'repo-local git material (.git, .git/config) resolves '
-                 'outside the canonical workspace root via symlink; hook '
-                 'resolution never follows escapes; refused fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['workspace-root'],
-        "reverify_steps": ['recompute'],
-    },
-    'session-trust-malformed': {
-        "domain": 'session-trust',
-        "code": 'session-trust-malformed',
-        "human": 'trust record malformed: unknown trust state or unnamed '
-                 'deciding principal; refused fail-closed, never a silent '
-                 'accept',
-        "severity": 'medium',
-        "evidence_kinds_required": ['trust-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-exceeded': {
-        "domain": 'token-scope',
-        "code": 'token-scope-exceeded',
-        "human": 'the scope grant does not cover the (tool, action) being '
-                 'invoked; also covers alias-not-granted anti-widening; '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['token', 'grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'token-scope-unparseable': {
-        "domain": 'token-scope',
-        "code": 'token-scope-unparseable',
-        "human": 'a presented scope-check input (grant, sealed policy '
-                 'wrapper, tool name, action, epoch) is malformed; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'tool-scope-undeclared': {
-        "domain": 'token-scope',
-        "code": 'tool-scope-undeclared',
-        "human": 'the tool or action is absent from the sealed scope '
-                 'policy; fail closed, authority never auto-expands',
-        "severity": 'medium',
-        "evidence_kinds_required": ['policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-policy-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-policy-tampered',
-        "human": 'the sealed scope policy MAC does not cover its spec '
-                 'bytes, or the spec fails shape validation; refused '
-                 'fail-closed',
-        "severity": 'critical',
-        "evidence_kinds_required": ['policy-declaration', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-tampered': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-tampered',
-        "human": 'the scope grant MAC does not cover the presented bytes; '
-                 'tamper is reported as tamper, never as a scope gap',
-        "severity": 'critical',
-        "evidence_kinds_required": ['grant', 'digest'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-grant-unbound': {
-        "domain": 'token-scope',
-        "code": 'scope-grant-unbound',
-        "human": 'the scope grant is bound to a different token than the '
-                 'one presented (e.g. scope narrowed mid-session); a new '
-                 'grant is required',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'token'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-verdict-mismatched': {
-        "domain": 'token-scope',
-        "code": 'scope-verdict-mismatched',
-        "human": 'a scope verdict presented to the executor for different '
-                 '(tool, action) parameters than it was granted for; the '
-                 'call never runs',
-        "severity": 'high',
-        "evidence_kinds_required": ['grant', 'policy-declaration'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane B: from wave244-mcp-scope (W244-2)
-    'scope-key-missing': {
-        "domain": 'token-scope',
-        "code": 'scope-key-missing',
-        "human": 'no deployment key supplied for scope policy/grant '
-                 'cryptography; fails closed (no dev-key fallback)',
-        "severity": 'high',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-amplified': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-amplified',
-        "human": 'host-measured guest consumption exceeded declared '
-                 'envelope plus the declared accounting slack; guest '
-                 'terminated fail-closed, never re-budgeted',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-envelope-malformed': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-envelope-malformed',
-        "human": 'guest budget envelope declaration or measurement is not '
-                 'the expected shape; envelopes are never renegotiated',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-deadline-fired': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-deadline-fired',
-        "human": 'guest blew its declared wall-clock bound; guest '
-                 'terminated fail-closed; in-flight effects are not '
-                 'committed',
-        "severity": 'high',
-        "evidence_kinds_required": ['budget-envelope', 'measurement'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane C: from wave244-guest-host-budget
-    'guest-budget-scope-undeclared': {
-        "domain": 'guest-budget',
-        "code": 'guest-budget-scope-undeclared',
-        "human": 'measurement or commit presented for a guest scope with '
-                 'no declared envelope; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['budget-envelope'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-authority-claim-refused': {
-        "domain": 'config',
-        "code": 'config-authority-claim-refused',
-        "human": 'agent-trusts-config: agent-observed config claims a privilege with no matching grant in the deployment-pinned authority; config never self-attests into authority; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'authority-source', 'provenance'],
-        "reverify_steps": ['authority-check', 'recompute'],
-    },
-    'config-provenance-agent-asserted': {
-        "domain": 'config',
-        "code": 'config-provenance-agent-asserted',
-        "human": 'agent-trusts-config: the config asserts its own provenance trust; provenance is deployment-vouched, never agent-asserted; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-provenance-untrusted': {
-        "domain": 'config',
-        "code": 'config-provenance-untrusted',
-        "human": 'agent-trusts-config: the config carries privilege claims with no provenance block; provenance absence is not trust; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'provenance'],
-        "reverify_steps": ['provenance-check'],
-    },
-    'config-record-malformed': {
-        "domain": 'config',
-        "code": 'config-record-malformed',
-        "human": 'agent-trusts-config: the config record or authority source failed structural validation; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'config-rewritten-privilege': {
-        "domain": 'config',
-        "code": 'config-rewritten-privilege',
-        "human": 'agent-trusts-config: the config was rewritten mid-run adding privileges; the rewrite is audit-logged and the privileged action fails closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['config-record', 'audit-journal', 'provenance'],
-        "reverify_steps": ['recompute', 'authority-check'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-key-material-in-process': {
-        "domain": 'kms-signer',
-        "code": 'signer-key-material-in-process',
-        "human": 'raw private-key bytes in an input path (signer '
-                 'argument, declaration config, env-derived value); '
-                 'the signing key is never in-process',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-adapter-tampered': {
-        "domain": 'kms-signer',
-        "code": 'signer-adapter-tampered',
-        "human": 'a declared KMS adapter handle wraps in-process key '
-                 'material; refused for production receipts',
-        "severity": 'high',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-unavailable': {
-        "domain": 'kms-signer',
-        "code": 'signer-unavailable',
-        "human": 'the KMS adapter could not be used (unreachable, '
-                 'misconfigured, declared-but-unconnected); failed '
-                 'closed with no fallback to in-process signing',
-        "severity": 'medium',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signer-identity-mismatch': {
-        "domain": 'kms-signer',
-        "code": 'signer-identity-mismatch',
-        "human": 'a signed receipt verified against a different adapter '
-                 'identity than the one that signed it',
-        "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-malformed': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-malformed',
-        "human": 'the receipt or signed record is not the shape the '
-                 'discipline speaks; includes post-signing mutation '
-                 'detected via the canonical digest',
-        "severity": 'medium',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
+        "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
+        "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
     },
-    # Wave-244 lane E: kms-signer receipt discipline (obsigna ADAPT)
-    'signed-receipt-signature-invalid': {
-        "domain": 'kms-signer',
-        "code": 'signed-receipt-signature-invalid',
-        "human": 'the consumer-pinned verifier did not return True for '
-                 'the retained bytes; never verified',
+    'wrong-purpose': {
+        "domain": 'key_identity',
+        "code": 'wrong-purpose',
+        "human": 'registered key identity: the key was used for the wrong purpose',
         "severity": 'high',
-        "evidence_kinds_required": ['signed-receipt'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'package-advisory-flagged': {
-        "domain": 'advisory',
-        "code": 'package-advisory-flagged',
-        "human": 'advisory flags a package whose signature verifies; '
-                 'refused (a signature proves who signed, never safety)',
-        "severity": 'high',
-        "evidence_kinds_required": ['advisory', 'manifest', 'signature'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane: from wave244-treeship-advisories
-    'pin-scope-insufficient': {
-        "domain": 'advisory',
-        "code": 'pin-scope-insufficient',
-        "human": 'unscoped agent_cert pin grades asserted at most; '
-                 're-pin with agent scope for verification evidence',
-        "severity": 'medium',
-        "evidence_kinds_required": ['pin'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-default-credentials': {
-        "domain": 'mcp-surface',
-        "code": 'surface-default-credentials',
-        "human": 'surface credentials are missing, empty, or a well-known '
-                 'placeholder/default value; refused fail-closed, never '
-                 'auto-remediated',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-admin-unauthenticated': {
-        "domain": 'mcp-surface',
-        "code": 'surface-admin-unauthenticated',
-        "human": 'an admin endpoint declares no auth mechanism; refused '
-                 'fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-public-unguarded': {
-        "domain": 'mcp-surface',
-        "code": 'surface-public-unguarded',
-        "human": 'a public endpoint declares no execution guard / per-call '
-                 'authorization; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-transport-bypass': {
-        "domain": 'mcp-surface',
-        "code": 'surface-transport-bypass',
-        "human": 'a stdio/unmediated transport carries traffic outside the '
-                 'mediated auth path; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-config-malformed': {
-        "domain": 'mcp-surface',
-        "code": 'surface-config-malformed',
-        "human": 'the surface config is not the expected shape; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['surface-config'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-244 lane G: from wave244-mcp-secure-defaults
-    'surface-attestation-key-missing': {
-        "domain": 'mcp-surface',
-        "code": 'surface-attestation-key-missing',
-        "human": 'no deployment issuer key supplied for the secure-'
-                 'defaults attestation; refused rather than issuing an '
-                 'unsigned attestation',
-        "severity": 'medium',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-issuer-unbound': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-issuer-unbound',
-        "human": "the token endpoint's origin is not the bound "
-                 "authorization server's origin nor a "
-                 "deployment-declared alternate; refused fail-closed",
-        "severity": 'high',
-        "evidence_kinds_required": ['binding', 'endpoint'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-issuer-unverified': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-issuer-unverified',
-        "human": 'the issuer hint or server metadata names a different '
-                 'issuer than the sealed authorization-server binding; '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['binding', 'metadata'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-metadata-malformed': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-metadata-malformed',
-        "human": 'a presented runtime input (binding wrapper, endpoint, '
-                 'issuer hint, metadata, flag) is malformed; refused '
-                 'fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-credential-misbound': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-credential-misbound',
-        "human": 'a credential stored under one authorization server is '
-                 'presented at another authorization server\'s token '
-                 'endpoint; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['binding', 'credential-label'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-fix-gap-refused': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-fix-gap-refused',
-        "human": 'issuer was omitted for a provider that requires it '
-                 '(patched-but-vulnerable-by-configuration); refused '
-                 'fail-closed, never silent fallback',
-        "severity": 'high',
-        "evidence_kinds_required": ['binding', 'gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-key-missing': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-key-missing',
-        "human": 'no deployment key supplied for the OAuth binding; '
-                 'failing closed (no dev-key fallback)',
-        "severity": 'medium',
-        "evidence_kinds_required": ['key-reference'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-binding-tampered': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-binding-tampered',
-        "human": "the sealed authorization-server binding's MAC does "
-                 'not cover its bytes; refused as tamper, never as a '
-                 'shape gap',
-        "severity": 'high',
-        "evidence_kinds_required": ['binding'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 1: from wave245-mcp-oauth-binding (W245-1)
-    'mcp-oauth-verdict-mismatched': {
-        "domain": 'mcp-oauth',
-        "code": 'mcp-oauth-verdict-mismatched',
-        "human": 'an OAuth verdict presented for a different token '
-                 'endpoint than it was granted for; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['verdict', 'gate-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
-    'spawn-context-record-malformed': {
-        "domain": 'spawn-context',
-        "code": 'spawn-context-record-malformed',
-        "human": 'the spawn/egress/persistence record is not the expected '
-                 'shape (unknown spawn context, non-string flags, bad '
-                 'ownership class); refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['spawn-record'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
-    'tool-spawn-context-untrusted': {
-        "domain": 'spawn-context',
-        "code": 'tool-spawn-context-untrusted',
-        "human": 'permission-bypass flags presented through a postinstall '
-                 'spawn context, or through an unvouched context claiming '
-                 'to be user-invoked; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['spawn-record', 'provenance'],
-        "reverify_steps": ['recompute', 'provenance-check'],
-    },
-    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
-    'spawn-context-declared-risk': {
-        "domain": 'spawn-context',
-        "code": 'spawn-context-declared-risk',
-        "human": 'permission-bypass flags in a user-invoked, '
-                 'deployment-vouched, explicitly authorized context; '
-                 'allowed-but-declared, never silent',
-        "severity": 'low',
-        "evidence_kinds_required": ['spawn-record', 'provenance'],
-        "reverify_steps": ['recompute', 'authority-check'],
-    },
-    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
-    'egress-destination-exemption-refused': {
-        "domain": 'spawn-context',
-        "code": 'egress-destination-exemption-refused',
-        "human": 'a review exemption claimed on destination-ownership '
-                 'grounds, or deployment-pinned status claimed for a '
-                 'destination the pinned map does not vouch; '
-                 'destination-ownership never exempts review',
-        "severity": 'medium',
-        "evidence_kinds_required": ['egress-record', 'provenance'],
-        "reverify_steps": ['recompute', 'provenance-check'],
-    },
-    # Wave-245 lane 3 (W245-3): spawn-context guard (s1ngularity shape)
-    'persistence-modification-refused': {
-        "domain": 'spawn-context',
-        "code": 'persistence-modification-refused',
-        "human": 'a shell-rc target written by an unvouched source; only '
-                 'deployment-vouched admin sources may modify rc files; '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['persistence-record', 'provenance'],
-        "reverify_steps": ['recompute', 'provenance-check'],
-    },
-    # Wave-245 lane: from wave245-registry-adversary
-    'package-signer-compromised': {
-        "domain": 'registry-acceptance',
-        "code": 'package-signer-compromised',
-        "human": 'a counted signature key is in the revocation set; the '
-                 'signature verifies but the signer is known-compromised '
-                 '(tamper-window shape); refused',
-        "severity": 'critical',
-        "evidence_kinds_required": ['manifest', 'signature', 'revocation'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane: from wave245-registry-adversary
-    'package-identity-name-untrusted': {
-        "domain": 'registry-acceptance',
-        "code": 'package-identity-name-untrusted',
-        "human": 'policy declares trust by name (account/publisher/name '
-                 'allowlist); trust is by pinned key identity, never by '
-                 'name; refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['policy'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane: from wave245-registry-adversary
-    'package-digest-first-seen-mismatch': {
-        "domain": 'registry-acceptance',
-        "code": 'package-digest-first-seen-mismatch',
-        "human": 'package digest differs from the first-seen digest for '
-                 'this name+version; the registry substituted bytes after '
-                 'first observation; refused',
-        "severity": 'critical',
-        "evidence_kinds_required": ['manifest', 'package-bytes'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane-5: delegation freshness gate
-    # (gov/delegation_freshness.py; yunaremaia/agent-capability-attestation
-    # ADAPT, patterns only, MIT).
-    'delegation-ttl-missing': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-ttl-missing',
-        "human": 'delegation freshness: the capability attestation carries '
-                 'no usable TTL (missing, zero, negative, non-integer, or '
-                 'boolean); treated as expired and refused fail-closed, '
-                 'never an infinite-life attestation',
-        "severity": 'high',
-        "evidence_kinds_required": ['capability-attestation'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-freshness-expired': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-freshness-expired',
-        "human": 'delegation freshness: the attestation TTL has elapsed at '
-                 'check time (inclusive of the exact expiry instant); '
-                 'refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['capability-attestation',
-                                    'freshness-timestamp'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-monotonicity-violated': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-monotonicity-violated',
-        "human": 'delegation freshness: a hop delegates a capability entry '
-                 'not covered by the parent set (exact entry, "*", or '
-                 '"<prefix>:*"); widening refused fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['capability-attestation',
-                                    'parent-attestation'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-state-mismatch': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-state-mismatch',
-        "human": 'delegation freshness: the attestation state_hash does '
-                 'not equal the digest of its presented capability set; '
-                 'the hop swapped its set or never bound it; refused '
-                 'fail-closed',
-        "severity": 'high',
-        "evidence_kinds_required": ['capability-attestation'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-attestation-malformed': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-attestation-malformed',
-        "human": 'delegation freshness: the attestation record is not the '
-                 'expected shape (non-string fields, non-sequence or '
-                 'non-string capabilities, unparseable or timezone-naive '
-                 'timestamps); refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['capability-attestation'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-ttl-excessive': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-ttl-excessive',
-        "human": 'delegation freshness: the attestation TTL exceeds the '
-                 'deployment max_ttl cap; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['capability-attestation',
-                                    'deployment-policy'],
-        "reverify_steps": ['recompute'],
-    },
-    'delegation-chain-broken': {
-        "domain": 'delegation-freshness',
-        "code": 'delegation-chain-broken',
-        "human": 'delegation freshness: the delegation chain is empty, not '
-                 'a sequence, or a hop issuer does not equal its parent '
-                 "subject; refused fail-closed",
-        "severity": 'high',
-        "evidence_kinds_required": ['capability-attestation'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 8: from wave245-egress-propagation
-    'egress-injection-propagation': {
-        "domain": 'egress',
-        "code": 'egress-injection-propagation',
-        "human": 'outbound public-channel content reproduces an injected '
-                 'instruction span observed from untrusted input; refused '
-                 'at hop 1',
-        "severity": 'high',
-        "evidence_kinds_required": ['egress', 'span'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 8: from wave245-egress-propagation
-    'instruction-provenance-public-channel': {
-        "domain": 'egress',
-        "code": 'instruction-provenance-public-channel',
-        "human": 'instruction authority requested for public-channel '
-                 'provenance; public channels are untrusted input and can '
-                 'never become instruction authority',
-        "severity": 'high',
-        "evidence_kinds_required": ['provenance'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 8: from wave245-egress-propagation
-    'instruction-provenance-untrusted': {
-        "domain": 'egress',
-        "code": 'instruction-provenance-untrusted',
-        "human": 'instruction authority requested for provenance outside '
-                 'the trusted set; untrusted input can never become '
-                 'instruction authority',
-        "severity": 'medium',
-        "evidence_kinds_required": ['provenance'],
-        "reverify_steps": ['recompute'],
-    },
-    # Wave-245 lane 8: from wave245-egress-propagation
-    'egress-propagation-malformed': {
-        "domain": 'egress',
-        "code": 'egress-propagation-malformed',
-        "human": 'the egress-propagation guard input is not the shape the '
-                 'seam speaks; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['gate-record'],
-        "reverify_steps": ['recompute'],
+        "evidence_kinds_required": ['key-registry', 'pubkey', 'revocation-registry', 'signature'],
+        "reverify_steps": ['recompute-pubkey-digest', 'resolve-key', 'check-revocation', 'verify-signature'],
     },
-    # Wave-245 lane 10: JWKS redirect-poisoning guard (GHSA-9v7f-9g4p-ffgj)
-    'jwks-redirect-refused': {
-        "domain": 'jwks',
-        "code": 'jwks-redirect-refused',
-        "human": 'a JWKS fetch response carried a redirect (3xx status or '
-                 'Location header); refused without contacting the redirect '
-                 'destination -- redirects are never followed for key '
-                 'material',
+    'wrong_delegator': {
+        "domain": 'approval',
+        "code": 'wrong_delegator',
+        "human": 'approval and delegation: the delegator identity is wrong',
         "severity": 'high',
-        "evidence_kinds_required": ['refusal-record'],
+        "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
-    'jwks-origin-mismatch': {
-        "domain": 'jwks',
-        "code": 'jwks-origin-mismatch',
-        "human": 'the JWKS request URL origin does not match the pinned '
-                 'issuer origin; refused before any transport call',
+    'wrong_run_identity': {
+        "domain": 'approval',
+        "code": 'wrong_run_identity',
+        "human": 'approval and delegation: the run identity is wrong',
         "severity": 'high',
-        "evidence_kinds_required": ['refusal-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'jwks-url-malformed': {
-        "domain": 'jwks',
-        "code": 'jwks-url-malformed',
-        "human": 'the JWKS request URL or pinned origin is not a '
-                 'well-formed absolute http(s) URL; refused fail-closed',
-        "severity": 'medium',
-        "evidence_kinds_required": ['refusal-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'jwks-issuer-unpinned': {
-        "domain": 'jwks',
-        "code": 'jwks-issuer-unpinned',
-        "human": 'no pinned issuer origin supplied for a JWKS fetch; '
-                 'refused rather than fetching unpinned key material',
-        "severity": 'medium',
-        "evidence_kinds_required": ['refusal-record'],
-        "reverify_steps": ['recompute'],
-    },
-    'jwks-transport-failed': {
-        "domain": 'jwks',
-        "code": 'jwks-transport-failed',
-        "human": 'the deployment transport raised, returned a malformed '
-                 'response, or returned a non-2xx status; refused rather '
-                 'than treating it as key material',
-        "severity": 'medium',
-        "evidence_kinds_required": ['refusal-record'],
+        "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
 }

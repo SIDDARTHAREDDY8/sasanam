@@ -294,6 +294,24 @@ ALLOWED_HMAC_SITES = {
     # binding for the deployment's AS binding, not a credential.
     ("gov/mcp_oauth_binding.py", "_mac", 0):
         "MCP OAuth AS binding seal MAC; deployment-owned key (required explicit pass, fail-closed when absent), domain-separated",
+    # gov/agent_identity.py (wave-248 lane 5, dex): short-lived identity
+    # tokens. The key is passed EXPLICITLY to IdentityTokenIssuer (never
+    # a default, never derived in-repo; >=16 bytes enforced, fail closed
+    # otherwise). Domain-separated (sasanam-identity-token/v1) over the
+    # canonical token body; an integrity binding for the federated
+    # identity, not a credential.
+    ("gov/agent_identity.py", "IdentityTokenIssuer.issue", 0):
+        "identity-token MAC; deployer-held key (explicit pass), domain-separated",
+    ("gov/agent_identity.py", "IdentityTokenIssuer.verify_token", 0):
+        "identity-token verification; same deployer-held key, domain-separated",
+    # gov/breach_boundary.py (wave-248 lane 1, F210 closure): tamper-evident
+    # verified-record seals. The key is passed EXPLICITLY to BreachBoundary
+    # (seal_key parameter; >=16 bytes enforced, fail closed otherwise; fresh
+    # random key generated if not supplied). Domain-separated over the
+    # canonical (component, seq, output, verifier_id, evidence); seals the
+    # verification attestation, not a credential.
+    ("gov/breach_boundary.py", "BreachBoundary._seal", 0):
+        "verified-record seal MAC; deployer-held or instance-generated key (explicit), domain-separated",
 }
 
 
