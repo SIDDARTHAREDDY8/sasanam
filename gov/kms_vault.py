@@ -149,8 +149,11 @@ class VaultKmsProvider(KmsProvider):
 
     ``transport`` is any :class:`VaultTransport` (tests inject
     ``fake_vault.FakeVaultTransport``; production injects
-    ``UrllibVaultTransport``). ``token`` is the Vault token used on every
-    call — it is held in memory and never logged.
+    ``UrllibVaultTransport``). Exactly one of ``token`` (a static Vault
+    token string) and ``credential_provider`` (a
+    :class:`gov.spiffe_credential_provider.CredentialProvider` supplying
+    short-lived tokens) must be given -- never both, never neither. The
+    token is held in memory and never logged.
     """
 
     provider_name = "vault"
@@ -158,16 +161,31 @@ class VaultKmsProvider(KmsProvider):
     # Envelope magic: b"VAULTKMS1" || u16be(kid_len) || kid || u32be(ct_len) || ct
     _MAGIC = b"VAULTKMS1"
 
-    def __init__(self, transport, *, token, mount="transit"):
+    def __init__(self, transport, *, token=None, credential_provider=None,
+                 mount="transit"):
         if not isinstance(transport, VaultTransport):
             raise TypeError("transport must be a VaultTransport, got %r"
                             % type(transport).__name__)
-        if not isinstance(token, str) or not token:
+        if (token is None) == (credential_provider is None):
+            raise ValueError(
+                "exactly one of token / credential_provider is required "
+                "(a static token and an attested credential provider are "
+                "mutually exclusive; neither means no auth)")
+        if token is not None and (not isinstance(token, str) or not token):
             raise ValueError("vault token must be a non-empty string")
+        if credential_provider is not None:
+            # Lazy import: gov/spiffe_credential_provider.py imports this
+            # module for the factory; a top-level import would be circular.
+            from .spiffe_credential_provider import CredentialProvider
+            if not isinstance(credential_provider, CredentialProvider):
+                raise TypeError(
+                    "credential_provider must be a CredentialProvider, "
+                    "got %r" % type(credential_provider).__name__)
         if not isinstance(mount, str) or not _MOUNT_RE.match(mount):
             raise ValueError("invalid vault transit mount %r" % (mount,))
         self._transport = transport
         self._token = token
+        self._credential_provider = credential_provider
         self._mount = mount
 
     # -- internals ----------------------------------------------------
@@ -179,12 +197,26 @@ class VaultKmsProvider(KmsProvider):
         return "/v1/%s/%s/%s" % (self._mount, op,
                                  urllib.parse.quote(key_id, safe=""))
 
-    def _api(self, op_label, method, path, payload):
+    def _current_token(self):
+        """Resolve the Vault token for one request. A static token is
+        returned as-is; a credential provider is asked for a fresh
+        short-lived token. Provider refusals are :class:`KmsError`
+        (``SpiffeError`` subclasses it), so existing fail-closed handlers
+        catch them with the machine ``code`` intact."""
+        if self._credential_provider is None:
+            return self._token
+        return self._credential_provider.current_token()
+
+    def _api(self, op_label, method, path, payload, _retried=False):
         """One fail-closed Vault API call. Returns the decoded JSON
-        document. Any failure raises :class:`KmsError`."""
+        document. Any failure raises :class:`KmsError`.
+
+        With a credential provider, a 403 drops the cached token,
+        re-authenticates once, and retries the request once -- then fails
+        closed. The retry is bounded: never a loop."""
         body = (json.dumps(payload).encode("utf-8")
                 if payload is not None else b"")
-        headers = {"X-Vault-Token": self._token,
+        headers = {"X-Vault-Token": self._current_token(),
                    "Content-Type": "application/json"}
         try:
             status, resp_body = self._transport.request(
@@ -197,6 +229,13 @@ class VaultKmsProvider(KmsProvider):
                 "vault kms %s: transport failure (%s)"
                 % (op_label, type(e).__name__))
         if status != 200:
+            if (status == 403 and self._credential_provider is not None
+                    and not _retried):
+                # The client token may have expired mid-session: drop the
+                # cache, re-authenticate once, retry once.
+                self._credential_provider.invalidate()
+                return self._api(op_label, method, path, payload,
+                                 _retried=True)
             _log.warning("vault kms %s failed: HTTP %d (path=%s)",
                          op_label, status, path)
             raise KmsError(

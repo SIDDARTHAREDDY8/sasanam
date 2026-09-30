@@ -1,0 +1,958 @@
+{
+  "corpus_digest": "3482b34f73f6305f302990c481389999eaf0ef738ac9e9caae51778474e02202",
+  "corpus_id": "w232-agree-conformance",
+  "corpus_version": 1,
+  "row_count": 60,
+  "rows": [
+    {
+      "expect": {
+        "table_digest": "8f37bab42a5fea7b086882a7c847233dc0b447b04a369c2f0543ed1b4aae20d8",
+        "verdict": "agree"
+      },
+      "id": "accept-permitted-occurred-table",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "occurred",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "dcbee9900ae294b56538ccd4afe9933911fead152a8035785373df4a40013391"
+    },
+    {
+      "expect": {
+        "table_digest": "8f37bab42a5fea7b086882a7c847233dc0b447b04a369c2f0543ed1b4aae20d8",
+        "verdict": "agree"
+      },
+      "id": "accept-permitted-occurred-sealed",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "occurred",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "60a9600625bd3764e050f7227071ce97c5749e0d3acb2d2bc302833991072253"
+    },
+    {
+      "expect": {
+        "table_digest": "8f37bab42a5fea7b086882a7c847233dc0b447b04a369c2f0543ed1b4aae20d8",
+        "verdict": "agree"
+      },
+      "id": "accept-permitted-occurred-verify",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "occurred",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "c59d68f8b5b65f2561fb880902d4dc15f0bd30763c0079a953b15a21f930b781"
+    },
+    {
+      "expect": {
+        "table_digest": "8f37bab42a5fea7b086882a7c847233dc0b447b04a369c2f0543ed1b4aae20d8",
+        "verdict": "agree"
+      },
+      "id": "accept-permitted-occurred-roundtrip",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "occurred",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "5cfa24588b40f46d9932a1d1d7cc263072385c48f4399340657732c1c312977a"
+    },
+    {
+      "expect": {
+        "table_digest": "8d307d2c410de716e37241ca4872befd41737904405b68037680f6393375160a",
+        "verdict": "disagree"
+      },
+      "id": "accept-permitted-absent-table",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "absent",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "15a22ddc371b0da2c82df4936316410ae5e10a12858a4be1d2ca495d979fe4bf"
+    },
+    {
+      "expect": {
+        "table_digest": "8d307d2c410de716e37241ca4872befd41737904405b68037680f6393375160a",
+        "verdict": "disagree"
+      },
+      "id": "accept-permitted-absent-sealed",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "absent",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "0cc0500594591b0ffcbc6da3195c355d8a11e242cb40e8fc7b8fc8e8c4e94ee1"
+    },
+    {
+      "expect": {
+        "table_digest": "8d307d2c410de716e37241ca4872befd41737904405b68037680f6393375160a",
+        "verdict": "disagree"
+      },
+      "id": "accept-permitted-absent-verify",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "absent",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "c9ef0ca19785f29698393370511d3f6e1fe12df690c901694e02171f597b3024"
+    },
+    {
+      "expect": {
+        "table_digest": "8d307d2c410de716e37241ca4872befd41737904405b68037680f6393375160a",
+        "verdict": "disagree"
+      },
+      "id": "accept-permitted-absent-roundtrip",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "absent",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "d6eb000db05417a723ff81d181e2dde24e987be50d563b25b9d3467a4e3c47e0"
+    },
+    {
+      "expect": {
+        "table_digest": "be7cfbd2c8276d6c931ab4d7aaf13f918c27bd734d9feff37fc337746f13d03d",
+        "verdict": "indeterminate"
+      },
+      "id": "accept-permitted-unobservable-table",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "unobservable",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "e56e588ca7e69ba5974d6051ad163533388c9f74c0eefd997b91b28e6b35beb6"
+    },
+    {
+      "expect": {
+        "table_digest": "be7cfbd2c8276d6c931ab4d7aaf13f918c27bd734d9feff37fc337746f13d03d",
+        "verdict": "indeterminate"
+      },
+      "id": "accept-permitted-unobservable-sealed",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "unobservable",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "ca103d13160339b41c1843898abdff77186a700311575a09aed73e38cb2aa736"
+    },
+    {
+      "expect": {
+        "table_digest": "be7cfbd2c8276d6c931ab4d7aaf13f918c27bd734d9feff37fc337746f13d03d",
+        "verdict": "indeterminate"
+      },
+      "id": "accept-permitted-unobservable-verify",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "unobservable",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "c04407127c880de9f24d75b9b2b1d19a1917f306c16edcc06dcdd751033a1f7a"
+    },
+    {
+      "expect": {
+        "table_digest": "be7cfbd2c8276d6c931ab4d7aaf13f918c27bd734d9feff37fc337746f13d03d",
+        "verdict": "indeterminate"
+      },
+      "id": "accept-permitted-unobservable-roundtrip",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "unobservable",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "61fa846b235c08242cd5b030e776b32bb78cf8b65403571f0f74c6d13ebba042"
+    },
+    {
+      "expect": {
+        "table_digest": "7cea361a483717d81eefa889c97966bdf3fe42f3c50d4aedeee77615445bf19a",
+        "verdict": "disagree"
+      },
+      "id": "accept-denied-occurred-table",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "occurred",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "c387e5645ad746e2bb52f44b420b62afc9d91529a3af27f7c3dca1914c4ae800"
+    },
+    {
+      "expect": {
+        "table_digest": "7cea361a483717d81eefa889c97966bdf3fe42f3c50d4aedeee77615445bf19a",
+        "verdict": "disagree"
+      },
+      "id": "accept-denied-occurred-sealed",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "occurred",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "1acbcc71806bc28ee42722bad4fc03d00963d2d1dafb9da7fcaec0e35dd22a98"
+    },
+    {
+      "expect": {
+        "table_digest": "7cea361a483717d81eefa889c97966bdf3fe42f3c50d4aedeee77615445bf19a",
+        "verdict": "disagree"
+      },
+      "id": "accept-denied-occurred-verify",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "occurred",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "75e47ecc1ebb9107bb58405b1131b49ff371c396ebd803c7612576df96909bd6"
+    },
+    {
+      "expect": {
+        "table_digest": "7cea361a483717d81eefa889c97966bdf3fe42f3c50d4aedeee77615445bf19a",
+        "verdict": "disagree"
+      },
+      "id": "accept-denied-occurred-roundtrip",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "occurred",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "9f7a8046edd0091b056c61357987936f59017f065bf1b238bc1fdbf0129269f0"
+    },
+    {
+      "expect": {
+        "table_digest": "e0d48c6135e186afd6b935b15d33bc652761bbe4a2cebea5c050dd275bfb425e",
+        "verdict": "agree"
+      },
+      "id": "accept-denied-absent-table",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "absent",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "a2b7241a24885f3c506936d807df75a1e4f15ef59f982b2a96ff9789bcf563cb"
+    },
+    {
+      "expect": {
+        "table_digest": "e0d48c6135e186afd6b935b15d33bc652761bbe4a2cebea5c050dd275bfb425e",
+        "verdict": "agree"
+      },
+      "id": "accept-denied-absent-sealed",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "absent",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "47385ff079bcd1950be492b055ab5ae787ddf93844d8c4ac3f628647df6f3e13"
+    },
+    {
+      "expect": {
+        "table_digest": "e0d48c6135e186afd6b935b15d33bc652761bbe4a2cebea5c050dd275bfb425e",
+        "verdict": "agree"
+      },
+      "id": "accept-denied-absent-verify",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "absent",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "27ab7c270320c68c17098020e127103bac6bb42797478b436ec2362edab6c359"
+    },
+    {
+      "expect": {
+        "table_digest": "e0d48c6135e186afd6b935b15d33bc652761bbe4a2cebea5c050dd275bfb425e",
+        "verdict": "agree"
+      },
+      "id": "accept-denied-absent-roundtrip",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "absent",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "ee0815ec81559e029752379fc681b2eca549fef43ae765125b3f94a843ffb2a5"
+    },
+    {
+      "expect": {
+        "table_digest": "3cbd3e0f97fd4fee9e4c87801b6d398ecfc60a22f42f291b405fc416ddc5e5f6",
+        "verdict": "one-sided"
+      },
+      "id": "accept-denied-unobservable-table",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "unobservable",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "21287ba068b83df3e9a6009c07ab59a05baf13b8183099ab2e331bc02b22319d"
+    },
+    {
+      "expect": {
+        "table_digest": "3cbd3e0f97fd4fee9e4c87801b6d398ecfc60a22f42f291b405fc416ddc5e5f6",
+        "verdict": "one-sided"
+      },
+      "id": "accept-denied-unobservable-sealed",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "unobservable",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "2d2473c27907c13b69d739f561b590d05f4c8a459680c0ab741f64b2920fc1b9"
+    },
+    {
+      "expect": {
+        "table_digest": "3cbd3e0f97fd4fee9e4c87801b6d398ecfc60a22f42f291b405fc416ddc5e5f6",
+        "verdict": "one-sided"
+      },
+      "id": "accept-denied-unobservable-verify",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "unobservable",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "a60c916ad2a8a6199e08bd0e1630c814dab73a1d8edb5077f3e07d7a490e883f"
+    },
+    {
+      "expect": {
+        "table_digest": "3cbd3e0f97fd4fee9e4c87801b6d398ecfc60a22f42f291b405fc416ddc5e5f6",
+        "verdict": "one-sided"
+      },
+      "id": "accept-denied-unobservable-roundtrip",
+      "input": {
+        "decision_reported": "denied",
+        "effect_observed": "unobservable",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "98826bcde04e23a9d17211189a96581a7a90817f7e840c0ee6f4568383de54dc"
+    },
+    {
+      "expect": {
+        "table_digest": "d8f10cc847e2982616d48c8d3b78ac827b69c1460d1fb7df0b31c1f1f13f54ae",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-occurred-table",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "occurred",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "b9db7c0d9ba3d8ddc6cbfa237900c1f4eb3ccb30f3dc6680303badd090f9361f"
+    },
+    {
+      "expect": {
+        "table_digest": "d8f10cc847e2982616d48c8d3b78ac827b69c1460d1fb7df0b31c1f1f13f54ae",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-occurred-sealed",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "occurred",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "3890af61f9dd20cccaca9e8dfca1a02081fbf37c2fe3d44e15d26f969b07b537"
+    },
+    {
+      "expect": {
+        "table_digest": "d8f10cc847e2982616d48c8d3b78ac827b69c1460d1fb7df0b31c1f1f13f54ae",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-occurred-verify",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "occurred",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "1ff2c92c5db6743affebaa0669d0e5652b6a6f2696e33e05fc6b95d923fa1259"
+    },
+    {
+      "expect": {
+        "table_digest": "d8f10cc847e2982616d48c8d3b78ac827b69c1460d1fb7df0b31c1f1f13f54ae",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-occurred-roundtrip",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "occurred",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "3a48d5f334753afac71e1475064429b15c37415fc68c527dc25f171fdc2bf16e"
+    },
+    {
+      "expect": {
+        "table_digest": "8095d460d7edcf54883a1cd975ed0bca04ab860cf6a10653f9bbd912352132ba",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-absent-table",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "absent",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "60f9092daa75ccb317d84f6387d6af48a0d82897fec3c8ac3cbc8f336b53b3dd"
+    },
+    {
+      "expect": {
+        "table_digest": "8095d460d7edcf54883a1cd975ed0bca04ab860cf6a10653f9bbd912352132ba",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-absent-sealed",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "absent",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "dbb5e72edc34dce4f8596212891147e11620607f05ed70805ea57e05ae42d22c"
+    },
+    {
+      "expect": {
+        "table_digest": "8095d460d7edcf54883a1cd975ed0bca04ab860cf6a10653f9bbd912352132ba",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-absent-verify",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "absent",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "b80b5f4c01805474e67679299691ac45eceeae48c1236ad50a1e7af3b0de3712"
+    },
+    {
+      "expect": {
+        "table_digest": "8095d460d7edcf54883a1cd975ed0bca04ab860cf6a10653f9bbd912352132ba",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-absent-roundtrip",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "absent",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "2750d285b6a9e5bc0fafb945d738cbe339236c9264e1aedd6738f9d3227248ec"
+    },
+    {
+      "expect": {
+        "table_digest": "431e1bd2453a9d127a540e476f6f830a0dfd59fe8d94d2ad2ea04a8fb1f897f0",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-unobservable-table",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "unobservable",
+        "fn": "table"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "81a3dc5eb999f797f6a4188876f598d128c3359bbbcc71f0a76c3b7a42a85940"
+    },
+    {
+      "expect": {
+        "table_digest": "431e1bd2453a9d127a540e476f6f830a0dfd59fe8d94d2ad2ea04a8fb1f897f0",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-unobservable-sealed",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "unobservable",
+        "fn": "sealed"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "7c107a83b5b2be0133887915f822e5de73c94bd1b2b89542393eac0b6890b8e3"
+    },
+    {
+      "expect": {
+        "table_digest": "431e1bd2453a9d127a540e476f6f830a0dfd59fe8d94d2ad2ea04a8fb1f897f0",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-unobservable-verify",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "unobservable",
+        "fn": "verify"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "065b1b55b215409853cc62c74eef008968404a80bbd87eb10fd417df716fe868"
+    },
+    {
+      "expect": {
+        "table_digest": "431e1bd2453a9d127a540e476f6f830a0dfd59fe8d94d2ad2ea04a8fb1f897f0",
+        "verdict": "one-sided"
+      },
+      "id": "accept-none-unobservable-roundtrip",
+      "input": {
+        "decision_reported": "none",
+        "effect_observed": "unobservable",
+        "fn": "roundtrip"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "2f624f21360f908c0d06027db532cecb528c48c7f1e5596f30f195d6cc86a210"
+    },
+    {
+      "expect": {
+        "table_digest": "6600ced50989883cdca7a3a5dc6c8ffd76aee2a932e63669ea4b3380fa180dc7",
+        "verdict": "not-exercised"
+      },
+      "id": "accept-not-exercised-01",
+      "input": {
+        "decision_digest": "0101010101010101010101010101010101010101010101010101010101010101",
+        "fn": "not_exercised",
+        "reason": "single-use reservation consumed by retry step",
+        "superseding_digest": "8989898989898989898989898989898989898989898989898989898989898989"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "26f97b580cc4108c965726f3110d54cb0f4cca9961950641f31ce94a385b6a49"
+    },
+    {
+      "expect": {
+        "table_digest": "fb1a41970233d876d873f0bb5a32825fc107b647758bd9508a577e933c99aa5d",
+        "verdict": "not-exercised"
+      },
+      "id": "accept-not-exercised-02",
+      "input": {
+        "decision_digest": "2323232323232323232323232323232323232323232323232323232323232323",
+        "fn": "not_exercised",
+        "reason": "step superseded by later permitted decision",
+        "superseding_digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "aa0d77d6f0ca71b2de94d6636ed12d74395c16c93fb135cd769fb10f526698e9"
+    },
+    {
+      "expect": {
+        "table_digest": "953f44fa0dd13f3daddfa693f4b1cf007fe48ebf1745c74b3172631ec9bef072",
+        "verdict": "not-exercised"
+      },
+      "id": "accept-not-exercised-03",
+      "input": {
+        "decision_digest": "4545454545454545454545454545454545454545454545454545454545454545",
+        "fn": "not_exercised",
+        "reason": "reservation already consumed elsewhere",
+        "superseding_digest": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "973268e0a455f8e92298f8cff2e0d6220b9bd7d03a0d48c9c311cf2232973a40"
+    },
+    {
+      "expect": {
+        "table_digest": "e250d1e6c889ac646cbd5216d9c235506daff899ccbec1925503d6e77aeb96a9",
+        "verdict": "not-exercised"
+      },
+      "id": "accept-not-exercised-04",
+      "input": {
+        "decision_digest": "6767676767676767676767676767676767676767676767676767676767676767",
+        "fn": "not_exercised",
+        "reason": "planned step removed before execution",
+        "superseding_digest": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+      },
+      "kind": "must-accept",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "2e792b65f5c1885dc34d7c83a12f14620adcb0f53652cf46b219482008d5b5ac"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-01-case-sensitive",
+      "input": {
+        "decision_reported": "PERMITTED",
+        "effect_observed": "occurred",
+        "fn": "table"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "f6f58cab9af7d0a13a49e810d85d3cdfd3f25f0d4e7dcb5dff64bc03b7ee67bd"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-02-null-axis",
+      "input": {
+        "decision_reported": null,
+        "effect_observed": "occurred",
+        "fn": "table"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "5928c20a6ffd004295ab5804c02b0e763c8050dc2cecdc7bd5a6ca8b17b5e838"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-03-unknown-effect",
+      "input": {
+        "decision_reported": "permitted",
+        "effect_observed": "maybe",
+        "fn": "table"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "451db5e3950543f3a528dc454ec3ed00f6dc3a92495df4efb7268556462e6d64"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-04-wrong-type",
+      "input": {
+        "decision_reported": 123,
+        "effect_observed": "absent",
+        "fn": "table"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "96724200a97a10da7dbbf009f29d46e3885cd02bc0c8c2150d4dd0bc505dd94d"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-05-empty-string",
+      "input": {
+        "decision_reported": "",
+        "effect_observed": "absent",
+        "fn": "table"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "d22c9aad0e776d0ab750558396e0543859a8d63f55a4e38acbc1d2b572fc7e89"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-06-bad-digest",
+      "input": {
+        "decision_digest": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "fn": "not_exercised",
+        "reason": "ok reason",
+        "superseding_digest": "abababababababababababababababababababababababababababababababab"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "af51593976290022cd461788643d8fcf60883f3de88fecd3417948d19a15c44d"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-07-empty-reason",
+      "input": {
+        "decision_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fn": "not_exercised",
+        "reason": "  ",
+        "superseding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "73e60bdb97192543283d4f65fae0f62b5f3bf02cbb04adc1ce4d9a7222fbc28e"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-08-long-reason",
+      "input": {
+        "decision_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fn": "not_exercised",
+        "reason": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "superseding_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "0c171dde277870a5e3d29d3bc673d5762fa6c1f29da62572078690895b6c641f"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-09-forged-verdict",
+      "input": {
+        "fn": "verify",
+        "record": "__special__:FORGE"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "0e45df2736eef470889647cce868713a1b82aef6d8bf85a5868c4f6bedd85132"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-10-edited-digest",
+      "input": {
+        "fn": "verify",
+        "record": "__special__:EDIT"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "f1b3c34fb859fddd37fbadc672b526faa71c3f8c95c48178324f89c51eef043b"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-11-seal-unmapped",
+      "input": {
+        "decision_reported": "bogus",
+        "effect_observed": "occurred",
+        "fn": "seal"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "d9df0da3dcc3a6c3488cb82f6df1c58e9d5a1e39e162f724e03b0c4f02b5327c"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-input-unmapped"
+      },
+      "id": "reject-12-foreign-capsule",
+      "input": {
+        "capsule": "__special__:FOREIGN",
+        "fn": "table_digest_of"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "150638a29a240416a3b06dd835cde95f7cdf1235da53a2427d7a0fa949d32051"
+    },
+    {
+      "expect": {
+        "refusal": "agreement-not-authorization"
+      },
+      "id": "reject-13-authority-misuse",
+      "input": {
+        "artifact": "__special__:VERDICT",
+        "fn": "deny_authority"
+      },
+      "kind": "must-reject",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "877c1cf57ed244cf83f5192d8596cd3034614cb5bda56f05b83ebc5c37fc8ea1"
+    },
+    {
+      "expect": {
+        "digest": "8f37bab42a5fea7b086882a7c847233dc0b447b04a369c2f0543ed1b4aae20d8"
+      },
+      "id": "derive-01",
+      "input": {
+        "cell": {
+          "decision_reported": "permitted",
+          "effect_observed": "occurred"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "d472b97b5a5d19fce5a385f60e46574a95c0174ac932d39e0aae69ec199e4954"
+    },
+    {
+      "expect": {
+        "digest": "e0d48c6135e186afd6b935b15d33bc652761bbe4a2cebea5c050dd275bfb425e"
+      },
+      "id": "derive-02",
+      "input": {
+        "cell": {
+          "decision_reported": "denied",
+          "effect_observed": "absent"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "5825f34461e4ef4c04267a9e383ce64ce03268860393d7c0e584a2f1f1e79983"
+    },
+    {
+      "expect": {
+        "digest": "be7cfbd2c8276d6c931ab4d7aaf13f918c27bd734d9feff37fc337746f13d03d"
+      },
+      "id": "derive-03",
+      "input": {
+        "cell": {
+          "decision_reported": "permitted",
+          "effect_observed": "unobservable"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "223005f809a80cdc93066510091540972ad7aa4ff0f020a0e968bf996f0ed60d"
+    },
+    {
+      "expect": {
+        "digest": "d8f10cc847e2982616d48c8d3b78ac827b69c1460d1fb7df0b31c1f1f13f54ae"
+      },
+      "id": "derive-04",
+      "input": {
+        "cell": {
+          "decision_reported": "none",
+          "effect_observed": "occurred"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "e452f64d23364afcd708a95de41c87890276c42e2b9601c1bc67848804e3e5c9"
+    },
+    {
+      "expect": {
+        "digest": "6600ced50989883cdca7a3a5dc6c8ffd76aee2a932e63669ea4b3380fa180dc7"
+      },
+      "id": "derive-05",
+      "input": {
+        "not_exercised": {
+          "decision_digest": "0101010101010101010101010101010101010101010101010101010101010101",
+          "reason": "single-use reservation consumed by retry step",
+          "superseding_digest": "8989898989898989898989898989898989898989898989898989898989898989"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "3a97ef3fbadf3a140fa3489649dbc15e99ebccbf4336a4e9673e762ca93814e8"
+    },
+    {
+      "expect": {
+        "digest": "8d307d2c410de716e37241ca4872befd41737904405b68037680f6393375160a"
+      },
+      "id": "derive-06",
+      "input": {
+        "cross_row": "accept-permitted-absent-sealed"
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "847c3133917837b47153e9139372c508033812ff764d0dd87034cd5f882abcb2"
+    },
+    {
+      "expect": {
+        "digest": "7cea361a483717d81eefa889c97966bdf3fe42f3c50d4aedeee77615445bf19a"
+      },
+      "id": "derive-07",
+      "input": {
+        "roundtrip_cell": {
+          "decision_reported": "denied",
+          "effect_observed": "occurred"
+        }
+      },
+      "kind": "derive",
+      "module": "gov.reconcile_agreement",
+      "module_version": 1,
+      "row_hash": "eb28bb8a20a7e2d91c526bacb57a8f9e31ba30f83618e2e941ce492bfc890a8c"
+    }
+  ],
+  "target_module": "gov.reconcile_agreement",
+  "target_version": 1
+}

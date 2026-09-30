@@ -82,7 +82,16 @@ _STATEMENT_FIELDS = frozenset({"payload_sha256", "provenance_digest",
 
 
 class EnvelopeError(ValueError):
-    """Raised loudly on any DSSE envelope parse/verify failure."""
+    """Raised loudly on any DSSE envelope parse/verify failure.
+
+    Wave-232: carries a machine ``reason`` (the closed refusal code).
+    Older raise sites pass no code; ``reason`` then defaults to the
+    message, so existing behavior is unchanged.
+    """
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.reason = code if code is not None else message
 
 
 def _check_hex_digest(value, where):
@@ -373,3 +382,246 @@ def _first_verifier(verifiers):
     if not verifiers:
         raise EnvelopeError("open_any requires at least one verifier")
     return verifiers[0]
+
+
+# ---------------------------------------------------------------------------
+# Wave-232: vendored payload-type namespace, strict PAE decode, plain
+# callback interface.
+#
+# The DSSE PAE already binds (payloadType, payload) into the signed bytes,
+# killing envelope-shape bugs by construction (F195 pressure). What it did
+# NOT enforce: the payloadType NAMESPACE. A generic "application/json"
+# type lets an attacker re-present one artifact's signature under a
+# different semantic. These helpers close that: only
+# ``application/vnd.sasanam.*+json`` is signable, and a strict
+# PAE decoder admits exactly one parse (no leading-zero lengths, no
+# trailing bytes, no second attempt).
+#
+# Curves note (cosign #5029, closed unmerged 2026-09-30): no P-384/P-521
+# key ever enters this path; signers here are the project's Ed25519 and
+# HMAC-SHA256 tiers only.
+# ---------------------------------------------------------------------------
+
+VENDORED_TYPE_PREFIX = "application/vnd.sasanam."
+VENDORED_TYPE_SUFFIX = "+json"
+
+_DS_ENVELOPE_FIELDS = frozenset(
+    {"payloadType", "payload", "signatures", "signing_input_digest"})
+_DS_SIG_FIELDS = frozenset({"keyid", "sig"})
+
+_MAX_PAE_LEN_DIGITS = 12
+_MAX_PAE_FIELD_BYTES = 4 * 1024 * 1024
+
+
+def check_payload_type_namespace(payload_type):
+    """Refuse any payloadType outside ``application/vnd.sasanam.*+json``.
+
+    Refuses ``dsse-payload-type-refused`` -- a generic type (or an empty
+    or non-string one) is a refusal at build time, never a downgrade.
+    """
+    if not isinstance(payload_type, str) or not payload_type:
+        raise EnvelopeError(
+            "dsse-payload-type-refused: payloadType must be a non-empty "
+            "string, got %r" % (payload_type,),
+            code="dsse-payload-type-refused")
+    if not (payload_type.startswith(VENDORED_TYPE_PREFIX)
+            and payload_type.endswith(VENDORED_TYPE_SUFFIX)):
+        raise EnvelopeError(
+            "dsse-payload-type-refused: payloadType %r is not in the "
+            "vendored namespace application/vnd.sasanam.*+json"
+            % (payload_type,),
+            code="dsse-payload-type-refused")
+    return payload_type
+
+
+def _malformed(detail):
+    raise EnvelopeError("dsse-envelope-malformed: %s" % detail,
+                        code="dsse-envelope-malformed")
+
+
+def _take_len_token(rest):
+    """Consume one ``LEN SP`` token from ``rest``; return (n, rest)."""
+    if b" " not in rest:
+        _malformed("truncated length token")
+    token, rest = rest.split(b" ", 1)
+    if not token or token.strip(b"0123456789"):
+        _malformed("length token is not decimal ASCII: %r" % (token,))
+    if len(token) > 1 and token.startswith(b"0"):
+        _malformed("length token has a leading zero: %r" % (token,))
+    if len(token) > _MAX_PAE_LEN_DIGITS:
+        _malformed("length token absurdly long")
+    n = int(token)
+    if n > _MAX_PAE_FIELD_BYTES:
+        _malformed("field length %d exceeds cap" % n)
+    return n, rest
+
+
+def pae_decode(pae_bytes):
+    """Strict inverse of :func:`pae`.
+
+    Admits exactly one parse of ``DSSEv1 SP LEN SP type SP LEN SP
+    body``: leading-zero lengths, non-decimal lengths, truncated fields,
+    and trailing bytes all refuse ``dsse-envelope-malformed``. There is
+    no second parse to fall back to.
+    """
+    if not isinstance(pae_bytes, (bytes, bytearray)):
+        _malformed("PAE input must be bytes, got %s"
+                   % type(pae_bytes).__name__)
+    raw = bytes(pae_bytes)
+    if not raw.startswith(b"DSSEv1 "):
+        _malformed("wrong domain separator (want b'DSSEv1 ')")
+    rest = raw[len(b"DSSEv1 "):]
+    type_len, rest = _take_len_token(rest)
+    if len(rest) < type_len:
+        _malformed("type field truncated")
+    payload_type = rest[:type_len]
+    rest = rest[type_len:]
+    if not rest.startswith(b" "):
+        _malformed("missing separator after payloadType")
+    rest = rest[1:]
+    if not payload_type:
+        _malformed("payloadType is empty")
+    body_len, rest = _take_len_token(rest)
+    if len(rest) < body_len:
+        _malformed("payload field truncated")
+    body = rest[:body_len]
+    rest = rest[body_len:]
+    if rest:
+        _malformed("trailing bytes after payload: %d byte(s)" % len(rest))
+    try:
+        payload_type_str = payload_type.decode("utf-8")
+    except UnicodeDecodeError:
+        _malformed("payloadType is not UTF-8")
+    return payload_type_str, body
+
+
+def envelope(payload, *, payload_type, sign, key_id=None):
+    """Sign ``payload`` bytes with a plain ``sign(bytes) -> bytes``
+    callback, returning a strict envelope dict.
+
+    ``payload_type`` must be in the vendored namespace
+    (``dsse-payload-type-refused`` otherwise). The signature covers the
+    PAE bytes ``DSSEv1 SP LEN SP payloadType SP LEN SP payload``; the
+    envelope additionally carries ``signing_input_digest`` binding the
+    exact bytes the signature covers, so a verifier can check the
+    binding before trusting the signature.
+    """
+    check_payload_type_namespace(payload_type)
+    if not isinstance(payload, (bytes, bytearray)):
+        _malformed("payload must be bytes, got %s" % type(payload).__name__)
+    payload = bytes(payload)
+    if len(payload) > _MAX_PAE_FIELD_BYTES:
+        _malformed("payload exceeds cap")
+    pae_bytes = pae(payload_type, payload)
+    try:
+        sig = sign(pae_bytes)
+    except EnvelopeError:
+        raise
+    except Exception as exc:
+        _malformed("signer callback failed: %s" % (exc,))
+    if not isinstance(sig, (bytes, bytearray)) or not sig:
+        _malformed("signer callback returned empty/non-bytes")
+    sig = bytes(sig)
+    try:
+        sig_hex = sig.hex()
+    except Exception:
+        _malformed("signature is not hex-encodable")
+    return {
+        "payloadType": payload_type,
+        "payload": base64.b64encode(payload).decode("ascii"),
+        "signatures": [{"keyid": key_id, "sig": sig_hex}],
+        "signing_input_digest":
+            hashlib.sha256(pae_bytes).hexdigest(),
+    }
+
+
+def verify_envelope(env, *, verify, expect_payload_type=None):
+    """Verify a strict envelope dict with a plain
+    ``verify(pae_bytes, sig_bytes) -> bool`` callback.
+
+    Checks, in order: strict shape (``dsse-envelope-malformed`` on any
+    ambiguity); vendored payloadType namespace
+    (``dsse-payload-type-refused``); optional ``expect_payload_type``
+    binding (a signature over a payload presented under the wrong type
+    fails here -- ``dsse-payload-type-refused``, never a silent pass);
+    ``signing_input_digest`` binding (the envelope fields must describe
+    exactly the bytes the signature covers); then the callback over the
+    PAE bytes for EVERY listed signature
+    (``dsse-signature-invalid`` on any failure).
+
+    Returns ``{"ok": True, "payload": bytes, "payload_type": str,
+    "key_id": ...}`` on success.
+    """
+    if not isinstance(env, dict):
+        _malformed("envelope must be a dict, got %s" % type(env).__name__)
+    extra = set(env) - _DS_ENVELOPE_FIELDS
+    if extra:
+        _malformed("unknown envelope field(s) refused: %s" % sorted(extra))
+    missing = _DS_ENVELOPE_FIELDS - set(env)
+    if missing:
+        _malformed("envelope missing field(s): %s" % sorted(missing))
+    got_type = env["payloadType"]
+    check_payload_type_namespace(got_type)
+    if expect_payload_type is not None and got_type != expect_payload_type:
+        raise EnvelopeError(
+            "dsse-payload-type-refused: envelope carries payloadType %r, "
+            "expected %r" % (got_type, expect_payload_type),
+            code="dsse-payload-type-refused")
+    payload = _b64_decode(env["payload"], "payload")
+    sig_entries = env["signatures"]
+    if not isinstance(sig_entries, list) or not sig_entries:
+        _malformed("signatures must be a non-empty list")
+    parsed_sigs = []
+    for i, entry in enumerate(sig_entries):
+        where = "signatures[%d]" % i
+        if not isinstance(entry, dict):
+            _malformed("%s: must be a dict" % where)
+        extra = set(entry) - _DS_SIG_FIELDS
+        if extra:
+            _malformed("%s: unknown field(s) refused: %s"
+                       % (where, sorted(extra)))
+        raw = entry.get("sig")
+        if not isinstance(raw, str) or not raw:
+            _malformed("%s: sig must be a non-empty string" % where)
+        try:
+            sig_bytes = bytes.fromhex(raw)
+        except ValueError:
+            _malformed("%s: sig is not hex" % where)
+        if not sig_bytes:
+            _malformed("%s: sig is empty" % where)
+        parsed_sigs.append((entry.get("keyid"), sig_bytes))
+    digest = env["signing_input_digest"]
+    if not isinstance(digest, str) or len(digest) != 64 or \
+            any(c not in "0123456789abcdef" for c in digest):
+        _malformed("signing_input_digest is not a lowercase sha256 hex")
+    pae_bytes = pae(got_type, payload)
+    if hashlib.sha256(pae_bytes).hexdigest() != digest:
+        _malformed("signing_input_digest does not bind the envelope's "
+                   "payloadType/payload (envelope fields disagree with "
+                   "the bytes the signature must cover)")
+    for keyid, sig_bytes in parsed_sigs:
+        try:
+            ok = verify(pae_bytes, sig_bytes)
+        except Exception as exc:
+            raise EnvelopeError(
+                "dsse-signature-invalid: verifier callback failed: %s"
+                % (exc,), code="dsse-signature-invalid")
+        if not ok:
+            raise EnvelopeError(
+                "dsse-signature-invalid: signature does not verify over "
+                "the PAE bytes (keyid=%r)" % (keyid,),
+                code="dsse-signature-invalid")
+    return {
+        "ok": True,
+        "payload": payload,
+        "payload_type": got_type,
+        "key_id": parsed_sigs[0][0],
+    }
+
+
+__all__ = __all__ + [
+    "check_payload_type_namespace",
+    "pae_decode",
+    "envelope",
+    "verify_envelope",
+]

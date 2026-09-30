@@ -157,12 +157,15 @@ class TransitSigner(Signer):
     fails closed at first use, never silently.
     """
 
-    def __init__(self, transport, *, token, key_name, mount="transit",
-                 key_version=None):
+    def __init__(self, transport, *, token=None, key_name, mount="transit",
+                 key_version=None, credential_provider=None):
         if not isinstance(transport, VaultTransport):
             raise TypeError("transport must be a VaultTransport, got %r"
                             % type(transport).__name__)
-        if not isinstance(token, str) or not token:
+        if (token is None) == (credential_provider is None):
+            raise ValueError(
+                "exactly one of token / credential_provider is required")
+        if token is not None and (not isinstance(token, str) or not token):
             raise ValueError("transit token must be a non-empty string")
         if not isinstance(key_name, str) or not _KEY_ID_RE.match(key_name):
             raise ValueError("invalid transit key name %r" % (key_name,))
@@ -174,6 +177,7 @@ class TransitSigner(Signer):
         # call path (auth header, TLS/timeout behavior, error mapping).
         # Only _api/_path are used; wrap/unwrap are never touched.
         self._vault = VaultKmsProvider(transport, token=token,
+                                       credential_provider=credential_provider,
                                        mount=mount)
         self._key_name = key_name
         self._pinned_version = key_version

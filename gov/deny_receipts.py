@@ -81,6 +81,12 @@ _REQUIRED_DECISION_FIELDS = (
 _DIGEST_FIELDS = ("token_digest", "policy_bundle_digest", "intent_digest")
 
 
+# Wave-232 lane C: optional DSSE envelope. The payload type is vendored so a
+# receipt envelope can never be re-presented as another artifact's
+# envelope (the payloadType is inside the signed PAE bytes).
+DENY_RECEIPT_ENVELOPE_TYPE = "application/vnd.sasanam.denial-receipt+json"
+
+
 # -- errors -------------------------------------------------------------
 
 class DenyReceiptError(Exception):
@@ -159,6 +165,36 @@ def _registry(registry):
     return _alg_registry().default_registry()
 
 
+def _dsse():
+    try:
+        from . import dsse_envelope as mod
+    except ImportError:  # standalone: module beside this file
+        import dsse_envelope as mod  # this file
+    return mod
+
+
+def _check_envelope_shape(envelope):
+    """Shape-check an attached DSSE envelope (wave-232).
+
+    Refuses ``dsse-envelope-malformed`` (via DenyReceiptMalformed) on any
+    ambiguity; the signature itself is checked in :func:`verify`, never
+    here.
+    """
+    mod = _dsse()
+    if not isinstance(envelope, dict):
+        raise DenyReceiptMalformed(
+            "dsse-envelope-malformed: receipt envelope must be a dict")
+    try:
+        mod.check_payload_type_namespace(envelope.get("payloadType"))
+    except mod.EnvelopeError as exc:
+        raise DenyReceiptMalformed("%s" % (exc.reason,)) from exc
+    for field in ("payload", "signatures", "signing_input_digest"):
+        if field not in envelope:
+            raise DenyReceiptMalformed(
+                "dsse-envelope-malformed: envelope missing %r" % (field,))
+    return envelope
+
+
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=True).encode("utf-8")
@@ -181,18 +217,22 @@ def _signing_input(body):
 def _check_receipt_shape(receipt):
     if not isinstance(receipt, dict):
         raise DenyReceiptMalformed("receipt must be a dict")
+    # Wave-232: "envelope" is an OPTIONAL additive field. Legacy receipts
+    # (no envelope) verify under the wave-230 rule exactly.
     expected = {"v", "kind", "verdict", "class", "rule_path",
                 "token_digest", "policy_bundle_digest", "intent_digest",
                 "jurisdiction_profile", "alg", "key_id",
-                "non_repudiation", "signature"}
+                "non_repudiation", "signature", "envelope"}
     unknown = set(receipt) - expected
     if unknown:
         raise DenyReceiptMalformed(
             "unknown receipt fields: %s" % ",".join(sorted(unknown)))
-    missing = expected - set(receipt)
+    missing = expected - {"envelope"} - set(receipt)
     if missing:
         raise DenyReceiptMalformed(
             "missing receipt fields: %s" % ",".join(sorted(missing)))
+    if "envelope" in receipt:
+        _check_envelope_shape(receipt["envelope"])
     if receipt.get("v") != DENY_RECEIPT_VERSION:
         raise DenyReceiptMalformed("bad receipt version")
     if receipt.get("kind") != _RECEIPT_KIND:
@@ -202,7 +242,7 @@ def _check_receipt_shape(receipt):
 
 # -- public API ---------------------------------------------------------
 
-def emit(decision_record, *, signer, registry=None):
+def emit(decision_record, *, signer, registry=None, envelope=None):
     """Emit a signed denial (or permit) receipt for a decision.
 
     ``decision_record`` needs ``verdict`` (permit|deny), an optional
@@ -216,6 +256,17 @@ def emit(decision_record, *, signer, registry=None):
     deny -> violation, and any outage -> unavailable. A permit
     verdict on an outage refuses
     ``deny-receipt-unavailable-as-permit``.
+
+    Wave-232: ``envelope`` is an OPTIONAL keyword-only opt-in
+    (``None`` = off). When set it must be exactly
+    ``DENY_RECEIPT_ENVELOPE_TYPE`` (``dsse-payload-type-refused``
+    otherwise -- a receipt built under any other type could never
+    verify, since verify binds the expected type); the receipt then carries
+    an additional ``"envelope"`` DSSE envelope whose signature covers
+    the PAE bytes (payloadType + canonical body). The legacy
+    ``"signature"`` field is unchanged, so an envelope-bearing receipt
+    minus its ``"envelope"`` field is byte-identical to the legacy
+    receipt.
     """
     if not isinstance(decision_record, dict):
         raise DenyReceiptMalformed("decision record must be a dict")
@@ -284,6 +335,35 @@ def emit(decision_record, *, signer, registry=None):
     sig = reg.sign(signer.alg, _signing_input(body), signer.secret)
     receipt = dict(body)
     receipt["signature"] = sig.hex()
+    # Wave-232: optional DSSE envelope. Additive only: the envelope
+    # signs the PAE bytes over (payloadType, canonical body); the
+    # legacy "signature" field is untouched, so stripping "envelope"
+    # yields the byte-identical legacy receipt. The type is pinned to
+    # the module constant -- verify() binds the expected type, so any
+    # other type would mint a permanently-unverifiable receipt.
+    if envelope is not None:
+        mod = _dsse()
+        if envelope is not DENY_RECEIPT_ENVELOPE_TYPE and \
+                not (isinstance(envelope, str) and
+                     envelope == DENY_RECEIPT_ENVELOPE_TYPE):
+            raise DenyReceiptMalformed(
+                "dsse-payload-type-refused: envelope must be exactly "
+                "%r (got %r)" % (DENY_RECEIPT_ENVELOPE_TYPE, envelope))
+        try:
+            mod.check_payload_type_namespace(envelope)
+        except mod.EnvelopeError as exc:
+            raise DenyReceiptMalformed("%s" % (exc.reason,)) from exc
+
+        def _sign(pae_bytes, _reg=reg, _alg=signer.alg,
+                  _secret=signer.secret):
+            return _reg.sign(_alg, pae_bytes, _secret)
+
+        try:
+            receipt["envelope"] = mod.envelope(
+                _signing_input(body), payload_type=envelope,
+                sign=_sign, key_id=signer.key_id)
+        except mod.EnvelopeError as exc:
+            raise DenyReceiptMalformed("%s" % (exc.reason,)) from exc
     return receipt
 
 
@@ -315,10 +395,33 @@ def verify(receipt, *, key, expect_alg=None, registry=None):
         sig = bytes.fromhex(sig_hex)
     except ValueError:
         raise DenyReceiptMalformed("receipt signature is not hex")
-    body = {k: v for k, v in receipt.items() if k != "signature"}
+    body = {k: v for k, v in receipt.items()
+            if k not in ("signature", "envelope")}
     if not reg.verify(receipt["alg"], _signing_input(body), sig, key):
         raise DenyReceiptInvalid(
             "deny-receipt-signature-invalid: signature does not verify")
+    # Wave-232: when an envelope rides along, it is verified too --
+    # the envelope's payload must be exactly the recomputed signature
+    # input, and its signature must verify over the PAE bytes. The
+    # legacy path above is unchanged (narrowing, never widened).
+    if "envelope" in receipt:
+        mod = _dsse()
+        env = receipt["envelope"]  # shape already checked at verify start
+
+        def _verify(pae_bytes, sig_bytes, _reg=reg, _alg=receipt["alg"],
+                    _key=key):
+            return bool(_reg.verify(_alg, pae_bytes, sig_bytes, _key))
+
+        try:
+            got = mod.verify_envelope(
+                env, verify=_verify,
+                expect_payload_type=DENY_RECEIPT_ENVELOPE_TYPE)
+        except mod.EnvelopeError as exc:
+            raise DenyReceiptInvalid("%s" % (exc.reason,)) from exc
+        if got["payload"] != _signing_input(body):
+            raise DenyReceiptInvalid(
+                "dsse-signature-invalid: envelope payload is not the "
+                "receipt's signature input (payload transplant)")
     return {
         "ok": True,
         "verdict": receipt["verdict"],

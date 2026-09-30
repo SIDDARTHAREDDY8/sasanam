@@ -764,6 +764,16 @@ def kms_provider_from_config(mapping):
       default ``False``), ``ca_bundle`` (PEM bundle path), and
       ``timeout_s`` (positive seconds, default 10) tune the transport.
       Every config-caused failure raises :class:`KmsError`.
+    * ``provider: vault-spiffe`` ->
+      :class:`gov.kms_vault.VaultKmsProvider` against HashiCorp Vault's
+      transit engine, but the Vault client token is acquired through a
+      file-projected JWT-SVID exchanged via the JWT auth method (see
+      :mod:`gov.spiffe_credential_provider`). ``svid_path``,
+      ``audience`` and ``role`` are required mapping keys; ``mount``,
+      ``allow_http``, ``ca_bundle`` and ``timeout_s`` tune the
+      transport. This branch NEVER reads ``VAULT_TOKEN`` -- the
+      no-static-fallback invariant is structural. Address comes from
+      ``VAULT_ADDR`` like ``provider: vault``.
     * ``provider: aws|gcp|azure`` -> :class:`KmsError`: real cloud adapters
       are not built in this repo ($0 spend, no credentials, no network).
     * anything else -> :class:`KmsError`.
@@ -784,6 +794,13 @@ def kms_provider_from_config(mapping):
         # translation live in gov.kms_vault.vault_provider_from_config.
         from .kms_vault import vault_provider_from_config
         return vault_provider_from_config(mapping)
+    if name == "vault-spiffe":
+        # Lazy import for the same circularity reason; all spiffe config
+        # parsing and the no-VAULT_TOKEN structural invariant live in
+        # gov.spiffe_credential_provider.vault_provider_from_spiffe_config.
+        from .spiffe_credential_provider import \
+            vault_provider_from_spiffe_config
+        return vault_provider_from_spiffe_config(mapping)
     if name in ("aws", "gcp", "azure"):
         raise KmsError(
             "real cloud KMS adapters (%s) are not built in this repo: "

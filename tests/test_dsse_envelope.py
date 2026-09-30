@@ -7,6 +7,8 @@ behavior and error taxonomy at the same seams.
 
 import base64
 import copy
+import hashlib
+import hmac
 import json
 import os
 import unittest
@@ -215,6 +217,166 @@ class TestDispatch(unittest.TestCase):
         got = dsse.open_any(env, P1, P2, COMMENTS, [v1])
         self.assertEqual(got["format"], "v2")
         self.assertEqual(got["trusted_comments"], COMMENTS)
+
+
+# ---------------------------------------------------------------------------
+# Wave-232 lane C: vendored payload-type namespace, strict PAE decode,
+# plain-callback envelope wrapper.
+# ---------------------------------------------------------------------------
+
+
+_W232_PT = "application/vnd.sasanam.denial-receipt+json"
+_W232_PAYLOAD = b'{"verdict":"DENY"}'
+
+# Hand-computed from the PAE shape: "DSSEv1" + " " + "43" + " " + type
+# (43 bytes) + " " + "18" + " " + payload (18 bytes). Independent
+# literal, not recomputed by the code under test.
+_W232_PAE = (
+    b"DSSEv1 43 application/vnd.sasanam.denial-receipt+json "
+    b"18 " + _W232_PAYLOAD
+)
+
+
+def _w232_signer(secret):
+    def _sign(msg):
+        return hmac.new(secret, msg, hashlib.sha256).digest()
+    return _sign
+
+
+def _w232_verifier(secret):
+    def _verify(msg, sig):
+        return hmac.compare_digest(
+            hmac.new(secret, msg, hashlib.sha256).digest(), sig)
+    return _verify
+
+
+class TestVendoredNamespace(unittest.TestCase):
+    def test_vendored_type_accepted(self):
+        self.assertEqual(
+            dsse.check_payload_type_namespace(_W232_PT), _W232_PT)
+
+    def test_generic_type_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.check_payload_type_namespace("application/json")
+        self.assertIn("dsse-payload-type-refused", ctx.exception.reason)
+
+    def test_empty_type_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.check_payload_type_namespace("")
+        self.assertIn("dsse-payload-type-refused", ctx.exception.reason)
+
+    def test_non_string_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.check_payload_type_namespace(None)
+        self.assertIn("dsse-payload-type-refused", ctx.exception.reason)
+
+
+class TestPaeDecode(unittest.TestCase):
+    def test_round_trip_literal(self):
+        self.assertEqual(dsse.pae(_W232_PT, _W232_PAYLOAD), _W232_PAE)
+        got_type, got_body = dsse.pae_decode(_W232_PAE)
+        self.assertEqual(got_type, _W232_PT)
+        self.assertEqual(got_body, _W232_PAYLOAD)
+
+    def test_leading_zero_refused(self):
+        amb = _W232_PAE.replace(b"DSSEv1 43 ", b"DSSEv1 043 ", 1)
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.pae_decode(amb)
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_trailing_bytes_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.pae_decode(_W232_PAE + b"\x00")
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_wrong_domain_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.pae_decode(b"X" + _W232_PAE[1:])
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_truncated_refused(self):
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.pae_decode(_W232_PAE[:-5])
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_non_decimal_length_refused(self):
+        bad = _W232_PAE.replace(b"DSSEv1 43 ", b"DSSEv1 4x ", 1)
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.pae_decode(bad)
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+
+class TestCallbackEnvelope(unittest.TestCase):
+    def setUp(self):
+        self.secret = hashlib.sha256(b"unit-dsse-key").digest()
+
+    def test_round_trip(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret), key_id="k1")
+        out = dsse.verify_envelope(env, verify=_w232_verifier(self.secret),
+                                   expect_payload_type=_W232_PT)
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["payload"], _W232_PAYLOAD)
+        self.assertEqual(out["key_id"], "k1")
+
+    def test_wrong_expected_type_refused(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret))
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(
+                env, verify=_w232_verifier(self.secret),
+                expect_payload_type=
+                "application/vnd.sasanam.decision-packet+json")
+        self.assertIn("dsse-payload-type-refused", ctx.exception.reason)
+
+    def test_tampered_payload_refused(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret))
+        bad = dict(env)
+        raw = bytearray(base64.b64decode(bad["payload"]))
+        raw[0] ^= 0x01
+        bad["payload"] = base64.b64encode(bytes(raw)).decode("ascii")
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(bad, verify=_w232_verifier(self.secret),
+                                 expect_payload_type=_W232_PT)
+        self.assertTrue(
+            "dsse-signature-invalid" in ctx.exception.reason
+            or "dsse-envelope-malformed" in ctx.exception.reason)
+
+    def test_wrong_key_refused(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret))
+        other = hashlib.sha256(b"other-key").digest()
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(env, verify=_w232_verifier(other),
+                                 expect_payload_type=_W232_PT)
+        self.assertIn("dsse-signature-invalid", ctx.exception.reason)
+
+    def test_unknown_field_refused(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret))
+        bad = dict(env)
+        bad["extra"] = "nope"
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(bad, verify=_w232_verifier(self.secret))
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_digest_binding_mismatch_refused(self):
+        env = dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT,
+                            sign=_w232_signer(self.secret))
+        bad = dict(env)
+        bad["signing_input_digest"] = "0" * 64
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.verify_envelope(bad, verify=_w232_verifier(self.secret))
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
+
+    def test_signer_failure_is_malformed(self):
+        def _boom(_msg):
+            raise RuntimeError("nope")
+
+        with self.assertRaises(dsse.EnvelopeError) as ctx:
+            dsse.envelope(_W232_PAYLOAD, payload_type=_W232_PT, sign=_boom)
+        self.assertIn("dsse-envelope-malformed", ctx.exception.reason)
 
 
 if __name__ == "__main__":

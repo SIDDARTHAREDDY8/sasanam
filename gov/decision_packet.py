@@ -39,6 +39,7 @@ What this does NOT do (honest boundaries):
   executor's rebuild-once (see ToolExecutor._emit_decision_packet).
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -72,6 +73,20 @@ def _decision_codes():
     return mod
 
 
+def _dsse_envelope():
+    """Lazy handle on gov/dsse_envelope (wave-232).
+
+    Imported lazily -- and only on the envelope path -- so the legacy
+    standalone story is unchanged: a packet that never carries an
+    envelope never needs dsse_envelope.py.
+    """
+    try:
+        from . import dsse_envelope as mod
+    except ImportError:  # standalone/offline: dsse_envelope.py beside
+        import dsse_envelope as mod  # this file
+    return mod
+
+
 def _deny_receipts():
     """Lazy handle on gov/deny_receipts (wave-230).
 
@@ -87,6 +102,12 @@ def _deny_receipts():
 
 
 DECISION_PACKET_VERSION = 1
+
+# Wave-232 lane C: optional DSSE envelope. The payload type is vendored
+# so a packet envelope can never be re-presented as another artifact's
+# envelope (the payloadType is inside the signed PAE bytes).
+DECISION_PACKET_ENVELOPE_TYPE = \
+    "application/vnd.sasanam.decision-packet+json"
 
 DECISIONS = ("allow", "deny", "queue")
 
@@ -864,12 +885,19 @@ def build_decision_packet(*, decision, boundary_declared,
     return body
 
 
-def sign_packet(body, seed):
+def sign_packet(body, seed, *, envelope=False):
     """Attach the executor's Ed25519 packet signature. Returns a new dict.
 
     ``seed`` is the 32-byte packet-signing seed (see resolve_packet_key).
     The authority block (kid/pubkey) is part of the signed body, so the
     signature binds the key identity to the packet.
+
+    Wave-232: ``envelope`` (keyword-only, default False) attaches an
+    additional DSSE ``"envelope"`` field whose signature covers the PAE
+    bytes (vendored payloadType + canonical body). Additive only: the
+    legacy ``"signature"`` field is unchanged, so an envelope-bearing
+    packet minus its ``"envelope"`` field is byte-identical to the
+    legacy packet.
     """
     if not isinstance(body, dict):
         raise PacketError("body must be a dict")
@@ -885,6 +913,26 @@ def sign_packet(body, seed):
     sig = _ed.sign(bytes(seed), signing_input(body_with_auth))
     packet = dict(body_with_auth)
     packet["signature"] = _b64u_encode(sig)
+    if envelope:
+        mod = _dsse_envelope()
+        pae_bytes = mod.pae(DECISION_PACKET_ENVELOPE_TYPE,
+                            signing_input(body_with_auth))
+        try:
+            env_sig = _ed.sign(bytes(seed), pae_bytes)
+        except Exception as exc:
+            raise PacketError("dsse-envelope-malformed: packet envelope "
+                              "signing failed: %s" % (exc,))
+        packet["envelope"] = {
+            "payloadType": DECISION_PACKET_ENVELOPE_TYPE,
+            "payload": base64.b64encode(
+                signing_input(body_with_auth)).decode("ascii"),
+            "signatures": [{
+                "keyid": authority["kid"],
+                "sig": bytes(env_sig).hex(),
+            }],
+            "signing_input_digest":
+                hashlib.sha256(pae_bytes).hexdigest(),
+        }
     return packet
 
 
@@ -1112,9 +1160,34 @@ def _verify(packet, entries, token_claims):
         sig = _b64u_decode(sig_b64)
     except (ValueError, TypeError):
         return False, "signature not base64url"
-    body = {k: v for k, v in packet.items() if k != "signature"}
+    body = {k: v for k, v in packet.items()
+            if k not in ("signature", "envelope")}
     if not _ed.verify(pub, signing_input(body), sig):
         return False, "Ed25519 packet signature does not verify"
+    # Wave-232: when an envelope rides along, verify it too -- through the
+    # shared verify_envelope seam so the strictness matches the receipt
+    # path exactly (unknown fields refused, PAE recomputed from the
+    # decoded fields and digest-bound, every listed signature verified
+    # over the PAE bytes with the authority key). The envelope's payload
+    # must additionally be exactly the signed body bytes (payload
+    # transplant is refused). The legacy path above is unchanged
+    # (narrowing, never widened).
+    if "envelope" in packet:
+        mod = _dsse_envelope()
+
+        def _verify_envelope(pae_bytes, sig_bytes, _pub=pub):
+            return bool(_ed.verify(_pub, pae_bytes, sig_bytes))
+
+        try:
+            got = mod.verify_envelope(
+                packet["envelope"], verify=_verify_envelope,
+                expect_payload_type=DECISION_PACKET_ENVELOPE_TYPE)
+        except mod.EnvelopeError as exc:
+            return False, exc.reason
+        if got["payload"] != signing_input(body):
+            return False, "dsse-signature-invalid: packet envelope " \
+                "payload is not the packet's signed body (payload " \
+                "transplant)"
     # Wave-228 (decision codes): replay the attached machine claim
     # against the live taxonomy. The claim is signature-covered, so a
     # swapped claim already fails above; this rejects a well-signed

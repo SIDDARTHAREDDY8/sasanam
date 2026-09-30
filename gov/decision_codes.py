@@ -4717,6 +4717,103 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
+    'spiffe-refused': {
+        "domain": 'spiffe',
+        "code": 'spiffe-refused',
+        "human": 'spiffe KMS auth: base-class fallback code; concrete '
+                 'refusals carry a specific spiffe-* code',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'spiffe-svid-unavailable': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-unavailable',
+        "human": 'spiffe KMS auth: the SVID file is absent or unreadable '
+                 '(SPIRE agent down or volume unmounted); refused before '
+                 'any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-file'],
+    },
+    'spiffe-svid-expired': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-expired',
+        "human": 'spiffe KMS auth: the SVID exp claim has passed; refused '
+                 'before any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-expiry'],
+    },
+    'spiffe-svid-malformed': {
+        "domain": 'spiffe',
+        "code": 'spiffe-svid-malformed',
+        "human": 'spiffe KMS auth: the SVID is not a usable JWT (shape, '
+                 'encoding, claims) or the file is wrong; refused before '
+                 'any network call',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-shape'],
+    },
+    'spiffe-audience-mismatch': {
+        "domain": 'spiffe',
+        "code": 'spiffe-audience-mismatch',
+        "human": 'spiffe KMS auth: the SVID aud does not match the '
+                 'configured audience; a foreign SVID is never presented',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-audience'],
+    },
+    'spiffe-auth-refused': {
+        "domain": 'spiffe',
+        "code": 'spiffe-auth-refused',
+        "human": 'spiffe KMS auth: the JWT login failed (403 after one '
+                 're-login, other HTTP errors, transport failure, or '
+                 'malformed login response)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-jwt-login'],
+    },
+    'spiffe-permission-invalid': {
+        "domain": 'spiffe',
+        "code": 'spiffe-permission-invalid',
+        "human": 'spiffe KMS auth: the SVID file has group/other '
+                 'permission bits or is not owned by the process uid; '
+                 'never read a secret other principals could have swapped',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['check-svid-permissions'],
+    },
+    # Wave-232 lane C (DSSE envelope discipline): additive, 575 -> 578.
+    'dsse-envelope-malformed': {
+        "domain": 'dsse',
+        "code": 'dsse-envelope-malformed',
+        "human": 'DSSE envelope: the envelope or PAE bytes are ambiguous '
+                 'or malformed (leading-zero length, trailing bytes, '
+                 'unknown fields, digest-binding mismatch)',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-payload-type-refused': {
+        "domain": 'dsse',
+        "code": 'dsse-payload-type-refused',
+        "human": 'DSSE envelope: payloadType outside the vendored '
+                 'application/vnd.sasanam.*+json namespace, or an envelope '
+                 'presented under the wrong expected payloadType',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'verdict-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'dsse-signature-invalid': {
+        "domain": 'dsse',
+        "code": 'dsse-signature-invalid',
+        "human": 'DSSE envelope: the signature does not verify over the '
+                 'PAE bytes (payloadType + payload bound by length prefix)',
+        "severity": 'critical',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
 }
 
 

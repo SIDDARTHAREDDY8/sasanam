@@ -144,5 +144,73 @@ class EvidenceTest(unittest.TestCase):
                             dr.evidence_digest(ev))
 
 
+class EnvelopeTest(unittest.TestCase):
+    # Wave-232 lane C: opt-in DSSE envelope on denial receipts.
+    def test_envelope_opt_in_round_trip(self):
+        signer, pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        r = dr.emit(_decision(), signer=signer,
+                    envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        self.assertEqual(r["envelope"]["payloadType"],
+                         dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        out = dr.verify(r, key=signer.secret)
+        self.assertTrue(out["ok"])
+
+    def test_envelope_absent_by_default(self):
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        r = dr.emit(_decision(), signer=signer)
+        self.assertNotIn("envelope", r)
+
+    def test_generic_envelope_type_refused_at_build(self):
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        with self.assertRaises(dr.DenyReceiptMalformed) as ctx:
+            dr.emit(_decision(), signer=signer, envelope="application/json")
+        self.assertIn("dsse-payload-type-refused", str(ctx.exception))
+
+    def test_vendored_but_wrong_envelope_type_refused_at_build(self):
+        # verify() binds the expected type, so minting under any other
+        # type would produce a permanently-unverifiable receipt.
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        with self.assertRaises(dr.DenyReceiptMalformed) as ctx:
+            dr.emit(_decision(), signer=signer,
+                    envelope="application/vnd.sasanam.other+json")
+        self.assertIn("dsse-payload-type-refused", str(ctx.exception))
+
+    def test_envelope_transplant_refused(self):
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        r1 = dr.emit(_decision(), signer=signer,
+                     envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        r2 = dr.emit(_decision(rule_path="policy/other/deny"),
+                     signer=signer,
+                     envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        r2x = dict(r2)
+        r2x["envelope"] = r1["envelope"]
+        with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
+            dr.verify(r2x, key=signer.secret)
+        self.assertIn("dsse-signature-invalid", str(ctx.exception))
+
+    def test_envelope_forgery_refused(self):
+        import copy
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        r = dr.emit(_decision(), signer=signer,
+                    envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        bad = copy.deepcopy(r)
+        bad["envelope"]["signatures"][0]["sig"] = "00" * 64
+        with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
+            dr.verify(bad, key=signer.secret)
+        self.assertIn("dsse-signature-invalid", str(ctx.exception))
+
+    def test_envelope_wrong_expected_type_refused(self):
+        import copy
+        signer, _pub = _signer(alg=ar.HMAC_SHA256_MAC)
+        r = dr.emit(_decision(), signer=signer,
+                    envelope=dr.DENY_RECEIPT_ENVELOPE_TYPE)
+        bad = copy.deepcopy(r)
+        bad["envelope"]["payloadType"] = \
+            "application/vnd.sasanam.decision-packet+json"
+        with self.assertRaises(dr.DenyReceiptInvalid) as ctx:
+            dr.verify(bad, key=signer.secret)
+        self.assertIn("dsse-payload-type-refused", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

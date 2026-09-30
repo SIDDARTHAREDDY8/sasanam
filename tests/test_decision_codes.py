@@ -68,7 +68,16 @@ class VocabularyCoverageTest(unittest.TestCase):
         missing = [c for c in VOCAB if c not in dc.TAXONOMY]
         self.assertEqual(missing, [],
                          "unmapped refusal strings: %r" % (missing[:8],))
-        self.assertEqual(len(dc.TAXONOMY), 575)
+        self.assertEqual(len(dc.TAXONOMY), 585)
+        # 575 = wave-231 merge pin; + 7 wave-232 lane-A spiffe KMS-auth codes
+        # (spiffe-refused base-class code plus
+        # spiffe-{svid-unavailable,svid-expired,svid-malformed,
+        # audience-mismatch,auth-refused,permission-invalid}),
+        # + 3 wave-232 lane-C DSSE envelope codes
+        # (dsse-{envelope-malformed,payload-type-refused,signature-invalid}),
+        # additive, zero deletions, zero key collisions, composed at merge
+        # from the two lane commits by direct byte-verification, pin updated
+        # here to match.
         # 567 = 546 (wave-229 merge: 530 + 16 checkpoint/policy-replay)
         # + 6 wave-230 lane-A signed-deny-receipt codes
         # (deny-receipt-refused, taxonomy-receipt-missing,

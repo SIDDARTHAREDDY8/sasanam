@@ -448,17 +448,29 @@ class LeasedCredentialManager(object):
     hash-chained audit log in production, a list in tests).
     ``now`` is the clock (epoch seconds); inject it in tests.
     ``token`` is the operator credential for the lease server —
-    sent in the ``X-Vault-Token`` header, NEVER logged.
+    sent in the ``X-Vault-Token`` header, NEVER logged. Exactly one of
+    ``token`` and ``credential_provider`` (a
+    :class:`gov.spiffe_credential_provider.CredentialProvider` supplying
+    short-lived tokens) must be given -- never both, never neither.
     """
 
-    def __init__(self, transport, *, token, audit_log=None, now=None,
-                 wrapping_ttl_s=60):
+    def __init__(self, transport, *, token=None, credential_provider=None,
+                 audit_log=None, now=None, wrapping_ttl_s=60):
         if transport is None:
             raise LeaseError("a transport is required")
-        if not token:
+        if (token is None) == (credential_provider is None):
+            raise LeaseError(
+                "exactly one of token / credential_provider is required")
+        if token is not None and not token:
             raise LeaseError("an operator token is required")
+        if credential_provider is not None and not hasattr(
+                credential_provider, "current_token"):
+            raise LeaseError(
+                "credential_provider must expose current_token(), got %r"
+                % (type(credential_provider).__name__,))
         self.transport = transport
         self._token = token
+        self._credential_provider = credential_provider
         self._audit_log = audit_log
         self._now = now or time.time
         self._wrapping_ttl_s = max(1, int(wrapping_ttl_s))
@@ -472,6 +484,22 @@ class LeasedCredentialManager(object):
         return ("LeasedCredentialManager(leases=%d, wraps=%d, "
                 "secrets=REDACTED)" % (len(self._leases),
                                        len(self._wraps)))
+
+    def _auth_headers(self):
+        """The operator auth header for one request. A static token is
+        used as-is; a credential provider is asked for a fresh
+        short-lived token per request.
+
+        Note: a credential-provider refusal propagates as
+        :class:`gov.kms.KmsError` (``SpiffeError``), not
+        :class:`LeaseError` -- it is an authentication failure, not a
+        lease failure, and existing ``except KmsError`` fail-closed
+        handlers catch it with the machine ``code`` intact."""
+        if self._credential_provider is not None:
+            token = self._credential_provider.current_token()
+        else:
+            token = self._token
+        return {"X-Vault-Token": token}
 
     # ------------------------------------------------------------- audit
 
@@ -531,7 +559,7 @@ class LeasedCredentialManager(object):
         try:
             status, body = self.transport.request(
                 "POST", "/v1/leases/issue",
-                {"X-Vault-Token": self._token},
+                self._auth_headers(),
                 json.dumps(req).encode("utf-8"))
         except LeaseTransportError as e:
             raise LeaseError("issue failed: lease server unreachable: %s"
@@ -583,7 +611,7 @@ class LeasedCredentialManager(object):
         try:
             status, body = self.transport.request(
                 "POST", "/v1/sys/leases/renew",
-                {"X-Vault-Token": self._token},
+                self._auth_headers(),
                 json.dumps({"lease_id": lease_id,
                             "increment": increment_s}).encode("utf-8"))
         except LeaseTransportError as e:
@@ -636,7 +664,7 @@ class LeasedCredentialManager(object):
         try:
             status, body = self.transport.request(
                 "PUT", "/v1/sys/leases/revoke",
-                {"X-Vault-Token": self._token},
+                self._auth_headers(),
                 json.dumps({"lease_id": lease_id}).encode("utf-8"))
         except LeaseTransportError as e:
             rec.state = "dead"
@@ -693,7 +721,7 @@ class LeasedCredentialManager(object):
             status, body = self.transport.request(
                 "GET", "/v1/sys/leases/lookup?lease_id=" +
                 urllib.parse.quote(rec.lease_id, safe=""),
-                {"X-Vault-Token": self._token}, b"")
+                self._auth_headers(), b"")
         except LeaseTransportError:
             return "dead"  # unknown server state: fail closed
         if status == 404:

@@ -386,5 +386,70 @@ class F199Regression(unittest.TestCase):
         self.assertTrue(ok, reason)
 
 
+class EnvelopeOptIn(unittest.TestCase):
+    # Wave-232 lane C: opt-in DSSE envelope on decision packets.
+    def test_envelope_round_trip(self):
+        body = dp.build_decision_packet(**_minimal_kwargs())
+        p = dp.sign_packet(body, SEED, envelope=True)
+        self.assertEqual(p["envelope"]["payloadType"],
+                         dp.DECISION_PACKET_ENVELOPE_TYPE)
+        ok, why = dp.verify_decision_packet(p)
+        self.assertTrue(ok, why)
+
+    def test_legacy_byte_identity(self):
+        body = dp.build_decision_packet(**_minimal_kwargs())
+        p = dp.sign_packet(body, SEED)
+        self.assertNotIn("envelope", p)
+        ok, why = dp.verify_decision_packet(p)
+        self.assertTrue(ok, why)
+
+    def test_envelope_transplant_refused(self):
+        body1 = dp.build_decision_packet(**_minimal_kwargs())
+        p1 = dp.sign_packet(body1, SEED, envelope=True)
+        body2 = dp.build_decision_packet(
+            **_minimal_kwargs(decision="deny"))
+        p2 = dp.sign_packet(body2, SEED, envelope=True)
+        p2x = dict(p2)
+        p2x["envelope"] = p1["envelope"]
+        ok, why = dp.verify_decision_packet(p2x)
+        self.assertFalse(ok)
+        self.assertIn("dsse-signature-invalid", why)
+
+    def test_envelope_forgery_refused(self):
+        body = dp.build_decision_packet(**_minimal_kwargs())
+        p = dp.sign_packet(body, SEED, envelope=True)
+        bad = copy.deepcopy(p)
+        bad["envelope"]["signatures"][0]["sig"] = "00" * 64
+        ok, why = dp.verify_decision_packet(bad)
+        self.assertFalse(ok)
+        self.assertIn("dsse-signature-invalid", why)
+
+    def test_envelope_wrong_type_refused(self):
+        body = dp.build_decision_packet(**_minimal_kwargs())
+        p = dp.sign_packet(body, SEED, envelope=True)
+        bad = copy.deepcopy(p)
+        bad["envelope"]["payloadType"] = \
+            "application/vnd.sasanam.denial-receipt+json"
+        ok, why = dp.verify_decision_packet(bad)
+        self.assertFalse(ok)
+        self.assertIn("dsse-payload-type-refused", why)
+
+
+    def test_envelope_unknown_field_refused(self):
+        import copy
+        body = dp.build_decision_packet(**_minimal_kwargs())
+        p = dp.sign_packet(body, SEED, envelope=True)
+        bad = copy.deepcopy(p)
+        bad["envelope"]["extra_field"] = "smuggled"
+        ok, why = dp.verify_decision_packet(bad)
+        self.assertFalse(ok)
+        self.assertIn("dsse-envelope-malformed", why)
+        bad2 = copy.deepcopy(p)
+        bad2["envelope"]["signatures"][0]["extra_sig_field"] = "smuggled"
+        ok, why = dp.verify_decision_packet(bad2)
+        self.assertFalse(ok)
+        self.assertIn("dsse-envelope-malformed", why)
+
+
 if __name__ == "__main__":
     unittest.main()
