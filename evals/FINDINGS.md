@@ -6512,3 +6512,41 @@ Next free finding: **F216**. **Open findings: none.** (F211 filed 2026-09-30, wa
 **Close-when criteria:** (1) `issue_summary()` (and `track_level()`, the shared read path) validates that every card is a dict and refuses `posture-card-malformed` otherwise — no raw `AttributeError` escapes any public path; (2) break-first battery: the non-dict-cards probe BREAKs (AttributeError) on old code, HELDs (malformed code) on fixed code; (3) adjacent suites green (test_posture_cards, w251 lane batteries).
 
 **Status: CLOSED 2026-10-01 (wave-253 lane 1).** Close-when path (1): `posture_cards.track_level()` -- the shared read path -- and `issue_summary()` both validate via the new `_require_card_dicts()` helper that `cards` is a list of dicts, refusing `PostureCardError(posture-card-malformed)` otherwise; no raw `AttributeError` escapes any public path. Close-when path (2): break-first battery `evals/w253_f214_f215_closure_probes.py` probes `f215/non-dict-cards-issue-summary` and `f215/non-dict-cards-track-level` BREAK (raw AttributeError) on the pristine wave-252 base and HELD (malformed code) on fixed code, deterministic across 2 runs (staging + `env -u GOV_DEPLOYMENT_MODE`), synthetic/local, standalone. Close-when path (3): adjacent suites green -- test_posture_cards 17/17 OK, w251 posture battery 12/12 HELD, w252 red-team battery 19/19 HELD (the standing F215 pin honestly flipped to a HELD regression pin with the pre-fix break shape documented in comments). No new decision codes (fix reuses `posture-card-malformed`); taxonomy pin stays 1004. `verify_summary`'s track-entry read was already guarded (`isinstance(t, dict)` filter).
+
+## F216: incident.transition() reaches "resolved" directly, bypassing resolve()'s fail-closed finding/task checks (MEDIUM)
+
+**Cells:** wave-254 lane 1 red-team, 2026-10-01. Standing regression pin: `evals/w254_redteam_probes.py` (probe `incident/transition-to-resolved-bypass`; 16 probes: 4 BREAK / 12 HELD / 0 ERROR, deterministic across 2 runs — staging + `env -u GOV_DEPLOYMENT_MODE` — synthetic/local, standalone).
+
+**Defect:** `gov/incident.py`'s `resolve()` is the module's fail-closed resolution gate: it refuses `incident-open-findings` (any linked finding whose `finding_status` is not "closed") and `incident-open-tasks` (any unresolved action item), the documented headline property #1 ("No resolution with open findings or tasks"). But `transition()` -- a public API -- runs no checks at all when `new_state == "resolved"`: the same `_lifecycle` walk that moves new -> investigating -> contained is reachable directly to resolved. Reproduced on the wave-253 base: `resolve()` correctly refused `incident-open-findings` for an incident with finding F1 open, then `transition(iid, "resolved")` on the same incident set state to "resolved" with no refusal. The fail-closed property is defeated through a public API of the same class -- a genuine bypass, not a contract nit.
+
+**Severity rationale:** MEDIUM. The incident record is the attribution/visibility layer: an incident with open findings can be marked resolved while the findings are still open, defeating the auditability the module exists to provide. Scoped below HIGH because the approval/policy gate is untouched (no policy decision is altered) and the journal stays tamper-evident -- a lying resolve() is detectable by any reader that checks the linked findings, but nothing refuses it.
+
+**Close-when criteria:** (1) `transition()` refuses (or runs the identical finding/task checks as `resolve()`) when `new_state == "resolved"` -- no path to the resolved state skips the checks; (2) break-first battery: the transition-bypass probe BREAKs (resolved with open finding) on old code, HELDs (refused with incident-open-findings or equivalent) on fixed code; (3) adjacent suites green (test_incident, w252 incident battery).
+
+**Status: OPEN.**
+
+## F217: policy_authoring.explain_candidate() escapes raw AttributeError on non-dict action or context=None (LOW)
+
+**Cells:** wave-254 lane 1 red-team, 2026-10-01. Standing regression pin: `evals/w254_redteam_probes.py` (probes `authoring/explain-non-dict-action`, `authoring/explain-none-context`), same battery as F216.
+
+**Defect:** `gov/policy_authoring.py`'s `explain_candidate()` calls `action.get("agent_id")` (via `_counter_key`) and `ctx.get(...)` (via `checked_bool`) without the None/non-dict guards that the shared read paths use elsewhere (`rule_matches` coerces non-dict actions to `{}`, `checked_bool` returns `False` on non-dict ctx). The native engine itself tolerates both shapes: `evaluate(action=None)` and `context=None` yield default_deny. So the explain layer disagrees with the engine's contract -- a raw `AttributeError: 'NoneType' object has no attribute 'get'` (action=None / context=None) or `'str' object has no attribute 'get'` (action="read_file") escapes where every other authoring seam refuses or decides. Same defect class as F215 (contract drift between a shared read path and a new public seam).
+
+**Severity rationale:** LOW. No silent allow: the crash is loud and no decision is emitted. Exposure is error-type confusion at the seam for any caller (including a future service wrapper) that catches `AuthoringError` to fail closed; the engine path itself stays fail-closed. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows.
+
+**Close-when criteria:** (1) `explain_candidate()` validates/normalizes `action` and `context` at the seam -- non-dict action or None context either refuses with a machine code (`policy-authoring-...`) or coerces to the engine's shapes, consistent with the engine's default_deny behavior; (2) break-first battery: both probes BREAK (raw AttributeError) on old code, HELD on fixed code; (3) adjacent suites green (test_policy_authoring, w253 authoring batteries).
+
+**Status: OPEN.**
+
+## F218: PermitJournal.grant() with deeply-nested payload escapes raw RecursionError instead of permit-journal-misuse (LOW)
+
+**Cells:** wave-254 lane 1 red-team, 2026-10-01. Standing regression pin: `evals/w254_redteam_probes.py` (probe `journal/deep-nesting-raw-error`), same battery as F216.
+
+**Defect:** The F214 fix wrapped `_build_body()`'s serialization in `try/except (TypeError, ValueError)`. A deeply-nested payload (3000-level dict in the reproduction) raises `RecursionError` from `json.dumps` -- which is not a subclass of either, so the raw `RecursionError` escapes `grant()` instead of the documented `PermitJournalRefusal` with `permit-journal-misuse`. Same seam and same machine-code contract as F214: callers that catch `PermitJournalError` to fail closed will miss this exception class entirely. Fail-closed in effect (no partial write, no chain corruption), wrong error type.
+
+**Severity rationale:** LOW. Fail-closed (no state mutated, no journal write), so the exposure is error-type confusion at the seam, identical to F214's scoping: a caller written against the documented `PermitJournalError` contract would see an unhandled exception. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows.
+
+**Close-when criteria:** (1) `_build_body()`'s serialization guard also catches `RecursionError` (or the payload depth is bounded before serialization) -- no raw recursion error escapes any public append path; (2) break-first battery: the deep-nesting probe BREAKs (raw RecursionError) on old code, HELDs (misuse code) on fixed code; (3) adjacent suites green (test_permit_journal, w250 permit-journal battery).
+
+**Status: OPEN.**
+
+Next free finding: **F219**. **Open findings: F216, F217, F218.**

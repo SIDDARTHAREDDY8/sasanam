@@ -81,9 +81,9 @@ class ContractTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 906); additive only.
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1017)
+        self.assertEqual(len(dc.TAXONOMY), 1029)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
     def test_exception_carries_code(self):

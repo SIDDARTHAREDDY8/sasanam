@@ -321,15 +321,15 @@ class TaxonomyPinTests(unittest.TestCase):
 
     def test_taxonomy_pin_979(self):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes: 1 breach-boundary + 9 skill-admission + 2 evidence-envelope + 6 skill-update + 13 identity + 3 combine + 7 artifact), additive only.
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1017)
+        self.assertEqual(len(dc.TAXONOMY), 1029)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         for code in _NEW_CODES:
             self.assertIn(code, dc.TAXONOMY)
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(set(dc.TAXONOMY)), 1017)
+        self.assertEqual(len(set(dc.TAXONOMY)), 1029)
 
 
 if __name__ == "__main__":

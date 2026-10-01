@@ -168,9 +168,9 @@ class TaxonomyPinTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-251 lane 1: re-pointed to 1000 (997 + 3 posture-card
         # codes), additive only.
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1017)
+        self.assertEqual(len(dc.TAXONOMY), 1029)
         for code in ("posture-card-malformed",
                      "posture-card-unverifiable",
                      "posture-card-unknown-track"):

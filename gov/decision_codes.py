@@ -614,6 +614,56 @@ TAXONOMY = {
         "evidence_kinds_required": ['approval-record'],
         "reverify_steps": ['recompute'],
     },
+    'approval-policy-audit-failed': {
+        "domain": 'approval-policy',
+        "code": 'approval-policy-audit-failed',
+        "human": 'approval policy: the audit sink raised while recording '
+                 'an auto-approve or opt-in disapproval; the decision is '
+                 'refused, never silently taken',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-policy-disapproval-defaulted': {
+        "domain": 'approval-policy',
+        "code": 'approval-policy-disapproval-defaulted',
+        "human": 'approval policy: a disapproval outcome was about to '
+                 'fire without an explicit opt-in rule; disapproval is '
+                 'never the default, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-policy-malformed': {
+        "domain": 'approval-policy',
+        "code": 'approval-policy-malformed',
+        "human": 'approval policy: the rule document, rule, or request '
+                 'is not well-formed; it never compiles into something '
+                 'weaker, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-policy-no-audit-sink': {
+        "domain": 'approval-policy',
+        "code": 'approval-policy-no-audit-sink',
+        "human": 'approval policy: auto-approve or opt-in disapproval '
+                 'refused -- no audit sink is configured, and silent '
+                 'non-human decisions are never allowed',
+        "severity": 'high',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'approval-policy-seam-unavailable': {
+        "domain": 'approval-policy',
+        "code": 'approval-policy-seam-unavailable',
+        "human": 'approval policy: require-approval refused -- the '
+                 'human queue public seam is unavailable; the request '
+                 'is dropped, never auto-passed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['recompute'],
+    },
     'approval-rebinding': {
         "domain": 'approval',
         "code": 'approval-rebinding',
@@ -2096,6 +2146,62 @@ TAXONOMY = {
         "human": 'capability assessment: the commit token is not known',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-malformed': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-malformed',
+        "human": 'compliance emitter: malformed control source, mapping, or findings index; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unknown-code': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unknown-code',
+        "human": 'compliance emitter: mapping references a decision code not in the live taxonomy; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unknown-finding': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unknown-finding',
+        "human": 'compliance emitter: mapping references a finding id not in the deployment findings index; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unknown-format': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unknown-format',
+        "human": 'compliance emitter: emit requested an unknown format; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unknown-mechanism': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unknown-mechanism',
+        "human": 'compliance emitter: mapping references a mechanism id not in the evidence crosswalk; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unknown-track': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unknown-track',
+        "human": 'compliance emitter: mapping references a posture track outside the closed track vocabulary; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'compliance-emitter-unlinked-claim': {
+        "domain": 'compliance-emitter',
+        "code": 'compliance-emitter-unlinked-claim',
+        "human": 'compliance emitter: control has no evidence mappings; a claim with no evidence link is never emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
         "reverify_steps": ['recompute'],
     },
     'component_tampered': {

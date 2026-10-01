@@ -206,9 +206,9 @@ class TestTaxonomyPin(unittest.TestCase):
         # Wave-248 lane 6: re-pointed to 941 (938 + 3 policy-combine
         # codes: combine-default-deny, combine-forbid-overrides,
         # combine-misuse), additive only; merge coordinator recomposes.
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1017)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1029)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_combine_codes_shape(self):

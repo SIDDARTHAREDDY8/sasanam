@@ -311,9 +311,9 @@ class TaxonomyTest(unittest.TestCase):
         # uri-normalize codes); additive only.
         # Wave-248 lane 1 (F210 closure): 938 + 1 additive
         # breach-boundary-seal-invalid code; additive only.
-        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
+        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1017)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1029)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
 
