@@ -3601,6 +3601,57 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence-envelope'],
         "reverify_steps": ['recompute'],
     },
+    'coverage-logbook-chain-broken': {
+        "domain": 'coverage',
+        "code": 'coverage-logbook-chain-broken',
+        "human": 'coverage ledger: a score-logbook entry failed chain '
+                 'verification (rewritten history, dropped entry, or '
+                 'broken linkage); the logbook is untrusted until '
+                 're-initialized',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coverage-refused-backdated-entry': {
+        "domain": 'coverage',
+        "code": 'coverage-refused-backdated-entry',
+        "human": 'coverage ledger: a score entry dated earlier than the '
+                 'previous logbook entry was refused; the logbook is '
+                 'timestamp-monotonic and append-only',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coverage-refused-monitor-implies-prevention': {
+        "domain": 'coverage',
+        "code": 'coverage-refused-monitor-implies-prevention',
+        "human": 'coverage ledger: monitor-mode coverage was presented as '
+                 'prevention; refused -- monitor-mode verdicts are evidence '
+                 'of visibility, never of prevention',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coverage-refused-no-denominator': {
+        "domain": 'coverage',
+        "code": 'coverage-refused-no-denominator',
+        "human": 'coverage ledger: a coverage percentage was requested '
+                 'without a denominator; refused -- a percentage without '
+                 'its denominator is not emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coverage-refused-no-proof-method': {
+        "domain": 'coverage',
+        "code": 'coverage-refused-no-proof-method',
+        "human": 'coverage ledger: a coverage percentage or score was '
+                 'requested without a named proof method; refused -- '
+                 'coverage without a proof method is not emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'credential-strict-config-invalid': {
         "domain": 'credential',
         "code": 'credential-strict-config-invalid',
