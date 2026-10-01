@@ -1,0 +1,230 @@
+"""Break-first F226 closure battery: emit_profile_results(quality_gate=True)
+must wrap EvidenceQualityError as ControlProfileError.
+
+Wave-259 lane B (F226 closure). Stdlib only. Deterministic across
+runs (staging + `env -u GOV_DEPLOYMENT_MODE`).
+
+F226 (LOW, OPEN at write time): emit_profile_results(quality_gate=True)
+calls gov/evidence_quality.evaluate() directly. After the F222 closure,
+empty quality evidence raises
+EvidenceQualityError(evidence-quality-empty-evidence) from inside
+evaluate(), and it propagates raw through the control-profiles public
+seam instead of being wrapped as ControlProfileError with a
+control-profile-* machine code. A caller catching only
+ControlProfileError misses this refusal entirely. Same defect class as
+F220/F221/F224 (wrong error type at a public seam).
+
+Close-when (from FINDINGS.md): (1) emit_profile_results with
+quality_gate=True over empty quality evidence raises
+ControlProfileError with a control-profile-* machine code; (2) these
+probes BREAK (raw EvidenceQualityError escapes) on the old code and
+HELD (ControlProfileError) on the fixed code, in both staging and
+`env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green
+(tests.test_control_profiles, w257 profiles battery, w258_f222
+probes).
+
+Fix choice (wrapping preferred): the wrap reuses the existing
+control-profile-gate-failed code -- the code the standing regression
+pin probe profiles/quality-gate-names-failed-expectations already
+expects for a refusing gate -- and names the wrapped
+evidence-quality-* code in the refusal message. No new taxonomy code;
+pin stays 1080.
+
+Method (diagnosing-bugs skill): each probe is falsifiable. Verdicts:
+HELD (wrapped ControlProfileError) or BREAK (raw EvidenceQualityError
+escapes, or a wrong code / missing wrap).
+"""
+
+import os
+import sys
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+
+from gov import control_profiles as cp  # noqa: E402
+from gov import evidence_quality as eq  # noqa: E402
+from gov import decision_codes  # noqa: E402  (taxonomy pin below)
+
+TAXONOMY_PIN = 1080  # Unchanged: the fix reuses control-profile-gate-failed.
+
+
+def _held(detail=""):
+    return ("HELD", detail)
+
+
+def _break(detail=""):
+    return ("BREAK", detail)
+
+
+def _control(cid, check, impact=0.9):
+    return {"id": cid, "impact": impact, "title": "t-%s" % (cid,),
+            "desc": "d-%s" % (cid,), "check": check}
+
+
+def _results():
+    prof = {"id": "P-F226", "title": "f226-probe",
+            "controls": [_control("C1", lambda snap: True)]}
+    return cp.run_profile(prof, {"e": 1})
+
+
+def _monotonic_exp():
+    return {"expectation_type": "expect_evidence_monotonic",
+            "kwargs": {}}
+
+
+def _gate_call(evidence, expectations=None):
+    return cp.emit_profile_results(
+        _results(), fmt="json", quality_gate=True,
+        quality_expectations=(expectations if expectations is not None
+                              else [_monotonic_exp()]),
+        quality_evidence=evidence)
+
+
+def _expect_wrapped(fn, want_inner_code, what):
+    """The F226 envelope check: a quality-module refusal must surface
+    as ControlProfileError(control-profile-gate-failed) naming the
+    wrapped evidence-quality-* code -- never as a raw
+    EvidenceQualityError."""
+    try:
+        fn()
+    except cp.ControlProfileError as exc:
+        if exc.code != "control-profile-gate-failed":
+            return _break("%s: wrong envelope code %s (want "
+                          "control-profile-gate-failed)"
+                          % (what, exc.code))
+        if want_inner_code not in str(exc):
+            return _break("%s: wrapped code %s not named in refusal "
+                          "%r" % (what, want_inner_code, str(exc)[:80]))
+        return _held("%s wrapped as control-profile-gate-failed "
+                     "(%s)" % (what, want_inner_code))
+    except eq.EvidenceQualityError as exc:
+        return _break("raw EvidenceQualityError(%s) escaped the "
+                      "control-profiles seam" % (exc.code,))
+    except Exception as exc:  # noqa: BLE001 -- probe harness
+        return _break("raw %s escaped" % type(exc).__name__)
+    return _break("%s: gate passed on refusing input" % (what,))
+
+
+def p_empty_quality_evidence_wrapped():
+    # F226 core: empty quality evidence raises
+    # evidence-quality-empty-evidence inside evaluate(); it must not
+    # escape raw through emit_profile_results(quality_gate=True).
+    return _expect_wrapped(
+        lambda: _gate_call([]),
+        "evidence-quality-empty-evidence",
+        "empty quality evidence")
+
+
+def p_malformed_quality_expectation_wrapped():
+    # Defense in depth: a malformed expectation (unknown type) also
+    # raises EvidenceQualityError from inside evaluate(); the seam
+    # must wrap it too, not just the empty-evidence shape.
+    bad = [{"expectation_type": "nope_unknown", "kwargs": {}}]
+    return _expect_wrapped(
+        lambda: _gate_call([{"seq": 1}], bad),
+        "evidence-quality-unknown-expectation",
+        "malformed quality expectation")
+
+
+def p_failed_expectation_still_gate_failed():
+    # Control (no regression): a genuinely failing expectation still
+    # refuses with control-profile-gate-failed naming the failed
+    # expectation type -- the pre-existing path, unchanged by the
+    # wrap.
+    try:
+        _gate_call([{"seq": 2}, {"seq": 1}])
+    except cp.ControlProfileError as exc:
+        if exc.code != "control-profile-gate-failed":
+            return _break("wrong code %s" % (exc.code,))
+        if "expect_evidence_monotonic" not in str(exc):
+            return _break("failed expectation not named: %r"
+                          % (str(exc)[:80],))
+        return _held("failing expectation still gate-failed, named")
+    except Exception as exc:  # noqa: BLE001 -- probe harness
+        return _break("raw %s escaped" % type(exc).__name__)
+    return _break("failing gate emitted")
+
+
+def p_clean_evidence_still_emits():
+    # Control (no regression): clean evidence still passes the gate
+    # and emits.
+    try:
+        art = _gate_call([{"seq": 1}, {"seq": 2}])
+    except Exception as exc:  # noqa: BLE001 -- probe harness
+        return _break("clean gate raised %s" % type(exc).__name__)
+    if "control-profile-check-passed" in art:
+        return _held("clean evidence emits")
+    return _break("clean gate emitted without pass mapping")
+
+
+def p_gate_failed_registered_in_taxonomy():
+    # The envelope code on the wrapped refusal is a registered
+    # control-profile-* taxonomy code (machine-code contract).
+    entry = decision_codes.TAXONOMY.get("control-profile-gate-failed")
+    if entry is None:
+        return _break("control-profile-gate-failed not in TAXONOMY")
+    if entry.get("domain") != "control-profile":
+        return _break("wrong domain %r" % (entry.get("domain"),))
+    return _held("gate-failed registered, domain=control-profile")
+
+
+PROBES = [p_empty_quality_evidence_wrapped,
+          p_malformed_quality_expectation_wrapped,
+          p_failed_expectation_still_gate_failed,
+          p_clean_evidence_still_emits,
+          p_gate_failed_registered_in_taxonomy]
+
+
+def green_check():
+    """Depth-1 adjacent checks. Honors GOV_SKIP_GREEN."""
+    if os.environ.get("GOV_SKIP_GREEN"):
+        print("GREEN CHECK: skipped (GOV_SKIP_GREEN=1)")
+        return True
+    import subprocess
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    suites = [
+        ("tests.test_control_profiles", "/var/tmp/g259-f226-green-cp"),
+        ("tests.test_evidence_quality", "/var/tmp/g259-f226-green-eq"),
+    ]
+    for suite, td in suites:
+        os.makedirs(td, exist_ok=True)
+        env = dict(os.environ)
+        env["GOV_SKIP_GREEN"] = "1"
+        env["TMPDIR"] = td
+        cmd = [sys.executable, "-m", "unittest", suite]
+        r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True,
+                           text=True, timeout=600)
+        if r.returncode != 0:
+            print("GREEN CHECK FAILED:", " ".join(cmd))
+            print(r.stdout[-2000:])
+            print(r.stderr[-2000:])
+            return False
+        print("GREEN CHECK: %s green" % (suite,))
+    return True
+
+
+def main():
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
+        "taxonomy pin: expected %d, got %d"
+        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))
+    held, broken = 0, 0
+    for fn in PROBES:
+        try:
+            verdict, detail = fn()
+        except Exception as exc:  # noqa: BLE001 -- probe harness
+            verdict, detail = ("ERROR", "%r" % (exc,))
+        if verdict == "HELD":
+            held += 1
+        else:
+            broken += 1
+        print("%-42s %-6s %s" % (fn.__name__, verdict, detail))
+    ok = green_check()
+    print("probes=%d held=%d broken=%d green=%s"
+          % (len(PROBES), held, broken, "OK" if ok else "FAIL"))
+    return 0 if (broken == 0 and ok) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -41,7 +41,7 @@ def _profile(controls, **kw):
 class TestTaxonomyPin(unittest.TestCase):
     def test_pin(self):
         n = len(decision_codes.TAXONOMY)
-        self.assertEqual(n, 1064)  # Wave-258 merge: pin -> 1064.
+        self.assertEqual(n, 1080)  # Wave-259 merge: pin -> 1080.
 
     def test_codes_resolve(self):
         for code in ("control-profile-malformed",
@@ -151,6 +151,32 @@ class TestRunProfile(unittest.TestCase):
         cp.run_profile(_profile([_control("C1", _ok)]), snap)
         self.assertEqual(snap, before)
 
+    def test_per_control_snapshot_isolation(self):
+        # F225: each control's check evaluates against a pristine
+        # per-control deep copy; a check that mutates its view
+        # cannot poison later controls' views.
+        seen = {}
+
+        def mutator(snapshot):
+            snapshot["poisoned"] = True
+            snapshot["nested"]["items"].append("forged")
+            return True
+
+        def reader(snapshot):
+            seen["poisoned"] = snapshot.get("poisoned", False)
+            seen["items"] = list(snapshot["nested"]["items"])
+            return not snapshot.get("poisoned", False)
+
+        res = cp.run_profile(
+            _profile([_control("C1", mutator),
+                      _control("C2", reader)]),
+            {"evidence": 1, "nested": {"items": ["genuine"]}})
+        by_id = {r["control_id"]: r for r in res["results"]}
+        self.assertFalse(seen["poisoned"])
+        self.assertEqual(seen["items"], ["genuine"])
+        self.assertEqual(by_id["C2"]["status"], "pass")
+        self.assertTrue(res["success"])
+
     def test_statistics(self):
         res = cp.run_profile(
             _profile([_control("C1", _ok), _control("C2", _no)]), {})
@@ -202,6 +228,41 @@ class TestEmitProfileResults(unittest.TestCase):
             cp.emit_profile_results(res, quality_gate=True)
         self.assertEqual(ctx.exception.code,
                          "control-profile-malformed")
+
+    def test_quality_gate_empty_evidence_wrapped(self):
+        # F226: empty quality evidence raises EvidenceQualityError
+        # (evidence-quality-empty-evidence) inside evaluate(); the
+        # seam must wrap it as ControlProfileError naming the
+        # wrapped code -- never a raw escape.
+        res = cp.run_profile(_profile([_control("C1", _ok)]), {})
+        with self.assertRaises(cp.ControlProfileError) as ctx:
+            cp.emit_profile_results(
+                res, fmt="json", quality_gate=True,
+                quality_expectations=[
+                    {"expectation_type": "expect_evidence_monotonic",
+                     "kwargs": {}}],
+                quality_evidence=[])
+        self.assertEqual(ctx.exception.code,
+                         "control-profile-gate-failed")
+        self.assertIn("evidence-quality-empty-evidence",
+                      str(ctx.exception))
+
+    def test_quality_gate_malformed_expectation_wrapped(self):
+        # F226 defense in depth: an unknown expectation type raises
+        # EvidenceQualityError(evidence-quality-unknown-expectation)
+        # inside evaluate(); wrapped identically.
+        res = cp.run_profile(_profile([_control("C1", _ok)]), {})
+        with self.assertRaises(cp.ControlProfileError) as ctx:
+            cp.emit_profile_results(
+                res, fmt="json", quality_gate=True,
+                quality_expectations=[
+                    {"expectation_type": "nope_unknown",
+                     "kwargs": {}}],
+                quality_evidence=[{"seq": 1}])
+        self.assertEqual(ctx.exception.code,
+                         "control-profile-gate-failed")
+        self.assertIn("evidence-quality-unknown-expectation",
+                      str(ctx.exception))
 
     def test_deployment_findings_index_merges(self):
         res = cp.run_profile(

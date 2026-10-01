@@ -49,7 +49,7 @@ from gov.decision_log import (  # noqa: E402
 )
 from gov.policy import PolicyEngine  # noqa: E402
 
-TAXONOMY_PIN = 1064  # Wave-258 merge: pin -> 1064.
+TAXONOMY_PIN = 1080  # Wave-258 merge: pin -> 1080.
 
 _PROBES = []
 
@@ -585,9 +585,9 @@ def _j_terminal():
 # ---------------------------------------------------------------------------
 
 def main():
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (  # Wave-258 merge: pin -> 1064.
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (  # Wave-258 merge: pin -> 1080.
         "taxonomy pin: expected %d, got %d"
-        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))  # Wave-258 merge: pin -> 1064.
+        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))  # Wave-258 merge: pin -> 1080.
     held, broken, errors = 0, 0, 0
     for name, fn in _PROBES:
         try:

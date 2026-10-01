@@ -29,8 +29,10 @@ Fail-closed evaluation:
     lists (no vacuous profile), duplicate control ids, impact
     outside [0.0, 1.0] or non-numeric (bool is not a number),
     non-callable checks.
-  - run_profile() evaluates each check against a deep copy of the
-    evidence snapshot (F212 lesson: caller data is never mutated).
+  - run_profile() evaluates each check against its OWN pristine
+    per-control deep copy of the evidence snapshot (F225 lesson:
+    checks are isolated from each other; F212 lesson: caller data
+    is never mutated).
     A check returning falsy becomes a FAIL result; a check raising
     becomes an ERROR result with exception_info -- never a crash of
     the whole evaluation. Every control yields exactly one result.
@@ -51,7 +53,11 @@ Composition with the compliance emitter:
     if it replaces the default.
   - quality_gate=True runs gov/evidence_quality.evaluate() first
     and refuses with control-profile-gate-failed (naming the failed
-    expectations) before the emitter ever runs.
+    expectations) before the emitter ever runs. F226: an
+    EvidenceQualityError raised inside evaluate() (e.g.
+    evidence-quality-empty-evidence) is wrapped -- only
+    ControlProfileError escapes this seam, never the raw
+    EvidenceQualityError.
 
 Determinism + honest boundaries:
   - profile_digest() is sha256 over the canonical declared profile:
@@ -311,14 +317,18 @@ def run_profile(profile, evidence_snapshot):
     Returns the profile result record: success, per-control results
     (exactly one per control, in order), statistics, meta.
     Fail-closed: a raising check becomes an ERROR result with
-    exception_info -- never a crash. Caller data is never mutated.
+    exception_info -- never a crash. Caller data is never mutated
+    (F212); each control's check receives a pristine per-control
+    deep copy of the snapshot (copy.deepcopy: unbounded depth,
+    cycle-safe via its memo dict), so a mutating check cannot
+    poison later controls' evidence views (F225).
     """
     normalized = validate_profile(profile)
     if not isinstance(evidence_snapshot, dict):
         _refuse(EVIDENCE_MALFORMED,
                 "evidence snapshot must be a dict")
     try:
-        snapshot = copy.deepcopy(evidence_snapshot)
+        pristine = copy.deepcopy(evidence_snapshot)
     except Exception as exc:
         _refuse(EVIDENCE_MALFORMED,
                 "evidence snapshot cannot be safely copied (%s: %s); "
@@ -332,7 +342,16 @@ def run_profile(profile, evidence_snapshot):
         cid = control["id"]
         severity = severity_for_impact(control["impact"])
         try:
-            raw = control["check"](snapshot)
+            # F225: each control evaluates against its OWN pristine
+            # per-control deep copy of the snapshot, so a check that
+            # mutates its view cannot poison later controls' views.
+            # Bound: copy.deepcopy -- unbounded depth, cycle-safe via
+            # its memo dict; the up-front copy above already proved
+            # the snapshot copyable, so this only fails on
+            # environmental (e.g. memory) faults, recorded as an
+            # ERROR result for this control -- never a crash.
+            view = copy.deepcopy(pristine)
+            raw = control["check"](view)
             ok, reason = _interpret_check_result(raw)
             if ok:
                 status = "pass"
@@ -429,7 +448,10 @@ def emit_profile_results(profile_results, fmt="json", findings=None,
 
     With quality_gate=True, gov/evidence_quality.evaluate() runs
     first and refuses with control-profile-gate-failed (naming the
-    failed expectations) before the emitter ever runs.
+    failed expectations) before the emitter ever runs. F226 seam
+    contract: an EvidenceQualityError raised by evaluate() is wrapped
+    via _refuse(GATE_FAILED, ...) so only ControlProfileError
+    escapes -- never the raw EvidenceQualityError.
 
     profile_results must be the dict returned by run_profile() (its
     shape is re-validated fail-closed here).
@@ -448,8 +470,14 @@ def emit_profile_results(profile_results, fmt="json", findings=None,
                     "quality_gate=True requires quality_expectations "
                     "and quality_evidence (a vacuous gate must never "
                     "pass)")
-        report = evidence_quality.evaluate(quality_expectations,
-                                           quality_evidence)
+        try:
+            report = evidence_quality.evaluate(quality_expectations,
+                                               quality_evidence)
+        except evidence_quality.EvidenceQualityError as exc:
+            _refuse(GATE_FAILED,
+                    "quality gate could not be evaluated (%s: %s); "
+                    "refusing emission rather than emitting past the "
+                    "gate" % (exc.code, str(exc)[: _REPR_LIMIT]))
         if not report["success"]:
             failed = [r["expectation_type"]
                       for r in report["results"] if not r["success"]]

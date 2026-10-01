@@ -18,7 +18,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1064  # Wave-258 merge: pin -> 1064.
+TAXONOMY_PIN = 1080  # Wave-258 merge: pin -> 1080.
 
 try:
     from gov import inventory_catalog as ic
@@ -273,7 +273,7 @@ def p_report_with_scorecard():
 def p_taxonomy_pin():
     """Taxonomy is exactly the lane pin: base 1029 + 7 additive."""
     try:
-        n = len(decision_codes.TAXONOMY)  # Wave-258 merge: pin -> 1064.
+        n = len(decision_codes.TAXONOMY)  # Wave-258 merge: pin -> 1080.
         uniq = len(set(decision_codes.TAXONOMY.keys()))
         for code in ("inventory-catalog-card-malformed",
                      "inventory-catalog-dangling-reference",

@@ -4850,6 +4850,69 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'keygroup-malformed': {
+        "domain": 'envelope',
+        "code": 'keygroup-malformed',
+        "human": 'key-group envelope: the key-group envelope bytes are '
+                 'structurally invalid (bad magic, truncated header/groups/'
+                 'wraps/ciphertext, bad lengths); refused before any '
+                 'key-dependent work',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keygroup-open-refused': {
+        "domain": 'envelope',
+        "code": 'keygroup-open-refused',
+        "human": 'key-group envelope: open refused under the single '
+                 'generic code (wrong key material, sub-quorum shares, '
+                 'tampered tag/header/ciphertext, or no share usable '
+                 'under the caller scope); failure does not leak which '
+                 'check or which share failed',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keygroup-scope-mismatch': {
+        "domain": 'envelope',
+        "code": 'keygroup-scope-mismatch',
+        "human": 'key-group envelope: the caller-provided scope matches '
+                 'no declared key-group entry; entries bound to other '
+                 'scopes are not attempted, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keygroup-seal-refused': {
+        "domain": 'envelope',
+        "code": 'keygroup-seal-refused',
+        "human": 'key-group envelope: seal refused (empty group list, '
+                 'zero-member group, bad quorum, duplicate key id, '
+                 'conflicting scopes for one key id, or weak key '
+                 'material)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keygroup-unknown-key-id': {
+        "domain": 'envelope',
+        "code": 'keygroup-unknown-key-id',
+        "human": 'key-group envelope: open presented a key id the '
+                 'envelope never declared; unknown key ids are refused '
+                 'explicitly, never silently skipped',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keygroup-version-unknown': {
+        "domain": 'envelope',
+        "code": 'keygroup-version-unknown',
+        "human": 'key-group envelope: the envelope version is not '
+                 'supported; refused before any key-dependent work',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'kid-ambiguity': {
         "domain": 'agent_card',
         "code": 'kid-ambiguity',
@@ -8518,6 +8581,102 @@ TAXONOMY = {
                  'mediated auth path; refused fail-closed',
         "severity": 'high',
         "evidence_kinds_required": ['surface-config'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-acl-denied': {
+        "domain": 'svid',
+        "code": 'svid-acl-denied',
+        "human": 'mesh control: the presented SVID identity is denied by '
+                 'the default-deny ACL; no allow entry admits the '
+                 'identity at a segment boundary',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-expired': {
+        "domain": 'svid',
+        "code": 'svid-expired',
+        "human": 'SVID identity: the presented SVID is expired '
+                 '(now >= expires_at); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-identity-malformed': {
+        "domain": 'svid',
+        "code": 'svid-identity-malformed',
+        "human": 'SVID identity: the presented identity document is '
+                 'structurally malformed; refused before any '
+                 'cryptographic work',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-issuer-unknown': {
+        "domain": 'svid',
+        "code": 'svid-issuer-unknown',
+        "human": 'SVID identity: the issuer key id is not among the '
+                 'pinned trust roots; parallel trust roots are never '
+                 'fetched, refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-malformed': {
+        "domain": 'svid',
+        "code": 'svid-malformed',
+        "human": 'SVID identity: the presented SVID is structurally '
+                 'malformed; refused before signature verification',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-missing': {
+        "domain": 'svid',
+        "code": 'svid-missing',
+        "human": 'SVID identity: no SVID was presented where the mesh '
+                 'admission seam requires one; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-signature-invalid': {
+        "domain": 'svid',
+        "code": 'svid-signature-invalid',
+        "human": 'SVID identity: the issuer signature does not verify '
+                 'against the pinned issuer key (forgery or key '
+                 'mismatch); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-trust-domain-mismatch': {
+        "domain": 'svid',
+        "code": 'svid-trust-domain-mismatch',
+        "human": 'SVID identity: the SVID trust domain does not exactly '
+                 'match the verifier trust domain; refused fail-closed, '
+                 'never downgraded',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-ttl-stretched': {
+        "domain": 'svid',
+        "code": 'svid-ttl-stretched',
+        "human": 'SVID issuance: the requested TTL exceeds the profile '
+                 'cap; refused fail-closed rather than silently '
+                 'shortened',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-ttl-unbounded': {
+        "domain": 'svid',
+        "code": 'svid-ttl-unbounded',
+        "human": 'SVID issuance: no explicit TTL in minutes was '
+                 'requested; an unbounded TTL is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'svr-digest-malformed': {

@@ -362,6 +362,26 @@ ALLOWED_HMAC_SITES = {
         "envelope integrity tag; key = _kdf(fresh per-envelope random, payload-mac), domain-separated",
     ("gov/encrypted_envelopes.py", "EnvelopeVault.open", 0):
         "envelope tag re-verification; key = _kdf(unwrapped envelope key, payload-mac), domain-separated",
+    # gov/key_groups.py (wave-259 lane 4): the key-group module's internal
+    # HMAC-SHA256 primitives, mirroring the wave-257 envelope precedent.
+    # The keys are deployment-supplied group key material (opaque bytes,
+    # minimum 16 bytes enforced, weak keys refused loudly at seal; never
+    # a default, never hard-coded). Key custody is deployment-owned: key
+    # material strength, storage, rotation, and revocation are the
+    # deployment's responsibility. All HMAC inputs are domain-separated
+    # via _DOMAIN ("sasanam-keygroup/v1/"), so KDF/stream/tag domains
+    # cannot collide. The HMAC here provides group wrap-key derivation
+    # (via the domain-separated _kdf), group sealing (HMAC-CTR keystream
+    # + encrypt-then-MAC tag), and tag re-verification on open; it is the
+    # module's core primitive, not a bypass of the log-key chokepoint.
+    ("gov/key_groups.py", "_kdf", 0):
+        "group wrap-KDF; key = deployment-supplied group key material (>=16 bytes enforced), domain-separated",
+    ("gov/key_groups.py", "_keystream", 0):
+        "group HMAC-CTR keystream; key = _kdf output (deployment-supplied group key material), domain-separated",
+    ("gov/key_groups.py", "GroupVault.seal", 0):
+        "group payload integrity tag; key = _kdf(group key material, payload-mac), domain-separated",
+    ("gov/key_groups.py", "GroupVault.open", 0):
+        "group tag re-verification; key = _kdf(unwrapped group key, payload-mac), domain-separated",
 }
 
 
