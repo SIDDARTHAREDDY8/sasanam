@@ -8383,6 +8383,17 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'scope-listing-subject-mismatch': {
+        "domain": 'scope-listing',
+        "code": 'scope-listing-subject-mismatch',
+        "human": 'scope-gated listing: the asserted presenter subject '
+                 'does not match the sealed ticket\'s bound subject '
+                 '(constant-time comparison); the call never runs',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-declaration', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
     'scope-listing-unknown-scope': {
         "domain": 'scope-listing',
         "code": 'scope-listing-unknown-scope',

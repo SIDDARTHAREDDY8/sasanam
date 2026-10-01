@@ -31,10 +31,26 @@ Identity binding: scopes are sealed into an HMAC ticket bound to the
 caller's SUBJECT DIGEST (sha256 of the verified SVID spiffe_id — this
 module does NOT verify SVIDs itself; call sites pass the output of
 ``gov.svid_issuer.SvidVerifier.verify`` and hash the ``spiffe_id``).
-Honest residual: subject enforcement (that the presenter IS the
-subject) belongs to ``gov.mcp_invocation_authz``'s trust-anchored
-subject and ``gov.svid_issuer``, not to this layer — the same split
-``gov.token_scope_enforcement`` makes for its grant ``sub`` field.
+The registry enforces the binding when the deployment asserts the
+presenter: :meth:`ToolRegistry.invoke` / :meth:`ToolRegistry.list_tools`
+take an optional ``expected_subject``; a mismatch with the ticket's
+bound subject refuses ``scope-listing-subject-mismatch``. Without an
+asserted presenter the ticket is holder-usable (documented): the
+binding is only as strong as the presenter's asserted identity, and
+the trust anchor for "who is presenting" still comes from the
+deployment (``gov.svid_issuer`` / ``gov.mcp_invocation_authz``) — this
+layer compares digests, it does not mint identities.
+
+Protocol separation (F241): scope tickets and consent tokens are
+sealed under DIFFERENT MAC domains (the w244 house pattern:
+``gov.token_scope_enforcement`` separates its grant and policy MACs
+with ``_GRANT_DOMAIN``/``_POLICY_DOMAIN``). A token sealed for one
+protocol never verifies under the other, even under a shared
+deployment key. Honest migration note: sealed values minted before
+this domain separation refuse ``scope-grant-tampered`` / fail
+consent verification — fail-closed, no silent downgrade; deployments
+re-mint after upgrade (consent tokens are 300s-TTL by default;
+scope tickets are re-sealed on the next issuance).
 
 Composition with the W244 layer: ``gov.token_scope_enforcement``
 enforces per-call scope coverage for token-bound MCP calls; this
@@ -48,12 +64,25 @@ Fail-closed rules (all machine-coded):
 - Scope confusion (``read`` vs ``read-admin``, prefix/suffix tricks) ->
   EXACT-match only; a near-miss never covers -> ``scope-listing-denied``.
 - Listing with no/empty scopes -> EMPTY list, never the full set.
-- Unregistered tool invocation -> ``scope-listing-not-registered``.
+- Unregistered tool invocation with a verified ticket ->
+  ``scope-listing-not-registered`` (deliberate post-auth residual).
+- Pre-auth order-of-checks (F242): ``invoke`` verifies the sealed
+  ticket BEFORE consulting the tool registry. A forged/malformed
+  ticket -> ``scope-grant-tampered`` for EVERY tool name (no existence
+  signal); a missing ticket -> ``scope-listing-denied`` for every
+  non-public name (zero-scope public tools stay invokable, consistent
+  with ``list_tools(None)``).
 - Tampered sealed ticket -> ``scope-grant-tampered`` (reused from the
   token-scope domain: a sealed scope ticket IS a scope grant; tamper is
   reported as tamper, never as a scope gap).
+- Presenter mismatch (F240): when the caller asserts a presenter
+  subject, it MUST equal the ticket's bound subject (constant-time
+  compare) -> ``scope-listing-subject-mismatch`` on mismatch.
 - Forged/expired/mis-bound consent -> ``scope-consent-forged`` /
   ``scope-consent-expired`` / ``scope-consent-unbound``.
+- Cross-protocol presentation (F241): a consent token presented as a
+  scope ticket -> ``scope-grant-tampered`` (MAC domain mismatch); a
+  scope ticket presented as a consent token -> ``scope-consent-forged``.
 - A consent is recorded ONLY through :func:`confirm_consent` with a
   human-presented valid token. There is no other recording path: the
   "approval recorded without the human step" attack has no API to call.
@@ -79,6 +108,7 @@ CODES = (
     "scope-consent-unbound",
     "scope-listing-denied",
     "scope-listing-not-registered",
+    "scope-listing-subject-mismatch",
     "scope-listing-unknown-scope",
 )
 
@@ -86,6 +116,16 @@ CODES = (
 
 _SCOPE_TICKET_VERSION = 1
 _CONSENT_TOKEN_VERSION = 1
+
+# F241: per-protocol MAC domains. Scope tickets and consent tokens are
+# sealed under different domains (w244 house pattern), so a token
+# minted for one protocol never verifies under the other even when a
+# deployment shares one key across both issuers. The domain enters the
+# MAC input, not the JSON body: cross-presentation fails closed on MAC
+# mismatch with no format change.
+_SCOPE_TICKET_DOMAIN = "scope-ticket.v1"
+_CONSENT_TOKEN_DOMAIN = "consent-token.v1"
+_DOMAIN_PREFIX = b"gov.scoped_tool_listing\x00"
 
 # Sentinel prefix the agent's args must carry instead of raw secrets.
 # The approval shape refuses (fail-closed) args that do NOT look
@@ -123,19 +163,37 @@ def _b64d(text):
             "scope-grant-tampered", "malformed sealed value")
 
 
-def _seal(key, payload):
+def _domain_bytes(domain):
+    return _DOMAIN_PREFIX + domain.encode("ascii") + b"\x00"
+
+
+def _seal(key, payload, domain):
+    """MAC-bind ``payload`` under ``domain``; returns an opaque str.
+
+    The domain is part of the MAC input (F241): sealed values are
+    protocol-bound, so cross-protocol presentation fails closed.
+    """
     body = _canonical(payload)
-    mac = hmac.new(key, body, hashlib.sha256).digest()
+    mac = hmac.new(key, _domain_bytes(domain) + body,
+                   hashlib.sha256).digest()
     return _b64e(body) + "." + _b64e(mac)
 
 
-def _open(key, sealed):
+def _open(key, sealed, domain):
+    """Verify a sealed value under ``domain``; returns the payload.
+
+    A value sealed under a different domain (or a tampered one)
+    refuses ``scope-grant-tampered`` — never a protocol-specific
+    code, so callers cannot mistake cross-protocol confusion for a
+    same-protocol defect.
+    """
     if not isinstance(sealed, str) or sealed.count(".") != 1:
         raise ScopedListingError(
             "scope-grant-tampered", "malformed sealed value")
     body_b64, mac_b64 = sealed.split(".")
     body = _b64d(body_b64)
-    expect = hmac.new(key, body, hashlib.sha256).digest()
+    expect = hmac.new(key, _domain_bytes(domain) + body,
+                      hashlib.sha256).digest()
     try:
         presented = _b64d(mac_b64)
     except ScopedListingError:
@@ -201,11 +259,16 @@ class ScopeTicketIssuer(object):
             "iat": float(time.time() if now is None else now),
             "nonce": secrets.token_hex(8),
         }
-        return _seal(self._key, payload)
+        return _seal(self._key, payload, _SCOPE_TICKET_DOMAIN)
 
     def verify(self, sealed):
-        """Verify a sealed ticket; returns (subject_digest, frozenset)."""
-        payload = _open(self._key, sealed)
+        """Verify a sealed ticket; returns (subject_digest, frozenset).
+
+        F241: the ticket is verified under the scope-ticket MAC domain;
+        a consent token (or any other protocol's sealed value) refuses
+        ``scope-grant-tampered`` even under a shared deployment key.
+        """
+        payload = _open(self._key, sealed, _SCOPE_TICKET_DOMAIN)
         if not isinstance(payload, dict) or payload.get("v") != \
                 _SCOPE_TICKET_VERSION:
             raise ScopedListingError(
@@ -273,16 +336,35 @@ class ToolRegistry(object):
         self._tools[name] = spec
         return self
 
-    def _ticket_scopes(self, sealed_ticket):
+    def _verified_ticket(self, sealed_ticket, expected_subject):
+        """Verify the sealed ticket; returns (subject_digest, scopes).
+
+        F240: when ``expected_subject`` is given, it MUST equal the
+        ticket's bound subject (constant-time comparison) or the use
+        refuses ``scope-listing-subject-mismatch``. The asserted
+        presenter identity is deployment-supplied (the output of
+        ``gov.svid_issuer`` / ``gov.mcp_invocation_authz``); this
+        layer compares digests, it does not mint identities. When no
+        presenter is asserted the ticket keeps its documented
+        holder-usable semantics.
+        """
         if sealed_ticket is None:
-            # Listing with no scopes -> empty, never full.
-            return frozenset()
+            # Listing/invocation with no scopes -> empty, never full.
+            return None, frozenset()
         if self._issuer is None:
             raise ScopedListingError(
                 "scope-listing-denied",
                 "no ticket issuer bound: listing refuses fail-closed")
-        _, scopes = self._issuer.verify(sealed_ticket)
-        return scopes
+        sub, scopes = self._issuer.verify(sealed_ticket)
+        if expected_subject is not None:
+            if not isinstance(expected_subject, str) or not \
+                    hmac.compare_digest(expected_subject.encode("utf-8"),
+                                        sub.encode("utf-8")):
+                raise ScopedListingError(
+                    "scope-listing-subject-mismatch",
+                    "presenter subject does not match the ticket's "
+                    "bound subject")
+        return sub, scopes
 
     def _view(self, spec):
         return {
@@ -293,14 +375,17 @@ class ToolRegistry(object):
             "required_scopes": sorted(spec["required_scopes"]),
         }
 
-    def list_tools(self, sealed_ticket):
+    def list_tools(self, sealed_ticket, expected_subject=None):
         """Return [(name, view)] for tools the ticket's scopes permit.
 
         Sorted by name, deterministic. Unpermitted tools are ABSENT —
         the listing is silence, not denial, so existence cannot be
-        confirmed from it.
+        confirmed from it. F240: when ``expected_subject`` is given
+        it must match the ticket's bound subject
+        (``scope-listing-subject-mismatch`` on mismatch).
         """
-        scopes = self._ticket_scopes(sealed_ticket)
+        _sub, scopes = self._verified_ticket(sealed_ticket,
+                                             expected_subject)
         out = []
         for name in sorted(self._tools):
             spec = self._tools[name]
@@ -309,21 +394,40 @@ class ToolRegistry(object):
                 out.append((name, self._view(spec)))
         return out
 
-    def invoke(self, sealed_ticket, tool_name, action_fn, *args, **kwargs):
+    def invoke(self, sealed_ticket, tool_name, action_fn, *args,
+               expected_subject=None, **kwargs):
         """Run ``action_fn`` iff the ticket's scopes cover the tool.
 
-        Refusals are machine-coded: ``scope-listing-not-registered``
-        for unknown tools, ``scope-listing-denied`` for out-of-scope
-        tools. (Deliberate residual: the two codes are
-        distinguishable — see REPORT.md §residuals. Listing, the
-        discovery seam, stays silent.)
+        F242: the sealed ticket is verified BEFORE the tool registry
+        is consulted, so no unauthenticated caller can distinguish
+        absent names from present-but-scoped names: a forged/malformed
+        ticket refuses ``scope-grant-tampered`` for EVERY tool name,
+        and a missing ticket refuses ``scope-listing-denied`` for
+        every non-public name (zero-scope public tools stay invokable,
+        consistent with ``list_tools(None)``).
+
+        Refusals are otherwise machine-coded:
+        ``scope-listing-not-registered`` for unknown tools (with a
+        verified ticket), ``scope-listing-denied`` for out-of-scope
+        tools, ``scope-listing-subject-mismatch`` when the asserted
+        presenter does not match the ticket's bound subject.
+        (Deliberate residual: the two codes are distinguishable
+        post-auth — see REPORT.md §residuals. Listing, the discovery
+        seam, stays silent.)
         """
+        _sub, scopes = self._verified_ticket(sealed_ticket,
+                                             expected_subject)
         spec = self._tools.get(tool_name)
         if spec is None:
+            if sealed_ticket is None:
+                # F242: no pre-auth existence oracle — a missing ticket
+                # refuses identically whether or not the name exists.
+                raise ScopedListingError(
+                    "scope-listing-denied",
+                    "no ticket presented for tool %r" % (tool_name,))
             raise ScopedListingError(
                 "scope-listing-not-registered",
                 "tool %r is not registered" % (tool_name,))
-        scopes = self._ticket_scopes(sealed_ticket)
         if not spec["required_scopes"] <= scopes:
             raise ScopedListingError(
                 "scope-listing-denied",
@@ -424,7 +528,12 @@ class ConsentIssuer(object):
 
     def mint_consent_url(self, approval_id, tool_name, scopes,
                          subject_digest, now, base_url):
-        """Mint the out-of-band consent URL for one (approval, tool)."""
+        """Mint the out-of-band consent URL for one (approval, tool).
+
+        F241: the token is sealed under the consent-token MAC domain,
+        so it never verifies as a scope ticket even when a deployment
+        shares one key across both issuers.
+        """
         if not approval_id or not tool_name or not subject_digest:
             raise ScopedListingError(
                 "scope-consent-forged",
@@ -439,7 +548,7 @@ class ConsentIssuer(object):
             "exp": float(now) + self._ttl,
             "nonce": secrets.token_hex(8),
         }
-        token = _seal(self._key, payload)
+        token = _seal(self._key, payload, _CONSENT_TOKEN_DOMAIN)
         base = (base_url or "").rstrip("/")
         return "%s?ct=%s" % (base, token)
 
@@ -449,12 +558,15 @@ class ConsentIssuer(object):
 
         Fail-closed: forged MAC -> ``scope-consent-forged``; past TTL ->
         ``scope-consent-expired``; valid MAC but bound to a different
-        approval/tool/subject -> ``scope-consent-unbound``. Nothing is
-        audited on refusal. On success the audit event records the
-        token's DIGEST — never the token.
+        approval/tool/subject -> ``scope-consent-unbound``. F241: a
+        sealed value minted for another protocol (e.g. a scope ticket)
+        refuses ``scope-consent-forged`` — the MAC domain mismatch is
+        reported as forgery, never as expiry. Nothing is audited on
+        refusal. On success the audit event records the token's DIGEST
+        — never the token.
         """
         try:
-            payload = _open(self._key, token)
+            payload = _open(self._key, token, _CONSENT_TOKEN_DOMAIN)
         except ScopedListingError:
             raise ScopedListingError(
                 "scope-consent-forged",
