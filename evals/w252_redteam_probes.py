@@ -17,7 +17,10 @@ Method (diagnosing-bugs skill): each probe is a falsifiable break
 attempt. Verdicts: HELD (attack refused / gap documented as an
 honest residual) or BREAK (genuine defect -> filed as a finding).
 
-Result: 17 HELD / 2 BREAK (F214, F215) / 0 ERROR.
+Result: 17 HELD / 2 BREAK (F214, F215) / 0 ERROR on the wave-252
+base. Post wave-253 lane 1 (F214/F215 closure): the two break pins
+were honestly flipped to HELD regression pins (pre-fix break shapes
+documented in the probe comments); 19/19 HELD on fixed code.
 """
 
 import hashlib
@@ -46,7 +49,7 @@ from gov.decision_log import (  # noqa: E402
 )
 from gov.policy import PolicyEngine  # noqa: E402
 
-TAXONOMY_PIN = 1004
+TAXONOMY_PIN = 1017
 
 _PROBES = []
 
@@ -138,16 +141,16 @@ def _p_norecompute():
 
 @probe("posture/non-dict-cards")
 def _p_nondict():
-    # issue_summary promises posture-card-malformed for malformed
-    # inputs, but non-dict cards escape as a raw AttributeError.
+    # Pre-fix (wave-253 lane 1): issue_summary promised
+    # posture-card-malformed for malformed inputs, but non-dict cards
+    # escaped as a raw AttributeError (F215). Fixed: every public
+    # path funnels through posture_cards._require_card_dicts.
     seed = bytes(range(32))
     try:
         pc.issue_summary("s", ["not-a-dict"], seed, issuer="me")
     except pc.PostureCardError as exc:
         assert exc.code == pc.MALFORMED, exc.code
         return _held("non-dict cards -> posture-card-malformed")
-    except AttributeError:
-        return _break("F215: raw AttributeError, not machine code")
     return _break("F215: non-dict cards silently accepted")
 
 
@@ -461,10 +464,12 @@ def _l_replay():
 
 @probe("journal/non-serializable-payload")
 def _j_payload():
-    # _build_body MACs the payload via json.dumps; a set payload
-    # escapes as a raw TypeError instead of permit-journal-misuse.
-    # No partial write (the MAC is computed before append), so this
-    # is fail-closed with the wrong error type.
+    # Pre-fix (wave-253 lane 1): _build_body MAC'd the payload via
+    # json.dumps with no guard, so a set payload escaped as a raw
+    # TypeError instead of permit-journal-misuse (F214). Fixed: the
+    # event_mac serialization is wrapped in PermitJournalRefusal.
+    # No partial write ever occurred (the MAC was computed before
+    # append) -- this was a contract violation, not a bypass.
     path = os.path.join(_tmpdir(), "j.jsonl")
     journal = pj.PermitJournal(path, key=b"k" * 32)
     try:
@@ -472,8 +477,6 @@ def _j_payload():
     except pj.PermitJournalError as exc:
         assert exc.code == pj.MISUSE_CODE, exc.code
         return _held("non-serializable payload -> misuse code")
-    except TypeError:
-        return _break("F214: raw TypeError, not machine code")
     return _break("F214: non-serializable payload silently accepted")
 
 

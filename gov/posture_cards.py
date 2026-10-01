@@ -53,6 +53,17 @@ def _refuse(code, detail):
     raise PostureCardError("%s: %s" % (code, detail), code)
 
 
+def _require_card_dicts(cards):
+    """Refuse posture-card-malformed unless cards is a list of dicts.
+
+    F215: every public path that reads cards funnels through here so a
+    non-dict element can never escape as a raw AttributeError.
+    """
+    if not isinstance(cards, list) or \
+            any(not isinstance(c, dict) for c in cards):
+        _refuse(MALFORMED, "cards must be a list of card dicts")
+
+
 # ---------------------------------------------------------------------------
 # Vocabulary.
 # ---------------------------------------------------------------------------
@@ -355,6 +366,7 @@ def track_level(cards, track):
     if track not in TRACKS:
         _refuse(UNKNOWN_TRACK, "unknown track %r; closed set: %s" %
                 (track, ", ".join(TRACKS)))
+    _require_card_dicts(cards)
     scoped = [c for c in cards if c.get("track") == track]
     passed = sum(1 for c in scoped if c.get("probe") == _PASS)
     if scoped and passed == len(scoped):
@@ -399,6 +411,7 @@ def issue_summary(subject, cards, seed, *, issuer, issued_at=None):
         _refuse(MALFORMED, "issuer must be a non-empty string")
     if not isinstance(cards, list):
         _refuse(MALFORMED, "cards must be a list")
+    _require_card_dicts(cards)
     if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
         _refuse(MALFORMED, "seed must be 32 bytes")
     stamp = issued_at if issued_at is not None else _utcnow()

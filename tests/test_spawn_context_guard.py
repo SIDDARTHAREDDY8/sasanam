@@ -285,9 +285,9 @@ class TaxonomyPinTest(unittest.TestCase):
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes),
         # additive only, comment + assert.
         # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
-        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # Wave-253 merge: re-pointed to 1017 (1004 + 13 codes), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1004)
+        self.assertEqual(len(dc.TAXONOMY), 1017)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
 

@@ -450,9 +450,17 @@ class PermitJournal:
                 "event_type": event_type, "issued_at": issued_at,
                 "mono_ns": time.monotonic_ns(), "payload": payload,
                 "prev_mac": self._running_mac}
-        body["mac"] = event_mac(
-            self._key, permit_id, event_id, event_type, issued_at,
-            body["mono_ns"], payload, self._running_mac)
+        try:
+            body["mac"] = event_mac(
+                self._key, permit_id, event_id, event_type, issued_at,
+                body["mono_ns"], payload, self._running_mac)
+        except (TypeError, ValueError) as exc:
+            # F214: payload serialization is caller misuse, not a
+            # bypass -- refuse with the machine-code contract instead
+            # of letting a raw TypeError escape the public seam.
+            raise PermitJournalRefusal(
+                MISUSE_CODE,
+                "payload is not JSON-serializable: %s" % (exc,))
         return body
 
     def _append(self, permit_id, event_type, payload, event_id=None,

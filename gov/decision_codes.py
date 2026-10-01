@@ -4185,6 +4185,62 @@ TAXONOMY = {
         "evidence_kinds_required": ['signal', 'digest'],
         "reverify_steps": ['replay-chain'],
     },
+    'incident-illegal-transition': {
+        "domain": 'incident',
+        "code": 'incident-illegal-transition',
+        "human": 'incident lifecycle: transition between the two states is '
+                 'not legal; refused fail-closed, state unchanged',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident', 'journal'],
+        "reverify_steps": ['replay-journal', 'check-transition-table'],
+    },
+    'incident-malformed': {
+        "domain": 'incident',
+        "code": 'incident-malformed',
+        "human": 'incident lifecycle: malformed input (bad id, title, '
+                 'role, task, notification, postmortem shape, or duplicate '
+                 'id); refused fail-closed, never coerced',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['validate-input-shape'],
+    },
+    'incident-open-findings': {
+        "domain": 'incident',
+        "code": 'incident-open-findings',
+        "human": 'incident lifecycle: resolve refused while linked '
+                 'findings are open, unknown, or unanswerable '
+                 '(fail-closed); refusal journaled',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident', 'journal'],
+        "reverify_steps": ['replay-journal', 'check-finding-status'],
+    },
+    'incident-open-tasks': {
+        "domain": 'incident',
+        "code": 'incident-open-tasks',
+        "human": 'incident lifecycle: resolve refused while tasks are '
+                 'incomplete; refusal journaled',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident', 'journal'],
+        "reverify_steps": ['replay-journal', 'check-tasks-done'],
+    },
+    'incident-premature-postmortem': {
+        "domain": 'incident',
+        "code": 'incident-premature-postmortem',
+        "human": 'incident lifecycle: postmortem attached before the '
+                 'incident was contained or resolved; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident', 'journal'],
+        "reverify_steps": ['replay-journal', 'check-state'],
+    },
+    'incident-unknown': {
+        "domain": 'incident',
+        "code": 'incident-unknown',
+        "human": 'incident lifecycle: reference to an unknown incident or '
+                 'task id; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['incident'],
+        "reverify_steps": ['check-id-exists'],
+    },
     'input_closure_digest': {
         "domain": 'provenance',
         "code": 'input_closure_digest',
@@ -5586,6 +5642,75 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
+    },
+    'policy-authoring-compile-refused': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-compile-refused',
+        "human": 'policy authoring: the compiled native policy was '
+                 'refused by PolicyEngine on round-trip; the authored '
+                 'source is not loadable, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-conflicting-filters': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-conflicting-filters',
+        "human": 'policy authoring: two filters in one AND conjunction '
+                 'constrain the same match key; merging them would be a '
+                 'UNION (weaker) contradicting the author AND, refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-empty': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-empty',
+        "human": 'policy authoring: authored document has no policies; '
+                 'refused fail-closed, never compiled to an empty set',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-malformed': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-malformed',
+        "human": 'policy authoring: authored document is unparseable or '
+                 'wrong-shaped (bad version, non-mapping filter/action, '
+                 'mistyped value); refused fail-closed, never skipped',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-unknown-action': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-unknown-action',
+        "human": 'policy authoring: unknown action type (known: deny, '
+                 'allow, require-approval); refused fail-closed so a '
+                 'misspelled action never compiles to a weaker effect',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-unknown-filter': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-unknown-filter',
+        "human": 'policy authoring: unknown filter type or filter key; '
+                 'refused fail-closed so a misspelled filter never '
+                 'compiles to a weaker rule',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-authoring-unknown-op': {
+        "domain": 'policy-authoring',
+        "code": 'policy-authoring-unknown-op',
+        "human": 'policy authoring: op not supported for the filter key; '
+                 'refused fail-closed, never coerced',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
     },
     'policy-body-malformed': {
         "domain": 'policy',
