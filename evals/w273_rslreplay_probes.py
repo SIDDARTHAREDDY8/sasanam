@@ -80,7 +80,7 @@ import gov.ed25519 as _ed                             # noqa: E402
 from gov.durable_journal import Journal               # noqa: E402
 from gov import durable_journal as dj                 # noqa: E402
 
-TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -109,7 +109,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1458: 1458 unique literals"
+    return "HELD", "taxonomy pin 1477: 1477 unique literals"
 
 
 # ---------------------------------------------------------------------------

@@ -47,6 +47,7 @@ import hashlib
 import itertools
 
 from gov import image_screen as _image_screen
+from gov import decode_trust as _dt
 
 try:
     from gov import decision_codes as _decision_codes
@@ -110,6 +111,7 @@ def _fail(code, fmt, detail, evidence_extra=None):
         evidence.update(evidence_extra)
     return {
         "verdict": "refuse",
+        "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
         "code": code,
         "format": fmt,
         "texts": [],
@@ -189,8 +191,10 @@ def _reassemble(texts, only=None):
 def extract_image_text(image_bytes, now=None):
     """Extract text channels into a provenance-tagged record.
 
-    ``now`` is accepted for pipeline symmetry and ignored: extraction
-    is clock-free by construction (no TTL, no expiry).
+    This is the UNTRUSTED-decode path (wave-274 lane 3): the input is
+    treated as hostile. ``now`` is accepted for pipeline symmetry
+    and ignored: extraction is clock-free by construction (no TTL,
+    no expiry).
 
     Never raises. Refuses fail-closed (``imgtext-malformed``,
     ``imgtext-oversized``, ``imgtext-extraction-failed``) rather than
@@ -235,6 +239,7 @@ def extract_image_text(image_bytes, now=None):
                 counts.get(entry["provenance"], 0) + 1)
         return {
             "verdict": "ok",
+            "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
             "code": None,
             "format": fmt,
             "texts": texts,
@@ -258,6 +263,39 @@ def extract_image_text(image_bytes, now=None):
     except Exception as exc:  # noqa: BLE001 -- never raise
         return _fail("imgtext-malformed", None,
                      "internal extraction error: %r" % (exc,))
+
+
+# ------------------------------------------------------------------
+# Decode trust split (wave-274 lane 3; Cedar decode/decode_unchecked).
+# ------------------------------------------------------------------
+
+IMAGE_TRUST_SCOPE = "image-text"
+
+
+def decode_trusted_image(image_bytes, evidence):
+    """Trusted-decode path for image bytes.
+
+    Requires ``evidence`` (a :class:`gov.decode_trust.TrustEvidence`
+    sealed over THESE bytes under the ``"image-text"`` scope -- e.g.
+    sealed by evidence-bundle verification of the artifact bytes);
+    the digest binding is re-checked before parsing
+    (decodetrust-no-evidence / decodetrust-binding-mismatch). The
+    evidence speaks to byte PROVENANCE (these bytes are the ones the
+    verifier saw), not byte BENIGNITY: extraction and the house
+    screening seam still run, because a verified carrier can carry
+    hostile text from further upstream. Use
+    :func:`extract_image_text` for hostile bytes.
+    """
+    if not isinstance(image_bytes, (bytes, bytearray)):
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted image decode requires bytes, got %s"
+            % type(image_bytes).__name__)
+    data = bytes(image_bytes)
+    _dt.require_trust(evidence, data, scope=IMAGE_TRUST_SCOPE)
+    record = extract_image_text(data)
+    record["trust_evidence"] = evidence.as_dict()
+    return record
 
 
 # ------------------------------------------------------------------
@@ -286,6 +324,7 @@ def screen_image_text(image_bytes, now=None):
         if record["verdict"] != "ok":
             return {
                 "verdict": record["verdict"],
+                "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
                 "code": record["code"],
                 "format": record["format"],
                 "extraction": record,
@@ -325,6 +364,7 @@ def screen_image_text(image_bytes, now=None):
                     "'imgtext-reassembled-instruction-detected'")
             return {
                 "verdict": "refuse",
+                "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
                 "code": "imgtext-reassembled-instruction-detected",
                 "format": record["format"],
                 "extraction": record,
@@ -334,6 +374,7 @@ def screen_image_text(image_bytes, now=None):
             }
         return {
             "verdict": "allow",
+            "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
             "code": None,
             "format": record["format"],
             "extraction": record,
@@ -344,3 +385,13 @@ def screen_image_text(image_bytes, now=None):
     except Exception as exc:  # noqa: BLE001 -- never raises
         return _fail("imgtext-malformed", None,
                      "internal screening error: %r" % (exc,))
+
+
+def rail_verdict_of(record):
+    """Adapt a carrier-screening verdict dict to the uniform rail
+    vocabulary (wave-274 lane 2). The ``screen_image_text`` dict
+    contract is unchanged; this is the uniform view. Unknown verdict
+    words refuse ``rail-adapter-unknown-verdict``.
+    """
+    from gov import rail_verdict as _rv
+    return _rv.from_screen_verdict(record, stage="carrier-screening")

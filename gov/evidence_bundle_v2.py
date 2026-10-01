@@ -58,6 +58,7 @@ from .evidence_certs import (
 from . import log as _audit_log
 from .ed25519 import sign as _ed_sign
 from .ed25519 import verify as _ed_verify
+from gov import decode_trust as _dt
 from .rekor_anchor import (
     _r6962_inclusion_proof,
     _r6962_leaf,
@@ -141,6 +142,12 @@ def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
     """Seal an evidence artifact: chain-then-bind the producer's
     signature, then build the signature attestation.
 
+    NOTE: this is the artifact-sealing ceremony, NOT the decode-trust
+    seam -- ``gov.decode_trust.seal_evidence`` (imported here as
+    ``_dt.seal_evidence``) seals a TrustEvidence over bytes for the
+    trusted-decode paths. Same verb, different ceremonies; do not
+    confuse them.
+
     ``artifact_signature`` is the 64-byte Ed25519 signature over the
     canonical artifact-body bytes, made by the certificate's subject
     key. Certificate failures raise the ``evcert-*`` codes from
@@ -218,10 +225,16 @@ def find_issuance_attestation(*, audit_log_path, cert_digest):
 def verify_sealed_bundle(*, sealed, audit_log_path, ca_public_key,
                          verify_time, require_producer_claim=False,
                          claim_public_key=None):
-    """Verify the three-artifact split. Order: shape, artifact
+    """Verify the three-artifact split. This is the UNTRUSTED-decode
+    path (wave-274 lane 3): the sealed bundle is hostile input until
+    every join below verifies. Order: shape, artifact
     self-consistency, attestation joins, cert join + full ceremony
     re-verification (``evcert-*`` failures propagate -- the signature
     is NEVER taken on trust), issuance join against the audit log.
+
+    On success the caller may seal a TrustEvidence over the artifact
+    digest (see :func:`decode_trusted_bundle`) for downstream
+    trusted-decode consumers.
 
     Any cross-artifact digest disagreement is
     ``evbundle-join-mismatch``; certificate failures surface as
@@ -305,6 +318,48 @@ def verify_sealed_bundle(*, sealed, audit_log_path, ca_public_key,
             issuance, claim_public_key=claim_public_key,
             verify_time=verify_time)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Decode trust split (wave-274 lane 3; Cedar decode/decode_unchecked).
+# ---------------------------------------------------------------------------
+
+BUNDLE_TRUST_SCOPE = "evidence-bundle"
+
+
+def decode_trusted_bundle(sealed, evidence):
+    """Trusted-decode path for a sealed evidence bundle.
+
+    Requires ``evidence`` (a :class:`gov.decode_trust.TrustEvidence`
+    sealed over the artifact digest under the ``"evidence-bundle"``
+    scope -- e.g. sealed by :func:`verify_sealed_bundle` on success);
+    the digest binding is re-checked against the artifact body
+    itself before a single field is read
+    (decodetrust-no-evidence / decodetrust-malformed-evidence /
+    decodetrust-binding-mismatch).
+    Returns the artifact body. Shape validation is NOT repeated --
+    it ran on the untrusted path before the ceremony was
+    re-verified.
+    """
+    if not isinstance(sealed, dict):
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted bundle decode requires the sealed bundle dict, "
+            "got %s" % type(sealed).__name__)
+    artifact = sealed.get("artifact")
+    if not isinstance(artifact, dict) \
+            or not isinstance(artifact.get("body"), dict):
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted bundle decode: sealed bundle lacks an artifact "
+            "body; refusing rather than guessing")
+    body_bytes = _canonical(artifact["body"])
+    # Bind to the artifact digest -- the exact join the untrusted
+    # path verified (body hashes to artifact_digest, attestation
+    # joins artifact_digest). Seal the canonical body bytes so the
+    # binding check is byte-exact.
+    _dt.require_trust(evidence, body_bytes, scope=BUNDLE_TRUST_SCOPE)
+    return artifact["body"]
 
 
 def _verify_issuance_claim(issuance, *, claim_public_key, verify_time):

@@ -13,7 +13,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import decision_codes
 
-TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 if os.environ.get("GOV_SKIP_GREEN") != "1":
     def _green():

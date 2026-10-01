@@ -1112,6 +1112,56 @@ TAXONOMY = {
         "evidence_kinds_required": ['audit-record'],
         "reverify_steps": ['recompute'],
     },
+    'attestor-ceremony-invalid': {
+        "domain": 'attested',
+        "code": 'attestor-ceremony-invalid',
+        "human": 'attestor registry: a registration entry write without a '
+                 'valid claim-level ceremony (missing, unknown signer, or '
+                 'bad signature); the write never lands',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestor-entry-ambiguous': {
+        "domain": 'attested',
+        "code": 'attestor-entry-ambiguous',
+        "human": 'attestor registry: collected environment facts matched '
+                 'more than one registration entry; refused fail-closed '
+                 'rather than picking one',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestor-entry-malformed': {
+        "domain": 'attested',
+        "code": 'attestor-entry-malformed',
+        "human": 'attestor registry: a registration entry fails shape '
+                 'validation (or duplicates an existing entry id); '
+                 'refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestor-entry-unmatched': {
+        "domain": 'attested',
+        "code": 'attestor-entry-unmatched',
+        "human": 'attestor registry: collected environment facts match no '
+                 'registration entry (or the matched entry is bound to a '
+                 'different producer); cert issuance refused unattested',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attestor-facts-malformed': {
+        "domain": 'attested',
+        "code": 'attestor-facts-malformed',
+        "human": 'attestor seam: the attestor returned a malformed '
+                 'collection (missing attestor id, non-dict or non-scalar '
+                 'facts); refusing rather than issuing unattested',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'authority-stale': {
         "domain": 'authority',
         "code": 'authority-stale',
@@ -3754,6 +3804,34 @@ TAXONOMY = {
         "human": 'decision log: an append carried a different request '
                  'digest than the bound epoch without an explicit '
                  'new_epoch() separation; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decodetrust-binding-mismatch': {
+        "domain": 'evcert',
+        "code": 'decodetrust-binding-mismatch',
+        "human": 'decode trust: sealed evidence failed its binding check '
+                 '(wire digest differs or scope mismatches); refusing to '
+                 'decode into trusted typed values',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'decodetrust-malformed-evidence': {
+        "domain": 'evcert',
+        "code": 'decodetrust-malformed-evidence',
+        "human": 'decode trust: the sealed evidence envelope is malformed; '
+                 'refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decodetrust-no-evidence': {
+        "domain": 'evcert',
+        "code": 'decodetrust-no-evidence',
+        "human": 'decode trust: no sealed evidence presented where trusted '
+                 'decode requires it; refusing rather than decoding raw',
         "severity": 'high',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -9290,6 +9368,39 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'provlabel-approval-required': {
+        "domain": 'provlabel',
+        "code": 'provlabel-approval-required',
+        "human": 'instruction-provenance labeling: a consequential action '
+                 'whose driving instruction provenance is below the required '
+                 'provenance (USER_DIRECT by default) is routed to approval '
+                 'with the provenance chain surfaced, never silently '
+                 'executed (toxic-agent-flow / EchoLeak / GTG-50020 class)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-chain', 'action-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'provlabel-malformed': {
+        "domain": 'provlabel',
+        "code": 'provlabel-malformed',
+        "human": 'instruction-provenance labeling: the seam input is not the '
+                 'expected shape (bad label rank, non-str text, non-unit '
+                 'compose values, non-ActionRequest); refused fail-closed, '
+                 'never raises',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provlabel-unresolvable-driver': {
+        "domain": 'provlabel',
+        "code": 'provlabel-unresolvable-driver',
+        "human": 'instruction-provenance labeling: driving unit ids from the '
+                 'plan trace have no label on record; approval required with '
+                 'the gap surfaced (fail-closed)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-chain', 'action-request'],
+        "reverify_steps": ['recompute'],
+    },
     'ptgrant-arg-attribute-missing': {
         "domain": 'tool_grant',
         "code": 'ptgrant-arg-attribute-missing',
@@ -9661,6 +9772,88 @@ TAXONOMY = {
                  'not register; closed vocabulary refuses',
         "severity": 'high',
         "evidence_kinds_required": ['grant-token', 'r3-document'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-adapter-unknown-verdict': {
+        "domain": 'rail',
+        "code": 'rail-adapter-unknown-verdict',
+        "human": 'rail verdict adaptor: a guard seam emitted a verdict '
+                 'word outside the known vocabulary (or a malformed '
+                 'verdict); refused fail-closed rather than treated as '
+                 'allow -- the vocabulary-mismatch block-evasion choke '
+                 'point',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-allow': {
+        "domain": 'rail',
+        "code": 'rail-allow',
+        "human": 'rail verdict: a guard seam allowed under the uniform '
+                 'ALLOW/BLOCK/TRANSFORM vocabulary (informational)',
+        "severity": 'low',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-chunk-body-mismatch': {
+        "domain": 'rail',
+        "code": 'rail-chunk-body-mismatch',
+        "human": 'retrieval rail: a chunk id was re-registered with '
+                 'different bytes; content swap under a stable id is '
+                 'refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-chunk-relabel-refused': {
+        "domain": 'rail',
+        "code": 'rail-chunk-relabel-refused',
+        "human": 'retrieval rail: a chunk id was re-registered with a '
+                 'different provenance label; labels never change across '
+                 'turns',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-chunk-unlabeled': {
+        "domain": 'rail',
+        "code": 'rail-chunk-unlabeled',
+        "human": 'retrieval rail: a chunk arrived without a label from the '
+                 'closed vocabulary, or carried label unknown; blocked '
+                 'fail-closed, never trusted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-instruction-chunk-masked': {
+        "domain": 'rail',
+        "code": 'rail-instruction-chunk-masked',
+        "human": 'retrieval rail: an instruction-shaped retrieved chunk '
+                 'was masked in place (TRANSFORM) with a visible '
+                 'placeholder; the approver sees the masking, not the '
+                 'injection',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-merge-contract-violated': {
+        "domain": 'rail',
+        "code": 'rail-merge-contract-violated',
+        "human": 'retrieval rail: an attempt to assemble or stage a '
+                 'non-chunk (bare string) value; merging provenance away '
+                 'is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'rail-transform-empty-spans': {
+        "domain": 'rail',
+        "code": 'rail-transform-empty-spans',
+        "human": 'rail verdict: a TRANSFORM with no masked spans (or '
+                 'overlapping/out-of-bounds spans) was requested; masking '
+                 'nothing with no record is an audit-trail hole, refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
         "reverify_steps": ['recompute'],
     },
     'receipt-expired': {

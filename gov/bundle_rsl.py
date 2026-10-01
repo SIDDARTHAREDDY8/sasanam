@@ -67,6 +67,7 @@ import hashlib
 import json
 
 from gov import ed25519 as _ed
+from gov import decode_trust as _dt
 from gov.durable_journal import Journal, JournalCorrupted
 
 SCHEMA_VERSION = 1
@@ -308,7 +309,45 @@ def make_rule_file(*, rule_id, bundle, principals, delegations,
     return json.dumps(wire, sort_keys=True)
 
 
-def _parse_rule(rule_wire, now):
+# ---------------------------------------------------------------------------
+# Decode trust split (wave-274 lane 3; Cedar decode/decode_unchecked).
+#
+# - decode_untrusted_rule: hostile wire -> shape validation only.
+#   Raises ValueError on any shape defect (the module-contract error);
+#   never touches signatures. Its output is NOT trusted.
+# - seal_rule_trust: the trust event. Verifies the terminal
+#   signature over the canonical body; on success seals a
+#   TrustEvidence bound to sha256(rule_wire) under the
+#   "bundle-rsl-rule" scope. Signature failures raise RSLError
+#   (rsl-terminal-rule-unsigned), exactly as before.
+# - decode_trusted_rule: the trusted path. Requires the evidence,
+#   re-checks the digest binding itself (a decoder fed hostile input
+#   is never reachable from here), then parses fast. It assumes the
+#   untrusted pass already validated shapes -- it must only ever be
+#   called on bytes that passed through seal_rule_trust.
+# - _authorize_rule: policy checks (delegation thresholds, expiry)
+#   that are authorization, not decoding; they run after trust is
+#   established. open_log composes all four in order.
+# ---------------------------------------------------------------------------
+
+RULE_TRUST_SCOPE = "bundle-rsl-rule"
+
+
+def _rule_wire_bytes(rule_wire):
+    if isinstance(rule_wire, str):
+        return rule_wire.encode("utf-8")
+    if isinstance(rule_wire, (bytes, bytearray)):
+        return bytes(rule_wire)
+    raise ValueError("rule_wire must be str or bytes, not %s"
+                     % type(rule_wire).__name__)
+
+
+def decode_untrusted_rule(rule_wire):
+    """Untrusted-decode path for an RSL rule wire: JSON + shape
+    validation only. Hostile input raises ValueError (the
+    module-contract error), never a raw AttributeError/TypeError and
+    never an RSLError -- no trust decision is made here.
+    """
     try:
         wire = json.loads(rule_wire)
     except (ValueError, TypeError):
@@ -322,9 +361,6 @@ def _parse_rule(rule_wire, now):
                   "terminal", "expires", "signatures"):
         if field not in wire:
             raise ValueError("rule_wire missing %r" % field)
-    body = {k: wire[k] for k in ("schema_version", "rule_id", "bundle",
-                                 "principals", "delegations", "terminal",
-                                 "expires")}
     # Shape validation before any attribute/item access: malformed
     # caller input must raise ValueError (the module-contract error),
     # never leak raw AttributeError/TypeError (F273).
@@ -351,19 +387,75 @@ def _parse_rule(rule_wire, now):
     if sig_entry is not None and not isinstance(sig_entry, dict):
         raise ValueError("signatures.terminal must be an object, not %s"
                          % type(sig_entry).__name__)
+    if not isinstance(wire.get("delegations"), list):
+        raise ValueError("delegations must be a list")
+    return wire
+
+
+def seal_rule_trust(rule_wire, rule):
+    """The trust event for an RSL rule: verify the terminal signature
+    over the canonical body of a shape-validated ``rule`` and seal a
+    TrustEvidence bound to the exact wire bytes.
+
+    ``rule`` must be the output of :func:`decode_untrusted_rule` on
+    the same ``rule_wire``. Signature failures raise RSLError
+    (rsl-terminal-rule-unsigned) -- the refusal code is unchanged.
+    """
+    body = {k: rule[k] for k in ("schema_version", "rule_id", "bundle",
+                                 "principals", "delegations", "terminal",
+                                 "expires")}
+    kid = rule["terminal"].get("key_id")
+    sig_entry = (rule.get("signatures") or {}).get("terminal")
     if not sig_entry or sig_entry.get("key_id") != kid:
         raise RSLError(TERMINAL_UNSIGNED,
                        "rule file carries no terminal signature")
     try:
         sig = bytes.fromhex(sig_entry["sig"])
-        pub = bytes.fromhex(principals[kid]["pub"])
+        pub = bytes.fromhex(rule["principals"][kid]["pub"])
     except (ValueError, TypeError, KeyError):
         raise RSLError(TERMINAL_UNSIGNED,
                        "terminal signature is malformed")
     if _ed.verify(pub, _canonical(body), sig) is not True:
         raise RSLError(TERMINAL_UNSIGNED,
                        "terminal signature does not verify")
-    # Thresholds are enforced at creation, re-checked here defense-in-depth.
+    wire_bytes = _rule_wire_bytes(rule_wire)
+    return _dt.seal_evidence(
+        scope=RULE_TRUST_SCOPE,
+        digest=hashlib.sha256(wire_bytes).hexdigest(),
+        kind="signature", signer="terminal:%s" % (kid,))
+
+
+def decode_trusted_rule(rule_wire, evidence):
+    """Trusted-decode path for an RSL rule wire.
+
+    Requires ``evidence`` sealed by :func:`seal_rule_trust` over
+    THESE bytes; the digest binding is re-checked before parsing
+    (decodetrust-no-evidence / decodetrust-malformed-evidence /
+    decodetrust-binding-mismatch on violation). Shapes are NOT
+    re-validated -- they were checked by the untrusted pass before
+    the signature was verified.
+    """
+    wire_bytes = _rule_wire_bytes(rule_wire)
+    _dt.require_trust(evidence, wire_bytes, scope=RULE_TRUST_SCOPE)
+    wire = json.loads(wire_bytes.decode("utf-8"))
+    if not isinstance(wire, dict):
+        # Unreachable for evidence sealed by seal_rule_trust (the
+        # untrusted pass guaranteed a dict), but the trusted path
+        # never trusts blindly: fail closed rather than misparse.
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted rule bytes do not decode to a JSON object")
+    return wire
+
+
+def _authorize_rule(rule, now):
+    """Policy checks for a trusted rule: delegation thresholds and
+    expiry. These are authorization, not decoding -- they run after
+    trust is established and raise RSLError, never ValueError.
+    """
+    wire = rule
+    # Thresholds are enforced at creation, re-checked here
+    # defense-in-depth.
     for i, d in enumerate(wire["delegations"]):
         if not isinstance(d, dict):
             raise ValueError("delegations[%d] must be an object" % i)
@@ -381,6 +473,16 @@ def _parse_rule(rule_wire, now):
                        "rule file expired at %r (now %r)" %
                        (wire["expires"], now))
     return wire
+
+
+def _parse_rule(rule_wire, now):
+    # Composition preserved for existing callers: untrusted decode
+    # (shape) -> trust event (signature) -> trusted decode (fast) ->
+    # authorization (thresholds, expiry). Refusal codes are unchanged.
+    rule = decode_untrusted_rule(rule_wire)
+    evidence = seal_rule_trust(rule_wire, rule)
+    rule = decode_trusted_rule(rule_wire, evidence)
+    return _authorize_rule(rule, now)
 
 
 def open_log(journal_path, rule_wire, now):

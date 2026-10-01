@@ -37,7 +37,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 MANIFEST_FORMAT = "sasanam-replay-manifest/v1"
 GENESIS = "00" * 32  # 64 hex chars, like the module's GENESIS_HASH
 NOW = 1790960000  # fixed test clock (2026-10-02-ish)
-PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
@@ -490,7 +490,7 @@ def _c_pin(mod):
                  "replay-unverifiable-tool-digest")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 7 and once:
-        return ("HELD", "1458 literals, unique, 0 dups, 7 new exactly once")
+        return ("HELD", "1477 literals, unique, 0 dups, 7 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

@@ -18,7 +18,7 @@ import unittest
 from gov import bundle_scan
 from gov import decision_codes as dc
 
-TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 EXPECTED_CODES = [
     "bundlescan-malformed",

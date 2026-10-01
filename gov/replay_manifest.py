@@ -65,6 +65,8 @@ import json
 import re
 import time
 
+from gov import decode_trust as _dt
+
 MANIFEST_FORMAT = "sasanam-replay-manifest/v1"
 GENESIS_HASH = "00" * 32  # 64 lowercase hex chars, like every link_hash
 
@@ -469,33 +471,41 @@ def _check_link_shape(link, seq):
     _require_hex64(link["link_hash"], "link %d link_hash" % seq)
 
 
-def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
-                    presentations=None):
-    """Verify a sealed replay manifest WITHOUT the engine.
+# ---------------------------------------------------------------------------
+# Decode trust split (wave-274 lane 3; Cedar decode/decode_unchecked).
+#
+# - decode_untrusted_manifest: hostile manifest -> full shape and
+#   self-consistency validation (link shapes, seq order, prev_hash
+#   chain, link_hash recomputation, tool pins, dirty flags,
+#   receipt references, presentations, manifest digest). Coded
+#   ReplayManifestError, never trusted output.
+# - seal_manifest_trust: the trust event. Runs the cryptographic
+#   receipt checks and the presentation byte checks (the inputs that
+#   need external verification) and seals a TrustEvidence bound to
+#   the manifest_digest under the "replay-manifest" scope.
+# - decode_trusted_manifest: the trusted path. Requires the
+#   evidence, re-checks the digest binding itself
+#   (decodetrust-no-evidence / decodetrust-binding-mismatch), then
+#   extracts the link list fast. Never reachable from unverified
+#   input.
+# ---------------------------------------------------------------------------
 
-    Checks: shape, seq order, prev_hash chain, link_hash
-    recomputation (any mismatch is ``replay-broken-chain`` -- evidence
-    disagrees with the claim, treat as tampering), tool-pin presence
-    and shape (``replay-unverifiable-tool-digest``), dirty flags
-    (``replay-dirty-codebase-seal``), approval-link receipt references
-    (``replay-missing-approval-receipt``), and the manifest digest.
+MANIFEST_TRUST_SCOPE = "replay-manifest"
 
-    ``receipts`` maps approval_receipt_ref -> statement dict;
-    ``receipt_checker(link, statement)`` performs the cryptographic
-    receipt verification (built on ``gov.corroboration_receipt``) and
-    raises ``ReplayManifestError("replay-approval-receipt-invalid")``
-    on failure. WITHOUT a checker, approval links are structurally
-    pinned but signature-unverified -- reported honestly as
-    ``receipts_unverified: True`` (never silent).
 
-    ``presentations`` maps presentation_digest -> presented bytes; a
-    digest whose bytes mismatch is ``replay-presentation-mismatch``.
-    Digests with no presented bytes are reported as
-    ``presentations_unverified`` (never assumed shown).
+def _manifest_seal_bytes(manifest):
+    """The exact bytes the manifest_digest covers."""
+    return _canonical({"format": MANIFEST_FORMAT,
+                       "links": manifest["links"],
+                       "code_pins": manifest["code_pins"]})
 
-    Returns ``{"verified": True, ...}`` on success; raises coded
-    ``ReplayManifestError`` on any failure. The raise-vs-return
-    contract is pinned in ``tests/test_replay_manifest.py``.
+
+def decode_untrusted_manifest(manifest):
+    """Untrusted-decode path for a replay manifest: shape and
+    self-consistency checks only. Raises coded ReplayManifestError on
+    any defect. Returns the parsed structure; the receipt and
+    presentation checks that need external verification are NOT run
+    here -- see :func:`seal_manifest_trust`.
     """
     if not isinstance(manifest, dict) \
             or manifest.get("format") != MANIFEST_FORMAT:
@@ -592,15 +602,6 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
                     "non-empty string" % (seq,))
         if "presentation_digest" in link:
             presentation_digests.add(link["presentation_digest"])
-    # Caller-supplied containers: a non-dict receipts/presentations map
-    # must fail with the coded error, never leak AttributeError (F272).
-    for name, mapping in (("receipts", receipts),
-                          ("presentations", presentations)):
-        if mapping is not None and not isinstance(mapping, dict):
-            raise ReplayManifestError(
-                "replay-malformed",
-                "%s must be a dict mapping digests to statements/bytes, "
-                "not %s" % (name, type(mapping).__name__))
     # Manifest-level digest: the seal covers links AND code pins.
     # A non-str manifest_digest must fail with the coded error, never
     # leak TypeError out of hmac.compare_digest (F272).
@@ -610,14 +611,41 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
             "replay-malformed",
             "manifest_digest must be a string, not %s"
             % type(digest).__name__)
-    recomputed = _sha256_hex(_canonical(
-        {"format": MANIFEST_FORMAT, "links": links,
-         "code_pins": code_pins}))
+    recomputed = _sha256_hex(_manifest_seal_bytes(manifest))
     if not hmac.compare_digest(recomputed, digest):
         raise ReplayManifestError(
             "replay-broken-chain",
             "manifest_digest does not cover the link list and code pins "
             "(seal broken)")
+    return {"links": links, "code_pins": code_pins,
+            "approval_links": approval_links,
+            "presentation_digests": presentation_digests,
+            "manifest_digest": digest}
+
+
+def seal_manifest_trust(parsed, *, receipts=None, receipt_checker=None,
+                        presentations=None):
+    """The trust event for a replay manifest: run the checks that
+    need external verification (cryptographic receipt checks,
+    presentation byte checks) over a shape-validated ``parsed``
+    manifest and seal a TrustEvidence bound to the manifest_digest.
+
+    Returns ``(evidence, report)`` where report carries
+    ``receipts_unverified`` / ``presentations_unverified`` exactly as
+    the legacy verifier did. Caller-supplied container shape defects
+    raise the coded ``replay-malformed`` (F272).
+    """
+    approval_links = parsed["approval_links"]
+    presentation_digests = parsed["presentation_digests"]
+    # Caller-supplied containers: a non-dict receipts/presentations map
+    # must fail with the coded error, never leak AttributeError (F272).
+    for name, mapping in (("receipts", receipts),
+                          ("presentations", presentations)):
+        if mapping is not None and not isinstance(mapping, dict):
+            raise ReplayManifestError(
+                "replay-malformed",
+                "%s must be a dict mapping digests to statements/bytes, "
+                "not %s" % (name, type(mapping).__name__))
     # Approval receipts: cryptographic check is delegated; absence is
     # reported, never silent.
     receipts_unverified = False
@@ -649,9 +677,92 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
                 "presented bytes do not match presentation_digest %s "
                 "(what-was-shown disagrees with the record)"
                 % digest[:16])
+    kind = "receipt" if (approval_links and not receipts_unverified) \
+        else "chain"
+    evidence = _dt.seal_evidence(
+        scope=MANIFEST_TRUST_SCOPE, digest=parsed["manifest_digest"],
+        kind=kind, signer="receipt-checker" if kind == "receipt"
+        else "self-consistency")
+    return evidence, {"receipts_unverified": receipts_unverified,
+                      "presentations_unverified": presentations_unverified}
+
+
+def decode_trusted_manifest(manifest, evidence):
+    """Trusted-decode path for a replay manifest.
+
+    Requires ``evidence`` sealed by :func:`seal_manifest_trust`;
+    the digest binding is re-checked against the manifest's own
+    seal bytes before a single link is read
+    (decodetrust-no-evidence / decodetrust-malformed-evidence /
+    decodetrust-binding-mismatch).
+    Returns the link list.
+    """
+    if not isinstance(manifest, dict):
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted manifest decode requires the manifest dict, got "
+            "%s" % type(manifest).__name__)
+    if evidence is None:
+        # No evidence presented at all: refuse before touching the
+        # wire shape (decodetrust-no-evidence, not
+        # decodetrust-binding-mismatch).
+        raise _dt.DecodeTrustError(
+            "decodetrust-no-evidence",
+            "trusted manifest decode requires sealed evidence; none "
+            "presented")
+    try:
+        seal_bytes = _manifest_seal_bytes(manifest)
+    except (KeyError, TypeError):
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "trusted manifest decode: manifest lacks the sealed "
+            "shape; refusing rather than guessing")
+    _dt.require_trust(evidence, seal_bytes, scope=MANIFEST_TRUST_SCOPE)
+    return manifest["links"]
+
+
+def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
+                    presentations=None):
+    """Verify a sealed replay manifest WITHOUT the engine.
+
+    Decode trust split: the untrusted-decode path
+    (:func:`decode_untrusted_manifest`) validates shapes and
+    self-consistency; the trust event (:func:`seal_manifest_trust`)
+    runs the cryptographic receipt and presentation checks; the
+    trusted-decode path (:func:`decode_trusted_manifest`) re-checks
+    the evidence binding before reading links. Checks: shape, seq
+    order, prev_hash chain, link_hash recomputation (any mismatch is
+    ``replay-broken-chain`` -- evidence disagrees with the claim,
+    treat as tampering), tool-pin presence and shape
+    (``replay-unverifiable-tool-digest``), dirty flags
+    (``replay-dirty-codebase-seal``), approval-link receipt references
+    (``replay-missing-approval-receipt``), and the manifest digest.
+
+    ``receipts`` maps approval_receipt_ref -> statement dict;
+    ``receipt_checker(link, statement)`` performs the cryptographic
+    receipt verification (built on ``gov.corroboration_receipt``) and
+    raises ``ReplayManifestError("replay-approval-receipt-invalid")``
+    on failure. WITHOUT a checker, approval links are structurally
+    pinned but signature-unverified -- reported honestly as
+    ``receipts_unverified: True`` (never silent).
+
+    ``presentations`` maps presentation_digest -> presented bytes; a
+    digest whose bytes mismatch is ``replay-presentation-mismatch``.
+    Digests with no presented bytes are reported as
+    ``presentations_unverified`` (never assumed shown).
+
+    Returns ``{"verified": True, ...}`` on success; raises coded
+    ``ReplayManifestError`` on any failure. The raise-vs-return
+    contract is pinned in ``tests/test_replay_manifest.py``.
+    """
+    parsed = decode_untrusted_manifest(manifest)
+    evidence, report = seal_manifest_trust(
+        parsed, receipts=receipts, receipt_checker=receipt_checker,
+        presentations=presentations)
+    links = decode_trusted_manifest(manifest, evidence)
     return {"verified": True,
-            "manifest_digest": manifest["manifest_digest"],
+            "manifest_digest": parsed["manifest_digest"],
             "links": len(links),
-            "approval_links": len(approval_links),
-            "receipts_unverified": receipts_unverified,
-            "presentations_unverified": presentations_unverified}
+            "approval_links": len(parsed["approval_links"]),
+            "receipts_unverified": report["receipts_unverified"],
+            "presentations_unverified": report["presentations_unverified"]}

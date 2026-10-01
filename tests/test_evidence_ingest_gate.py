@@ -212,9 +212,9 @@ class TestGateDiscipline(unittest.TestCase):
 
 
 class TestTaxonomyPin(unittest.TestCase):
-    def test_pin_1458_on_raw_literals(self):
-        # Wave-272 merge pin: 1458 = 1411 (wave-271 merge) + 32 codes
-        # (8 prodauth-* + 7 drift-*/revbind-* + 9 ingest-* + 8 oidc-*).
+    def test_pin_1477_on_raw_literals(self):
+        # Wave-274 merge pin: 1477 = 1458 (wave-273 merge) + 19 codes
+        # (3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
         # Counted on quoted source literals per the wave-260 lesson.
         import re
         from collections import Counter
@@ -224,8 +224,8 @@ class TestTaxonomyPin(unittest.TestCase):
         codes = re.findall(
             r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
         dups = [c for c, n in Counter(codes).items() if n > 1]
-        self.assertEqual(len(codes), 1458)
-        self.assertEqual(len(set(codes)), 1458)
+        self.assertEqual(len(codes), 1477)
+        self.assertEqual(len(set(codes)), 1477)
         self.assertEqual(dups, [])
         ingest = sorted(c for c in codes if c.startswith("ingest-"))
         self.assertEqual(len(ingest), 9)

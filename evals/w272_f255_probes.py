@@ -41,7 +41,7 @@ if REPO_ROOT not in sys.path:
 from gov import bundle_scan as _bs  # noqa: E402
 from gov import skill_admission as _sa  # noqa: E402
 
-TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 SINK_CODE = "bundlescan-rce-global"
 UNKNOWN_CODE = "bundlescan-unknown-global"
@@ -271,7 +271,7 @@ def c06_pin():
     codes = re.findall(
         r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
     if len(codes) == TAXONOMY_PIN and len(set(codes)) == TAXONOMY_PIN:
-        return "HELD", "pin 1458 holds"
+        return "HELD", "pin 1477 holds"
     return ("ERROR",
             "pin drift: %d literals / %d unique (expected %d)"
             % (len(codes), len(set(codes)), TAXONOMY_PIN))

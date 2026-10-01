@@ -121,6 +121,7 @@ def _fail(code, detail, evidence_extra=None):
         evidence.update(evidence_extra)
     return {
         "verdict": "refuse",
+        "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
         "code": code,
         "refs": [],
         "flagged": [],
@@ -331,6 +332,7 @@ def extract_egress_refs(content, channels=None, now=None):
                 refs.append(ref)
         return {
             "verdict": "ok",
+            "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
             "code": None,
             "refs": refs,
             "checks": ["extracted"],
@@ -490,6 +492,7 @@ def screen_egress_refs(content, policy=None, channels=None, now=None):
         if record["verdict"] != "ok":
             return {
                 "verdict": record["verdict"],
+                "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
                 "code": record["code"],
                 "refs": record["refs"],
                 "flagged": [],
@@ -524,6 +527,7 @@ def screen_egress_refs(content, policy=None, channels=None, now=None):
                     "unknown decision code: %r" % (code,))
             return {
                 "verdict": "refuse",
+                "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
                 "code": code,
                 "refs": notes,
                 "flagged": flagged,
@@ -533,6 +537,7 @@ def screen_egress_refs(content, policy=None, channels=None, now=None):
             }
         return {
             "verdict": "allow",
+            "provenance_label": "RETRIEVED_UNTRUSTED",  # wave-274: ingress label (instruction provenance)
             "code": None,
             "refs": notes,
             "flagged": [],
@@ -543,3 +548,13 @@ def screen_egress_refs(content, policy=None, channels=None, now=None):
     except Exception as exc:  # noqa: BLE001 -- never raises
         return _fail("egress-refs-malformed",
                      "internal screening error: %r" % (exc,))
+
+
+def rail_verdict_of(record):
+    """Adapt an egress-screening verdict dict to the uniform rail
+    vocabulary (wave-274 lane 2). The ``screen_egress_refs`` dict
+    contract is unchanged; this is the uniform view. Unknown verdict
+    words refuse ``rail-adapter-unknown-verdict``.
+    """
+    from . import rail_verdict as _rv
+    return _rv.from_screen_verdict(record, stage="egress-screening")

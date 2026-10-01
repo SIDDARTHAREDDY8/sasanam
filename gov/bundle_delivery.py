@@ -88,6 +88,7 @@ from .bundle_refresh import (
     tuf_canonical_json,
 )
 from .dsse_envelope import pae
+from gov import decode_trust as _dt
 from .signing import Ed25519Verifier
 
 #: DSSE payload type for delegated-targets envelopes. The type is
@@ -441,17 +442,36 @@ def seal_delegated_targets(doc, signers):
     return tuf_canonical_json(envelope)
 
 
-def _verify_delegated_envelope(role, wire, now, where):
-    """Verify one delegated-targets envelope under the delegation's
-    own keys.
+# ---------------------------------------------------------------------------
+# Decode trust split (wave-274 lane 3; Cedar decode/decode_unchecked).
+#
+# - decode_untrusted_envelope: hostile wire -> envelope shape,
+#   canonical-bytes, and payload extraction, plus delegated-doc
+#   SHAPE validation. Coded bundle-delivery-delegation-malformed,
+#   never trusted output.
+# - seal_delegation_trust: the trust event. Verifies the role's
+#   signature threshold over the PAE bytes; seals a TrustEvidence
+#   bound to sha256(payload_bytes) under the
+#   "bundle-delivery-delegation" scope. Threshold failures raise
+#   bundle-delivery-delegation-unverified.
+# - decode_trusted_delegated_doc: the trusted path. Requires the
+#   evidence, re-checks the digest binding itself
+#   (decodetrust-no-evidence / decodetrust-binding-mismatch), then
+#   parses fast. Never reachable from unverified input.
+# ---------------------------------------------------------------------------
 
-    Returns the payload document. Raises
-    ``bundle-delivery-delegation-unverified`` when the role's
-    threshold is not met by distinct declared key IDs, and
-    ``bundle-delivery-delegation-malformed`` on shape defects. An
-    expired document is returned with ``"_expired": True`` set -- the
-    caller decides: it may bootstrap a successor, but it is never an
-    authority (see :class:`ExpiredBootstrap`).
+DELEGATION_TRUST_SCOPE = "bundle-delivery-delegation"
+TARGETS_TRUST_SCOPE = "bundle-delivery-targets"
+
+
+def decode_untrusted_envelope(wire, where):
+    """Untrusted-decode path for a delegated-targets envelope.
+
+    Returns ``(payload_bytes, doc)``: the raw payload bytes and the
+    shape-validated payload document. Every defect is the coded
+    ``bundle-delivery-delegation-malformed``. The returned document
+    is NOT trusted -- signatures are checked by
+    :func:`seal_delegation_trust`.
     """
     try:
         text = bytes(wire).decode("utf-8")
@@ -500,7 +520,19 @@ def _verify_delegated_envelope(role, wire, now, where):
                 "%s: _type %r is not delegated-targets"
                 % (where, doc.get("_type")))
     _validate_delegated_doc(doc, where)
-    pae_bytes = pae(DELEGATED_PAYLOAD_TYPE, payload)
+    return payload, doc
+
+
+def seal_delegation_trust(role, payload_bytes, signatures, where):
+    """The trust event for a delegated-targets document: verify the
+    role's signature threshold over the PAE bytes and seal a
+    TrustEvidence bound to the exact payload bytes.
+
+    ``payload_bytes`` / ``signatures`` come from
+    :func:`decode_untrusted_envelope`. Threshold failures raise
+    ``bundle-delivery-delegation-unverified`` (code unchanged).
+    """
+    pae_bytes = pae(DELEGATED_PAYLOAD_TYPE, payload_bytes)
     seen = set()
     for entry in signatures:
         if not isinstance(entry, dict):
@@ -532,6 +564,65 @@ def _verify_delegated_envelope(role, wire, now, where):
         _refuse("bundle-delivery-delegation-unverified",
                 "%s: delegation %r threshold not met (%d of %d)"
                 % (where, role.name, len(seen), role.threshold))
+    return _dt.seal_evidence(
+        scope=DELEGATION_TRUST_SCOPE,
+        digest=hashlib.sha256(payload_bytes).hexdigest(),
+        kind="signature",
+        signer="delegation:%s/threshold:%d" % (role.name,
+                                               role.threshold))
+
+
+def decode_trusted_delegated_doc(payload_bytes, evidence, where):
+    """Trusted-decode path for a delegated-targets payload.
+
+    Requires ``evidence`` sealed by :func:`seal_delegation_trust`
+    over THESE bytes; the digest binding is re-checked before
+    parsing (decodetrust-no-evidence /
+    decodetrust-malformed-evidence / decodetrust-binding-mismatch).
+    Shape validation is NOT repeated -- it ran on the untrusted path
+    before the signatures were checked.
+    """
+    _dt.require_trust(evidence, payload_bytes,
+                      scope=DELEGATION_TRUST_SCOPE)
+    try:
+        doc = _json.loads(bytes(payload_bytes).decode("utf-8"))
+    except ValueError:
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "%s: trusted payload bytes are not JSON; refusing "
+            "rather than guessing" % (where,))
+    if not isinstance(doc, dict) \
+            or doc.get("_type") != "delegated-targets":
+        raise _dt.DecodeTrustError(
+            "decodetrust-malformed-evidence",
+            "%s: trusted payload is not a delegated-targets "
+            "document" % (where,))
+    return doc
+
+
+def _verify_delegated_envelope(role, wire, now, where):
+    """Verify one delegated-targets envelope under the delegation's
+    own keys.
+
+    Composition of the decode trust split: untrusted envelope decode
+    -> trust event (threshold) -> trusted doc decode -> expiry
+    policy. Returns the payload document. Raises
+    ``bundle-delivery-delegation-unverified`` when the role's
+    threshold is not met by distinct declared key IDs, and
+    ``bundle-delivery-delegation-malformed`` on shape defects. An
+    expired document is returned with ``"_expired": True`` set -- the
+    caller decides: it may bootstrap a successor, but it is never an
+    authority (see :class:`ExpiredBootstrap`).
+    """
+    payload, doc = decode_untrusted_envelope(wire, where)
+    # The signatures list was shape-checked by the untrusted pass;
+    # re-read it from the parsed envelope for the trust event. The
+    # envelope bytes are canonical (checked above), so re-parsing
+    # the same wire is exact.
+    envelope = _json.loads(bytes(wire).decode("utf-8"))
+    evidence = seal_delegation_trust(role, payload,
+                                     envelope.get("signatures"), where)
+    doc = decode_trusted_delegated_doc(payload, evidence, where)
     expired = now >= _parse_time(doc["expires"], where + ".expires")
     doc = dict(doc)
     doc["_expired"] = expired
@@ -604,7 +695,8 @@ def _targets_map(doc, where):
     return targets
 
 
-def resolve_target(target, top_targets_doc, fetch_delegated, now):
+def resolve_target(target, top_targets_doc, fetch_delegated, now,
+                   trust=None):
     """Resolve ``target`` through the delegation tree, preorder DFS.
 
     ``top_targets_doc`` is the verified top-level targets document
@@ -612,6 +704,17 @@ def resolve_target(target, top_targets_doc, fetch_delegated, now):
     returns delegated-targets wire bytes, raising
     :class:`FetchNotFound` on a clean miss. ``now`` is a timezone-aware
     datetime.
+
+    ``trust`` is the decode-trust seam for the top-level document: a
+    :class:`gov.decode_trust.TrustEvidence` sealed over the
+    canonical bytes of ``top_targets_doc`` under the
+    ``"bundle-delivery-targets"`` scope. When provided, the digest
+    binding is re-checked before resolution (a planted targets doc
+    from a compromised mirror refuses
+    ``decodetrust-binding-mismatch``). When ``None`` (legacy
+    callers, tests), the document's provenance is caller-asserted --
+    documented honestly, not verified. :func:`resolve_pin` always
+    passes evidence sealed from the refresher's trusted chain state.
 
     Trust order is the delegation list order: earlier roles are more
     trusted. A terminating delegation eligible for the target stops
@@ -628,6 +731,13 @@ def resolve_target(target, top_targets_doc, fetch_delegated, now):
     if not isinstance(target, str) or not target:
         _refuse("bundle-delivery-delegation-malformed",
                 "target must be a non-empty str")
+    if trust is not None:
+        # The top-level document is the one input resolve_target
+        # cannot verify itself (it arrives pre-parsed from the
+        # refresh chain): bind it to the chain's trust evidence
+        # before the delegation walk reads a single role.
+        _dt.require_trust(trust, tuf_canonical_json(top_targets_doc),
+                          scope=TARGETS_TRUST_SCOPE)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     warnings = []
@@ -948,15 +1058,27 @@ def resolve_pin(refresher, target, fetch_delegated, now):
 
     The refresher must be in ``"trusted"`` state; anything else raises
     :class:`SuspendedError` (via :meth:`verified_targets_doc`).
+
+    Decode-trust wiring: the refresher's ``"trusted"`` chain state is
+    the verification event for the top-level targets document, so
+    ``resolve_pin`` seals a TrustEvidence over its canonical bytes
+    (scope ``"bundle-delivery-targets"``) and passes it to
+    :func:`resolve_target` -- the in-repo verified call path always
+    carries evidence.
     """
     doc = refresher.verified_targets_doc()
+    trust = _dt.seal_evidence(
+        scope=TARGETS_TRUST_SCOPE,
+        digest=hashlib.sha256(tuf_canonical_json(doc)).hexdigest(),
+        kind="chain", signer="bundle-refresh:trusted")
     entry = (doc.get("targets") or {}).get(target)
     if entry is not None:
         digest, _length = _check_target_entry(target, entry, "resolve_pin")
         pin = {"digest": digest, "chain_state": "trusted"}
         pin["_provenance_role"] = "targets"
         return pin
-    resolution = resolve_target(target, doc, fetch_delegated, now)
+    resolution = resolve_target(target, doc, fetch_delegated, now,
+                                trust=trust)
     pin = {"digest": resolution.digest, "chain_state": "trusted"}
     pin["_provenance_role"] = resolution.role
     return pin

@@ -138,6 +138,13 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 # class id (string) on classed issuances. <arc>.1.8 is the issuer,
 # <arc>.1.24 the subject.
 _PROV_OID_SUFFIX = ".1.40"
+# Wave-274 lane 3: attestor-plugin claim set. When an attestor is
+# configured, the matched registration entry id is recorded at
+# <arc>.1.41 (auditable on the certificate, like the provisioner
+# class). No SPIFFE dependency, no JWT SVIDs, no bearer flows --
+# the certified producer identity stays in the OIDC (iss, sub)
+# ceremony; this is an environment binding on top.
+_ATTESTOR_OID_SUFFIX = ".1.41"
 
 # Single-label wildcard: https://*.suffix where suffix is a dotted host.
 # The * binds exactly one DNS label ([-_a-zA-Z0-9]+) -- it can never span
@@ -589,6 +596,17 @@ class EvidenceCA(object):
     ``identity_assertion`` argument is ignored on this path) and the
     certified producer identity -- the verified (iss, sub) pair -- is
     recorded on the audit attestation as ``producer_identity``.
+
+    ``attestor`` / ``attested_registry`` are the optional
+    attestor-plugin interface (``gov.attestors``; SPIFFE ADAPT,
+    principle only). Both-or-neither at construction. When
+    configured, ``issue()`` collects environment facts from the
+    attestor, matches them against ceremony-backed registration
+    entries, and requires the matched entry's producer to be the
+    assertion sub; the entry id lands in the cert extensions at
+    ``<arc>.1.41`` and the attested facts on the issuance
+    attestation. Refusals are the ``attestor-*`` codes, raised as
+    :class:`EvidenceCertError`.
     """
 
     def __init__(self, *, kms_provider, ca_key_id, ca_public_key,
@@ -597,7 +615,8 @@ class EvidenceCA(object):
                  default_lifetime_s=DEFAULT_LIFETIME_S,
                  max_lifetime_s=DEFAULT_MAX_LIFETIME_S,
                  status_list_url=None, now=None, provisioners=None,
-                 claim_public_key=None, oidc_gate=None):
+                 claim_public_key=None, oidc_gate=None,
+                 attestor=None, attested_registry=None):
         if not isinstance(kms_provider, KmsProvider):
             raise TypeError("kms_provider must be a gov.kms.KmsProvider")
         kms_provider._validate_key_id(ca_key_id)
@@ -633,6 +652,22 @@ class EvidenceCA(object):
         provisioners = _validate_provisioners(provisioners, max_lifetime_s)
         if oidc_gate is not None and not isinstance(oidc_gate, OidcGate):
             raise TypeError("oidc_gate must be a gov.evidence_certs.OidcGate")
+        # Wave-274 lane 3: attestor-plugin interface (SPIFFE ADAPT,
+        # principle only). Both-or-neither: an attestor without a
+        # registry to match against (or a registry with no attestor
+        # to collect from) is a deployment bug, refused at
+        # construction -- never silently unbound.
+        if (attestor is None) != (attested_registry is None):
+            raise ValueError("attestor and attested_registry must be "
+                             "configured together or not at all")
+        if attestor is not None:
+            from gov.attestors import Attestor as _Attestor
+            from gov.attestors import AttestedRegistry as _AttestedRegistry
+            if not isinstance(attestor, _Attestor):
+                raise TypeError("attestor must be a gov.attestors.Attestor")
+            if not isinstance(attested_registry, _AttestedRegistry):
+                raise TypeError("attested_registry must be a "
+                                "gov.attestors.AttestedRegistry")
         self._kms = kms_provider
         self._ca_key_id = ca_key_id
         self._ca_public_key = bytes(ca_public_key)
@@ -648,6 +683,8 @@ class EvidenceCA(object):
         self._status_list_url = status_list_url
         self._provisioners = provisioners
         self._oidc_gate = oidc_gate
+        self._attestor = attestor
+        self._attested_registry = attested_registry
         self._now = now or __import__("time").time
 
     def _resolve_provisioner(self, provisioner):
@@ -672,6 +709,52 @@ class EvidenceCA(object):
                 "unknown provisioner class %r; the CA requires a "
                 "configured class" % (provisioner,))
         return self._provisioners[provisioner]
+
+    def _bind_attested(self, sub):
+        """Collect attestor facts and match a registration entry.
+
+        Returns ``(entry_id, facts)``. Every refusal is an
+        ``attestor-*`` EvidenceCertError -- the CA's refusal carrier
+        is always EvidenceCertError, so the attestor seam never
+        leaks a foreign exception type out of issuance.
+        """
+        from gov.attestors import AttestorError, _shape_facts
+        try:
+            collected = self._attestor.collect()
+        except AttestorError as exc:
+            raise EvidenceCertError(exc.code, exc.detail)
+        except Exception as exc:
+            raise EvidenceCertError(
+                "attestor-facts-malformed",
+                "attestor collect() raised %s; refusing rather than "
+                "issuing unattested" % type(exc).__name__)
+        if not isinstance(collected, dict):
+            raise EvidenceCertError(
+                "attestor-facts-malformed",
+                "attestor collect() must return a dict, not %s"
+                % type(collected).__name__)
+        attestor_id = collected.get("attestor_id")
+        # Shape to scalars with the registry's own shaping (the
+        # attestation records the facts that were actually matched,
+        # never unshaped input).
+        try:
+            shaped = _shape_facts(collected.get("facts"))
+        except AttestorError as exc:
+            raise EvidenceCertError(exc.code, exc.detail)
+        try:
+            entry = self._attested_registry.match(
+                shaped, attestor_id=attestor_id)
+        except AttestorError as exc:
+            raise EvidenceCertError(exc.code, exc.detail)
+        if entry.get("producer_sub") != sub:
+            raise EvidenceCertError(
+                "attestor-entry-unmatched",
+                "matched registration entry %r is bound to producer "
+                "%r, not the assertion sub %r; refusing to mint for "
+                "the wrong identity"
+                % (entry.get("entry_id"), entry.get("producer_sub"),
+                   sub))
+        return entry["entry_id"], shaped
 
     # -- issuance ----------------------------------------------------------
 
@@ -792,6 +875,21 @@ class EvidenceCA(object):
                 "assertion sub %r != approval decider %r"
                 % (sub, appr.get("decider")))
 
+        # (3b) attestor environment binding (when configured). The
+        # attestor collects environment facts; the registry matches
+        # them against ceremony-backed registration entries; the
+        # matched entry's producer must BE the assertion sub -- a
+        # cert is never minted for an unattested environment or for
+        # the wrong identity under a matched environment. The
+        # OIDC (iss, sub) ceremony remains the producer identity;
+        # this is an environment binding on top (no SVIDs, no
+        # bearer flows).
+        attested_entry_id = None
+        attested_facts = None
+        if self._attestor is not None:
+            attested_entry_id, attested_facts = self._bind_attested(
+                sub)
+
         # (4) proof of possession
         challenge = _pop_challenge(approval_id, ephemeral_pub)
         if _ed_verify(bytes(ephemeral_pub), challenge,
@@ -841,6 +939,12 @@ class EvidenceCA(object):
         if provisioner is not None:
             # The provisioner class is auditable on the certificate.
             extensions[self._oid_arc + _PROV_OID_SUFFIX] = provisioner
+        if attested_entry_id is not None:
+            # The attested environment (registration entry id) is
+            # auditable on the certificate. The full attested facts
+            # live on the issuance attestation.
+            extensions[self._oid_arc + _ATTESTOR_OID_SUFFIX] = \
+                attested_entry_id
         body = {
             "format": CERT_FORMAT,
             "subject_public_key": base64.b64encode(
@@ -908,6 +1012,13 @@ class EvidenceCA(object):
             # pair -- the application-level authorization half the OIDC
             # token alone does not establish.
             attestation["producer_identity"] = producer_identity
+        if attested_entry_id is not None:
+            # The environment binding: which registration entry the
+            # attestor's facts matched, and the matched facts
+            # themselves (a verifier re-matches them against the
+            # declared entry).
+            attestation["attested_entry_id"] = attested_entry_id
+            attestation["attested_facts"] = attested_facts
         from . import log as _audit_log
         try:
             stored = _audit_log.open_audit_log(
@@ -1126,16 +1237,19 @@ def verify_cert_chain(cert, ca_public_key, now, oid_arc=None):
                                     "extensions must carry exactly two OID "
                                     "fields (issuer, subject)")
     else:
-        # Arc-aware: the provisioner-class OID <arc>.1.40 is the only
-        # permitted extra OID key; issuer/subject remain required.
+        # Arc-aware: the provisioner-class OID <arc>.1.40 and the
+        # attestor-entry OID <arc>.1.41 are the only permitted extra
+        # OID keys; issuer/subject remain required.
         required = {oid_arc + ".1.8", oid_arc + ".1.24"}
-        allowed = required | {oid_arc + _PROV_OID_SUFFIX}
+        allowed = required | {oid_arc + _PROV_OID_SUFFIX,
+                              oid_arc + _ATTESTOR_OID_SUFFIX}
         if not required <= set(oid_keys) <= allowed or not all(
                 isinstance(ext[k], str) and ext[k] for k in oid_keys):
             raise EvidenceCertError("evcert-malformed-cert",
                                     "extensions must carry the issuer and "
                                     "subject OID fields and at most the "
-                                    "provisioner-class OID field")
+                                    "provisioner-class / attestor-entry "
+                                    "OID fields")
     body = {k: v for k, v in cert.items() if k != "ca_signature"}
     canonical = _canonical_body(body)
     ca_sig = _b64_cert_bytes(cert, "ca_signature", 64,

@@ -650,3 +650,15 @@ class Gate(object):
             else:
                 n_allow += 1
         return {"would_allow": n_allow, "would_deny": dict(deny)}
+
+
+def rail_verdict_of(verdict):
+    """Adapt a protect-gate verdict dict to the uniform rail vocabulary.
+
+    Wave-274 lane 2: composition, not fork -- evaluate() keeps its
+    ``{"allowed": bool, ...}`` contract; this is the uniform-vocabulary
+    view of the same decision. Unknown shapes refuse loudly via
+    ``rail-adapter-unknown-verdict`` (never fall through to ALLOW).
+    """
+    from gov import rail_verdict as _rv
+    return _rv.from_gate_verdict(verdict, stage="protect-gate")
