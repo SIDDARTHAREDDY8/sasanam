@@ -51,7 +51,7 @@ except ImportError:
 from gov import evidence_quality as eq  # noqa: E402 (exists at base)
 from gov import decision_codes  # noqa: E402 (taxonomy pin below)
 
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 
 _PROBES = []
 

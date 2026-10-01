@@ -739,15 +739,45 @@ class PackAlert(object):
         self.pack_id = pack_id
 
 
-def match_pack(pack, enriched_events, journal=None):
+def _behsig_exception_context(ev):
+    """Map an enriched event to the (principal, action, resource) context
+    the canonical policy-exception engine evaluates. Advisory mapping:
+    only the closed enriched fields are exposed, never raw text."""
+    return {
+        "principal": {"id": ev.get("actor_id", "")},
+        "action": ev.get("tool.action", ""),
+        "resource": {
+            "target": ev.get("tool.target", ""),
+            "class": ev.get("arg.class", ""),
+        },
+    }
+
+
+def match_pack(pack, enriched_events, journal=None, policy_exceptions=None,
+               eval_start=None):
     """Match enriched events against a loaded pack.
 
     ``enriched_events`` must be ``enrich_event`` outputs (marked
     ``_enriched``); raw events refuse loudly via ``ValueError`` --
     the matcher never sees raw text. Returns ``[PackAlert]`` in event
     order. Matching is advisory: it reports, never blocks.
+
+    ``policy_exceptions`` (optional): loaded ``PolicyException``
+    objects from ``gov.policy_exception`` (the canonical exception
+    type). When given, a rule hit that a canonical exception covers is
+    converted to a LOUD skip -- journaled with
+    ``exception-rule-skipped`` and the exception identities -- instead
+    of emitting an alert. This is the governed, expiring, attributed
+    way to suppress behsig rules; ``policyName`` must equal the pack's
+    ``pack_id``. ``eval_start`` (pinned time) is required when
+    ``policy_exceptions`` is given: exception expiry never reads the
+    wall clock.
     """
     alerts = []
+    if policy_exceptions is not None and eval_start is None:
+        raise ValueError(
+            "match_pack: eval_start is required when policy_exceptions "
+            "is given (exception expiry is pinned-time only)")
     events = list(enriched_events)
     for ev in events:
         if not (isinstance(ev, dict) and ev.get("_enriched") is True):
@@ -777,6 +807,24 @@ def match_pack(pack, enriched_events, journal=None):
                 continue
             if any(_exception_hits(x, ev) for x in rule.exceptions):
                 continue
+            if policy_exceptions is not None:
+                # Canonical governed exception: loud skip with the
+                # exception identities attached, never a silent
+                # suppression. Lazy import: behavioral_sig_packs must
+                # stay importable without the exception module.
+                from .policy_exception import apply as _pe_apply
+                decision = _pe_apply(
+                    pack.pack_id, rule.name,
+                    _behsig_exception_context(ev), eval_start,
+                    policy_exceptions)
+                if decision.kind == "skip":
+                    _journal_to(journal, {
+                        "code": "exception-rule-skipped",
+                        "rule": rule.name,
+                        "policy": pack.pack_id,
+                        "exception_ids": decision.exception_ids,
+                        "event_digest": ev["raw.digest"]})
+                    continue
             w = rule.capture_window
             capture = [_summarize(e)
                        for e in events[max(0, i - w):i + 1]]

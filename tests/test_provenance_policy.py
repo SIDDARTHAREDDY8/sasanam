@@ -408,10 +408,10 @@ class OfflineBundleAdapterTests(unittest.TestCase):
 class TaxonomyTests(unittest.TestCase):
     def test_pin_and_codes(self):
         n = len(dc.TAXONOMY)
-        self.assertEqual(n, 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(n, 1299)  # Wave-268 merge: pin -> 1299.
         for c in pp.CODES:
             self.assertIn(c, dc.TAXONOMY)
-        self.assertEqual(len(set(dc.TAXONOMY)), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(set(dc.TAXONOMY)), 1299)  # Wave-268 merge: pin -> 1299.
 
 
 if __name__ == "__main__":

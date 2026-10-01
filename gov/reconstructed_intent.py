@@ -345,11 +345,25 @@ def _dest_in_text(dest, text):
     return False
 
 
-def _indicators(text, tool):
+def _indicators(text, tool, exclude=()):
     """Action-indicator stems present in a text: the tool's verb
-    stems (house prefix convention) plus the assembly lexicon."""
-    toks = _tokens(text)
-    stems = _verb_stems(tool) + _ASSEMBLY_STEMS
+    stems (house prefix convention) plus the assembly lexicon.
+
+    F250: tools outside ``_TOOL_VERBS`` fall back to the single
+    multi-word string ``tool.replace("_", " ")`` (e.g. "slack post"),
+    which no token can startswith -- the verb-stem disjunct was
+    silently void for unlisted tools. The fallback is therefore
+    split into single tokens here so the tool's verb tokens
+    participate. Tokens in ``exclude`` (destination-derived: the
+    same discipline as topic support) never count -- for an unlisted
+    tool the fallback also carries the tool's name noun ("slack"),
+    which would otherwise fire as a phantom indicator wherever the
+    destination URL names it, wrongly engaging the single-complete
+    delimiter.
+    """
+    toks = _tokens(text) - set(exclude)
+    stems = tuple(part for s in (_verb_stems(tool) + _ASSEMBLY_STEMS)
+                  for part in s.split())
     return set(s for s in stems
                if any(t.startswith(s) for t in toks))
 
@@ -526,11 +540,19 @@ def _score_texts(texts, tool, args, user_text, justification):
     dest_in_user = _dest_in_text(dest, user_text)
     provenance = dest_in_union and not dest_in_user
 
+    dest_toks = _tokens(" ".join(
+        sorted(dest["emails"] | dest["urls"])))
+    # Account digit tails are tokens too: a destination-derived tail
+    # must not count as shared "topic" support -- or as an action
+    # indicator (F250: see _indicators).
+    dest_toks |= set(dest["accounts"])
+
     union_indicators = set()
     for text in texts:
-        union_indicators |= _indicators(text, tool)
+        union_indicators |= _indicators(text, tool, exclude=dest_toks)
     single_complete = any(
-        _dest_in_slots(dest, slots) and _indicators(text, tool)
+        _dest_in_slots(dest, slots)
+        and _indicators(text, tool, exclude=dest_toks)
         for slots, text in zip(per_chunk, texts))
     union_complete = bool(dest_in_union and union_indicators
                           and not single_complete)
@@ -544,11 +566,8 @@ def _score_texts(texts, tool, args, user_text, justification):
     # dest_toks), and a user-named destination still quiets the
     # verdict via provenance, not via topic.
     action_toks = _tokens(action_text)
-    dest_toks = _tokens(" ".join(
-        sorted(dest["emails"] | dest["urls"])))
-    # Account digit tails are tokens too: a destination-derived tail
-    # must not count as shared "topic" support.
-    dest_toks |= set(dest["accounts"])
+    # (dest_toks computed above; destination-derived tokens never
+    # count as shared "topic" support.)
     chunk_toks = _tokens(" ".join(texts))
     shared = (chunk_toks & action_toks) - dest_toks
     topic_support = len(shared) >= _TOPIC_SUPPORT_MIN

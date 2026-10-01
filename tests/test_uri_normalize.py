@@ -125,7 +125,7 @@ class ErrorContractTests(unittest.TestCase):
         # Lane-local pin: 936 (wave-246) + 2 new codes.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
 

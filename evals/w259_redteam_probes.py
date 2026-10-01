@@ -45,7 +45,7 @@ from gov import short_lived_credentials as slc  # noqa: E402
 
 # Wave-259 base pin. If the count moves, the delta must be explained
 # by a landed taxonomy change -- never repoint blindly.
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 
 _PROBES = []
 

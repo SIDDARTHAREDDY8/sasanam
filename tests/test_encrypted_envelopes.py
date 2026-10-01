@@ -36,7 +36,7 @@ class EnvelopeContracts(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-258 merge: pin -> 1080.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
         for c in ("envelope-malformed", "envelope-open-refused",
                   "envelope-recipient-refused", "envelope-seal-refused",
                   "envelope-version-unknown"):

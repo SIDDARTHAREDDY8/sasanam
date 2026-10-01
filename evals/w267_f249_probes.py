@@ -28,7 +28,7 @@ import sys
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 # This battery adds no other gov/ code.
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -227,7 +227,7 @@ def p_signature_tamper():
 
 
 def p_pin():
-    """Pin: the raw source literals must number exactly 1274."""
+    """Pin: the raw source literals must number exactly 1299."""
     src = open(os.path.join(_REPO, "gov", "decision_codes.py"),
                encoding="utf-8").read()
     import re
@@ -237,7 +237,7 @@ def p_pin():
                 % (len(lits), TAXONOMY_PIN))
     if len(set(lits)) != len(lits):
         return ("ERROR", "duplicate code literals")
-    return ("HELD", "1274/1274 unique raw literals")
+    return ("HELD", "1299/1299 unique raw literals")
 
 
 PROBES = [
@@ -251,7 +251,7 @@ PROBES = [
     ("f249/replay-still-refused", p_replay_still_refused),
     ("f249/root-untrusted", p_root_untrusted),
     ("f249/signature-tamper", p_signature_tamper),
-    ("pin/taxonomy-1274", p_pin),
+    ("pin/taxonomy-1299", p_pin),
 ]
 
 # Per-mode expectations: raw probe verdict -> expected verdict.
@@ -260,7 +260,7 @@ _EXPECT = {
         "f249/splice-unrelated-issuer": "BREAK",
         "f249/splice-narrower-caps": "BREAK",
         "f249/splice-at-middle": "BREAK",
-        "pin/taxonomy-1274": "ERROR",
+        "pin/taxonomy-1299": "ERROR",
     },
     "fixed": {},
 }

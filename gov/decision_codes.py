@@ -1140,6 +1140,113 @@ TAXONOMY = {
         "evidence_kinds_required": ['predicate', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
     },
+    'authz-allow': {
+        "domain": 'authz',
+        "code": 'authz-allow',
+        "human": 'four-bucket authorization combine: an ALLOW rule '
+                 'matched (or default-allow with no allow rules '
+                 'configured); the request is admitted',
+        "severity": 'low',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-audit-hit': {
+        "domain": 'authz',
+        "code": 'authz-audit-hit',
+        "human": 'four-bucket authorization combine: an AUDIT rule '
+                 'matched; logged only, never enforced',
+        "severity": 'low',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-default-deny': {
+        "domain": 'authz',
+        "code": 'authz-default-deny',
+        "human": 'four-bucket authorization combine: no allow rule '
+                 'matched and at least one allow rule is configured; '
+                 'default-deny refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-deny': {
+        "domain": 'authz',
+        "code": 'authz-deny',
+        "human": 'four-bucket authorization combine: a DENY rule '
+                 'matched (or a provider denied); deny-before-allow '
+                 'is structural',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-malformed-bundle': {
+        "domain": 'authz',
+        "code": 'authz-malformed-bundle',
+        "human": 'four-bucket authorization combine: the bundle is '
+                 'not a well-formed authorization bundle; refusing '
+                 'at load',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-malformed-rule': {
+        "domain": 'authz',
+        "code": 'authz-malformed-rule',
+        "human": 'four-bucket authorization combine: a rule is not '
+                 'well-formed (bad name, unknown action, unknown '
+                 'keys, bad clause); refusing at load',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-partial-attributes': {
+        "domain": 'authz',
+        "code": 'authz-partial-attributes',
+        "human": 'four-bucket authorization combine: decision-path '
+                 'rules were unevaluable on attributes missing at '
+                 'the enforcement point; the fidelity loss is loud '
+                 'and the verdict fails closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-provider-misconfigured': {
+        "domain": 'authz',
+        "code": 'authz-provider-misconfigured',
+        "human": 'four-bucket authorization combine: a custom rule '
+                 'matched but the external authorizer provider is '
+                 'misconfigured, absent, errored, or timed out; '
+                 'fail-closed deny-everything',
+        "severity": 'high',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-shadow-evaluated': {
+        "domain": 'authz',
+        "code": 'authz-shadow-evaluated',
+        "human": 'four-bucket authorization combine: a shadow '
+                 '(dry-run) rule was evaluated and reported but not '
+                 'enforced',
+        "severity": 'low',
+        "evidence_kinds_required": ['authorization-bundle',
+                                    'authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'authz-uncheckable': {
+        "domain": 'authz',
+        "code": 'authz-uncheckable',
+        "human": 'four-bucket authorization combine: the request or '
+                 'bundle could not be evaluated; fail-closed backstop',
+        "severity": 'medium',
+        "evidence_kinds_required": ['authorization-request'],
+        "reverify_steps": ['recompute'],
+    },
     'axis-ceiling-hit': {
         "domain": 'axis',
         "code": 'axis-ceiling-hit',
@@ -4677,6 +4784,69 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'exception-compensating-validation-failed': {
+        "domain": 'exception',
+        "code": 'exception-compensating-validation-failed',
+        "human": 'policy exception: one or more compensating validations '
+                 'failed, so the exception was refused and the rule outcome '
+                 'stands; exceptions are granted only while their own '
+                 'validations still pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record', 'validation-result'],
+        "reverify_steps": ['recompute', 'replay-match'],
+    },
+    'exception-expired': {
+        "domain": 'exception',
+        "code": 'exception-expired',
+        "human": 'policy exception: the exception is past its expiresAt at '
+                 'the pinned evaluation time and was skipped fail-closed '
+                 'toward enforcement; expired exceptions grant nothing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-granted-with-attribution': {
+        "domain": 'exception',
+        "code": 'exception-granted-with-attribution',
+        "human": 'policy exception: a rule hit was converted to a skip with '
+                 'the exception identities attached; the skip flows into the '
+                 'decision trail, never a silent bypass',
+        "severity": 'low',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute', 'replay-match'],
+    },
+    'exception-malformed': {
+        "domain": 'exception',
+        "code": 'exception-malformed',
+        "human": 'policy exception: the exception wire failed closed-shape '
+                 'validation (unknown keys, bad DSL op, unparseable '
+                 'expiresAt, or missing required fields); nothing half-loads',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-rule-skipped': {
+        "domain": 'exception',
+        "code": 'exception-rule-skipped',
+        "human": 'policy exception: a behavioral-signature rule hit was '
+                 'converted to a skip by a canonical policy exception; the '
+                 'skip is journaled with the exception identities instead of '
+                 'being silently suppressed',
+        "severity": 'low',
+        "evidence_kinds_required": ['exception-record', 'decision-trail'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-unauthorized-authorship': {
+        "domain": 'exception',
+        "code": 'exception-unauthorized-authorship',
+        "human": 'policy exception: the exception is unsigned, signed by a '
+                 'key outside the deployment trust set, or its body was '
+                 'tampered after sealing; unprivileged authorship is refused '
+                 'loudly and the exception never loads',
+        "severity": 'high',
+        "evidence_kinds_required": ['exception-record', 'signature-verification'],
+        "reverify_steps": ['recompute', 'reverify-signature'],
+    },
     'expected-participant-missing': {
         "domain": 'participants',
         "code": 'expected-participant-missing',
@@ -5556,6 +5726,93 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['signal', 'digest'],
         "reverify_steps": ['replay-chain'],
+    },
+    'ifc-audit-required': {
+        "domain": 'ifc',
+        "code": 'ifc-audit-required',
+        "human": 'IFC privilege exercise without an audit hook refuses: '
+                 'privilege use is never silent; every declassification or '
+                 'endorsement must leave audit evidence',
+        "severity": 'medium',
+        "evidence_kinds_required": ['label-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-integrity-flow-denied': {
+        "domain": 'ifc',
+        "code": 'ifc-integrity-flow-denied',
+        "human": 'IFC sink check: labeled data lacks the trust tags the '
+                 'sink requires; unendorsed tool output is refused at '
+                 'trust-requiring sinks (execution)',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'sink-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-label-malformed': {
+        "domain": 'ifc',
+        "code": 'ifc-label-malformed',
+        "human": 'IFC: malformed label, provenance, registry, sink policy, '
+                 'grant, or timestamp; fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['label-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-privilege-denied': {
+        "domain": 'ifc',
+        "code": 'ifc-privilege-denied',
+        "human": 'IFC privilege exercise without a covering privilege '
+                 'refuses: declassification/endorsement needs an authorized '
+                 'grant, and trust tags cannot be self-claimed at '
+                 'assignment time',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-privilege-expired': {
+        "domain": 'ifc',
+        "code": 'ifc-privilege-expired',
+        "human": 'IFC privilege exercise with an expired grant refuses',
+        "severity": 'medium',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-privilege-scope-denied': {
+        "domain": 'ifc',
+        "code": 'ifc-privilege-scope-denied',
+        "human": 'IFC privilege exercise for tags outside the granted '
+                 'privilege scope refuses',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-privilege-unauthorized': {
+        "domain": 'ifc',
+        "code": 'ifc-privilege-unauthorized',
+        "human": 'IFC privilege grant with invalid authorization evidence '
+                 'refuses: authorization must be human-approval or '
+                 'deployment-role with a non-empty reference; tampered or '
+                 'forged grants are detected via digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-secrecy-flow-denied': {
+        "domain": 'ifc',
+        "code": 'ifc-secrecy-flow-denied',
+        "human": 'IFC sink check: labeled data would leak secrecy tags to '
+                 'a sink with lower clearance; declassify via an authorized '
+                 'privilege before release',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'sink-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-sink-unmapped': {
+        "domain": 'ifc',
+        "code": 'ifc-sink-unmapped',
+        "human": 'IFC sink check against an unknown sink name refuses: '
+                 'sinks must be declared, never assumed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['label-record'],
+        "reverify_steps": ['recompute'],
     },
     'incident-illegal-transition': {
         "domain": 'incident',

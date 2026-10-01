@@ -14,7 +14,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 from gov import decision_codes as dc
 from gov import policy_change_containment as pcc
 
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 
 
 def _egress(rid, subject, hosts, ports=(443,), methods=("GET",),

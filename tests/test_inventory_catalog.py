@@ -65,8 +65,8 @@ class TaxonomyPinTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog),
         # additive
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
-        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
+        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1299)  # Wave-268 merge: pin -> 1299.
         for code in ("inventory-catalog-card-malformed",
                      "inventory-catalog-dangling-reference",
                      "inventory-catalog-duplicate-entry",

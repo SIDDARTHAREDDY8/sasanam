@@ -62,7 +62,7 @@ except Exception:  # red phase: module not written yet
     _cr = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 # pin 1222 -> 1231 (+9 corrob-*/corrob-vc-*).
 
 EXPECTED_CODES = (
@@ -683,7 +683,7 @@ _PROBES = [
     ("corrob/evidence-carried", _calib_evidence_carried),
     ("corrob/honest-absence", _calib_honest_absence),
     ("corrob/legacy-quiet", _calib_legacy_quiet),
-    ("corrob/pin-1274", _pin_probe),
+    ("corrob/pin-1299", _pin_probe),
     ("corrob/green-check", _green_check),
 ]
 

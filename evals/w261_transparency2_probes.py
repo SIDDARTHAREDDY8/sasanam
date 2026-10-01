@@ -54,7 +54,7 @@ from gov import transparency_log as tl  # noqa: E402
 
 # This lane adds no machine codes: the module's contract is plain
 # human messages (TransparencyLogError, no taxonomy entries).
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
     "taxonomy drift: expected %d, got %d"

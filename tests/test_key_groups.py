@@ -52,7 +52,7 @@ class KeyGroupContracts(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-259 merge: pin -> 1080.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
         for c in ("keygroup-malformed", "keygroup-open-refused",
                   "keygroup-scope-mismatch", "keygroup-seal-refused",
                   "keygroup-unknown-key-id", "keygroup-version-unknown"):

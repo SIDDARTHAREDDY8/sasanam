@@ -37,7 +37,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
+TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
 
 _IMPL = os.environ.get("GOV_SUPPCHAIN_IMPL", "gov.skill_supply_chain")
 _STUB_DIR = "/tmp/w267_suppchain_stub"

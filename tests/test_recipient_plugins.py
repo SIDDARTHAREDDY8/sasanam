@@ -159,7 +159,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-263 lane 1: pin -> 1136 (1129 + 7 recipient-plugin-*).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
 
 
 class SymmetricPluginTest(unittest.TestCase):

@@ -14,7 +14,7 @@ class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9
         # callback-*).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
         for code in ac.CODES:
             self.assertIn(code, decision_codes.TAXONOMY)
 
@@ -24,7 +24,7 @@ class TaxonomyPinTests(unittest.TestCase):
         lits = [a or b for a, b in
                 re.findall(r'"code": \'([^\']+)\'|"code": "([^"]+)"',
                            src)]
-        self.assertEqual(len(lits), 1274)  # Wave-267 merge: pin -> 1274.
+        self.assertEqual(len(lits), 1299)  # Wave-268 merge: pin -> 1299.
         self.assertEqual(len(set(lits)), len(lits))
 
 
