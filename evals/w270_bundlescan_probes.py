@@ -49,7 +49,7 @@ except Exception:  # red phase: module not written yet
 from gov import skill_admission as _sa
 from gov import decision_codes as _dc
 
-TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1482  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 EXPECTED_CODES = (
     "bundlescan-rce-global",
@@ -373,7 +373,7 @@ def c07_pin_registered():
     missing = [c for c in EXPECTED_CODES
                if c not in _dc.TAXONOMY]
     if not missing and len(_dc.TAXONOMY) == TAXONOMY_PIN:
-        return "HELD", "6 codes registered, pin 1477"
+        return "HELD", "6 codes registered, pin 1482"
     return "BREAK", "missing=%s len=%s" % (missing, len(_dc.TAXONOMY))
 
 

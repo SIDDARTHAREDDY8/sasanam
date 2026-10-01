@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import permit_journal as pj  # noqa: E402
 
-TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1482  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN,\
     "taxonomy drift: %d != %d" % (len(decision_codes.TAXONOMY),  # Wave-258 merge: pin -> 1080.

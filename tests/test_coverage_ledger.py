@@ -23,7 +23,7 @@ sys.path.insert(0, REPO)
 import gov.coverage_ledger as cl  # noqa: E402
 from gov import decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 1482  # Wave-275 lane D: pin 1477 -> 1482 (+5 coverage-*).
+TAXONOMY_PIN = 1482  # Wave-275 lane D: pin 1482 -> 1482 (+5 coverage-*).
 
 T0 = "2026-10-01T12:00:00+00:00"
 T1 = "2026-10-01T13:00:00+00:00"

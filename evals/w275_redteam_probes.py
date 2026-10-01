@@ -56,7 +56,7 @@ import gov.attestors as at                             # noqa: E402
 import gov.image_text as it                            # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1477  # Wave-274 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1482  # Wave-275 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -81,7 +81,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1477: 1477 unique literals"
+    return "HELD", "taxonomy pin 1482: 1482 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -311,7 +311,7 @@ def rv02_combine_precedence():
 
 
 _PROBES = [
-    ("pin-taxonomy-1477", "HELD", _pin_check),
+    ("pin-taxonomy-1482", "HELD", _pin_check),
     # decode_trust / image_text: F292.
     ("dt09-trusted-skips-screen", "BREAK", dt09_trusted_skips_screen),
     ("dt09b-screen-refuses", "HELD", dt09b_screen_refuses),

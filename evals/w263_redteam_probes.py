@@ -87,7 +87,7 @@ from gov import policy_distribution as poldist
 from gov import root_ceremony as rc
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1482  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _PROBES = []
 

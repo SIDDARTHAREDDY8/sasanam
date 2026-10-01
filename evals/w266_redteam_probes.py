@@ -27,7 +27,7 @@ import time
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1477  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1482  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 # +9 callback-* +9 delegation-* +9 discipline-*. This battery adds
 # no gov/ code.
 
