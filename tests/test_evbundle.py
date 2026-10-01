@@ -481,16 +481,16 @@ class TaxonomyTests(unittest.TestCase):
             self.assertEqual(TAXONOMY[code]["domain"], "evbundle")
             self.assertEqual(TAXONOMY[code]["severity"], severity)
 
-    def test_taxonomy_pin_1372_on_raw_literals(self):
+    def test_taxonomy_pin_1411_on_raw_literals(self):
         # Wave-260: duplicates are invisible to len(TAXONOMY); assert on
         # the raw source literals instead. Lane-local pin: 1325 + 8.
         import gov.decision_codes as dc
         with open(dc.__file__, encoding="utf-8") as f:
             src = f.read()
         literals = re.findall(r'"code": \'([^\']+)\'', src)
-        self.assertEqual(len(literals), 1372)
-        self.assertEqual(len(set(literals)), 1372)  # zero duplicates
-        self.assertEqual(len(dc.TAXONOMY), 1372)
+        self.assertEqual(len(literals), 1411)
+        self.assertEqual(len(set(literals)), 1411)  # zero duplicates
+        self.assertEqual(len(dc.TAXONOMY), 1411)
         for code, _sev in EXPECTED_EVBUNDLE_CODES:
             self.assertEqual(src.count("\"code\": '%s'" % code), 1,
                              "code literal %s must appear exactly once"

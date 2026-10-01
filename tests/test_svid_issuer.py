@@ -406,7 +406,7 @@ class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-259 lane 3: pin 1080 -> 1074 (+10 svid-* codes).
         # Wave-261 lane B (F233): pin 1092 -> 1093 (+1 svid-usage-mismatch).
-        self.assertEqual(len(dc.TAXONOMY), 1372)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(dc.TAXONOMY), 1411)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
         for code in ("svid-missing", "svid-malformed",
                      "svid-identity-malformed", "svid-ttl-unbounded",
                      "svid-ttl-stretched", "svid-trust-domain-mismatch",

@@ -349,14 +349,14 @@ class TestFileStore(unittest.TestCase):
 
 
 class TestTaxonomyPin(unittest.TestCase):
-    def test_taxonomy_pin_1372(self):
+    def test_taxonomy_pin_1411(self):
         here = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(here, "..", "gov", "decision_codes.py"),
                   encoding="utf-8") as fh:
             src = fh.read()
         literals = re.findall(r'"code": \'([^\']*)\'', src)
-        self.assertEqual(len(literals), 1372)
-        self.assertEqual(len(set(literals)), 1372)
+        self.assertEqual(len(literals), 1411)
+        self.assertEqual(len(set(literals)), 1411)
         for code in ("ceremony-v2-already-consumed",
                      "ceremony-v2-ambiguous-resume",
                      "ceremony-v2-malformed",

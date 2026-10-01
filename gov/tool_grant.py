@@ -72,14 +72,24 @@ _PROOF_SKEW_S = 60
 _MAX_LIFETIME_S = 3600
 
 # ---------------------------------------------------------------------------
-# Decision codes (ptgrant domain; merged taxonomy pin 1372)
+# Decision codes (ptgrant domain; merged taxonomy pin 1411)
 # ---------------------------------------------------------------------------
 
 PTGRANT_CODES = [
+    # --- v2 enforcement refinement (wave-271, 6 codes) ---
+    # Missing required arg_bounds attribute at the seam: deny + log the
+    # missing fields (never a conditional permission, SpiceDB lesson).
+    "ptgrant-arg-attribute-missing",
     "ptgrant-arg-bound-violated",
     "ptgrant-attenuation-invalid",
     "ptgrant-audience-mismatch",
+    # Per-request tool cap exceeded on a batch evaluation.
+    "ptgrant-batch-tool-cap-exceeded",
+    # Caller credential lacks the required scope for the operation.
+    "ptgrant-caller-unauthorized",
     "ptgrant-cnf-missing",
+    # Request-scoped context material exceeds the size cap.
+    "ptgrant-context-oversize",
     "ptgrant-grant-expired",
     "ptgrant-grant-malformed",
     "ptgrant-grant-not-yet-valid",
@@ -88,9 +98,13 @@ PTGRANT_CODES = [
     "ptgrant-jti-reused",
     "ptgrant-link-unverifiable",
     "ptgrant-mandate-drift",
+    # Mandate store unreachable (raise or None): fail closed.
+    "ptgrant-mandate-unreachable",
     "ptgrant-max-calls-exhausted",
     "ptgrant-ok",
     "ptgrant-pop-invalid",
+    # Grant's pinned predicate-registry hash != registry under evaluation.
+    "ptgrant-predicate-hash-mismatch",
     "ptgrant-predicate-unknown",
     "ptgrant-signature-invalid",
     "ptgrant-supply-chain-failed",
@@ -115,6 +129,11 @@ def _canonical(obj):
     """Deterministic JSON bytes for signing/digesting."""
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
                       ensure_ascii=True).encode("ascii")
+
+
+# Sentinel distinguishing "argument attribute absent" from "present with
+# value None" at the v2 evaluation seam (wave-271).
+_MISSING = object()
 
 
 def _b64(b):
@@ -213,6 +232,24 @@ PREDICATE_REGISTRY = {
     "exp": _p_exp,
 }
 PREDICATE_REGISTRY_VERSION = 1
+
+
+def predicate_registry_hash():
+    """Content hash of the closed predicate registry (SpiceDB schema-hash
+    discipline): sha256 over the canonical (registry-version, sorted
+    predicate-name set). The grant carries this hash in its signed body;
+    enforcement refuses when the registry under evaluation differs from
+    the pinned one. Predicate *implementations* are pinned by
+    (version, name-set): any semantic change must ship a version bump,
+    which is the deployment discipline this function enforces.
+    """
+    canonical = {"version": PREDICATE_REGISTRY_VERSION,
+                 "predicates": sorted(PREDICATE_REGISTRY.keys())}
+    return hashlib.sha256(_canonical(canonical)).hexdigest()
+
+
+# zedtoken discipline: the grant body pins exactly this value at issue.
+PREDICATE_REGISTRY_HASH = predicate_registry_hash()
 
 
 def eval_predicate(name, arg, params):
@@ -379,6 +416,11 @@ class Issuer:
             "cnf": {"jkt": _jwk_thumbprint(bytes(proof_pub))},
             "authorization_details": details,
             "predicate_registry_version": PREDICATE_REGISTRY_VERSION,
+            # v2 (wave-271): zedtoken-style content-hash pin of the predicate
+            # registry under which the grant was minted. Enforcement with
+            # check_registry_pin=True refuses grants whose pinned hash does
+            # not match the live registry, and refuses unpinned v1 grants.
+            "predicate_registry_hash": predicate_registry_hash(),
         }
         if act is not None:
             # Top-level claims only: nested ``act`` is informational and is
@@ -630,12 +672,20 @@ def _deny(code, detail, checked):
 
 
 def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
-            now, usage_store, mandate_version_provider, link_verifier):
+            now, usage_store, mandate_version_provider, link_verifier,
+            request_context=None, check_registry_pin=False,
+            max_context_bytes=4096):
     """Gateway enforcement, post-parse. Never raises; fail-closed verdicts.
 
-    Check order: shape/signature -> issuer -> aud -> time -> PoP/cnf ->
-    mandate version -> detail selection -> arg_bounds -> attenuation ->
+    Check order: shape/signature -> registry pin (v2, opt-in) -> issuer ->
+    aud -> time -> PoP/cnf -> mandate version -> detail selection ->
+    request context (v2, opt-in) -> arg_bounds -> attenuation ->
     supply chain -> budget.
+
+    v2 kwargs are backward-compatible: with the defaults (``request_context``
+    unset, ``check_registry_pin`` False) behavior is byte-identical to v1.
+    ``request_context`` merges request-scoped invocation material into the
+    evaluation view for this one check only; it is never persisted.
     """
     checked = []
     ok, code, _body = verify_grant(grant, issuer_pub=issuer_pub, now=now)
@@ -643,6 +693,20 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     if not ok:
         return _deny(code, "grant invalid", checked)
     body = _body
+
+    # v2 (wave-271, opt-in): zedtoken-style registry pin. The grant's signed
+    # body carries the predicate-registry content hash under which it was
+    # minted; enforcement refuses when the live registry differs, and
+    # refuses unpinned (pre-v2) grants -- fail closed on verifier drift.
+    if check_registry_pin:
+        pinned = body.get("predicate_registry_hash")
+        live = predicate_registry_hash()
+        if pinned != live:
+            checked.append("registry:hash-mismatch")
+            return _deny("ptgrant-predicate-hash-mismatch",
+                         "grant pinned to registry hash %r, registry is %r"
+                         % (pinned, live), checked)
+        checked.append("registry:pin-ok")
 
     if body["aud"] != server_uri or not isinstance(body["aud"], str):
         checked.append("aud:mismatch")
@@ -682,6 +746,26 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     if not isinstance(args, dict):
         checked.append("args:malformed")
         return _deny("ptgrant-grant-malformed", "args must be an object", checked)
+
+    # v2 (wave-271, opt-in): request-scoped invocation material (OpenFGA
+    # contextual-tuples analog). Merged into the evaluation view for this
+    # one check only -- never persisted. Caller-influenced, so it is
+    # type-checked and size-capped like any untrusted input.
+    ctx = None
+    if request_context is not None:
+        if not isinstance(request_context, dict):
+            checked.append("context:malformed")
+            return _deny("ptgrant-grant-malformed",
+                         "request_context must be an object", checked)
+        if len(_canonical(request_context)) > max_context_bytes:
+            checked.append("context:oversize")
+            return _deny("ptgrant-context-oversize",
+                         "request_context exceeds %d bytes"
+                         % (max_context_bytes,), checked)
+        ctx = request_context
+        checked.append("context:ok")
+
+    missing = []
     for arg, bound in detail.get("arg_bounds", {}).items():
         pred = bound.get("predicate")
         if pred not in PREDICATE_REGISTRY:
@@ -689,10 +773,29 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
             return _deny("ptgrant-predicate-unknown",
                          "arg_bounds[%r] uses unknown predicate %r" % (arg, pred),
                          checked)
-        if not eval_predicate(pred, args.get(arg), bound.get("params")):
+        val = args.get(arg, _MISSING)
+        if val is _MISSING and ctx is not None:
+            val = ctx.get(arg, _MISSING)
+        if val is _MISSING:
+            if ctx is not None:
+                # v2: the attribute cannot be evaluated from stored params
+                # or request-scoped material -> deny with the missing
+                # fields logged (never a conditional permission).
+                missing.append(arg)
+                continue
+            # v1 legacy path: missing arg evaluates the predicate against
+            # None, which fails -> ptgrant-arg-bound-violated. Preserved
+            # byte-for-byte when request_context is unset.
+            val = None
+        if not eval_predicate(pred, val, bound.get("params")):
             checked.append("arg:%s:violated" % (arg,))
             return _deny("ptgrant-arg-bound-violated",
                          "argument %r violates its bound" % (arg,), checked)
+    if missing:
+        checked.append("args:missing")
+        return _deny("ptgrant-arg-attribute-missing",
+                     "required argument attribute(s) missing: %s"
+                     % (", ".join(sorted(missing)),), checked)
     checked.append("args:ok")
 
     aok, acode, adetail, budget = _check_attenuation(grant, holder_pub)
@@ -818,6 +921,177 @@ def make_ptgrant_provider(*, issuer_pub, server_name, server_uri, now_fn,
 
 
 # ---------------------------------------------------------------------------
+# v2 gateway evaluation (wave-271): production PDP disciplines
+# ---------------------------------------------------------------------------
+# Pattern sources (nothing copied): OpenFGA's dogfooded gateway (method ->
+# relation mapping, in-process, request-scoped contextual tuples) and
+# SpiceDB's zedtokens ((datastore, revision, schema-hash) pinning).
+#
+# The 7 falsifiable properties:
+#  P1 stale mandate_version -> deny (zedtoken discipline)
+#  P2 predicate-registry content-hash mismatch -> deny
+#  P3 missing required arg_bounds attribute -> deny + missing fields logged
+#  P4 request-scoped grant material never persists
+#  P5 mandate store unreachable -> deny (fail closed, never noop-allow)
+#  P6 batch verdicts: one per tool call, pinned snapshot, never shared
+#  P7 admin/data-plane credential separation
+
+_UNREACHABLE = object()
+
+
+def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
+                     tool, args, request_context, caller_cred, now,
+                     usage_store, mandate_version_provider, link_verifier,
+                     max_context_bytes=4096, verdict_cache=None):
+    """v2 gateway single-call evaluation. Never raises; fail-closed verdicts.
+
+    Gateway meta-check order:
+      caller scope (data-plane) -> mandate store reachability ->
+      full enforce() with check_registry_pin=True and the request context.
+
+    The mandate version is fetched ONCE per call; the pinned value is what
+    enforce() re-checks, so a mandate bump landing mid-call cannot serve a
+    stale allow within that call.
+
+    ``verdict_cache`` (optional dict) caches DENIES only, keyed on
+    (grant digest, server, tool, args digest, mandate version, registry
+    hash, caller scope set). Deny caching is sound because denying inputs
+    only harden over time: a bumped mandate or tightened registry keeps
+    denying. Allows are never cached, so no stale allow can be served.
+
+    ``request_context`` is request-scoped invocation material merged into
+    the evaluation view for this one check only; it is never persisted.
+    A ``None`` context becomes an *empty* evaluation view, so a missing
+    required attribute is always reported as
+    ``ptgrant-arg-attribute-missing`` at the v2 gateway (never the v1
+    ``ptgrant-arg-bound-violated``).
+    """
+    checked = []
+
+    # P7: caller authentication at the gateway is a scoped-credential check
+    # (OpenFGA lesson: the backend must not serve admin-key bearer tokens).
+    scopes = (caller_cred.get("scopes") if isinstance(caller_cred, dict)
+              else None)
+    if not isinstance(scopes, list) or "data-plane" not in scopes:
+        return _deny("ptgrant-caller-unauthorized",
+                     "caller credential lacks the data-plane scope", checked)
+    checked.append("caller:ok")
+
+    # P5: reachability BEFORE any real evaluation (OpenFGA trap #3:
+    # opt-in authz degrades to allow when the backend is gone; Sasanam
+    # fails closed). A raising provider and a None-returning provider are
+    # both "store unreachable".
+    body = grant.get("body") if isinstance(grant, dict) else None
+    mandate_id = body.get("mandate_id") if isinstance(body, dict) else None
+    try:
+        cur = mandate_version_provider(mandate_id)
+    except Exception:  # noqa: BLE001 -- any store failure is unreachable
+        cur = _UNREACHABLE
+    if cur is _UNREACHABLE or cur is None:
+        checked.append("mandate:unreachable")
+        return _deny("ptgrant-mandate-unreachable",
+                     "mandate store unreachable or mandate unknown", checked)
+    checked.append("mandate:reachable")
+
+    # P1/P2/P6: pinned snapshot -- every check in this call sees the same
+    # mandate version and the live registry hash.
+    def _pinned_provider(_mid, _cur=cur):
+        return _cur
+
+    cache_key = None
+    if verdict_cache is not None:
+        try:
+            gdigest = hashlib.sha256(_canonical(body)).hexdigest()
+            adigest = hashlib.sha256(_canonical(args)).hexdigest()
+            cache_key = (gdigest, server_name, tool, adigest, cur,
+                         predicate_registry_hash(),
+                         tuple(sorted(s for s in scopes
+                                      if isinstance(s, str))))
+        except Exception:  # noqa: BLE001 -- unhashable shapes skip caching
+            cache_key = None
+        if cache_key is not None:
+            hit = verdict_cache.get(cache_key)
+            if (isinstance(hit, dict) and hit.get("ok") is False):
+                checked.append("cache:deny-hit")
+                out = dict(hit)
+                out["checked"] = (list(hit.get("checked", []))
+                                  + ["cache:deny-hit"])
+                return out
+
+    verdict = enforce(grant, proof=proof, issuer_pub=issuer_pub,
+                      server_name=server_name, server_uri=server_uri,
+                      tool=tool, args=args, now=now, usage_store=usage_store,
+                      mandate_version_provider=_pinned_provider,
+                      link_verifier=link_verifier,
+                      request_context=(request_context
+                                       if request_context is not None else {}),
+                      check_registry_pin=True,
+                      max_context_bytes=max_context_bytes)
+    verdict["checked"] = checked + verdict.get("checked", [])
+    if (verdict_cache is not None and cache_key is not None
+            and verdict.get("ok") is False):
+        verdict_cache[cache_key] = dict(verdict)
+    return verdict
+
+
+def evaluate_batch(items, *, grant, issuer_pub, server_name, server_uri,
+                   now, usage_store, mandate_version_provider,
+                   link_verifier, caller_cred, max_tools_per_request=8,
+                   max_context_bytes=4096, verdict_cache=None):
+    """Evaluate a batch of tool calls. Returns
+    ``{"snapshot": {...} or None, "verdicts": [verdict, ...]}``.
+
+    P6: the mandate snapshot (mandate id/version + registry hash) is pinned
+    ONCE for the whole batch; every item gets an INDEPENDENT verdict --
+    decisions are never shared across tool calls, and a partial-coverage
+    batch denies exactly the uncovered items. A batch larger than
+    ``max_tools_per_request`` is denied item-by-item with
+    ``ptgrant-batch-tool-cap-exceeded`` (a single denial record per item,
+    so the response shape stays one-verdict-per-call).
+    """
+    if not isinstance(items, list) or not items:
+        return {"snapshot": None, "verdicts": []}
+    if len(items) > max_tools_per_request:
+        v = {"ok": False, "code": "ptgrant-batch-tool-cap-exceeded",
+             "detail": "batch of %d exceeds per-request cap %d"
+                      % (len(items), max_tools_per_request),
+             "checked": ["batch:cap-exceeded"], "grant_jti": None}
+        return {"snapshot": None, "verdicts": [dict(v) for _ in items]}
+
+    body = grant.get("body") if isinstance(grant, dict) else None
+    mandate_id = body.get("mandate_id") if isinstance(body, dict) else None
+    try:
+        cur = mandate_version_provider(mandate_id)
+    except Exception:  # noqa: BLE001
+        cur = None
+    snapshot = {"mandate_id": mandate_id, "mandate_version": cur,
+                "predicate_registry_hash": predicate_registry_hash()}
+    if cur is None:
+        v = _deny("ptgrant-mandate-unreachable",
+                  "mandate store unreachable", ["batch:mandate-unreachable"])
+        return {"snapshot": snapshot,
+                "verdicts": [dict(v) for _ in items]}
+
+    def _pinned_provider(_mid, _cur=cur):
+        return _cur
+
+    verdicts = []
+    for it in items:
+        it = it if isinstance(it, dict) else {}
+        verdicts.append(evaluate_request(
+            grant, proof=it.get("proof"), issuer_pub=issuer_pub,
+            server_name=server_name, server_uri=server_uri,
+            tool=it.get("tool"), args=it.get("args"),
+            request_context=it.get("request_context"),
+            caller_cred=caller_cred, now=now, usage_store=usage_store,
+            mandate_version_provider=_pinned_provider,
+            link_verifier=link_verifier,
+            max_context_bytes=max_context_bytes,
+            verdict_cache=verdict_cache))
+    return {"snapshot": snapshot, "verdicts": verdicts}
+
+
+# ---------------------------------------------------------------------------
 # Composition note: policy_delta
 # ---------------------------------------------------------------------------
 # PTG enforcement decisions compose with policy_delta as *deny-veto*
@@ -839,3 +1113,17 @@ def make_ptgrant_provider(*, issuer_pub, server_name, server_uri, now_fn,
 # - Exchange does not revoke the parent (RFC 8693 2.1).
 # - The stale-revocation window equals the grant TTL when the
 #   introspection secondary path is not consulted.
+# - v2 (wave-271) honest limits:
+#   - predicate_registry_hash() pins (version, name-set), not predicate
+#     *implementations*: a same-version semantic change is caught only by
+#     the deployment discipline of bumping PREDICATE_REGISTRY_VERSION.
+#   - evaluate_request() refuses pre-v2 (unpinned) grants when
+#     check_registry_pin=True: v1-issued grants must be re-issued to be
+#     evaluated at the v2 gateway.
+#   - verdict_cache caches denies only; a permit that turns into a deny
+#     (tightened registry, consumed budget) is always re-evaluated.
+#   - caller_cred is a gateway-supplied credential object; Sasanam does
+#     not mint agent credentials (dex/federated identity is a separate
+#     build lane).
+#   - evaluate_batch() is a convenience over evaluate_request(): one
+#     verdict per item, shared pinned snapshot, never shared decisions.

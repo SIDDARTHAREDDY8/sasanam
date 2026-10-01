@@ -2222,7 +2222,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony', 'signature'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-digest-mismatch': {
         "domain": 'ceremony',
         "code": 'ceremony-digest-mismatch',
@@ -2234,7 +2233,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony', 'signature'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-double-review': {
         "domain": 'ceremony',
         "code": 'ceremony-double-review',
@@ -2245,7 +2243,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-malformed-proposal': {
         "domain": 'ceremony',
         "code": 'ceremony-malformed-proposal',
@@ -2256,7 +2253,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-not-keyholder': {
         "domain": 'ceremony',
         "code": 'ceremony-not-keyholder',
@@ -2266,7 +2262,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-phase-violation': {
         "domain": 'ceremony',
         "code": 'ceremony-phase-violation',
@@ -2278,7 +2273,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-private-key-material': {
         "domain": 'ceremony',
         "code": 'ceremony-private-key-material',
@@ -2290,7 +2284,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-quorum-not-reached': {
         "domain": 'ceremony',
         "code": 'ceremony-quorum-not-reached',
@@ -2301,7 +2294,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony', 'signature'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-refused': {
         "domain": 'namespace',
         "code": 'ceremony-refused',
@@ -2321,7 +2313,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony', 'rehearsal'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-rehearsal-missing': {
         "domain": 'ceremony',
         "code": 'ceremony-rehearsal-missing',
@@ -2332,7 +2323,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-replayed': {
         "domain": 'ceremony',
         "code": 'ceremony-replayed',
@@ -2343,7 +2333,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-routine-path-refused': {
         "domain": 'ceremony',
         "code": 'ceremony-routine-path-refused',
@@ -2355,7 +2344,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-unknown-ceremony': {
         "domain": 'ceremony',
         "code": 'ceremony-unknown-ceremony',
@@ -2365,7 +2353,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'ceremony-v2-already-consumed': {
         "domain": 'ceremony',
         "code": 'ceremony-v2-already-consumed',
@@ -2471,7 +2458,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
     },
-
     'chain-octet-digest-absent': {
         "domain": 'audit',
         "code": 'chain-octet-digest-absent',
@@ -3338,10 +3324,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
-    # Wave-267 human-corroboration receipts (SB 947). The receipt
-    # proves a keyholder signed a scope-bound statement at a time; it
-    # does NOT prove independent investigation (anti-rubber-stamp
-    # properties belong in the approval ceremony, not the receipt).
     'corrob-receipt-failed': {
         "domain": 'corroboration',
         "code": 'corrob-receipt-failed',
@@ -3489,11 +3471,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence-envelope'],
         "reverify_steps": ['recompute'],
     },
-    # Wave-266 strict credential tier (never-materialize). Opt-in per
-    # credential: real values never resolve in the agent-visible
-    # execution environment; only the supervisor-owned egress injector
-    # (gov/credential_strict.py) resolves, for approved requests to
-    # authorized hosts. All four fail closed (high severity).
     'credential-strict-config-invalid': {
         "domain": 'credential',
         "code": 'credential-strict-config-invalid',
@@ -4090,7 +4067,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
-
     'detector-duplicate-name': {
         "domain": 'detector',
         "code": 'detector-duplicate-name',
@@ -4111,7 +4087,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
-
     'detector-malformed': {
         "domain": 'detector',
         "code": 'detector-malformed',
@@ -4133,7 +4108,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
-
     'detector-unknown-predicate': {
         "domain": 'detector',
         "code": 'detector-unknown-predicate',
@@ -4155,7 +4129,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
-
     'device-pin-malformed': {
         "domain": 'jail',
         "code": 'device-pin-malformed',
@@ -4828,7 +4801,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['checkpoint'],
         "reverify_steps": ['re-verify-checkpoint'],
     },
-
     'evbundle-consistency-invalid': {
         "domain": 'evbundle',
         "code": 'evbundle-consistency-invalid',
@@ -4839,7 +4811,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['checkpoint'],
         "reverify_steps": ['re-verify-consistency'],
     },
-
     'evbundle-inclusion-unverified': {
         "domain": 'evbundle',
         "code": 'evbundle-inclusion-unverified',
@@ -4849,7 +4820,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['inclusion-proof'],
         "reverify_steps": ['re-verify-inclusion'],
     },
-
     'evbundle-issuance-unverifiable': {
         "domain": 'evbundle',
         "code": 'evbundle-issuance-unverifiable',
@@ -4860,7 +4830,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['audit-log'],
         "reverify_steps": ['re-verify-chain'],
     },
-
     'evbundle-join-mismatch': {
         "domain": 'evbundle',
         "code": 'evbundle-join-mismatch',
@@ -4872,7 +4841,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['artifact', 'attestation'],
         "reverify_steps": ['re-check-joins'],
     },
-
     'evbundle-malformed': {
         "domain": 'evbundle',
         "code": 'evbundle-malformed',
@@ -4883,7 +4851,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle-record'],
         "reverify_steps": ['re-check-shape'],
     },
-
     'evbundle-transparency-unavailable': {
         "domain": 'evbundle',
         "code": 'evbundle-transparency-unavailable',
@@ -4905,7 +4872,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['producer-authorization'],
         "reverify_steps": ['re-verify-producer-auth'],
     },
-
     'evcert-anchor-unavailable': {
         "domain": 'evcert',
         "code": 'evcert-anchor-unavailable',
@@ -5467,6 +5433,148 @@ TAXONOMY = {
         "human": 'gate: the verifier returned undecidable without a '
                  'mandatory reason from the closed vocabulary; the '
                  'gate contract refuses the verdict itself',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-breakglass-invalid': {
+        "domain": 'gatehard',
+        "code": 'gatehard-breakglass-invalid',
+        "human": 'enforcement hardening: a break-glass token was '
+                 'presented but is invalid (bad signature, wrong '
+                 'request class, or expired); a namespace claim alone '
+                 'is never sufficient -- break-glass is signed policy '
+                 'only',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-breakglass-used': {
+        "domain": 'gatehard',
+        "code": 'gatehard-breakglass-used',
+        "human": 'enforcement hardening: a valid signed break-glass '
+                 'token overrode a deny; the override is audited with '
+                 'its reason',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-gate-error': {
+        "domain": 'gatehard',
+        "code": 'gatehard-gate-error',
+        "human": 'enforcement hardening: a gate policy raised during '
+                 'evaluation; the gate refuses fail-closed (default '
+                 'deny, never silent allow)',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-gate-timeout': {
+        "domain": 'gatehard',
+        "code": 'gatehard-gate-timeout',
+        "human": 'enforcement hardening: a gate policy exceeded its '
+                 'deadline (global floor, per-policy override '
+                 'tightening only); the gate refuses fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-global-deadline-unset': {
+        "domain": 'gatehard',
+        "code": 'gatehard-global-deadline-unset',
+        "human": 'enforcement hardening: gate construction without a '
+                 'global deadline is refused; an unset global '
+                 'deadline would silently ignore per-policy timeouts',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-host-callback-denied': {
+        "domain": 'gatehard',
+        "code": 'gatehard-host-callback-denied',
+        "human": 'enforcement hardening: a policy invoked a host '
+                 'callback not on the enumerated allowlist; the '
+                 'callback is refused and the gate denies',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-host-callback-wildcard': {
+        "domain": 'gatehard',
+        "code": 'gatehard-host-callback-wildcard',
+        "human": 'enforcement hardening: a wildcard host-callback '
+                 'allowlist entry was offered at construction and '
+                 'refused; wildcards are not offered',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-ignore-exception-invalid': {
+        "domain": 'gatehard',
+        "code": 'gatehard-ignore-exception-invalid',
+        "human": 'enforcement hardening: a failure-ignore exception '
+                 'was presented for a crashed policy but is invalid '
+                 '(bad signature, wrong policy, or expired); the deny '
+                 'stands',
+        "severity": 'high',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-ignore-exception-used': {
+        "domain": 'gatehard',
+        "code": 'gatehard-ignore-exception-used',
+        "human": 'enforcement hardening: a crashed policy was allowed '
+                 'under a valid signed, expiring failure-ignore '
+                 'exception; the exception is audited',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-monitor-would-deny': {
+        "domain": 'gatehard',
+        "code": 'gatehard-monitor-would-deny',
+        "human": 'enforcement hardening: monitor mode allowed a '
+                 'request that protect mode would have denied; the '
+                 'would-deny is recorded, never enforced',
+        "severity": 'low',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-per-policy-deadline-exceeds-global': {
+        "domain": 'gatehard',
+        "code": 'gatehard-per-policy-deadline-exceeds-global',
+        "human": 'enforcement hardening: a per-policy deadline '
+                 'exceeding the global floor was refused at '
+                 'registration; overrides tighten only',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-policy-denied': {
+        "domain": 'gatehard',
+        "code": 'gatehard-policy-denied',
+        "human": 'enforcement hardening: a gate policy predicate '
+                 'returned deny; the gate refuses the request',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-policy-malformed': {
+        "domain": 'gatehard',
+        "code": 'gatehard-policy-malformed',
+        "human": 'enforcement hardening: a policy spec is missing a '
+                 'required key (policy_id, predicate_name, predicate, '
+                 'host_callbacks); compilation refuses it',
+        "severity": 'medium',
+        "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'gatehard-unknown-mode': {
+        "domain": 'gatehard',
+        "code": 'gatehard-unknown-mode',
+        "human": 'enforcement hardening: gate construction with an '
+                 'unrecognized mode is refused fail-closed; the mode '
+                 'vocabulary is monitor | protect',
         "severity": 'high',
         "evidence_kinds_required": ['gate-record'],
         "reverify_steps": ['recompute'],
@@ -6256,6 +6364,46 @@ TAXONOMY = {
                  'flag-only advisory, never a denial (false positives '
                  'from compression/quantization are documented)',
         "severity": 'low',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgtext-extraction-failed': {
+        "domain": 'imgtext',
+        "code": 'imgtext-extraction-failed',
+        "human": 'image text extraction: corrupt/unparseable text chunks '
+                 'in an otherwise-parseable image; extraction refused '
+                 'fail-closed rather than silently dropping channels',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgtext-malformed': {
+        "domain": 'imgtext',
+        "code": 'imgtext-malformed',
+        "human": 'image text extraction: input is not bytes or has an '
+                 'unknown magic; refused fail-closed, never raises',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgtext-oversized': {
+        "domain": 'imgtext',
+        "code": 'imgtext-oversized',
+        "human": 'image text extraction: input exceeds the parse budget; '
+                 'refused before parsing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgtext-reassembled-instruction-detected': {
+        "domain": 'imgtext',
+        "code": 'imgtext-reassembled-instruction-detected',
+        "human": 'image text extraction: reassembled cross-channel text '
+                 '(joined before screening) is instruction-shaped per the '
+                 'house instruction-shaping seam; refuses the wave-270 '
+                 'fragment-evasion residual (benign fragments across '
+                 'channels that only form an instruction when joined)',
+        "severity": 'high',
         "evidence_kinds_required": ['screen-verdict'],
         "reverify_steps": ['recompute'],
     },
@@ -8755,6 +8903,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'ptgrant-arg-attribute-missing': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-arg-attribute-missing',
+        "human": 'per-tool grant v2: a required arg_bounds attribute is missing from both the stored grant params and the request-scoped invocation material',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
     'ptgrant-arg-bound-violated': {
         "domain": 'tool_grant',
         "code": 'ptgrant-arg-bound-violated',
@@ -8779,6 +8935,22 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'signature'],
         "reverify_steps": ['verify-signature', 'recompute'],
     },
+    'ptgrant-batch-tool-cap-exceeded': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-batch-tool-cap-exceeded',
+        "human": 'per-tool grant v2: a batch evaluation exceeds the per-request tool cap',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['recompute'],
+    },
+    'ptgrant-caller-unauthorized': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-caller-unauthorized',
+        "human": 'per-tool grant v2: the caller credential lacks the required scope (data-plane) for the operation',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
     'ptgrant-cnf-missing': {
         "domain": 'tool_grant',
         "code": 'ptgrant-cnf-missing',
@@ -8786,6 +8958,14 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'signature'],
         "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-context-oversize': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-context-oversize',
+        "human": 'per-tool grant v2: request-scoped context material exceeds the size cap',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['recompute'],
     },
     'ptgrant-grant-expired': {
         "domain": 'tool_grant',
@@ -8851,6 +9031,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'signature'],
         "reverify_steps": ['verify-signature', 'recompute'],
     },
+    'ptgrant-mandate-unreachable': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-mandate-unreachable',
+        "human": 'per-tool grant v2: the mandate store is unreachable (raise or None); fail closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['recompute'],
+    },
     'ptgrant-max-calls-exhausted': {
         "domain": 'tool_grant',
         "code": 'ptgrant-max-calls-exhausted',
@@ -8871,6 +9059,14 @@ TAXONOMY = {
         "domain": 'tool_grant',
         "code": 'ptgrant-pop-invalid',
         "human": 'per-tool grant: the proof-of-possession proof fails binding or signature',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-predicate-hash-mismatch': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-predicate-hash-mismatch',
+        "human": 'per-tool grant v2: the grant-pinned predicate-registry content hash does not match the registry under evaluation',
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'signature', 'proof'],
         "reverify_steps": ['verify-signature', 'recompute'],
@@ -9446,12 +9642,63 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'claim', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'replay-approval-receipt-invalid': {
+        "domain": 'replay',
+        "code": 'replay-approval-receipt-invalid',
+        "human": 'replay manifest: an approval link\'s corroboration '
+                 'receipt failed cryptographic binding (statement digest '
+                 'mismatch, bad envelope signature, or no receipt supplied '
+                 'for the reference); the approval is not non-repudiated',
+        "severity": 'high',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-broken-chain': {
+        "domain": 'replay',
+        "code": 'replay-broken-chain',
+        "human": 'replay manifest: a link prev_hash, link_hash, or the '
+                 'manifest seal does not recompute; the record is not '
+                 'tamper-evident as presented -- treat as tampering',
+        "severity": 'critical',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-dirty-codebase-seal': {
+        "domain": 'replay',
+        "code": 'replay-dirty-codebase-seal',
+        "human": 'replay manifest: a tool call recorded a dirty codebase; '
+                 'sealing (or verifying) a dirty chain is refused -- a dirty '
+                 'codebase is never sealed',
+        "severity": 'high',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['recompute'],
+    },
     'replay-evidence-tampered': {
         "domain": 'policy_replay',
         "code": 'replay-evidence-tampered',
         "human": 'policy replay: the captured evidence digest does not match its contents',
         "severity": 'critical',
         "evidence_kinds_required": ['policy-revision', 'evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'replay-malformed': {
+        "domain": 'replay',
+        "code": 'replay-malformed',
+        "human": 'replay manifest: the manifest, link, or builder argument '
+                 'is the wrong shape (bad digests, unknown action, bad '
+                 'sequence); refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['re-check-shape'],
+    },
+    'replay-missing-approval-receipt': {
+        "domain": 'replay',
+        "code": 'replay-missing-approval-receipt',
+        "human": 'replay manifest: an approval_received link has no '
+                 'corroboration-receipt reference; an approval without a '
+                 'receipt is not sealable',
+        "severity": 'high',
+        "evidence_kinds_required": ['manifest-record'],
         "reverify_steps": ['recompute'],
     },
     'replay-policy-digest-mismatch': {
@@ -9502,6 +9749,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-revision'],
         "reverify_steps": ['recompute'],
     },
+    'replay-presentation-mismatch': {
+        "domain": 'replay',
+        "code": 'replay-presentation-mismatch',
+        "human": 'replay manifest: the verifier-supplied presentation bytes '
+                 'do not hash to the recorded presentation_digest; '
+                 'what-was-shown disagrees with the record',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['recompute'],
+    },
     'replay-refused': {
         "domain": 'policy_replay',
         "code": 'replay-refused',
@@ -9509,6 +9766,16 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['policy-revision', 'evidence'],
         "reverify_steps": ['recompute', 'replay-claim'],
+    },
+    'replay-unverifiable-tool-digest': {
+        "domain": 'replay',
+        "code": 'replay-unverifiable-tool-digest',
+        "human": 'replay manifest: a tool call has no verifiable code '
+                 'digest pin (missing, malformed, or registry-mismatched); '
+                 'unpinned tools are not sealable',
+        "severity": 'high',
+        "evidence_kinds_required": ['manifest-record'],
+        "reverify_steps": ['recompute'],
     },
     'replayed_nonce': {
         "domain": 'identity',
@@ -9792,6 +10059,70 @@ TAXONOMY = {
         "human": 'version manifest: a rollback to an older signed version was detected',
         "severity": 'critical',
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-fork-detected': {
+        "domain": 'bundle',
+        "code": 'rsl-fork-detected',
+        "human": 'bundle RSL: two state entries for one bundle share a parent or a sequence number; the log forked; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-log-corrupt': {
+        "domain": 'bundle',
+        "code": 'rsl-log-corrupt',
+        "human": 'bundle RSL: the state log failed chain verification (break, gap, or tamper); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-rollback-attempt': {
+        "domain": 'bundle',
+        "code": 'rsl-rollback-attempt',
+        "human": 'bundle RSL: an ancestor state digest was pinned or re-recorded as current; downgrades are refused loudly, never applied silently',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-rule-expired': {
+        "domain": 'bundle',
+        "code": 'rsl-rule-expired',
+        "human": 'bundle RSL: the rule file is expired; expiry is enforced at creation, open, and every operation',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-skipped-revoked': {
+        "domain": 'bundle',
+        "code": 'rsl-skipped-revoked',
+        "human": 'bundle RSL: a state entry in the chain carries a skip (revocation) annotation; verification fails closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-terminal-rule-unsigned': {
+        "domain": 'bundle',
+        "code": 'rsl-terminal-rule-unsigned',
+        "human": 'bundle RSL: the rule file lacks a valid terminal-key signature over the rule body; the always-last allow-rule is unsigned',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-threshold-invalid': {
+        "domain": 'bundle',
+        "code": 'rsl-threshold-invalid',
+        "human": 'bundle RSL: a delegation threshold is outside [1, principals]; refused at rule-creation time, not at evaluation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recompute'],
+    },
+    'rsl-transition-unauthorized': {
+        "domain": 'bundle',
+        "code": 'rsl-transition-unauthorized',
+        "human": 'bundle RSL: a state upgrade has no threshold-satisfying signed transition authorization; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
     'rule-missing': {
@@ -10199,7 +10530,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'digest'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-consent-forged': {
         "domain": 'scope-listing',
         "code": 'scope-consent-forged',
@@ -10211,7 +10541,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'digest'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-consent-unbound': {
         "domain": 'scope-listing',
         "code": 'scope-consent-unbound',
@@ -10222,7 +10551,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'digest'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-grant-tampered': {
         "domain": 'token-scope',
         "code": 'scope-grant-tampered',
@@ -10261,7 +10589,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration', 'digest'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-listing-not-registered': {
         "domain": 'scope-listing',
         "code": 'scope-listing-not-registered',
@@ -10271,7 +10598,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-listing-subject-mismatch': {
         "domain": 'scope-listing',
         "code": 'scope-listing-subject-mismatch',
@@ -10282,7 +10608,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration', 'digest'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-listing-unknown-scope': {
         "domain": 'scope-listing',
         "code": 'scope-listing-unknown-scope',
@@ -10293,7 +10618,6 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration'],
         "reverify_steps": ['recompute'],
     },
-
     'scope-policy-tampered': {
         "domain": 'token-scope',
         "code": 'scope-policy-tampered',

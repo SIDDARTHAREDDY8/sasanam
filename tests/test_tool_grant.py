@@ -6,7 +6,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import ed25519, tool_grant  # noqa: E402
 
-TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 ISS_SEED = bytes.fromhex("11" * 32)
 HOLDER_SEED = bytes.fromhex("22" * 32)
@@ -310,7 +310,7 @@ class TestTaxonomy(unittest.TestCase):
         codes = re.findall(r'"(ptgrant-[a-z-]+)"', src)
         declared = sorted(set(codes))
         self.assertEqual(declared, sorted(tool_grant.PTGRANT_CODES))
-        self.assertEqual(len(tool_grant.PTGRANT_CODES), 19)
+        self.assertEqual(len(tool_grant.PTGRANT_CODES), 25)
 
 
 if __name__ == "__main__":

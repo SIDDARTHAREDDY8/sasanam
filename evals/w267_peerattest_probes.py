@@ -51,12 +51,12 @@ else:
         HAVE_MODULE = False
         pa = None
 
-# Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*). Sibling pin assertions are the merge
+# Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*). Sibling pin assertions are the merge
 # coordinator's. Enforced at import in module mode; the taxonomy_pin
 # probe reports the state in both modes (stub mode pre-build
 # legitimately BREAKs).
 if IMPL == "module":
-    assert len(decision_codes.TAXONOMY) == 1372, "taxonomy pin 1372"
+    assert len(decision_codes.TAXONOMY) == 1411, "taxonomy pin 1411"
 
 PROBES = []
 
@@ -606,7 +606,7 @@ def taxonomy_pin():
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(federation-[a-z-]+)\'', src)
-    if len(decision_codes.TAXONOMY) != 1372:
+    if len(decision_codes.TAXONOMY) != 1411:
         return "BREAK(pin %d)" % len(decision_codes.TAXONOMY)
     new = [c for c in set(lits)
            if c.startswith("federation-attestation-")

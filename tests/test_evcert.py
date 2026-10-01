@@ -630,7 +630,7 @@ class DecisionCodeTests(unittest.TestCase):
         import gov.decision_codes as dc
         with open(dc.__file__, encoding="utf-8") as f:
             src = f.read()
-        self.assertEqual(src.count("\"code\": '"), 1372)  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(src.count("\"code\": '"), 1411)  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
         for code in self.EXPECTED:
             self.assertEqual(src.count("\"code\": '%s'" % code), 1,
                              "code literal %s must appear exactly once"
