@@ -6568,4 +6568,17 @@ BREAK (the F218 probe flipped HELD; the remaining 3 BREAK are the
 still-OPEN F216/F217 probes). No new machine codes, no taxonomy
 change (pin stays 1029).
 
-Next free finding: **F219**. **Open findings: none.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3.)
+
+## F219: gov/approval_policy.py escapes raw RecursionError on deeply-nested requests/predicates instead of ApprovalPolicyError machine codes (LOW)
+
+**Cells:** wave-256 lane 1 red-team, 2026-10-01. Standing regression pin: `evals/w256_redteam_probes.py` (probes `approval/route-deep-request-raw-error`, `approval/simulate-deep-request-raw-error`, `approval/compile-deep-predicate-raw-error`).
+
+**Defect:** `_request_digest()` catches only `(TypeError, ValueError)` around `json.dumps`; a deeply-nested request dict (12000-level in the reproduction; `json.dumps` raises `RecursionError` at ~10000 here) escapes raw `RecursionError` from the public `route()` and `simulate()` seams instead of an `ApprovalPolicyError` machine code. The same class reaches `compile_rules()`: `_check_predicate()` recurses on the `and`/`or` predicate structure, so a deeply-nested predicate escapes raw `RecursionError` instead of `approval-policy-malformed`. This is the same defect class as F218 (same seam shape, same machine-code contract): callers written against the documented `ApprovalPolicyError`-with-code contract will miss this exception class entirely. Fail-closed in effect (no auto-approval taken, no audit entry written, no rule compiled -- the exception aborts before any side effect), wrong error type.
+
+**Severity rationale:** LOW. Fail-closed (no state mutated, no decision taken), so the exposure is error-type confusion at the seam, identical to F218's scoping. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows: the request is refused loudly, just not with a machine code.
+
+**Close-when criteria:** (1) no raw `RecursionError` escapes any public `approval_policy` seam -- `route()`, `simulate()`, and `compile_rules()` refuse deeply-nested inputs with an `ApprovalPolicyError` carrying a machine code (catch-extension or a depth bound before serialization/validation, F218-style); (2) break-first battery: the three deep-input probes BREAK (raw RecursionError) on old code, HELD (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_approval_policy, w254 approval-policy battery).
+
+**Status: OPEN.**
+
+Next free finding: **F220**. **Open findings: F219.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3.)

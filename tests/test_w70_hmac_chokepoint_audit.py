@@ -95,6 +95,21 @@ ALLOWED_HMAC_SITES = {
     # without a configured key), never hard-coded or derived in-repo.
     ("gov/skill_watch.py", "_pin_manifest_mac", 0):
         "pin-manifest MAC; key = operator key via keyprovider (H22, no fallback)",
+    # gov/short_lived_credentials.py (wave-256): the credential-journal
+    # chain MACs. The key is DEPLOYMENT-OWNED: passed explicitly to
+    # CredentialIssuer(path, key=...) or via the GOV_CREDENTIAL_KEY env
+    # var (hex); >=16 bytes enforced, fail closed on weak/invalid keys
+    # (short-lived-credential-key-weak). The None-key fallback generates
+    # secrets.token_bytes(32) and is documented single-process/tests only
+    # (not durable across restarts). All three sites take the resolved key
+    # as their first parameter; no key is hard-coded or derived in-repo.
+    ("gov/short_lived_credentials.py", "_genesis_mac", 0):
+        "credential-journal chain anchor; deployment-owned key (explicit pass/env)",
+    ("gov/short_lived_credentials.py", "_event_mac", 0):
+        "credential event chain MAC; deployment-owned key (explicit pass/env)",
+    ("gov/short_lived_credentials.py", "_secret_binding", 0):
+        "stored secret proof (HMAC id:secret, secret never stored); "
+        "deployment-owned key (explicit pass/env)",
     # gov/kms.py: the SYNTHETIC fake KMS test double. _FAKE_WRAP_SECRET
     # is a hard-coded test value, never a real key; the real envelope
     # path (EnvelopeKmsProvider) unwraps via the KMS backend, not HMAC.

@@ -32,7 +32,7 @@ class TestEvidenceEnvelope(unittest.TestCase):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1036)
+        self.assertEqual(len(dc.TAXONOMY), 1049)  # Wave-256 merge: pin -> 1049.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         self.assertIn("evidence-envelope-record-limit", dc.TAXONOMY)
         self.assertIn("evidence-envelope-record-too-large", dc.TAXONOMY)

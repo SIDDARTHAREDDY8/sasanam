@@ -3540,6 +3540,38 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'evidence-quality-evidence-malformed': {
+        "domain": 'evidence-quality',
+        "code": 'evidence-quality-evidence-malformed',
+        "human": 'evidence quality: the evidence under evaluation is malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
+    'evidence-quality-gate-failed': {
+        "domain": 'evidence-quality',
+        "code": 'evidence-quality-gate-failed',
+        "human": 'evidence quality: the quality gate refused emission; an expectation failed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
+    'evidence-quality-malformed': {
+        "domain": 'evidence-quality',
+        "code": 'evidence-quality-malformed',
+        "human": 'evidence quality: the expectation or gate input is malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
+    'evidence-quality-unknown-expectation': {
+        "domain": 'evidence-quality',
+        "code": 'evidence-quality-unknown-expectation',
+        "human": 'evidence quality: unknown expectation type; refused rather than skipped',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
     'evidence-refused': {
         "domain": 'evidence',
         "code": 'evidence-refused',
@@ -7612,6 +7644,92 @@ TAXONOMY = {
                  'accept',
         "severity": 'medium',
         "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-chain-broken': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-chain-broken',
+        "human": 'credential journal: HMAC chain verification failed on '
+                 'load -- an event was not made by a key holder or was '
+                 'tampered after write; failed closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-corrupted': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-corrupted',
+        "human": 'credential journal: the underlying durable journal '
+                 'failed verification (chain break, torn tail); failed '
+                 'closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-expired': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-expired',
+        "human": 'a presented credential is past its TTL; refused '
+                 'fail-closed and the expiry is journaled',
+        "severity": 'medium',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-key-weak': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-key-weak',
+        "human": 'credential journal: the HMAC key is missing, malformed, '
+                 'or too short; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-malformed': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-malformed',
+        "human": 'credential issuance: principal, scope, ttl, or issuer '
+                 'configuration is malformed; refused instead of guessed',
+        "severity": 'low',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-revoked': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-revoked',
+        "human": 'a presented credential was revoked before expiry; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-scope-forbidden': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-scope-forbidden',
+        "human": 'credential issuance or verification: a wildcard scope '
+                 'was requested without explicit opt-in, or the presented '
+                 'scope does not match the bound scope; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-ttl-unbounded': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-ttl-unbounded',
+        "human": 'credential issuance: the TTL is missing, non-positive, '
+                 'or above the configured maximum; unbounded leases are '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['credential-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'short-lived-credential-unknown': {
+        "domain": 'short-lived-credential',
+        "code": 'short-lived-credential-unknown',
+        "human": 'a presented credential id is unknown or its secret does '
+                 'not match; refused with a single code so id-existence '
+                 'is not leaked',
+        "severity": 'medium',
+        "evidence_kinds_required": ['credential-record'],
         "reverify_steps": ['recompute'],
     },
     'signal-kind-required': {

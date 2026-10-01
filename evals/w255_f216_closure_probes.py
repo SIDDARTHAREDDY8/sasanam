@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import incident as inc_mod  # noqa: E402
 
-assert len(decision_codes.TAXONOMY) == 1036, "taxonomy pin 1036"  # Wave-255 merge: re-pointed to 1036 (1029 + 7 inventory-catalog), additive only; merge coordinator composed.
+assert len(decision_codes.TAXONOMY) == 1049, "taxonomy pin 1049"  # Wave-256 merge: pin -> 1049.
 
 _PROBES = []
 

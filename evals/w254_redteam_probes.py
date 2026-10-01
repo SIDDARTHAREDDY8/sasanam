@@ -37,7 +37,7 @@ from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1036  # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
+TAXONOMY_PIN = 1049  # Wave-256 merge: pin -> 1049.
 
 _PROBES = []
 
@@ -462,9 +462,9 @@ def _p_tuple_cards():
 # ---------------------------------------------------------------------------
 
 def main():
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (  # Wave-256 merge: pin -> 1049.
         "taxonomy pin: expected %d, got %d"
-        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))
+        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))  # Wave-256 merge: pin -> 1049.
     held, broken, errors = 0, 0, 0
     for name, fn in _PROBES:
         try:
