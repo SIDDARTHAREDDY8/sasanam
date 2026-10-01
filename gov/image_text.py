@@ -39,12 +39,19 @@ Honest limits (listed on every verdict's ``out_of_scope``):
     instruction-shaping seam it composes with.
   * Filler-omitted screening drops at most _MAX_FILLER_OMISSIONS
     channels per candidate (F282, wave-273): 3+ attacker filler
-    channels between fragments remain a residual; the candidate count
-    is sum(comb(n, k) for k in 0.._MAX_FILLER_OMISSIONS).
+    channels between fragments remain a residual. Each omission is
+    screened over its F290 window -- the union of _HOUSE_CHUNK_SPAN
+    chunks and _WINDOW_HALF chars around the omitted gap(s), a true
+    substring of the omission candidate's probe (F290, wave-275) --
+    verdict-identical to the old global enumeration, in O(n) windows
+    instead of O(n^3). There is no chunk-count cap and no truncation
+    point, so no boundary an attacker can straddle by splitting a
+    payload across it.
 """
 
 import hashlib
 import itertools
+import re
 
 from gov import image_screen as _image_screen
 from gov import decode_trust as _dt
@@ -128,49 +135,315 @@ def provenance_of(channel):
 
 
 # ------------------------------------------------------------------
-# F282 (wave-273): filler-omitted reassembly candidates.
+# F290 (wave-275): bounded filler-omitted screening.
 #
-# The reassembly joins channels in file order before screening, but an
-# attacker-controlled benign filler channel interleaved between two
-# fragments breaks the house seam's word span in the plain join
-# ("Ignore\n<filler>\n all previous instructions ..."). The attacker
-# owns chunk ordering, so any ordered subsequence of channels may be
-# the instruction: screen the full join plus every ordered
-# subsequence that omits up to _MAX_FILLER_OMISSIONS channels.
-# Omitting more than 2 is an honest residual (module docstring's
-# honest limits) -- the candidate count is
-# sum(comb(n, k) for k in 0.._MAX_FILLER_OMISSIONS), trivial for
-# real-world channel counts.
+# F282 (wave-273) screens the full join plus every ordered
+# subsequence omitting up to _MAX_FILLER_OMISSIONS channels --
+# sum(comb(n, k) for k in 0..2) candidates, O(n^3) chars total.
+# At 600 tiny channels that never returns (screening-path DoS).
+# This block reformulates it verdict-identically in O(n) windows.
+#
+# The reformulation rests on the house-pattern register
+# (gov/memory_provenance.py). Every pattern:
+#   * starts with \b and has no ^/$ anchors, no lookarounds, no
+#     backreferences (pinned by test_house_register_anchor_free) --
+#     so a match inside a window substring is a match of the whole
+#     probe, and the combined alternation is equivalent to the
+#     member patterns;
+#   * contains a literal word >= 3 letters (asserted by
+#     _house_matchers) -- the keyword prefilter below;
+#   * satisfies ONE of:
+#     (a) chunk-span <= _HOUSE_CHUNK_SPAN: the match covers that
+#         many space-separated chunks at most. Unbounded repeats
+#         are whitespace-only (one collapsed space on a match-copy
+#         probe) or space-free within a single chunk (e.g. the
+#         [a-z]+ in evasion_confirmation_waiver) -- neither crosses
+#         a chunk boundary. 13 of the 15 patterns are in this class
+#         (max 5 spaces -> span 6);
+#     (b) no unbounded space-free repeat and char length <=
+#         _HOUSE_MAX_MATCH: the two .{0,N} wildcard patterns
+#         (evasion_normative_descriptive, 225 chars;
+#         evasion_verification_cost_framing, 114 chars). A match
+#         straddling a gap then lies within _WINDOW_HALF chars of
+#         it.
+# A gap-straddling match of class (a) lies within _HOUSE_CHUNK_SPAN
+# chunks of the gap; of class (b) within _WINDOW_HALF chars. The
+# window for an omission is the UNION of the two -- a true
+# substring of the omission candidate's probe -- so every
+# gap-straddling match of every pattern is inside it, and every
+# window match is a genuine candidate match (no anchors). With a
+# clean full join, every match of an omission candidate strictly
+# contains its gap(s) (a non-containing match lies in a
+# prefix/suffix byte-identical -- up to collapsible whitespace --
+# to the full join's), so screening the windows is
+# verdict-identical to the wave-273 global enumeration, including
+# the first-in-register-order reasons.
+#
+# 1. Blank chunks (match-copy whitespace-only) are dropped before
+#    omission analysis. The seam matches against _match_copy(text)
+#    and the match copy collapses whitespace, so a blank chunk
+#    contributes only collapsible whitespace to any candidate: it
+#    can neither create a match nor hide one, present or omitted.
+# 2. Keyword prefilter: a window over [lo, hi) minus gaps is built
+#    and regex-screened only if some surviving chunk in range
+#    contains a house-pattern literal word (per-chunk prefix sums:
+#    O(1) per candidate). A match reproduces a literal word
+#    contiguously, and chunk junctions collapse to a space, so a
+#    word can never form across one -- may_hit=False is exact.
+# 3. Pair gate: a both-gap match of class (a) spans at most
+#    _HOUSE_CHUNK_SPAN chunks, so b - a <= _HOUSE_CHUNK_SPAN; of
+#    class (b) it is shorter than _HOUSE_MAX_MATCH chars, so the
+#    collapsed distance between the gaps -- lower-bounded by the
+#    surviving non-space chars between them -- is below
+#    _HOUSE_MAX_MATCH. Both bounds grow with b, so the first b
+#    failing both ends the inner loop.
+#
+# Net: identical verdicts on every input, O(n * _HOUSE_CHUNK_SPAN)
+# windows of O(_HOUSE_CHUNK_SPAN + _WINDOW_HALF) chars instead of
+# O(n^3). There is no chunk-count cap and no truncation point, so
+# there is no boundary an attacker can straddle by splitting a
+# payload across it -- every chunk gets full single- and
+# pair-omission analysis.
 # ------------------------------------------------------------------
 
 _MAX_FILLER_OMISSIONS = 2
 
+#: Max match length in match-copy chars, over the house patterns
+#: WITHOUT an unbounded space-free repeat (the two .{0,N}
+#: wildcard patterns: 225 and 114 chars). A match of one of these
+#: straddling an omitted gap lies within _WINDOW_HALF chars of it.
+#: Guarded by TestF290BoundedScreening::test_house_wildcard_span_stable.
+_HOUSE_MAX_MATCH = 256
+
+#: Max chunk-span over the house patterns WITH an unbounded
+#: space-free repeat (13 patterns; the longest spans 5 spaces ->
+#: 6 chunks). A gap-straddling match of one of these lies within
+#: this many chunks of the gap. Guarded by
+#: TestF290BoundedScreening::test_house_wildcard_span_stable.
+_HOUSE_CHUNK_SPAN = 6
+
+#: Char half-width of the screening window around an omitted gap.
+#: Must exceed _HOUSE_MAX_MATCH plus junction slack (<= 3 chars:
+#: the two single edge-spaces a chunk join can lose at a junction).
+#: Guarded by TestF290BoundedScreening::test_house_wildcard_span_stable.
+_WINDOW_HALF = 300
+
+_WS_RUN = re.compile(r"\s+")
+
+
+def _keep_chunks(parts):
+    """Return ``[(chunk_text, match_copy)]`` for the non-blank chunks.
+
+    A chunk is blank when the house seam's match copy of it is
+    whitespace-only. Verdict-preserving: see the F290 comment block
+    above. The match copies are reused by the keyword prefilter so
+    each chunk's text is normalized once.
+    """
+    from gov.memory_provenance import _match_copy  # noqa: SLF001
+    kept = []
+    for t in parts:
+        mc = _match_copy(t)
+        if mc.strip():
+            kept.append((t, mc))
+    return kept
+
+
+_HOUSE_KEYWORD_RE = None
+_HOUSE_COMBINED_RE = None
+_HOUSE_WILD_KEYWORD_RE = None
+
+
+def _house_matchers():
+    """(keyword_re, combined_re) for the house patterns -- cached.
+
+    ``keyword_re`` matches any literal word (>= 3 letters) from the
+    pattern sources; ``combined_re`` is the alternation of the full
+    sources, so ``combined_re.search(probe)`` iff some house pattern
+    matches the probe. Every pattern must contribute at least one
+    literal word (asserted -- a wordless pattern would make the
+    keyword prefilter unsound, so this fails closed at first use).
+    Character classes are stripped before word extraction so class
+    internals (e.g. the ``a`` in ``[a-z]``) can never become
+    keywords. The register is static, so this is computed once.
+    """
+    global _HOUSE_KEYWORD_RE, _HOUSE_COMBINED_RE, _HOUSE_WILD_KEYWORD_RE
+    if _HOUSE_KEYWORD_RE is None:
+        from gov import memory_provenance as _mp  # noqa: SLF001
+        registers = (_mp._MEMORY_INSTRUCTION_PATTERNS  # noqa: SLF001
+                     + _mp._MEMORY_EVASION_PATTERNS  # noqa: SLF001
+                     + _mp._MEMORY_P5_EVASION_PATTERNS)  # noqa: SLF001
+        kws = set()
+        sources = []
+        for _reason, compiled in registers:
+            src = compiled.pattern
+            sources.append(src)
+            words = re.findall(
+                r"[A-Za-z]{3,}", re.sub(r"\[[^\]]*\]", "", src))
+            assert words, (
+                "house pattern without a literal word -- the F290 "
+                "keyword prefilter would be unsound: %r" % (src,))
+            kws.update(w.lower() for w in words)
+        assert kws and sources, "empty house pattern register"
+        _HOUSE_KEYWORD_RE = re.compile(
+            "|".join(sorted(kws, key=len, reverse=True)))
+        # Non-capturing wrap: some sources contain top-level `|`.
+        # The register has no backreferences or named groups, so the
+        # alternation matches iff some member pattern matches.
+        _HOUSE_COMBINED_RE = re.compile(
+            "|".join("(?:%s)" % s for s in sources))
+        # F290: literal words (>=3 letters, outside char classes) from
+        # the two wildcard patterns only. A both-gap match whose gaps
+        # are more than _HOUSE_CHUNK_SPAN chunks apart must be a
+        # wildcard (class b); it must contain one of these words, so
+        # a window without any cannot yield one and its probe need
+        # not be built.
+        _wild = set()
+        for _reason, _compiled in registers:
+            if _reason not in ("evasion_normative_descriptive",
+                               "evasion_verification_cost_framing"):
+                continue
+            _words = [w.lower() for w in re.findall(
+                r"[A-Za-z]{3,}",
+                re.sub(r"\[[^\]]*\]", "", _compiled.pattern))]
+            # Per-pattern (not just union): a future wordless wildcard
+            # pattern would silently make the far-pair prefilter
+            # unsound -- fail closed at first use.
+            assert _words, (
+                "wildcard house pattern without a literal word -- the "
+                "F290 far-pair prefilter would be unsound: %r" % (_reason,))
+            _wild.update(_words)
+        assert _wild, "wildcard patterns yielded no keywords"
+        _HOUSE_WILD_KEYWORD_RE = re.compile(
+            "|".join(sorted(_wild, key=len, reverse=True)))
+    return _HOUSE_KEYWORD_RE, _HOUSE_COMBINED_RE, _HOUSE_WILD_KEYWORD_RE
+
 
 def _screening_candidates(texts):
-    """Yield reassembled-text candidates for the house screen.
+    """Yield ``(probe_or_None, may_hit)`` for the house screen.
 
-    Same parts as :func:`_reassemble` (non-empty, extraction order):
-    the full join, then every ordered subsequence omitting up to
-    ``_MAX_FILLER_OMISSIONS`` channels. Deduped.
+    Lazy generator. A probe is the house seam's match copy of the
+    candidate: the chunks, NFKC-normalized, invisible characters
+    stripped, whitespace collapsed, lowercased -- built directly
+    from the per-chunk match copies (joining then collapsing equals
+    collapsing the true join: the two commute up to boundary
+    whitespace runs, and blank chunks contribute only collapsible
+    whitespace). Screening a probe is exactly what the house seam
+    does to the candidate text.
+
+    The full join's probe first (always screened), then every
+    one-gap omission and every two-gap omission, each screened over
+    its F290 window: the union of _HOUSE_CHUNK_SPAN chunks and
+    _WINDOW_HALF chars around the omitted gap(s) -- a true
+    substring of the omission candidate's probe. Verdict-identical
+    to the wave-273 global enumeration (see the F290 block above).
+
+    ``may_hit`` is False only when no surviving chunk in the window
+    contains any house-pattern literal word -- then no pattern can
+    match it. The screening loop skips those candidates entirely
+    (``probe`` is None: nothing is built) without changing the
+    verdict.
     """
     parts = [t for t in texts if t]
-    n = len(parts)
-    seen = set()
+    kept = _keep_chunks(parts)
+    n = len(kept)
+    mcs = [mc for _, mc in kept]
+    yield _WS_RUN.sub(" ", " ".join(mcs)), True
+    if n == 0:
+        return
+    kw_re, _combined, _wild_re = _house_matchers()
+    # Per-chunk keyword hit + prefix sums: a window over [lo, hi)
+    # minus gaps needs screening iff some surviving chunk in range
+    # contains a keyword -- O(1) per candidate.
+    hit = [kw_re.search(mc) is not None for mc in mcs]
+    pref = [0] * (n + 1)
+    for i, h in enumerate(hit):
+        pref[i + 1] = pref[i] + (1 if h else 0)
+    # Wildcard-only hits + prefix sums, for far pairs (below).
+    whit = [_wild_re.search(mc) is not None for mc in mcs]
+    wpref = [0] * (n + 1)
+    for i, h in enumerate(whit):
+        wpref[i + 1] = wpref[i] + (1 if h else 0)
+    # Per-chunk collapsed length + non-space prefix sums. Match
+    # copies are already whitespace-collapsed; non-space chars
+    # survive collapsing, so their prefix sums lower-bound collapsed
+    # char distances -- used by the pair gate.
+    lens = [len(mc) for mc in mcs]
+    nsp = [0] * (n + 1)
+    for i, mc in enumerate(mcs):
+        nsp[i + 1] = nsp[i] + lens[i] - mc.count(" ")
+    # Char-cover arrays: char_lo[a] = leftmost chunk index covering
+    # _WINDOW_HALF collapsed chars left of gap a (or 0); char_hi[a]
+    # symmetrically right. The window union below takes min/max
+    # with the _HOUSE_CHUNK_SPAN chunk radius.
+    char_lo = [0] * n
+    char_hi = [0] * n
+    for a in range(n):
+        lo, cov = a, 0
+        while lo > 0 and cov < _WINDOW_HALF:
+            lo -= 1
+            cov += lens[lo] + 1
+        char_lo[a] = lo
+        hi, cov = a + 1, 0
+        while hi < n and cov < _WINDOW_HALF:
+            cov += lens[hi] + 1
+            hi += 1
+        char_hi[a] = hi
 
-    def emit(idxs):
-        joined = _REASSEMBLY_SEPARATOR.join(parts[i] for i in idxs)
-        if joined not in seen:
-            seen.add(joined)
-            yield joined
+    def _window(a, b):
+        lo = min(a - _HOUSE_CHUNK_SPAN, char_lo[a])
+        hi = max(b + _HOUSE_CHUNK_SPAN + 1, char_hi[b])
+        return max(0, lo), min(n, hi)
 
-    full = list(range(n))
-    yield from emit(full)
-    for k in range(1, _MAX_FILLER_OMISSIONS + 1):
-        for omit in itertools.combinations(full, k):
-            omitted = set(omit)
-            yield from emit([i for i in full if i not in omitted])
+    def _may_hit(lo, hi, gaps):
+        c = pref[hi] - pref[lo]
+        for g in gaps:
+            if lo <= g < hi and hit[g]:
+                c -= 1
+        return c > 0
 
+    def _probe(lo, hi, gaps):
+        return _WS_RUN.sub(
+            " ", " ".join(mcs[i] for i in range(lo, hi) if i not in gaps))
 
+    # Wave-273 order: full join, then all singles, then all pairs
+    # lexicographic -- the first hit (and its reason) coincides.
+    for a in range(n):
+        lo, hi = _window(a, a)
+        # single omission {a}
+        if _may_hit(lo, hi, (a,)):
+            yield _probe(lo, hi, {a}), True
+        else:
+            yield None, False
+    for a in range(n):
+        # pair omissions {a, b}: a both-gap match of class (a)
+        # spans at most _HOUSE_CHUNK_SPAN chunks, so b - a is
+        # bounded; of class (b) it is shorter than _HOUSE_MAX_MATCH
+        # chars, so the non-space chars between the gaps (a lower
+        # bound on the collapsed distance) are bounded too. Both
+        # grow with b: the first b failing both ends the inner
+        # loop. A pair hit touching only one gap is already a hit
+        # of the corresponding single (screened above), so only
+        # both-gap hits need the pair. For b - a beyond the chunk
+        # span, only a wildcard (class b) both-gap match is
+        # possible, which needs a wildcard literal word in the
+        # window -- without one the probe is skipped unbuilt.
+        for b in range(a + 1, n):
+            if (b - a > _HOUSE_CHUNK_SPAN
+                    and nsp[b] - nsp[a + 1] >= _HOUSE_MAX_MATCH):
+                break
+            blo, bhi = _window(a, b)
+            if b - a > _HOUSE_CHUNK_SPAN:
+                wc = wpref[bhi] - wpref[blo]
+                for g in (a, b):
+                    if blo <= g < bhi and whit[g]:
+                        wc -= 1
+                if wc <= 0:
+                    yield None, False
+                    continue
+            if _may_hit(blo, bhi, (a, b)):
+                yield _probe(blo, bhi, {a, b}), True
+            else:
+                yield None, False
 def _reassemble(texts, only=None):
     """Join channel texts in extraction order with the separator.
 
@@ -333,21 +606,39 @@ def screen_image_text(image_bytes, now=None):
                 "out_of_scope": list(_OUT_OF_SCOPE),
             }
         reas = record["reassembled"]
-        # F282: screen the full join plus filler-omitted candidates --
-        # any ordered subsequence may be the instruction when the
-        # attacker owns chunk ordering.
-        candidates = list(_screening_candidates(
-            [e["text"] for e in record["texts"]]))
+        # F282/F290: screen the full join plus filler-omitted
+        # candidates -- any ordered subsequence may be the
+        # instruction when the attacker owns chunk ordering. The
+        # generator is lazy: candidates the keyword prefilter rules
+        # out yield (None, False) and build nothing. Identical
+        # windows from repeated filler are screened once (sha256
+        # digests, not the window strings, so the set stays small).
+        # The combined regex is one pass instead of fifteen; on a
+        # hit the seam itself (_house_reason, idempotent on match
+        # copies) supplies the exact first-in-register-order reason.
+        # The loop breaks on the first hit.
+        _combined_re = _house_matchers()[1]
+        screened = 0
+        seen = set()
         reason = None
-        for candidate in candidates:
-            reason = _house_reason(candidate)
-            if reason is not None:
-                break
+        for probe, may_hit in _screening_candidates(
+                [e["text"] for e in record["texts"]]):
+            if not may_hit:
+                continue
+            digest = hashlib.sha256(probe.encode("utf-8")).digest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            screened += 1
+            if _combined_re.search(probe):
+                reason = _house_reason(probe)
+                if reason is not None:
+                    break
         evidence = {
             "format": record["format"],
             "instruction_reason": reason,
             "reassembled_digest": reas["all_digest"],
-            "screened_candidates": len(candidates),
+            "screened_candidates": screened,
             "hit_in_rendered":
                 _house_reason(reas["rendered_text"]) is not None,
             "hit_in_metadata":
