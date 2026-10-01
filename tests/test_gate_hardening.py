@@ -177,6 +177,69 @@ class TestErrorFailClosed(unittest.TestCase):
         self.assertFalse(v["allowed"])
         self.assertEqual(v["code"], "gatehard-gate-error")
 
+    def test_f291_undeepcopyable_request_denies_no_raise(self):
+        # F291: deepcopy failure becomes a coded fail-closed deny, not
+        # a raw raise.
+        import threading
+        g = _gate()
+        g.register_policy(_policy(lambda rt: True))
+        v = g.evaluate({"request_id": "r1",
+                        "lock": threading.Lock()})
+        self.assertFalse(v["allowed"])
+        self.assertEqual(v["code"], "gatehard-gate-error")
+        self.assertEqual(v["request_id"], "r1")
+
+    def test_f291_undeepcopyable_request_monitor_would_deny(self):
+        import threading
+        g = _gate(mode="monitor")
+        g.register_policy(_policy(lambda rt: True))
+        v = g.evaluate({"request_id": "r1",
+                        "lock": threading.Lock()})
+        self.assertTrue(v["allowed"])
+        self.assertEqual(v["code"], "gatehard-monitor-would-deny")
+        self.assertEqual(v["would_deny_code"], "gatehard-gate-error")
+
+    def test_f291_deep_nesting_denies_no_raise(self):
+        # F291: pathological nesting -> RecursionError inside deepcopy,
+        # converted to a coded deny.
+        deep = cur = {}
+        for _ in range(200000):
+            cur["n"] = {}
+            cur = cur["n"]
+        g = _gate()
+        g.register_policy(_policy(lambda rt: True))
+        v = g.evaluate({"request_id": "r1", "deep": deep})
+        self.assertFalse(v["allowed"])
+        self.assertEqual(v["code"], "gatehard-gate-error")
+
+    def test_f291_scan_row_denies_no_raise(self):
+        # F291, scan() leg: hostile copy yields a fail-closed row.
+        import threading
+        g = _gate()
+        g.register_policy(_policy(lambda rt: True))
+        rows = g.scan([{"request_id": "r1",
+                        "lock": threading.Lock()}])
+        self.assertEqual(rows, [{"request_id": "r1", "would": "deny",
+                                 "code": "gatehard-gate-error"}])
+
+    def test_f291_non_dict_request_denies_no_raise(self):
+        # F291: a hostile non-dict request cannot raise via request_id
+        # extraction on the early-deny path.
+        import threading
+        class Weird(object):
+            def __init__(self):
+                self.lock = threading.Lock()
+            def __bool__(self):
+                return True
+            def get(self, *a, **k):
+                raise TypeError("no get for you")
+        g = _gate()
+        g.register_policy(_policy(lambda rt: True))
+        v = g.evaluate(Weird())
+        self.assertFalse(v["allowed"])
+        self.assertEqual(v["code"], "gatehard-gate-error")
+        self.assertEqual(v["request_id"], "?")
+
     def test_valid_ignore_exception_allows_audited(self):
         def boom(rt):
             raise RuntimeError("x")

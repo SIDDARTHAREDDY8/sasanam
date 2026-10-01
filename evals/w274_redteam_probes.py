@@ -222,9 +222,11 @@ def _gh_gate(mode="protect"):
 
 
 def gh01_deepcopy_raises():
-    """F291: evaluate() documents 'Never raises' but copy.deepcopy sits
-    outside the try -- a lock-valued request raises raw TypeError.
-    Expected BREAK (open)."""
+    """F291: evaluate() documents 'Never raises' -- the F258 deepcopy
+    used to sit outside the try and raised raw TypeError. CLOSED
+    2026-10-01 (wave-275 lane C): the deepcopy is inside the
+    fail-closed boundary and becomes a coded gatehard-gate-error deny.
+    Expected HELD."""
     g = _gh_gate()
     try:
         g.evaluate({"request_id": "r1", "lock": threading.Lock()})
@@ -240,8 +242,10 @@ def gh01_deepcopy_raises():
 
 
 def gh02_scan_deepcopy_raises():
-    """F291, scan() leg: copy.deepcopy sits outside the per-request
-    try. Expected BREAK (open)."""
+    """F291, scan() leg: the deepcopy used to sit outside the
+    per-request try. CLOSED 2026-10-01 (wave-275 lane C): hostile
+    copies now yield a coded gatehard-gate-error deny row.
+    Expected HELD."""
     g = _gh_gate()
     try:
         g.scan([{"request_id": "r1", "lock": threading.Lock()}])
@@ -746,9 +750,9 @@ _PROBES = [
     ("im01-quadratic-candidates", "BREAK",
      im01_quadratic_candidates),
     # gate_hardening: F291 (new breaks) + monitor accounting.
-    ("gh01-deepcopy-raises", "BREAK",
+    ("gh01-deepcopy-raises", "HELD",
      gh01_deepcopy_raises),
-    ("gh02-scan-deepcopy-raises", "BREAK",
+    ("gh02-scan-deepcopy-raises", "HELD",
      gh02_scan_deepcopy_raises),
     ("gh03-evaluate-allow-deny-sanity", "HELD",
      gh03_evaluate_allow_deny_sanity),
