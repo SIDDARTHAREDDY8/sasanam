@@ -46,6 +46,16 @@ request digests without epoch separation, and proof verification
 failures all raise ``DecisionLogError`` (never a silent False at the
 log seam; the pure ``MerkleTree`` verifiers return bool like the
 upstream Go API).
+
+Wave-252 lane 1 (F212, F213 -- both CLOSED 2026-09-30):
+  * F212: ``append()`` snapshots ``(request_digest, effect,
+    policy_key)`` from the live CombinedDecision at append time;
+    ``detect_equivocation()`` reads the snapshots ONLY, so
+    post-append mutation of a caller-held decision can neither hide
+    a genuine equivocation nor fabricate false evidence.
+  * F213: ``EquivocationProof.verify()`` bounds-checks its leaf
+    indices (and tree size / root shapes) and returns False on a
+    hand-crafted bogus proof instead of raising IndexError.
 """
 
 import hashlib
@@ -356,6 +366,11 @@ def _check_request_digest(value):
     return value
 
 
+def _is_int(value):
+    """True for a genuine int (bool excluded -- True is not index 1)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 # ------------------------------------------------- equivocation proof
 
 
@@ -384,16 +399,33 @@ class EquivocationProof(object):
         self.root = root
 
     def verify(self, log):
-        """Re-verify both halves against the log's current root."""
+        """Re-verify both halves against the log's current root.
+
+        Never raises on a hand-crafted proof: malformed fields
+        (out-of-range or non-integer leaf indices, bad tree size,
+        bad root) return False (F213).
+        """
         if not isinstance(log, DecisionLog):
             return False
+        if not _is_int(self.tree_size) or self.tree_size <= 0:
+            return False
         if log.tree_size() < self.tree_size:
+            return False
+        if (not isinstance(self.root, bytes)
+                or len(self.root) != _HASH_LEN):
             return False
         root = log.root()
         if not hmac.compare_digest(root, self.root):
             return False
         if self.effect_a == self.effect_b:
             return False
+        # F213: bounds-check the proof's leaf indices against the
+        # log; a bogus index returns False instead of raising
+        # IndexError (or TypeError for a non-integer index).
+        size = log.tree_size()
+        for idx in (self.index_a, self.index_b):
+            if not _is_int(idx) or idx < 0 or idx >= size:
+                return False
         leaf_a = log._leaf_hash_at(self.index_a)
         leaf_b = log._leaf_hash_at(self.index_b)
         ok_a = MerkleTree.verify_inclusion(
@@ -426,18 +458,24 @@ def detect_equivocation(log):
     (first index of each effect). Returns a list (possibly empty).
     The log detects -- it does not prevent: equivocating leaves are
     recorded, and this function surfaces the evidence.
+
+    F212: detection reads the append-time snapshots
+    (request_digest, effect, policy_key) ONLY. It never touches the
+    caller-held CombinedDecision objects, so post-append mutation of
+    a logged decision can neither hide a genuine equivocation nor
+    fabricate false evidence.
     """
     if not isinstance(log, DecisionLog):
         raise DecisionLogError(
             MALFORMED_CODE, "detect_equivocation needs a DecisionLog")
     groups = {}
     order = []
-    for idx, (req, combined) in enumerate(log._entries()):
-        key = (req, _policy_key(combined))
+    for idx, (req, effect, pkey) in enumerate(log._snapshots_list()):
+        key = (req, pkey)
         if key not in groups:
             groups[key] = []
             order.append(key)
-        groups[key].append((idx, combined.effect))
+        groups[key].append((idx, effect))
     root = log.root()
     size = log.tree_size()
     out = []
@@ -475,6 +513,10 @@ class DecisionLog(object):
         self._tree = MerkleTree()
         self._leaf_hashes = []  # parallel: leaf hashes (32 bytes)
         self._entries_data = []  # (request_digest, CombinedDecision)
+        # F212: append-time snapshots (request_digest, effect,
+        # policy_key) -- all immutable values. detect_equivocation()
+        # reads these ONLY, never the live objects in _entries_data.
+        self._snapshots = []
         self._epochs = []
         self._bound = None
 
@@ -482,6 +524,10 @@ class DecisionLog(object):
 
     def _entries(self):
         return list(self._entries_data)
+
+    def _snapshots_list(self):
+        """Append-time (request_digest, effect, policy_key) snapshots."""
+        return list(self._snapshots)
 
     def _leaf_hash_at(self, index):
         return self._leaf_hashes[index]
@@ -511,6 +557,11 @@ class DecisionLog(object):
         idx = self._tree.append(leaf)
         self._leaf_hashes.append(hash_leaf(leaf))
         self._entries_data.append((request_digest, combined))
+        # F212: snapshot the detection-relevant fields NOW, from
+        # the live object, before the caller can mutate it
+        # post-append (all three values are immutable).
+        self._snapshots.append(
+            (request_digest, combined.effect, _policy_key(combined)))
         return idx
 
     def new_epoch(self, request_digest):

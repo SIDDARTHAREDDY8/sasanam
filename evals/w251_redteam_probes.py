@@ -13,6 +13,14 @@ HELD pins.
 
 Hypotheses under test:
 
+Wave-252 lane 1 note: F212 and F213 are CLOSED (2026-09-30). The
+three break probes (log/post-append-mutation-hides,
+log/post-append-mutation-fabricates, log/bogus-proof-index) are now
+regression pins asserting the closure: the fabricate probe was
+flipped to assert the fixed behavior (it was a pure
+break-demonstrator and could never return HELD); the hide and
+bogus-index probes flipped automatically.
+
 decision_log
   H1 forged inclusion proof -> verify_proof must raise
        decision-log-proof-invalid (never accept).
@@ -189,31 +197,34 @@ def probe_log_mutation_hides():
 
 
 def probe_log_mutation_fabricates():
-    # H4: same aliasing, other direction -- fabricate evidence whose
-    # proof verifies while the effect labels are lies.
+    # H4 (F212, CLOSED wave-252 lane 1): post-append mutation of a
+    # logged CombinedDecision must NOT fabricate equivocation
+    # evidence. The log snapshots (request_digest, effect,
+    # policy_key) at append; detect_equivocation() reads the
+    # snapshots only. Pre-fix break shape (kept as documentation):
+    # mutating d2.effect to "deny" made detect_equivocation return
+    # a proof that verify(log) ACCEPTED while the leaf bytes still
+    # committed to allow/allow.
     log = _dl.DecisionLog()
     req = b"f" * 32
     d1 = _mkcd("allow", [_mkpd("allow")])
     d2 = _mkcd("allow", [_mkpd("allow")])
-    # pristine twin of d2's leaf, for the lie check below
+    # pristine twin of d2's leaf, for the honesty check below
     twin = _mkcd("allow", [_mkpd("allow")])
     twin_bytes = _dl._canonical_leaf_bytes(twin, req)
     log.append(d1, req)
     log.append(d2, req)
     assert _dl.detect_equivocation(log) == [], "control failed"
     leaf_before = log._leaf_hash_at(1)
-    d2.effect = "deny"  # post-append mutation
+    d2.effect = "deny"  # post-append mutation: must not fabricate
     found = _dl.detect_equivocation(log)
-    assert len(found) == 1, "fabrication did not register"
-    assert found[0].verify(log) is True, "fabricated proof must verify"
-    # The leaf never changed: it still commits to "allow".
+    assert found == [], \
+        "post-append mutation FABRICATED equivocation evidence"
+    # The leaf still commits to the true allow bytes.
     assert log._leaf_hash_at(1) == leaf_before
     assert log._leaf_hash_at(1) == _dl.hash_leaf(twin_bytes), \
         "leaf hash no longer matches the true allow bytes"
-    assert found[0].effect_b == "deny", "label should read deny"
-    raise AssertionError(
-        "fabricated equivocation: proof VERIFIES (effect_b='deny') "
-        "while the leaf bytes still commit to 'allow'")
+    return "mutation did not fabricate equivocation (snapshot)"
 
 
 def probe_log_bogus_index():

@@ -6460,7 +6460,7 @@ Concretely: install skill v1 with digest A (pin A). Then present record v1 with 
 
 **Status: CLOSED 2026-09-30 (wave-250 lane 1).** Close-when path (1): the installed map is now `{name: (version, digest)}` (the legacy bare-int form is refused as `skill-update-malformed`); a same-version reinstall with a different digest is refused with the new taxonomy code `skill-update-digest-changed` (taxonomy 979 -> 980). Break-first verification: `evals/w250_f211_closure_probes.py` (5 probes) reports BREAK on the pre-fix module (the F211 break shape: same-version digest substitution allowed) and 5/5 HELD on the fixed module, deterministic across 2 runs (staging + `env -u GOV_DEPLOYMENT_MODE`), synthetic/local, standalone. The standing w249 red-team pin `update/same-version-digest-substitution` flipped BREAK -> HELD (refused: skill-update-digest-changed); the w248 skill-update battery is 13/13 HELD with the new `same-version-digest-change-refused` probe. Idempotent identical-bytes reinstall stays allowed. Adjacent suites green: test_skill_update 30/30, w248 battery 13/13, w249 redteam 15/15, test_wiring 12/12. No overstatement: the primary pin-matching boundary is unchanged; this closes the idempotency-promise gap only.
 
-Next free finding: **F212**. **Open findings: F212, F213.** (F211 filed 2026-09-30, wave-249 lane 2 red-team, closed 2026-09-30, wave-250 lane 1; F212 and F213 filed 2026-09-30, wave-251 lane 3 red-team.)
+Next free finding: **F216**. **Open findings: F214, F215.** (F211 filed 2026-09-30, wave-249 lane 2 red-team, closed 2026-09-30, wave-250 lane 1; F212 and F213 filed 2026-09-30, wave-251 lane 3 red-team, closed 2026-09-30, wave-252 lane 1; F214 and F215 filed 2026-10-01, wave-252 lane 2 red-team.)
 
 ## F212: DecisionLog trusts caller-held CombinedDecision mutability — post-append mutation hides or fabricates equivocation evidence (LOW)
 
@@ -6475,7 +6475,7 @@ Next free finding: **F212**. **Open findings: F212, F213.** (F211 filed 2026-09-
 
 **Close-when criteria:** (1) `append()` snapshots the detection-relevant fields at append time — store `(request_digest, effect, policy_key)` (immutable values) instead of (or in addition to) the live object, and `detect_equivocation()` reads only the snapshots; (2) a break-first battery at the public seam showing the mutation probes BREAK on the old code and HELD on the fixed code (post-append mutation no longer moves detection; fabricated proof impossible); (3) adjacent suites green (test_decision_log, w250 decision-log battery).
 
-**Status: OPEN** (filed 2026-09-30, wave-251 lane 3 red-team).
+**Status: CLOSED 2026-09-30 (wave-252 lane 1).** Close-when path (1): `DecisionLog.append()` now snapshots `(request_digest, effect, policy_key)` from the live `CombinedDecision` at append time into `self._snapshots` (all three values immutable: 32-byte bytes, str, tuple-of-tuples-of-str); `detect_equivocation()` reads the snapshots ONLY — the identifier `combined` no longer appears in the detection function, and the live objects retained in `_entries_data` have no detection-adjacent readers. Close-when path (2): break-first battery `evals/w252_f212_f213_closure_probes.py` (7 probes) reports 5 BREAK on the pristine wave-251 base (hide -> detection returns []; fabricate -> verifying proof with lying labels; policy-identity mutation -> group split; bogus index -> IndexError; bad index -> TypeError) and 7/7 HELD on the fixed module, deterministic across 2 runs (staging + `env -u GOV_DEPLOYMENT_MODE`), synthetic/local, standalone. Close-when path (3): adjacent suites green — test_decision_log + test_policy_combine + test_evidence_bundle 107/107, w250 decision-log battery 12/12, w251 red-team 20/20 HELD (the standing F212/F213 pin `log/post-append-mutation-hides` and `log/bogus-proof-index` flipped BREAK -> HELD automatically; `log/post-append-mutation-fabricates` was a pure break-demonstrator and was honestly flipped to a HELD pin asserting the fixed behavior, with the pre-fix break shape documented in its comments). No new decision codes (fixes introduce no new refusal paths); taxonomy pin stays 1004. No overstatement: the Merkle integrity layer is unchanged; this closes the detection-view aliasing gap only.
 
 ## F213: EquivocationProof.verify() raises IndexError on out-of-range leaf index instead of returning False (LOW)
 
@@ -6487,6 +6487,30 @@ Next free finding: **F212**. **Open findings: F212, F213.** (F211 filed 2026-09-
 
 **Close-when criteria:** (1) `verify()` bounds-checks both indices (and tree_size consistency) and returns `False` for any out-of-range or malformed proof instead of raising; (2) break-first battery: the bogus-index probe BREAKs (raises) on old code, HELDs (returns False) on fixed code; (3) adjacent suites green.
 
-**Status: OPEN** (filed 2026-09-30, wave-251 lane 3 red-team).
+**Status: CLOSED 2026-09-30 (wave-252 lane 1).** Close-when path (1): `EquivocationProof.verify()` now bounds-checks both leaf indices (`_is_int` guard excluding bool, `0 <= idx < log.tree_size()`) and validates `tree_size` (genuine int, > 0) and `root` (32-byte bytes) shapes before touching the log — any out-of-range or malformed hand-crafted proof returns `False`, never raises. Close-when path (2): break-first battery `evals/w252_f212_f213_closure_probes.py` probes `f213/bogus-index-returns-false` and `f213/bad-index-returns-false` BREAK on pristine (IndexError on index 999; TypeError on `"0"`/`None`) and HELD on the fixed module. Close-when path (3): adjacent suites green (same runs as F212 above). No new decision codes; taxonomy pin stays 1004. Genuine proofs still verify `True`.
 
-Next free finding: **F214**. **Open findings: F212, F213.**
+## F214: PermitJournal escapes raw TypeError on non-serializable payload instead of permit-journal-misuse (LOW)
+
+**Cells:** wave-252 lane 2 red-team, 2026-10-01. Standing regression pin: `evals/w252_redteam_probes.py` (19 probes: 2 BREAK / 17 HELD, deterministic across 2 runs — staging + `env -u GOV_DEPLOYMENT_MODE` — synthetic/local, standalone), preserved as the permanent pin.
+
+**Defect:** `gov/permit_journal.py`'s `PermitJournal._build_body()` computes the event MAC over `_canonical(payload)` — `json.dumps` — with no serialization guard. A `grant()`/`record_use()`/etc. call whose payload contains a non-JSON-serializable value (e.g. a `set`) escapes as a raw `TypeError: Object of type set is not JSON serializable` (probe `journal/non-serializable-payload`) instead of the module's `PermitJournalRefusal` with `permit-journal-misuse`. The module documents a machine-code contract for every refusal (its decision_codes domain lists `permit-journal-misuse`), and callers that catch `PermitJournalError` to fail closed will miss this exception class entirely. Fail-closed in effect (the MAC is computed before `append_if`, so no partial write and no chain corruption), wrong error type — a contract violation at a public seam, not a bypass.
+
+**Severity rationale:** LOW. Fail-closed (no state mutated, no journal write), so the exposure is error-type confusion at the seam: a caller written against the documented `PermitJournalError` contract would see an unhandled `TypeError`. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows.
+
+**Close-when criteria:** (1) payload serialization in `_build_body` is wrapped so non-serializable payloads raise `PermitJournalRefusal` with `permit-journal-misuse` (no raw `TypeError` escapes any public append path); (2) break-first battery: the non-serializable-payload probe BREAKs (raw TypeError) on old code, HELDs (misuse code) on fixed code; (3) adjacent suites green (test_permit_journal, w250 permit-journal battery).
+
+**Status: OPEN** (filed 2026-10-01, wave-252 lane 2 red-team).
+
+## F215: posture_cards issue_summary/track_level escape raw AttributeError on non-dict cards instead of posture-card-malformed (LOW)
+
+**Cells:** wave-252 lane 2 red-team, 2026-10-01. Standing regression pin: `evals/w252_redteam_probes.py` (probe `posture/non-dict-cards`), same battery as F214.
+
+**Defect:** `gov/posture_cards.py`'s `issue_summary()` validates that `cards` is a list but not that its elements are dicts; `track_level()` then calls `c.get("track")` on each element. A cards list containing a non-dict (e.g. `["not-a-dict"]`) escapes as a raw `AttributeError: 'str' object has no attribute 'get'` instead of the documented `PostureCardError` with `posture-card-malformed`. The module's contract is that malformed inputs refuse with machine codes (`posture-card-malformed`, `posture-card-unverifiable`, `posture-card-unknown-track`); a raw `AttributeError` breaks that contract for any caller (including a future service wrapper) that catches `PostureCardError` to fail closed.
+
+**Severity rationale:** LOW. The caller supplies its own cards, so exploitation requires a buggy (not adversarial) caller, and the failure is loud, not silent — no false posture claim is produced. Scoped below MEDIUM because there is no integrity or authenticity impact: no summary is issued, only the wrong exception type.
+
+**Close-when criteria:** (1) `issue_summary()` (and `track_level()`, the shared read path) validates that every card is a dict and refuses `posture-card-malformed` otherwise — no raw `AttributeError` escapes any public path; (2) break-first battery: the non-dict-cards probe BREAKs (AttributeError) on old code, HELDs (malformed code) on fixed code; (3) adjacent suites green (test_posture_cards, w251 lane batteries).
+
+**Status: OPEN** (filed 2026-10-01, wave-252 lane 2 red-team).
+
+Next free finding: **F216**. **Open findings: F214, F215.**
