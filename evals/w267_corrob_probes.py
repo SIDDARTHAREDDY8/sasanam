@@ -62,7 +62,7 @@ except Exception:  # red phase: module not written yet
     _cr = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 # pin 1222 -> 1231 (+9 corrob-*/corrob-vc-*).
 
 EXPECTED_CODES = (

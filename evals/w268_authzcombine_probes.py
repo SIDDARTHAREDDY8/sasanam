@@ -44,9 +44,9 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-# Wave-268 merge: pin -> 1299 (lane: 1274 + 10 authz-* = 1284).
+# Wave-269 merge: pin -> 1325 (lane: 1274 + 10 authz-* = 1284).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 1299
+TAXONOMY_PIN = 1325
 
 _STUB_SRC = '''
 """Permissive stub: allows every request. Red-phase foil only."""

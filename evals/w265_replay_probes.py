@@ -84,7 +84,7 @@ from gov import durable_approval as da  # noqa: E402
 from gov import decision_bom as dbom  # noqa: E402
 from gov.durable_journal import JournalCorrupted  # noqa: E402
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 TMP_BASE = "/var/tmp/g265replay"
 Path(TMP_BASE).mkdir(parents=True, exist_ok=True)

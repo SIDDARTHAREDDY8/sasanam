@@ -49,7 +49,7 @@ from gov import decision_codes  # noqa: E402 (taxonomy pin below)
 
 # Wave-260: 3 new machine codes (callauthz-denied, callauthz-check-error,
 # callauthz-not-configured) -> pin 1080 -> 1083.
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _PROBES = []
 

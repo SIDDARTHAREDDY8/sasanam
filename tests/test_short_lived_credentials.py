@@ -21,7 +21,7 @@ class TaxonomyPinTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-256 lane 2: re-pointed to 1045 (1036 + 9
         # short-lived-credential), additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1325)  # Wave-269 merge: pin -> 1325.
         for code in (
                 "short-lived-credential-chain-broken",
                 "short-lived-credential-corrupted",

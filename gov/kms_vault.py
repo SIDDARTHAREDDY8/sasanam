@@ -371,6 +371,48 @@ class VaultKmsProvider(KmsProvider):
                               arn_or_name="vault:%s:%s"
                               % (self._mount, name))
 
+    def sign(self, key_id, digest):
+        """Sign a 32-byte SHA-256 digest with the transit key ``key_id``.
+
+        Uses the Vault transit ``/sign`` endpoint with ``prehashed``
+        input and the ``ed25519`` signature algorithm; returns the 64
+        raw signature bytes. The private key never leaves Vault. Any
+        failure raises :class:`KmsError` (fail closed; never falls back
+        to a local key).
+        """
+        self._validate_key_id(key_id)
+        if (not isinstance(digest, (bytes, bytearray))
+                or len(digest) != 32):
+            raise KmsError("vault kms sign: digest must be 32 bytes")
+        _log.debug("vault kms sign: key_id=%r", key_id)
+        doc = self._api("sign", "POST", self._path("sign", key_id),
+                        {"input": base64.b64encode(bytes(digest)).decode(
+                            "ascii"),
+                         "prehashed": True,
+                         "signature_algorithm": "ed25519"})
+        try:
+            sig_field = doc["data"]["signature"]
+        except (KeyError, TypeError):
+            raise KmsError(
+                "vault kms sign: response missing data.signature")
+        # Vault transit returns "vault:v1:<base64>"; the base64 payload
+        # of an ed25519 signature decodes to exactly 64 bytes.
+        if (not isinstance(sig_field, str)
+                or not sig_field.startswith("vault:v1:")):
+            raise KmsError(
+                "vault kms sign: malformed signature in response")
+        try:
+            sig = base64.b64decode(sig_field[len("vault:v1:"):],
+                                   validate=True)
+        except Exception:
+            raise KmsError(
+                "vault kms sign: invalid signature encoding in response")
+        if len(sig) != 64:
+            raise KmsError(
+                "vault kms sign: unexpected signature length %d"
+                % len(sig))
+        return sig
+
 
 def _safe_error_summary(resp_body):
     """Extract a short, safe operator summary from a Vault error body.

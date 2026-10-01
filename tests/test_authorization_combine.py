@@ -1,7 +1,6 @@
 """Unit tests for gov/authorization_combine.py (wave-268 lane).
 
-Pin 1299 is asserted here (lane-local); the global pin repoint is the
-merge coordinator's chore per lane convention.
+Pin 1325 is asserted here; repointed by the wave-269 merge coordinator.
 """
 
 import re
@@ -366,8 +365,8 @@ class VerdictShapeTests(unittest.TestCase):
 
 class RegistryTests(unittest.TestCase):
     def test_lane_pin(self):
-        # Wave-268 authzcombine: pin -> 1299.
-        self.assertEqual(len(dc.TAXONOMY), 1299)
+        # Wave-269 merge: pin -> 1325.
+        self.assertEqual(len(dc.TAXONOMY), 1325)
 
     def test_authz_codes_present(self):
         expected = ["authz-allow", "authz-audit-hit",

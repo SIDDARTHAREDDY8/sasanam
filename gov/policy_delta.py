@@ -31,6 +31,36 @@ Composition (never duplication):
   review evidence; the concrete artifacts go back to the caller,
   never into the journal.
 
+Composition with policy exceptions (wave-269):
+
+  ``evaluate`` and ``counterexamples`` accept an optional exception
+  seam (``exceptions`` = loaded :class:`gov.policy_exception.
+  PolicyException` objects from
+  :func:`gov.policy_exception.load_exceptions`, plus ``policy_name``
+  and a pinned ``eval_start``). The algebra:
+
+  * Deny > Unknown > Allow, structurally. A granted skip NEVER
+    clears a deny and NEVER converts Unknown to Allow.
+  * Skips apply ONLY to allow-rule grants: a granted skip on an
+    allow rule suppresses that rule's grant (recorded with the
+    exception identity; the engine default-deny then decides).
+  * A granted skip on a DENY rule is recorded as ``vetoed`` and the
+    deny stands: deny-veto is structural, never a named operator.
+  * A residual (unevaluable) deny yields Unknown regardless of any
+    skip: residual-deny => Unknown is structural.
+  * Exception expiry is evaluated against the pinned ``eval_start``:
+    an expired exception re-arms the rule automatically. A missing
+    ``eval_start`` with exceptions present is a loud
+    ``policy-delta-malformed`` refusal -- there is no silent clock.
+  * ``counterexamples`` never drops a grant because of a skip: a
+    grant whose rule is exception-skipped is emitted WITH the
+    exception identity attached (``exception_skips``), so the
+    reviewer sees the would-be grant and its suppression. Without
+    exceptions the records are byte-identical to before.
+  * The exception match context is derived deterministically from
+    the request/expansion atom: ``{"subject", "action", "resource":
+    {"host", "port", "method", "path", "credential"}}``.
+
 What this module provides, stdlib-only:
 
 * :func:`counterexamples`: compare candidate vs current vs the
@@ -106,6 +136,12 @@ from gov.policy_change_containment import (
     _parse_port,
     _port_covers,
     check_policy_change,
+)
+from gov.policy_exception import (
+    PolicyException,
+    PolicyExceptionError,
+    apply as _exc_apply,
+    to_skip_record as _exc_skip_record,
 )
 
 __all__ = [
@@ -281,15 +317,95 @@ def _digest_record(obj):
 
 
 def _counterexample(subject, action, resource, within_boundary,
-                    failed_checks):
+                    failed_checks, exception_skips=()):
     artifact = {"code": COUNTEREXAMPLE_RAISED,
                 "subject": subject,
                 "action": action,
                 "resource": resource,
                 "within_boundary": bool(within_boundary),
                 "failed_checks": list(failed_checks)}
+    if exception_skips:
+        # A grant whose rule is exception-skipped is never silently
+        # dropped: it is emitted WITH the exception identity
+        # attached, so the reviewer sees the would-be grant and its
+        # suppression. Absent when no skip applies, so default
+        # records stay byte-identical to before.
+        artifact["exception_skips"] = [
+            {"rule": rid, "exception_ids": list(eids)}
+            for rid, eids in exception_skips]
     artifact["evidence_digest"] = _digest_record(artifact)
     return artifact
+
+
+# ------------------------------------------------------------------
+# Exception seam (wave-269 composition).
+# ------------------------------------------------------------------
+
+def _exc_seam(exceptions, policy_name, eval_start):
+    """Validate the optional exception seam.
+
+    Returns (active, exceptions_list). ``active`` is False when no
+    exceptions are supplied or no policy name is given (exceptions
+    are then inert -- fail-closed toward enforcement). A supplied
+    seam without a pinned ``eval_start`` is a loud malformed
+    refusal: there is no silent clock."""
+    if exceptions is None:
+        return False, []
+    if not isinstance(exceptions, (list, tuple)):
+        _malformed("exceptions",
+                   "must be a list of loaded PolicyException objects")
+    for e in exceptions:
+        if not isinstance(e, PolicyException):
+            _malformed("exceptions",
+                       "entries must be loaded PolicyException objects "
+                       "(use gov.policy_exception.load_exceptions)")
+    if policy_name is None:
+        return False, list(exceptions)
+    if not isinstance(policy_name, str) or not policy_name:
+        _malformed("policy_name", "must be a non-empty string or None")
+    if eval_start is None:
+        _malformed("exceptions",
+                   "exceptions require a pinned eval_start; no "
+                   "ambient clock")
+    try:
+        _exc_apply(policy_name, "__probe__", {}, eval_start, [])
+    except PolicyExceptionError as exc:
+        _malformed("eval_start", exc.human)
+    return True, list(exceptions)
+
+
+def _exception_context(subject, action, resource):
+    """Deterministic exception match context derived from a
+    request atom or an expansion atom."""
+    return {"subject": subject, "action": action,
+            "resource": dict(resource)}
+
+
+def _skip_entry(policy_name, rule_id, rule_effect, vetoed, decision,
+                context, eval_start):
+    """Digest-linked skip entry for the decision trail. A skip on a
+    deny rule is marked ``vetoed`` -- the deny stands; the attempt
+    is attributed, never silently dropped."""
+    entry = _exc_skip_record(decision, policy_name, rule_id,
+                             context, eval_start)
+    entry["rule_effect"] = rule_effect
+    entry["vetoed"] = bool(vetoed)
+    return entry
+
+
+def _granted_skip(policy_name, rule_id, context, eval_start,
+                  exceptions):
+    """Granted SkipDecision for one (policy, rule) hit, or None."""
+    try:
+        decision = _exc_apply(policy_name, rule_id, context,
+                              eval_start, exceptions)
+    except PolicyExceptionError:
+        # Malformed exception input at apply time fails closed:
+        # the rule is not skipped.
+        return None
+    if decision.kind == "skip":
+        return decision
+    return None
 
 
 def _record(verdict, delta_class, failed, cxs, detail=""):
@@ -305,7 +421,8 @@ def _record(verdict, delta_class, failed, cxs, detail=""):
 
 
 def counterexamples(candidate, current, boundary,
-                    credentialed_hosts=()):
+                    credentialed_hosts=(), exceptions=None,
+                    policy_name=None, eval_start=None):
     """Emit one concrete counterexample per expansion grant.
 
     Returns a record: gate ``verdict``/``delta_class`` (composed
@@ -314,8 +431,16 @@ def counterexamples(candidate, current, boundary,
     delta (``policy-delta-forbid-residual``): the allow-expansion
     is still attributed for the reviewer, but the verdict is
     ``uncheckable`` -- never a vacuous pass. Raises
-    :class:`PolicyDeltaError` only on malformed input."""
+    :class:`PolicyDeltaError` only on malformed input.
+
+    With an exception seam (``exceptions`` + ``policy_name`` + a
+    pinned ``eval_start``), a grant whose rule is exception-skipped
+    is still emitted -- with the exception identity attached in
+    ``exception_skips`` -- so the suppression is auditable and
+    nothing is silently dropped."""
     deny_ids = _deny_rule_ids(candidate)
+    seam_active, exc_list = _exc_seam(exceptions, policy_name,
+                                      eval_start)
     try:
         report = check_policy_change(candidate, current, boundary,
                                      credentialed_hosts)
@@ -342,6 +467,18 @@ def counterexamples(candidate, current, boundary,
     curr_atoms = _atoms(curr_rules)
     bound_atoms = _atoms(bound_rules)
 
+    # Per-rule atom index for exception attribution: an expansion
+    # grant is never dropped because of a skip -- when a granted
+    # exception covers the grant's rule, the counterexample carries
+    # the exception identity.
+    rule_atom_keys = {}
+    if seam_active:
+        for rule in cand_rules:
+            keys = set()
+            for a in _atoms([rule]):
+                keys.add(json.dumps(a, sort_keys=True, default=str))
+            rule_atom_keys[rule["id"]] = keys
+
     expansion = sorted(
         (a for a in cand_atoms if not _covered_by(a, curr_atoms)),
         key=lambda a: json.dumps(a, sort_keys=True, default=str))
@@ -353,15 +490,29 @@ def counterexamples(candidate, current, boundary,
             fired = _atom_failed_checks(atom, bound_atoms,
                                         curr_atoms, cred_hosts)
             resource = _render_resource(atom)
+            exc_skips = []
+            if seam_active:
+                akey = json.dumps(atom, sort_keys=True, default=str)
+                for rid, keys in rule_atom_keys.items():
+                    if akey not in keys:
+                        continue
+                    ctx = _exception_context(atom[0], atom[1],
+                                             resource)
+                    decision = _granted_skip(policy_name, rid, ctx,
+                                             eval_start, exc_list)
+                    if decision is not None:
+                        exc_skips.append(
+                            (rid, decision.exception_ids))
         except Exception:
             # Error-skip fail-closed: an unattributable atom is
             # never silently dropped; it poisons the verdict.
             errored = True
             fired = [EVALUATION_ERROR]
             resource = _render_resource(atom)
+            exc_skips = []
         cxs.append(_counterexample(atom[0], atom[1], resource,
                                    BOUNDARY_EXCEEDED not in fired,
-                                   fired))
+                                   fired, exc_skips))
 
     failed = list(report["failed_checks"])
     if deny_ids and FORBID_RESIDUAL not in failed:
@@ -499,17 +650,27 @@ def _parse_request(req):
     return (subject, "egress", host, port, method, path, credential)
 
 
-def evaluate(policy, request):
+def evaluate(policy, request, exceptions=None, policy_name=None,
+             eval_start=None):
     """Authorize one request. Returns a decision record:
     ``decision`` in ("Allow", "Deny", "Unknown"), ``reason`` (a
-    machine code for Deny/Unknown), ``matched_rule``.
+    machine code for Deny/Unknown), ``matched_rule``, and
+    ``exception_skips`` (skip entries with exception identities,
+    possibly empty).
 
     The combine: a covering deny rule hard-overrides any allow;
     no covering allow => Deny (default-deny lives in the engine);
     a residual (unevaluable) deny rule => Unknown -- the
     deployment MUST treat Unknown as Deny, never fail-open;
     evaluation errors skip toward deny, never toward allow.
-    Malformed policy raises loudly; a malformed request Denies."""
+    Malformed policy raises loudly; a malformed request Denies.
+
+    With an exception seam (``exceptions`` + ``policy_name`` + a
+    pinned ``eval_start``): a granted skip on an allow rule
+    suppresses that rule's grant (recorded in ``exception_skips``
+    with the exception identity); a granted skip on a deny rule is
+    recorded as ``vetoed`` and the deny stands -- deny-veto and
+    residual-deny => Unknown are structural and survive skipping."""
     try:
         rules, residual, _skipped = _load_policy_engine(
             policy, "policy")
@@ -517,16 +678,26 @@ def evaluate(policy, request):
         raise
     except PolicyChangeError as e:
         _refuse(MALFORMED, e.detail)
+    seam_active, exc_list = _exc_seam(exceptions, policy_name,
+                                      eval_start)
     try:
         req_atom = _parse_request(request)
     except (_Uncheckable, PolicyDeltaError, PolicyChangeError):
         return {"decision": "Deny", "reason": EVALUATION_ERROR,
-                "matched_rule": None}
+                "matched_rule": None, "exception_skips": []}
+    ctx = _exception_context(
+        req_atom[0], req_atom[1],
+        {"host": _render_shape(req_atom[2]),
+         "port": _render_shape(req_atom[3]),
+         "method": _render_shape(req_atom[4]),
+         "path": _render_shape(req_atom[5]),
+         "credential": req_atom[6]}) if seam_active else None
     if residual:
         # Residual forbid: we cannot prove the deny does NOT
-        # cover the request => Unknown, never fail-open.
+        # cover the request => Unknown, never fail-open. Skips
+        # cannot clear a residual: the Unknown stands regardless.
         return {"decision": "Unknown", "reason": FORBID_RESIDUAL,
-                "matched_rule": residual[0]}
+                "matched_rule": residual[0], "exception_skips": []}
     for rule in rules:
         if rule["effect"] != "deny":
             continue
@@ -537,10 +708,24 @@ def evaluate(policy, request):
             # Cannot confirm the deny does not cover => Unknown.
             return {"decision": "Unknown",
                     "reason": FORBID_RESIDUAL,
-                    "matched_rule": rule["id"]}
+                    "matched_rule": rule["id"],
+                    "exception_skips": []}
         if covered:
+            skips = []
+            if seam_active:
+                decision = _granted_skip(policy_name, rule["id"],
+                                         ctx, eval_start, exc_list)
+                if decision is not None:
+                    # The skip is real but VETOED: a deny rule is
+                    # never cleared by an exception. Attributed,
+                    # never silently dropped.
+                    skips.append(_skip_entry(
+                        policy_name, rule["id"], "deny", True,
+                        decision, ctx, eval_start))
             return {"decision": "Deny", "reason": FORBID,
-                    "matched_rule": rule["id"]}
+                    "matched_rule": rule["id"],
+                    "exception_skips": skips}
+    collected = []
     for rule in rules:
         if rule["effect"] != "allow":
             continue
@@ -551,10 +736,21 @@ def evaluate(policy, request):
             # Error-skip fail-closed: skip toward deny.
             continue
         if covered:
+            if seam_active:
+                decision = _granted_skip(policy_name, rule["id"],
+                                         ctx, eval_start, exc_list)
+                if decision is not None:
+                    # Granted skip suppresses this rule's grant;
+                    # the engine default-deny decides.
+                    collected.append(_skip_entry(
+                        policy_name, rule["id"], "allow", False,
+                        decision, ctx, eval_start))
+                    continue
             return {"decision": "Allow", "reason": "allow",
-                    "matched_rule": rule["id"]}
+                    "matched_rule": rule["id"],
+                    "exception_skips": collected}
     return {"decision": "Deny", "reason": DEFAULT_DENY,
-            "matched_rule": None}
+            "matched_rule": None, "exception_skips": collected}
 
 
 def request_review(gate, record, policy_id):

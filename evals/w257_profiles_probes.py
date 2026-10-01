@@ -22,7 +22,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 try:
     from gov import decision_codes

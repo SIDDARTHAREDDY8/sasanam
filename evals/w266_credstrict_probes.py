@@ -53,7 +53,7 @@ else:
 # Enforced at import in module mode; the taxonomy_pin probe reports
 # the state in both modes (stub mode pre-build legitimately BREAKs).
 if IMPL == "module":
-    assert len(decision_codes.TAXONOMY) == 1299, "taxonomy pin 1299"  # Wave-268 merge: pin -> 1299.
+    assert len(decision_codes.TAXONOMY) == 1325, "taxonomy pin 1299"  # Wave-269 merge: pin -> 1325.
 
 PROBES = []
 
@@ -420,7 +420,7 @@ def taxonomy_pin():
         os.path.dirname(os.path.abspath(__file__))),
         "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(credential-strict-[a-z-]+)\'', src)
-    if len(decision_codes.TAXONOMY) != 1299:
+    if len(decision_codes.TAXONOMY) != 1325:
         return "BREAK(pin %d)" % len(decision_codes.TAXONOMY)
     if sorted(set(lits)) != sorted(lits) or len(lits) != 4:
         return "BREAK(literals %r)" % (lits,)

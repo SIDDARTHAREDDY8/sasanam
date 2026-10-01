@@ -43,7 +43,7 @@ from gov import transparency_log as tl  # noqa: E402
 # Wave-260 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _PROBES = []
 

@@ -208,7 +208,7 @@ class LandlockTaxonomyTest(unittest.TestCase):
 
     def test_pin(self):
         # Local pin for this lane: base 1205 + 3 landlock codes.
-        self.assertEqual(len(dcd.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
+        self.assertEqual(len(dcd.TAXONOMY), 1325)  # Wave-269 merge: pin -> 1325.
 
 
 class LandlockEnvConfigTest(unittest.TestCase):

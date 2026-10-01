@@ -15,7 +15,7 @@ from gov import decision_codes as dc
 from gov import policy_delta as pd
 from gov.agent_callbacks import Continue, HumanApprovalGate
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 
 def _egress(rid, subject, hosts, ports=(443,), methods=("GET",),

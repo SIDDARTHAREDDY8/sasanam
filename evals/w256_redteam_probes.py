@@ -37,7 +37,7 @@ from gov import inventory_catalog as ic  # noqa: E402
 from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _PROBES = []
 

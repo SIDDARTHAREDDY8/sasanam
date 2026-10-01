@@ -56,7 +56,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 import gov.decision_packet as dp  # noqa: E402
 import gov.ed25519 as ed25519  # noqa: E402
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 
 def _seed(tag):
@@ -1035,33 +1035,118 @@ def d03_attribution_no_drift():
 
 
 def d04_exception_skip_forward():
-    """Cross-seam watch item for the wave-268 exception lane:
-    evaluate() has NO exception/skip path today -- a RuleSkip-shaped
-    bypass cannot be smuggled through the request engine because the
-    concept does not exist. When the Kyverno-style exception tuple
-    lands, its skip MUST compose with deny-veto (a skip must never
-    downgrade a covering deny or an Unknown). RESIDUAL (forward
-    hazard, not a current defect)."""
-    pol = {"version": 1, "rules": _PD_CURRENT["rules"] + [
+    """CLOSED by the wave-269 poldelta x exception-tuple
+    composition: the exception seam now exists in the request
+    engine, and a granted RuleSkip composes with deny-veto -- it
+    can never clear a deny or an Unknown. Break-first: BREAKs if
+    a skip clears a deny, converts Unknown to Allow, or silently
+    drops a skipped rule from counterexample attribution."""
+    from gov import policy_exception as pex
+
+    seed = ed25519.generate_seed()
+    pub = ed25519.publickey(seed)
+    kid = "redteam-probe-key"
+    trusted = {kid: Ed25519Verifier(pub, kid)}
+    start = "2026-10-01T12:00:00Z"
+    pname = "redteam-probe-policy"
+
+    def _granted(rule, exc_id):
+        body = {
+            "kind": "sasanam.policy-exception/v1",
+            "id": exc_id,
+            "policyName": pname,
+            "ruleNames": [rule],
+            "match": {"any": [
+                {"path": "subject", "op": "eq",
+                 "value": "agent-worker"}]},
+            "conditions": [],
+            "expiresAt": "2027-01-01T00:00:00Z",
+            "compensatingValidations": [],
+        }
+        wire = pex.seal_exception(body, seed, kid)
+        return pex.load_exceptions(
+            [wire], trusted, start).exceptions
+
+    seam = {"policy_name": pname, "eval_start": start}
+    deny_pol = {"version": 1, "rules": _PD_CURRENT["rules"] + [
         {"id": "deny-x", "subject": "agent-worker", "effect": "deny",
          "action": "egress",
          "hosts": ["*"], "ports": [443],
          "methods": ["*"], "paths": ["*"],
          "credential": None},
     ]}
-    req = {"subject": "agent-worker", "action": "egress",
-           "host": "evil.example.com", "port": 443,
-           "method": "POST", "path": "/exfil", "credential": None}
-    d = poldelta.evaluate(pol, req)
-    has_skip = any("skip" in k.lower() or "exception" in k.lower()
-                   for k in d)
-    if d["decision"] == "Deny" and not has_skip:
-        return ("RESIDUAL",
-                "no skip path exists in the request engine today; "
-                "the coming exception-tuple lane must compose "
-                "RuleSkip with deny-veto (skip must never clear a "
-                "deny or an Unknown)")
-    return ("ERROR", "unexpected: %r" % (d,))
+    ok_req = {"subject": "agent-worker", "action": "egress",
+              "host": "api.example.com", "port": 443,
+              "method": "GET", "path": "/v1/models",
+              "credential": None}
+
+    # (1) Skip on the covering deny: the skip is recorded vetoed,
+    # the deny stands (deny-veto is structural).
+    d = poldelta.evaluate(deny_pol, ok_req,
+                          exceptions=_granted("deny-x", "exc-d1"),
+                          **seam)
+    sk = d.get("exception_skips", [])
+    if d["decision"] != "Deny" or \
+            d.get("reason") != "policy-delta-forbid" or \
+            len(sk) != 1 or sk[0].get("rule") != "deny-x" or \
+            sk[0].get("vetoed") is not True or \
+            sk[0].get("exception_ids") != ["exc-d1"]:
+        return ("BREAK", "skip cleared/misattributed a deny: %r"
+                % (d,))
+
+    # (2) Skip on the allow grant: the grant is suppressed and the
+    # engine default-deny decides -- never an Allow.
+    d = poldelta.evaluate(_PD_CURRENT, ok_req,
+                          exceptions=_granted("llm", "exc-a1"),
+                          **seam)
+    sk = d.get("exception_skips", [])
+    if d["decision"] != "Deny" or \
+            d.get("reason") != "policy-delta-default-deny" or \
+            len(sk) != 1 or sk[0].get("vetoed") is not False or \
+            sk[0].get("exception_ids") != ["exc-a1"]:
+        return ("BREAK", "skip mis-handled an allow grant: %r"
+                % (d,))
+
+    # (3) Residual deny + skip on the allow: Unknown survives
+    # skipping (never converts to Allow).
+    resid = {"version": 1, "rules": _PD_CURRENT["rules"] + [
+        {"id": "deny-weird", "subject": "agent-worker",
+         "effect": "deny", "action": "egress",
+         "hosts": ["[unparseable"], "ports": [443],
+         "methods": ["GET"], "paths": ["/v1/*"],
+         "credential": None},
+    ]}
+    d = poldelta.evaluate(resid, ok_req,
+                          exceptions=_granted("llm", "exc-a2"),
+                          **seam)
+    if d["decision"] != "Unknown":
+        return ("BREAK", "skip converted Unknown: %r" % (d,))
+
+    # (4) Counterexample attribution: a skipped grant is emitted
+    # with its exception identity, never silently dropped.
+    widen = {"version": 1, "rules": _PD_CURRENT["rules"] + [
+        {"id": "llm-evil", "subject": "agent-worker",
+         "effect": "allow", "action": "egress",
+         "hosts": ["evil.example.com"], "ports": [443],
+         "methods": ["POST"], "paths": ["/exfil"],
+         "credential": None},
+    ]}
+    r = poldelta.counterexamples(widen, _PD_CURRENT, _PD_BOUNDARY,
+                                 exceptions=_granted("llm-evil",
+                                                     "exc-e1"),
+                                 **seam)
+    cxs = r.get("counterexamples", [])
+    if len(cxs) != 1:
+        return ("BREAK", "skipped grant dropped from attribution: "
+                "%r" % (r,))
+    sk = cxs[0].get("exception_skips", [])
+    if len(sk) != 1 or sk[0].get("rule") != "llm-evil" or \
+            sk[0].get("exception_ids") != ["exc-e1"]:
+        return ("BREAK", "skipped grant misattributed: %r"
+                % (cxs[0],))
+    return ("HELD",
+            "RuleSkip composes with deny-veto: skips never clear a "
+            "deny or an Unknown; skipped grants are attributed")
 
 
 # ----------------------------------------------------------------------

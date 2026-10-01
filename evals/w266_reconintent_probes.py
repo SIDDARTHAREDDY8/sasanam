@@ -46,7 +46,7 @@ except Exception:  # red phase: module not written yet
     decision_codes = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 # pin 1205 -> 1208 (+3 reconintent-*).
 
 EXPECTED_CODES = (

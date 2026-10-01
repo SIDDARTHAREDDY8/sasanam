@@ -43,7 +43,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _STUB_SRC = '''
 """Permissive stub: accepts every packet. Red-phase foil only."""

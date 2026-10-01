@@ -205,7 +205,7 @@ class PinTests(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Lane-local pin: 1222 + 9 verpol-* codes. The global
         # test_decision_codes.py repoint is the merge coordinator's.
-        self.assertEqual(len(dc.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
+        self.assertEqual(len(dc.TAXONOMY), 1325)  # Wave-269 merge: pin -> 1325.
         codes = [c for c in dc.TAXONOMY if c.startswith("verpol-")]
         self.assertEqual(len(codes), 9)
 

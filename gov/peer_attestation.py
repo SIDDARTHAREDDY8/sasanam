@@ -24,7 +24,9 @@ resistance. This module adds the six adapted primitives:
   ``peer-double-join-incident`` to the hash-chained durable journal
   (SPIRE's contract: both sides log the double-join as a security
   incident). Rotation is explicit: ``remove_peer`` unbinds, then a
-  fresh registration succeeds.
+  fresh registration succeeds. Bindings, identity mappings, and bans
+  are rebuilt from the journal on ``__init__`` (F251): the TOFU
+  guarantee survives restarts, not just the process lifetime.
 * **Centrally-authored identity mapping**: the deployment authors
   which identities each anchor-bound peer may claim
   (:meth:`PeerAttestationTable.author_identity`). Attestation
@@ -296,11 +298,133 @@ class PeerAttestationTable(object):
         self._peers = {}        # peer_id -> record
         self._anchor_index = {}  # anchor_pub_hex -> peer_id
         self._mapping = {}      # peer_id -> frozenset(identities)
+        # F251 fix: rebuild control-plane state from the durable
+        # journal. Without this, TOFU bindings, identity mappings,
+        # and bans were in-memory-only and a restart silently voided
+        # them (an attacker's post-restart registration succeeded
+        # while the legitimate owner's later re-registration was the
+        # one refused, with confused attribution).
+        self._replay_journal()
 
     # -- journal ----------------------------------------------------
 
     def _journal_append(self, rtype, body):
         self._journal.append(rtype, body)
+
+    # -- journal replay (F251) ---------------------------------------
+
+    def _replay_journal(self):
+        """Rebuild in-memory control-plane state from the journal.
+
+        Applies, in order, the control-plane record types this class
+        journals: ``peer-registered``, ``peer-identity-authorized``,
+        ``peer-banned``, ``peer-removed``. Incident records
+        (``peer-double-join-incident``), snapshot anchors, and unknown
+        types carry no peer state and are ignored. Replay is
+        read-only: it never appends to the journal.
+
+        Records are hash-chain-verified at journal load, but replay
+        still validates shapes and raises
+        ``durable_journal.JournalCorrupted`` on a shape-invalid known
+        record: silently skipping a binding would reintroduce F251.
+        A registration for an already-bound peer id or anchor key is
+        a journal anomaly (the live path refuses double-join before
+        journaling); first record wins, the anomaly is left in the
+        audit trail rather than rebound.
+
+        Claim payloads are NOT restored: the journal records
+        ``claim_keys`` for audit; claim evidence is re-attested at
+        each attestation, so replay rebuilds an empty claim set.
+
+        Note: operator-invoked ``Journal.compact()`` drops folded
+        pre-snapshot history by design; replay covers the records the
+        journal still holds.
+        """
+        for rec in self._journal.records:
+            rtype = rec.get("type")
+            body = rec.get("body") or {}
+            if rtype == "peer-registered":
+                self._replay_registered(body)
+            elif rtype == "peer-identity-authorized":
+                self._replay_authorized(body)
+            elif rtype == "peer-banned":
+                self._replay_banned(body)
+            elif rtype == "peer-removed":
+                self._replay_removed(body)
+            # else: incidents, snapshot anchors, unknown types --
+            # no control-plane state.
+
+    def _replay_registered(self, body):
+        try:
+            peer_id = _check_peer_id(body["peer_id"])
+            anchor = _check_anchor(body["anchor_public_key"])
+        except (KeyError, TypeError, PeerAttestationError) as exc:
+            raise _durable_journal.JournalCorrupted(
+                "peer-registered record malformed: %r" % (exc,))
+        if peer_id in self._peers or anchor in self._anchor_index:
+            # Journal anomaly: first record wins (see _replay_journal).
+            return
+        self._peers[peer_id] = {
+            "peer_id": peer_id,
+            "anchor_public_key": anchor,
+            "claims": {},
+            "registered_at": body.get("registered_at"),
+            "banned": False,
+            "challenge": None,
+            "last_attested_identity": None,
+        }
+        self._anchor_index[anchor] = peer_id
+
+    def _replay_authorized(self, body):
+        try:
+            peer_id = _check_peer_id(body["peer_id"])
+            identities = body["identities"]
+            if (not isinstance(identities, (list, tuple))
+                    or not identities):
+                raise _malformed("identities malformed")
+            seen = set()
+            for ident in identities:
+                _check_identity(ident)
+                seen.add(ident)
+        except (KeyError, TypeError, PeerAttestationError) as exc:
+            raise _durable_journal.JournalCorrupted(
+                "peer-identity-authorized record malformed: %r" % (exc,))
+        self._mapping[peer_id] = frozenset(sorted(seen))
+
+    def _replay_banned(self, body):
+        try:
+            peer_id = _check_peer_id(body["peer_id"])
+        except (KeyError, TypeError, PeerAttestationError) as exc:
+            raise _durable_journal.JournalCorrupted(
+                "peer-banned record malformed: %r" % (exc,))
+        rec = self._peers.get(peer_id)
+        if rec is None:
+            # Cannot happen through the public API (ban_peer refuses
+            # unknown peers); fail closed by keeping the ban.
+            rec = {
+                "peer_id": peer_id,
+                "anchor_public_key": None,
+                "claims": {},
+                "registered_at": None,
+                "banned": True,
+                "challenge": None,
+                "last_attested_identity": None,
+            }
+            self._peers[peer_id] = rec
+        else:
+            rec["banned"] = True
+            rec["challenge"] = None
+
+    def _replay_removed(self, body):
+        try:
+            peer_id = _check_peer_id(body["peer_id"])
+        except (KeyError, TypeError, PeerAttestationError) as exc:
+            raise _durable_journal.JournalCorrupted(
+                "peer-removed record malformed: %r" % (exc,))
+        # Mirror remove_peer exactly (it does not clear _mapping).
+        rec = self._peers.pop(peer_id, None)
+        if rec is not None and rec.get("anchor_public_key") is not None:
+            self._anchor_index.pop(rec["anchor_public_key"], None)
 
     # -- centrally-authored identity mapping -------------------------
 
@@ -368,7 +492,8 @@ class PeerAttestationTable(object):
         self._journal_append("peer-registered",
                              {"peer_id": peer_id,
                               "anchor_public_key": anchor_pub_hex,
-                              "claim_keys": sorted(normalized)})
+                              "claim_keys": sorted(normalized),
+                              "registered_at": now})
         return {"peer_id": peer_id, "registered": True}
 
     def _double_join_incident(self, bound_peer_id, presented_anchor,
@@ -538,7 +663,13 @@ class PeerAttestationTable(object):
             rec = self._peers[peer_id]
             if rec["banned"]:
                 continue
-            if rec["registered_at"] + ttl_seconds < now:
+            registered_at = rec.get("registered_at")
+            if registered_at is None:
+                # F251 replay: journals written before registered_at
+                # was journaled carry no timestamp. Staleness cannot
+                # be computed -- fail safe by keeping the peer.
+                continue
+            if registered_at + ttl_seconds < now:
                 self._anchor_index.pop(rec["anchor_public_key"], None)
                 del self._peers[peer_id]
                 pruned += 1

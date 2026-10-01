@@ -172,6 +172,36 @@ class KmsProvider(abc.ABC):
         """Return a :class:`KeyDescription` (metadata only). Raises
         :class:`KmsError` for unknown keys or provider failures."""
 
+    # -- signing operation (concrete default: fail closed) ------------------
+
+    def sign(self, key_id, digest):
+        """Sign a 32-byte SHA-256 digest with the KMS key ``key_id``.
+
+        Returns the 64-byte Ed25519 signature; the private key never
+        leaves the KMS boundary. Any failure raises :class:`KmsError`.
+
+        The default implementation raises :class:`KmsError`:
+        envelope-only providers inherit it and fail closed (see
+        :func:`provider_can_sign`). Subclasses whose backend can sign
+        MUST override this method.
+        """
+        raise KmsError("KMS sign not supported by provider %r"
+                       % (self.provider_name,))
+
+
+def provider_can_sign(provider):
+    """Capability probe: True iff ``provider`` overrides
+    :meth:`KmsProvider.sign`.
+
+    Callers that need a KMS signature MUST consult this probe (or
+    catch the fail-closed :class:`KmsError`) rather than falling back
+    to a local key: a local key is a custody downgrade and is never
+    an acceptable substitute.
+    """
+    if not isinstance(provider, KmsProvider):
+        raise TypeError("provider_can_sign expects a KmsProvider")
+    return type(provider).sign is not KmsProvider.sign
+
 
 # ---------------------------------------------------------------------------
 # FakeKmsProvider — deterministic local test double. TEST-ONLY.
@@ -345,6 +375,35 @@ class FakeKmsProvider(KmsProvider):
         return KeyDescription(key_id, self.provider_name,
                               enabled=key_id not in self.disabled,
                               arn_or_name="fake:%s" % key_id)
+
+    # -- signing -------------------------------------------------------------
+
+    def _signing_seed(self, key_id):
+        """Deterministic Ed25519 seed for ``key_id``. TEST-ONLY: derived
+        from the fixed fake wrap secret, so it provides ZERO production
+        security -- the whole point of this class."""
+        return self._hmac(b"fake-sign-seed", key_id.encode("utf-8")).digest()
+
+    def sign(self, key_id, digest):
+        """Deterministic test signing: Ed25519 over the 32-byte digest
+        with the seed from :meth:`_signing_seed`. TEST-ONLY."""
+        from . import ed25519 as _ed25519  # lazy: leaf module, no cycle
+        self._check_ready("sign", key_id)
+        if (not isinstance(digest, (bytes, bytearray))
+                or len(digest) != 32):
+            raise KmsError("FakeKMS sign: digest must be 32 bytes")
+        sig = _ed25519.sign(self._signing_seed(key_id), bytes(digest))
+        self.calls.append(("sign", key_id, _utcnow()))
+        return sig
+
+    def test_signing_public_key(self, key_id):
+        """TEST-ONLY: the deterministic Ed25519 public key that
+        :meth:`sign` signs with for ``key_id``, so tests can configure
+        the corresponding verifier without touching key material."""
+        from . import ed25519 as _ed25519  # lazy: leaf module, no cycle
+        self._check_ready("test_signing_public_key", key_id,
+                          allow_disabled=True)
+        return _ed25519.publickey(self._signing_seed(key_id))
 
 
 # ---------------------------------------------------------------------------

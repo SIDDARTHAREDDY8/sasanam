@@ -28,7 +28,7 @@ from gov import skill_supply_chain as sc
 from gov.bundle_refresh import tuf_canonical_json
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 
 def _seed(tag):

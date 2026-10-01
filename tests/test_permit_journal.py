@@ -44,7 +44,7 @@ class TaxonomyPinTest(_Base):
         # merge coordinator recomposes.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1299)  # Wave-268 merge: pin -> 1299.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1325)  # Wave-269 merge: pin -> 1325.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_new_codes_registered(self):

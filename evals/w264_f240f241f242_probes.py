@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _PROBES = []
 

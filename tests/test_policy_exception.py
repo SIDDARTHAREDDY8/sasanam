@@ -1,7 +1,6 @@
 """Unit tests for gov/policy_exception.py (wave-268 lane).
 
-Pin 1299 is asserted here (lane-local); the global pin repoint is the
-merge coordinator's chore per lane convention.
+Pin 1325 is asserted here; repointed by the wave-269 merge coordinator.
 """
 
 import hashlib
@@ -14,7 +13,7 @@ import gov.policy_exception as pe
 from gov.signing import Ed25519Verifier
 
 
-PIN = 1299  # Wave-268 merge: pin -> 1299 (lane: 1274 + 6 exception-*).
+PIN = 1325  # Wave-269 merge: pin -> 1325 (lane: 1274 + 6 exception-*).
 
 EXPECTED_CODES = (
     "exception-compensating-validation-failed",

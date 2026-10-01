@@ -53,7 +53,7 @@ except Exception:  # red phase: module not written yet
     _pe = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299 (lane: 1274 + 6 exception-*).
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325 (lane: 1274 + 6 exception-*).
 
 EXPECTED_CODES = (
     "exception-compensating-validation-failed",

@@ -4664,6 +4664,136 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
+    'evcert-anchor-unavailable': {
+        "domain": 'evcert',
+        "code": 'evcert-anchor-unavailable',
+        "human": 'evidence cert: the transparency anchor (or the '
+                 'seen-key registry alongside the audit log) is '
+                 'unreachable; issuance refused -- no bypass switch exists',
+        "severity": 'medium',
+        "evidence_kinds_required": ['anchor-status', 'audit-log'],
+        "reverify_steps": ['re-check-anchor'],
+    },
+    'evcert-assertion-expired': {
+        "domain": 'evcert',
+        "code": 'evcert-assertion-expired',
+        "human": 'evidence cert: the identity assertion is expired '
+                 '(exp <= issuance time)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-fetch-assertion'],
+    },
+    'evcert-binding-invalid': {
+        "domain": 'evcert',
+        "code": 'evcert-binding-invalid',
+        "human": 'evidence cert: the evidence signature does not bind to '
+                 'the certificate (wrong key, approval mismatch, or '
+                 'intent mismatch)',
+        "severity": 'high',
+        "evidence_kinds_required": ['certificate', 'signature'],
+        "reverify_steps": ['re-verify-signature'],
+    },
+    'evcert-cert-expired': {
+        "domain": 'evcert',
+        "code": 'evcert-cert-expired',
+        "human": 'evidence cert: the certificate is outside its validity '
+                 'window at verification time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['certificate'],
+        "reverify_steps": ['recompute'],
+    },
+    'evcert-chain-invalid': {
+        "domain": 'evcert',
+        "code": 'evcert-chain-invalid',
+        "human": 'evidence cert: the CA signature does not verify against '
+                 'the configured CA public key',
+        "severity": 'high',
+        "evidence_kinds_required": ['certificate'],
+        "reverify_steps": ['re-verify-signature'],
+    },
+    'evcert-identity-not-decider': {
+        "domain": 'evcert',
+        "code": 'evcert-identity-not-decider',
+        "human": 'evidence cert: the assertion subject is not the decider '
+                 'of record on the approval',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'approval-record'],
+        "reverify_steps": ['re-fetch-approval'],
+    },
+    'evcert-key-reused': {
+        "domain": 'evcert',
+        "code": 'evcert-key-reused',
+        "human": 'evidence cert: the subject key was already bound to an '
+                 'approval; ephemeral keys are single-use',
+        "severity": 'high',
+        "evidence_kinds_required": ['certificate', 'audit-log'],
+        "reverify_steps": ['re-check-registry'],
+    },
+    'evcert-kms-cannot-sign': {
+        "domain": 'evcert',
+        "code": 'evcert-kms-cannot-sign',
+        "human": 'evidence cert: the KMS provider cannot sign '
+                 '(envelope-only backend); issuance refused rather than '
+                 'falling back to a local key',
+        "severity": 'medium',
+        "evidence_kinds_required": ['kms-response'],
+        "reverify_steps": ['recompute'],
+    },
+    'evcert-lifetime-exceeded': {
+        "domain": 'evcert',
+        "code": 'evcert-lifetime-exceeded',
+        "human": 'evidence cert: the requested lifetime exceeds the '
+                 'deployment maximum',
+        "severity": 'medium',
+        "evidence_kinds_required": ['certificate'],
+        "reverify_steps": ['recompute'],
+    },
+    'evcert-malformed-cert': {
+        "domain": 'evcert',
+        "code": 'evcert-malformed-cert',
+        "human": 'evidence cert: the certificate fails shape validation '
+                 '(fields, EKU, extensions, or key bindings)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['certificate'],
+        "reverify_steps": ['recompute'],
+    },
+    'evcert-malformed-request': {
+        "domain": 'evcert',
+        "code": 'evcert-malformed-request',
+        "human": 'evidence cert: the issuance request fails shape '
+                 'validation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['recompute'],
+    },
+    'evcert-pop-invalid': {
+        "domain": 'evcert',
+        "code": 'evcert-pop-invalid',
+        "human": 'evidence cert: the proof-of-possession signature does '
+                 'not verify against the presented subject key and the '
+                 'approval-bound challenge',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'signature'],
+        "reverify_steps": ['re-verify-signature'],
+    },
+    'evcert-unknown-approval': {
+        "domain": 'evcert',
+        "code": 'evcert-unknown-approval',
+        "human": 'evidence cert: the approval id is unknown or not in the '
+                 'pending state',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval-record'],
+        "reverify_steps": ['re-fetch-approval'],
+    },
+    'evcert-unknown-issuer': {
+        "domain": 'evcert',
+        "code": 'evcert-unknown-issuer',
+        "human": 'evidence cert: the identity issuer is not in the CA '
+                 'allowlist',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-fetch-assertion'],
+    },
     'evidence-envelope-record-limit': {
         "domain": 'evidence',
         "code": 'evidence-envelope-record-limit',
@@ -5812,6 +5942,47 @@ TAXONOMY = {
                  'sinks must be declared, never assumed',
         "severity": 'medium',
         "evidence_kinds_required": ['label-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgscreen-instruction-detected': {
+        "domain": 'imgscreen',
+        "code": 'imgscreen-instruction-detected',
+        "human": 'image carrier screening: instruction-shaped text found '
+                 'in image container metadata (PNG tEXt/zTXt/iTXt, JPEG '
+                 'COM/EXIF UserComment/XMP, GIF comment); refused '
+                 'fail-closed, bytes never reach the model as content',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgscreen-malformed': {
+        "domain": 'imgscreen',
+        "code": 'imgscreen-malformed',
+        "human": 'image carrier screening: input is not bytes, has an '
+                 'unknown magic, or has truncated/impossible container '
+                 'structure; refused fail-closed, never raises',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgscreen-oversized': {
+        "domain": 'imgscreen',
+        "code": 'imgscreen-oversized',
+        "human": 'image carrier screening: input exceeds the parse budget; '
+                 'refused before parsing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'imgscreen-stego-suspect': {
+        "domain": 'imgscreen',
+        "code": 'imgscreen-stego-suspect',
+        "human": 'image carrier screening: LSB-plane chi-square anomaly '
+                 'consistent with least-significant-bit embedding; '
+                 'flag-only advisory, never a denial (false positives '
+                 'from compression/quantization are documented)',
+        "severity": 'low',
+        "evidence_kinds_required": ['screen-verdict'],
         "reverify_steps": ['recompute'],
     },
     'incident-illegal-transition': {
@@ -9818,6 +9989,84 @@ TAXONOMY = {
         "human": 'approval and delegation: self-delegation was refused',
         "severity": 'high',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-domain-mismatch': {
+        "domain": 'sessbind',
+        "code": 'sessbind-domain-mismatch',
+        "human": 'session-bound presentation: the token info domain does '
+                 'not match the verifier role (receipt vs approval vs '
+                 'decision); confused-deputy attempt refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-ehd-mismatch': {
+        "domain": 'sessbind',
+        "code": 'sessbind-ehd-mismatch',
+        "human": 'session-bound presentation: the token EHD does not match '
+                 'H(nonce || pinned verifier key); the session is bound to '
+                 'a different ephemeral key; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-malformed': {
+        "domain": 'sessbind',
+        "code": 'sessbind-malformed',
+        "human": 'session-bound presentation: malformed token, transcript '
+                 'record, or API argument; refused fail-closed, never a '
+                 'silent accept',
+        "severity": 'medium',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-ok': {
+        "domain": 'sessbind',
+        "code": 'sessbind-ok',
+        "human": 'session-bound presentation: signature, transcript, EHD, '
+                 'domain, and expiry all verified for this session; the '
+                 'artifact was shown in-session by the pinned key',
+        "severity": 'low',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-signature-invalid': {
+        "domain": 'sessbind',
+        "code": 'sessbind-signature-invalid',
+        "human": 'session-bound presentation: the presentation signature '
+                 'does not verify under the pinned key; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-token-expired': {
+        "domain": 'sessbind',
+        "code": 'sessbind-token-expired',
+        "human": 'session-bound presentation: the token is expired (or not '
+                 'yet valid) at the verifier now; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-transcript-mismatch': {
+        "domain": 'sessbind',
+        "code": 'sessbind-transcript-mismatch',
+        "human": 'session-bound presentation: the token transcript digest '
+                 'does not match the verifier session transcript; cross-'
+                 'session replay refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['presentation'],
+        "reverify_steps": ['recompute'],
+    },
+    'sessbind-verifier-misconfigured': {
+        "domain": 'sessbind',
+        "code": 'sessbind-verifier-misconfigured',
+        "human": 'session-bound presentation: no verifier is configured '
+                 'for the signer key, or the provider failed; refused '
+                 'fail-closed with a loud journal entry',
+        "severity": 'medium',
+        "evidence_kinds_required": ['presentation'],
         "reverify_steps": ['recompute'],
     },
     'session-trust-malformed': {

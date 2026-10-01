@@ -41,7 +41,7 @@ except ImportError:
     sv = None
     decision_codes = None
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 _PROBES = []
 

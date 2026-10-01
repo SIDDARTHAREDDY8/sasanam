@@ -47,7 +47,7 @@ from gov import control_profiles as cp  # noqa: E402
 from gov import evidence_quality as eq  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 
 def _held(detail=""):

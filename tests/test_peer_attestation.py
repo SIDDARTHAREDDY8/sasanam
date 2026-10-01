@@ -18,7 +18,7 @@ from gov import ed25519
 from gov import peer_attestation as pa
 from gov import trust_federation as tf
 
-TAXONOMY_PIN = 1299  # Wave-268 merge: pin -> 1299.
+TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
 
 
 def _keys():
