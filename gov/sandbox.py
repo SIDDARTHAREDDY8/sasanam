@@ -170,6 +170,7 @@ import base64
 import contextlib
 import ctypes
 import datetime
+import errno
 import fcntl
 import json
 import os
@@ -1193,6 +1194,9 @@ def sandbox_config_from_env():
       GOV_SANDBOX_PIVOT=1     pivot_root filesystem jail (required)
       GOV_SANDBOX_SECCOMP=1   seccomp-bpf syscall allowlist (required)
       GOV_SANDBOX_PRIVDROP=1  drop to the 'nobody' uid/gid (required)
+      GOV_SANDBOX_LANDLOCK=1  Landlock LSM filesystem tier (required):
+                              jail root read-only, one read-write scratch
+                              subdir, system allowlist read+execute
       GOV_SANDBOX_CAGE_MODE=filtered-egress
                               install the filtered-egress cage seccomp
                               profile instead of DEFAULT_SECCOMP_ALLOW
@@ -1229,6 +1233,7 @@ def sandbox_config_from_env():
         "pivot": _env_flag("GOV_SANDBOX_PIVOT"),
         "seccomp": _env_flag("GOV_SANDBOX_SECCOMP"),
         "privdrop": _env_flag("GOV_SANDBOX_PRIVDROP"),
+        "landlock": _env_flag("GOV_SANDBOX_LANDLOCK"),
     }
     avail = {
         "netns": netns_available(),
@@ -1236,6 +1241,7 @@ def sandbox_config_from_env():
         "pivot": pivot_available(),
         "seccomp": seccomp_available(),
         "privdrop": privdrop_available(),
+        "landlock": landlock_available(),
     }
     missing = [k for k in want if want[k] and not avail[k]]
     if missing:
@@ -1281,6 +1287,8 @@ def sandbox_config_from_env():
         "require_privdrop": bool(want["privdrop"]),
         "use_seccomp": bool(want["seccomp"]),
         "require_seccomp": bool(want["seccomp"]),
+        "use_landlock": bool(want["landlock"]),
+        "require_landlock": bool(want["landlock"]),
         "cage_mode": cage_mode,
         "deployment_mode": deployment_mode,
     }
@@ -1594,6 +1602,276 @@ def main(argv=None):
     return 2
 
 
+# ---------------------------------------------------------------------------
+# Landlock LSM tier (wave-266).
+#
+# Pattern ADAPTED from the wave-265 NVIDIA OpenShell teardown (prospectus
+# §3.4: OpenShell confines tools with the Landlock LSM + seccomp-BPF).
+# Pattern only — no vendored code; the ruleset below is written against
+# the kernel ABI documented in linux/landlock.h and was verified
+# empirically on this tree's kernels (ABI 8). Stdlib only (ctypes for the
+# three syscalls, which have no libc wrappers).
+#
+# Design (mirrors the existing opt-in hardened layers):
+#   * use_landlock / require_landlock constructor flags with the same
+#     fail-closed require_* semantics as the other layers;
+#   * the ruleset is built PARENT-side (the child must never widen its own
+#     cage) and handed to the child over pass_fds; the child calls
+#     restrict_self() BEFORE the seccomp filter installs (the BPF
+#     allowlist does not cover the Landlock syscalls);
+#   * default-deny policy: the jail root is read-only, one designated
+#     scratch subdir is read-write (no execute — write-then-execute
+#     stays impossible), and only a fixed system allowlist mirroring the
+#     pivot layer's read-only staging set is readable+executable. Rules
+#     pin inodes, so they survive pivot_root;
+#   * unavailability with use_landlock and no require_landlock degrades
+#     gracefully with a machine-coded warning; require_landlock refuses
+#     fail-closed; a ruleset build/apply failure ALWAYS refuses
+#     fail-closed (the tool never runs under the weak tier while the
+#     deployment asked for the strong one).
+#
+# Honest residuals (documented, not gaps): Landlock cannot restrict
+# stat/chdir (kernel limitation, noted in linux/landlock.h); nothing in
+# the jail root is executable or writable (read-only by design); this
+# lane adds no seccomp-BPF of its own (next tier); Linux-only mechanism
+# (landlock_available() gates on sys.platform, not just posix).
+# ---------------------------------------------------------------------------
+
+_LANDLOCK_CREATE_RULESET_VERSION = 0x1
+_LANDLOCK_RULE_PATH_BENEATH = 1
+
+# Filesystem rights, linux/landlock.h (bits 0-14; REFER is always
+# implicitly handled by the kernel; TRUNCATE exists since ABI 3).
+_LANDLOCK_FS_EXECUTE = 0x1
+_LANDLOCK_FS_WRITE_FILE = 0x2
+_LANDLOCK_FS_READ_FILE = 0x4
+_LANDLOCK_FS_READ_DIR = 0x8
+_LANDLOCK_FS_TRUNCATE = 0x4000
+
+_LANDLOCK_ABI_CACHE = {"version": None}
+_LANDLOCK_AVAILABLE_CACHE = {"available": None}
+
+# System allowlist, mirroring the pivot layer's read-only staging set.
+# /etc is read-only (not just ld.so.cache): the dynamic linker, NSS, and
+# distro symlinks out of /usr (e.g. /usr/lib/python3.12/sitecustomize.py
+# -> /etc/python3.12/sitecustomize.py) all resolve under it. Sensitive
+# files stay protected by Unix permissions + privdrop.
+_LANDLOCK_DEFAULT_SYSTEM_RO = ("usr", "bin", "lib", "lib64", "sbin", "etc")
+
+_LANDLOCK_SCRATCH_NAME_DEFAULT = "scratch"
+
+
+class _LandlockRulesetAttr(ctypes.Structure):
+    _fields_ = [("handled_access_fs", ctypes.c_uint64),
+                ("handled_access_net", ctypes.c_uint64)]
+
+
+class _LandlockPathBeneathAttr(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [("allowed_access", ctypes.c_uint64),
+                ("parent_fd", ctypes.c_int32)]
+
+
+def _landlock_syscall_numbers():
+    """(create, add_rule, restrict_self) syscall numbers for this arch.
+
+    Raises KeyError when unresolvable — callers treat that as
+    "unavailable", never as a silent bypass.
+    """
+    return (_syscall_number("landlock_create_ruleset"),
+            _syscall_number("landlock_add_rule"),
+            _syscall_number("landlock_restrict_self"))
+
+
+def _landlock_syscall(nr, *args):
+    """Raw Landlock syscall. Raises OSError on failure."""
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    ret = libc.syscall(nr, *args)
+    if ret < 0:
+        raise OSError(ctypes.get_errno(),
+                      "landlock syscall %d failed" % (nr,))
+    return ret
+
+
+def landlock_abi_version():
+    """Kernel Landlock ABI version, or 0 when the syscalls are absent."""
+    if _LANDLOCK_ABI_CACHE["version"] is None:
+        version = 0
+        try:
+            nr_create, _, _ = _landlock_syscall_numbers()
+            v = _landlock_syscall(nr_create, None, 0,
+                                  _LANDLOCK_CREATE_RULESET_VERSION)
+            if 1 <= v <= 64:
+                version = int(v)
+        except (OSError, KeyError):
+            version = 0
+        _LANDLOCK_ABI_CACHE["version"] = version
+    return _LANDLOCK_ABI_CACHE["version"]
+
+
+def _landlock_enforcement_probe():
+    """Forked child: does restrict_self() actually confine?
+
+    The syscalls can be wired while the LSM is disabled; then
+    restrict_self() succeeds and confines nothing. The only reliable
+    detector is empirical: confine a child with a deny-all ruleset and
+    check that opening ordinary files fails EACCES. Probed once per
+    process; the parent is never confined (same pattern as
+    netns_available()).
+    """
+    pid = os.fork()
+    if pid == 0:  # child
+        try:
+            nr_create, _, nr_restrict = _landlock_syscall_numbers()
+            attr = _LandlockRulesetAttr(
+                _LANDLOCK_FS_EXECUTE | _LANDLOCK_FS_WRITE_FILE
+                | _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR, 0)
+            rs = _landlock_syscall(nr_create, ctypes.byref(attr),
+                                   ctypes.sizeof(attr), 0)
+            _landlock_syscall(nr_restrict, rs, 0)
+            os.close(rs)
+            # Deny-all is active: at least one open must fail EACCES,
+            # and none may succeed.
+            enforced = False
+            for probe_path in ("/etc/hostname", "/proc/version",
+                               "/etc/passwd"):
+                try:
+                    fd = os.open(probe_path, os.O_RDONLY)
+                except OSError as e:
+                    if e.errno == errno.EACCES:
+                        enforced = True
+                else:
+                    os.close(fd)
+                    os._exit(1)  # opened: NOT confined
+            os._exit(0 if enforced else 1)
+        except BaseException:
+            os._exit(1)
+    _, status = os.waitpid(pid, 0)
+    return os.waitstatus_to_exitcode(status) == 0
+
+
+def landlock_available():
+    """True when this kernel actually enforces Landlock confinement."""
+    if _LANDLOCK_AVAILABLE_CACHE["available"] is None:
+        available = False
+        # Landlock is a Linux-only mechanism; the posix check alone would
+        # let other Unixes reach the syscall-number parse below, which can
+        # only fail its way to False.
+        if (sys.platform.startswith("linux") and landlock_abi_version() >= 1):
+            available = _landlock_enforcement_probe()
+        _LANDLOCK_AVAILABLE_CACHE["available"] = available
+    return _LANDLOCK_AVAILABLE_CACHE["available"]
+
+
+def _landlock_add_path_rule(ruleset_fd, path, allowed_access):
+    """Grant allowed_access on the hierarchy (or file) at path."""
+    _, nr_add, _ = _landlock_syscall_numbers()
+    is_dir = os.path.isdir(path)
+    if not is_dir:
+        # Directory-only rights are invalid on file rules (EINVAL).
+        allowed_access &= ~_LANDLOCK_FS_READ_DIR
+    flags = os.O_PATH | (os.O_DIRECTORY if is_dir else 0)
+    fd = os.open(path, flags)
+    try:
+        attr = _LandlockPathBeneathAttr(allowed_access, fd)
+        _landlock_syscall(nr_add, ruleset_fd, _LANDLOCK_RULE_PATH_BENEATH,
+                          ctypes.byref(attr), 0)
+    finally:
+        os.close(fd)
+
+
+def landlock_build_ruleset(*, jail_root, scratch_name, argv0, extra_ro=()):
+    """Build (not yet apply) the Landlock ruleset for one call.
+
+    Returns the ruleset fd, owned by the caller (pass it to the child
+    over pass_fds; the child calls restrict_self() then closes it).
+    Raises OSError when the ruleset cannot be built — the caller must
+    refuse fail-closed.
+    """
+    abi = landlock_abi_version()
+    if abi < 1:
+        raise OSError(errno.ENOSYS, "landlock unavailable on this kernel")
+    nr_create, _, _ = _landlock_syscall_numbers()
+    handled_fs = (_LANDLOCK_FS_EXECUTE | _LANDLOCK_FS_WRITE_FILE
+                  | _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR)
+    if abi >= 3:
+        handled_fs |= _LANDLOCK_FS_TRUNCATE
+    attr = _LandlockRulesetAttr(handled_fs, 0)
+    # The net-rights field exists since ABI 4; size the struct the
+    # kernel understands.
+    attr_size = ctypes.sizeof(attr) if abi >= 4 else 8
+    rs = _landlock_syscall(nr_create, ctypes.byref(attr), attr_size, 0)
+    try:
+        read_only = _LANDLOCK_FS_READ_FILE | _LANDLOCK_FS_READ_DIR
+        rx = read_only | _LANDLOCK_FS_EXECUTE
+        seen = set()
+
+        def _grant(path, access):
+            real = os.path.realpath(path)
+            if real in seen:
+                return
+            seen.add(real)
+            _landlock_add_path_rule(rs, real, access)
+
+        # The jail root: readable, never writable (tool output goes to
+        # the scratch subdir).
+        _grant(jail_root, read_only)
+        # Designated scratch: read-write (no execute — write-then-
+        # execute stays impossible), truncate where the ABI has it.
+        scratch_access = read_only | _LANDLOCK_FS_WRITE_FILE
+        if abi >= 3:
+            scratch_access |= _LANDLOCK_FS_TRUNCATE
+        _grant(os.path.join(jail_root, scratch_name), scratch_access)
+        # System allowlist. Missing entries are skipped (distro
+        # variance); the interpreter's own directory is always covered
+        # so the child can still exec.
+        for name in _LANDLOCK_DEFAULT_SYSTEM_RO:
+            path = os.path.join("/", name)
+            if os.path.isdir(path):
+                _grant(path, rx)
+        for exe_dir in (os.path.dirname(os.path.realpath(argv0)),
+                        os.path.dirname(os.path.realpath(sys.executable))):
+            if os.path.isdir(exe_dir):
+                _grant(exe_dir, rx)
+        # Venv interpreters: site.py reads pyvenv.cfg (next to the
+        # unresolved executable's parent dir) at startup. Grant that
+        # single file read-only when present — nothing else from the
+        # venv is needed under -I.
+        for exe in (argv0, sys.executable):
+            cfg = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(exe))),
+                "pyvenv.cfg")
+            if os.path.isfile(cfg):
+                _grant(cfg, read_only)
+        # Operator widening (explicit absolute paths only).
+        for path in extra_ro:
+            if not os.path.isabs(path):
+                raise OSError(errno.EINVAL,
+                              "landlock_extra_ro must be absolute: %r"
+                              % (path,))
+            if os.path.isdir(path):
+                _grant(path, rx)
+            elif os.path.isfile(path):
+                _grant(path, read_only)
+            else:
+                raise OSError(errno.ENOENT,
+                              "landlock_extra_ro not found: %r" % (path,))
+    except BaseException:
+        try:
+            os.close(rs)
+        except OSError:
+            pass
+        raise
+    return rs
+
+
+def _landlock_restrict_self(ruleset_fd):
+    """Activate the ruleset for the calling thread. Raises OSError."""
+    _, _, nr_restrict = _landlock_syscall_numbers()
+    _landlock_syscall(nr_restrict, ruleset_fd, 0)
+
+
 class SandboxError(RuntimeError):
     """Raised when the sandbox refuses to run.
 
@@ -1619,6 +1897,7 @@ class SandboxResult:
     pivot_active: bool = False
     privdropped: bool = False
     seccomp_active: bool = False
+    landlock_active: bool = False
     note: str = ""
 
     @property
@@ -1641,6 +1920,9 @@ class Sandbox:
                  use_pivot_root=False, require_pivot_root=False,
                  drop_privs=False, require_privdrop=False,
                  use_seccomp=False, require_seccomp=False,
+                 use_landlock=False, require_landlock=False,
+                 landlock_scratch_name=_LANDLOCK_SCRATCH_NAME_DEFAULT,
+                 landlock_extra_ro=(),
                  cage_mode="strict",
                  deployment_mode="production",
                  refusal_receipt_dir=None,
@@ -1659,6 +1941,15 @@ class Sandbox:
         if require_seccomp and not use_seccomp:
             raise ValueError("require_seccomp=True conflicts with "
                              "use_seccomp=False")
+        if require_landlock and not use_landlock:
+            raise ValueError("require_landlock=True conflicts with "
+                             "use_landlock=False")
+        if (not isinstance(landlock_scratch_name, str)
+                or not landlock_scratch_name
+                or "/" in landlock_scratch_name
+                or landlock_scratch_name in (".", "..")):
+            raise ValueError("landlock_scratch_name must be a single "
+                             "path component, got %r" % (landlock_scratch_name,))
         if cage_mode not in _CAGE_MODES:
             raise ValueError(
                 "unknown cage_mode %r: must be one of %s (fail-closed; "
@@ -1705,6 +1996,10 @@ class Sandbox:
         self.require_privdrop = bool(require_privdrop)
         self.use_seccomp = bool(use_seccomp)
         self.require_seccomp = bool(require_seccomp)
+        self.use_landlock = bool(use_landlock)
+        self.require_landlock = bool(require_landlock)
+        self.landlock_scratch_name = landlock_scratch_name
+        self.landlock_extra_ro = tuple(landlock_extra_ro)
         self.cage_mode = cage_mode
         self.pivot_extra_mounts = dict(pivot_extra_mounts or {})
         # F81/D10: an optional FilteredEgressLauncher (gov/egress_launcher.py).
@@ -1725,6 +2020,7 @@ class Sandbox:
         self.pivot_capable = self.use_pivot_root and pivot_available()
         self.privdrop_capable = self.drop_privs and privdrop_available()
         self.seccomp_capable = self.use_seccomp and seccomp_available()
+        self.landlock_capable = self.use_landlock and landlock_available()
 
     # -- public API -------------------------------------------------------
 
@@ -1817,11 +2113,65 @@ class Sandbox:
                 # caller-supplied cwd is never chown'ed for you.)
                 uid, gid = _nobody_ids()
                 os.chown(jail, uid, gid)
+            # Wave-266 Landlock tier: create the designated scratch subdir
+            # and build the ruleset PARENT-side (the child must never widen
+            # its own cage). A build failure refuses fail-closed before any
+            # child exists. require_landlock + unavailable kernel refuses
+            # here too — before spawning anything.
+            landlock_fd = None
+            if self.use_landlock:
+                if not self.landlock_capable:
+                    if self.require_landlock:
+                        _refuse_loud(
+                            "Landlock filesystem tier required but "
+                            "unavailable on this kernel/LSM; refusing to "
+                            "run without the required layer (fail-closed).",
+                            kind="sandbox-landlock-required",
+                            receipt_dir=self.refusal_receipt_dir,
+                            extra={"layer": "landlock"})
+                    # else: graceful degradation — the machine-coded
+                    # warning lands in the result note below.
+                else:
+                    scratch_dir = Path(jail) / self.landlock_scratch_name
+                    try:
+                        if scratch_dir.is_symlink():
+                            raise OSError(errno.EEXIST,
+                                          "scratch path is a symlink: %r"
+                                          % (str(scratch_dir),))
+                        scratch_dir.mkdir(parents=False, exist_ok=True)
+                        if self.drop_privs and cwd is None:
+                            uid, gid = _nobody_ids()
+                            os.chown(scratch_dir, uid, gid)
+                    except OSError as e:
+                        _refuse_loud(
+                            "Landlock scratch setup failed: %r" % (e,),
+                            kind="sandbox-landlock-apply-failed",
+                            receipt_dir=self.refusal_receipt_dir,
+                            extra={"layer": "landlock"})
+                    try:
+                        landlock_fd = landlock_build_ruleset(
+                            jail_root=str(jail),
+                            scratch_name=self.landlock_scratch_name,
+                            argv0=argv[0],
+                            extra_ro=self.landlock_extra_ro)
+                    except OSError as e:
+                        _refuse_loud(
+                            "Landlock ruleset build failed: %r" % (e,),
+                            kind="sandbox-landlock-apply-failed",
+                            receipt_dir=self.refusal_receipt_dir,
+                            extra={"layer": "landlock"})
             child_env = self._child_env(jail, extra_env)
             if self.use_pivot_root:
                 # Inside the pivot the jail IS "/"; host paths are gone.
                 child_env["HOME"] = "/"
                 child_env["TMPDIR"] = "/"
+            if self.use_landlock and self.landlock_capable:
+                # The rules pin inodes, so they survive pivot_root; the
+                # child-visible path is "/" + name under the pivot.
+                child_env["GOV_SANDBOX_SCRATCH"] = (
+                    "/" + self.landlock_scratch_name
+                    if self.use_pivot_root
+                    else str(Path(jail) / self.landlock_scratch_name))
             if self.canary_plant is not None:
                 # Wave-51 P1: seed the jail with canary artifacts before
                 # the child starts. Planting failure refuses the run
@@ -1836,22 +2186,25 @@ class Sandbox:
                 if _canary_env:
                     child_env.update(_canary_env)
             # Status pipe: the pre-exec hook reports the per-call ground
-            # truth as exactly five bytes —
-            #   [net, pid, pivot, privdrop, seccomp] —
+            # truth as exactly six bytes —
+            #   [net, pid, pivot, privdrop, seccomp, landlock] —
             # written by a single party per call just before exec (or
             # before os._exit(127) on a fail-closed refusal). The parent
             # reads them deadline-bounded; missing bytes (EOF) mean "not
-            # established". pass_fds keeps the write end open in the child.
+            # established". pass_fds keeps the write end (and the Landlock
+            # ruleset fd, when built) open in the child.
             status_r, status_w = os.pipe()
             preexec = self._make_preexec(argv, child_env, status_w, str(jail),
-                                          seccomp_tier)
+                                         seccomp_tier, landlock_fd)
             start = time.monotonic()
+            pass_fds = (status_w,) if landlock_fd is None else (
+                status_w, landlock_fd)
             popen_kw = dict(
                 cwd=str(jail),
                 stdin=(subprocess.PIPE if stdin_data is not None
                        else subprocess.DEVNULL),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True, pass_fds=(status_w,))
+                start_new_session=True, pass_fds=pass_fds)
             try:
                 if launcher_mode:
                     # The governed spawn path and the wall are one call:
@@ -1874,14 +2227,21 @@ class Sandbox:
                         **popen_kw)
             finally:
                 # Parent never writes; the child (or its death) closes it.
+                # The ruleset fd is the child's now (it closes it after
+                # restrict_self); ours is closed here either way.
                 os.close(status_w)
+                if landlock_fd is not None:
+                    try:
+                        os.close(landlock_fd)
+                    except OSError:
+                        pass
             try:
                 marker = self._read_status_marker(status_r)
             finally:
                 os.close(status_r)
-            flags = list(marker) + [0] * (5 - len(marker))
+            flags = list(marker) + [0] * (6 - len(marker))
             (net_isolated, pid_isolated, pivot_active, privdropped,
-             seccomp_active) = (bool(v) for v in flags[:5])
+             seccomp_active, landlock_active) = (bool(v) for v in flags[:6])
             missing = []
             if self.require_netns and not net_isolated:
                 missing.append("network")
@@ -1893,7 +2253,25 @@ class Sandbox:
                 missing.append("privdrop")
             if self.require_seccomp and not seccomp_active:
                 missing.append("seccomp")
-            if missing:
+            # Wave-266: the Landlock tier gets its own machine codes
+            # (never the generic required-layer-missing): an unavailable
+            # kernel with require_landlock was already refused before
+            # spawn; here the tier was available but did not establish
+            # for this call.
+            landlock_hard_refusal = None
+            if self.use_landlock and not landlock_active:
+                if self.require_landlock:
+                    landlock_hard_refusal = "sandbox-landlock-required"
+                elif self.landlock_capable and len(marker) == 6:
+                    # The child reported honestly, but the Landlock byte
+                    # is 0: the ruleset failed to apply. Fail closed —
+                    # the tool never runs under the weak tier while the
+                    # deployment asked for the strong one.
+                    landlock_hard_refusal = "sandbox-landlock-apply-failed"
+                # else: unavailable kernel (graceful: machine-coded
+                # warning in the note below) or the child died before
+                # reporting (covered by the generic fallback note).
+            if missing or landlock_hard_refusal:
                 # Fail closed: the child was stopped before exec by the
                 # pre-exec hook (or died before reporting), so it never
                 # ran without the required layer(s). Reap it, close our
@@ -1909,12 +2287,21 @@ class Sandbox:
                             _stream.close()
                         except OSError:
                             pass
-                _refuse_loud(
-                    "%s layer(s) required but not established"
-                    % "+".join(missing),
-                    kind="required-layer-missing",
-                    receipt_dir=self.refusal_receipt_dir,
-                    extra={"missing": sorted(missing)})
+                if landlock_hard_refusal:
+                    _refuse_loud(
+                        "Landlock filesystem tier requested but not "
+                        "established for this call; refusing to run "
+                        "without it (fail-closed).",
+                        kind=landlock_hard_refusal,
+                        receipt_dir=self.refusal_receipt_dir,
+                        extra={"layer": "landlock"})
+                else:
+                    _refuse_loud(
+                        "%s layer(s) required but not established"
+                        % "+".join(missing),
+                        kind="required-layer-missing",
+                        receipt_dir=self.refusal_receipt_dir,
+                        extra={"missing": sorted(missing)})
             try:
                 if stdin_data is not None:
                     try:
@@ -1945,18 +2332,26 @@ class Sandbox:
             result.pivot_active = pivot_active
             result.privdropped = privdropped
             result.seccomp_active = seccomp_active
+            result.landlock_active = landlock_active
             want = {"network": self.use_netns, "PID": self.use_pidns,
                     "pivot-root": self.use_pivot_root,
-                    "privdrop": self.drop_privs, "seccomp": self.use_seccomp}
+                    "privdrop": self.drop_privs, "seccomp": self.use_seccomp,
+                    "landlock": self.use_landlock}
             have = {"network": net_isolated, "PID": pid_isolated,
                     "pivot-root": pivot_active, "privdrop": privdropped,
-                    "seccomp": seccomp_active}
+                    "seccomp": seccomp_active, "landlock": landlock_active}
             fell_back = [k for k in want if want[k] and not have[k]]
             if fell_back:
                 fallback_note = ("layer fallback: %s not established for "
                                  "this call; ran with the remaining "
                                  "defense-in-depth limits only"
                                  % "+".join(fell_back))
+                if ("landlock" in fell_back and not self.landlock_capable):
+                    # Machine-coded: requested but unavailable on this
+                    # kernel/LSM, and not required — the graceful path.
+                    fallback_note += (" [sandbox-landlock-unavailable: "
+                                      "Landlock LSM unavailable on this "
+                                      "kernel/LSM]")
                 result.note = (result.note + "; " + fallback_note
                                if result.note else fallback_note)
             if launcher_mode:
@@ -1998,7 +2393,7 @@ class Sandbox:
 
     @staticmethod
     def _read_status_marker(status_r):
-        """Read the 5-byte [net, pid, pivot, privdrop, seccomp] marker.
+        """Read the 6-byte [net, pid, pivot, privdrop, seccomp, landlock] marker.
 
         Deadline-bounded: a child that died before reporting yields EOF and
         the missing bytes are treated as "not established" (fail closed).
@@ -2008,14 +2403,14 @@ class Sandbox:
         sel = selectors.DefaultSelector()
         sel.register(status_r, selectors.EVENT_READ)
         try:
-            while len(marker) < 5:
+            while len(marker) < 6:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
                 if not sel.select(timeout=remaining):
                     break
                 try:
-                    chunk = os.read(status_r, 5 - len(marker))
+                    chunk = os.read(status_r, 6 - len(marker))
                 except OSError:
                     break
                 if not chunk:
@@ -2097,7 +2492,7 @@ class Sandbox:
         return _preexec
 
     def _make_preexec(self, argv, child_env, status_w, jail_path,
-                      seccomp_tier):
+                      seccomp_tier, landlock_fd=None):
         # F81/D10 + Fog decision 2 (composition): in egress-launcher
         # mode the wall is the network boundary. The sandbox keeps
         # rlimits/filesystem/pidns; its own netns unshare is skipped
@@ -2155,8 +2550,9 @@ class Sandbox:
             if hasattr(_r, "RLIMIT_NPROC"):
                 _lim(_r.RLIMIT_NPROC, nproc)
 
-        def _report(net_ok, pid_ok, pivot_ok, priv_ok, seccomp_ok):
-            # Exactly five bytes, one writer per call, just before exec
+        def _report(net_ok, pid_ok, pivot_ok, priv_ok, seccomp_ok,
+                    landlock_ok=False):
+            # Exactly six bytes, one writer per call, just before exec
             # (or before os._exit(127) on a fail-closed refusal). Best
             # effort — if the write itself fails the parent sees EOF and
             # treats the call as unhardened.
@@ -2165,9 +2561,38 @@ class Sandbox:
                                           1 if pid_ok else 0,
                                           1 if pivot_ok else 0,
                                           1 if priv_ok else 0,
-                                          1 if seccomp_ok else 0)))
+                                          1 if seccomp_ok else 0,
+                                          1 if landlock_ok else 0)))
             except OSError:
                 pass
+
+        def _child_landlock(net_ok, pid_ok, pivot_done):
+            """Apply the Landlock ruleset in the child.
+
+            Returns True when the ruleset was enforced, False when no
+            ruleset fd was passed (tier not requested or unavailable).
+
+            Must run BEFORE the seccomp filter installs (the BPF
+            allowlist does not cover the Landlock syscalls). Raises
+            PreexecChainAbort on failure: fail-closed, the tool never
+            runs under the weak tier while the deployment asked for the
+            strong one. The marker is written before the raise so the
+            parent can attribute the failure to this tier.
+            """
+            if landlock_fd is None:
+                return False
+            try:
+                _landlock_restrict_self(landlock_fd)
+            except OSError:
+                _report(net_ok, pid_ok, pivot_done, False, False, False)
+                raise PreexecChainAbort(
+                    127, "sandbox: landlock restrict_self failed")
+            finally:
+                try:
+                    os.close(landlock_fd)
+                except OSError:
+                    pass
+            return True
 
         def _harden_worker():
             """UID/GID drop + seccomp in the final worker, just before exec.
@@ -2218,7 +2643,7 @@ class Sandbox:
                 # network still attached. F150: raise-don't-exit -- the
                 # launcher wrapper converts this to PREEXEC_CHAIN_ABORT_CODE
                 # (98); the marker above still drives _refuse_loud.
-                _report(False, False, False, False, False)
+                _report(False, False, False, False, False, False)
                 raise PreexecChainAbort(
                     127, "sandbox: required network namespace missing")
             # PID namespace unshared (provisionally) BEFORE the pivot setup:
@@ -2247,7 +2672,7 @@ class Sandbox:
                 # Fail closed BEFORE exec: without the pivot the child's
                 # absolute-path writes could reach the host filesystem.
                 # F150: raise-don't-exit (see above).
-                _report(net_ok, False, False, False, False)
+                _report(net_ok, False, False, False, False, False)
                 raise PreexecChainAbort(
                     127, "sandbox: required pivot-root missing")
             if pidns:
@@ -2278,16 +2703,20 @@ class Sandbox:
                                     os._exit(127)
                                 pivot_done = False
                         try:
+                            landlock_ok = _child_landlock(
+                                net_ok, True, pivot_done)
                             priv_ok, seccomp_ok = _harden_worker()
                         except PreexecChainAbort:
                             # Forked worker: no launcher wrapper here to
                             # convert the F150 abort -- keep the
-                            # historical fail-closed os._exit(127), with
-                            # no marker (EOF drives _refuse_loud, as
-                            # before).
+                            # historical fail-closed os._exit(127). A
+                            # Landlock apply failure wrote its marker
+                            # before raising (attributable); a
+                            # _harden_worker failure writes none (EOF
+                            # drives _refuse_loud, as before).
                             os._exit(127)
                         _report(net_ok, True, pivot_done, priv_ok,
-                                seccomp_ok)
+                                seccomp_ok, landlock_ok)
                         try:
                             # F81/D10: in launcher mode the pidns worker
                             # execs the wall-wrapped argv (the wrap
@@ -2320,7 +2749,7 @@ class Sandbox:
                 # same-UID worker can os.kill() the parent by explicit PID
                 # (demonstrated). Never run hostile code this way.
                 # F150: raise-don't-exit (see above).
-                _report(net_ok, False, pivot_ok, False, False)
+                _report(net_ok, False, pivot_ok, False, False, False)
                 raise PreexecChainAbort(
                     127, "sandbox: required PID namespace missing")
             # Fallback path (no PID namespace): finish the pivot here,
@@ -2334,12 +2763,14 @@ class Sandbox:
                 except OSError:
                     if require_pivot:
                         # F150: raise-don't-exit (see above).
-                        _report(net_ok, False, False, False, False)
+                        _report(net_ok, False, False, False, False, False)
                         raise PreexecChainAbort(
                             127, "sandbox: required pivot-root missing")
                     pivot_done = False
+            landlock_ok = _child_landlock(net_ok, False, pivot_done)
             priv_ok, seccomp_ok = _harden_worker()
-            _report(net_ok, False, pivot_done, priv_ok, seccomp_ok)
+            _report(net_ok, False, pivot_done, priv_ok, seccomp_ok,
+                    landlock_ok)
         return _preexec
 
     @staticmethod

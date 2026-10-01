@@ -13,7 +13,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import decision_codes
 
-TAXONOMY_PIN = 1205
+TAXONOMY_PIN = 1222
 
 if os.environ.get("GOV_SKIP_GREEN") != "1":
     def _green():

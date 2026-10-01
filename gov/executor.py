@@ -1080,7 +1080,19 @@ class ToolExecutor:
                  # set, a deny (or check error/timeout, or no matching
                  # policy) refuses the swap fail-closed with a
                  # callauthz-* machine code and nothing is substituted.
-                 call_authorizer=None):
+                 call_authorizer=None,
+                 # Reconstructed-intent scoring seam (wave-266, F248):
+                 # a gov.reconstructed_intent.ReconstructionSeam,
+                 # constructed by the deployment in the operator trust
+                 # domain (it owns the chunk buffer feeding and the
+                 # human-approval queue the hold is queued to).
+                 # Appended LAST so no existing positional caller can
+                 # misalign. Opt-in: None (default) = pre-wave-266
+                 # behavior, zero behavior change
+                 # (check_reconstructed_intent returns a quiet verdict
+                 # without touching anything; note_read_output does not
+                 # buffer chunks).
+                 reconstruction_seam=None):
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -1579,6 +1591,12 @@ class ToolExecutor:
         # (check_public_channel_egress returns a silent allow without
         # touching anything; note_public_channel_input is a no-op).
         self.propagation_guard = propagation_guard
+        # Wave-266 (F248): reconstructed-intent scoring seam,
+        # deployment-supplied. Opt-in: None = zero behavior change
+        # (check_reconstructed_intent returns a quiet verdict without
+        # touching anything; note_read_output does not buffer
+        # chunks).
+        self.reconstruction_seam = reconstruction_seam
         self._advisory_bom_chain = [""]
         # Guards the BOM sub-chain head read-update plus the advisory
         # audit appends, so concurrent call()s on this executor cannot
@@ -4080,6 +4098,15 @@ class ToolExecutor:
         durably (counts, doc ids, opaque commitments — never token
         strings) so a later run's egress check can consult it.
         """
+        if self.reconstruction_seam is not None:
+            # Wave-266 (F248): feed the run's untrusted chunk set for
+            # act-gate reconstructed-intent scoring. Best-effort
+            # buffering (note_chunk ignores malformed notes); the
+            # seam validates shapes fail-closed at scoring time.
+            # Same coverage ceiling as the rare-token tracker: reads
+            # that never cross the governed tool boundary stay
+            # invisible.
+            self.reconstruction_seam.note_chunk(str(source_id), text)
         if self.rare_token_tracker is None:
             return {"observed": False, "agent_id": str(agent_id),
                     "source_id": str(source_id)}
@@ -4497,6 +4524,114 @@ class ToolExecutor:
                                % detail)
         self.log.append(event)
         return res
+
+    def check_reconstructed_intent(self, agent_id, tool, args,
+                                   chunks=None, user_text="",
+                                   justification="", identity=None,
+                                   queue_hold=True):
+        """Wave-266 (F248): reconstructed-intent scoring seam --
+        the operational act-gate entry point.
+
+        Scores the run's untrusted chunk set (Divide-and-Inject
+        fragments) plus the planned action via the installed
+        ``gov.reconstructed_intent.ReconstructionSeam``. Opt-in:
+        with no seam installed this returns a quiet verdict and does
+        nothing (zero behavior change). ``chunks=None`` scores the
+        seam's buffered per-run chunk set (fed by note_read_output);
+        an explicit chunk set is validated fail-closed by the seam.
+
+        Graduated response (the rare_token_hold pattern):
+
+        - quiet: silent; the verdict dict is the record.
+        - suspect: a LOUD ``reconstructed_intent_suspect`` audit
+          event (args digest, never raw args; built by
+          ``gov.reconstructed_intent.suspect_event`` so the journal
+          shape cannot drift from the standalone seam path). With
+          ``queue_hold=True`` (default) a synthetic
+          ``reconintent_review`` approval is also queued for human
+          resolution (flag "reconstructed_intent"; ``identity`` is
+          REQUIRED here, F42 -- separation of duties rides the
+          standard queue machinery: the agent can never approve its
+          own hold away). The in-call() act path scores quietly via
+          ``score_buffered`` pre-policy and applies the event +
+          hold post-policy itself instead (fail-closed direction
+          only: a deny stays denied with no dangling event; an
+          existing require_approval keeps its record and gains the
+          reconintent preview banner). Execution is never blocked
+          on the heuristic: the action proceeds per the human
+          decision.
+
+        A throwing queue is LOUD (``reconintent_hold_queue_failed``)
+        and the suspect verdict is still returned -- the flag is
+        never dropped silently.
+        """
+        from . import reconstructed_intent as _reconintent
+        if self.reconstruction_seam is None:
+            return {"suspect": False, "score": 0,
+                    "confidence": "none", "code": None,
+                    "installed": False,
+                    "signals": {"chunks_scored": 0}}
+        # Score directly: the seam's evaluate() is the standalone
+        # deployment path (own journal + queue callable). Here the
+        # executor owns the audit log and the approval queue, so the
+        # hold rides the standard machinery below -- separation of
+        # duties is enforced by gov.approvals, not by a docstring.
+        # score_buffered: buffer texts were fingerprinted at note
+        # time, so the act path does not re-hash per call.
+        if chunks is None:
+            verdict = self.reconstruction_seam.score_buffered(
+                tool, args, user_text, justification)
+        else:
+            verdict = _reconintent.score_run(
+                chunks, tool, args, user_text, justification)
+        verdict["installed"] = True
+        if not verdict.get("suspect"):
+            return verdict
+        self.log.append(_reconintent.suspect_event(
+            verdict, agent_id, tool, args, self.run_id))
+        if identity is None and queue_hold:
+            raise TypeError(
+                "check_reconstructed_intent() requires identity when "
+                "a reconstructed-intent hold queues a "
+                "reconintent_review approval (F42); the approval "
+                "queue never trusts caller-supplied identity fields")
+        if queue_hold:
+            try:
+                _hold = _reconintent.hold_request(
+                    verdict, agent_id, tool, args, justification)
+                self.approvals.queue(
+                    {"tool": "reconintent_review",
+                     "args": _hold["args"],
+                     "identity": identity.as_dict(),
+                     "agent_justification": justification or None,
+                     "redactions": []},
+                    PolicyDecision(
+                        "require_approval",
+                        "Reconstructed-intent HOLD for agent %r: %s"
+                        % (agent_id,
+                           _reconintent.preview_banner(verdict)),
+                        policy_id="reconintent",
+                        flag="reconstructed_intent"),
+                    "agent_direct",
+                    "review reconstructed-intent HOLD for agent %r"
+                    % (agent_id,),
+                    caller_identity=identity,
+                    delegation_receipt=self._session_delegation_receipt())
+            except Exception:
+                self.log.append({
+                    "event": "reconintent_hold_queue_failed",
+                    "code": "reconintent-queue-failed",
+                    "flag": "reconstructed_intent",
+                    "run_id": self.run_id,
+                    "agent_id": str(agent_id),
+                    "tool": tool,
+                    "reason": ("reconintent_review approval could not "
+                               "be queued; the "
+                               "reconstructed_intent_suspect audit "
+                               "event remains the record -- operator "
+                               "must review manually"),
+                })
+        return verdict
 
     def check_write_declared_path(self, agent_id, path_resolved,
                                   declared_path=None):
@@ -9784,6 +9919,53 @@ class ToolExecutor:
                     policy_id="egress-tiered-verdict",
                     flag="egress_tiered_risk")
 
+        # Wave-266 (F248): reconstructed-intent scoring seam. Every
+        # call for a tool carrying destination slots, with a seam
+        # installed and chunks buffered from noted reads, is scored
+        # here -- after identity, DLP, and volume guards, before
+        # policy evaluation. Denied calls are not scored and journal
+        # no suspect event (the denial is already LOUD; a suspect
+        # event with no queued record would be a dangling signal).
+        # The seam digests args, never journals raw values (wave-90
+        # idiom). Scoring is QUIET here: the verdict is stashed and
+        # the LOUD event + hold are applied post-policy, so a
+        # policy-denied call journals no dangling suspect event with
+        # no queued record (Spec review, second pass). Graduated
+        # response: quiet proceeds silently; suspect forces the
+        # standard require_approval path below (fail-closed
+        # direction only -- a deny stays denied, an existing
+        # require_approval is untouched but gains the reconintent
+        # preview banner on its record; never a silent block on the
+        # heuristic). Opt-in: with no seam installed this is skipped
+        # entirely (zero behavior change).
+        _reconintent_hold = None
+        _reconintent_verdict = None
+        if self.reconstruction_seam is not None:
+            from . import reconstructed_intent as _reconintent
+            if (_reconintent.has_critical_destinations(tool, kwargs)
+                    and self.reconstruction_seam.has_chunks()):
+                _recon_user_text = ""
+                if self._intent_user_turns:
+                    _recon_user_text = self._intent_user_turns[-1]
+                _reconintent_verdict = (
+                    self.reconstruction_seam.score_buffered(
+                        tool, kwargs, _recon_user_text))
+                if _reconintent_verdict.get("suspect"):
+                    _reconintent_hold = PolicyDecision(
+                        "require_approval",
+                        ("Reconstructed-intent HOLD on %r: the run's "
+                         "untrusted chunks jointly complete an "
+                         "actionable directive no single chunk "
+                         "carried (score %d, confidence %s) -- a "
+                         "human must review this action before it "
+                         "executes (F248, wave-266)."
+                         % (tool,
+                            _reconintent_verdict.get("score", 0),
+                            _reconintent_verdict.get(
+                                "confidence", "medium"))),
+                        policy_id="reconintent",
+                        flag="reconstructed_intent")
+
         # S3 (K-041): an unrated mutating tool is never allowed silently.
         # _MUTATING_TOOLS names the known mutating tools (api_call is
         # read-classified per F1; read_file is non-mutating). A tool the
@@ -10147,6 +10329,33 @@ class ToolExecutor:
         if (_tiered_egress_hold is not None
                 and decision.effect == "allow"):
             decision = _tiered_egress_hold
+        # Wave-266 (F248): reconstructed-intent hold. A suspect from
+        # the run's untrusted chunk set downgrades an allow to queued
+        # human review -- fail-closed direction only: a deny stays
+        # denied (the denial is already journaled LOUD, so no
+        # dangling suspect event is emitted and nothing is queued);
+        # an existing require_approval is untouched (its record
+        # keeps the original policy_id/flag) but the LOUD
+        # reconstructed_intent_suspect event is journaled and the
+        # reconintent banner leads the queued record's preview below,
+        # so the human reviewer sees the forcing without
+        # correlating log-to-queue by hand. The queued record for a
+        # forced hold carries policy_id "reconintent" + flag
+        # "reconstructed_intent"; separation of duties rides
+        # gov.approvals (the agent can never approve its own hold
+        # away).
+        if (_reconintent_verdict is not None
+                and _reconintent_verdict.get("suspect")):
+            if decision.effect != "deny":
+                # _reconintent is bound by the pre-policy import
+                # above: a non-None verdict implies the seam was
+                # installed and the import ran.
+                self.log.append(_reconintent.suspect_event(
+                    _reconintent_verdict, identity.agent_id, tool,
+                    kwargs, self.run_id))
+            if (_reconintent_hold is not None
+                    and decision.effect == "allow"):
+                decision = _reconintent_hold
         # Wave-89 (stream s5-tool): deferred-effect (plant-now/harm-later)
         # scan on the raw kwargs. A hit chains a loud
         # deferred_effect_detected event and forces require_approval on
@@ -10853,6 +11062,18 @@ class ToolExecutor:
         # never denies and never breaks queueing (None when inert).
         intent_slice_verdict = self._intent_slice_verdict(
             tool, redacted_args, justification, identity)
+        # Wave-266 (F248): the machine-generated reconstructed-intent
+        # banner leads the preview when the run's untrusted chunks
+        # jointly completed this action's directive (the record keeps
+        # the original policy's id/flag; the banner is how the human
+        # reviewer sees the forcing -- the wave-89 deferred-effect
+        # banner pattern).
+        _reconintent_banner = ""
+        if (_reconintent_verdict is not None
+                and _reconintent_verdict.get("suspect")):
+            _reconintent_banner = (
+                _reconintent.preview_banner(
+                    _reconintent_verdict) + " ")
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
@@ -10861,10 +11082,11 @@ class ToolExecutor:
             # deferred-effect banner leads the preview when the call
             # plants a later-firing trigger (agent prose never gets to
             # soften it).
-            ((_tool_continuity.deferred_preview_banner(_deferred) + " "
-              + self._preview(tool, redacted_args))
-             if _deferred is not None
-             else self._preview(tool, redacted_args)),
+            (_reconintent_banner
+             + ((_tool_continuity.deferred_preview_banner(_deferred)
+                 + " " + self._preview(tool, redacted_args))
+                if _deferred is not None
+                else self._preview(tool, redacted_args))),
             policy_hash=policy.policy_hash,
             # Wave-89 (stream s5-tool): the tool-definition digest pinned
             # at queue time and the deferred-effect details ride the

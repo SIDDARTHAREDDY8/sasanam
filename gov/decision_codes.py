@@ -3053,6 +3053,51 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence-envelope'],
         "reverify_steps": ['recompute'],
     },
+    # Wave-266 strict credential tier (never-materialize). Opt-in per
+    # credential: real values never resolve in the agent-visible
+    # execution environment; only the supervisor-owned egress injector
+    # (gov/credential_strict.py) resolves, for approved requests to
+    # authorized hosts. All four fail closed (high severity).
+    'credential-strict-config-invalid': {
+        "domain": 'credential',
+        "code": 'credential-strict-config-invalid',
+        "human": 'strict credential misconfigured: strict=True without '
+                 'a non-empty strict_injector operator label, or '
+                 'strict_injector without strict=True; nothing is '
+                 'registered',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential', 'binding', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'credential-strict-host-denied': {
+        "domain": 'credential',
+        "code": 'credential-strict-host-denied',
+        "human": 'supervisor egress injection refused: the request '
+                 'destination is not in the credential\u2019s '
+                 'authorized host set',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential', 'binding', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'credential-strict-refused': {
+        "domain": 'credential',
+        "code": 'credential-strict-refused',
+        "human": 'agent-side resolution of a never-materialize (strict) '
+                 'credential is refused: the value may only be injected '
+                 'in the supervisor-owned egress path',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential', 'binding', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'credential-strict-unapproved': {
+        "domain": 'credential',
+        "code": 'credential-strict-unapproved',
+        "human": 'supervisor egress injection refused: the request has '
+                 'no valid approval for the tool and destination',
+        "severity": 'high',
+        "evidence_kinds_required": ['credential', 'binding', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'cross_run_denied': {
         "domain": 'approval',
         "code": 'cross_run_denied',
@@ -7132,6 +7177,70 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-boundary-exceeded': {
+        "domain": 'policy',
+        "code": 'policy-boundary-exceeded',
+        "human": 'policy change: the candidate grants authority outside '
+                 'the declared damage boundary; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-capability-expansion': {
+        "domain": 'policy',
+        "code": 'policy-change-capability-expansion',
+        "human": 'policy change: the candidate adds a new (method, path) '
+                 'capability on a host:port the subject already reaches; '
+                 'refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-credential-reach-expansion': {
+        "domain": 'policy',
+        "code": 'policy-change-credential-reach-expansion',
+        "human": 'policy change: a subject newly gains reach to a '
+                 'credential it had no reach to; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-l7-bypass-credentialed': {
+        "domain": 'policy',
+        "code": 'policy-change-l7-bypass-credentialed',
+        "human": 'policy change: the candidate adds L7 reach on a '
+                 'deployment-declared credentialed host; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-link-local-reach': {
+        "domain": 'policy',
+        "code": 'policy-change-link-local-reach',
+        "human": 'policy change: the candidate newly reaches link-local, '
+                 'loopback, or cloud-metadata endpoints; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-malformed': {
+        "domain": 'policy',
+        "code": 'policy-change-malformed',
+        "human": 'policy change: the input failed structural validation; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-change-uncheckable': {
+        "domain": 'policy',
+        "code": 'policy-change-uncheckable',
+        "human": 'policy change: the delta uses a shape the static check '
+                 'cannot model; refused fail-closed, never a vacuous pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-compile-refused': {
         "domain": 'policy',
         "code": 'policy-compile-refused',
@@ -8024,6 +8133,40 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'reconintent-malformed': {
+        "domain": 'reconintent',
+        "code": 'reconintent-malformed',
+        "human": 'reconstructed-intent seam: a chunk fails shape, '
+                 'fingerprint, or cap validation; refused loudly '
+                 'before scoring -- malformed input is never scored '
+                 'silently',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'reconintent-queue-failed': {
+        "domain": 'reconintent',
+        "code": 'reconintent-queue-failed',
+        "human": 'reconstructed-intent seam: the suspect hold could '
+                 'not be queued for human review; the suspect flag '
+                 'stays journaled -- operator must review manually',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'reconintent-suspect': {
+        "domain": 'reconintent',
+        "code": 'reconintent-suspect',
+        "human": 'reconstructed-intent seam: the run\'s untrusted '
+                 'chunks jointly complete an actionable directive no '
+                 'single chunk carried, and the action\'s critical '
+                 'destination is sourced from those chunks rather '
+                 'than the user turn; advisory journal flag plus a '
+                 'queued human approval -- never a silent block',
+        "severity": 'medium',
+        "evidence_kinds_required": ['scan-verdict', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'record-depth-exceeded': {
         "domain": 'canonical',
         "code": 'record-depth-exceeded',
@@ -8507,6 +8650,37 @@ TAXONOMY = {
         "human": 'policy compilation: the run limits are invalid',
         "severity": 'medium',
         "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-landlock-apply-failed': {
+        "domain": 'sandbox',
+        "code": 'sandbox-landlock-apply-failed',
+        "human": 'sandbox: the Landlock filesystem tier was requested but '
+                 'the ruleset could not be built or enforced for this call; '
+                 'refused fail-closed — the tool never runs under the weak '
+                 'tier while the deployment asked for the strong one',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-landlock-required': {
+        "domain": 'sandbox',
+        "code": 'sandbox-landlock-required',
+        "human": 'sandbox: the Landlock filesystem tier was required but is '
+                 'unavailable on this kernel/LSM; refused fail-closed rather '
+                 'than running without the required layer',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-landlock-unavailable': {
+        "domain": 'sandbox',
+        "code": 'sandbox-landlock-unavailable',
+        "human": 'sandbox: the Landlock filesystem tier was requested but is '
+                 'unavailable on this kernel/LSM; the call ran with the '
+                 'remaining defense-in-depth limits only',
+        "severity": 'low',
+        "evidence_kinds_required": ['assessment'],
         "reverify_steps": ['recompute'],
     },
     'sandbox-refused': {

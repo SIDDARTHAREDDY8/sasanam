@@ -28,7 +28,7 @@ import sys
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1205  # Wave-263 feat-provenance lane 3 (pin 1136 in-lane: 1129 + 7 provenance-*); wave-263 merge: 1151 (+8 mesh-auth, +7 recipient-plugin).
+TAXONOMY_PIN = 1222  # Wave-263 feat-provenance lane 3 (pin 1136 in-lane: 1129 + 7 provenance-*); wave-263 merge: 1151 (+8 mesh-auth, +7 recipient-plugin).
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))

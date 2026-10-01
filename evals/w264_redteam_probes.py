@@ -27,7 +27,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-263 merge: pin -> 1151 (+7 recipient-plugin-*, +8 mesh-auth-*,
 # +7 provenance-*).
-TAXONOMY_PIN = 1205
+TAXONOMY_PIN = 1222
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))

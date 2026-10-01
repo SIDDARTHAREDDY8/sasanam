@@ -87,7 +87,7 @@ from gov import policy_distribution as poldist
 from gov import root_ceremony as rc
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1205
+TAXONOMY_PIN = 1222
 
 _PROBES = []
 

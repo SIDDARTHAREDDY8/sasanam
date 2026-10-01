@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import evidence_quality as eq  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = 1205  # Wave-260: pin -> 1106 (wave-259 merge).
+TAXONOMY_PIN = 1222  # Wave-260: pin -> 1106 (wave-259 merge).
 
 
 def _held(detail=""):

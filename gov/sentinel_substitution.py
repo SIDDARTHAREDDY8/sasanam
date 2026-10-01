@@ -451,7 +451,8 @@ class SentinelVault(object):
         return "fake_value_%s" % uuid.uuid4()
 
     def register(self, credential_id, real_value, inject_hosts,
-                 credential_class, release_policy="attested"):
+                 credential_class, release_policy="attested", *,
+                 strict=False, strict_injector=None):
         """Bind a real credential to its authorized hosts. Returns the
         sentinel the agent sees.
 
@@ -468,6 +469,19 @@ class SentinelVault(object):
           explicitly per credential, LOUD-audited on every use, sunsets
           on ``attestation_release.LEGACY_RELEASE_SUNSET``);
           ``"deny_all"`` (incident hold -- refused at both seams).
+
+        Wave-266 strict tier (never-materialize, opt-in per
+        credential): ``strict=True`` binds the credential to a single
+        supervisor-owned egress injector by operator label
+        (``strict_injector``, required non-empty string). A strict
+        credential is NEVER resolved in the agent-visible execution
+        environment -- ``substitute_for_execution`` refuses it with
+        ``credential-strict-refused``; resolution happens only in
+        ``gov/credential_strict.py:StrictEgressInjector``. Malformed
+        strict config fails closed at registration: nothing is
+        registered. Passing ``strict_injector`` without ``strict``
+        is likewise refused. Existing callers (no strict kwargs)
+        are unaffected.
 
         There is no silent default: a credential registered without an
         explicit ``release_policy`` is attestation-mandatory, so a
@@ -493,6 +507,25 @@ class SentinelVault(object):
             raise SentinelError(
                 "release_policy %r is not one of %s"
                 % (release_policy, RELEASE_POLICIES))
+        # Wave-266 strict tier: opt-in per credential, fail closed on
+        # malformed config. Both directions refused (strict without a
+        # binding label, or a binding label without strict) — nothing
+        # registers unless the strict config is complete.
+        if strict:
+            if not isinstance(strict_injector, str) \
+                    or not strict_injector.strip():
+                raise SentinelError(
+                    "credential-strict-config-invalid: strict=True "
+                    "requires strict_injector to be a non-empty "
+                    "operator label naming the supervisor-owned "
+                    "egress injector allowed to resolve this "
+                    "credential (nothing registered)")
+            strict_injector = strict_injector.strip()
+        elif strict_injector is not None:
+            raise SentinelError(
+                "credential-strict-config-invalid: strict_injector "
+                "without strict=True is meaningless (nothing "
+                "registered)")
         hosts = frozenset(_check_host(h) for h in inject_hosts)
         if not hosts:
             raise SentinelError(
@@ -515,7 +548,9 @@ class SentinelVault(object):
         rec = {"credential_id": credential_id, "real": real_value,
                "hosts": hosts, "decoy": False, "sentinel": sentinel,
                "credential_class": credential_class,
-               "release_policy": release_policy}
+               "release_policy": release_policy,
+               "strict": bool(strict),
+               "strict_injector": strict_injector}
         self._entries[sentinel] = rec
         self._by_cred[credential_id] = sentinel
         return sentinel
@@ -896,6 +931,35 @@ def substitute_for_execution(vault, tool, args, *, identity=None,
     if not rid:
         rid = "?"
     aid = _identity_agent_id(identity) or "?"
+    # Wave-266 strict tier (never-materialize): a strict sentinel must
+    # NEVER resolve in the agent-visible execution environment. Refuse
+    # here -- after the binding early-returns but before release-
+    # predicate evaluation, jti consumption, enforcer checks, or any
+    # substitution -- with a machine-coded SentinelError, and audit
+    # the refusal LOUDLY (no secrets). Resolution of a strict
+    # credential happens ONLY in the supervisor-owned egress path
+    # (gov/credential_strict.py:StrictEgressInjector).
+    strict_hit = next(
+        (rec for rec in bound.values() if rec.get("strict")), None)
+    if strict_hit is not None:
+        rec = strict_hit
+        if audit_log is not None:
+            audit_log.append({
+                "event": "credential_strict_refused",
+                "code": "credential-strict-refused",
+                "credential_id": rec["credential_id"],
+                "agent_id": aid,
+                "run_id": rid,
+                "dest_host": dest,
+                "tool": tool,
+            })
+        raise SentinelError(
+            "credential-strict-refused: credential %r is a "
+            "never-materialize (strict) credential bound to supervisor "
+            "egress injector %r -- agent-side execution resolution is "
+            "refused; resolve it only via "
+            "gov/credential_strict.py:StrictEgressInjector"
+            % (rec["credential_id"], rec.get("strict_injector")))
     decisions = []  # (tok, rec, ok, reason, via_override, jti)
     for tok, rec in bound.items():
         # No silent downgrade (R6): a record missing release_policy is

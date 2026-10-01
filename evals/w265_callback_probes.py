@@ -35,7 +35,7 @@ except Exception:  # red phase: module not written yet
     decision_codes = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1205  # Wave-265 lane (callback seams):
+TAXONOMY_PIN = 1222  # Wave-265 lane (callback seams):
 # pin 1177 -> 1186 (+9 callback-*).
 
 EXPECTED_CALLBACK_CODES = (

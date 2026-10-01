@@ -35,7 +35,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1205  # Wave-263 merge: 1151. This lane: +7 mandate-*.
+TAXONOMY_PIN = 1222  # Wave-263 merge: 1151. This lane: +7 mandate-*.
 
 MOD_NAME = os.environ.get("GOV_MANDATE_IMPL", "gov.bounded_mandates")
 bm = importlib.import_module(MOD_NAME)

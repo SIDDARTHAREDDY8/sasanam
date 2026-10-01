@@ -50,7 +50,7 @@ except ImportError:
     rp = None
     _HAVE_RP = False
 
-TAXONOMY_PIN = 1205  # 1151 + 7 recipient-plugin-* codes (wave-263 lane 1).
+TAXONOMY_PIN = 1222  # 1151 + 7 recipient-plugin-* codes (wave-263 lane 1).
 
 _PROBES = []
 
