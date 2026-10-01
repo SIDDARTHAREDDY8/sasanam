@@ -26,6 +26,12 @@ Public surface:
 
 Machine codes (domain 'approval-policy'):
     approval-policy-malformed            -- rule doc / request malformed
+                                            (incl. nesting past the
+                                            _MAX_NESTING_DEPTH=200
+                                            bound: refused F218-style
+                                            before any recursion, so a
+                                            raw RecursionError never
+                                            escapes a public seam)
     approval-policy-no-audit-sink        -- auto-approve or disapproval
                                             refused: no audit sink
     approval-policy-seam-unavailable     -- require-approval refused:
@@ -71,6 +77,58 @@ DISAPPROVAL_OPT_IN = "disapproval-opt-in"
 # the fail-closed direction.
 _OPS = ("eq", "ne", "lt", "lte", "gt", "gte", "in", "not-in",
         "contains", "startswith", "exists")
+
+# Maximum nesting depth for rule documents, predicates, and requests
+# (F219; same 200 bound as F218's _MAX_PAYLOAD_DEPTH so the two seams
+# share one contract). Deeply-nested inputs are refused with
+# approval-policy-malformed BEFORE any recursion (digest, compile,
+# or predicate evaluation) can blow the interpreter stack. Real
+# rule docs and requests are flat (depth < 10 in the existing
+# suites); nothing legitimate approaches this bound.
+_MAX_NESTING_DEPTH = 200
+
+
+def _nesting_depth(obj):
+    """Iterative nesting depth of dict/list/tuple containers.
+
+    Never recurses (an explicit stack), so a hostile deeply-nested
+    input cannot blow the interpreter stack here. Cycle-safe via a
+    seen-set: a cyclic input is reported at its first-repeat depth
+    and is refused by the caller's bound check.
+    """
+    max_depth = 0
+    seen = set()
+    stack = [(obj, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if depth > max_depth:
+            max_depth = depth
+        if isinstance(current, dict):
+            children = current.values()
+        elif isinstance(current, (list, tuple)):
+            children = current
+        else:
+            continue
+        for child in children:
+            if isinstance(child, (dict, list, tuple)):
+                stack.append((child, depth + 1))
+    return max_depth
+
+
+def _refuse_too_deep(what):
+    """Fail closed on a too-deeply-nested input (F219)."""
+    raise ApprovalPolicyError(
+        MALFORMED,
+        "%s nesting depth exceeds the %d bound" % (what,
+                                                  _MAX_NESTING_DEPTH))
+
+
+def _check_depth(obj, what):
+    if _nesting_depth(obj) > _MAX_NESTING_DEPTH:
+        _refuse_too_deep(what)
 
 _RULE_KEYS = frozenset(
     ("id", "when", "action", "disapproval", "note"))
@@ -257,6 +315,11 @@ class RuleSet(object):
 
     def __init__(self, rules):
         # rules: list of (id, when, action, disapproval) tuples.
+        # F219: the bound is enforced here too, so a hand-built
+        # RuleSet cannot smuggle a deeply-nested predicate past the
+        # compile seam into the recursive evaluator.
+        for _rid, when, _action, _dis in rules:
+            _check_depth(when, "rule predicate")
         self._rules = tuple(rules)
 
     def evaluate(self, request):
@@ -265,6 +328,7 @@ class RuleSet(object):
         if not isinstance(request, dict):
             raise ApprovalPolicyError(
                 MALFORMED, "request must be a dict")
+        _check_depth(request, "request")
         for rule_id, when, action, _disapproval in self._rules:
             if _eval_predicate(when, request):
                 return Outcome(action, rule_id, True, [{
@@ -289,15 +353,24 @@ def compile_rules(doc):
     rules = doc.get("rules")
     if not isinstance(rules, list) or not rules:
         _refuse("'rules' must be a non-empty list")
+    # F219: bound the whole document before the recursive validator
+    # runs; a deeply-nested predicate would otherwise escape raw
+    # RecursionError from this public seam.
+    _check_depth(doc, "rule document")
     seen = set()
     compiled = []
-    for i, rule in enumerate(rules):
-        _check_rule(rule, i)
-        if rule["id"] in seen:
-            _refuse("duplicate rule id %r" % (rule["id"],))
-        seen.add(rule["id"])
-        compiled.append((rule["id"], rule["when"], rule["action"],
-                         rule.get("disapproval") is True))
+    try:
+        for i, rule in enumerate(rules):
+            _check_rule(rule, i)
+            if rule["id"] in seen:
+                _refuse("duplicate rule id %r" % (rule["id"],))
+            seen.add(rule["id"])
+            compiled.append((rule["id"], rule["when"], rule["action"],
+                             rule.get("disapproval") is True))
+    except RecursionError:
+        # Defensive: the depth bound above should already have
+        # refused; never let a raw RecursionError escape the seam.
+        _refuse("rule document nesting blew the recursion limit")
     return RuleSet(compiled)
 
 
@@ -317,9 +390,13 @@ def _canonical_json(obj):
 
 
 def _request_digest(request):
+    # F219: RecursionError (deeply-nested request) is caught alongside
+    # the serialization errors so a raw RecursionError never escapes
+    # this seam; the depth bound in route()/simulate()/evaluate()
+    # refuses first, this is the defensive second line.
     try:
         canonical = _canonical_json(request)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise ApprovalPolicyError(
             MALFORMED, "request is not JSON-canonicalizable: %s"
             % (exc,))
@@ -372,6 +449,9 @@ def route(rule_set, request, queue=None, audit_sink=None,
         carry the explicit opt-in (re-checked here: compile-time
         enforcement is not the only line).
     """
+    # F219: fail fast on a too-deeply-nested request before any
+    # digest or predicate evaluation can blow the interpreter stack.
+    _check_depth(request, "request")
     outcome = rule_set.evaluate(request)
     action = outcome.action
     if action == REQUIRE_APPROVAL:
@@ -429,6 +509,9 @@ def simulate(rule_set, requests):
             MALFORMED, "requests must be a list")
     previews = []
     for request in requests:
+        # F219: bound before the digest; a deeply-nested request is
+        # refused machine-coded instead of escaping RecursionError.
+        _check_depth(request, "request")
         outcome = rule_set.evaluate(request)
         previews.append({
             "request_digest": _request_digest(request),

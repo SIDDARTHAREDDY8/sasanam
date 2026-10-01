@@ -167,7 +167,7 @@ class RouteTests(unittest.TestCase):
 class TaxonomyTests(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
-        self.assertEqual(len(dc.TAXONOMY), 1049)  # Wave-256 merge: pin -> 1049.
+        self.assertEqual(len(dc.TAXONOMY), 1063)  # Wave-257 merge: pin -> 1063.
 
     def test_new_codes_resolve(self):
         for code in ("approval-policy-malformed",
@@ -181,7 +181,7 @@ class TaxonomyTests(unittest.TestCase):
 
     def test_no_duplicates(self):
         self.assertEqual(len(set(dc.TAXONOMY.keys())),
-                         len(dc.TAXONOMY))  # Wave-256 merge: pin -> 1049.
+                         len(dc.TAXONOMY))  # Wave-257 merge: pin -> 1063.
 
 
 if __name__ == "__main__":

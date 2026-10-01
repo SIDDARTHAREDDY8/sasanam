@@ -191,7 +191,7 @@ class TaxonomyTest(unittest.TestCase):
         # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1049)  # Wave-256 merge: pin -> 1049.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1063)  # Wave-257 merge: pin -> 1063.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_new_codes_mapped(self):

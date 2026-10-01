@@ -341,6 +341,27 @@ ALLOWED_HMAC_SITES = {
         "permit-journal per-event chain MAC; deployer-held key (kwarg/env), domain-separated",
     ("gov/permit_journal.py", "_snapshot_mac", 0):
         "permit-journal snapshot MAC; deployer-held key (kwarg/env), domain-separated",
+    # gov/encrypted_envelopes.py (wave-257 lane 1): the envelope module's
+    # internal HMAC-SHA256 primitives. The keys are EITHER (a) a fresh
+    # per-envelope 32-byte random from secrets.token_bytes (the envelope
+    # key, generated inside EnvelopeVault.seal, never reused, never
+    # persisted), (b) derived via the domain-separated _kdf from (a), or
+    # (c) deployment-supplied recipient key material (opaque bytes,
+    # minimum 16 bytes enforced, refused loudly via
+    # envelope-recipient-refused otherwise; never a default, never
+    # hard-coded). All HMAC inputs are domain-separated via _DOMAIN
+    # ("sasanam-envelope/v1:"), so KDF/stream/tag domains cannot
+    # collide. The HMAC here provides envelope confidentiality (via the
+    # HMAC-CTR keystream) and integrity (the envelope tag); it is the
+    # module's core primitive, not a bypass of the log-key chokepoint.
+    ("gov/encrypted_envelopes.py", "_kdf", 0):
+        "envelope KDF; key = fresh per-envelope random or deployment-supplied recipient material, domain-separated",
+    ("gov/encrypted_envelopes.py", "_keystream", 0):
+        "envelope HMAC-CTR keystream; key = _kdf output (fresh per-envelope random), domain-separated",
+    ("gov/encrypted_envelopes.py", "EnvelopeVault.seal", 0):
+        "envelope integrity tag; key = _kdf(fresh per-envelope random, payload-mac), domain-separated",
+    ("gov/encrypted_envelopes.py", "EnvelopeVault.open", 0):
+        "envelope tag re-verification; key = _kdf(unwrapped envelope key, payload-mac), domain-separated",
 }
 
 

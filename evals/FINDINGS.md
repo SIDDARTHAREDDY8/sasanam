@@ -6579,6 +6579,70 @@ change (pin stays 1029).
 
 **Close-when criteria:** (1) no raw `RecursionError` escapes any public `approval_policy` seam -- `route()`, `simulate()`, and `compile_rules()` refuse deeply-nested inputs with an `ApprovalPolicyError` carrying a machine code (catch-extension or a depth bound before serialization/validation, F218-style); (2) break-first battery: the three deep-input probes BREAK (raw RecursionError) on old code, HELD (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_approval_policy, w254 approval-policy battery).
 
+**Status: CLOSED 2026-10-01 (wave-257 lane 3).** Closure evidence:
+(1) F218-style closure in `gov/approval_policy.py`: new `_nesting_depth()` (iterative, explicit-stack, cycle-safe, same shape as F218's `_payload_depth`) and `_MAX_NESTING_DEPTH = 200` (same bound as F218, one shared contract across seams). Depth is refused with the existing `approval-policy-malformed` machine code (the finding's own expectation for the compile seam; "request malformed" for the route/simulate seams) BEFORE any recursion, at every public seam: `compile_rules()` (whole document, plus a defensive `except RecursionError` around the validation loop), `RuleSet.__init__` (each predicate -- a hand-built RuleSet cannot smuggle a deep predicate into the recursive evaluator), `RuleSet.evaluate()` (request), `route()` (request, fail-fast), and `simulate()` (each request). Defensive `except RecursionError` also added to `_request_digest()` alongside `(TypeError, ValueError)`. No new machine codes (taxonomy stays 1049).
+(2) Break-first battery `evals/w257_f219_probes.py`: on pristine wave-256 base, 0/3 HELD 3 BREAK (raw RecursionError escaped `route()`, `simulate()`, `compile_rules()`); on fixed code, 3/3 HELD (all refused `approval-policy-malformed`) in staging AND `env -u GOV_DEPLOYMENT_MODE`. Boundary measured: depth 200 accepted, depth 201 refused, on both request and compile seams.
+(3) Full wave-256 red-team battery `evals/w256_redteam_probes.py`: 33/33 HELD on the fixed tree (the 3 former F219 BREAKs now HELD, the other 30 still HELD). Adjacent: `tests.test_approval_policy` 18/18 OK, `evals/w254_approval_policy_probes.py` all HELD, `tests.test_decision_codes` 19/19 OK.
+
+## F220: gov/evidence_quality.py escapes raw TypeError on deepcopy-hostile caller input instead of a machine code (LOW)
+
+**Cells:** wave-257 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w257_redteam_probes.py` (probes `evidence/deepcopy-lock-evidence-raw-typeerror`, `evidence/deepcopy-lock-artifacts-raw-typeerror`).
+
+**Defect:** `evaluate()` calls `copy.deepcopy(evidence)` BEFORE any shape validation, and `_normalize_kwargs()` deep-copies the caller-supplied `artifacts` mapping during kwarg normalization. A deepcopy-hostile object (e.g. a `threading.Lock` in the evidence list, or as an artifact value) escapes raw `TypeError: cannot pickle '_thread.lock' object` from the public `evaluate()` seam instead of `evidence-quality-evidence-malformed` / `evidence-quality-malformed`. JSON-shaped malformed evidence IS machine-coded (pinned by the `evidence/malformed-shape-machine-coded` probe) -- only the deepcopy-first ordering escapes. Same defect class as F218 (raw stdlib exception at a public seam, machine-code contract broken). Fail-closed in effect (no gate pass, no emission -- the exception aborts before any result), wrong error type.
+
+**Severity rationale:** LOW. Fail-closed (nothing is emitted or passed on the raw path), so the exposure is error-type confusion at the seam, identical to F218's scoping. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows: the gate refuses loudly, just not with a machine code.
+
+**Close-when criteria:** (1) no raw `TypeError` escapes `evaluate()`/`validate_expectation()` on deepcopy-hostile caller input -- shapes are validated before deepcopy, or deepcopy is guarded and mapped to the evidence/malformed machine codes; (2) break-first battery: the two deepcopy probes BREAK (raw TypeError) on old code, HELD (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
+
 **Status: OPEN.**
 
-Next free finding: **F220**. **Open findings: F219.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3.)
+## F221: gov/evidence_quality.py escapes raw RecursionError on deeply-nested evidence instead of a machine code (LOW)
+
+**Cells:** wave-257 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w257_redteam_probes.py` (probe `evidence/deep-nesting-raw-recursionerror`).
+
+**Defect:** `copy.deepcopy(evidence)` in `evaluate()` recurses unboundedly. A 10000-deep evidence payload escapes raw `RecursionError` from the public `evaluate()` seam instead of a machine code. This is the same defect class as F218 (permit journal, closed wave-255 by bounding payload depth at 200 before the durable write plus a defensive `RecursionError` catch) and F219 (approval policy, still open) -- this module has no depth bound and no catch at all. Fail-closed in effect (the exception aborts before any result), wrong error type.
+
+**Severity rationale:** LOW. Fail-closed, same scoping as F218/F219: error-type confusion at the seam, no integrity property weakened, no attacker advantage beyond a loud refusal.
+
+**Close-when criteria:** (1) no raw `RecursionError` escapes `evaluate()` on deeply-nested evidence -- an iterative depth bound before deepcopy (F218-style) or a guarded deepcopy mapped to a machine code; (2) break-first battery: the deep-nesting probe BREAKs (raw RecursionError) on old code, HELDs (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
+
+**Status: OPEN.**
+
+## F222: gov/evidence_quality.py reports success on empty evidence -- vacuous gate pass (LOW)
+
+**Cells:** wave-257 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w257_redteam_probes.py` (probe `evidence/empty-evidence-vacuous-pass`).
+
+**Defect:** `evaluate()` refuses an empty EXPECTATION list ("a vacuous gate must never pass"), but empty EVIDENCE passes every expectation type vacuously: `expect_evidence_monotonic`, `expect_chain_intact`, `expect_fields_present`, and `expect_timestamps_ordered` over `[]`, and `expect_bundle_complete` over `{"items": []}`, all return `success=True`. A pipeline stage that silently drops all evidence still gets a green quality report -- the one fail-OPEN in this module's fail-closed evaluation contract, and inconsistent with the module's own anti-vacuity principle.
+
+**Severity rationale:** LOW. The compliance emitter's claims come from the control source, not from the gated evidence, so no false compliance artifact is emitted; the harm is a misleading green quality report masking a pipeline outage (zero items evaluated). Scoped below MEDIUM because no false attestation is produced.
+
+**Close-when criteria:** (1) `evaluate()` over empty evidence does not report success -- either a machine-coded refusal or per-expectation FAILED results (statistics honestly show zero items evaluated); (2) break-first battery: the empty-evidence probe BREAKs (vacuous success) on old code, HELDs (refused/failed) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
+
+**Status: OPEN.**
+
+## F223: gov/short_lived_credentials.py leaks id-existence via a timing side channel (LOW)
+
+**Cells:** wave-257 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w257_redteam_probes.py` (probe `credentials/timing-id-existence-delta`).
+
+**Defect:** unknown credential ids and secret mismatches share the refusal CODE `short-lived-credential-unknown` ("id-existence is not leaked"), but the two paths are not timing-indistinguishable: the mismatch path computes one extra HMAC-SHA256 (`_secret_binding`) plus `hmac.compare_digest` before refusing. Measured on the merge base: the mismatch path is systematically ~3000 ns slower (median-of-medians over 3x800 samples after warmup), distinguishable with ~10^2 samples at a local call boundary. The API-level claim holds (same code); the timing level does not.
+
+**Severity rationale:** LOW. Credential ids are 128-bit unguessable, so the oracle cannot enumerate ids -- it only confirms existence of an already-known candidate id, and the shared refusal code still holds at the API level. Scoped below MEDIUM because practical exploitability is marginal (local call boundary, ~10^2 samples, minimal attacker value).
+
+**Close-when criteria:** (1) the unknown-id path performs equivalent dummy HMAC work before refusing (or another construction eliminating the systematic delta), so unknown-id vs secret-mismatch are timing-indistinguishable within noise; (2) break-first battery: the timing probe BREAKs (systematic delta > 1000 ns) on old code, HELDs (delta within noise) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_short_lived_credentials, w256 credentials battery).
+
+**Status: OPEN.**
+
+## F224: gov/short_lived_credentials.py escapes raw TypeError on non-numeric `now` instead of a machine code (LOW)
+
+**Cells:** wave-257 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w257_redteam_probes.py` (probe `credentials/non-numeric-now-raw-typeerror`).
+
+**Defect:** `now` is an injectable parameter on the `verify()`/`expire_due()` read paths but is never validated: `verify(cid, secret, now="yesterday")` and `expire_due(now="yesterday")` escape raw `TypeError` (`'>=' not supported`) from the public seams instead of a `short-lived-credential-malformed` refusal. Every other input on these seams (`principal`, `scope`, `ttl_seconds`, `key`) is machine-coded; `now` is the odd one out. Same defect class as F218 (raw stdlib exception at a public seam). Fail-closed in effect (the exception aborts before any verification), wrong error type. (Note: a caller-supplied PAST numeric `now` is honored by design -- `now` is a documented test hook and the caller is the trusted deployment; that behavior is pinned HELD by the `credentials/past-now-is-test-hook` probe and is NOT this finding.)
+
+**Severity rationale:** LOW. Fail-closed, same scoping as F218: error-type confusion at the seam, no integrity property weakened.
+
+**Close-when criteria:** (1) non-numeric `now` is refused with a `short-lived-credential-malformed` machine code on both `verify()` and `expire_due()`; (2) break-first battery: the non-numeric-now probe BREAKs (raw TypeError) on old code, HELDs (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_short_lived_credentials, w256 credentials battery).
+
+**Status: OPEN.**
+
+
+Next free finding: **F225**. **Open findings: F220, F221, F222, F223, F224.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3; F219 filed 2026-10-01, wave-256 lane 1 red-team, closed 2026-10-01, wave-257 lane 3; F220/F221/F222/F223/F224 filed 2026-10-01, wave-257 lane 4 red-team.)

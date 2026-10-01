@@ -2425,6 +2425,78 @@ TAXONOMY = {
         "evidence_kinds_required": ['deployment', 'checklist', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'control-profile-check-passed': {
+        "domain": 'control-profile',
+        "code": 'control-profile-check-passed',
+        "human": 'control profile: a control check passed; result marker so clean profiles emit linked artifacts',
+        "severity": 'low',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['rerun-profile-check', 'recompute'],
+    },
+    'control-profile-duplicate-control-id': {
+        "domain": 'control-profile',
+        "code": 'control-profile-duplicate-control-id',
+        "human": 'control profile: duplicate control id; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'control-profile-empty': {
+        "domain": 'control-profile',
+        "code": 'control-profile-empty',
+        "human": 'control profile: profile has no controls; a vacuous profile must never pass; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'control-profile-evidence-malformed': {
+        "domain": 'control-profile',
+        "code": 'control-profile-evidence-malformed',
+        "human": 'control profile: the evidence snapshot under evaluation is malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
+    'control-profile-gate-failed': {
+        "domain": 'control-profile',
+        "code": 'control-profile-gate-failed',
+        "human": 'control profile: the evidence-quality gate refused emission; an expectation failed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
+    'control-profile-invalid-impact': {
+        "domain": 'control-profile',
+        "code": 'control-profile-invalid-impact',
+        "human": 'control profile: control impact is not a number in [0.0, 1.0]; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'control-profile-malformed': {
+        "domain": 'control-profile',
+        "code": 'control-profile-malformed',
+        "human": 'control profile: the profile or control shape is malformed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'control-profile-non-callable-check': {
+        "domain": 'control-profile',
+        "code": 'control-profile-non-callable-check',
+        "human": 'control profile: control check is not a runtime callable (serialized/call-by-name checks refused; no eval of stored strings)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'control-profile-unknown-key': {
+        "domain": 'control-profile',
+        "code": 'control-profile-unknown-key',
+        "human": 'control profile: unknown profile/control key; a typo must never silently change what gets checked; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['recompute'],
+    },
     'corpus-expired': {
         "domain": 'corpus',
         "code": 'corpus-expired',
@@ -3334,6 +3406,55 @@ TAXONOMY = {
         "human": 'approval and delegation: no reason was supplied; refused',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-malformed': {
+        "domain": 'envelope',
+        "code": 'envelope-malformed',
+        "human": 'encrypted envelope: the envelope bytes are structurally '
+                 'invalid (bad magic, truncated header/recipient/ciphertext, '
+                 'bad lengths); refused before any cryptographic work',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-open-refused': {
+        "domain": 'envelope',
+        "code": 'envelope-open-refused',
+        "human": 'encrypted envelope: open refused under the single '
+                 'generic code (wrong key, unknown recipient, or tampered '
+                 'tag/ciphertext/header); failure does not leak which check '
+                 'or which recipient failed',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-recipient-refused': {
+        "domain": 'envelope',
+        "code": 'envelope-recipient-refused',
+        "human": 'encrypted envelope: a seal recipient spec is invalid '
+                 '(not a Recipient, empty/non-str id, id too long, or key '
+                 'material shorter than the 16-byte minimum)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-seal-refused': {
+        "domain": 'envelope',
+        "code": 'envelope-seal-refused',
+        "human": 'encrypted envelope: seal refused (empty recipient list, '
+                 'duplicate recipient id, non-bytes/empty/oversize payload)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-version-unknown': {
+        "domain": 'envelope',
+        "code": 'envelope-version-unknown',
+        "human": 'encrypted envelope: the envelope version is not '
+                 'supported; refused before any cryptographic work',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
     'escalation-action-mismatch': {
