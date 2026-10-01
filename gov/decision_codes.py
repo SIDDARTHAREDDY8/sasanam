@@ -5415,6 +5415,75 @@ TAXONOMY = {
         "evidence_kinds_required": ['lease', 'timestamp', 'revocation-registry'],
         "reverify_steps": ['check-expiry', 'check-revocation'],
     },
+    'mandate-constraint-exceeded': {
+        "domain": 'mandate',
+        "code": 'mandate-constraint-exceeded',
+        "human": 'bounded mandate: a closed mandate exceeded an open '
+                 'mandate constraint (tool outside the allowlist, or '
+                 'cumulative cost over the spend cap); refused at the '
+                 'audit seam',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-expired': {
+        "domain": 'mandate',
+        "code": 'mandate-expired',
+        "human": 'bounded mandate: the action was executed outside the '
+                 'open mandate time window, or the window had closed at '
+                 'verification time; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-malformed': {
+        "domain": 'mandate',
+        "code": 'mandate-malformed',
+        "human": 'bounded mandate: a malformed open mandate, proposal, '
+                 'closed action, or MAC key; refused before any '
+                 'verification',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-replay': {
+        "domain": 'mandate',
+        "code": 'mandate-replay',
+        "human": 'bounded mandate: a closed mandate was presented twice; '
+                 'the second presentation is a replay; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-tampered': {
+        "domain": 'mandate',
+        "code": 'mandate-tampered',
+        "human": 'bounded mandate: a mandate MAC failed to verify, the '
+                 'closed-mandate hash chain is broken, or the action '
+                 'claims a future execution time; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-unknown': {
+        "domain": 'mandate',
+        "code": 'mandate-unknown',
+        "human": 'bounded mandate: a closed mandate bound to a different '
+                 'open mandate than the one presented; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mandate-version-mismatch': {
+        "domain": 'mandate',
+        "code": 'mandate-version-mismatch',
+        "human": 'bounded mandate: a mandate carried an unknown type '
+                 'version; implementations must match the exact type '
+                 'string, so it is refused before interpretation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'manifest-downgrade-refused': {
         "domain": 'manifest',
         "code": 'manifest-downgrade-refused',
