@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 _PROBES = []
 
@@ -263,7 +263,7 @@ def _p_f242_residual():
     low = iss.seal("agent-sub", set(), 1000.0)
     ghost = _code_of(lambda: reg.invoke(low, "ghost_tool", lambda: 1))
     scoped = _code_of(lambda: reg.invoke(low, "read_file", lambda: 1))
-    if ghost == "scope-listing-not-registered" and \
+    if ghost == "scope-listing-not-registered" and\
             scoped == "scope-listing-denied":
         return _held("post-auth: not-registered vs denied (deliberate)")
     return ("ERROR", "post-auth codes changed: %s / %s" % (ghost, scoped))

@@ -32,7 +32,7 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-263 lane 2: pin -> 1137 (8 new mesh-auth-* codes).
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
@@ -157,7 +157,7 @@ def p_envelope_stripping():
     issuer, gate, _, _ = _world()
     card = _card("svid", "scope-ticket")
     tasks = ma.MeshTaskAuth(gate)
-    tasks.begin("t1")
+    tasks.begin("t1", owner=SPIFFE_A)
     env = _svid_envelope(issuer, SPIFFE_A)
     tasks.call("t1", card, env, now=NOW)  # call 1: fine
     ok, why = _expect_mesh_auth(
@@ -180,12 +180,12 @@ def p_escalation_bypass():
     issuer, gate, tickets, _ = _world()
     card = _card("svid", "scope-ticket")
     tasks = ma.MeshTaskAuth(gate)
-    tasks.begin("t2")
+    tasks.begin("t2", owner=SPIFFE_A)
     svid_env = _svid_envelope(issuer, SPIFFE_A)
     tasks.call("t2", card, svid_env, now=NOW)
     tasks.escalate("t2", required_scheme="scope-ticket",
                    reason="fetch_url needs the net:fetch scope grant",
-                   now=NOW)
+                   subject=SPIFFE_A, now=NOW)
     if tasks.state("t2") != ma.TASK_STATE_AUTH_REQUIRED:
         return False, "GAP: escalate did not pause the task"
     # (a) plain call with the OLD credential while paused -> refused,
@@ -199,7 +199,8 @@ def p_escalation_bypass():
         return False, "GAP: refused call unpaused the task"
     # (b) resume with the OLD (weaker) scheme -> escalation-bypass.
     ok, why = _expect_mesh_auth(
-        lambda: tasks.resume("t2", card, svid_env, now=NOW),
+        lambda: tasks.resume("t2", card, svid_env, subject=SPIFFE_A,
+                             now=NOW),
         "mesh-auth-escalation-bypass")
     if not ok:
         return False, why
@@ -269,7 +270,7 @@ def p_taxonomy_pin():
     if missing:
         return False, "GAP: codes missing from taxonomy: %r" % missing
     if len(dc.TAXONOMY) != TAXONOMY_PIN:
-        return False, "GAP: taxonomy has %d codes, pin is %d" \
+        return False, "GAP: taxonomy has %d codes, pin is %d"\
             % (len(dc.TAXONOMY), TAXONOMY_PIN)
     return True, "HELD (pin %d, 8 new codes present)" % TAXONOMY_PIN
 

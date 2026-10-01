@@ -32,7 +32,7 @@ class TestEvidenceEnvelope(unittest.TestCase):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1177)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(dc.TAXONOMY), 1205)  # Wave-258 merge: pin -> 1106.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         self.assertIn("evidence-envelope-record-limit", dc.TAXONOMY)
         self.assertIn("evidence-envelope-record-too-large", dc.TAXONOMY)
@@ -96,7 +96,7 @@ class TestEvidenceEnvelope(unittest.TestCase):
         seed, pub = _keys()
         env = ee.seal_record({"seq": 1}, seed)
         env2 = copy.deepcopy(env)
-        env2["payloadType"] = \
+        env2["payloadType"] =\
             "application/vnd.sasanam.decision-packet+json"
         with self.assertRaises(ee.EvidenceEnvelopeError) as ctx:
             ee.open_record(env2, pub)

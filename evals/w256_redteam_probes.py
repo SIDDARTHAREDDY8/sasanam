@@ -37,7 +37,7 @@ from gov import inventory_catalog as ic  # noqa: E402
 from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 
@@ -205,7 +205,7 @@ def _p_disapproval_legit():
             "action": "disapproval-opt-in", "disapproval": True}],
     })
     out = ap.route(rs, {"kind": "bad"}, audit_sink=seen.append)
-    if out.get("audited") and seen and \
+    if out.get("audited") and seen and\
             seen[0]["decision"] == "disapproved":
         return _held("opt-in disapproval audited")
     return _break("opt-in path misbehaved: %r" % (out,))
@@ -391,7 +391,7 @@ def _p_aliasing():
     src["mappings"][0]["ref"] = "MUTATED"
     src["mappings"].append(
         {"kind": "code", "ref": "zzz", "rationale": "z"})
-    if norm["mappings"][0]["ref"] == "permit-journal-misuse" and \
+    if norm["mappings"][0]["ref"] == "permit-journal-misuse" and\
             len(norm["mappings"]) == 1:
         return _held("normalized copy isolated from caller")
     return _break("caller mutation leaked into normalized source")
@@ -531,7 +531,7 @@ def _p_immutability():
     entry["relationships"].append({"to": "zzz", "type": "uses"})
     entry["owner"] = "mallory"
     fresh = ic.entry_of(cat, "a1")
-    if len(fresh["relationships"]) == 1 and \
+    if len(fresh["relationships"]) == 1 and\
             fresh["owner"] == "o":
         return _held("catalog immune to caller mutation")
     return _break("caller mutation corrupted catalog state")

@@ -81,7 +81,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes: 1 breach-boundary + 9 skill-admission + 2 evidence-envelope + 6 skill-update + 13 identity + 3 combine + 7 artifact), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1177)  # Wave-262 lane 3 (ceremony): pin -> 1119 (1106 + 13 ceremony-*).
+        self.assertEqual(len(dc.TAXONOMY), 1205)  # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9 callback-*).
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,
@@ -376,9 +376,9 @@ class PacketIntegrationTest(unittest.TestCase):
     def test_unmapped_code_in_section_rejected(self):
         pkt = _packet(decision_code="permit-revoked")
         forged = copy.deepcopy(pkt)
-        forged["decision_code"]["value"]["refusal"] = \
+        forged["decision_code"]["value"]["refusal"] =\
             "no-such-refusal-code-xyz"
-        forged["decision_code"]["value"]["code"] = \
+        forged["decision_code"]["value"]["code"] =\
             "no-such-refusal-code-xyz"
         # Re-sign: signature valid, but taxonomy replay must still
         # refuse the unmapped claim.

@@ -22,7 +22,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 try:
     from gov import decision_codes
@@ -34,7 +34,7 @@ except ImportError:
 if HAVE_MODULE:
     _n = len(decision_codes.TAXONOMY)
     # Wave-258 merge: pin -> 1080.
-    assert _n == TAXONOMY_PIN, \
+    assert _n == TAXONOMY_PIN,\
         "taxonomy drift: %d != %d" % (_n, TAXONOMY_PIN)
 
 PROBES = []
@@ -80,7 +80,7 @@ def p_duplicate_control_ids_refused():
         cp.run_profile(
             _profile([_control("C1", _ok), _control("C1", _no)]), {})
     except cp.ControlProfileError as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "control-profile-duplicate-control-id" else "BREAK"
     except Exception:
         return "BREAK"
@@ -113,7 +113,7 @@ def p_empty_controls_refused():
     try:
         cp.run_profile(_profile([]), {})
     except cp.ControlProfileError as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "control-profile-empty" else "BREAK"
     except Exception:
         return "BREAK"
@@ -187,7 +187,7 @@ def p_check_raising_becomes_error():
     r = res["results"][0]
     if r["status"] != "error":
         return "BREAK"
-    if not r.get("exception_info") or \
+    if not r.get("exception_info") or\
             "RuntimeError" not in r["exception_info"].get("raised", ""):
         return "BREAK"
     return "HELD"
@@ -200,7 +200,7 @@ def p_fail_result_maps_to_finding():
     res = cp.run_profile(_profile([_control("C1", _no, impact=0.9)]),
                          {})
     out = cp.emit_profile_results(res, fmt="json")
-    if '"kind": "finding"' not in out and \
+    if '"kind": "finding"' not in out and\
             '"kind":"finding"' not in out:
         return "BREAK"
     if "high" not in out:
@@ -255,7 +255,7 @@ def p_quality_gate_failure_blocks_emit():
                  "kwargs": {}}],
             quality_evidence=[{"seq": 2}, {"seq": 1}])
     except cp.ControlProfileError as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "control-profile-gate-failed" else "BREAK"
     except Exception:
         return "BREAK"

@@ -73,7 +73,7 @@ except ImportError:
 
 # Wave-262 feature lane 2: +4 detector-* machine codes -> 1106 -> 1110.
 # Assert on the deduped dict AND on raw source literals (wave-260 lesson).
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 _NEW_CODES = ("detector-deprecated", "detector-exception-malformed",
               "detector-unknown-maturity", "detector-unknown-priority")
@@ -268,7 +268,7 @@ def _p_suppressed():
         return _gap("want record_type 'suppressed', got %r"
                     % (rec["record_type"],))
     ed = rec["exception_decision"]
-    if ed["matched"] != ["allow-ci"] or ed["suppressing_exception"] \
+    if ed["matched"] != ["allow-ci"] or ed["suppressing_exception"]\
             != "allow-ci" or ed["decision"] != "suppressed":
         return _gap("exception_decision wrong: %r" % (ed,))
     if "allow-ci" not in (rec["reason"] or ""):
@@ -630,7 +630,7 @@ def _p_additivity():
     # Detection behavior identical to wave-261 (Tracee half untouched).
     produced = eng.process({"type": "credential_swap", "agent_id": "agent-7",
                             "host": "evil.example", "credential_id": "cred-1"})
-    if len(produced) != 1 or produced[0]["event_name"] != \
+    if len(produced) != 1 or produced[0]["event_name"] !=\
             "credential_swap_outside_allowlist":
         return _gap("detection behavior changed: %r" % (produced,))
     # Alert half: no declared priority -> observation, never inflated.

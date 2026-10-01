@@ -2,7 +2,7 @@
 
 Re-verifies F240-F244 closures at the public seams on the MERGED tree, and
 confirms F245-F247 still BREAK (honestly OPEN). Standing post-wave audit.
-Taxonomy pin: 1177.
+Taxonomy pin: 1178.
 """
 import copy
 import inspect
@@ -13,7 +13,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import decision_codes
 
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 if os.environ.get("GOV_SKIP_GREEN") != "1":
     def _green():
@@ -27,7 +27,7 @@ if os.environ.get("GOV_SKIP_GREEN") != "1":
         print("GREEN CHECK: adjacent lane batteries green")
     _green()
 
-assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, "taxonomy pin 1177"
+assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, "taxonomy pin 1178"
 
 results = []
 

@@ -37,7 +37,7 @@ from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 
@@ -146,7 +146,7 @@ def _p_aliasing():
     tl[0]["event"] = "MUTATED"
     ai[0]["item"] = "MUTATED"
     pm = mgr.postmortem(iid)
-    if pm["timeline"][0]["event"] == "e0" \
+    if pm["timeline"][0]["event"] == "e0"\
             and pm["action_items"][0]["item"] == "fix":
         return _held("deep-copied at append and read")
     return _break("post-append mutation visible in record")

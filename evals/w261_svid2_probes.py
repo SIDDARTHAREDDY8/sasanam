@@ -42,7 +42,7 @@ from gov import svid_issuer as sv  # noqa: E402
 
 # Wave-261 lane B: pin 1092 -> 1093 (+1 svid-usage-mismatch, F233).
 # Additive only; repointed value-token-only per the wave-256 lesson.
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 _PROBES = []
 
@@ -280,7 +280,7 @@ def _p_now_hook():
     mc = sv.MeshControl(verifier,
                         {"allow": ["spiffe://example.org/w"]})
     admitted = mc.admit(doc, now=NOW - 590.0)
-    if claims["issued_at"] != int(NOW - 600.0) or \
+    if claims["issued_at"] != int(NOW - 600.0) or\
             admitted != "spiffe://example.org/w/a":
         return ("ERROR", "past-numeric now not honored")
     return _held("past numeric `now` honored on issue/verify/admit")

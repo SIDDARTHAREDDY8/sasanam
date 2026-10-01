@@ -36,6 +36,16 @@ Fail-closed rules (all machine-coded):
 - A statement whose signature does not verify -> the emitter refuses
   to emit it (``provenance-statement-unverified``); tampered bytes
   never reach downstream policy.
+- Hostile input shapes never escape as raw exceptions: an unhashable
+  (non-string) signature ``key_id`` is skipped as an unmatchable
+  signer (``provenance-statement-unverified``); a non-dict VSA
+  ``verifier`` is treated as unpinned, and a non-string verifier
+  ``id`` likewise (``provenance-vsa-refused``); a truthy non-dict
+  VSA ``subject``/``digest`` carries no digest
+  (``provenance-subject-refused``); a non-string ``verified_level``
+  has no rank (``provenance-vsa-refused``); a bool/non-numeric/
+  non-finite ``now`` refuses ``provenance-vsa-refused`` before any
+  validity decision (the F228 clock contract; F245).
 
 Honest residuals (documented, not hidden):
 - This checks provenance CLAIMS against policy; it does not make the
@@ -146,6 +156,48 @@ def _as_hex64(value, what=None):
     return low
 
 
+def _subject_digest(vsa):
+    """Extract the VSA's subject sha256 without letting hostile
+    shapes escape as raw exceptions (F245): a truthy non-dict
+    ``subject`` (or ``digest``) carries no digest and is therefore
+    unmatchable -- treated as missing so the caller refuses
+    machine-coded."""
+    subject = vsa.get("subject")
+    if not isinstance(subject, dict):
+        return None
+    digest_field = subject.get("digest")
+    if not isinstance(digest_field, dict):
+        return None
+    return digest_field.get("sha256")
+
+
+def _vsa_level_rank(level):
+    """Rank lookup that refuses to hash hostile values (F245): a
+    non-string ``verified_level`` can never be a valid rank -- None
+    so the caller refuses machine-coded instead of escaping as a
+    raw TypeError from the dict lookup."""
+    if not isinstance(level, str):
+        return None
+    return _VSA_LEVEL_RANK.get(level)
+
+
+def _validate_now(now):
+    """The repo-wide clock contract (F228 shape): a None ``now``
+    resolves to ``time.time()``; a bool/non-numeric/non-finite ``now``
+    refuses machine-coded BEFORE any refusal decision. On this seam
+    the machine code is ``provenance-vsa-refused`` -- the VSA
+    credential's own failure code (F245 close-when)."""
+    if now is None:
+        return float(time.time())
+    if isinstance(now, bool) or not isinstance(now, (int, float)):
+        _refuse("provenance-vsa-refused",
+                "now must be a finite number or None")
+    if now != now or now in (float("inf"), float("-inf")):
+        _refuse("provenance-vsa-refused",
+                "now must be finite (got NaN/inf)")
+    return float(now)
+
+
 # ---------------------------------------------------------------------------
 # Statements: sign / verify / emit.
 # ---------------------------------------------------------------------------
@@ -203,6 +255,12 @@ def verify_statement(statement, signers):
         if not isinstance(entry, dict):
             continue
         key_id = entry.get("key_id")
+        if not isinstance(key_id, str):
+            # F245: an unhashable (or non-string) key_id can never
+            # match a pinned signer. Skipping keeps the refusal
+            # machine-coded instead of escaping as a raw TypeError
+            # from the dict lookup below.
+            continue
         pub_hex = signers.get(key_id)
         if not pub_hex:
             continue  # unknown signer key: not a match, keep looking
@@ -592,8 +650,7 @@ class ProvenancePolicy(object):
         ``provenance-vsa-refused`` (or ``provenance-subject-refused``
         for digest mismatch) on any failure.
         """
-        if now is None:
-            now = time.time()
+        now = _validate_now(now)
         if not isinstance(vsa, dict) or vsa.get("format") != VSA_FORMAT:
             _refuse("provenance-vsa-refused",
                     "not a sasanam VSA")
@@ -605,8 +662,21 @@ class ProvenancePolicy(object):
             _refuse("provenance-vsa-refused",
                     "VSA scope mismatch: issued for %r, admitting under %r"
                     % (vsa.get("policy_id"), policy_id))
-        verifier = vsa.get("verifier") or {}
+        verifier = vsa.get("verifier")
+        if not isinstance(verifier, dict):
+            # F245: a truthy non-dict verifier field has no usable id
+            # and is therefore unpinned -- refuse machine-coded
+            # instead of escaping as a raw AttributeError from
+            # verifier.get("id").
+            verifier = {}
         vid = verifier.get("id")
+        if not isinstance(vid, str):
+            # F245 (two-axis review catch): an unhashable (or
+            # non-string) verifier id can never match a pinned
+            # verifier -- treat it as unpinned so the refusal below
+            # stays machine-coded instead of escaping as a raw
+            # TypeError from the dict lookup.
+            vid = None
         pub_hex = self.trusted_verifiers.get(vid)
         if not pub_hex:
             _refuse("provenance-vsa-refused",
@@ -639,15 +709,14 @@ class ProvenancePolicy(object):
         if age > self.vsa_max_age_seconds:
             _refuse("provenance-vsa-refused",
                     "VSA older than policy max age")
-        digest = ((vsa.get("subject") or {}).get("digest") or {}
-                  ).get("sha256")
+        digest = _subject_digest(vsa)
         digest = _as_hex64(digest, "VSA subject digest")
         want = _as_hex64(expected_subject_digest,
                          "expected subject digest")
         if digest is None or want is None or digest != want:
             _refuse("provenance-subject-refused",
                     "VSA subject digest does not match the artifact")
-        rank = _VSA_LEVEL_RANK.get(vsa.get("verified_level"))
+        rank = _vsa_level_rank(vsa.get("verified_level"))
         need = _VSA_LEVEL_RANK[self.vsa_required_level]
         if rank is None or rank < need:
             _refuse("provenance-vsa-refused",

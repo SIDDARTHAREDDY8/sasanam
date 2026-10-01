@@ -64,7 +64,14 @@ is read, copied, imported, or vendored):
   the task stays paused and every further call refuses
   ``mesh-auth-task-paused``; presenting the old/weaker scheme at
   resume -> ``mesh-auth-escalation-bypass``. A paused task never
-  proceeds and never fails silently.
+  proceeds and never fails silently. F247: every transition
+  (``escalate``/``resume``/``abandon``) binds to the task owner's
+  deployment-verified subject (recorded at ``begin``) and refuses
+  ``mesh-auth-not-owner`` otherwise — a bare task_id is never an
+  authorization; tasks begun without an owner refuse all
+  transitions. F246: ``call()`` accepts the same ``subject=``
+  parameter ``resume()`` already had, so subject-bound schemes no
+  longer silently downgrade to Bearer <redacted> on the task path.
 
 * **Tiered card disclosure** (A2A §6.9). ``public_view()`` shows
   capabilities + the declared scheme names (capability discovery
@@ -86,7 +93,7 @@ Composition (never duplication):
 * This module's own machine codes are ``mesh-auth-*`` (contract
   decisions only: undeclared scheme, missing envelope, scheme
   confusion, scope uncovered, subject mismatch, task paused,
-  escalation bypass, malformed).
+  escalation bypass, not-owner, malformed).
 
 Fail-closed: every refusal is machine-coded; nothing proceeds on a
 partial verification. Key distribution (who holds the ticket /
@@ -104,6 +111,14 @@ Honest boundaries
   Deployments needing subject binding pass ``subject=`` (the
   verified spiffe_id); mismatch refuses ``mesh-auth-subject-
   mismatch``.
+* The task owner binding (``MeshTaskAuth.begin(owner=...)``) is an
+  HONEST trust model: this layer compares the presented subject
+  against the recorded owner (constant-time); it does NOT mint
+  identities. The deployment authenticates the network caller
+  through ``authorize_call``/``MeshControl`` and threads the
+  verified subject in (the F240 ``expected_subject`` pattern).
+  Without that outer authentication, the owner field is just a
+  string the caller supplied — self-claimed, not verified.
 * Transport security (A2A §7.1's TLS 1.3 MUST) is assumed from the
   deployment, as is the clock the verifiers run on (injectable
   ``now``; a None ``now`` resolves to ``time.time()``).
@@ -157,6 +172,7 @@ SCOPE_UNCOVERED_CODE = "mesh-auth-scope-uncovered"
 SUBJECT_MISMATCH_CODE = "mesh-auth-subject-mismatch"
 TASK_PAUSED_CODE = "mesh-auth-task-paused"
 ESCALATION_BYPASS_CODE = "mesh-auth-escalation-bypass"
+NOT_OWNER_CODE = "mesh-auth-not-owner"
 
 CODES = (
     MALFORMED_CODE,
@@ -167,6 +183,7 @@ CODES = (
     SUBJECT_MISMATCH_CODE,
     TASK_PAUSED_CODE,
     ESCALATION_BYPASS_CODE,
+    NOT_OWNER_CODE,
 )
 
 # ---------------------------------------------------------------------------
@@ -471,31 +488,81 @@ class MeshTaskAuth(object):
                 MALFORMED_CODE, "unknown task %r" % (task_id,))
         return task
 
-    def begin(self, task_id):
-        """Start a task in the active state."""
+    def begin(self, task_id, owner=None):
+        """Start a task in the active state.
+
+        ``owner`` is the task owner's DEPLOYMENT-VERIFIED subject (the
+        server authenticates the network caller through
+        ``authorize_call``/``MeshControl`` BEFORE threading it in;
+        this layer records and compares it, it does not mint
+        identities -- the F240 ``expected_subject`` trust-anchor
+        pattern). ``escalate``/``resume``/``abandon`` then require
+        the matching ``subject=`` and refuse ``mesh-auth-not-owner``
+        otherwise, so a bare task_id is never an authorization. A
+        task begun WITHOUT an owner has no authorization anchor and
+        refuses every transition (fail-closed): ownerless tasks are
+        for single-party/local use only.
+        """
         if not isinstance(task_id, str) or not task_id:
             raise MeshAuthError(
                 MALFORMED_CODE, "task_id must be a non-empty string")
         if task_id in self._tasks:
             raise MeshAuthError(
                 MALFORMED_CODE, "task %r already begun" % (task_id,))
+        if owner is not None and \
+                (not isinstance(owner, str) or not owner):
+            raise MeshAuthError(
+                MALFORMED_CODE,
+                "owner must be a non-empty string or None")
         self._tasks[task_id] = {
             "state": TASK_STATE_ACTIVE,
+            "owner": owner,
             "required_scheme": None,
             "reason": None,
             "history": [("begin", TASK_STATE_ACTIVE)],
         }
         return TASK_STATE_ACTIVE
 
+    def _require_owner(self, task, task_id, subject, action):
+        """Bind a task state transition to the task owner's subject.
+
+        The ``subject`` presented here is the deployment-verified
+        subject of the caller (see :meth:`begin`); it is compared
+        constant-time against the recorded owner. Anything else --
+        no owner recorded, no subject presented, or a mismatch --
+        refuses ``mesh-auth-not-owner``. F247.
+        """
+        owner = task.get("owner")
+        if owner is None:
+            raise MeshAuthError(
+                NOT_OWNER_CODE,
+                "%s on task %r refused: the task was begun without an "
+                "owner, so no caller can be authorized for its "
+                "transitions" % (action, task_id))
+        if not isinstance(subject, str) or \
+                not hmac.compare_digest(subject, owner):
+            raise MeshAuthError(
+                NOT_OWNER_CODE,
+                "%s on task %r refused: the caller is not the task "
+                "owner" % (action, task_id))
+
     def state(self, task_id):
         """The task's machine-coded state."""
         return self._get(task_id)["state"]
 
     def call(self, task_id, card, envelope, required_scopes=None,
-             now=None):
+             now=None, subject=None):
         """Authorize one call on an ACTIVE task. On an
         AUTH_REQUIRED task the call refuses task-paused WITHOUT
-        touching the envelope; the task stays paused."""
+        touching the envelope; the task stays paused.
+
+        ``subject`` is the paired SVID identity for subject-bound
+        schemes (the scope-ticket case) -- the same composition
+        ``resume()`` supports. F246: without it every task call
+        silently evaluated scope tickets as Bearer <redacted>; the
+        parameter is optional so Bearer <redacted> callers keep their
+        documented semantics.
+        """
         task = self._get(task_id)
         if task["state"] == TASK_STATE_ABANDONED:
             raise MeshAuthError(
@@ -509,18 +576,28 @@ class MeshTaskAuth(object):
                 "proceeds unauthenticated"
                 % (task_id, task["required_scheme"], task["reason"]))
         return self._gate.authorize_call(
-            card, envelope, required_scopes=required_scopes, now=now)
+            card, envelope, required_scopes=required_scopes,
+            subject=subject, now=now)
 
-    def escalate(self, task_id, required_scheme, reason, now=None):
+    def escalate(self, task_id, required_scheme, reason, subject=None,
+                 now=None):
         """Pause the task: it now needs ``required_scheme`` auth to
         continue. Returns the escalation record (the §7.6 message:
-        what is needed and why), fulfilled out-of-band."""
+        what is needed and why), fulfilled out-of-band.
+
+        F247: only the task's owner may escalate. ``subject`` is the
+        deployment-verified subject of the caller (see
+        :meth:`begin`); a missing/mismatched subject -- or a task
+        with no recorded owner -- refuses ``mesh-auth-not-owner``.
+        """
         task = self._get(task_id)
         if task["state"] != TASK_STATE_ACTIVE:
             raise MeshAuthError(
                 MALFORMED_CODE,
                 "escalate needs an active task (task %r is %r)"
                 % (task_id, task["state"]))
+        at = _validate_now(now)
+        self._require_owner(task, task_id, subject, "escalate")
         if required_scheme not in OUR_SCHEMES:
             raise MeshAuthError(
                 MALFORMED_CODE,
@@ -529,7 +606,6 @@ class MeshTaskAuth(object):
         if not isinstance(reason, str) or not reason.strip():
             raise MeshAuthError(
                 MALFORMED_CODE, "escalation needs a human-readable reason")
-        at = _validate_now(now)
         task["state"] = TASK_STATE_AUTH_REQUIRED
         task["required_scheme"] = required_scheme
         task["reason"] = reason.strip()
@@ -548,13 +624,19 @@ class MeshTaskAuth(object):
         ``mesh-auth-escalation-bypass`` and the task stays paused.
         On success the task returns to active. ``subject`` is the
         paired SVID identity for subject-bound schemes (the
-        scope-ticket case)."""
+        scope-ticket case).
+
+        F247: only the task's owner may resume. The owner binding is
+        checked BEFORE the scheme check, so a non-owner cannot even
+        reach the escalation-bypass decision on another party's task.
+        """
         task = self._get(task_id)
         if task["state"] != TASK_STATE_AUTH_REQUIRED:
             raise MeshAuthError(
                 MALFORMED_CODE,
                 "resume needs an AUTH_REQUIRED task (task %r is %r)"
                 % (task_id, task["state"]))
+        self._require_owner(task, task_id, subject, "resume")
         if not isinstance(envelope, dict) or \
                 envelope.get("scheme") != task["required_scheme"]:
             task["history"].append(
@@ -575,9 +657,15 @@ class MeshTaskAuth(object):
         task["history"].append(("resume", TASK_STATE_ACTIVE))
         return record
 
-    def abandon(self, task_id):
-        """Terminal: the task will never resume."""
+    def abandon(self, task_id, subject=None):
+        """Terminal: the task will never resume.
+
+        F247: only the task's owner may abandon. ``subject`` is the
+        deployment-verified subject of the caller (see
+        :meth:`begin`); anything else refuses ``mesh-auth-not-owner``.
+        """
         task = self._get(task_id)
+        self._require_owner(task, task_id, subject, "abandon")
         task["state"] = TASK_STATE_ABANDONED
         task["history"].append(("abandon", TASK_STATE_ABANDONED))
         return TASK_STATE_ABANDONED

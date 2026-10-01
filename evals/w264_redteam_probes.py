@@ -27,7 +27,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-263 merge: pin -> 1151 (+7 recipient-plugin-*, +8 mesh-auth-*,
 # +7 provenance-*).
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
@@ -87,6 +87,7 @@ _MESH_TICKET_KEY = b"w264-ticket-key-32-bytes-padded-0"
 _MESH_CRED_KEY = b"w264-cred-key-32-bytes-padded-00"
 _MESH_ISSUER_SEED = bytes(range(32))
 _NOW = 4000000000.0
+_SPIFFE_A = "spiffe://example.org/agent-a"
 
 
 def _mesh_world():
@@ -245,19 +246,49 @@ def _p_unauthenticated_transitions():
         return ("ERROR", why)
     _issuer, gate, _tickets = _mesh_world()
     tasks = ma.MeshTaskAuth(gate)
-    tasks.begin("victim-task")
+    try:
+        # Fixed code (F247): begin records the task owner.
+        tasks.begin("victim-task", owner=_SPIFFE_A)
+    except TypeError:
+        # Old code: no owner concept; begin takes only task_id.
+        tasks.begin("victim-task")
     # "Attacker": no credential, no envelope, just the task_id.
-    tasks.escalate("victim-task", "svid", "attacker says so")
+    try:
+        tasks.escalate("victim-task", "svid", "attacker says so",
+                       now=_NOW)
+    except ma.MeshAuthError as e:
+        if e.code == "mesh-auth-not-owner":
+            refused = True
+        else:
+            return _break("wrong code %s (want mesh-auth-not-owner)"
+                          % e.code)
+    else:
+        refused = False
     paused = tasks.state("victim-task") == ma.TASK_STATE_AUTH_REQUIRED
     tasks2 = ma.MeshTaskAuth(gate)
-    tasks2.begin("victim-task-2")
-    tasks2.abandon("victim-task-2")
+    try:
+        tasks2.begin("victim-task-2", owner=_SPIFFE_A)
+    except TypeError:
+        tasks2.begin("victim-task-2")
+    try:
+        tasks2.abandon("victim-task-2")
+    except ma.MeshAuthError as e:
+        if e.code == "mesh-auth-not-owner":
+            refused2 = True
+        else:
+            return _break("wrong code %s (want mesh-auth-not-owner)"
+                          % e.code)
+    else:
+        refused2 = False
     killed = tasks2.state("victim-task-2") == ma.TASK_STATE_ABANDONED
     if paused and killed:
         return _break(
             "unauthenticated escalate() paused a task and "
             "unauthenticated abandon() terminally killed another: "
             "task state transitions need no credential")
+    if refused and refused2:
+        return _held("unauthenticated transitions refused: "
+                     "mesh-auth-not-owner")
     return ("ERROR", "transitions did not take effect?!")
 
 

@@ -219,10 +219,10 @@ class TaskTest(World):
 
     def test_escalate_pauses_and_resume_reauthenticates(self):
         t = self._tasks()
-        t.begin("t")
+        t.begin("t", owner=SPIFFE_A)
         t.call("t", self.card("svid"), self.svid_env(), now=NOW)
         esc = t.escalate("t", "scope-ticket", "needs the scope grant",
-                         now=NOW)
+                         subject=SPIFFE_A, now=NOW)
         self.assertEqual(esc["state"], ma.TASK_STATE_AUTH_REQUIRED)
         self.assertEqual(t.state("t"), ma.TASK_STATE_AUTH_REQUIRED)
         self._refused(
@@ -232,7 +232,7 @@ class TaskTest(World):
         self.assertEqual(t.state("t"), ma.TASK_STATE_AUTH_REQUIRED)
         self._refused(
             lambda: t.resume("t", self.card("svid", "scope-ticket"),
-                             self.svid_env(), now=NOW),
+                             self.svid_env(), subject=SPIFFE_A, now=NOW),
             "mesh-auth-escalation-bypass")
         rec = t.resume("t", self.card("svid", "scope-ticket"),
                        self.ticket_env(), subject=SPIFFE_A, now=NOW)
@@ -241,16 +241,17 @@ class TaskTest(World):
 
     def test_escalation_record_is_the_out_of_band_contract(self):
         t = self._tasks()
-        t.begin("t")
-        t.escalate("t", "scope-ticket", "needs the scope grant", now=NOW)
+        t.begin("t", owner=SPIFFE_A)
+        t.escalate("t", "scope-ticket", "needs the scope grant",
+                   subject=SPIFFE_A, now=NOW)
         rec = t.escalation_record("t")
         self.assertEqual(rec["required_scheme"], "scope-ticket")
         self.assertIn("grant", rec["reason"])
 
     def test_abandon_is_terminal(self):
         t = self._tasks()
-        t.begin("t")
-        t.abandon("t")
+        t.begin("t", owner=SPIFFE_A)
+        t.abandon("t", subject=SPIFFE_A)
         self.assertEqual(t.state("t"), ma.TASK_STATE_ABANDONED)
         self._refused(
             lambda: t.call("t", self.card("svid"), self.svid_env(),
@@ -259,14 +260,54 @@ class TaskTest(World):
 
     def test_escalate_requires_a_reason(self):
         t = self._tasks()
-        t.begin("t")
+        t.begin("t", owner=SPIFFE_A)
         self._refused(lambda: t.escalate("t", "scope-ticket", "  ",
-                                         now=NOW),
+                                         subject=SPIFFE_A, now=NOW),
                       "mesh-auth-malformed")
 
     def test_unknown_task_refuses(self):
         t = self._tasks()
         self._refused(lambda: t.state("nope"), "mesh-auth-malformed")
+
+    def test_transitions_refuse_non_owner(self):
+        # F247: only the task owner may escalate/resume/abandon.
+        t = self._tasks()
+        t.begin("t", owner=SPIFFE_A)
+        self._refused(
+            lambda: t.escalate("t", "scope-ticket", "need it", now=NOW),
+            "mesh-auth-not-owner")
+        self._refused(
+            lambda: t.escalate("t", "scope-ticket", "need it",
+                               subject=SPIFFE_B, now=NOW),
+            "mesh-auth-not-owner")
+        self._refused(lambda: t.abandon("t"), "mesh-auth-not-owner")
+        self.assertEqual(t.state("t"), ma.TASK_STATE_ACTIVE)
+
+    def test_ownerless_task_refuses_transitions(self):
+        # F247: a task begun without an owner has no authorization
+        # anchor; transitions fail closed.
+        t = self._tasks()
+        t.begin("t")
+        self._refused(
+            lambda: t.escalate("t", "scope-ticket", "need it",
+                               subject=SPIFFE_A, now=NOW),
+            "mesh-auth-not-owner")
+        self._refused(lambda: t.abandon("t", subject=SPIFFE_A),
+                      "mesh-auth-not-owner")
+        self.assertEqual(t.state("t"), ma.TASK_STATE_ACTIVE)
+
+    def test_call_accepts_subject(self):
+        # F246: call(subject=) threads the subject into authorize_call
+        # for subject-bound schemes instead of silently downgrading
+        # to Bearer <redacted>.
+        t = self._tasks()
+        t.begin("t", owner=SPIFFE_A)
+        rec = t.call("t", self.card("svid", "scope-ticket"),
+                     self.ticket_env(), subject=SPIFFE_A, now=NOW)
+        self.assertEqual(rec["subject"], SPIFFE_A)
+        rec = t.call("t", self.card("svid", "scope-ticket"),
+                     self.ticket_env(), now=NOW)
+        self.assertTrue(rec["subject"].startswith("ticket:"))
 
 
 if __name__ == "__main__":

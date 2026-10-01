@@ -45,7 +45,7 @@ from gov import short_lived_credentials as slc  # noqa: E402
 
 # Wave-259 base pin. If the count moves, the delta must be explained
 # by a landed taxonomy change -- never repoint blindly.
-TAXONOMY_PIN = 1177  # Wave-259 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-259 merge: pin -> 1106.
 
 _PROBES = []
 
@@ -224,7 +224,7 @@ def _p_f228():
         lambda: iss.verify(cid, "wrong-secret", now="yesterday"))
     good_path = code_of(
         lambda: iss.verify(cid, sec, now="yesterday"))
-    if unknown_path != slc.MALFORMED_CODE or \
+    if unknown_path != slc.MALFORMED_CODE or\
             mismatch_path != slc.MALFORMED_CODE:
         return _break("non-numeric now is not refused as malformed "
                       "on every verify() path: unknown-id -> %s, "
@@ -538,7 +538,7 @@ def _h_gate_failed():
                                 quality_evidence=evidence)
         return _break("failing gate did not refuse")
     except cp.ControlProfileError as e:
-        if e.code == "control-profile-gate-failed" and \
+        if e.code == "control-profile-gate-failed" and\
                 "expect_evidence_monotonic" in str(e):
             return _held("gate refuses machine-coded, naming the "
                          "failed expectation")
@@ -580,7 +580,7 @@ def _green_check():
                 [sys.executable, os.path.join(repo, battery)],
                 capture_output=True, text=True, timeout=600,
                 env=env, cwd=repo)
-            tail = (p.stdout or "").strip().splitlines()[-1:] or \
+            tail = (p.stdout or "").strip().splitlines()[-1:] or\
                 [""]
             notes.append((battery,
                           "exit=%d %s" % (p.returncode, tail[0][:60])))

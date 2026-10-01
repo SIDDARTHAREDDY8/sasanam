@@ -75,7 +75,7 @@ except ImportError:
     _HAVE_MODULE = False
 
 #: Lane-local pin: 1151 (wave-263 merge) + 7 federation-* codes.
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 _PROBES = []
 
@@ -804,7 +804,7 @@ def _p_valid_control():
                       % _refusal_code(e))
     if claims.get("trust_domain") != _PARTNER_DOMAIN:
         return ("ERROR", "claims wrong: %r" % (claims,))
-    if claims.get("spiffe_id") != \
+    if claims.get("spiffe_id") !=\
             "spiffe://%s/agent/worker-1" % _PARTNER_DOMAIN:
         return ("ERROR", "spiffe_id wrong: %r" % (claims,))
     # Unfederated domain still refuses (the seam is not permissive).
@@ -883,7 +883,7 @@ def _p_admission_route():
     except Exception as e:  # noqa: BLE001
         failed.append("admit-refused:%s" % _refusal_code(e))
     else:
-        if rec.get("mode") != "federated" or \
+        if rec.get("mode") != "federated" or\
                 rec.get("trust_domain") != _PARTNER_DOMAIN:
             failed.append("admit-wrong-record:%r" % (rec,))
     # 2. A LOCALLY verifiable SVID on the federated route refuses --

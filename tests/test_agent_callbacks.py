@@ -1,0 +1,171 @@
+"""Unit tests for gov.agent_callbacks (wave-265 feature lane)."""
+
+import json
+import os
+import unittest
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import agent_callbacks as ac
+from gov import decision_codes
+
+
+class TaxonomyPinTests(unittest.TestCase):
+    def test_pin(self):
+        # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9
+        # callback-*).
+        self.assertEqual(len(decision_codes.TAXONOMY), 1205)
+        for code in ac.CODES:
+            self.assertIn(code, decision_codes.TAXONOMY)
+
+    def test_code_literals_unique(self):
+        import re
+        src = open("gov/decision_codes.py").read()
+        lits = [a or b for a, b in
+                re.findall(r'"code": \'([^\']+)\'|"code": "([^"]+)"',
+                           src)]
+        self.assertEqual(len(lits), 1205)
+        self.assertEqual(len(set(lits)), len(lits))
+
+
+def _tool(tool_name, args):
+    return {"ok": True, "tool": tool_name}
+
+
+class VerdictTests(unittest.TestCase):
+    def test_block_refuses_with_code(self):
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.execute(_tool, "t", {"a": 1},
+                       before=(lambda t, a: ac.Block(),))
+        self.assertEqual(ctx.exception.code, "callback-blocked")
+
+    def test_rewrite_uses_new_args(self):
+        ex = ac.CallbackExecutor()
+        seen = []
+
+        def spy(t, a):
+            seen.append(dict(a))
+            return _tool(t, a)
+
+        ex.execute(spy, "t", {"a": 1},
+                   before=(lambda t, a: ac.Rewrite({"a": 2}),))
+        self.assertEqual(seen, [{"a": 2}])
+
+    def test_rewrite_non_dict_refuses(self):
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.execute(_tool, "t", {"a": 1},
+                       before=(lambda t, a: ac.Rewrite(["nope"]),))
+        self.assertEqual(ctx.exception.code, "callback-malformed-verdict")
+
+    def test_escalate_returns_paused_call(self):
+        ex = ac.CallbackExecutor()
+        ran = []
+
+        def spy(t, a):
+            ran.append(t)
+            return _tool(t, a)
+
+        out = ex.execute(spy, "t", {"a": 1},
+                         before=(lambda t, a: ac.Escalate("x"),))
+        self.assertIsInstance(out, ac.EscalatedCall)
+        self.assertEqual(ran, [])
+        self.assertEqual(out.tool_name, "t")
+
+    def test_after_replaces_result(self):
+        ex = ac.CallbackExecutor()
+        out = ex.execute(_tool, "t", {"a": 1},
+                         after=(lambda t, a, r: {"replaced": True},))
+        self.assertEqual(out, {"replaced": True})
+
+    def test_after_block_is_malformed(self):
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.execute(_tool, "t", {"a": 1},
+                       after=(lambda t, a, r: ac.Block(),))
+        self.assertEqual(ctx.exception.code, "callback-malformed-verdict")
+
+    def test_on_error_suppresses(self):
+        def failer(t, a):
+            raise IOError("nope")
+
+        ex = ac.CallbackExecutor()
+        out = ex.execute(failer, "t", {"a": 1},
+                         on_error=(lambda t, a, e: {"suppressed": True},))
+        self.assertEqual(out, {"suppressed": True})
+
+    def test_on_error_reraise_without_suppressor(self):
+        def failer(t, a):
+            raise IOError("nope")
+
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(IOError):
+            ex.execute(failer, "t", {"a": 1})
+
+    def test_noncallable_registration_refuses(self):
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.add_before("not-a-callable")
+        self.assertEqual(ctx.exception.code, "callback-malformed-verdict")
+
+
+class FloorTests(unittest.TestCase):
+    def test_enforcement_denial_skips_callbacks(self):
+        consulted = []
+
+        def deny(t, a):
+            return (False, "scope-listing-denied")
+
+        ex = ac.CallbackExecutor()
+
+        def witness(t, a):
+            consulted.append(t)
+            return ac.Continue()
+
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.execute(_tool, "t", {"a": 1}, enforcement=deny,
+                       before=(witness,))
+        self.assertEqual(ctx.exception.code, "scope-listing-denied")
+        self.assertEqual(consulted, [])
+
+    def test_enforcement_allows(self):
+        ex = ac.CallbackExecutor()
+        out = ex.execute(_tool, "t", {"a": 1},
+                         enforcement=lambda t, a: (True, None))
+        self.assertEqual(out, {"ok": True, "tool": "t"})
+
+    def test_enforcement_bad_shape_faults(self):
+        ex = ac.CallbackExecutor()
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ex.execute(_tool, "t", {"a": 1},
+                       enforcement=lambda t, a: "yes")
+        self.assertEqual(ctx.exception.code, "callback-faulted")
+
+
+class GateTests(unittest.TestCase):
+    def test_request_resolve_approve(self):
+        journal = []
+        gate = ac.HumanApprovalGate(journal)
+        aid = gate.request("payments.refund", {"amount": 500})
+        self.assertEqual(len(journal), 1)
+        self.assertEqual(journal[0]["code"], "callback-approval-requested")
+        self.assertNotIn("amount", json.dumps(journal[0]))
+        verdict = gate.resolve(aid, True, decider="human-1")
+        self.assertIsInstance(verdict, ac.Continue)
+        self.assertEqual(journal[1]["state"], "approved")
+
+    def test_resolve_unknown_refuses(self):
+        gate = ac.HumanApprovalGate([])
+        with self.assertRaises(ac.CallbackError) as ctx:
+            gate.resolve("nope", True)
+        self.assertEqual(ctx.exception.code, "callback-unknown-approval")
+
+    def test_gate_requires_journal(self):
+        with self.assertRaises(ac.CallbackError) as ctx:
+            ac.HumanApprovalGate(None)
+        self.assertEqual(ctx.exception.code, "callback-malformed-verdict")
+
+
+if __name__ == "__main__":
+    unittest.main()

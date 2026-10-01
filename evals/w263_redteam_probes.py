@@ -87,7 +87,7 @@ from gov import policy_distribution as poldist
 from gov import root_ceremony as rc
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1177
+TAXONOMY_PIN = 1205
 
 _PROBES = []
 
@@ -238,7 +238,7 @@ def _p_post_auth_residual():
     low = iss.seal("agent-sub", set(), 1000.0)
     ghost = _code_of(lambda: reg.invoke(low, "ghost_tool", lambda: 1))
     scoped = _code_of(lambda: reg.invoke(low, "read_file", lambda: 1))
-    if ghost == "scope-listing-not-registered" and \
+    if ghost == "scope-listing-not-registered" and\
             scoped == "scope-listing-denied":
         return _held("post-auth: not-registered vs denied (deliberate)")
     return ("ERROR", "post-auth codes changed: %s / %s" % (ghost, scoped))
@@ -250,7 +250,7 @@ def _p_ticket_tamper():
     iss, reg = _world()
     good = iss.seal("agent-sub", {"files:read"}, 1000.0)
     body, mac = good.split(".")
-    bad = body[:-2] + ("AA" if not body.endswith("AA") else "BB") + \
+    bad = body[:-2] + ("AA" if not body.endswith("AA") else "BB") +\
         "." + mac
     code = _code_of(lambda: reg.invoke(bad, "read_file", lambda: 1))
     if code != "scope-grant-tampered":

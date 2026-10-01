@@ -60,7 +60,7 @@ from gov import svid_issuer as sv  # noqa: E402
 # Wave-261 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1177  # Wave-260 merge pin; wave-261 redteam adds none.
+TAXONOMY_PIN = 1205  # Wave-260 merge pin; wave-261 redteam adds none.
 
 _PROBES = []
 
@@ -181,8 +181,8 @@ def _h_pd_equiv():
     r2 = sub.apply(p2.sign_bundle("t", 1, {"a": 2}))
     c2 = r2.get("code")
     c2 = c2["code"] if isinstance(c2, dict) else c2
-    if r1["outcome"] == "applied" and r2["outcome"] == "refused" \
-            and c2 == "poldist-version-rollback" \
+    if r1["outcome"] == "applied" and r2["outcome"] == "refused"\
+            and c2 == "poldist-version-rollback"\
             and sub.payload == {"a": 1}:
         return _held("same-version fork refused; head not switched")
     return _break("equivocation handling wrong: %s then %s/%s"
@@ -221,7 +221,7 @@ def _h_pd_dup():
     b = pub.sign_bundle("policies", 1, {"a": 1})
     r1 = sub.apply(b)
     r2 = sub.apply(b)  # at-least-once redelivery of the current head
-    if r1["outcome"] == "applied" and r2.get("duplicate") is True \
+    if r1["outcome"] == "applied" and r2.get("duplicate") is True\
             and sub.version == 1 and sub.payload == {"a": 1}:
         return _held("identical redelivery applied idempotently")
     return _break("duplicate handling wrong: %r then %r" % (r1, r2))
@@ -402,7 +402,7 @@ def _h_enr_burn():
         auth.redeem(key, "spiffe://example.org/w/a", "bb" * 32, 5)
         return _break("key usable again after failed issuance")
     except sv.SvidError as e:
-        if first == sv.SVID_IDENTITY_MALFORMED_CODE and \
+        if first == sv.SVID_IDENTITY_MALFORMED_CODE and\
                 e.code == enr.ENROLLMENT_KEY_REPLAYED_CODE:
             return _held("issuance failure still burns the key "
                          "(exactly-once, single-threaded)")

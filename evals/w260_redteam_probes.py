@@ -43,7 +43,7 @@ from gov import transparency_log as tl  # noqa: E402
 # Wave-260 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1177  # Wave-261 merge: pin -> 1106 (1092 + 1 svid-usage-mismatch + 9 ballot-* + 4 detector-*); wave-260 redteam adds none.
+TAXONOMY_PIN = 1205  # Wave-261 merge: pin -> 1106 (1092 + 1 svid-usage-mismatch + 9 ballot-* + 4 detector-*); wave-260 redteam adds none.
 
 _PROBES = []
 
@@ -233,8 +233,8 @@ def _p_f233():
         verifier,
         {"allow": ["spiffe://example.org/workload"]}).admit(
             mesh_svid, expected_usage="workload-auth"))
-    if vcode == sv.SVID_USAGE_MISMATCH_CODE and \
-            acode == sv.SVID_ACL_DENIED_CODE and \
+    if vcode == sv.SVID_USAGE_MISMATCH_CODE and\
+            acode == sv.SVID_ACL_DENIED_CODE and\
             pcode == sv.SVID_USAGE_MISMATCH_CODE:
         return _held("usage mismatch refused at both seams "
                      "(svid-usage-mismatch / svid-acl-denied)")
@@ -323,7 +323,7 @@ def _p_f228x():
         lambda: iss.verify("no-such-id", "x", now="yesterday"))
     mismatch = code_of(
         lambda: iss.verify(cid, "wrong-secret", now="yesterday"))
-    if unknown != "short-lived-credential-malformed" or \
+    if unknown != "short-lived-credential-malformed" or\
             mismatch != "short-lived-credential-malformed":
         return _baseline(
             "F228 open: unknown=%s mismatch=%s (want malformed on "

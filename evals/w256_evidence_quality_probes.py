@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 try:
     from gov import decision_codes
@@ -33,7 +33,7 @@ except ImportError:
     HAVE_MODULE = False
 
 if HAVE_MODULE:
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, \
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN,\
         "taxonomy drift: %d != %d" % (len(decision_codes.TAXONOMY),  # Wave-258 merge: pin -> 1080.
                                       TAXONOMY_PIN)
 
@@ -129,7 +129,7 @@ def p_unknown_expectation_refuses():
             [{"expectation_type": "expect_nonexistent_thing",
               "kwargs": {}}], _mono_items())
     except eq.EvidenceQualityError as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "evidence-quality-unknown-expectation" else "BREAK"
     except Exception:
         return "BREAK"
@@ -185,7 +185,7 @@ def p_gate_refuses_emission_on_failure():
             [{"expectation_type": "expect_evidence_monotonic",
               "kwargs": {}}], items)
     except eq.EvidenceQualityError as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "evidence-quality-gate-failed" else "BREAK"
     except Exception:
         return "BREAK"
@@ -200,7 +200,7 @@ def p_gate_emits_on_clean():
         _control_source(), "json",
         [{"expectation_type": "expect_evidence_monotonic",
           "kwargs": {}}], _mono_items())
-    return "HELD" if '"id": "SAS-EQ-001"' in out or \
+    return "HELD" if '"id": "SAS-EQ-001"' in out or\
         '"id":"SAS-EQ-001"' in out or "SAS-EQ-001" in out else "BREAK"
 
 
@@ -227,7 +227,7 @@ def p_no_silent_skip():
     stats = res["statistics"]
     if stats["evaluated_expectations"] != 3:
         return "BREAK"
-    if stats["successful_expectations"] + \
+    if stats["successful_expectations"] +\
             stats["unsuccessful_expectations"] != 3:
         return "BREAK"
     return "HELD" if res["success"] else "BREAK"

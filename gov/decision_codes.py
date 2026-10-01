@@ -1754,6 +1754,90 @@ TAXONOMY = {
         "evidence_kinds_required": ['check-request'],
         "reverify_steps": ['recompute'],
     },
+    'callback-approval-denied': {
+        "domain": 'callback',
+        "code": 'callback-approval-denied',
+        "human": 'callback seam: the human denied the paused approval '
+                 'request; the call never runs',
+        "severity": 'medium',
+        "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-approval-expired': {
+        "domain": 'callback',
+        "code": 'callback-approval-expired',
+        "human": 'callback seam: the approval request was expired before '
+                 'a decision arrived; a stale approval can never resolve',
+        "severity": 'medium',
+        "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-approval-requested': {
+        "domain": 'callback',
+        "code": 'callback-approval-requested',
+        "human": 'callback seam: execution paused for human approval; '
+                 'the request record carries the args digest, never raw '
+                 'args',
+        "severity": 'low',
+        "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-blocked': {
+        "domain": 'callback',
+        "code": 'callback-blocked',
+        "human": 'callback seam: a before_tool callback BLOCKed the '
+                 'call; the tool never runs',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-cannot-widen': {
+        "domain": 'callback',
+        "code": 'callback-cannot-widen',
+        "human": 'callback seam: a callback rewrite widened the call '
+                 'past the enforcement floor; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-declaration', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-faulted': {
+        "domain": 'callback',
+        "code": 'callback-faulted',
+        "human": 'callback seam: a callback (or the enforcement '
+                 'predicate) threw; the call is refused fail-closed and '
+                 'no raw exception escapes into the enforcement path',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-finding-escalated': {
+        "domain": 'callback',
+        "code": 'callback-finding-escalated',
+        "human": 'callback seam: an after_tool callback escalated a '
+                 'finding into the journal; the result was returned '
+                 'unchanged',
+        "severity": 'low',
+        "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-malformed-verdict': {
+        "domain": 'callback',
+        "code": 'callback-malformed-verdict',
+        "human": 'callback seam: a callback returned a non-verdict shape '
+                 'or the call inputs were malformed; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'callback-unknown-approval': {
+        "domain": 'callback',
+        "code": 'callback-unknown-approval',
+        "human": 'callback seam: resolve/expire named an approval id '
+                 'with no pending request; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'cancellation-unauthorized': {
         "domain": 'arap',
         "code": 'cancellation-unauthorized',
@@ -3152,6 +3236,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-action-refused': {
+        "domain": 'delegation',
+        "code": 'delegation-action-refused',
+        "human": 'signed delegation chain: the presented action is not '
+                 'covered by the leaf delegation capabilities; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-attenuation-inverted': {
+        "domain": 'delegation',
+        "code": 'delegation-attenuation-inverted',
+        "human": 'signed delegation chain: a hop grants capabilities '
+                 'not covered by its parent (attenuation inversion); '
+                 'widening refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-attestation-malformed': {
         "domain": 'delegation-freshness',
         "code": 'delegation-attestation-malformed',
@@ -3190,6 +3294,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-expired': {
+        "domain": 'delegation',
+        "code": 'delegation-expired',
+        "human": 'signed delegation chain: a delegation in the chain is '
+                 'outside its not_before/not_after window at '
+                 'verification time; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-freshness-expired': {
         "domain": 'delegation-freshness',
         "code": 'delegation-freshness-expired',
@@ -3199,6 +3313,16 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['capability-attestation',
                                     'freshness-timestamp'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-malformed': {
+        "domain": 'delegation',
+        "code": 'delegation-malformed',
+        "human": 'signed delegation chain: a delegation, chain, '
+                 'capability, key, or time value is not the expected '
+                 'shape; refused before verification',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-monotonicity-violated': {
@@ -3218,6 +3342,45 @@ TAXONOMY = {
         "human": 'capability assessment: the delegation is not allowlisted',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-parent-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-parent-mismatch',
+        "human": 'signed delegation chain: a hop parent_digest does not '
+                 'equal the digest of the presented parent; the chain '
+                 'is broken or spliced; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-replay': {
+        "domain": 'delegation',
+        "code": 'delegation-replay',
+        "human": 'signed delegation chain: the same (chain, action) '
+                 'invocation was already verified; the second '
+                 'presentation is a replay; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-root-untrusted': {
+        "domain": 'delegation',
+        "code": 'delegation-root-untrusted',
+        "human": 'signed delegation chain: the root issuer is not in '
+                 'the deployment-pinned trust anchors; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-signature-invalid': {
+        "domain": 'delegation',
+        "code": 'delegation-signature-invalid',
+        "human": 'signed delegation chain: an Ed25519 delegation '
+                 'signature failed to verify; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
         "reverify_steps": ['recompute'],
     },
     'delegation-state-mismatch': {
@@ -3258,6 +3421,17 @@ TAXONOMY = {
         "human": 'capability assessment: the delegation parent is not known',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-version-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-version-mismatch',
+        "human": 'signed delegation chain: a delegation carried an '
+                 'unknown type version; implementations must match '
+                 'the exact type string, so it is refused before '
+                 'interpretation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-would-widen': {
@@ -3597,6 +3771,103 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
+    },
+    'discipline-inhibitor-malformed': {
+        "domain": 'discipline',
+        "code": 'discipline-inhibitor-malformed',
+        "human": 'approval discipline: a refusal fact presented for '
+                 'inhibition is malformed (missing identity fields '
+                 'or not a refusal kind); refused fail-closed, the '
+                 'prompt proceeds',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-inhibitor-unverifiable': {
+        "domain": 'discipline',
+        "code": 'discipline-inhibitor-unverifiable',
+        "human": 'approval discipline: a refusal fact carries no '
+                 'journal_digest binding, so it is a caller claim '
+                 'rather than a digest-bound fact; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-prompt-coalesced': {
+        "domain": 'discipline',
+        "code": 'discipline-prompt-coalesced',
+        "human": 'approval discipline: an identical approval request '
+                 'is already pending inside the repeat window; the '
+                 'prompt is coalesced onto the existing pending '
+                 'request and not re-issued (informational)',
+        "severity": 'low',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-prompt-inhibited': {
+        "domain": 'discipline',
+        "code": 'discipline-prompt-inhibited',
+        "human": 'approval discipline: a digest-bound refusal fact '
+                 'for the same decision is active, so the redundant '
+                 'prompt is inhibited (informational)',
+        "severity": 'low',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-prompt-silenced': {
+        "domain": 'discipline',
+        "code": 'discipline-prompt-silenced',
+        "human": 'approval discipline: an operator-signed, '
+                 'time-bounded silence covers this prompt class; '
+                 'the re-prompt is suppressed (informational; '
+                 'prompts only, never enforcement denials)',
+        "severity": 'low',
+        "evidence_kinds_required": ['signature', 'record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-request-malformed': {
+        "domain": 'discipline',
+        "code": 'discipline-request-malformed',
+        "human": 'approval discipline: the approval request is '
+                 'malformed (missing or mistyped identity fields); '
+                 'refused loudly -- a malformed request is never '
+                 'coalesced and never reaches the queue',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-silence-forbidden-class': {
+        "domain": 'discipline',
+        "code": 'discipline-silence-forbidden-class',
+        "human": 'approval discipline: the silence matchers cover a '
+                 'high or critical severity class; refused at '
+                 'creation -- silences can never cover high-severity '
+                 'approval classes',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-silence-malformed': {
+        "domain": 'discipline',
+        "code": 'discipline-silence-malformed',
+        "human": 'approval discipline: the silence is malformed '
+                 '(bad shape, invalid operator signature, missing '
+                 'or expired not_after, window beyond the maximum); '
+                 'refused fail-closed, prompts proceed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'discipline-silence-unjournaled': {
+        "domain": 'discipline',
+        "code": 'discipline-silence-unjournaled',
+        "human": 'approval discipline: no journal is available for '
+                 'the silence record; refused -- a silence nobody '
+                 'records is a governance hole',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
     },
     'discovery-identity-mismatch': {
         "domain": 'mcp-discovery',
@@ -5832,6 +6103,19 @@ TAXONOMY = {
                  'envelope, task id, or escalation record; refused '
                  'before any verification',
         "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-not-owner': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-not-owner',
+        "human": 'mesh auth contract: a task state transition '
+                 '(escalate, resume, or abandon) was attempted by a '
+                 'subject that is not the task owner recorded at '
+                 'begin, or the task was begun without an owner and '
+                 'so has no authorization anchor; refused, the task '
+                 'state is unchanged',
+        "severity": 'high',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },

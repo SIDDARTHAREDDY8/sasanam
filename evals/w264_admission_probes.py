@@ -94,7 +94,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import ed25519 as _ed
 
-TAXONOMY_PIN = 1177  # 1151 + 11 admission-policy-* codes
+TAXONOMY_PIN = 1205  # 1151 + 11 admission-policy-* codes
 
 _PROBES = []
 
@@ -579,7 +579,7 @@ def p_conjunction_ok(target):
                       % (dec,))
     if target is not _STUB:
         sat = dec.get("satisfied_authority", {})
-        if not sat.get("conjunction") or \
+        if not sat.get("conjunction") or\
                 dec.get("entry_mode") != "all":
             return _break("decision hides the conjunction: %r"
                           % (dec,))
@@ -658,7 +658,7 @@ def p_refusal_summary(target):
         code = getattr(e, "code", "")
         if code != "admission-policy-identity-refused":
             return _break("wrong refusal code: %r" % (code,))
-        if "admission-policy-unsigned" in detail and \
+        if "admission-policy-unsigned" in detail and\
                 "admission-policy-identity-refused" in detail:
             return _held("refusal names every failed authority")
         return _break("refusal hides failures: %r" % (detail,))

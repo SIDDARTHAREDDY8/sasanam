@@ -18,7 +18,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 try:
     from gov import inventory_catalog as ic
@@ -237,7 +237,7 @@ def p_mutation_isolation():
         got = ic.entry_of(cat, "agent-1")
     except Exception:
         return "BREAK"
-    return "HELD" if got["owner"] == "team-a" and \
+    return "HELD" if got["owner"] == "team-a" and\
         got["relationships"] == [] else "BREAK"
 
 
@@ -304,7 +304,7 @@ def p_registered_predicate_refuses():
     try:
         ic.is_registered_name({"agent-1": {}}, "agent-1")
     except ic.CatalogRefused as exc:
-        return "HELD" if exc.code == \
+        return "HELD" if exc.code ==\
             "inventory-catalog-entry-malformed" else "BREAK"
     except Exception:
         return "BREAK"

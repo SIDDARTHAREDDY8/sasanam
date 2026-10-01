@@ -70,7 +70,7 @@ from gov import svid_issuer as sv  # noqa: E402
 # Wave-262 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1177  # Wave-261 merge pin; wave-262 redteam adds none.
+TAXONOMY_PIN = 1205  # Wave-261 merge pin; wave-262 redteam adds none.
 
 _PROBES = []
 
@@ -626,7 +626,7 @@ def _h_fa_agentic():
             return _break("%s did not return a request: %s"
                           % (action, out))
         req = out["payload"]
-        if req.get("type") != "action-request" or \
+        if req.get("type") != "action-request" or\
                 req.get("constraints", {}).get("max") != 2:
             return _break("%s request malformed: %s" % (action, req))
         if out["payload"].get("value", None) == {"q": 1}:
@@ -640,7 +640,7 @@ def _h_fa_noop_refrain():
     out_n = fa.apply_action(fa.FailResult(code="n", action="noop"), {})
     out_r = fa.apply_action(fa.FailResult(code="r", action="refrain"),
                             {})
-    if out_n["disposition"] == "continued" and \
+    if out_n["disposition"] == "continued" and\
             out_r["disposition"] == "refrained":
         return _held("noop->continued, refrain->refrained; caller must "
                      "interpret")
@@ -879,7 +879,7 @@ def _h_det_chain():
     if names == ["ballot_open", "quorum_stall_detected"]:
         f = [e for e in out
              if e["event_name"] == "quorum_stall_detected"][0]["fields"]
-        if f.get("ballot_id") == "b9" and \
+        if f.get("ballot_id") == "b9" and\
                 "_engine_stamp" not in str(out):
             return _held("sample chain fires in topo order; stamp "
                          "absent from returned events")

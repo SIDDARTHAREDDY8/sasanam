@@ -44,7 +44,7 @@ from gov import encrypted_envelopes as ee  # noqa: E402
 from gov import evidence_quality as eq  # noqa: E402
 from gov import short_lived_credentials as slc  # noqa: E402
 
-TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 
@@ -122,7 +122,7 @@ def _p_wrap_transplant():
     off_a, wl_a = wrap_off(env_a)
     off_c, wl_c = wrap_off(env_c)
     assert wl_a == wl_c == 48
-    forged = env_c[:off_c] + env_a[off_a:off_a + wl_a] + \
+    forged = env_c[:off_c] + env_a[off_a:off_a + wl_a] +\
         env_c[off_c + wl_c:]
     try:
         v.open(forged, _KM)
@@ -568,7 +568,7 @@ def _green_check():
                 [sys.executable, os.path.join(repo, battery)],
                 capture_output=True, text=True, timeout=600,
                 env=env, cwd=repo)
-            tail = (p.stdout or "").strip().splitlines()[-1:] or \
+            tail = (p.stdout or "").strip().splitlines()[-1:] or\
                 [""]
             notes.append((battery,
                           "exit=%d %s" % (p.returncode, tail[0][:60])))

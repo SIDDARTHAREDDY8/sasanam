@@ -22,7 +22,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1177  # Wave-258 F222: pin -> 1106.
+TAXONOMY_PIN = 1205  # Wave-258 F222: pin -> 1106.
 
 try:
     from gov import decision_codes
@@ -32,7 +32,7 @@ except ImportError:
     HAVE_MODULE = False
 
 if HAVE_MODULE:
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, \
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN,\
         "taxonomy drift: %d != %d" % (  # Wave-258 F222: pin -> 1080.
             len(decision_codes.TAXONOMY), TAXONOMY_PIN)
 
@@ -76,7 +76,7 @@ def p_empty_monotonic_vacuous():
     if _vacuous_break("expect_evidence_monotonic", {}, []):
         return "BREAK(F222: vacuous success on empty evidence)"
     return "HELD" if _refused_with(
-        "expect_evidence_monotonic", {}, [], EMPTY_CODE) else \
+        "expect_evidence_monotonic", {}, [], EMPTY_CODE) else\
         "BREAK(F222: empty evidence neither succeeds nor is refused)"
 
 
@@ -85,7 +85,7 @@ def p_empty_chain_vacuous():
     if _vacuous_break("expect_chain_intact", {}, []):
         return "BREAK(F222: vacuous success on empty evidence)"
     return "HELD" if _refused_with(
-        "expect_chain_intact", {}, [], EMPTY_CODE) else \
+        "expect_chain_intact", {}, [], EMPTY_CODE) else\
         "BREAK(F222: empty evidence neither succeeds nor is refused)"
 
 
@@ -95,7 +95,7 @@ def p_empty_fields_vacuous():
     if _vacuous_break("expect_fields_present", kwargs, []):
         return "BREAK(F222: vacuous success on empty evidence)"
     return "HELD" if _refused_with(
-        "expect_fields_present", kwargs, [], EMPTY_CODE) else \
+        "expect_fields_present", kwargs, [], EMPTY_CODE) else\
         "BREAK(F222: empty evidence neither succeeds nor is refused)"
 
 
@@ -104,7 +104,7 @@ def p_empty_timestamps_vacuous():
     if _vacuous_break("expect_timestamps_ordered", {}, []):
         return "BREAK(F222: vacuous success on empty evidence)"
     return "HELD" if _refused_with(
-        "expect_timestamps_ordered", {}, [], EMPTY_CODE) else \
+        "expect_timestamps_ordered", {}, [], EMPTY_CODE) else\
         "BREAK(F222: empty evidence neither succeeds nor is refused)"
 
 
@@ -115,7 +115,7 @@ def p_empty_bundle_vacuous():
     if _vacuous_break("expect_bundle_complete", kwargs, evidence):
         return "BREAK(F222: vacuous success on empty bundle)"
     return "HELD" if _refused_with(
-        "expect_bundle_complete", kwargs, evidence, EMPTY_CODE) else \
+        "expect_bundle_complete", kwargs, evidence, EMPTY_CODE) else\
         "BREAK(F222: empty bundle neither succeeds nor is refused)"
 
 
@@ -136,7 +136,7 @@ def p_empty_gate_refuses():
             source, "json",
             [_expect("expect_evidence_monotonic")], [])
     except eq.EvidenceQualityError as exc:
-        return "HELD" if exc.code == EMPTY_CODE else \
+        return "HELD" if exc.code == EMPTY_CODE else\
             "BREAK(F222: gate refused with wrong code %r)" % (exc.code,)
     except Exception as exc:
         return "BREAK(F222: gate raised raw %r)" % (type(exc).__name__,)
@@ -186,8 +186,8 @@ def p_malformed_none_still_refused():
     try:
         eq.evaluate([_expect("expect_evidence_monotonic")], None)
     except eq.EvidenceQualityError as exc:
-        return "HELD" if exc.code == \
-            "evidence-quality-evidence-malformed" else \
+        return "HELD" if exc.code ==\
+            "evidence-quality-evidence-malformed" else\
             "BREAK(wrong code %r)" % (exc.code,)
     return "BREAK(None evidence evaluated)"
 
@@ -198,7 +198,7 @@ def p_empty_expectations_still_refused():
     try:
         eq.evaluate([], [{"seq": 1}])
     except eq.EvidenceQualityError as exc:
-        return "HELD" if exc.code == "evidence-quality-malformed" \
+        return "HELD" if exc.code == "evidence-quality-malformed"\
             else "BREAK(wrong code %r)" % (exc.code,)
     return "BREAK(empty expectations evaluated)"
 

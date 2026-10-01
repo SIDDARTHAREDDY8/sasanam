@@ -51,7 +51,7 @@ except ImportError:
 from gov import evidence_quality as eq  # noqa: E402 (exists at base)
 from gov import decision_codes  # noqa: E402 (taxonomy pin below)
 
-TAXONOMY_PIN = 1177  # Wave-261 lane 2: no new codes (pin 1106 at merge); wave-262 alert lane: +4 detector-* codes -> 1110.
+TAXONOMY_PIN = 1205  # Wave-261 lane 2: no new codes (pin 1106 at merge); wave-262 alert lane: +4 detector-* codes -> 1110.
 
 _PROBES = []
 
@@ -216,7 +216,7 @@ def p_filter_no_bypass():
     if clean != snapshot:
         return _break("filter mutated the caller's value")
     # every surviving subvalue byte-identical to the input
-    if out["payload"]["value"][0] != snapshot[0] or \
+    if out["payload"]["value"][0] != snapshot[0] or\
             out["payload"]["value"][1] != snapshot[2]:
         return _break("filter altered non-offending fields")
     return _held("aliased bypass -> exception; clean filter exact, "
@@ -322,14 +322,14 @@ def p_seam_empty():
     except eq.EvidenceQualityError as exc:
         if exc.code != "evidence-quality-empty-evidence":
             return _break("wrong code: %r" % (exc.code,))
-        if exc.fail_result is None or \
+        if exc.fail_result is None or\
                 exc.fail_result.action != "exception":
             return _break("empty evidence must prescribe exception")
     # opt-in handling path: returns the FailResult instead of raising
     report, fr = eq.evaluate_with_action(exp, [])
     if report is not None:
         return _break("opt-in path returned a report on refusal")
-    if fr is None or fr.code != "evidence-quality-empty-evidence" or \
+    if fr is None or fr.code != "evidence-quality-empty-evidence" or\
             fr.action != "exception":
         return _break("opt-in FailResult wrong: %r" % (fr,))
     # success path unchanged: (report, None)
@@ -359,9 +359,9 @@ def p_agentic():
             return _break("%s disposition %r" % (action,
                                                  out["disposition"]))
         req = out["payload"]
-        if not isinstance(req, dict) or \
-                req.get("type") != "action-request" or \
-                req.get("action") != action or \
+        if not isinstance(req, dict) or\
+                req.get("type") != "action-request" or\
+                req.get("action") != action or\
                 req.get("code") != "evidence-quality-malformed":
             return _break("%s request malformed: %r" % (action, req))
         if data != snapshot:

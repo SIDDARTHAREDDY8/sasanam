@@ -27,7 +27,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1177  # Wave-262 lane 3 (ceremony): pin -> 1119 (1106 + 13 ceremony-*).
+TAXONOMY_PIN = 1205  # Wave-262 lane 3 (ceremony): pin -> 1119 (1106 + 13 ceremony-*).
 
 try:
     from gov import decision_codes
@@ -39,7 +39,7 @@ except ImportError:
     HAVE_MODULE = False
 
 if HAVE_MODULE:
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, \
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN,\
         "taxonomy drift: %d != %d" % (len(decision_codes.TAXONOMY),
                                       TAXONOMY_PIN)
 

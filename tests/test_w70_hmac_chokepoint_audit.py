@@ -425,6 +425,16 @@ ALLOWED_HMAC_SITES = {
     # re-verifies closed ⊆ open by recomputing the same MAC.
     ("gov/bounded_mandates.py", "seal_body", 0):
         "mandate seal MAC; deployment-owned key (explicit pass, >=16B)",
+    # gov/approval_discipline.py (wave-265): the silence seal MAC. The
+    # key is DEPLOYMENT-OWNED: passed explicitly as operator_key/key to
+    # the silence APIs and validated by _check_key (>=16 bytes, fail
+    # closed discipline-silence-malformed; no default, no dev-key
+    # fallback, never hard-coded or derived in-repo). The MAC is
+    # domain-separated (SILENCE_DOMAIN) and binds the silence
+    # matchers/expiry/issuer; silences suppress prompts only, never
+    # enforcement denials.
+    ("gov/approval_discipline.py", "_silence_mac", 0):
+        "silence seal MAC; deployment-owned key (explicit pass, >=16B)",
 }
 
 
