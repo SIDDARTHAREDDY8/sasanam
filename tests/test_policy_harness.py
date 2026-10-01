@@ -287,7 +287,7 @@ class TestTaxonomyPin(unittest.TestCase):
     def test_pin_1001(self):
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1080)  # Wave-258 merge: pin -> 1080.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1092)  # Wave-258 merge: pin -> 1092.
         # Wave-251 lane 2: re-pointed to 1001 (997 + 4 policy-harness
         # codes), additive only.
         for code in ("policy-harness-malformed",

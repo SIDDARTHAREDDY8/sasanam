@@ -13,7 +13,7 @@ Contracts pinned here:
 * journal carries digests/ids/scopes only -- never plaintext, never
   key material.
 * fresh data key per seal (seals differ).
-* taxonomy pin 1080.
+* taxonomy pin 1092.
 """
 
 import hashlib
@@ -52,7 +52,7 @@ class KeyGroupContracts(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-259 merge: pin -> 1080.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1080)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1092)
         for c in ("keygroup-malformed", "keygroup-open-refused",
                   "keygroup-scope-mismatch", "keygroup-seal-refused",
                   "keygroup-unknown-key-id", "keygroup-version-unknown"):

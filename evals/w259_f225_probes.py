@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import control_profiles as cp  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = 1080  # Wave-258 merge: pin -> 1080.
+TAXONOMY_PIN = 1092  # Wave-258 merge: pin -> 1092.
 
 _PROBES = []
 

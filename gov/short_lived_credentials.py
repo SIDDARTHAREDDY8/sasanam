@@ -460,7 +460,16 @@ class CredentialIssuer:
         Fail-closed: unknown id/secret, revoked, expired, or
         scope-mismatched presentations are refused. An expired
         presentation also journals CRED_EXPIRED (once).
+
+        `now` is validated first, before ANY refusal decision
+        (F228): a non-numeric/bool/NaN/inf `now` is refused with
+        short-lived-credential-malformed regardless of
+        id/secret correctness. The validation runs identically
+        on every path (including unknown-id), so it adds no
+        id-existence timing delta on top of the F223
+        dummy-HMAC symmetry.
         """
+        at = _validate_now(now)
         st = self._states.get(credential_id)
         if st is None or st.get("status") == "unknown":
             # F223: the secret-mismatch path below performs one
@@ -493,7 +502,6 @@ class CredentialIssuer:
                 SCOPE_FORBIDDEN_CODE,
                 "credential %r is not bound to scope %r"
                 % (credential_id, scope))
-        at = _validate_now(now)
         if at >= st["expires_at"]:
             if st["status"] == "active":
                 self._append_event(credential_id, CRED_EXPIRED, {

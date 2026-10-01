@@ -289,7 +289,7 @@ class MeshControlTests(unittest.TestCase):
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-259 lane 3: pin 1080 -> 1074 (+10 svid-* codes).
-        self.assertEqual(len(dc.TAXONOMY), 1080)
+        self.assertEqual(len(dc.TAXONOMY), 1092)
         for code in ("svid-missing", "svid-malformed",
                      "svid-identity-malformed", "svid-ttl-unbounded",
                      "svid-ttl-stretched", "svid-trust-domain-mismatch",

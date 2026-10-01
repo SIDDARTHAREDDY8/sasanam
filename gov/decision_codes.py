@@ -1527,6 +1527,33 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'callauthz-check-error': {
+        "domain": 'callauthz',
+        "code": 'callauthz-check-error',
+        "human": 'per-call authorization: the policy check raised, timed '
+                 'out, or returned a malformed verdict; denied fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['check-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'callauthz-denied': {
+        "domain": 'callauthz',
+        "code": 'callauthz-denied',
+        "human": 'per-call authorization: the policy check denied the call',
+        "severity": 'high',
+        "evidence_kinds_required": ['check-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'callauthz-not-configured': {
+        "domain": 'callauthz',
+        "code": 'callauthz-not-configured',
+        "human": 'per-call authorization: no check configured (or no '
+                 'policy matched) where a check is required; denied '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['check-request'],
+        "reverify_steps": ['recompute'],
+    },
     'cancellation-unauthorized': {
         "domain": 'arap',
         "code": 'cancellation-unauthorized',
@@ -6039,6 +6066,60 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'poldist-bundle-malformed': {
+        "domain": 'poldist',
+        "code": 'poldist-bundle-malformed',
+        "human": 'policy distribution: the bundle envelope is not '
+                 'well-formed JSON or a required field (v, topic, '
+                 'version, payload, sig) has the wrong shape; refused '
+                 'before any verification, never applied',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recheck-bundle-shape'],
+    },
+    'poldist-signature-mismatch': {
+        "domain": 'poldist',
+        "code": 'poldist-signature-mismatch',
+        "human": 'policy distribution: the bundle Ed25519 signature '
+                 'does not verify under the subscriber-pinned publisher '
+                 'key (forgery, post-signing tamper, or key confusion); '
+                 'refused, never applied',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'signature'],
+        "reverify_steps": ['reverify-bundle-signature'],
+    },
+    'poldist-signature-missing': {
+        "domain": 'poldist',
+        "code": 'poldist-signature-missing',
+        "human": 'policy distribution: the bundle carries no '
+                 'well-formed Ed25519 signature (unsigned bundle); '
+                 'refused, never applied',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['reverify-bundle-signature'],
+    },
+    'poldist-topic-cross': {
+        "domain": 'poldist',
+        "code": 'poldist-topic-cross',
+        "human": 'policy distribution: the bundle topic is not the '
+                 "subscriber's bound topic (unknown topic or cross-topic "
+                 'replay); refused before any signature work, never '
+                 'applied',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recheck-topic-binding'],
+    },
+    'poldist-version-rollback': {
+        "domain": 'poldist',
+        "code": 'poldist-version-rollback',
+        "human": 'policy distribution: the bundle version is older than '
+                 'the loaded head, or the same version carries different '
+                 'payload bytes (equivocation-shaped); the head is not '
+                 'switched, the bundle is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle'],
+        "reverify_steps": ['recheck-bundle-version'],
+    },
     'policy-authoring-compile-refused': {
         "domain": 'policy-authoring',
         "code": 'policy-authoring-compile-refused',
@@ -8589,6 +8670,42 @@ TAXONOMY = {
         "human": 'mesh control: the presented SVID identity is denied by '
                  'the default-deny ACL; no allow entry admits the '
                  'identity at a segment boundary',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-enrollment-key-expired': {
+        "domain": 'svid',
+        "code": 'svid-enrollment-key-expired',
+        "human": 'SVID enrollment: the presented pre-auth enrollment key '
+                 'is expired (now >= expires_at); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-enrollment-key-replayed': {
+        "domain": 'svid',
+        "code": 'svid-enrollment-key-replayed',
+        "human": 'SVID enrollment: the presented pre-auth enrollment key '
+                 'was already consumed; replay refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-enrollment-key-unknown': {
+        "domain": 'svid',
+        "code": 'svid-enrollment-key-unknown',
+        "human": 'SVID enrollment: the presented pre-auth enrollment key '
+                 'matches no issued key; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-enrollment-spiffe-mismatch': {
+        "domain": 'svid',
+        "code": 'svid-enrollment-spiffe-mismatch',
+        "human": 'SVID enrollment: the pre-auth enrollment key is bound '
+                 'to a different spiffe id; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],

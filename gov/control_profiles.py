@@ -46,6 +46,12 @@ Composition with the compliance emitter:
     control maps to a finding (ref derived deterministically from
     the profile digest + control id) with the impact-weighted
     severity in the rationale. The emitter is UNTOUCHED.
+  - emit_profile_results re-validates the caller-supplied
+    profile_results fail-closed before use: five top-level keys, and
+    (F227) every per-result record must be a dict carrying
+    control_id, status, reason, impact, severity, digest -- a
+    malformed record is refused with control-profile-malformed, so
+    no raw KeyError/TypeError escapes the seam.
   - The default findings index is built from this run's own
     verdicts (fail/error -> "open"); a deployment-supplied index is
     merged over it -- the deployment owns the index (the emitter's
@@ -108,6 +114,14 @@ _REPR_LIMIT = 500
 _TOP_LEVEL_KEYS = ("id", "title", "description", "check_version",
                    "controls")
 _CONTROL_KEYS = ("id", "impact", "title", "desc", "check")
+# Per-result keys emit_profile_results indexes (F227). Every record
+# in a run_profile() result carries exactly these (plus check,
+# check_version, exception_info, which the emitter never reads); the
+# seam re-validates them fail-closed before use so a malformed
+# caller-built record is refused with control-profile-malformed
+# instead of escaping a raw KeyError.
+_RESULT_KEYS = ("control_id", "status", "reason", "impact",
+                "severity", "digest")
 
 
 class ControlProfileError(Exception):
@@ -453,6 +467,13 @@ def emit_profile_results(profile_results, fmt="json", findings=None,
     via _refuse(GATE_FAILED, ...) so only ControlProfileError
     escapes -- never the raw EvidenceQualityError.
 
+    F227 seam contract: per-result records are re-validated
+    fail-closed before any per-result key is used -- every record
+    must be a dict carrying control_id, status, reason, impact,
+    severity, digest; a malformed caller-built record is refused
+    with control-profile-malformed (no new taxonomy code) so no raw
+    KeyError/TypeError escapes this seam.
+
     profile_results must be the dict returned by run_profile() (its
     shape is re-validated fail-closed here).
     """
@@ -485,6 +506,29 @@ def emit_profile_results(profile_results, fmt="json", findings=None,
                     "quality gate refused emission; failed "
                     "expectations: %s" % (", ".join(failed),))
     results = profile_results["results"]
+    # F227 seam contract: per-result records are re-validated
+    # fail-closed BEFORE any per-result key is indexed. run_profile()
+    # always emits dict records carrying _RESULT_KEYS; a caller-built
+    # record that is not a dict or is missing any of these keys is
+    # refused with control-profile-malformed -- no raw KeyError or
+    # TypeError escapes this seam. The check is status-agnostic (it
+    # runs before the pass/fail split) so the pass-mapping path, the
+    # findings-mapping loop, and _default_findings_index() all see
+    # only validated records.
+    if not isinstance(results, list):
+        _refuse(MALFORMED,
+                "profile_results['results'] must be a list of "
+                "result records")
+    for i, r in enumerate(results):
+        if not isinstance(r, dict):
+            _refuse(MALFORMED,
+                    "profile_results['results'][%d] must be a "
+                    "result record dict" % (i,))
+        for key in _RESULT_KEYS:
+            if key not in r:
+                _refuse(MALFORMED,
+                        "profile_results['results'][%d] is missing "
+                        "key %r" % (i, key))
     passed = [r for r in results if r["status"] == "pass"]
     failed = [r for r in results if r["status"] in ("fail", "error")]
     mappings = []

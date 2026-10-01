@@ -41,7 +41,7 @@ def _profile(controls, **kw):
 class TestTaxonomyPin(unittest.TestCase):
     def test_pin(self):
         n = len(decision_codes.TAXONOMY)
-        self.assertEqual(n, 1080)  # Wave-259 merge: pin -> 1080.
+        self.assertEqual(n, 1092)  # Wave-259 merge: pin -> 1092.
 
     def test_codes_resolve(self):
         for code in ("control-profile-malformed",
@@ -269,6 +269,55 @@ class TestEmitProfileResults(unittest.TestCase):
             _profile([_control("C1", _no, impact=0.2)]), {})
         out = cp.emit_profile_results(res, fmt="json", findings={})
         self.assertIn("low", out)
+
+    def test_emit_refuses_result_missing_each_key(self):
+        # F227: per-result keys are re-validated fail-closed before
+        # any is indexed. A caller-built record missing any of them
+        # must be refused with control-profile-malformed -- never a
+        # raw KeyError escaping the seam.
+        for key in ("control_id", "status", "reason", "impact",
+                    "severity", "digest"):
+            with self.subTest(key=key):
+                res = cp.run_profile(
+                    _profile([_control("C1", _no)]), {})
+                del res["results"][0][key]
+                with self.assertRaises(cp.ControlProfileError) as ctx:
+                    cp.emit_profile_results(res, fmt="json")
+                self.assertEqual(ctx.exception.code,
+                                 "control-profile-malformed")
+                self.assertIn(key, str(ctx.exception))
+
+    def test_emit_refuses_non_dict_result_record(self):
+        # F227 defense in depth: a non-dict record cannot have keys
+        # checked -- refused with the machine code, not a raw
+        # TypeError from r["status"].
+        res = cp.run_profile(_profile([_control("C1", _no)]), {})
+        res["results"][0] = "not-a-record"
+        with self.assertRaises(cp.ControlProfileError) as ctx:
+            cp.emit_profile_results(res, fmt="json")
+        self.assertEqual(ctx.exception.code,
+                         "control-profile-malformed")
+
+    def test_emit_refuses_non_list_results(self):
+        # F227 defense in depth: results must be a list of records;
+        # a dict would iterate its keys and escape a raw TypeError.
+        res = cp.run_profile(_profile([_control("C1", _no)]), {})
+        res["results"] = {"C1": "fail"}
+        with self.assertRaises(cp.ControlProfileError) as ctx:
+            cp.emit_profile_results(res, fmt="json")
+        self.assertEqual(ctx.exception.code,
+                         "control-profile-malformed")
+
+    def test_emit_refuses_pass_record_missing_key(self):
+        # F227: validation runs before the pass/fail split, so it is
+        # status-agnostic -- a pass record missing a key is refused
+        # too.
+        res = cp.run_profile(_profile([_control("C1", _ok)]), {})
+        del res["results"][0]["digest"]
+        with self.assertRaises(cp.ControlProfileError) as ctx:
+            cp.emit_profile_results(res, fmt="json")
+        self.assertEqual(ctx.exception.code,
+                         "control-profile-malformed")
 
 
 if __name__ == "__main__":

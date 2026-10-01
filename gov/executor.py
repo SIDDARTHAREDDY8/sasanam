@@ -1069,7 +1069,18 @@ class ToolExecutor:
                  # (gov/policy_combine.py). Appended LAST so no existing
                  # positional caller can misalign. Opt-in: empty
                  # (default) = pre-wave-249 behavior, zero change.
-                 policy_set=()):
+                 policy_set=(),
+                 # Per-call authorization enforcement (wave-260, envoy
+                 # ext_authz adaptation): a gov.call_enforcement
+                 # CallEnforcer consulted on EVERY sentinel credential
+                 # swap at the execution boundary (both the direct path
+                 # and the approved sweep). Appended LAST so no existing
+                 # positional caller can misalign. Opt-in: None
+                 # (default) = pre-wave-260 behavior, zero change; when
+                 # set, a deny (or check error/timeout, or no matching
+                 # policy) refuses the swap fail-closed with a
+                 # callauthz-* machine code and nothing is substituted.
+                 call_authorizer=None):
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -1493,6 +1504,10 @@ class ToolExecutor:
         # sweep), into an ephemeral copy — the secret never enters the
         # audit path.
         self.sentinel_registry = sentinel_registry
+        # Wave-260: per-call authorization enforcer for the sentinel
+        # substitution seam (gov.call_enforcement.CallEnforcer or
+        # None). Opt-in: None (default) = pre-wave-260 behavior.
+        self.call_authorizer = call_authorizer
         # Wave-198: attestation-conditioned release trust anchor
         # (gov.attestation_release.AttestationReleaseConfig or None).
         # Fail fast on a misconfigured value: a non-config would
@@ -10566,7 +10581,10 @@ class ToolExecutor:
                         identity.agent_id),
                     release_config=self.attestation_config,
                     audit_log=self.log,
-                    run_id=self.run_id)[0]
+                    run_id=self.run_id,
+                    # Wave-260: every swap on the direct path goes
+                    # through the per-call authorization check.
+                    enforcer=getattr(self, "call_authorizer", None))[0]
             with _exchange_ledger.bind_reader(
                     identity.principal, identity.run_id,
                     action_log=self.log):
@@ -12383,7 +12401,10 @@ class ToolExecutor:
                         release_config=self.attestation_config,
                         audit_log=self.log,
                         run_id=_approved_identity.get(
-                            "run_id", self.run_id))[0]
+                            "run_id", self.run_id),
+                        # Wave-260: every swap on the approved sweep
+                        # goes through the per-call authorization check.
+                        enforcer=getattr(self, "call_authorizer", None))[0]
                 result = self._invoke_simulate(rec["tool"], _exec_args, ctx,
                                               _approved_identity)
             # Wave-175 lane 1 (countersigned invocation receipts, R7 #7

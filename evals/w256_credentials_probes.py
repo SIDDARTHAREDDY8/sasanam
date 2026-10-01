@@ -29,7 +29,7 @@ try:
 except ImportError:
     HAVE_MODULE = False
 
-assert len(decision_codes.TAXONOMY) == 1080, "taxonomy pin 1080"  # Wave-258 merge: pin -> 1080.
+assert len(decision_codes.TAXONOMY) == 1092, "taxonomy pin 1092"  # Wave-258 merge: pin -> 1092.
 
 PROBES = []
 

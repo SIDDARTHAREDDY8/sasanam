@@ -829,7 +829,8 @@ def substitute_for_execution(vault, tool, args, *, identity=None,
                              attestation=None, release_config=None,
                              audit_log=None, run_id=None, now=None,
                              policy_override=None,
-                             policy_override_keyset=None):
+                             policy_override_keyset=None,
+                             enforcer=None):
     """EXECUTION-BOUNDARY seam: substitute known sentinels into an
     EPHEMERAL copy of ``args`` immediately before the tool is invoked.
     The host binding is RE-VALIDATED here fail-closed (the vault may
@@ -847,11 +848,26 @@ def substitute_for_execution(vault, tool, args, *, identity=None,
     operator-signed override. Every attested/legacy/deny_all decision
     is audit-logged via ``audit_log`` (no secrets, no token material).
 
+    Wave-260: ``enforcer`` (a ``gov.call_enforcement.CallEnforcer`` or
+    None) is the per-call authorization check (envoy ext_authz
+    adaptation). When provided, EVERY credential swap goes through
+    ``enforcer.enforce`` with
+    ``{caller_identity, action="credential.swap", resource=credential_id,
+    context={dest_host, tool, release_policy, sentinel_prefix}}``
+    AFTER the release predicate allows and BEFORE any jti is consumed
+    or any value substituted -- no partial release. A deny raises
+    :class:`SentinelError` with the verdict's machine code
+    (``callauthz-denied`` / ``callauthz-check-error`` /
+    ``callauthz-not-configured``), fail-closed, and nothing is
+    substituted. ``None`` (default) preserves the pre-wave-260
+    behavior for direct/test callers; the ``ToolExecutor`` wires its
+    ``call_authorizer`` here on both execution paths.
+
     Returns ``(new_args, substituted_real_values)``. Appends to
     ``vault.substitution_log`` (operator-side, in-memory only). Raises
     :class:`SentinelError` (fail-closed, no trip — the attempt path
-    already had its chance to trip) on a binding mismatch or an
-    attestation refusal.
+    already had its chance to trip) on a binding mismatch, an
+    attestation refusal, or a per-call authorization denial.
     """
     if vault is None or tool not in EGRESS_TOOLS:
         return args, ()
@@ -933,6 +949,52 @@ def substitute_for_execution(vault, tool, args, *, identity=None,
         raise SentinelError(
             "execution refused: attestation-conditioned release failed "
             "for credential %r: %s" % (rec["credential_id"], reason))
+    # Wave-260: per-call authorization (envoy ext_authz adaptation).
+    # Every swap goes through the enforcer AFTER the release predicate
+    # allows and BEFORE any jti is consumed or any value substituted --
+    # no partial release. A deny raises with the verdict's machine
+    # code; nothing is substituted. The check request carries the full
+    # authorization context; the audit event carries no secrets (the
+    # credential id is an operator label, the sentinel only a prefix).
+    if enforcer is not None:
+        try:
+            from . import call_enforcement as _ce
+        except ImportError:
+            raise SentinelError(
+                "callauthz-not-configured: an enforcer was supplied but "
+                "gov.call_enforcement is unimportable -- refused "
+                "fail-closed")
+        for tok, rec, ok, reason, via, jti in decisions:
+            cid = rec["credential_id"]
+            request = _ce.CheckRequest(
+                caller_identity=aid,
+                action="credential.swap",
+                resource=cid,
+                context={"dest_host": dest, "tool": tool,
+                         "release_policy": rec.get("release_policy",
+                                                   "attested"),
+                         "sentinel_prefix": (tok[:20] + "..."
+                                             if isinstance(tok, str)
+                                             else "?")})
+            verdict = enforcer.enforce(request)
+            if audit_log is not None:
+                audit_log.append({
+                    "event": "callauthz_decision",
+                    "credential_id": cid,
+                    "agent_id": aid,
+                    "run_id": rid,
+                    "dest_host": dest,
+                    "verdict": "allowed" if verdict.allow else "denied",
+                    "code": verdict.code,
+                    "policy_id": verdict.policy_id,
+                    "reason": verdict.reason,
+                })
+            if not verdict.allow:
+                raise SentinelError(
+                    "%s: per-call authorization denied the swap of "
+                    "credential %r for agent %s at %r (policy %s): %s"
+                    % (verdict.code, cid, aid, dest,
+                       verdict.policy_id, verdict.reason))
     # All decisions allow: consume the jtis (single consumption point),
     # then substitute.
     for tok, rec, ok, reason, via, jti in decisions:

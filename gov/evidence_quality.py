@@ -154,12 +154,26 @@ def _safe_deepcopy(obj, code, what):
     contract requires an evidence-quality-* refusal instead.
     F221: the defensive except RecursionError (the iterative depth
     bound above is the primary defense).
+    F229: a hostile __deepcopy__ may raise ANY exception
+    (RuntimeError, KeyError, OSError, custom Exception subclasses);
+    the trailing except Exception maps every remaining case to the
+    caller's machine code. Except Exception catches nothing in
+    BaseException, so KeyboardInterrupt and SystemExit still
+    propagate raw, as required.
     """
     try:
         return copy.deepcopy(obj)
     except RecursionError:
         _refuse(code, "%s too deeply nested for a safe copy" % (what,))
     except (TypeError, ValueError, AttributeError, copy.Error):
+        _refuse(code, "%s is not a copyable plain-data shape"
+                % (what,))
+    except Exception:
+        # F229: map every remaining hostile exception to the EXISTING
+        # machine code (no new codes), following the F220 mapping
+        # convention above. _refuse() raises EvidenceQualityError
+        # (an Exception), but it runs in the except arm, not inside
+        # the try, so nothing is masked.
         _refuse(code, "%s is not a copyable plain-data shape"
                 % (what,))
 
