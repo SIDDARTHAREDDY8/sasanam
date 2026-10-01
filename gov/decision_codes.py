@@ -4220,6 +4220,77 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'federation-bundle-confusion': {
+        "domain": 'federation',
+        "code": 'federation-bundle-confusion',
+        "human": 'trust federation: a bundle whose trust_domain does not '
+                 'match the relationship it was presented under; '
+                 'cross-domain bundle use refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-bundle-expired': {
+        "domain": 'federation',
+        "code": 'federation-bundle-expired',
+        "human": 'trust federation: the foreign trust bundle is past its '
+                 'expires_at; stale bundles are fail-closed at install '
+                 'and at verify time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-bundle-malformed': {
+        "domain": 'federation',
+        "code": 'federation-bundle-malformed',
+        "human": 'trust federation: the fetched bundle bytes are not a '
+                 'well-formed bundle document; refused before any '
+                 'signature check',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-bundle-missing': {
+        "domain": 'federation',
+        "code": 'federation-bundle-missing',
+        "human": 'trust federation: a federation relationship is '
+                 'declared but no bundle was ever polled for it; '
+                 'refused until the bundle endpoint is polled',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-bundle-signature-invalid': {
+        "domain": 'federation',
+        "code": 'federation-bundle-signature-invalid',
+        "human": 'trust federation: the foreign bundle signature does '
+                 'not verify under the relationship-pinned endpoint '
+                 'key; the bundle is not installed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-relationship-malformed': {
+        "domain": 'federation',
+        "code": 'federation-relationship-malformed',
+        "human": 'trust federation: a malformed federation relationship '
+                 'declaration (bad trust domain, non-https endpoint, '
+                 'unknown endpoint profile, or bad endpoint key); '
+                 'refused at declaration',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-untrusted-domain': {
+        "domain": 'federation',
+        "code": 'federation-untrusted-domain',
+        "human": 'trust federation: no live federation relationship for '
+                 'the SVID trust domain (one-way: trusting them never '
+                 'lets them trust us); refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'gate-exception-malformed': {
         "domain": 'gate',
         "code": 'gate-exception-malformed',
