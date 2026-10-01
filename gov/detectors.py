@@ -712,7 +712,18 @@ class DetectorEngine:
         }
 
     def _run_detector(self, detector, event):
-        """Run one detector on one event; errors are contained by caller."""
+        """Run one detector on one event; errors are contained by caller.
+
+        Data-defined paths (predicates, exception fields, from_field)
+        evaluate against the stamp-stripped event: the per-engine
+        provenance secret can never be observed or exfiltrated through
+        a detector definition (F239). The structural provenance check
+        in process() stays on the internal event -- it is not
+        data-defined.
+        """
+        if _STAMP_KEY in event:
+            event = {k: v for k, v in event.items()
+                     if k != _STAMP_KEY}
         if not _selector_matches(detector["event_selector"], event):
             return None
         if not all(_eval_predicate(p, event)

@@ -42,7 +42,7 @@ except Exception as e:  # noqa: BLE001 -- pre-fix red baseline
     _HAVE_KG = False
     _IMPORT_ERROR = e
 
-TAXONOMY_PIN = 1129  # Wave-259 merge: pin -> 1106.
+TAXONOMY_PIN = 1151  # Wave-259 merge: pin -> 1106.
 
 _PROBES = []
 

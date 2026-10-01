@@ -333,6 +333,10 @@ _MAX_SWEEP_SUBVALUES = 50000
 def _iter_subvalues(value):
     """Yield every subvalue exactly once; cycle-safe via id().
 
+    Dict KEYS are byte-carrying positions of the value graph and are
+    yielded too (F238): exact offending bytes surviving as a key must
+    trip the no-bypass sweep just like an aliased value does.
+
     Raises _SweepOverflow past the budget: an unverifiable redaction
     fails closed rather than returning unchecked.
     """
@@ -350,6 +354,7 @@ def _iter_subvalues(value):
         yield current
         if isinstance(current, dict):
             stack.extend(current.values())
+            stack.extend(current.keys())
         elif isinstance(current, (list, tuple)):
             stack.extend(current)
 

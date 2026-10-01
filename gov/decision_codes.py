@@ -5549,6 +5549,87 @@ TAXONOMY = {
         "evidence_kinds_required": ['measurement', 'policy', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'mesh-auth-envelope-missing': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-envelope-missing',
+        "human": 'mesh auth contract: a mesh call carried no auth '
+                 'envelope; refused before routing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-escalation-bypass': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-escalation-bypass',
+        "human": 'mesh auth contract: a paused (AUTH_REQUIRED) task was '
+                 'resumed with the old/weaker scheme instead of the '
+                 'escalated one; refused, the task stays paused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-malformed': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-malformed',
+        "human": 'mesh auth contract: a malformed card declaration, '
+                 'envelope, task id, or escalation record; refused '
+                 'before any verification',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-scheme-confusion': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-scheme-confusion',
+        "human": 'mesh auth contract: a credential was presented under a '
+                 'different scheme than the call requires (or the '
+                 'payload does not match its declared scheme); schemes '
+                 'are never substituted for each other',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-scope-uncovered': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-scope-uncovered',
+        "human": 'mesh auth contract: the verified credential scopes do '
+                 'not cover the scopes the call requires (exact-set); '
+                 'refused at the call seam',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-subject-mismatch': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-subject-mismatch',
+        "human": 'mesh auth contract: a scope ticket presented alongside '
+                 'an authenticated subject is bound to a different '
+                 'subject; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-task-paused': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-task-paused',
+        "human": 'mesh auth contract: a call against an AUTH_REQUIRED '
+                 'task was refused without evaluating the envelope; the '
+                 'task stays paused until re-auth with the required '
+                 'scheme',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'mesh-auth-undeclared-scheme': {
+        "domain": 'mesh-auth',
+        "code": 'mesh-auth-undeclared-scheme',
+        "human": 'mesh auth contract: the envelope scheme is not in the '
+                 'callee card declared securitySchemes; refused '
+                 'default-deny',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'missing-digest': {
         "domain": 'authorization_receipt',
         "code": 'missing-digest',
@@ -6859,6 +6940,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['release', 'approval-record', 'signature'],
         "reverify_steps": ['verify-signature', 'replay-chain'],
     },
+    'provenance-builder-refused': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-builder-refused',
+        "human": 'admission-time provenance policy: the statement builder '
+                 'id is missing or not in the policy allowlist (a '
+                 'validly-signed statement from a foreign builder still '
+                 'refuses; claims are checked, not made true)',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-statement'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-chain-class-mismatch': {
         "domain": 'provenance',
         "code": 'provenance-chain-class-mismatch',
@@ -6896,6 +6988,39 @@ TAXONOMY = {
         "evidence_kinds_required": ['provenance-receipt'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-policy-vacuous': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-policy-vacuous',
+        "human": 'admission-time provenance policy: the policy is vacuous '
+                 'or malformed (no allowed sources, no allowed builders, '
+                 'no pinned statement signers); it admits nothing so it '
+                 'cannot be constructed — never a vacuous allow',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-source-refused': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-source-refused',
+        "human": 'admission-time provenance policy: the statement source '
+                 '(uri or digest) is missing or not in the policy '
+                 'allowlist, or a policy-expected build input mismatches; '
+                 'the artifact is not admitted',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-statement'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-statement-unverified': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-statement-unverified',
+        "human": 'admission-time provenance policy: the provenance '
+                 'statement signature does not verify under a pinned '
+                 'statement signer (or the statement is malformed); '
+                 'tampered bytes are never emitted downstream',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-statement', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-step-break': {
         "domain": 'provenance',
         "code": 'provenance-step-break',
@@ -6906,6 +7031,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['workflow-commitment'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-subject-refused': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-subject-refused',
+        "human": 'admission-time provenance policy: the statement subject '
+                 'digest is missing/malformed or does not match the '
+                 'expected artifact digest; the provenance is about a '
+                 'different artifact',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-statement', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-tag-refused': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-tag-refused',
+        "human": 'admission-time provenance policy: the statement tag is '
+                 'missing while required, unparseable, outside the '
+                 'policy semver range, or not in the allowed list',
+        "severity": 'high',
+        "evidence_kinds_required": ['provenance-statement'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-upgraded': {
         "domain": 'provenance',
         "code": 'provenance-upgraded',
@@ -6914,6 +7060,19 @@ TAXONOMY = {
                  'observation); refused, never re-graded',
         "severity": 'critical',
         "evidence_kinds_required": ['provenance-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-vsa-refused': {
+        "domain": 'provenance-policy',
+        "code": 'provenance-vsa-refused',
+        "human": 'admission-time provenance policy: the Verification '
+                 'Summary Attestation is refused — unpinned verifier, bad '
+                 'signature, scope (policy id) mismatch, expired or '
+                 'not-yet-valid, older than the policy max age, or below '
+                 'the required verification level; VSA delegates trust, '
+                 'it does not create it',
+        "severity": 'high',
+        "evidence_kinds_required": ['vsa', 'signature'],
         "reverify_steps": ['recompute'],
     },
     'provisioned_required': {
@@ -7191,6 +7350,77 @@ TAXONOMY = {
         "human": 'platform egress: the evidence could not be verified',
         "severity": 'high',
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-identity-refused': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-identity-refused',
+        "human": 'envelope recipient plugin: the seal/open identity a '
+                 'plugin needs is missing or malformed (bad key material, '
+                 'bad quorum, colliding share ids, too few shares)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-label-inconsistent': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-label-inconsistent',
+        "human": 'envelope recipient plugin: a plugin emitted a wire '
+                 'label outside its own namespace in one seal operation; '
+                 'refused by the framework',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-malformed-wrap': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-malformed-wrap',
+        "human": 'envelope recipient plugin: a plugin emitted a wrap '
+                 'that is not exactly 48 bytes, or no wire entries at '
+                 'all; refused by the framework',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-namespace-conflict': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-namespace-conflict',
+        "human": 'envelope recipient plugin: registration refused -- the '
+                 'plugin claims an already-claimed namespace, overlaps '
+                 'one by prefix, reuses a plugin name, or declares a '
+                 'malformed namespace',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-unknown-label': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-unknown-label',
+        "human": 'envelope recipient plugin: a recipient label names a '
+                 'namespace no registered plugin claims (or a plugin '
+                 'name with no registration); refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-unwrap-refused': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-unwrap-refused',
+        "human": 'envelope recipient plugin: a plugin refused or '
+                 'errored during unwrap; the vault converts this to the '
+                 'generic envelope-open-refused, never partial plaintext',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'recipient-plugin-wrap-refused': {
+        "domain": 'envelope',
+        "code": 'recipient-plugin-wrap-refused',
+        "human": 'envelope recipient plugin: a plugin refused or '
+                 'errored during wrap; seal refused with no envelope '
+                 'emitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
     'recompute-absent-refusal-no-coverage': {

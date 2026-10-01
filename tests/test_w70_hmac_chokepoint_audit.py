@@ -358,10 +358,32 @@ ALLOWED_HMAC_SITES = {
         "envelope KDF; key = fresh per-envelope random or deployment-supplied recipient material, domain-separated",
     ("gov/encrypted_envelopes.py", "_keystream", 0):
         "envelope HMAC-CTR keystream; key = _kdf output (fresh per-envelope random), domain-separated",
-    ("gov/encrypted_envelopes.py", "EnvelopeVault.seal", 0):
-        "envelope integrity tag; key = _kdf(fresh per-envelope random, payload-mac), domain-separated",
+    ("gov/encrypted_envelopes.py", "EnvelopeVault._assemble", 0):
+        "envelope integrity tag (wave-263: tag computation moved from seal into _assemble, shared by seal and seal_plugin); key = _kdf(fresh per-envelope random, payload-mac), domain-separated",
     ("gov/encrypted_envelopes.py", "EnvelopeVault.open", 0):
         "envelope tag re-verification; key = _kdf(unwrapped envelope key, payload-mac), domain-separated",
+    ("gov/encrypted_envelopes.py", "EnvelopeVault._open_parsed", 0):
+        "wave-263 plugin-open path tag re-verification; key = _kdf(plugin-unwrapped 32-byte envelope key, payload-mac), domain-separated; compare_digest, fail closed",
+    # gov/recipient_plugins.py (wave-263 lane 1): the recipient-plugin
+    # module's internal HMAC-SHA256 primitives. These mirror
+    # gov/encrypted_envelopes' _kdf/_keystream byte-for-byte (duplicated,
+    # not imported, to avoid a circular import -- the vault imports the
+    # plugin module; documented in gov/recipient_plugins.py). The keys
+    # are deployment-supplied recipient key material (symmetric plugin)
+    # or Shamir share bytes (quorum plugin), passed as seal/open
+    # identities -- opaque bytes, deployment-owned custody (strength,
+    # storage, rotation, revocation); never a default, never hard-coded.
+    # Domains: _ENVELOPE_DOMAIN is byte-identical to the envelope
+    # _DOMAIN ("sasanam-envelope/v1/") for the symmetric KEM-compat
+    # path; _PLUGIN_DOMAIN ("sasanam-recipient-plugin/v1/") separates
+    # the quorum per-share wraps, so the two KDF/stream/tag domains
+    # cannot collide. The HMAC here provides wrap-key derivation and
+    # the HMAC-CTR keystream for the 48-byte wire wraps; it is the
+    # module's core primitive, not a bypass of the log-key chokepoint.
+    ("gov/recipient_plugins.py", "_kdf", 0):
+        "plugin wrap-KDF; key = deployment-supplied recipient key material or share bytes, domain-separated (_ENVELOPE_DOMAIN / _PLUGIN_DOMAIN)",
+    ("gov/recipient_plugins.py", "_keystream", 0):
+        "plugin HMAC-CTR keystream for 48-byte wire wraps; key = _kdf output (deployment-supplied recipient material), domain-separated",
     # gov/key_groups.py (wave-259 lane 4): the key-group module's internal
     # HMAC-SHA256 primitives, mirroring the wave-257 envelope precedent.
     # The keys are deployment-supplied group key material (opaque bytes,

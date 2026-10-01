@@ -22,7 +22,7 @@ import sys
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1129  # Wave-262 lane 1: pin -> 1112.
+TAXONOMY_PIN = 1151  # Wave-262 lane 1: pin -> 1112.
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))

@@ -70,7 +70,7 @@ from gov import svid_issuer as sv  # noqa: E402
 # Wave-262 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1129  # Wave-261 merge pin; wave-262 redteam adds none.
+TAXONOMY_PIN = 1151  # Wave-261 merge pin; wave-262 redteam adds none.
 
 _PROBES = []
 
@@ -484,22 +484,28 @@ def _h_fa_alias():
 
 @probe("failaction/filter-offending-bytes-as-dict-key-not-swept")
 def _p_f238_keyhole():
-    # The no-bypass sweep (_iter_subvalues) extends the stack with
-    # dict VALUES only -- keys are never visited. The exact offending
-    # bytes surviving as a dict key are missed, and filter returns
-    # "continued" on a value that still contains them, contradicting
-    # the documented guarantee ("if those bytes survive at any other
-    # path ... the filter refuses instead of returning a tainted
-    # value").
-    out = _filter_result("note", {"note": "SECRET",
-                                  "SECRET": "innocent", "other": 1})
+    # Wave-263 closure: the no-bypass sweep (_iter_subvalues) now
+    # visits dict keys, so the exact offending bytes surviving as a
+    # key trip the sweep and the filter refuses with the FailResult's
+    # own code (the same refusal idiom as the aliased-value control
+    # above). Pre-fix this returned "continued" with the key bytes
+    # surviving -> BREAK.
+    try:
+        out = _filter_result("note", {"note": "SECRET",
+                                      "SECRET": "innocent", "other": 1})
+    except fa.FailureActionError as e:
+        if e.code == "pii-leak":
+            return _held("key-resident offending bytes refused with "
+                         "the FailResult's own code")
+        return _break("refused with wrong code: %s" % e.code)
     v = out["payload"]["value"]
     if out["disposition"] == "continued" and "SECRET" in v:
         return _break(
             "filter returned 'continued' with the exact offending "
             "bytes surviving as a dict key: %s (sweep never visits "
             "keys)" % v)
-    return _held("key-resident offending bytes refused: %s" % out)
+    return _break("filter continued without refusing key-resident "
+                  "offending bytes: %s" % out)
 
 
 @probe("failaction/filter-substring-survival-accepted")

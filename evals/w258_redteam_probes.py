@@ -44,7 +44,7 @@ from gov import encrypted_envelopes as ee  # noqa: E402
 from gov import evidence_quality as eq  # noqa: E402
 from gov import short_lived_credentials as slc  # noqa: E402
 
-TAXONOMY_PIN = 1129  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1151  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 

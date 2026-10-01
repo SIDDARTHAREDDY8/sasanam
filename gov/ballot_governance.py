@@ -463,14 +463,22 @@ class BallotBox:
 
     def _effective_votes(self, ballot):
         """Re-run every vote() hook over all recorded votes (CCF: each
-        submitted vote re-executes all ballots against current state)."""
+        submitted vote re-executes all ballots against current state).
+
+        The hook return is bool-coerced exactly as vote() does, so the
+        resolve-time tally always agrees with the journaled effective
+        values (F237: the shipped resolvers use `is True` / `is False`,
+        and an uncoerced truthy/falsy return silently corrupted the
+        tally -- veto evasion, lost yes-votes).
+        """
         btype = self.constitution.ballot_types[ballot["ballot_type"]]
         view = self._view(ballot)
         effective = {}
         for member_id, vote in ballot["votes"].items():
             member = self.constitution.members[member_id]
-            effective[member_id] = btype.vote_fn(member,
-                                                 vote["decision"], view)
+            effective[member_id] = bool(btype.vote_fn(member,
+                                                      vote["decision"],
+                                                      view))
         return effective
 
     # -- vote ------------------------------------------------------------
