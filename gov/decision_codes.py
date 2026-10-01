@@ -2546,6 +2546,45 @@ TAXONOMY = {
         "evidence_kinds_required": ['decision-packet', 'signature'],
         "reverify_steps": ['verify-packet-signature'],
     },
+    'decision-log-equivocation': {
+        "domain": 'decision-log',
+        "code": 'decision-log-equivocation',
+        "human": 'decision log: two logged combined decisions share the '
+                 'same request digest and policy-revision set but carry '
+                 'different effects; the equivocation is proven by '
+                 'inclusion proofs against the log root',
+        "severity": 'high',
+        "evidence_kinds_required": ['log-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decision-log-malformed': {
+        "domain": 'decision-log',
+        "code": 'decision-log-malformed',
+        "human": 'decision log: a leaf, request digest, STH, or proof was '
+                 'malformed; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decision-log-proof-invalid': {
+        "domain": 'decision-log',
+        "code": 'decision-log-proof-invalid',
+        "human": 'decision log: an inclusion or consistency proof did not '
+                 'verify against the claimed root; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'decision-log-request-mismatch': {
+        "domain": 'decision-log',
+        "code": 'decision-log-request-mismatch',
+        "human": 'decision log: an append carried a different request '
+                 'digest than the bound epoch without an explicit '
+                 'new_epoch() separation; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'decommission_refused': {
         "domain": 'recovery',
         "code": 'decommission_refused',
@@ -3348,6 +3387,43 @@ TAXONOMY = {
                  'per-record canonical-byte bound',
         "severity": 'medium',
         "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-graph-ambiguous-link': {
+        "domain": 'evidence-graph',
+        "code": 'evidence-graph-ambiguous-link',
+        "human": 'evidence graph: an identity selector matched more than '
+                 'one node; refused fail-closed rather than guessing '
+                 '(GUAC-adapted heuristic-linking hardening)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-graph-malformed': {
+        "domain": 'evidence-graph',
+        "code": 'evidence-graph-malformed',
+        "human": 'evidence graph: malformed node, edge, or projection '
+                 'input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-graph-overflow': {
+        "domain": 'evidence-graph',
+        "code": 'evidence-graph-overflow',
+        "human": 'evidence graph: a node or edge add would exceed the '
+                 'configured cap; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'evidence-graph-unlinked': {
+        "domain": 'evidence-graph',
+        "code": 'evidence-graph-unlinked',
+        "human": 'evidence graph: an identity selector matched no node; '
+                 'refused fail-closed rather than leaving a dangling edge',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
         "reverify_steps": ['recompute'],
     },
     'evidence-incomplete': {
@@ -5208,6 +5284,94 @@ TAXONOMY = {
                  'different action instance than the bound one',
         "severity": 'high',
         "evidence_kinds_required": ['permit-record', 'binding-digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-chain-broken': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-chain-broken',
+        "human": 'permit journal: HMAC chain verification failed on '
+                 'load -- an event was not made by a key holder or was '
+                 'tampered after write; failed closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-corrupted': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-corrupted',
+        "human": 'permit journal: the underlying durable journal '
+                 'failed verification (chain break, torn tail, or '
+                 'missing snapshot sidecar); failed closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-duplicate-event': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-duplicate-event',
+        "human": 'permit journal: the event_id is already recorded; '
+                 'appends are idempotent and replays refuse',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-key-weak': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-key-weak',
+        "human": 'permit journal: the HMAC key is missing, malformed, '
+                 'or shorter than 16 bytes; refused rather than '
+                 'running with weak integrity',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-misuse': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-misuse',
+        "human": 'permit journal: programmer misuse (bad argument '
+                 'types, non-permit snapshot sidecar); refused '
+                 'fail-closed rather than guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-snapshot-tampered': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-snapshot-tampered',
+        "human": 'permit journal: the snapshot fold was not made by a '
+                 'key holder at the claimed tip (snapshot MAC '
+                 'mismatch); failed closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-transition-illegal': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-transition-illegal',
+        "human": 'permit journal: the lifecycle transition is illegal '
+                 '(second grant, or a transition on a terminal '
+                 'permit); refused, permits never resurrect',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-unknown-permit': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-unknown-permit',
+        "human": 'permit journal: no grant recorded for the permit id; '
+                 'use/expire/revoke/finalize refuse before grant',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'permit-journal-write-conflict': {
+        "domain": 'permit-journal',
+        "code": 'permit-journal-write-conflict',
+        "human": 'permit journal: the append lost the tip compare-and-'
+                 'swap after 3 attempts; another writer holds the '
+                 'journal -- retry the operation',
+        "severity": 'medium',
+        "evidence_kinds_required": ['permit-record'],
         "reverify_steps": ['recompute'],
     },
     'permit-jti-duplicate': {
@@ -7414,6 +7578,17 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
+    },
+    'skill-update-digest-changed': {
+        "domain": 'skill-update',
+        "code": 'skill-update-digest-changed',
+        "human": 'install gate: same-version reinstall carries a '
+                 'different digest than the installed bundle '
+                 '(bytes swapped under a pinned version); refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal', 'digest', 'input'],
+        "reverify_steps": ['recompute-digest'],
     },
     'skill-update-digest-mismatch': {
         "domain": 'skill-update',

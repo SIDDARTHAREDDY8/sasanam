@@ -312,6 +312,20 @@ ALLOWED_HMAC_SITES = {
     # verification attestation, not a credential.
     ("gov/breach_boundary.py", "BreachBoundary._seal", 0):
         "verified-record seal MAC; deployer-held or instance-generated key (explicit), domain-separated",
+    # gov/permit_journal.py (wave-250 lane 3): HMAC-SHA256 chain over the
+    # event-sourced permit journal (adversarial layer over the durable
+    # journal reliability layer). Key resolution: explicit ``key`` kwarg >
+    # GOV_PERMIT_JOURNAL_KEY (hex) env > fresh random 32 bytes; <16 bytes
+    # refused fail-closed. Durability across restarts requires the
+    # deployment to supply a STABLE key (kwarg or env) — documented in the
+    # module docstring; HMAC is shared-secret authenticity, not
+    # non-repudiation (standing honest residual).
+    ("gov/permit_journal.py", "_genesis_mac", 0):
+        "permit-journal chain genesis MAC; deployer-held key (kwarg/env), domain-separated",
+    ("gov/permit_journal.py", "event_mac", 0):
+        "permit-journal per-event chain MAC; deployer-held key (kwarg/env), domain-separated",
+    ("gov/permit_journal.py", "_snapshot_mac", 0):
+        "permit-journal snapshot MAC; deployer-held key (kwarg/env), domain-separated",
 }
 
 

@@ -174,7 +174,8 @@ class TaxonomyMappingTest(unittest.TestCase):
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes),
         # additive only, comment + assert.
         # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 979)
+        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
 
 if __name__ == "__main__":

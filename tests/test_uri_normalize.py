@@ -123,7 +123,8 @@ class ErrorContractTests(unittest.TestCase):
 
     def test_taxonomy_pin_938(self):
         # Lane-local pin: 936 (wave-246) + 2 new codes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 979)
+        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
 
 if __name__ == "__main__":

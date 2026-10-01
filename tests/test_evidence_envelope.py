@@ -30,7 +30,8 @@ class TestEvidenceEnvelope(unittest.TestCase):
     # Lane-local pin: 938 (wave-247) + 2 new codes.
     def test_taxonomy_pin(self):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
-        self.assertEqual(len(dc.TAXONOMY), 979)
+        self.assertEqual(len(dc.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         self.assertIn("evidence-envelope-record-limit", dc.TAXONOMY)
         self.assertIn("evidence-envelope-record-too-large", dc.TAXONOMY)
 

@@ -23,6 +23,9 @@ Refusals (all taxonomy-coded, domain ``skill-update``):
   (mix-and-match / plant).
 - ``skill-update-digest-mismatch``: bundle bytes != record digest.
 - ``skill-update-version-rollback``: record version < installed.
+- ``skill-update-digest-changed`` (wave-250 lane 1, F211 closure):
+  same-version reinstall with a different digest (bytes swapped
+  under a pinned version).
 - ``skill-update-malformed``: malformed record/pin/bundle input.
 
 Red-first: on the pristine base (module absent) every probe reports
@@ -100,7 +103,10 @@ def _expect_code(fn, code):
 def p_rollback_refused():
     bundle = b"skill-bytes-v2"
     digest = _digest(bundle)
-    client = _su.SkillUpdateClient(installed={"demo-skill": 2})
+    # Wave-250 lane 1 (F211 closure): the installed map is
+    # {name: (version, digest)} since the F211 fix.
+    client = _su.SkillUpdateClient(
+        installed={"demo-skill": (2, _digest(b"skill-bytes-v2"))})
     record = _good_record("demo-skill", 1, digest)
     return _expect_code(
         lambda: client.install(bundle, record,
@@ -209,7 +215,10 @@ def p_reinstall_same_version_allowed():
     # Idempotent reinstall of the identical bytes is not a rollback.
     bundle = b"skill-bytes-v2"
     digest = _digest(bundle)
-    client = _su.SkillUpdateClient(installed={"demo-skill": 2})
+    # Wave-250 lane 1 (F211 closure): pre-seeded digest must match
+    # the reinstall bytes for the idempotent path to be allowed.
+    client = _su.SkillUpdateClient(
+        installed={"demo-skill": (2, digest)})
     record = _good_record("demo-skill", 2, digest)
     receipt = client.install(bundle, record, _good_pin(digest),
                              NOW)
@@ -220,7 +229,10 @@ def p_reinstall_same_version_allowed():
 def p_upgrade_allowed():
     bundle = b"skill-bytes-v3"
     digest = _digest(bundle)
-    client = _su.SkillUpdateClient(installed={"demo-skill": 2})
+    # Wave-250 lane 1 (F211 closure): installed map is
+    # {name: (version, digest)}.
+    client = _su.SkillUpdateClient(
+        installed={"demo-skill": (2, _digest(b"skill-bytes-v2"))})
     record = _good_record("demo-skill", 3, digest)
     receipt = client.install(bundle, record, _good_pin(digest),
                              NOW)
@@ -235,11 +247,28 @@ def p_expected_codes_pinned():
         "skill-update-record-unpinned",
         "skill-update-digest-mismatch",
         "skill-update-version-rollback",
+        "skill-update-digest-changed",
         "skill-update-malformed",
     }
     assert set(_su.EXPECTED_CODES) == expected, \
         "code set drift: %r" % (sorted(_su.EXPECTED_CODES),)
-    return "6/6 codes pinned"
+    return "7/7 codes pinned"
+
+
+def p_same_version_digest_change_refused():
+    # F211 break shape (wave-250 lane 1): same version, different
+    # digest -- bytes swapped under a pinned version -- must be
+    # refused with skill-update-digest-changed.
+    digest_a = _digest(b"legitimate skill v1")
+    bundle_b = b"malicious skill v1 - different bytes"
+    digest_b = _digest(bundle_b)
+    client = _su.SkillUpdateClient(
+        installed={"demo-skill": (1, digest_a)})
+    record = _good_record("demo-skill", 1, digest_b)
+    return _expect_code(
+        lambda: client.install(bundle_b, record,
+                               _good_pin(digest_b), NOW),
+        "skill-update-digest-changed")
 
 
 PROBES = [
@@ -254,6 +283,8 @@ PROBES = [
     ("happy-path-allowed", p_happy_path_allowed),
     ("reinstall-same-version-allowed",
      p_reinstall_same_version_allowed),
+    ("same-version-digest-change-refused",
+     p_same_version_digest_change_refused),
     ("upgrade-allowed", p_upgrade_allowed),
     ("expected-codes-pinned", p_expected_codes_pinned),
 ]

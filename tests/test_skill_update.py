@@ -45,7 +45,10 @@ class TaxonomyPinTests(unittest.TestCase):
         # metadata-expired, record-unpinned, version-rollback),
         # additive only; merge coordinator recomposes.
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
-        self.assertEqual(len(dc.TAXONOMY), 979)
+        # Wave-250 lane 1 (F211 closure): re-pointed to 980 (979 +
+        # 1 skill-update code: digest-changed), additive only.
+        self.assertEqual(len(dc.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
     def test_expected_codes_pinned(self):
         self.assertEqual(
@@ -55,6 +58,7 @@ class TaxonomyPinTests(unittest.TestCase):
              "skill-update-record-unpinned",
              "skill-update-digest-mismatch",
              "skill-update-version-rollback",
+             "skill-update-digest-changed",
              "skill-update-malformed"})
 
 
@@ -71,8 +75,11 @@ class InstallGateTests(unittest.TestCase):
         self.assertEqual(client.installed_version("demo-skill"), 1)
 
     def test_upgrade_advances_installed(self):
+        # Wave-250 lane 1 (F211 closure): the installed map is now
+        # {name: (version, digest)}; the digest is tracked so a
+        # same-version reinstall must be identical bytes.
         client = su.SkillUpdateClient(
-            installed={"demo-skill": 2})
+            installed={"demo-skill": (2, _digest(b"skill-bytes-v2"))})
         bundle = b"skill-bytes-v3"
         digest = _digest(bundle)
         receipt = client.install(
@@ -85,17 +92,39 @@ class InstallGateTests(unittest.TestCase):
         bundle = b"skill-bytes-v2"
         digest = _digest(bundle)
         client = su.SkillUpdateClient(
-            installed={"demo-skill": 2})
+            installed={"demo-skill": (2, digest)})
         receipt = client.install(
             bundle, _record(version=2, digest=digest),
             _pin(digest), NOW)
         self.assertEqual(receipt["version"], 2)
+        self.assertEqual(client.installed_digest("demo-skill"),
+                         digest)
+
+    def test_same_version_digest_change_refused(self):
+        # F211 break shape (wave-250 lane 1): same version, different
+        # digest -- bytes swapped under a pinned version -- must be
+        # refused, not silently installed.
+        digest_a = _digest(b"legitimate skill v1")
+        bundle_b = b"malicious skill v1 - different bytes"
+        digest_b = _digest(bundle_b)
+        client = su.SkillUpdateClient(
+            installed={"demo-skill": (1, digest_a)})
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            client.install(bundle_b,
+                           _record(version=1, digest=digest_b),
+                           _pin(digest_b), NOW)
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-digest-changed")
+        # Installed state untouched by the refusal.
+        self.assertEqual(client.installed_version("demo-skill"), 1)
+        self.assertEqual(client.installed_digest("demo-skill"),
+                         digest_a)
 
     def test_version_rollback_refused(self):
         bundle = b"skill-bytes-v1"
         digest = _digest(bundle)
         client = su.SkillUpdateClient(
-            installed={"demo-skill": 2})
+            installed={"demo-skill": (2, _digest(b"skill-bytes-v2"))})
         with self.assertRaises(su.SkillUpdateError) as ctx:
             client.install(bundle, _record(version=1, digest=digest),
                            _pin(digest), NOW)
@@ -286,8 +315,21 @@ class MalformedInputTests(unittest.TestCase):
                          "skill-update-malformed")
 
     def test_installed_map_validated(self):
+        # Wave-250 lane 1 (F211 closure): the installed map is
+        # {name: (version, digest)}; the legacy bare-int form is
+        # refused as malformed.
         with self.assertRaises(su.SkillUpdateError) as ctx:
-            su.SkillUpdateClient(installed={"demo-skill": -1})
+            su.SkillUpdateClient(
+                installed={"demo-skill": (-1, _digest(b"x"))})
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            su.SkillUpdateClient(installed={"demo-skill": 1})
+        self.assertEqual(ctx.exception.code,
+                         "skill-update-malformed")
+        with self.assertRaises(su.SkillUpdateError) as ctx:
+            su.SkillUpdateClient(
+                installed={"demo-skill": (1, "not-a-digest")})
         self.assertEqual(ctx.exception.code,
                          "skill-update-malformed")
 
@@ -308,6 +350,8 @@ class InstalledStateTests(unittest.TestCase):
     def test_unknown_skill_has_no_version(self):
         self.assertIsNone(
             su.SkillUpdateClient().installed_version("nope"))
+        self.assertIsNone(
+            su.SkillUpdateClient().installed_digest("nope"))
 
     def test_failed_install_does_not_advance(self):
         bundle = b"skill-bytes-v1"
@@ -323,7 +367,9 @@ class InstalledStateTests(unittest.TestCase):
     def test_multiple_skills_independent(self):
         b1, b2 = b"skill-one", b"skill-two"
         d1, d2 = _digest(b1), _digest(b2)
-        client = su.SkillUpdateClient(installed={"one": 5})
+        # Wave-250 lane 1 (F211 closure): installed map entries are
+        # (version, digest) pairs.
+        client = su.SkillUpdateClient(installed={"one": (5, d1)})
         client.install(b1, _record(name="one", version=6,
                                    digest=d1), _pin(d1), NOW)
         client.install(b2, _record(name="two", version=1,

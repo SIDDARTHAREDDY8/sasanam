@@ -129,7 +129,8 @@ class TaxonomyTest(unittest.TestCase):
         # only, comment + assert.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 899); additive only.
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes), additive only.
-        self.assertEqual(len(dc.TAXONOMY), 979)
+        self.assertEqual(len(dc.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
     def test_codes_mapped(self):
         for code in ("identity-attestation-malformed",

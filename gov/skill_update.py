@@ -34,19 +34,28 @@ Refusals (domain ``skill-update``, all in ``EXPECTED_CODES``):
   older than the installed version. Same-version reinstall of
   identical bytes is allowed (idempotent); upgrades advance the
   installed state.
+- ``skill-update-digest-changed`` -- the record's version equals the
+  installed version but the digest differs from the installed digest:
+  a same-version reinstall must be of identical bytes (idempotent);
+  swapping the bytes under a pinned version is refused.
 - ``skill-update-malformed`` -- the record, pin, or bundle input is
   not the expected shape (wrong types, bad digest format, negative
   version, unknown record keys).
 
 Check order is fixed and documented: malformed -> index-untrusted ->
 metadata-expired -> record-unpinned -> digest-mismatch ->
-version-rollback. Time (``now``) is an explicit epoch-int argument;
-this module reads no clock, performs no I/O, and makes no network
-calls. The transport that fetched the bytes is deployment-owned.
+version-rollback -> digest-changed. Time (``now``) is an explicit
+epoch-int argument; this module reads no clock, performs no I/O,
+and makes no network calls. The transport that fetched the bytes is
+deployment-owned.
 
-The installed-version map is deployment-owned persistent state: the
+The installed-state map is deployment-owned persistent state: it maps
+skill name -> ``(version, digest)`` of the installed bundle. The
 client holds it in memory and advances it on each successful install;
-the deployment persists it across restarts.
+the deployment persists it across restarts. Tracking the installed
+digest closes F211: a same-version reinstall must carry identical
+bytes, and a digest change under a pinned version is refused rather
+than silently overwriting the installed bundle.
 
 Stdlib only. Deterministic.
 """
@@ -61,6 +70,7 @@ EXPECTED_CODES = (
     "skill-update-record-unpinned",
     "skill-update-digest-mismatch",
     "skill-update-version-rollback",
+    "skill-update-digest-changed",
     "skill-update-malformed",
 )
 
@@ -167,26 +177,50 @@ def _check_now(now):
 class SkillUpdateClient(object):
     """Install-time admission gate for skill bundles.
 
-    ``installed`` maps skill name -> installed version int. It is
-    deployment-owned persistent state; the client advances it on each
-    successful install and the deployment persists it.
+    ``installed`` maps skill name -> ``(version, digest)`` of the
+    installed bundle (a 2-tuple or 2-list; the digest is the sha256 of
+    the installed bundle bytes). It is deployment-owned persistent
+    state; the client advances it on each successful install and the
+    deployment persists it. The digest is tracked so that a
+    same-version reinstall must be of identical bytes (F211).
     """
 
     def __init__(self, installed=None):
         self._installed = {}
-        for name, version in (installed or {}).items():
-            if (not isinstance(name, str) or not name
-                    or not isinstance(version, int)
+        for name, entry in (installed or {}).items():
+            if not isinstance(name, str) or not name:
+                raise SkillUpdateError(
+                    "skill-update-malformed",
+                    "installed map keys must be non-empty strings")
+            if (not isinstance(entry, (tuple, list))
+                    or len(entry) != 2):
+                raise SkillUpdateError(
+                    "skill-update-malformed",
+                    "installed map must be {non-empty str: "
+                    "(version int, digest hex64)}")
+            version, digest = entry
+            if (not isinstance(version, int)
                     or isinstance(version, bool) or version < 0):
                 raise SkillUpdateError(
                     "skill-update-malformed",
                     "installed map must be {non-empty str: "
-                    "non-negative int}")
-            self._installed[name] = version
+                    "(non-negative int version, digest hex64)}")
+            if not _is_hex64(digest):
+                raise SkillUpdateError(
+                    "skill-update-malformed",
+                    "installed map must be {non-empty str: "
+                    "(non-negative int version, digest hex64)}")
+            self._installed[name] = (version, digest)
 
     def installed_version(self, name):
         """Return the installed version for ``name``, or None."""
-        return self._installed.get(name)
+        entry = self._installed.get(name)
+        return entry[0] if entry is not None else None
+
+    def installed_digest(self, name):
+        """Return the installed digest for ``name``, or None."""
+        entry = self._installed.get(name)
+        return entry[1] if entry is not None else None
 
     def install(self, bundle_bytes, record, pin, now):
         """Admit or refuse a skill bundle.
@@ -219,11 +253,17 @@ class SkillUpdateClient(object):
                     "bundle bytes sha256 does not match the skill "
                     "record digest for %r v%d" % (name, version))
         installed = self._installed.get(name)
-        if installed is not None and version < installed:
+        if installed is not None and version < installed[0]:
             _refuse("skill-update-version-rollback",
                     "skill %r v%d is older than installed v%d"
-                    % (name, version, installed))
-        self._installed[name] = version
+                    % (name, version, installed[0]))
+        if (installed is not None and version == installed[0]
+                and digest != installed[1]):
+            _refuse("skill-update-digest-changed",
+                    "skill %r v%d digest changed: same-version "
+                    "reinstall must be identical bytes (F211)"
+                    % (name, version))
+        self._installed[name] = (version, digest)
         return {"name": name, "version": version, "digest": digest}
 
 

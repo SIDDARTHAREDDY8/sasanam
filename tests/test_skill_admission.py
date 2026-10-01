@@ -38,7 +38,8 @@ class SkillAdmissionPinTests(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes: 1 breach-boundary + 9 skill-admission + 2 evidence-envelope + 6 skill-update + 13 identity + 3 combine + 7 artifact), additive only.
         # codes), additive only; merge coordinator recomposes.
-        self.assertEqual(len(dc.TAXONOMY), 979)
+        self.assertEqual(len(dc.TAXONOMY), 997)
+        # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
     def test_module_constants_match_taxonomy(self):
         for const in (

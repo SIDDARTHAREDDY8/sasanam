@@ -12821,3 +12821,17 @@ Open findings: none (F210 filed by triage, RETRACTED at merge as misdiagnosis �
 **Red-first audit:** no closures claimed this wave (F211 filed OPEN). No overstatements.
 
 **F211 (LOW, OPEN):** same-version digest substitution in skill_update. Next free: F212.
+
+## Wave-250 merge (base `5495ece5a94af02946e026af6d57cd77e8b60860`, pin 997)
+
+**Merge** (base `5495ece5a94af02946e026af6d57cd77e8b60860`, pin 997). Integrated four wave-250 lane commits by direct file copy + byte-verification (lane worktrees, exact parents, exact trailers verified pre-merge). Taxonomy 979 -> 997 (+18 additive codes, zero duplicates, alphabetical placement verified, `code_for()` over all 997 keys). `gov/decision_codes.py` composed centrally by the merge coordinator.
+
+**Lane commits:**
+- W250-1 (`595677787cd52a540f5684b277f268a5eedbfb92`): F211 closure — `SkillUpdateClient.install()` now tracks `installed` as `{name: (version, digest)}`; same-version reinstall with a different digest refused with new code `skill-update-digest-changed`; legacy bare-int maps refused fail-closed as `skill-update-malformed`; identical-bytes idempotent reinstall preserved; new `installed_digest()` accessor. **F211 (LOW) CLOSED** 2026-09-30 wave-250 lane 1. +1 code. Red-first: `evals/w250_f211_closure_probes.py` pre-fix BREAK -> 5/5 HELD x2; the standing w249 red-team F211 pin flipped BREAK -> HELD.
+- W250-2 (`f56194154dfe7b5fdbf40c4ae4dcede10c6254a5`): `gov/decision_log.py` — transparency-dev/merkle-adapted RFC 6962 Merkle-tree decision log (stdlib-only). First `append()` binds the epoch's 32-byte request digest (different digests refuse `decision-log-request-mismatch` unless `new_epoch()`); `detect_equivocation()` proves same-request-digest + same-policy-revision-set + different-effects with inclusion proofs; STH issue/sign/verify over `gov/ed25519` (key deployment-owned). Upstream RFC 6962 hash vectors + inclusion/consistency testdata pinned (fetched 2026-09-30). +4 codes. Red-first: `evals/w250_decision_log_probes.py` 0/12 -> 12/12 HELD x2. Units: `tests/test_decision_log.py` 37/37.
+- W250-3 (`72b4ae662342691de3d4866f03b69d82c71d608d`): `gov/permit_journal.py` — temporalio/temporal-adapted event-sourced durable permit journal (stdlib-only, composes over `gov/durable_journal.py`). Permit lifecycle events (`GRANTED`/`USED`/`EXPIRED`/`REVOKED`/`FINALIZED`) in an append-only HMAC-SHA256-chained JSONL log, verified on every load (fail-closed); idempotent appends, terminal permits never resurrect, tip compare-and-swap, snapshot+compaction with keyed snapshot MAC. +9 codes. Red-first: `evals/w250_permit_journal_probes.py` 0/16 -> 16/16 HELD x2. Units: `tests/test_permit_journal.py` 19/19.
+- W250-4 (`90f1ae576dea9960c38059803c68c79d60ea4813`): `gov/evidence_graph.py` — GUAC-adapted evidence-graph projection (stdlib-only). Projects verified artifacts (in-toto layouts, DSSE envelopes, offline bundles, decision packets) into one auditor-traversable graph; fail-closed linking (`evidence-graph-unlinked` on zero matches, `evidence-graph-ambiguous-link` on 2+, never guesses); queries `traverse`/`provenance`/`blast_radius`; deterministic digest, bounded caps. +4 codes. Red-first: `evals/w250_evidence_graph_probes.py` 0/10 -> 10/10 HELD x2. Units: `tests/test_evidence_graph.py` 34/34.
+
+**Red-first audit:** F211 closure re-verified break-first on the merged tree (see gates below); no other closures claimed; no overstatements.
+
+**Findings:** F211 CLOSED. Next free: F212. Open findings: none.
