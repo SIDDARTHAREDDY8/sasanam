@@ -189,23 +189,24 @@ def eg05_relative_ref_stays_allowed():
 # ---------------------------------------------------------------------------
 
 def im01_quadratic_candidates():
-    """F290: _screening_candidates enumerates 1+n+n(n-1)/2 candidates
-    with an O(n)-char join EACH (join happens before the dedup check),
-    and nothing caps the channel count. Structural, deterministic,
-    fast: n=150 must yield exactly 11326 candidates. If a future fix
-    bounds enumeration, the count drops and this flips to HELD.
-    Expected BREAK (open)."""
+    """F290 (wave-275 CLOSED): _screening_candidates used to enumerate
+    1+n+n(n-1)/2 candidates with an O(n)-char join EACH (join before
+    the dedup check), and nothing capped the channel count -- n=150
+    yielded 11326. The wave-275 fix bounds enumeration to a lazy
+    hybrid-window generator: n=150 now yields 2415 (1 full + 150
+    singles + 2264 gated pairs), each probe window-bounded. Expected
+    HELD (closed). A return to the quadratic count is BREAK."""
     n = 150
     texts = ["filler-text-%04d" % i for i in range(n)]
     cands = list(it._screening_candidates(texts))  # noqa: SLF001
-    want = 1 + n + n * (n - 1) // 2
-    if len(cands) == want:
+    quadratic = 1 + n + n * (n - 1) // 2
+    if len(cands) == quadratic:
         return ("BREAK",
-                "F290: %d channels enumerate %d candidates "
-                "(unbounded quadratic)" % (n, want))
-    if len(cands) < want:
-        return ("HELD", "enumeration bounded: %d of %d" % (len(cands),
-                                                           want))
+                "F290 regression: %d channels enumerate %d candidates "
+                "(unbounded quadratic)" % (n, quadratic))
+    if len(cands) == 2415:
+        return ("HELD", "enumeration bounded: 2415 of %d (F290 closed)"
+                % (quadratic,))
     return "ERROR", "unexpected count %d" % (len(cands),)
 
 
@@ -742,8 +743,8 @@ _PROBES = [
      eg04_absolute_direct_token_refused),
     ("eg05-relative-ref-stays-allowed", "HELD",
      eg05_relative_ref_stays_allowed),
-    # image_text: F290 (new break).
-    ("im01-quadratic-candidates", "BREAK",
+    # image_text: F290 (closed wave-275).
+    ("im01-quadratic-candidates", "HELD",
      im01_quadratic_candidates),
     # gate_hardening: F291 (new breaks) + monitor accounting.
     ("gh01-deepcopy-raises", "BREAK",
