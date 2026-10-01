@@ -56,6 +56,8 @@ from .evidence_certs import (
     verify_evidence_signature,
 )
 from . import log as _audit_log
+from .ed25519 import sign as _ed_sign
+from .ed25519 import verify as _ed_verify
 from .rekor_anchor import (
     _r6962_inclusion_proof,
     _r6962_leaf,
@@ -84,7 +86,8 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 class EvidenceBundleV2Error(Exception):
     """Coded, fail-closed v2 bundle error. ``code`` is a machine code in
-    the ``evbundle`` decision-code domain; ``detail`` is human text."""
+    the ``evbundle`` or ``prodauth`` decision-code domain; ``detail``
+    is human text."""
 
     def __init__(self, code, detail):
         super(EvidenceBundleV2Error, self).__init__(
@@ -213,7 +216,8 @@ def find_issuance_attestation(*, audit_log_path, cert_digest):
 
 
 def verify_sealed_bundle(*, sealed, audit_log_path, ca_public_key,
-                         verify_time):
+                         verify_time, require_producer_claim=False,
+                         claim_public_key=None):
     """Verify the three-artifact split. Order: shape, artifact
     self-consistency, attestation joins, cert join + full ceremony
     re-verification (``evcert-*`` failures propagate -- the signature
@@ -223,6 +227,13 @@ def verify_sealed_bundle(*, sealed, audit_log_path, ca_public_key,
     ``evbundle-join-mismatch``; certificate failures surface as
     ``evcert-*``; a missing/broken issuance attestation is
     ``evbundle-issuance-unverifiable``.
+
+    With ``require_producer_claim=True``, the issuance attestation
+    must carry a producer-authorization claim (``prodauth-claim-*``
+    failures propagate): the claim signature, expiry, and the
+    (approval_id, subject_key_id) join are re-verified against the
+    attestation. The legacy path (``False``) never requires the
+    claim, so existing bundles keep verifying byte-identically.
     """
     if not isinstance(sealed, dict) or sealed.get("kind") != BUNDLE_FORMAT:
         raise EvidenceBundleV2Error(
@@ -284,11 +295,35 @@ def verify_sealed_bundle(*, sealed, audit_log_path, ca_public_key,
         raise EvidenceBundleV2Error(
             "evbundle-join-mismatch",
             "issuance attestation cert_digest disagrees with the seal")
-    return {"verified": True,
-            "cert_digest": sealed["cert_digest"],
-            "artifact_digest": artifact["artifact_digest"],
-            "issuance_seq": issuance.get("seq"),
-            "honest_claims": _HONEST_CLAIMS}
+    result = {"verified": True,
+              "cert_digest": sealed["cert_digest"],
+              "artifact_digest": artifact["artifact_digest"],
+              "issuance_seq": issuance.get("seq"),
+              "honest_claims": _HONEST_CLAIMS}
+    if require_producer_claim:
+        result["producer_authz"] = _verify_issuance_claim(
+            issuance, claim_public_key=claim_public_key,
+            verify_time=verify_time)
+    return result
+
+
+def _verify_issuance_claim(issuance, *, claim_public_key, verify_time):
+    """Require and verify the producer-authorization claim embedded
+    in an issuance attestation. Missing claim ->
+    ``prodauth-claim-invalid`` (the bundle claims the producer path
+    but the attestation carries no claim); signature/expiry/join
+    failures propagate from ``verify_producer_claim``."""
+    claim = issuance.get("producer_authz_claim")
+    if claim is None:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "producer-authorization claim required but the issuance "
+            "attestation carries none")
+    return verify_producer_claim(
+        claim, claim_public_key=claim_public_key,
+        approval_id=issuance.get("approval_id"),
+        subject_key_id=issuance.get("subject_key_id"),
+        verify_time=verify_time)
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +379,438 @@ def default_producer_auth_verifier(auth, digest):
             "subject_key_id": verified["subject_key_id"],
             "principal": verified["principal"],
             "approval_id": verified["approval_id"]}
+
+
+# ---------------------------------------------------------------------------
+# Producer-authorization claim (SLSA-shaped)
+#
+# SLSA's provenance and Fulcio's identity machinery both answer "which
+# key signed this digest" but omit the application-level question: was
+# the producer AUTHORIZED to speak for the claimed application
+# identity? This seam closes that negative space: on the claim path
+# (``submit_evidence_with_producer_claim``), the evidence-cert
+# ceremony MUST establish that the requesting producer is authorized
+# for the claimed application scope BEFORE the transparency log sees
+# the digest. Pattern-only steal (clean-room; no Fulcio/SLSA code):
+# Fulcio's "issue on presentation of a valid identity token" ceremony,
+# SLSA's {"_type", "subject", "predicate"} statement shape.
+#
+# The claim binds (producer identity, authorized scope) to one
+# certificate issuance via the (approval_id, subject_key_id) pair --
+# both are fixed before the certificate is minted, so the claim can
+# be minted before issuance and embedded by the CA into the
+# ``evidence-cert-issued`` attestation (see
+# ``EvidenceCA.issue(producer_authz_claim=...)``). Verify-time
+# re-checks: claim signature (exact ``is True``, wave-243 lesson),
+# expiry, and the approval/subject-key join against the attestation.
+#
+# Honest limit: this proves "the producer was authorized to produce
+# for scope S at claim time" -- never "the producer was authorized to
+# act", and never the truth of the evidence.
+# ---------------------------------------------------------------------------
+
+PRODAUTH_TOKEN_FORMAT = "prodauth-identity-token.v1"
+PRODAUTH_TOKEN_AUDIENCE = "sasanam-evcert-ca"
+PRODAUTH_CLAIM_FORMAT = "prodauth-claim.v1"
+PRODAUTH_STATEMENT_TYPE = \
+    "https://sasanam.dev/producer-authorization/v1"
+PRODAUTH_PREDICATE_TYPE = \
+    "https://sasanam.dev/producer-authorization/predicate/v1"
+PRODAUTH_REGISTRY_STATEMENT_FORMAT = "prodauth-registry-statement.v1"
+
+# Identity tokens are single-use-ish and short-lived; the default is
+# deliberately small so a captured token is a poor replay asset.
+PRODAUTH_DEFAULT_TOKEN_TTL_S = 300
+PRODAUTH_DEFAULT_CLAIM_TTL_S = 300
+PRODAUTH_MAX_TTL_S = 3600
+
+_HEX16 = re.compile(r"^[0-9a-f]{16}$")
+
+def _now_int(now):
+    """Accept ``now`` as None, an int epoch, or a zero-arg callable."""
+    if now is None:
+        return int(time.time())
+    if callable(now):
+        return int(now())
+    return int(now)
+
+
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+
+
+class ProducerRegistry(object):
+    """producer identity -> authorized scopes, fail-closed on unknowns.
+
+    ``entries`` maps a producer identity (non-empty string, e.g. the
+    identity-token ``sub``) to an iterable of authorized scope strings.
+    ``admin_public_key`` is the Ed25519 key that signs registration
+    statements; ``register()`` verifies the statement signature (exact
+    ``is True``), shape, and expiry before mutating the mapping, so a
+    registry with an admin key cannot be silently rewritten.
+    Scope matching is EXACT (no wildcards, deny-by-default): a producer
+    not in the mapping, or a scope not in the producer's set, is
+    refused -- never defaulted. Unknown producers fail closed with
+    ``prodauth-producer-unknown``; this is the load-bearing check the
+    SLSA/Fulcio negative space motivates.
+    """
+
+    def __init__(self, *, entries=None, admin_public_key=None, now=None):
+        if admin_public_key is not None and (
+                not isinstance(admin_public_key, (bytes, bytearray))
+                or len(admin_public_key) != 32):
+            raise TypeError(
+                "admin_public_key must be 32 bytes or None")
+        self._admin = None if admin_public_key is None \
+            else bytes(admin_public_key)
+        if now is None:
+            self._now = time.time
+        elif callable(now):
+            self._now = now
+        else:
+            # An int epoch: freeze into a thunk so register()'s
+            # self._now() call keeps working (convention: None/int/
+            # callable all accepted).
+            self._now = lambda n=int(now): n
+        self._entries = {}
+        for producer, scopes in (entries or {}).items():
+            self._entries[self._check_producer(producer)] = \
+                frozenset(self._check_scopes(scopes))
+
+    @staticmethod
+    def _check_producer(producer):
+        if not isinstance(producer, str) or not producer:
+            raise EvidenceBundleV2Error(
+                "prodauth-producer-unknown",
+                "producer identity must be a non-empty string")
+        return producer
+
+    @staticmethod
+    def _check_scopes(scopes):
+        if not isinstance(scopes, (list, tuple, set, frozenset)) \
+                or not scopes:
+            raise EvidenceBundleV2Error(
+                "prodauth-scope-not-authorized",
+                "scopes must be a non-empty list of scope strings")
+        out = []
+        for s in scopes:
+            if not isinstance(s, str) or not s:
+                raise EvidenceBundleV2Error(
+                    "prodauth-scope-not-authorized",
+                    "each scope must be a non-empty string")
+            out.append(s)
+        return out
+
+    def register(self, *, statement, now=None):
+        """Register (or replace) a producer's scopes on a signed admin
+        statement. ``statement`` is
+        ``{"statement": body, "signature": b64}`` with
+        ``body = {"format": "prodauth-registry-statement.v1",
+        "producer": ..., "scopes": [...], "exp": int}``.
+        Refusals are ``prodauth-registry-unauthorized`` (no admin key
+        configured, malformed statement, expired, or bad signature --
+        a forged registration is dishonored, never honored). Returns
+        the registered producer identity.
+        """
+        now = _now_int(now if now is not None else self._now())
+        if self._admin is None:
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registry has no admin key; refusing registration")
+        if not isinstance(statement, dict) \
+                or not isinstance(statement.get("statement"), dict) \
+                or not isinstance(statement.get("signature"), str):
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registration statement must be "
+                "{statement: dict, signature: str}")
+        body = statement["statement"]
+        if body.get("format") != PRODAUTH_REGISTRY_STATEMENT_FORMAT:
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "unknown registration statement format %r"
+                % (body.get("format"),))
+        producer = body.get("producer")
+        scopes = body.get("scopes")
+        exp = body.get("exp")
+        if not isinstance(producer, str) or not producer \
+                or not isinstance(scopes, list) or not scopes \
+                or not all(isinstance(s, str) and s for s in scopes) \
+                or not isinstance(exp, int):
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registration statement has bad shape")
+        if exp <= now:
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registration statement expired")
+        try:
+            sig = base64.b64decode(statement["signature"], validate=True)
+        except ValueError:
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registration statement signature is not valid base64")
+        if _ed_verify(self._admin, _canonical(body), sig) is not True:
+            raise EvidenceBundleV2Error(
+                "prodauth-registry-unauthorized",
+                "registration statement signature does not verify "
+                "against the registry admin key")
+        self._entries[producer] = frozenset(scopes)
+        return producer
+
+    def check(self, producer, scope):
+        """Fail-closed authorization check. Returns True; raises
+        ``prodauth-producer-unknown`` (producer not registered) or
+        ``prodauth-scope-not-authorized`` (scope not in the producer's
+        set). Exact scope match only."""
+        if not isinstance(producer, str) or not producer:
+            raise EvidenceBundleV2Error(
+                "prodauth-producer-unknown",
+                "producer identity must be a non-empty string")
+        if not isinstance(scope, str) or not scope:
+            raise EvidenceBundleV2Error(
+                "prodauth-scope-not-authorized",
+                "scope must be a non-empty string")
+        scopes = self._entries.get(producer)
+        if scopes is None:
+            raise EvidenceBundleV2Error(
+                "prodauth-producer-unknown",
+                "producer %r is not registered; refusing rather than "
+                "defaulting" % (producer,))
+        if scope not in scopes:
+            raise EvidenceBundleV2Error(
+                "prodauth-scope-not-authorized",
+                "producer %r is not authorized for scope %r"
+                % (producer, scope))
+        return True
+
+
+def mint_identity_token(*, issuer_signing_key, sub, ttl_s=None,
+                        now=None, iss="sasanam-identity-issuer"):
+    """Mint a Fulcio-shaped identity token: the certificate is issued
+    on presentation of a valid token (clean-room pattern, no Fulcio
+    code). ``sub`` is the producer identity. The audience is pinned
+    to the evidence CA so a token cannot be replayed into another
+    system. Returns ``{"token": body, "token_signature": b64}``."""
+    now = _now_int(now)
+    ttl_s = PRODAUTH_DEFAULT_TOKEN_TTL_S if ttl_s is None else ttl_s
+    if not isinstance(issuer_signing_key, (bytes, bytearray)) \
+            or len(issuer_signing_key) != 32:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "issuer_signing_key must be 32 bytes")
+    if not isinstance(sub, str) or not sub:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "sub must be a non-empty producer identity string")
+    if not isinstance(ttl_s, int) or not 1 <= ttl_s <= PRODAUTH_MAX_TTL_S:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "ttl_s must be in [1, %d]" % PRODAUTH_MAX_TTL_S)
+    body = {"format": PRODAUTH_TOKEN_FORMAT,
+            "iss": iss,
+            "sub": sub,
+            "aud": PRODAUTH_TOKEN_AUDIENCE,
+            "iat": now,
+            "exp": now + ttl_s}
+    sig = _ed_sign(bytes(issuer_signing_key), _canonical(body))
+    return {"token": body,
+            "token_signature": base64.b64encode(sig).decode("ascii")}
+
+
+def verify_identity_token(token, *, issuer_public_key, now=None):
+    """Verify a presented identity token: shape, pinned audience,
+    expiry, then the issuer signature (exact ``is True``). Refusals:
+    ``prodauth-token-invalid`` (shape, audience, or signature) and
+    ``prodauth-token-expired``. Returns
+    ``{"producer": sub, "iss": iss}``."""
+    now = _now_int(now)
+    if not isinstance(issuer_public_key, (bytes, bytearray)) \
+            or len(issuer_public_key) != 32:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "issuer_public_key must be 32 bytes")
+    if not isinstance(token, dict) \
+            or not isinstance(token.get("token"), dict) \
+            or not isinstance(token.get("token_signature"), str):
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "identity token must be {token: dict, token_signature: str}")
+    body = token["token"]
+    if body.get("format") != PRODAUTH_TOKEN_FORMAT:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "unknown identity token format %r" % (body.get("format"),))
+    if body.get("aud") != PRODAUTH_TOKEN_AUDIENCE:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "token audience %r is not the evidence CA (replay into "
+            "another system refused)" % (body.get("aud"),))
+    sub = body.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "token sub must be a non-empty producer identity string")
+    exp = body.get("exp")
+    if not isinstance(exp, int) or exp <= now:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-expired",
+            "identity token expired (exp %r <= now %d)"
+            % (exp, now))
+    try:
+        sig = base64.b64decode(token["token_signature"], validate=True)
+    except ValueError:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "token signature is not valid base64")
+    if _ed_verify(bytes(issuer_public_key), _canonical(body), sig) \
+            is not True:
+        raise EvidenceBundleV2Error(
+            "prodauth-token-invalid",
+            "identity token signature does not verify against the "
+            "identity issuer key")
+    return {"producer": sub, "iss": body.get("iss")}
+
+
+def issue_producer_claim(*, registry, identity_token,
+                         identity_issuer_public_key, requested_scope,
+                         subject_key_id, approval_id, claim_signing_key,
+                         ttl_s=None, now=None):
+    """Mint the SLSA-shaped producer-authorization claim: verify the
+    identity token (Fulcio-shaped ceremony), then the
+    producer->scope authorization (fail-closed on unknown producers).
+    The claim binds (producer, scope) to the (approval_id,
+    subject_key_id) pair of the issuance it was minted for, so the
+    claim can be minted before the certificate exists. Signed by the
+    claim authority key (deployment-owned). Returns
+    ``{"format": "prodauth-claim.v1", "statement": {...},
+    "signature": b64}``."""
+    now = _now_int(now)
+    ttl_s = PRODAUTH_DEFAULT_CLAIM_TTL_S if ttl_s is None else ttl_s
+    if not isinstance(registry, ProducerRegistry):
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "registry must be a ProducerRegistry")
+    if not isinstance(claim_signing_key, (bytes, bytearray)) \
+            or len(claim_signing_key) != 32:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim_signing_key must be 32 bytes")
+    if not isinstance(ttl_s, int) or not 1 <= ttl_s <= PRODAUTH_MAX_TTL_S:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "ttl_s must be in [1, %d]" % PRODAUTH_MAX_TTL_S)
+    if not isinstance(subject_key_id, str) \
+            or not _HEX16.match(subject_key_id):
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "subject_key_id must be 16 lowercase hex chars")
+    if not isinstance(approval_id, str) or not _HEX32.match(approval_id):
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "approval_id must be 32 lowercase hex chars")
+    verified = verify_identity_token(
+        identity_token, issuer_public_key=identity_issuer_public_key,
+        now=now)
+    producer = verified["producer"]
+    # The load-bearing check: unknown producers fail closed here,
+    # before any claim (and any digest) exists.
+    registry.check(producer, requested_scope)
+    body = {
+        "_type": PRODAUTH_STATEMENT_TYPE,
+        "subject": [{
+            "name": "evidence-cert-subject-key:" + subject_key_id,
+            "digest": {"sasanam-key-id-v1": subject_key_id},
+        }],
+        "predicateType": PRODAUTH_PREDICATE_TYPE,
+        "predicate": {
+            "producer": {"identity": producer,
+                         "identityIssuer": verified["iss"]},
+            "authorizedScope": requested_scope,
+            "approvalId": approval_id,
+            "issuedAt": now,
+            "expiresAt": now + ttl_s,
+        },
+    }
+    sig = _ed_sign(bytes(claim_signing_key), _canonical(body))
+    return {"format": PRODAUTH_CLAIM_FORMAT,
+            "statement": body,
+            "signature": base64.b64encode(sig).decode("ascii")}
+
+
+def verify_producer_claim(claim, *, claim_public_key, approval_id,
+                          subject_key_id, verify_time):
+    """Verify a producer-authorization claim at the use site: shape,
+    claim-authority signature (exact ``is True``), expiry, then the
+    (approval_id, subject_key_id) join. Refusals:
+    ``prodauth-claim-invalid`` (shape/signature),
+    ``prodauth-claim-expired``,
+    ``prodauth-claim-mismatch`` (the claim was minted for a different
+    issuance). Returns ``{"producer": ..., "scope": ...}``."""
+    if not isinstance(claim_public_key, (bytes, bytearray)) \
+            or len(claim_public_key) != 32:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim_public_key must be 32 bytes")
+    if not isinstance(claim, dict) \
+            or claim.get("format") != PRODAUTH_CLAIM_FORMAT \
+            or not isinstance(claim.get("statement"), dict) \
+            or not isinstance(claim.get("signature"), str):
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim must be {format: %r, statement: dict, "
+            "signature: str}" % PRODAUTH_CLAIM_FORMAT)
+    stmt = claim["statement"]
+    if stmt.get("_type") != PRODAUTH_STATEMENT_TYPE \
+            or stmt.get("predicateType") != PRODAUTH_PREDICATE_TYPE:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim statement has wrong _type/predicateType")
+    try:
+        sig = base64.b64decode(claim["signature"], validate=True)
+    except ValueError:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim signature is not valid base64")
+    if _ed_verify(bytes(claim_public_key), _canonical(stmt), sig) \
+            is not True:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim signature does not verify against the claim "
+            "authority key")
+    pred = stmt.get("predicate")
+    if not isinstance(pred, dict):
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim predicate must be a dict")
+    exp = pred.get("expiresAt")
+    if not isinstance(exp, int) or exp <= verify_time:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-expired",
+            "producer-authorization claim expired (expiresAt %r <= "
+            "verify_time %d)" % (exp, verify_time))
+    subjects = stmt.get("subject")
+    bound_key = None
+    if isinstance(subjects, list):
+        for s in subjects:
+            if isinstance(s, dict):
+                d = s.get("digest")
+                if isinstance(d, dict) and "sasanam-key-id-v1" in d:
+                    bound_key = d["sasanam-key-id-v1"]
+                    break
+    if pred.get("approvalId") != approval_id \
+            or bound_key != subject_key_id:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-mismatch",
+            "claim was minted for a different issuance "
+            "(approval/subject-key join failed)")
+    producer = (pred.get("producer") or {}).get("identity")
+    scope = pred.get("authorizedScope")
+    if not isinstance(producer, str) or not producer \
+            or not isinstance(scope, str) or not scope:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-invalid",
+            "claim predicate has bad producer/scope")
+    return {"producer": producer, "scope": scope}
 
 
 # ---------------------------------------------------------------------------
@@ -600,9 +1067,14 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
 
 
 def verify_submission(*, submission, audit_log_path, ca_public_key,
-                      verify_time, transparency_log):
+                      verify_time, transparency_log,
+                      require_producer_claim=False, claim_public_key=None):
     """Verify a v2 submission end to end: the three-artifact split,
-    then the transparency receipt against the log."""
+    then the transparency receipt against the log.
+
+    ``require_producer_claim=True`` additionally requires and
+    verifies the producer-authorization claim on the issuance
+    attestation (see ``verify_sealed_bundle``)."""
     if not isinstance(submission, dict) \
             or submission.get("kind") != SUBMISSION_FORMAT:
         raise EvidenceBundleV2Error(
@@ -614,10 +1086,11 @@ def verify_submission(*, submission, audit_log_path, ca_public_key,
         raise EvidenceBundleV2Error(
             "evbundle-malformed",
             "submission must carry a transparency_receipt")
-    verified = verify_sealed_bundle(sealed=sealed,
-                                    audit_log_path=audit_log_path,
-                                    ca_public_key=ca_public_key,
-                                    verify_time=verify_time)
+    verified = verify_sealed_bundle(
+        sealed=sealed, audit_log_path=audit_log_path,
+        ca_public_key=ca_public_key, verify_time=verify_time,
+        require_producer_claim=require_producer_claim,
+        claim_public_key=claim_public_key)
     checkpoint = {"log_id": receipt.get("log_id"),
                   "tree_size": receipt.get("tree_size"),
                   "root": receipt.get("root"),
@@ -633,8 +1106,107 @@ def verify_submission(*, submission, audit_log_path, ca_public_key,
         raise EvidenceBundleV2Error(
             "evbundle-transparency-unavailable",
             "transparency verification failed: %r" % (e,))
-    return {"verified": True,
-            "cert_digest": verified["cert_digest"],
-            "artifact_digest": verified["artifact_digest"],
-            "tree_size": checkpoint["tree_size"],
+    result = {"verified": True,
+              "cert_digest": verified["cert_digest"],
+              "artifact_digest": verified["artifact_digest"],
+              "tree_size": checkpoint["tree_size"],
+              "honest_claims": _HONEST_CLAIMS}
+    if verified.get("producer_authz") is not None:
+        # Claim path only: the legacy return dict stays
+        # byte-identical to before.
+        result["producer_authz"] = verified["producer_authz"]
+    return result
+
+
+def submit_evidence_with_producer_claim(
+        *, artifact_body, cert, artifact_signature, approval_id,
+        intent_digest, audit_log_path, ca_public_key, verify_time,
+        identity_token, identity_issuer_public_key, producer_registry,
+        requested_scope, claim_public_key,
+        transparency_log=None, now=None):
+    """Claim-path submission: the evidence-cert ceremony MUST
+    establish producer authorization BEFORE the transparency log sees
+    the digest.
+
+    Order: (1) verify the presented identity token and the
+    producer->scope authorization -- any ``prodauth-*`` refusal
+    happens here and the digest is NEVER submitted; (2) seal
+    (chain-then-binding; ``evcert-*`` failures propagate) and join
+    the issuance attestation; (3) the attestation MUST carry a
+    producer-authorization claim that verifies (signature, expiry,
+    issuance join) AND names this producer and scope -- a claim for a
+    different issuance, an expired claim, or a claim for a different
+    scope is refused with ``prodauth-claim-mismatch``; (4) the
+    existing producer-auth seam and transparency submission.
+
+    The claim itself is minted by ``issue_producer_claim`` and
+    embedded at issuance time by
+    ``EvidenceCA.issue(producer_authz_claim=...)``; this function
+    never mints -- it verifies what the attestation carries.
+    """
+    now_s = _now_int(now)
+    # (1) The ceremony: token -> producer, registry -> scope.
+    # Fail-closed on unknown producers BEFORE any digest exists.
+    token_out = verify_identity_token(
+        identity_token, issuer_public_key=identity_issuer_public_key,
+        now=now_s)
+    producer = token_out["producer"]
+    if not isinstance(producer_registry, ProducerRegistry):
+        raise EvidenceBundleV2Error(
+            "prodauth-producer-unknown",
+            "producer_registry must be a ProducerRegistry")
+    producer_registry.check(producer, requested_scope)
+    # (2) Seal + issuance join (honest layering: evcert-* propagate).
+    sealed = seal_evidence(artifact_body=artifact_body, cert=cert,
+                           artifact_signature=artifact_signature,
+                           approval_id=approval_id,
+                           intent_digest=intent_digest,
+                           ca_public_key=ca_public_key,
+                           verify_time=verify_time)
+    issuance = find_issuance_attestation(
+        audit_log_path=audit_log_path,
+        cert_digest=sealed["cert_digest"])
+    # (3) The attestation must carry a verifying claim for THIS
+    # producer and scope.
+    claim_out = _verify_issuance_claim(
+        issuance, claim_public_key=claim_public_key,
+        verify_time=verify_time)
+    if claim_out["producer"] != producer \
+            or claim_out["scope"] != requested_scope:
+        raise EvidenceBundleV2Error(
+            "prodauth-claim-mismatch",
+            "issuance claim authorizes producer %r for scope %r, not "
+            "the presenting producer %r / requested scope %r"
+            % (claim_out["producer"], claim_out["scope"],
+               producer, requested_scope))
+    # (4) Existing producer-auth seam + transparency submission.
+    digest = sealed["artifact"]["artifact_digest"]
+    auth = {"kind": "evidence-cert",
+            "cert": cert,
+            "artifact_bytes": _canonical(artifact_body),
+            "artifact_signature": bytes(artifact_signature),
+            "approval_id": approval_id,
+            "intent_digest": intent_digest,
+            "ca_public_key": ca_public_key,
+            "verify_time": verify_time}
+    default_producer_auth_verifier(auth, digest)
+    log = transparency_log if transparency_log is not None else make_log(
+        producer_auth_verifier=default_producer_auth_verifier,
+        now=lambda: now_s)
+    try:
+        receipt = log.submit(digest, producer_auth=auth)
+    except EvidenceBundleV2Error:
+        raise
+    except Exception as e:  # noqa: BLE001 -- never silently skip the log
+        raise EvidenceBundleV2Error(
+            "evbundle-transparency-unavailable",
+            "transparency provider %r failed: %r"
+            % (getattr(log, "provider_name", "?"), e))
+    return {"kind": SUBMISSION_FORMAT,
+            "sealed": sealed,
+            "issuance_ref": {"cert_digest": sealed["cert_digest"],
+                             "audit_log_path": audit_log_path},
+            "transparency_receipt": receipt,
+            "producer_authz": {"producer": producer,
+                               "scope": requested_scope},
             "honest_claims": _HONEST_CLAIMS}

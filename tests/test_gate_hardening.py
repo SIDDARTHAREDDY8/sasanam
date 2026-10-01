@@ -322,7 +322,7 @@ class TestTaxonomy(unittest.TestCase):
         src = open(path).read()
         lits = re.findall(r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]',
                           src)
-        self.assertEqual(len(lits), 1411)
+        self.assertEqual(len(lits), 1443)
         self.assertEqual(len(set(lits)), len(lits))
         gh = sorted(c for c in set(lits) if c.startswith("gatehard-"))
         self.assertEqual(len(gh), 14)

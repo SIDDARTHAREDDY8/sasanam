@@ -1,0 +1,13 @@
+{
+  "_comment": "TEST-ONLY FIXTURE. This key and issuer exist only for unit/red-team batteries. It is NOT a real OIDC provider. A deployment must obtain its JWKS from its own issuer's discovery document and configure OidcGate with that JWKS; see gov/evidence_certs.py for the live-path integration seam.",
+  "issuer": "https://oidc.test.example",
+  "keys": [
+    {
+      "crv": "Ed25519",
+      "kid": "test-key-1",
+      "kty": "OKP",
+      "use": "sig",
+      "x": "tTPYrZ_Pvd4LSBwbM03cPFNBL9YUVk5-Wv0CA2jTgsM"
+    }
+  ]
+}

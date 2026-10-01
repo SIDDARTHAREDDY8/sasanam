@@ -46,7 +46,7 @@ from gov import policy_exception as pe
 from gov import ed25519
 from gov.signing import Ed25519Verifier
 
-TAXONOMY_PIN = 1411  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (no new codes here).
+TAXONOMY_PIN = 1443  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (no new codes here).
 
 EVAL_START = "2026-10-01T12:00:00Z"
 POLICY_NAME = "delta-policy"

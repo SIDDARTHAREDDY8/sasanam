@@ -17,11 +17,13 @@ Severity semantics (operational, stolen from the modelscan pattern):
 
 - CRITICAL: a code-execution sink global (``os.system``,
   ``subprocess.Popen``, ``builtins.eval``, ...) resolved in the stream
-  AND a ``REDUCE`` opcode present. Unpickling such a stream executes
-  attacker-controlled code at load. -> ingestion REFUSED.
+  AND a call-capable opcode present (``REDUCE``, ``INST``, ``OBJ``, or
+  ``NEWOBJ`` -- all four invoke an attacker-named callable at unpickle
+  time). Unpickling such a stream executes attacker-controlled code at
+  load. -> ingestion REFUSED.
 - HIGH: exploitable-but-not-executing at load -- gadget primitives
-  (``builtins.getattr``/``setattr``/``delattr``, ``operator.attrgetter``,
-  ``builtins.compile``) or a sink global with no ``REDUCE`` in the
+  (``builtins.getattr``/``setattr``/``delattr``, ``builtins.compile``,
+  ``operator.attrgetter``) or a sink global with no call opcode in the
   stream (a loaded gun, not a fired one). -> loud ADVISORY evidence,
   ingestion still admitted.
 - MEDIUM: unknown/ambiguous globals -- any ``GLOBAL``/``STACK_GLOBAL``
@@ -41,11 +43,15 @@ resolves it from the two most recent string pushes on a small symbolic
 stack. An unresolvable ``STACK_GLOBAL`` is a MEDIUM finding (the
 scanner cannot name what the stream will load).
 
-The sink+``REDUCE`` rule is deliberately conservative: a sink global
-anywhere in the stream combined with a ``REDUCE`` anywhere in the
-stream is CRITICAL, even if the reduce's callable is a different
-global. Carrying a code-execution sink inside a skill bundle is
-refusal-worthy on its own; the scanner does not attempt dataflow.
+The sink+call-opcode rule is deliberately conservative: a sink
+global anywhere in the stream combined with ``REDUCE``, ``INST``,
+``OBJ``, or ``NEWOBJ`` anywhere in the stream is CRITICAL, even if
+the call's callable is a different global. Carrying a code-execution
+sink inside a skill bundle is refusal-worthy on its own; the scanner
+does not attempt dataflow. (Wave-272, F255: the rule previously fired
+only on ``REDUCE``; protocol-0/1 ``INST`` carries its callable in the
+opcode argument with no ``GLOBAL`` at all, and ``OBJ``/``NEWOBJ`` take
+theirs from the stack -- both were invisible to the sink rule.)
 
 Composition: :func:`gov.skill_admission.admit` accepts an additive
 ``artifact_bytes`` kwarg (name -> payload bytes, for artifacts the
@@ -195,15 +201,24 @@ def _structural_refusal(code, detail, digest, nbytes):
 
 
 def _scan_stream(data):
-    """Walk the opcode stream; return (globals, saw_reduce, notes).
+    """Walk the opcode stream; return (globals, saw_call_opcode, notes).
 
     ``globals``: list of ``(module, name, pos, resolvable)`` in stream
-    order. Raises on truncated/corrupt input (caller maps to
+    order. ``saw_call_opcode``: True when any call-capable opcode --
+    ``REDUCE``, ``INST``, ``OBJ``, or ``NEWOBJ`` -- is present (all
+    four invoke an attacker-named callable at unpickle time). Raises
+    on truncated/corrupt input (caller maps to
     ``bundlescan-malformed``). Never unpickles.
+
+    ``INST`` (protocol 0/1) carries the callable as the opcode
+    argument (``'module name'``, same shape as ``GLOBAL``) -- it is
+    resolved into ``globals`` exactly like a ``GLOBAL``. ``OBJ`` and
+    ``NEWOBJ`` take their callable from the stack (a prior
+    ``GLOBAL``/``STACK_GLOBAL``); they only set ``saw_call_opcode``.
     """
     resolved = []
     recent_strings = []
-    saw_reduce = False
+    saw_call_opcode = False
     stop_count = 0
     first_stop_end = None
     notes = []
@@ -220,8 +235,15 @@ def _scan_stream(data):
             else:
                 recent_strings.append(repr(arg))
             del recent_strings[:max(0, len(recent_strings) - 8)]
-        elif name == "GLOBAL":
-            # arg is the single string 'module name' on protocols 0-3.
+        elif name == "GLOBAL" or name == "INST":
+            # GLOBAL arg is the single string 'module name' on
+            # protocols 0-3. INST (protocol 0/1) carries its callable
+            # in the opcode argument in the same shape -- the sink
+            # hides here, invisible to GLOBAL-only scanning. Both are
+            # call-target resolutions; INST additionally marks the
+            # stream as call-capable.
+            if name == "INST":
+                saw_call_opcode = True
             if isinstance(arg, str) and " " in arg:
                 module, gname = arg.split(" ", 1)
                 resolved.append((module, gname, pos, True))
@@ -234,8 +256,11 @@ def _scan_stream(data):
             else:
                 resolved.append(("<unresolved>", "STACK_GLOBAL", pos,
                                  False))
-        elif name == "REDUCE":
-            saw_reduce = True
+        elif name in ("REDUCE", "OBJ", "NEWOBJ"):
+            # All three invoke an attacker-named callable taken from
+            # the stack (REDUCE) or bound at the call site; together
+            # with INST they are the call-capable opcodes.
+            saw_call_opcode = True
         elif name == "STOP":
             stop_count += 1
             if first_stop_end is None:
@@ -248,11 +273,19 @@ def _scan_stream(data):
         notes.append(_finding(
             "low", CODE_ODD_PACKAGING,
             "%d trailing byte(s) after STOP" % (len(data) - first_stop_end)))
-    return resolved, saw_reduce, notes
+    return resolved, saw_call_opcode, notes
 
 
-def _classify(resolved, saw_reduce):
-    """Classify resolved globals into findings (stream order)."""
+def _classify(resolved, saw_call_opcode):
+    """Classify resolved globals into findings (stream order).
+
+    The sink rule fires when a code-execution sink global is resolved
+    ANYWHERE in the stream AND a call-capable opcode (REDUCE, INST,
+    OBJ, or NEWOBJ) is present ANYWHERE in the stream. This is
+    deliberately conservative: the scanner does not attempt dataflow,
+    and carrying a code-execution sink inside a skill bundle is
+    refusal-worthy on its own.
+    """
     findings = []
     seen = set()
     for module, gname, pos, resolvable in resolved:
@@ -273,18 +306,19 @@ def _classify(resolved, saw_reduce):
         module = key[0]
         where = "stream offset %d" % (pos,)
         if key in _CODE_EXEC_SINKS:
-            if saw_reduce:
+            if saw_call_opcode:
                 findings.append(_finding(
                     "critical", CODE_RCE_GLOBAL,
-                    "code-execution sink %s.%s with REDUCE present at "
-                    "%s: unpickling executes attacker-controlled code"
+                    "code-execution sink %s.%s with a call opcode "
+                    "(REDUCE/INST/OBJ/NEWOBJ) present at %s: "
+                    "unpickling executes attacker-controlled code"
                     % (module, gname, where)))
             else:
                 findings.append(_finding(
                     "high", CODE_SUSPICIOUS_GLOBAL,
-                    "code-execution sink %s.%s with no REDUCE at %s: "
-                    "a loaded gun, not a fired one" % (module, gname,
-                                                       where)))
+                    "code-execution sink %s.%s with no call opcode at "
+                    "%s: a loaded gun, not a fired one"
+                    % (module, gname, where)))
         elif key in _GADGET_PRIMITIVES:
             findings.append(_finding(
                 "high", CODE_SUSPICIOUS_GLOBAL,
@@ -337,8 +371,8 @@ def scan_pickle_stream(data, max_bytes=DEFAULT_MAX_BYTES, context=None):
                 CODE_OVERSIZED,
                 "payload %d bytes exceeds max_bytes %d%s"
                 % (len(data), max_bytes, ctx), digest, len(data))
-        resolved, saw_reduce, notes = _scan_stream(bytes(data))
-        findings = _classify(resolved, saw_reduce) + notes
+        resolved, saw_call_opcode, notes = _scan_stream(bytes(data))
+        findings = _classify(resolved, saw_call_opcode) + notes
     except Exception as exc:  # noqa: BLE001 -- fail closed, never raise
         return _structural_refusal(
             CODE_MALFORMED,

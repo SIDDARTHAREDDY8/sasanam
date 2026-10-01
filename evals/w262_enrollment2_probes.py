@@ -51,7 +51,7 @@ from gov import svid_issuer as sv  # noqa: E402
 # cover every path) -- pin stays at the wave-261 value. If the count
 # moves, the delta must be explained by a landed taxonomy change --
 # never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 _PROBES = []
 

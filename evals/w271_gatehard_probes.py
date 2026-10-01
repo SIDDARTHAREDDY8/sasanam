@@ -40,7 +40,7 @@ NOW = 1791000000  # fixed test clock (2026-10-01-ish)
 # grep -o '"code": ' overcounts; quoted-literal extraction is canonical).
 import re as _re  # noqa: E402
 
-TAXONOMY_PIN = 1411  # base 1411 new gatehard-* codes
+TAXONOMY_PIN = 1443  # base 1411 new gatehard-* codes
 _GATEHARD_CODES = (
     "gatehard-monitor-would-deny",
     "gatehard-policy-denied",
@@ -471,7 +471,7 @@ def _c5():
 def _c6():
     lits = _quoted_literals(os.path.join(_REPO, "gov", "decision_codes.py"))
     if not _require_real():
-        return len(lits) == 1411, len(lits)
+        return len(lits) == 1443, len(lits)
     missing = [c for c in _GATEHARD_CODES if lits.count(c) != 1]
     dups = [c for c in set(lits) if lits.count(c) > 1]
     return (len(lits) == TAXONOMY_PIN and not missing and not dups,

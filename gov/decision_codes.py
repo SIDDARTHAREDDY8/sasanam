@@ -4421,6 +4421,46 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'drift-baseline-updated': {
+        "domain": 'drift',
+        "code": 'drift-baseline-updated',
+        "human": 'drift report: the per-request decision baseline was '
+                 '(re)recorded; the event anchors the drift chain',
+        "severity": 'low',
+        "evidence_kinds_required": ['chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'drift-detected': {
+        "domain": 'drift',
+        "code": 'drift-detected',
+        "human": 'drift report: a rescan found an item the baseline '
+                 'allowed that the current policy set denies; the '
+                 'event carries then/now decisions and the gate digest',
+        "severity": 'medium',
+        "evidence_kinds_required": ['chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'drift-log-corrupt': {
+        "domain": 'drift',
+        "code": 'drift-log-corrupt',
+        "human": 'drift report: the drift-event chain failed '
+                 'verification (edit, reorder, or truncation); refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain'],
+        "reverify_steps": ['recompute'],
+    },
+    'drift-malformed': {
+        "domain": 'drift',
+        "code": 'drift-malformed',
+        "human": 'drift report: the drift event, scanner, or reporter '
+                 'argument is the wrong shape (non-dict event, scanner '
+                 'without scan(), bad digest or request id); refusing '
+                 'instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['chain'],
+        "reverify_steps": ['recompute'],
+    },
     'dsse-envelope-malformed': {
         "domain": 'dsse',
         "code": 'dsse-envelope-malformed',
@@ -6463,6 +6503,91 @@ TAXONOMY = {
         "evidence_kinds_required": ['incident'],
         "reverify_steps": ['check-id-exists'],
     },
+    'ingest-admit': {
+        "domain": 'ingest',
+        "code": 'ingest-admit',
+        "human": 'evidence-ingest gate: sealed bundle passed transparency, '
+                 'issuance, revision-binding and staleness checks; admitted',
+        "severity": 'low',
+        "evidence_kinds_required": ['sealed-bundle'],
+        "reverify_steps": ['recheck-transparency', 'recheck-issuance'],
+    },
+    'ingest-freshness-invalid': {
+        "domain": 'ingest',
+        "code": 'ingest-freshness-invalid',
+        "human": 'evidence-ingest gate: freshness annotation present but '
+                 'invalid (bad signature, wrong issuer, expired or '
+                 'future-dated); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['sealed-bundle', 'freshness-annotation'],
+        "reverify_steps": ['recheck-annotation-signature',
+                           'recheck-annotation-ttl'],
+    },
+    'ingest-issuance-unverifiable': {
+        "domain": 'ingest',
+        "code": 'ingest-issuance-unverifiable',
+        "human": 'evidence-ingest gate: issuance attestation missing or '
+                 'unverifiable; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['sealed-bundle', 'issuance'],
+        "reverify_steps": ['recheck-issuance'],
+    },
+    'ingest-malformed': {
+        "domain": 'ingest',
+        "code": 'ingest-malformed',
+        "human": 'evidence-ingest gate: submission malformed; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['sealed-bundle'],
+        "reverify_steps": ['recheck-bundle-shape'],
+    },
+    'ingest-producer-unauthorized': {
+        "domain": 'ingest',
+        "code": 'ingest-producer-unauthorized',
+        "human": 'evidence-ingest gate: producer-authorization claim failed '
+                 '(attestation signature invalid or issuer not authorized); '
+                 'refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['sealed-bundle', 'producer-cert'],
+        "reverify_steps": ['recheck-producer-authorization'],
+    },
+    'ingest-revision-unbound': {
+        "domain": 'ingest',
+        "code": 'ingest-revision-unbound',
+        "human": 'evidence-ingest gate: bundle content not bound to any '
+                 'registered revision; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['sealed-bundle', 'revision-binding'],
+        "reverify_steps": ['recheck-revision-binding'],
+    },
+    'ingest-scan-error': {
+        "domain": 'ingest',
+        "code": 'ingest-scan-error',
+        "human": 'evidence-ingest gate: background scan of an admitted '
+                 'bundle errored; recorded loudly, never silently passed',
+        "severity": 'high',
+        "evidence_kinds_required": ['scan-report'],
+        "reverify_steps": ['rerun-scan'],
+    },
+    'ingest-signature-unverified': {
+        "domain": 'ingest',
+        "code": 'ingest-signature-unverified',
+        "human": 'evidence-ingest gate: sealed-bundle signature or '
+                 'transparency inclusion unverifiable; refused fail-closed',
+        "severity": 'critical',
+        "evidence_kinds_required": ['sealed-bundle', 'transparency-receipt'],
+        "reverify_steps": ['recheck-transparency', 'recheck-signature'],
+    },
+    'ingest-stale-revision': {
+        "domain": 'ingest',
+        "code": 'ingest-stale-revision',
+        "human": 'evidence-ingest gate: bundle references an audit-chain '
+                 'revision older than the staleness horizon with no valid '
+                 'freshness annotation; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['sealed-bundle', 'revision-binding'],
+        "reverify_steps": ['recheck-revision-age'],
+    },
     'input_closure_digest': {
         "domain": 'provenance',
         "code": 'input_closure_digest',
@@ -7523,6 +7648,81 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['execution-evidence'],
         "reverify_steps": ['recompute'],
+    },
+    'oidc-ambiguous-subject': {
+        "domain": 'oidc',
+        "code": 'oidc-ambiguous-subject',
+        "human": 'evidence cert OIDC gate: the token payload carries '
+                 'duplicate sub claims; the producer identity is ambiguous '
+                 'and fails closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'jwks'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-audience-mismatch': {
+        "domain": 'oidc',
+        "code": 'oidc-audience-mismatch',
+        "human": 'evidence cert OIDC gate: the token aud does not include '
+                 'this ceremony audience; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'jwks'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-issuer-mismatch': {
+        "domain": 'oidc',
+        "code": 'oidc-issuer-mismatch',
+        "human": 'evidence cert OIDC gate: the token iss is not the '
+                 'expected issuer; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'jwks'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-malformed-token': {
+        "domain": 'oidc',
+        "code": 'oidc-malformed-token',
+        "human": 'evidence cert OIDC gate: the token is not a well-formed '
+                 'three-part JWT with a JSON object header and payload; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-missing-claim': {
+        "domain": 'oidc',
+        "code": 'oidc-missing-claim',
+        "human": 'evidence cert OIDC gate: the token is missing one of the '
+                 'required iss/aud/sub/exp claims; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-signature-invalid': {
+        "domain": 'oidc',
+        "code": 'oidc-signature-invalid',
+        "human": 'evidence cert OIDC gate: the token signature does not '
+                 'verify against the issuer JWKS (wrong alg, unknown kid, '
+                 'or bad signature); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['identity-assertion', 'jwks'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-token-expired': {
+        "domain": 'oidc',
+        "code": 'oidc-token-expired',
+        "human": 'evidence cert OIDC gate: the token exp is past now plus '
+                 'the clock-skew bound; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-verify-token'],
+    },
+    'oidc-token-required': {
+        "domain": 'oidc',
+        "code": 'oidc-token-required',
+        "human": 'evidence cert OIDC gate: this CA requires an OIDC token '
+                 'and none was presented; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['identity-assertion'],
+        "reverify_steps": ['re-verify-token'],
     },
     'opt-out-consumed': {
         "domain": 'deploy',
@@ -8720,6 +8920,70 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
+    'prodauth-claim-expired': {
+        "domain": 'prodauth',
+        "code": 'prodauth-claim-expired',
+        "human": 'producer authorization: the SLSA-shaped producer-authorization claim expired before the use time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signature', 'claim'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'prodauth-claim-invalid': {
+        "domain": 'prodauth',
+        "code": 'prodauth-claim-invalid',
+        "human": 'producer authorization: the producer-authorization claim has a bad shape or its claim-authority signature does not verify',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'claim'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'prodauth-claim-mismatch': {
+        "domain": 'prodauth',
+        "code": 'prodauth-claim-mismatch',
+        "human": 'producer authorization: the producer-authorization claim was minted for a different issuance (approval/subject-key join failed)',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'claim'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'prodauth-producer-unknown': {
+        "domain": 'prodauth',
+        "code": 'prodauth-producer-unknown',
+        "human": 'producer authorization: the presenting producer is not in the producer registry; refusing rather than defaulting',
+        "severity": 'high',
+        "evidence_kinds_required": ['registry', 'identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'prodauth-registry-unauthorized': {
+        "domain": 'prodauth',
+        "code": 'prodauth-registry-unauthorized',
+        "human": 'producer authorization: a producer-registry registration statement is malformed, expired, or not signed by the registry admin key',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signature', 'registry'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'prodauth-scope-not-authorized': {
+        "domain": 'prodauth',
+        "code": 'prodauth-scope-not-authorized',
+        "human": 'producer authorization: the producer is registered but not authorized for the requested scope (exact match, no wildcards)',
+        "severity": 'high',
+        "evidence_kinds_required": ['registry', 'identity'],
+        "reverify_steps": ['recompute'],
+    },
+    'prodauth-token-expired': {
+        "domain": 'prodauth',
+        "code": 'prodauth-token-expired',
+        "human": 'producer authorization: the presented identity token expired',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signature', 'identity'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'prodauth-token-invalid': {
+        "domain": 'prodauth',
+        "code": 'prodauth-token-invalid',
+        "human": 'producer authorization: the presented identity token has a bad shape, wrong audience, or a signature that does not verify against the identity issuer key',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'identity'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
     'production': {
         "domain": 'deployment',
         "code": 'production',
@@ -9884,6 +10148,39 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['journal', 'digest'],
         "reverify_steps": ['replay-chain'],
+    },
+    'revbind-content-mismatch': {
+        "domain": 'revbind',
+        "code": 'revbind-content-mismatch',
+        "human": 'revision binding: a replayed tool_call pins a content '
+                 'digest that does not match the digest bound for this '
+                 'chain revision, and no content-equivalence annotation '
+                 'covers the change; the replay is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['chain', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'revbind-equivalence-accepted': {
+        "domain": 'revbind',
+        "code": 'revbind-equivalence-accepted',
+        "human": 'revision binding: a replayed tool_call pins a '
+                 'different content digest than the revision binding, '
+                 'but an explicit content_equivalence annotation covers '
+                 'the change; accepted and reported (advisory)',
+        "severity": 'low',
+        "evidence_kinds_required": ['chain', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'revbind-malformed': {
+        "domain": 'revbind',
+        "code": 'revbind-malformed',
+        "human": 'revision binding: the revision label, manifest link, '
+                 'or registry argument is the wrong shape (empty '
+                 'revision, missing tool id, malformed revision block); '
+                 'refusing instead of guessing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['chain', 'digest'],
+        "reverify_steps": ['recompute'],
     },
     'reverify-malformed': {
         "domain": 'reverify',

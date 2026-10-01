@@ -47,7 +47,7 @@ try:
 except ImportError:
     ma = se = sv = ac = ed = decision_codes = None
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 _PROBES = []
 

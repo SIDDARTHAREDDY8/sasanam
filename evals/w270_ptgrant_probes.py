@@ -17,7 +17,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 STUB = os.environ.get("GOV_PTGRANT_IMPL") == "stub"
 
@@ -96,7 +96,15 @@ def enforce_env(**kw):
     return env
 
 
+# F254: make_pop_proof requires a caller-supplied unique nonce (no silent
+# default). Battery mints get deterministic unique nonces from a counter;
+# callers that pin replay behavior pass explicit nonces.
+_POP_COUNTER = [0]
+
+
 def pop_proof(grant, seed=HOLDER_SEED, **kw):
+    _POP_COUNTER[0] += 1
+    kw.setdefault("nonce", "w270-probe-%d" % _POP_COUNTER[0])
     return tool_grant.make_pop_proof(seed, grant, method="tools/call",
                                      uri=AUD + "/tools/call", now=NOW, **kw)
 
@@ -226,7 +234,7 @@ def p08_max_calls_exhausted():
         return {"ok": True, "code": "first-call-unexpectedly-refused"}
     proof2 = tool_grant.make_pop_proof(HOLDER_SEED, g, method="tools/call",
                                        uri=AUD + "/tools/call", now=NOW + 1,
-                                       nonce=b"n2")
+                                       nonce="n2")
     return tool_grant.enforce(g, proof=proof2, tool="read_file",
                               args={"path": "/data/shared/a.txt"}, **env)
 
@@ -247,7 +255,8 @@ def p10_cnf_confusion():
         return {"ok": True, "code": "stub-foil"}
     g = issue([details_for("read_file")])
     bad_proof = tool_grant.make_pop_proof(ATTACKER_SEED, g, method="tools/call",
-                                          uri=AUD + "/tools/call", now=NOW)
+                                          uri=AUD + "/tools/call", now=NOW,
+                                          nonce="atk-cnf-1")
     env = enforce_env()
     return tool_grant.enforce(g, proof=bad_proof, tool="read_file",
                               args={"path": "/data/shared/a.txt"}, **env)

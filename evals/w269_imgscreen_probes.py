@@ -46,7 +46,7 @@ try:
 except Exception:
     decision_codes = None
 
-TAXONOMY_PIN = 1411  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (lane: 1299 + 4 imgscreen-*).
+TAXONOMY_PIN = 1443  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (lane: 1299 + 4 imgscreen-*).
 
 EXPECTED_CODES = (
     "imgscreen-instruction-detected",

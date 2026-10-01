@@ -259,7 +259,7 @@ class ApprovalShapeTest(unittest.TestCase):
 
 class TaxonomyPinTest(unittest.TestCase):
     def test_pin_is_1112(self):
-        self.assertEqual(len(dc.TAXONOMY), 1411)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(dc.TAXONOMY), 1443)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
         # Wave-262 lane 1: pin -> 1112 (1106 + 6 scope-listing codes).
 
     def test_new_codes_sorted_and_complete(self):

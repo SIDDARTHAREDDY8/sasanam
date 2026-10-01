@@ -76,6 +76,11 @@ ACTION_PRESENTATION = "presentation"
 ACTION_APPROVAL_REQUESTED = "approval_requested"
 ACTION_APPROVAL_RECEIVED = "approval_received"
 ACTION_GATE_CONSULT = "gate_consult"
+# Wave-272: explicit content-equivalence annotations. A replay whose
+# tool digest differs from the revision binding is refused unless the
+# manifest carries one of these links covering
+# (tool_id, bound_digest -> presented_digest) with a non-empty reason.
+ACTION_CONTENT_EQUIVALENCE = "content_equivalence"
 _ACTIONS = frozenset([
     ACTION_ENVIRONMENT_SNAPSHOT,
     ACTION_TOOL_CALL,
@@ -83,6 +88,7 @@ _ACTIONS = frozenset([
     ACTION_APPROVAL_REQUESTED,
     ACTION_APPROVAL_RECEIVED,
     ACTION_GATE_CONSULT,
+    ACTION_CONTENT_EQUIVALENCE,
 ])
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -185,15 +191,26 @@ class ReplayManifestBuilder(object):
     ``actor`` is the workload identity (SPIFFE-ID-shaped string).
     ``now`` is an explicit clock (defaults to time.time); pass a fixed
     clock for deterministic manifests. ``code_pin_policy`` gates
-    ``seal()`` (fail-closed pin block)."""
+    ``seal()`` (fail-closed pin block). ``chain_revision`` is the
+    deployment's chain-revision label (wave-272): when set, every
+    ``tool_call`` link records a ``revision_binding`` block binding its
+    pin to the chain revision it executed at."""
 
-    def __init__(self, actor, *, now=None, code_pin_policy=None):
+    def __init__(self, actor, *, now=None, code_pin_policy=None,
+                 chain_revision=None):
         if not isinstance(actor, str) or not actor:
             raise ReplayManifestError(
                 "replay-malformed", "actor must be a non-empty string")
+        if chain_revision is not None and \
+                (not isinstance(chain_revision, str)
+                 or not chain_revision):
+            raise ReplayManifestError(
+                "replay-malformed",
+                "chain_revision must be a non-empty string or None")
         self._actor = actor
         self._now = now or time.time
         self._policy = code_pin_policy or CodePinPolicy()
+        self._chain_revision = chain_revision
         self._links = []
         self._sealed = False
 
@@ -257,6 +274,13 @@ class ReplayManifestBuilder(object):
                   "tool_digest_pin": tool_digest_pin,
                   "seed": seed,
                   "dirty": bool(dirty)}
+        if self._chain_revision is not None:
+            # Wave-272 revision binding: the pin is bound to the chain
+            # revision it executed at, on the link itself.
+            fields["revision_binding"] = {
+                "revision": self._chain_revision,
+                "content_digest": tool_digest_pin,
+            }
         if presentation_digest is not None:
             _require_hex64(presentation_digest, "presentation_digest")
             fields["presentation_digest"] = presentation_digest
@@ -328,6 +352,35 @@ class ReplayManifestBuilder(object):
         else:
             fields["dispatched_tool"] = str(dispatched_tool)
         return self._append(ACTION_GATE_CONSULT, fields)
+
+    def record_content_equivalence(self, *, tool_id, from_digest,
+                                   to_digest, reason):
+        """Explicit content-equivalence annotation (wave-272): the
+        deployment states that ``to_digest`` is an acceptable
+        replacement for ``from_digest`` for ``tool_id`` (e.g. a
+        versioned tool rollout). ``revision_binding.verify_replay``
+        accepts a replay whose pin differs from the revision binding
+        ONLY when one of these links covers
+        ``(tool_id, from_digest -> to_digest)``. The reason is
+        mandatory -- an annotation without a reason is refused at
+        record time (fail closed, never carried as free text)."""
+        if not isinstance(tool_id, str) or not tool_id:
+            raise ReplayManifestError(
+                "replay-malformed",
+                "tool_id must be a non-empty string")
+        _require_hex64(from_digest, "from_digest")
+        _require_hex64(to_digest, "to_digest")
+        if not isinstance(reason, str) or not reason:
+            raise ReplayManifestError(
+                "replay-malformed",
+                "reason must be a non-empty string (an equivalence "
+                "annotation without a reason is refused)")
+        return self._append(ACTION_CONTENT_EQUIVALENCE, {
+            "tool_id": tool_id,
+            "from_digest": from_digest,
+            "to_digest": to_digest,
+            "reason": reason,
+        })
 
     # -- seal ---------------------------------------------------------
 
@@ -484,6 +537,26 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
                     "replay-unverifiable-tool-digest",
                     "link %d has no seal-time code pin (code_pins); the "
                     "manifest was not sealed fail-closed" % (seq,))
+            # Wave-272: the revision_binding block the builder emits
+            # is structurally validated like everything else -- a
+            # malformed block is refused, never half-honored (an
+            # uncoded AttributeError at the registry seam is the
+            # failure this prevents).
+            binding = link.get("revision_binding")
+            if binding is not None:
+                if not isinstance(binding, dict) \
+                        or not isinstance(
+                            binding.get("revision"), str) \
+                        or not binding.get("revision") \
+                        or not isinstance(
+                            binding.get("content_digest"), str) \
+                        or not _HEX64.match(
+                            binding.get("content_digest")):
+                    raise ReplayManifestError(
+                        "replay-malformed",
+                        "link %d revision_binding must be a dict with "
+                        "a non-empty revision string and a 64-char "
+                        "hex content_digest" % (seq,))
         elif action == ACTION_APPROVAL_RECEIVED:
             ref = link.get("approval_receipt_ref")
             if not ref:
@@ -492,6 +565,24 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
                     "link %d approval_received without a receipt "
                     "reference" % (seq,))
             approval_links.append((seq, link))
+        elif action == ACTION_CONTENT_EQUIVALENCE:
+            # Wave-272: explicit equivalence annotations are
+            # structurally validated like everything else -- a
+            # malformed annotation is refused, never half-honored.
+            for field in ("from_digest", "to_digest"):
+                value = link.get(field)
+                if not isinstance(value, str) or \
+                        not _HEX64.match(value):
+                    raise ReplayManifestError(
+                        "replay-malformed",
+                        "link %d content_equivalence %s must be 64 "
+                        "lowercase hex chars" % (seq, field))
+            if not isinstance(link.get("reason"), str) or \
+                    not link.get("reason"):
+                raise ReplayManifestError(
+                    "replay-malformed",
+                    "link %d content_equivalence reason must be a "
+                    "non-empty string" % (seq,))
         if "presentation_digest" in link:
             presentation_digests.add(link["presentation_digest"])
     # Manifest-level digest: the seal covers links AND code pins.

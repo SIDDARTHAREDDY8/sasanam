@@ -66,7 +66,7 @@ from gov import ed25519 as _ed  # noqa: E402
 from gov import kms  # noqa: E402
 from gov.signing import Ed25519Signer, Ed25519Verifier, Verifier  # noqa: E402
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 _EVAL_START = "2026-10-01T00:00:00Z"
 _EVCERT_NOW = 1790860000  # fixed test clock (2026-10-01-ish)
@@ -1269,10 +1269,10 @@ def _p_reg_f251():
                      "accepted")
 
 
-@probe("reg/taxonomy-pin-1411")
+@probe("reg/taxonomy-pin-1443")
 def _p_reg_pin():
     """Pin: wave-270 merge (1325 -> 1372, +47 codes)."""
-    pin = 1411
+    pin = 1443
     if TAXONOMY_PIN == pin:
         return ("HELD", "taxonomy pin is %d" % TAXONOMY_PIN)
     return ("ERROR", "battery pin %d != %d" % (TAXONOMY_PIN, pin))

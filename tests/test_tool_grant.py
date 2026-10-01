@@ -6,7 +6,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import ed25519, tool_grant  # noqa: E402
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 ISS_SEED = bytes.fromhex("11" * 32)
 HOLDER_SEED = bytes.fromhex("22" * 32)
@@ -207,9 +207,43 @@ class TestBudget(unittest.TestCase):
         v1 = tool_grant.enforce(g, proof=proof, tool="read_file",
                                 args={"path": "/data/shared/a.txt"}, **env)
         self.assertTrue(v1["ok"])
+        used1 = store.status(g["body"]["jti"], 3)["calls_used"]
         v2 = tool_grant.enforce(g, proof=proof, tool="read_file",
                                 args={"path": "/data/shared/a.txt"}, **env)
         self.assertEqual(v2["code"], "ptgrant-jti-reused")
+        # F253: the nonce replay check runs before budget consumption --
+        # the refused replay is budget-neutral.
+        self.assertEqual(used1, 1, "first call consumed exactly one")
+        used2 = store.status(g["body"]["jti"], 3)["calls_used"]
+        self.assertEqual(used2, used1, "refused replay burned budget")
+
+
+class TestProofMinting(unittest.TestCase):
+    """F254: make_pop_proof has no silent deterministic default."""
+
+    def _mint_kw(self, g):
+        return dict(seed=HOLDER_SEED, grant=g, method="tools/call",
+                    uri=AUD + "/tools/call", now=NOW)
+
+    def test_missing_nonce_refused(self):
+        g = _issue([_details()])
+        with self.assertRaises(tool_grant.GrantError) as ctx:
+            tool_grant.make_pop_proof(**self._mint_kw(g))
+        self.assertEqual(ctx.exception.code, "ptgrant-pop-invalid")
+
+    def test_empty_nonce_refused(self):
+        g = _issue([_details()])
+        for bad in ("", None, b"bytes-not-str"):
+            with self.assertRaises(tool_grant.GrantError) as ctx:
+                tool_grant.make_pop_proof(nonce=bad, **self._mint_kw(g))
+            self.assertEqual(ctx.exception.code, "ptgrant-pop-invalid")
+
+    def test_same_second_unique_nonces_distinct(self):
+        g = _issue([_details()])
+        p1 = tool_grant.make_pop_proof(nonce="m1", **self._mint_kw(g))
+        p2 = tool_grant.make_pop_proof(nonce="m2", **self._mint_kw(g))
+        self.assertNotEqual(p1, p2)
+        self.assertNotEqual(p1["sig"], p2["sig"])
 
 
 class TestAttenuation(unittest.TestCase):

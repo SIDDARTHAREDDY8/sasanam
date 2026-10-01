@@ -24,6 +24,14 @@ machine-readable ``evcert-*`` code (see :class:`EvidenceCertError`
 and ``gov/decision_codes.py``):
 
 1. request shape (evcert-malformed-request)
+1a. OIDC four-claim gate (``oidc-*``) -- when the CA configures an
+    :class:`OidcGate`, the producer MUST present an OIDC token; the
+    ``iss``/``aud``/``sub``/``exp`` claims are verified against the
+    issuer's JWKS and the verified claims BECOME the identity
+    assertion (the ``identity_assertion`` argument is ignored on this
+    path). Missing token: ``oidc-token-required``. The certified
+    producer identity is the verified (iss, sub) pair, recorded on the
+    audit attestation as ``producer_identity``.
 1b. provisioner-class resolution (evcert-malformed-request) -- when
     the CA configures provisioner classes, the request must name a
     known one; ambiguity fails closed
@@ -41,6 +49,26 @@ and ``gov/decision_codes.py``):
 7. KMS signing capability + signature self-check
    (evcert-kms-cannot-sign; operational KMS failures raise
    gov.kms.KmsError, never a local-key fallback)
+
+Honest OIDC boundary: the gate verifies Ed25519 (``"EdDSA"``) token
+signatures against a deployment-supplied JWKS using only the stdlib
+and the repo's vendored ``gov.ed25519``. RS256/ES256 (or any other
+JWA) issuers are NOT verified in-process -- the live-path integration
+seam is to subclass :class:`OidcGate` and override
+:meth:`OidcGate._verify_signature`, or to supply a pre-fetched JWKS
+from the deployment's own issuer discovery. There is no live OIDC
+provider in the $0 test environment; ``evals/fixtures/
+oidc_test_jwks.json`` is a TEST-ONLY fixture and must never be
+configured on a production CA.
+
+The gate is the identity half: it exposes the verified (iss, sub)
+pair on the certificate (``principal`` + issuer OID fields, byte-
+identical wire) and on the audit attestation (``producer_identity``).
+Authorization decisions over that pair belong to the
+producer-authorization mapping (a parallel wave-272 lane); the
+existing provisioner-class binding consumes it through the
+principal/class fields it already carries.
+
 
 Lifetime discipline: default 10 minutes, deployment-capped at 60
 minutes; anything over 24 hours requires a configured status-list
@@ -160,6 +188,256 @@ def _issuer_allows(pattern, iss):
 def _pop_challenge(approval_id, ephemeral_pub):
     return (POP_DOMAIN + approval_id.encode("utf-8")
             + hashlib.sha256(ephemeral_pub).digest())
+
+
+# ---------------------------------------------------------------------------
+# OIDC four-claim gate ceremony (wave-272)
+#
+# Fulcio-style ceremonies authenticate a valid OIDC token but establish
+# no application-level producer authorization. This gate is the identity
+# half: before issuance the producer MUST present an OIDC token whose
+# iss/aud/sub/exp verify against the issuer's JWKS. The certified
+# producer identity is the verified (iss, sub) pair.
+# ---------------------------------------------------------------------------
+
+OIDC_DEFAULT_CLOCK_SKEW_S = 300  # explicit clock-skew bound for exp
+_OIDC_REQUIRED_CLAIMS = ("iss", "aud", "sub", "exp")
+_OIDC_JWT_ALG = "EdDSA"  # Ed25519; the only JWA verified in-process
+_OIDC_JWT_PARTS = 3  # header.payload.signature
+
+
+def _b64u_decode(s):
+    """Base64url-decode, unpadded. Raises ValueError on bad input."""
+    if not isinstance(s, str) or not s:
+        raise ValueError("not a base64url string")
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def _loads_no_dup(raw):
+    """Parse a JSON object, reporting duplicate keys.
+
+    Returns ``(obj, dups)`` where ``dups`` is the set of keys that
+    appeared more than once. A non-object payload raises ValueError.
+    Standard ``json.loads`` silently keeps the LAST duplicate, which
+    would let an attacker smuggle a second ``sub`` claim past the
+    gate -- ambiguity fails closed here instead.
+    """
+    pairs = json.loads(raw, object_pairs_hook=list)
+    if not isinstance(pairs, list):
+        raise ValueError("payload is not a JSON object")
+    obj = {}
+    dups = set()
+    for pair in pairs:
+        # A JSON object decodes (with object_pairs_hook=list) to a
+        # list of [key, value] pairs; anything else is a non-object
+        # payload smuggled past the top-level check (e.g. `[1,2,3]`
+        # unpacks to a TypeError, `["ab"]` silently becomes {"a":"b"}).
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2 \
+                or not isinstance(pair[0], str):
+            raise ValueError("payload is not a JSON object")
+        k, v = pair
+        if k in obj:
+            dups.add(k)
+        obj[k] = v
+    return obj, dups
+
+
+class OidcGate(object):
+    """Four-claim OIDC token gate for the evidence-cert ceremony.
+
+    ``issuer`` is the single expected ``iss`` value (exact string
+    match -- no allowlist patterns at this seam; the ceremony's own
+    issuer allowlist still applies downstream). ``audience`` is this
+    ceremony's ``aud`` value. ``jwks`` is the issuer's JSON Web Key
+    Set as a dict (``{"keys": [...]}``); only ``kty="OKP"`` /
+    ``crv="Ed25519"`` keys with a ``kid`` are loaded -- anything else
+    is a deployment bug and raises ValueError at construction, never
+    silently skipped. ``clock_skew_s`` bounds ``exp`` acceptance: a
+    token is valid iff ``now <= exp + clock_skew_s``.
+
+    :meth:`verify_token` returns the verified claims
+    ``{"iss", "sub", "exp"}`` or raises :class:`EvidenceCertError`
+    with an ``oidc-*`` code; it never raises anything else on hostile
+    input. Verification order is fixed: token shape -> header -> key
+    selection -> signature -> payload shape -> claim presence ->
+    claim values.
+
+    Live-path seam: only Ed25519 (``"EdDSA"``) signatures verify
+    in-process (stdlib-only by design). A deployment whose issuer
+    uses another JWA subclasses and overrides
+    :meth:`_verify_signature`; the deployment obtains ``jwks`` from
+    its own issuer's discovery document out of band.
+    """
+
+    def __init__(self, *, issuer, audience, jwks, clock_skew_s=None,
+                 now=None):
+        if not isinstance(issuer, str) or not issuer:
+            raise ValueError("issuer must be a non-empty string")
+        if not isinstance(audience, str) or not audience:
+            raise ValueError("audience must be a non-empty string")
+        if clock_skew_s is None:
+            clock_skew_s = OIDC_DEFAULT_CLOCK_SKEW_S
+        if not isinstance(clock_skew_s, int) or clock_skew_s < 0:
+            raise ValueError("clock_skew_s must be a non-negative int")
+        self._issuer = issuer
+        self._audience = audience
+        self._skew = clock_skew_s
+        self._now = now or __import__("time").time
+        self._keys = self._load_jwks(jwks)
+
+    @staticmethod
+    def _load_jwks(jwks):
+        if not isinstance(jwks, dict) \
+                or not isinstance(jwks.get("keys"), list) \
+                or not jwks["keys"]:
+            raise ValueError("jwks must be a dict with a non-empty "
+                             "'keys' list")
+        keys = {}
+        for entry in jwks["keys"]:
+            if not isinstance(entry, dict):
+                raise ValueError("jwks keys must be objects")
+            if entry.get("kty") != "OKP" or entry.get("crv") != "Ed25519":
+                raise ValueError(
+                    "only kty=OKP/crv=Ed25519 keys are supported "
+                    "(got %r/%r); use the _verify_signature seam for "
+                    "other JWAs" % (entry.get("kty"), entry.get("crv")))
+            kid = entry.get("kid")
+            if not isinstance(kid, str) or not kid:
+                raise ValueError("jwks keys must carry a non-empty kid")
+            try:
+                x = _b64u_decode(entry.get("x"))
+            except ValueError:
+                raise ValueError("jwks key %r has malformed x" % (kid,))
+            if len(x) != 32:
+                raise ValueError("jwks key %r x must be 32 bytes" % (kid,))
+            if kid in keys:
+                raise ValueError("duplicate kid %r in jwks" % (kid,))
+            keys[kid] = x
+        return keys
+
+    def _now_s(self):
+        return int(self._now())
+
+    def _verify_signature(self, signing_input, signature, key):
+        """Verify an Ed25519 signature. The live-path seam: override
+        for non-EdDSA issuers. Returns exact True/False (wave-243)."""
+        return _ed_verify(key, signing_input, signature) is True
+
+    def verify_token(self, token):
+        """Verify the four claims. Returns ``{"iss","sub","exp"}``.
+
+        Refusals: oidc-malformed-token, oidc-ambiguous-subject,
+        oidc-missing-claim, oidc-issuer-mismatch,
+        oidc-audience-mismatch, oidc-token-expired,
+        oidc-signature-invalid. Never raises on hostile input.
+        """
+        # -- token shape ------------------------------------------------
+        if not isinstance(token, str):
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "token must be a string")
+        parts = token.split(".")
+        if len(parts) != _OIDC_JWT_PARTS or not all(parts):
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "token must be three non-empty "
+                                    "dot-separated parts")
+        header_b64, payload_b64, sig_b64 = parts
+        try:
+            header = json.loads(_b64u_decode(header_b64).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "header is not valid JSON")
+        if not isinstance(header, dict):
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "header is not a JSON object")
+        # -- algorithm allowlist (exact; "none" never verifies) ---------
+        if header.get("alg") != _OIDC_JWT_ALG:
+            raise EvidenceCertError(
+                "oidc-signature-invalid",
+                "unsupported alg %r; only %r verifies in-process"
+                % (header.get("alg"), _OIDC_JWT_ALG))
+        kid = header.get("kid")
+        if not isinstance(kid, str) or kid not in self._keys:
+            raise EvidenceCertError("oidc-signature-invalid",
+                                    "unknown or missing kid %r" % (kid,))
+        try:
+            signature = _b64u_decode(sig_b64)
+        except ValueError:
+            raise EvidenceCertError("oidc-signature-invalid",
+                                    "signature is not valid base64url")
+        if len(signature) != 64:
+            raise EvidenceCertError("oidc-signature-invalid",
+                                    "signature must be 64 bytes")
+        # -- signature BEFORE claims (never trust unverified claims) ---
+        signing_input = (header_b64 + "." + payload_b64).encode("ascii")
+        if not self._verify_signature(signing_input, signature,
+                                      self._keys[kid]):
+            raise EvidenceCertError("oidc-signature-invalid",
+                                    "token signature does not verify "
+                                    "against the JWKS key %r" % (kid,))
+        # -- payload shape, duplicate-key detection ----------------------
+        try:
+            payload, dups = _loads_no_dup(
+                _b64u_decode(payload_b64).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError, TypeError):
+            # TypeError is belt-and-braces: _loads_no_dup validates
+            # pair shapes, but this boundary promises never to leak a
+            # non-ceremony exception on hostile input.
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "payload is not valid JSON")
+        if "sub" in dups:
+            raise EvidenceCertError(
+                "oidc-ambiguous-subject",
+                "payload carries duplicate 'sub' claims; the subject "
+                "identity is ambiguous and fails closed")
+        if dups:
+            # Any other duplicate collapses last-wins under a plain
+            # json.loads; fail closed rather than guessing which value
+            # the signer meant.
+            raise EvidenceCertError(
+                "oidc-malformed-token",
+                "payload carries duplicate claims %r" % sorted(dups))
+        # -- claim presence ----------------------------------------------
+        for claim in _OIDC_REQUIRED_CLAIMS:
+            if claim not in payload:
+                raise EvidenceCertError("oidc-missing-claim",
+                                        "token is missing claim %r"
+                                        % (claim,))
+        iss, aud, sub, exp = (payload["iss"], payload["aud"],
+                              payload["sub"], payload["exp"])
+        # -- claim values --------------------------------------------------
+        if not isinstance(iss, str) or not iss:
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "iss must be a non-empty string")
+        if not hmac.compare_digest(iss, self._issuer):
+            raise EvidenceCertError("oidc-issuer-mismatch",
+                                    "token iss %r != expected issuer"
+                                    % (iss,))
+        if isinstance(aud, str):
+            aud_ok = hmac.compare_digest(aud, self._audience)
+        elif isinstance(aud, list) and aud \
+                and all(isinstance(a, str) for a in aud):
+            aud_ok = any(hmac.compare_digest(a, self._audience)
+                         for a in aud)
+        else:
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "aud must be a string or a non-empty "
+                                    "list of strings")
+        if not aud_ok:
+            raise EvidenceCertError("oidc-audience-mismatch",
+                                    "token aud does not include this "
+                                    "ceremony's audience")
+        if not isinstance(sub, str) or not sub:
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "sub must be a non-empty string")
+        if not isinstance(exp, int) or isinstance(exp, bool):
+            raise EvidenceCertError("oidc-malformed-token",
+                                    "exp must be an integer")
+        if self._now_s() > exp + self._skew:
+            raise EvidenceCertError(
+                "oidc-token-expired",
+                "token exp %d is past now + %ds skew"
+                % (exp, self._skew))
+        return {"iss": iss, "sub": sub, "exp": exp}
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +582,13 @@ class EvidenceCA(object):
     floor); a widening or incoherent policy is refused with ValueError
     at construction. When provisioners are configured, ``issue()``
     requires a known ``provisioner`` class -- ambiguity fails closed.
+
+    ``oidc_gate`` is an optional :class:`OidcGate`. When configured,
+    ``issue()`` requires an ``oidc_token``: the verified (iss, sub,
+    exp) claims BECOME the identity assertion (the
+    ``identity_assertion`` argument is ignored on this path) and the
+    certified producer identity -- the verified (iss, sub) pair -- is
+    recorded on the audit attestation as ``producer_identity``.
     """
 
     def __init__(self, *, kms_provider, ca_key_id, ca_public_key,
@@ -311,13 +596,18 @@ class EvidenceCA(object):
                  anchor_reachable, oid_arc,
                  default_lifetime_s=DEFAULT_LIFETIME_S,
                  max_lifetime_s=DEFAULT_MAX_LIFETIME_S,
-                 status_list_url=None, now=None, provisioners=None):
+                 status_list_url=None, now=None, provisioners=None,
+                 claim_public_key=None, oidc_gate=None):
         if not isinstance(kms_provider, KmsProvider):
             raise TypeError("kms_provider must be a gov.kms.KmsProvider")
         kms_provider._validate_key_id(ca_key_id)
         if not isinstance(ca_public_key, (bytes, bytearray)) \
                 or len(ca_public_key) != 32:
             raise ValueError("ca_public_key must be 32 bytes")
+        if claim_public_key is not None and (
+                not isinstance(claim_public_key, (bytes, bytearray))
+                or len(claim_public_key) != 32):
+            raise ValueError("claim_public_key must be 32 bytes or None")
         if not issuers or not all(isinstance(p, str) and p for p in issuers):
             raise ValueError("issuers must be a non-empty list of URL "
                              "patterns")
@@ -341,9 +631,13 @@ class EvidenceCA(object):
             raise ValueError(
                 "max_lifetime_s > 24h requires status_list_url")
         provisioners = _validate_provisioners(provisioners, max_lifetime_s)
+        if oidc_gate is not None and not isinstance(oidc_gate, OidcGate):
+            raise TypeError("oidc_gate must be a gov.evidence_certs.OidcGate")
         self._kms = kms_provider
         self._ca_key_id = ca_key_id
         self._ca_public_key = bytes(ca_public_key)
+        self._claim_public_key = None if claim_public_key is None \
+            else bytes(claim_public_key)
         self._issuers = list(issuers)
         self._approval_lookup = approval_lookup
         self._audit_log_path = audit_log_path
@@ -353,6 +647,7 @@ class EvidenceCA(object):
         self._max_lifetime_s = max_lifetime_s
         self._status_list_url = status_list_url
         self._provisioners = provisioners
+        self._oidc_gate = oidc_gate
         self._now = now or __import__("time").time
 
     def _resolve_provisioner(self, provisioner):
@@ -383,13 +678,31 @@ class EvidenceCA(object):
     def _now_s(self):
         return int(self._now())
 
-    def issue(self, *, identity_assertion, ephemeral_pub, pop_sig,
+    def issue(self, *, identity_assertion=None, ephemeral_pub, pop_sig,
               approval_id, intent_digest, lifetime_s=None,
-              provisioner=None):
+              provisioner=None, producer_authz_claim=None,
+              oidc_token=None):
         """Run the issuance checks in order and mint a certificate.
 
         Returns ``(cert, audit_entry)``. Every refusal raises
         :class:`EvidenceCertError` with its machine code.
+
+        ``producer_authz_claim`` is the optional SLSA-shaped
+        producer-authorization claim (see
+        ``gov.evidence_bundle_v2.issue_producer_claim``): when
+        present it is verified against the CA's ``claim_public_key``
+        (signature, expiry, approval/subject-key join) and embedded
+        byte-identically into the ``evidence-cert-issued`` attestation
+        as ``producer_authz_claim``. A CA with no claim key configured
+        refuses claim-carrying issuance rather than embedding an
+        unverified claim. Deployments that never pass a claim keep the
+        legacy behavior byte-identically.
+
+        When the CA configures an :class:`OidcGate`, ``oidc_token`` is
+        required and the verified (iss, sub, exp) claims become the
+        identity assertion (``identity_assertion`` is ignored on that
+        path). Without a gate, ``identity_assertion`` is required and a
+        presented ``oidc_token`` is refused (never honored).
         """
         now = self._now_s()
 
@@ -402,6 +715,30 @@ class EvidenceCA(object):
                 "KMS provider %r cannot sign; issuance refused rather "
                 "than falling back to a local key"
                 % (self._kms.provider_name,))
+
+        # (1a) OIDC four-claim gate (when configured): the verified
+        # token claims BECOME the identity assertion for the rest of
+        # the lattice. The certified producer identity is the verified
+        # (iss, sub) pair.
+        oidc_verified = False
+        producer_identity = None
+        if self._oidc_gate is not None:
+            if oidc_token is None:
+                raise EvidenceCertError(
+                    "oidc-token-required",
+                    "this CA requires an OIDC token; none was presented")
+            claims = self._oidc_gate.verify_token(oidc_token)
+            identity_assertion = {"iss": claims["iss"],
+                                  "sub": claims["sub"],
+                                  "exp": claims["exp"]}
+            oidc_verified = True
+            producer_identity = {"iss": claims["iss"],
+                                 "sub": claims["sub"]}
+        elif oidc_token is not None:
+            raise EvidenceCertError(
+                "evcert-malformed-request",
+                "oidc_token presented but this CA has no OIDC gate "
+                "configured; the token is refused, never honored")
 
         # (1) request shape
         self._check_shape(identity_assertion, ephemeral_pub, pop_sig,
@@ -474,6 +811,15 @@ class EvidenceCA(object):
                 "subject key id %s already bound to approval %s; "
                 "ephemeral keys are single-use" % (key_id, registry[key_id]
                                                   .get("approval_id")))
+
+        # (5b) producer-authorization claim (SLSA-shaped, optional
+        # seam). The claim binds (producer, scope) to this issuance's
+        # (approval_id, subject_key_id); verify signature, expiry,
+        # and both joins here so the attestation never embeds an
+        # unverified claim. A claim with no claim key configured is
+        # refused -- never embedded on trust.
+        self._check_producer_claim(producer_authz_claim, approval_id,
+                                   key_id, now)
 
         # (6) transparency anchor -- refuse, never bypass
         if not self._anchor_reachable():
@@ -549,7 +895,19 @@ class EvidenceCA(object):
             "subject_key_id": key_id,
             "not_after": not_after,
             "anchor_status": "reachable",
+            "oidc_verified": oidc_verified,
         }
+        if producer_authz_claim is not None:
+            # Byte-identical to the claim verified at (5b): the
+            # attestation is the claim's anchor in the hash-chained
+            # log. The key is absent on the legacy path (no claim),
+            # keeping legacy attestations byte-identical.
+            attestation["producer_authz_claim"] = producer_authz_claim
+        if producer_identity is not None:
+            # The certified producer identity is the verified (iss, sub)
+            # pair -- the application-level authorization half the OIDC
+            # token alone does not establish.
+            attestation["producer_identity"] = producer_identity
         from . import log as _audit_log
         try:
             stored = _audit_log.open_audit_log(
@@ -559,6 +917,88 @@ class EvidenceCA(object):
             _save_registry(reg_path, registry)
             raise
         return cert, stored
+
+    def _check_producer_claim(self, claim, approval_id, key_id, now):
+        """Verify the SLSA-shaped producer-authorization claim at
+        issuance time (defense-in-depth; the claim path in
+        ``gov.evidence_bundle_v2`` re-verifies at submission and at
+        bundle-verify time). ``None`` means the legacy path -- no
+        claim, no check. Refusals are the ``prodauth-*`` codes (they
+        live in the global decision-code taxonomy):
+        ``prodauth-claim-invalid`` (shape, signature, or no claim key
+        configured), ``prodauth-claim-expired``,
+        ``prodauth-claim-mismatch`` (approval/subject-key join).
+
+        The format literals below mirror
+        ``gov.evidence_bundle_v2``'s ``PRODAUTH_*`` constants; this
+        module cannot import them (evidence_bundle_v2 imports
+        evidence_certs).
+        """
+        if claim is None:
+            return None
+        if self._claim_public_key is None:
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "claim-carrying issuance refused: this CA has no "
+                "claim_public_key configured (refusing rather than "
+                "embedding an unverifiable claim)")
+        if not isinstance(claim, dict) \
+                or claim.get("format") != "prodauth-claim.v1" \
+                or not isinstance(claim.get("statement"), dict) \
+                or not isinstance(claim.get("signature"), str):
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "producer claim must be {format: 'prodauth-claim.v1', "
+                "statement: dict, signature: str}")
+        stmt = claim["statement"]
+        if stmt.get("_type") != \
+                "https://sasanam.dev/producer-authorization/v1" \
+                or stmt.get("predicateType") != \
+                "https://sasanam.dev/producer-authorization/" \
+                "predicate/v1":
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "producer claim statement has wrong _type/predicateType")
+        try:
+            sig = base64.b64decode(claim["signature"], validate=True)
+        except ValueError:
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "producer claim signature is not valid base64")
+        if _ed_verify(self._claim_public_key, _canonical_body(stmt),
+                      sig) is not True:
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "producer claim signature does not verify against the "
+                "CA's claim key")
+        pred = stmt.get("predicate")
+        if not isinstance(pred, dict):
+            raise EvidenceCertError(
+                "prodauth-claim-invalid",
+                "producer claim predicate must be a dict")
+        exp = pred.get("expiresAt")
+        if not isinstance(exp, int) or exp <= now:
+            raise EvidenceCertError(
+                "prodauth-claim-expired",
+                "producer claim expired (expiresAt %r <= now %d)"
+                % (exp, now))
+        bound_key = None
+        subjects = stmt.get("subject")
+        if isinstance(subjects, list):
+            for s in subjects:
+                if isinstance(s, dict):
+                    d = s.get("digest")
+                    if isinstance(d, dict) \
+                            and "sasanam-key-id-v1" in d:
+                        bound_key = d["sasanam-key-id-v1"]
+                        break
+        if pred.get("approvalId") != approval_id \
+                or bound_key != key_id:
+            raise EvidenceCertError(
+                "prodauth-claim-mismatch",
+                "producer claim was minted for a different issuance "
+                "(approval/subject-key join failed)")
+        return claim
 
     @staticmethod
     def _check_shape(identity_assertion, ephemeral_pub, pop_sig,

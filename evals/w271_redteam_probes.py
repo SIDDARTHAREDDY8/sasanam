@@ -6,22 +6,33 @@ v2, evidence-cert provisioner classes, and the F252 output-IFC
 issuance-registry closure, plus cross-seam trajectories.
 
 New defects found by this battery (filed 2026-10-01):
-  F253 (LOW)  tool_grant: a refused replayed PoP proof consumes the
-              victim's max_calls budget BEFORE the nonce check refuses
-              it -- captured proofs can be replayed to exhaust a grant.
-  F254 (LOW)  tool_grant: make_pop_proof's default nonce is a digest of
-              (method, uri, now) -- two legitimate proofs minted in the
-              same second are byte-identical, so the second call is
-              refused as ptgrant-jti-reused ("fresh per-call proof"
-              broken by the default).
-  F255 (LOW)  bundle_scan: INST/OBJ/NEWOBJ (protocol 0-2 call opcodes)
-              are not modeled -- a stream that executes attacker code
-              at load via INST is admitted "clean"; the sink rule only
-              fires on REDUCE.
+  F253 (LOW, CLOSED 2026-10-01, wave-272)  tool_grant: a refused replayed
+              PoP proof consumed the victim's max_calls budget BEFORE
+              the nonce check refused it. Closed by moving the nonce
+              replay check above usage consumption in enforce
+              (gov/tool_grant.py); r01 now pins budget-neutrality.
+  F254 (LOW, CLOSED 2026-10-01, wave-272)  tool_grant: make_pop_proof's
+              default nonce was a digest of (method, uri, now) -- two
+              legitimate proofs minted in the same second were
+              byte-identical. Closed by requiring the nonce at mint
+              time (missing/empty raises GrantError ptgrant-pop-invalid;
+              no silent default); r02/r03 now pin the new contract.
+  F255 (LOW, CLOSED 2026-10-01, wave-272)  bundle_scan: INST/OBJ/NEWOBJ
+              (protocol 0-2 call opcodes) were not modeled -- a stream
+              that executes attacker code at load via INST was admitted
+              "clean"; the sink rule fired only on REDUCE. Closed by
+              the gov/bundle_scan.py sink-rule extension (INST/OBJ/
+              NEWOBJ are now call-capable opcodes; the INST opcode
+              argument resolves like a GLOBAL); b01/b02/b03/x02a now
+              HELD as regression pins (b01: flagged advisory MEDIUM,
+              not refused -- builtins.print is not a sink).
 
-The r01/r02/r03/b01/b02/b03/x02a probes demonstrate these breaks and
-are EXPECTED to BREAK until the findings close; at closure they flip
-to HELD (the close-when criteria name the flipped assertions).
+The r01/r02/r03 probes pin the F253/F254 closures (2026-10-01, wave-272
+lane): r01 asserts replays are budget-neutral; r02 asserts minting
+without a nonce is refused; r03 asserts two same-second proofs with
+caller-unique nonces both enforce. The b01/b02/b03/x02a probes flipped
+to HELD at the F255 closure (2026-10-01, wave-272) and now pin that
+closure (the close-when criteria name the flipped assertions).
 
 F252 re-probe: the issuance-registry closure HELD (pinned, not
 re-filed). F251 (session binding at the wrong seam) was not
@@ -77,7 +88,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 # Merge pin: 1411 (wave-270 merge). Counted on QUOTED source literals
 # ("code": '...') -- the bare '"code": ' substring overcounts by 2.
-TAXONOMY_PIN = 1411  # Wave-270 merge: pin 1325 -> 1372 (+47 codes).
+TAXONOMY_PIN = 1443  # Wave-270 merge: pin 1325 -> 1372 (+47 codes).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -118,7 +129,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1411: 1411 unique literals"
+    return "HELD", "taxonomy pin 1443: 1443 unique literals"
 
 
 def _seed(i):
@@ -209,34 +220,44 @@ def r01_replay_burns_budget():
     return "ERROR", "unexpected: %r used %d->%d" % (r2["code"], used1, used2)
 
 
-# --- F254: default nonce collides within the same second --------------
+# --- F254 closure (2026-10-01, wave-272 lane): nonce is required ---------
 
 def r02_default_nonce_collides():
-    """F254: two default proofs in the same second are byte-identical."""
+    """F254 CLOSED: there is no silent deterministic default -- minting
+    without a nonce is a loud refusal (ptgrant-pop-invalid), never a
+    byte-identical same-second proof."""
     grant = _tg_grant([_tg_details()])
-    p1 = _tg_proof(grant)
-    p2 = _tg_proof(grant)
-    if p1 == p2:
-        return ("BREAK",
-                "F254: default proofs identical (nonce=%s); the "
-                "'fresh per-call proof' promise is broken by the "
-                "default" % p1["nonce"])
-    return "HELD", "default proofs differ"
+    try:
+        tool_grant.make_pop_proof(_TG_HOLDER_SEED, grant, method="POST",
+                                  uri=_TG_AUD + "/tools/call", now=_TG_NOW)
+    except tool_grant.GrantError as exc:
+        if getattr(exc, "code", None) == "ptgrant-pop-invalid":
+            return ("HELD",
+                    "minting without nonce refused ptgrant-pop-invalid; "
+                    "no silent same-second collision possible")
+        return "ERROR", "wrong refusal code: %r" % (getattr(exc, "code", None),)
+    return ("BREAK",
+            "F254: minting without nonce silently defaulted -- same-second "
+            "proofs can still be byte-identical")
 
 
 def r03_default_nonce_second_call_refused():
-    """F254 consequence: the 2nd legitimate same-second call is refused
-    as a replay."""
+    """F254 CLOSED: caller-supplied unique nonces make two same-second
+    proofs distinct -- the second legitimate call enforces ptgrant-ok."""
     grant = _tg_grant([_tg_details()])
     store = tool_grant.UsageStore()
-    p1 = _tg_proof(grant)
-    p2 = _tg_proof(grant)
+    p1 = _tg_proof(grant, nonce="r03-unique-1")
+    p2 = _tg_proof(grant, nonce="r03-unique-2")
     r1 = tool_grant.enforce(grant, proof=p1, **_tg_env(store))
     r2 = tool_grant.enforce(grant, proof=p2, **_tg_env(store))
-    if r1["code"] == "ptgrant-ok" and r2["code"] == "ptgrant-jti-reused":
+    if r1["code"] == "ptgrant-ok" and r2["code"] == "ptgrant-ok":
+        return ("HELD",
+                "two same-second proofs with unique caller nonces both "
+                "enforced ptgrant-ok")
+    if r2["code"] == "ptgrant-jti-reused":
         return ("BREAK",
                 "F254: second legitimate call refused ptgrant-jti-reused")
-    return "HELD", "second call: %s" % r2["code"]
+    return "ERROR", "unexpected: r1=%r r2=%r" % (r1["code"], r2["code"])
 
 
 # --- tool_grant holds ---------------------------------------------------
@@ -1243,10 +1264,11 @@ def _green_checks():
 _PROBES = [
     # (id, expected, fn)
     ("pin-taxonomy", "HELD", _pin_check),
-    # tool_grant: F253 + F254 are new breaks; the rest hold.
-    ("r01-replay-burns-budget", "BREAK", r01_replay_burns_budget),
-    ("r02-default-nonce-collides", "BREAK", r02_default_nonce_collides),
-    ("r03-default-nonce-2nd-call-refused", "BREAK",
+    # tool_grant: F253 + F254 are CLOSED (wave-272 lane) -- r01/r02/r03
+    # now pin the closures as HELD; F255 (b01/b02/b03/x02a) still BREAKs.
+    ("r01-replay-burns-budget", "HELD", r01_replay_burns_budget),
+    ("r02-default-nonce-collides", "HELD", r02_default_nonce_collides),
+    ("r03-default-nonce-2nd-call-refused", "HELD",
      r03_default_nonce_second_call_refused),
     ("r04-stale-mandate", "HELD", r04_stale_mandate_version),
     ("r05-unknown-predicate", "HELD", r05_unknown_predicate_refused),
@@ -1269,10 +1291,11 @@ _PROBES = [
     ("c12-no-schema-passthrough", "HELD", c12_no_schema_passthrough),
     ("c13-unknown-approval", "HELD", c13_unknown_approval),
     ("c14-double-resume", "HELD", c14_double_resume),
-    # bundle_scan: F255 breaks b01/b02/b03; the rest hold.
-    ("b01-inst-executes-clean", "BREAK", b01_inst_executes_but_clean),
-    ("b02-inst-sink-clean", "BREAK", b02_inst_sink_admitted),
-    ("b03-obj-sink-not-refused", "BREAK", b03_obj_sink_not_refused),
+    # bundle_scan: F255 closed 2026-10-01 (wave-272): b01 flagged
+    # (advisory, not clean), b02/b03/x02a now refuse; b04-b07 unchanged.
+    ("b01-inst-executes-clean", "HELD", b01_inst_executes_but_clean),
+    ("b02-inst-sink-clean", "HELD", b02_inst_sink_admitted),
+    ("b03-obj-sink-not-refused", "HELD", b03_obj_sink_not_refused),
     ("b04-reduce-sink-refused", "HELD", b04_reduce_sink_refused),
     ("b05-mangled-advisory", "HELD", b05_mangled_getattr_advisory),
     ("b06-truncated", "HELD", b06_truncated_malformed),
@@ -1299,7 +1322,7 @@ _PROBES = [
     ("f03-issued-control", "HELD", f03_issued_grant_exercises),
     # cross-seam
     ("x01-grant-without-approval", "HELD", x01_grant_without_approval),
-    ("x02a-inst-payload-admitted", "BREAK", x02a_inst_payload_admitted),
+    ("x02a-inst-payload-admitted", "HELD", x02a_inst_payload_admitted),
     ("x02b-reduce-payload-refused", "HELD", x02b_reduce_payload_refused),
     ("x03a-wrong-session", "HELD", x03a_presentation_wrong_session),
     ("x03b-stale-presentation", "HELD",

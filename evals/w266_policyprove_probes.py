@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 
 _IMPL = os.environ.get("GOV_POLICYPROVE_IMPL",
                         "gov.policy_change_containment")
@@ -426,7 +426,7 @@ def p_taxonomy_pin():
         return (False, "CODES=%r" % (codes,))
     if codes != sorted(codes):
         return (False, "CODES not alphabetical")
-    if TAXONOMY_PIN != 1411:
+    if TAXONOMY_PIN != 1443:
         return (False, "battery pin drift")
     return (True, "7 policy-* codes, alphabetical, pin 1212")
 

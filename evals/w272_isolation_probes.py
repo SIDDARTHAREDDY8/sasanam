@@ -1,0 +1,395 @@
+"""Wave-272 isolation audit battery: enforcement-path isolation guarantees.
+
+Audits gov/gate_hardening.py (wave-271) against a MALICIOUS in-process
+predicate threat model. The module documents its honest limit:
+"in-process Python predicates are trusted code; fresh discarded runtime
+is API-level discipline, not WASM-grade memory isolation."
+
+This battery pins the claimed guarantees (probes i01-i08, i13: must be
+HELD) and demonstrates where claimed guarantees break under a hostile
+predicate (probes i09-i12: BREAK -> filed as F256/F257/F258). Probes
+x01/x02 are informational: they demonstrate the DOCUMENTED trust
+boundary (predicates are trusted code), not violations.
+
+Deterministic: explicit now/clock everywhere. Module-level staging
+default. Depth-1 green check honoring GOV_SKIP_GREEN. No in-repo git
+subprocesses. Fresh /var/tmp/g272* TMPDIRs.
+"""
+
+import os
+import sys
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from gov import gate_hardening as gh  # noqa: E402
+
+TAXONOMY_PIN = 1443  # base 0a90e4f; this lane adds no codes
+
+NOW = 1700000000
+
+
+def _gate(**kw):
+    kw.setdefault("global_deadline_s", 60.0)
+    kw.setdefault("now", lambda: NOW)
+    return gh.Gate(**kw)
+
+
+def _policy(predicate, policy_id="p", deadline_s=None, callbacks=()):
+    return gh.compile_policy({
+        "policy_id": policy_id,
+        "predicate_name": getattr(predicate, "__name__", "p"),
+        "predicate": predicate,
+        "deadline_s": deadline_s,
+        "host_callbacks": list(callbacks),
+    })
+
+
+class _Clock(object):
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, dt):
+        self.t += dt
+
+
+RESULTS = []
+
+
+def probe(name, fn):
+    try:
+        held, detail = fn()
+    except Exception as e:  # noqa: BLE001
+        RESULTS.append((name, "ERROR", "harness error: %r" % (e,)))
+        return
+    RESULTS.append((name, "HELD" if held else "BREAK", detail))
+
+
+# ---------------------------------------------------------------------------
+# Claimed guarantees: must be HELD
+# ---------------------------------------------------------------------------
+
+def i01_callback_denied():
+    def pred(rt):
+        rt.host_callback("evil-cb")
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    v = g.evaluate({"request_id": "r1"})
+    held = (v["allowed"] is False
+            and v["code"] == "gatehard-host-callback-denied")
+    return held, "verdict=%s" % (v["code"],)
+
+
+def i02_callback_allowed():
+    seen = {}
+
+    def pred(rt):
+        seen["out"] = rt.host_callback("ok-cb", "arg1")
+        return True
+
+    g = _gate(host_allowlist=frozenset({"ok-cb"}))
+    g.register_policy(_policy(pred, callbacks=["ok-cb"]))
+    v = g.evaluate({"request_id": "r1"})
+    held = v["allowed"] is True and seen.get("out") == "cb:ok-cb:arg1"
+    return held, "allowed=%s out=%r" % (v["allowed"], seen.get("out"))
+
+
+def i03_deadline_deny():
+    clock = _Clock()
+
+    def pred(rt):
+        clock.advance(20.0)
+        return True
+
+    g = _gate(global_deadline_s=10.0, clock=clock)
+    g.register_policy(_policy(pred))
+    v = g.evaluate({"request_id": "r1"})
+    held = (v["allowed"] is False
+            and v["code"] == "gatehard-gate-timeout")
+    return held, "verdict=%s" % (v["code"],)
+
+
+def i04_error_deny():
+    def pred(rt):
+        raise ValueError("boom")
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    v = g.evaluate({"request_id": "r1"})
+    held = (v["allowed"] is False
+            and v["code"] == "gatehard-gate-error")
+    return held, "verdict=%s" % (v["code"],)
+
+
+def i05_ctx_fresh():
+    ids = []
+
+    def pred(rt):
+        ids.append(id(rt.ctx))
+        rt.ctx["scratch"] = "x"
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    g.evaluate({"request_id": "r1"})
+    g.evaluate({"request_id": "r2"})
+    held = len(ids) == 2 and ids[0] != ids[1]
+    return held, "ctx ids distinct=%s" % (ids[0] != ids[1],)
+
+
+def i06_no_runtime_retained():
+    def pred(rt):
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    g.evaluate({"request_id": "r1"})
+    held = g._runtime_after_eval_is_none() is True
+    return held, "_last_runtime is None=%s" % held
+
+
+def i07_shallow_top_level():
+    def pred(rt):
+        rt.request["injected"] = True
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    caller = {"request_id": "r1"}
+    g.evaluate(caller)
+    held = "injected" not in caller
+    return held, "caller top-level unmutated=%s" % held
+
+
+def i08_private_callback_path():
+    def pred(rt):
+        rt._host_callback("evil-cb")
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    v = g.evaluate({"request_id": "r1"})
+    held = (v["allowed"] is False
+            and v["code"] == "gatehard-host-callback-denied")
+    return held, "private path still allowlisted, verdict=%s" % v["code"]
+
+
+def i13_scan_readonly():
+    def pred(rt):
+        return rt.request.get("request_id") != "deny-me"
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    g.evaluate({"request_id": "warm"})
+    before = len(g.audit_log())
+    out = g.scan([{"request_id": "deny-me"}, {"request_id": "ok-1"}])
+    after = len(g.audit_log())
+    held = (before == after
+            and out[0]["request_id"] == "deny-me"
+            and out[0] == {"request_id": "deny-me", "would": "deny",
+                           "code": "gatehard-policy-denied"}
+            and out[1]["would"] == "allow")
+    return held, "audit %d->%d, deterministic order=%s" % (
+        before, after, out[0]["request_id"] == "deny-me")
+
+
+# ---------------------------------------------------------------------------
+# Claimed-guarantee violations under a hostile predicate -> findings
+# ---------------------------------------------------------------------------
+
+def i09_systemexit_escapes():
+    def pred(rt):
+        raise SystemExit(3)
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    try:
+        g.evaluate({"request_id": "r1"})
+    except SystemExit:
+        return False, "SystemExit propagated out of evaluate() (F256)"
+    except BaseException as e:  # noqa: BLE001
+        return False, "BaseException %r propagated (F256)" % (e,)
+    return True, "evaluate() contained SystemExit"
+
+
+def i10_keyboardinterrupt_escapes():
+    def pred(rt):
+        raise KeyboardInterrupt()
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    try:
+        g.evaluate({"request_id": "r1"})
+    except KeyboardInterrupt:
+        return False, "KeyboardInterrupt propagated out of evaluate() (F256)"
+    except BaseException as e:  # noqa: BLE001
+        return False, "BaseException %r propagated (F256)" % (e,)
+    return True, "evaluate() contained KeyboardInterrupt"
+
+
+def i11_audit_unbounded():
+    def pred(rt):
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    for i in range(5000):
+        g.evaluate({"request_id": "r%d" % i})
+    n = len(g.audit_log())
+    # No bound exists: every evaluation appends; a deployment under
+    # request volume grows memory without limit.
+    held = n < 5000
+    return held, "audit entries after 5000 evals: %d (F257)" % n
+
+
+def i12_nested_aliasing():
+    def pred(rt):
+        rt.request["nested"]["k"] = "pwned"
+        return True
+
+    g = _gate()
+    g.register_policy(_policy(pred))
+    caller = {"request_id": "r1", "nested": {"k": "v"}}
+    g.evaluate(caller)
+    held = caller["nested"]["k"] == "v"
+    return held, "caller nested value=%r (F258)" % caller["nested"]["k"]
+
+
+# ---------------------------------------------------------------------------
+# Informational: documented trust boundary, not findings
+# ---------------------------------------------------------------------------
+
+def x01_closure_gate_escape():
+    """Predicate closing over the gate object can demote/alter it.
+    The module documents predicates as trusted code; this demonstrates
+    the boundary is API-level, not isolation."""
+    box = {}
+
+    def pred(rt):
+        box["gate"].demote_to_monitor(reason="pwned")
+        return True
+
+    g = _gate()
+    box["gate"] = g
+    g.register_policy(_policy(pred))
+    g.evaluate({"request_id": "r1"})
+    escaped = (g.mode == "monitor")
+    return (not escaped), \
+        "closure reached gate, mode=%s (documented trust boundary)" % g.mode
+
+
+def x02_clock_tamper():
+    """Predicate monkeypatching the clock module-globally defeats the
+    deadline budget. Trusted-code assumption; subprocess isolation
+    would fix it."""
+    import time as _time
+
+    real = _time.monotonic
+
+    def pred(rt):
+        _time.monotonic = lambda: 0.0  # noqa: E731
+        try:
+            return True
+        finally:
+            _time.monotonic = real
+
+    g = _gate(global_deadline_s=0.001)  # real clock, not injected
+    g.register_policy(_policy(pred))
+    v = g.evaluate({"request_id": "r1"})
+    tampered = _time.monotonic is real and v["allowed"] is True
+    return (not tampered), \
+        "global clock tamper defeated deadline, allowed=%s" % v["allowed"]
+
+
+def c_pin_check():
+    import re
+    src = open(os.path.join(os.path.dirname(__file__), "..",
+                            "gov", "decision_codes.py")).read()
+    codes = re.findall(r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
+    held = (len(codes) == TAXONOMY_PIN and len(set(codes)) == TAXONOMY_PIN)
+    return held, "%d/%d unique, pin %d" % (len(codes), len(set(codes)),
+                                           TAXONOMY_PIN)
+
+
+def green_check():
+    """Depth-1: adjacent battery + unit suite with GOV_SKIP_GREEN=1."""
+    if os.environ.get("GOV_SKIP_GREEN") == "1":
+        return True, "skipped (GOV_SKIP_GREEN=1)"
+    root = os.path.join(os.path.dirname(__file__), "..")
+    env = dict(os.environ)
+    env["GOV_SKIP_GREEN"] = "1"
+    tmp = tempfile.mkdtemp(prefix="g272-green-")
+    env["TMPDIR"] = tmp
+    env["GOV_RUN_ROOT"] = tmp
+    py = sys.executable
+    ok = True
+    notes = []
+    for cmd in (
+        [py, "evals/w271_gatehard_probes.py"],
+        [py, "-m", "unittest", "tests.test_gate_hardening", "-v"],
+    ):
+        r = subprocess.run(cmd, cwd=root, env=env, capture_output=True,
+                           text=True, timeout=600)
+        good = (r.returncode == 0)
+        ok = ok and good
+        notes.append("%s rc=%d" % (" ".join(cmd[-1:]), r.returncode))
+    return ok, "; ".join(notes)
+
+
+def info(name, fn):
+    try:
+        _, detail = fn()
+    except Exception as e:  # noqa: BLE001
+        RESULTS.append((name, "ERROR", "harness error: %r" % (e,)))
+        return
+    RESULTS.append((name, "INFO", detail))
+
+
+def main():
+    for name, fn in [
+        ("i01-callback-denied", i01_callback_denied),
+        ("i02-callback-allowed", i02_callback_allowed),
+        ("i03-deadline-deny", i03_deadline_deny),
+        ("i04-error-deny", i04_error_deny),
+        ("i05-ctx-fresh", i05_ctx_fresh),
+        ("i06-no-runtime-retained", i06_no_runtime_retained),
+        ("i07-shallow-top-level", i07_shallow_top_level),
+        ("i08-private-callback-path", i08_private_callback_path),
+        ("i13-scan-readonly", i13_scan_readonly),
+        ("i09-systemexit-escapes", i09_systemexit_escapes),
+        ("i10-keyboardinterrupt-escapes", i10_keyboardinterrupt_escapes),
+        ("i11-audit-unbounded", i11_audit_unbounded),
+        ("i12-nested-aliasing", i12_nested_aliasing),
+        ("c-pin-check", c_pin_check),
+    ]:
+        probe(name, fn)
+    for name, fn in [
+        ("x01-closure-gate-escape", x01_closure_gate_escape),
+        ("x02-clock-tamper", x02_clock_tamper),
+    ]:
+        info(name, fn)
+    held_n = sum(1 for _, s, _ in RESULTS if s == "HELD")
+    break_n = sum(1 for _, s, _ in RESULTS if s == "BREAK")
+    err_n = sum(1 for _, s, _ in RESULTS if s == "ERROR")
+    print("== w272 isolation audit ==")
+    for name, status, detail in RESULTS:
+        print("%-34s %-6s %s" % (name, status, detail))
+    g_held, g_detail = green_check()
+    print("green-check: %s (%s)" % ("HELD" if g_held else "BREAK", g_detail))
+    print("RESULT %s: %d HELD / %d BREAK / %d ERROR (+green %s)" % (
+        "OK" if err_n == 0 and g_held else "FAIL",
+        held_n, break_n, err_n, "HELD" if g_held else "BREAK"))
+    return 0 if (err_n == 0 and g_held) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

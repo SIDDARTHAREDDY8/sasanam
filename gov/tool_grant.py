@@ -72,7 +72,7 @@ _PROOF_SKEW_S = 60
 _MAX_LIFETIME_S = 3600
 
 # ---------------------------------------------------------------------------
-# Decision codes (ptgrant domain; merged taxonomy pin 1411)
+# Decision codes (ptgrant domain; merged taxonomy pin 1443)
 # ---------------------------------------------------------------------------
 
 PTGRANT_CODES = [
@@ -592,9 +592,21 @@ def _check_attenuation(grant, holder_pub):
 # ---------------------------------------------------------------------------
 
 def make_pop_proof(seed, grant, *, method, uri, now, nonce=None):
-    """Mint a per-call proof of possession bound to the grant's digest."""
+    """Mint a per-call proof of possession bound to the grant's digest.
+
+    ``nonce`` must be a non-empty string that is unique per call. There
+    is no silent default: omitting it (or passing a non-string/empty
+    value) is a loud ``ptgrant-pop-invalid`` refusal, never a digest
+    fallback. This module is deterministic ("never randomness"), and a
+    digest of (method, uri, now) collides within the same second -- two
+    byte-identical proofs, the second legitimate call falsely refused as
+    a replay (F254). The caller supplies per-call uniqueness.
+    """
     if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
         raise GrantError("ptgrant-grant-malformed", "seed must be 32 bytes")
+    if not isinstance(nonce, str) or not nonce:
+        raise GrantError("ptgrant-pop-invalid",
+                         "nonce is required and must be a non-empty string")
     seed = bytes(seed)
     body = grant["body"]
     digest = hashlib.sha256(_canonical(body)).hexdigest()
@@ -604,8 +616,7 @@ def make_pop_proof(seed, grant, *, method, uri, now, nonce=None):
         "method": method,
         "uri": uri,
         "iat": now,
-        "nonce": nonce if isinstance(nonce, str) and nonce else
-        hashlib.sha256(_canonical([method, uri, now])).hexdigest()[:16],
+        "nonce": nonce,
         "pub": _b64(ed25519.publickey(seed)),
     }
     proof["sig"] = _b64(ed25519.sign(seed, _canonical(proof)))
@@ -680,7 +691,7 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     Check order: shape/signature -> registry pin (v2, opt-in) -> issuer ->
     aud -> time -> PoP/cnf -> mandate version -> detail selection ->
     request context (v2, opt-in) -> arg_bounds -> attenuation ->
-    supply chain -> budget.
+    supply chain -> nonce replay -> budget.
 
     v2 kwargs are backward-compatible: with the defaults (``request_context``
     unset, ``check_registry_pin`` False) behavior is byte-identical to v1.
@@ -855,19 +866,22 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
             return _deny("ptgrant-attenuation-invalid",
                          "caveat max_calls exceeds grant", checked)
         max_calls = budget["max_calls"]
-    consumed, remaining = usage_store.consume(body["jti"], max_calls)
-    if not consumed:
-        checked.append("budget:exhausted")
-        return _deny("ptgrant-max-calls-exhausted",
-                     "call budget exhausted for grant %r" % (body["jti"],), checked)
-    checked.append("budget:ok")
-
+    # F253: the nonce replay check runs BEFORE usage consumption. A proof
+    # refused as ptgrant-jti-reused is budget-neutral -- a captured proof
+    # replayed N times cannot drain the victim grant's max_calls.
     nonce = proof.get("nonce") if isinstance(proof, dict) else None
     if isinstance(nonce, str) and usage_store.seen_nonce(body["jti"], nonce):
         checked.append("proof:replayed")
         return _deny("ptgrant-jti-reused",
                      "proof nonce already presented for this grant", checked)
     checked.append("proof:fresh")
+
+    consumed, remaining = usage_store.consume(body["jti"], max_calls)
+    if not consumed:
+        checked.append("budget:exhausted")
+        return _deny("ptgrant-max-calls-exhausted",
+                     "call budget exhausted for grant %r" % (body["jti"],), checked)
+    checked.append("budget:ok")
 
     return {"ok": True, "code": "ptgrant-ok",
             "detail": "grant authorizes %r with %d call(s) remaining" % (ident, remaining),

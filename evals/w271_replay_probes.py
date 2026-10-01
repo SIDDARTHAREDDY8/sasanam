@@ -37,7 +37,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 MANIFEST_FORMAT = "sasanam-replay-manifest/v1"
 GENESIS = "00" * 32  # 64 hex chars, like the module's GENESIS_HASH
 NOW = 1790960000  # fixed test clock (2026-10-02-ish)
-PIN = 1411  # lane-local taxonomy pin (merge coordinator repoints globally)
+PIN = 1443  # lane-local taxonomy pin (merge coordinator repoints globally)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
@@ -473,7 +473,7 @@ def _c_artifact(mod):
     return ("HELD", "manifest wraps as a v2 evidence artifact")
 
 
-@probe("pin/taxonomy-1411", "control")
+@probe("pin/taxonomy-1443", "control")
 def _c_pin(mod):
     import re as _re
     src = open(os.path.join(_REPO, "gov", "decision_codes.py")).read()
@@ -490,7 +490,7 @@ def _c_pin(mod):
                  "replay-unverifiable-tool-digest")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 7 and once:
-        return ("HELD", "1411 literals, unique, 0 dups, 7 new exactly once")
+        return ("HELD", "1443 literals, unique, 0 dups, 7 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

@@ -13,7 +13,7 @@ tests pin contracts the battery exercises end to end:
   - negative-evidence links carry tool_dispatched False
   - terminology: "replay manifest", never "replay" unqualified
 
-TAXONOMY_PIN = 1411 -- wave-271 merge pin; the merge coordinator repoints it globally.
+TAXONOMY_PIN = 1443 -- wave-272 merge pin (1443 + 32 codes).
 """
 
 import json
@@ -22,7 +22,7 @@ import unittest
 from gov import decision_codes
 from gov import replay_manifest as rm
 
-TAXONOMY_PIN = 1411  # Wave-271 merge: pin 1372 -> 1411 (+39 codes).
+TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes).
 
 NOW = 1790960000
 

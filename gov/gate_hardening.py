@@ -256,6 +256,16 @@ class Gate(object):
     def audit_log(self):
         return list(self._audit)
 
+    def policy_digest(self):
+        """Digest identifying the registered policy set (wave-272).
+
+        Pure and additive: the sha256 of the canonical sorted list of
+        compiled-policy digests. ``gov.drift_report`` carries this on
+        every drift event so a policy change between baseline and
+        rescan is visible ON the events."""
+        return hashlib.sha256(_canonical(
+            sorted(self._policies.keys()))).hexdigest()
+
     def _runtime_after_eval_is_none(self):
         return self._last_runtime is None
 
