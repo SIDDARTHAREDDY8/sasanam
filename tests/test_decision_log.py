@@ -361,7 +361,7 @@ class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1063)  # Wave-257 merge: pin -> 1063.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1064)  # Wave-258 merge: pin -> 1064.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
         for code in ("decision-log-malformed",
                      "decision-log-request-mismatch",

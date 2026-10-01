@@ -170,7 +170,7 @@ class TaxonomyPinTest(unittest.TestCase):
         # codes), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1063)  # Wave-257 merge: pin -> 1063.
+        self.assertEqual(len(dc.TAXONOMY), 1064)  # Wave-258 merge: pin -> 1064.
         for code in ("posture-card-malformed",
                      "posture-card-unverifiable",
                      "posture-card-unknown-track"):

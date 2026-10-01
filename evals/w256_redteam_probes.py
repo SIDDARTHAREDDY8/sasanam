@@ -37,7 +37,7 @@ from gov import inventory_catalog as ic  # noqa: E402
 from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 
-TAXONOMY_PIN = 1063  # Wave-257 merge: pin -> 1063.
+TAXONOMY_PIN = 1064  # Wave-258 merge: pin -> 1064.
 
 _PROBES = []
 
@@ -693,9 +693,9 @@ def _p_f218():
 # ---------------------------------------------------------------------------
 
 def main():
-    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (  # Wave-257 merge: pin -> 1063.
+    assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (  # Wave-258 merge: pin -> 1064.
         "taxonomy pin: expected %d, got %d"
-        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))  # Wave-257 merge: pin -> 1063.
+        % (TAXONOMY_PIN, len(decision_codes.TAXONOMY)))  # Wave-258 merge: pin -> 1064.
     held, broken, errors = 0, 0, 0
     for name, fn in _PROBES:
         try:

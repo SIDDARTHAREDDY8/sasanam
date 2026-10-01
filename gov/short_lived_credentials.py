@@ -39,7 +39,10 @@ code (``short-lived-credential-unknown``): id-existence is not
 leaked.
 
 Wall-clock expiry uses ``time.time()``; ``now`` is an injectable
-parameter on the read paths so tests are deterministic. Clock skew
+parameter on the read paths so tests are deterministic. ``now``
+must be a finite number (non-numeric, bool, NaN, and inf are
+refused machine-coded); a past numeric ``now`` is honored by
+design -- the caller is the trusted deployment. Clock skew
 between issuer and verifier is deployment-owned.
 """
 
@@ -47,6 +50,7 @@ import copy
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import time
@@ -169,6 +173,28 @@ def _secret_binding(key, credential_id, secret):
         hashlib.sha256).hexdigest()
 
 
+# The dummy comparison target for the unknown-id refusal path (F223):
+# same length as a hex sha256 digest so compare_digest is
+# constant-time against it, and a fixed value the caller cannot
+# influence.
+_DUMMY_BINDING = "0" * 64
+
+
+def _dummy_binding_check(key, credential_id, secret):
+    """Equivalent dummy HMAC work for the unknown-id refusal path.
+
+    The secret-mismatch path in verify() runs one _secret_binding
+    HMAC plus one compare_digest before refusing; this runs the
+    same work on the unknown-id path so the two refusal paths are
+    timing-indistinguishable within noise. The API-level claim
+    (shared refusal code) already held; this closes the timing
+    level. Honest residual: dummy work is not a panacea --
+    microarchitectural channels are out of scope for this layer.
+    """
+    expect = _secret_binding(key, credential_id, secret or "")
+    hmac.compare_digest(expect, _DUMMY_BINDING)
+
+
 # ---------------------------------------------------------------------------
 # Key resolution + input validation
 # ---------------------------------------------------------------------------
@@ -229,6 +255,33 @@ def _validate_scope(scope, allow_wildcard_scope):
             SCOPE_FORBIDDEN_CODE,
             "wildcard scope %r is refused by default" % scope)
     return scope
+
+
+def _validate_now(now):
+    """Validate the injectable wall-clock hook.
+
+    ``None`` means "use time.time()". Otherwise ``now`` must be a
+    finite int/float unix-epoch value. A bool is refused even
+    though it is an int subclass -- it carries no timestamp
+    semantics. Non-finite values are refused: a NaN ``now`` would
+    silently never trigger expiry (``nan >= expires_at`` is
+    False), and an inf ``now`` would silently force expiry. The
+    caller is the trusted deployment, so a PAST numeric ``now``
+    is honored by design (documented test hook, pinned by the
+    credentials/past-now-is-test-hook probe).
+    """
+    if now is None:
+        return time.time()
+    if isinstance(now, bool) or not isinstance(now, (int, float)):
+        raise CredentialRefusal(
+            MALFORMED_CODE,
+            "now must be a unix-epoch number, got %s"
+            % type(now).__name__)
+    if math.isnan(now) or math.isinf(now):
+        raise CredentialRefusal(
+            MALFORMED_CODE,
+            "now must be a finite unix-epoch number")
+    return now
 
 
 def _utcnow_iso():
@@ -410,6 +463,12 @@ class CredentialIssuer:
         """
         st = self._states.get(credential_id)
         if st is None or st.get("status") == "unknown":
+            # F223: the secret-mismatch path below performs one
+            # _secret_binding HMAC plus a compare_digest before
+            # refusing; run equivalent dummy work here first so the
+            # two refusal paths are timing-indistinguishable
+            # within noise.
+            _dummy_binding_check(self._key, credential_id, secret)
             raise CredentialRefusal(
                 UNKNOWN_CODE,
                 "no such credential %r" % (credential_id,))
@@ -434,7 +493,7 @@ class CredentialIssuer:
                 SCOPE_FORBIDDEN_CODE,
                 "credential %r is not bound to scope %r"
                 % (credential_id, scope))
-        at = time.time() if now is None else now
+        at = _validate_now(now)
         if at >= st["expires_at"]:
             if st["status"] == "active":
                 self._append_event(credential_id, CRED_EXPIRED, {
@@ -468,7 +527,7 @@ class CredentialIssuer:
 
     def expire_due(self, now=None):
         """Journal CRED_EXPIRED for every active credential past TTL."""
-        at = time.time() if now is None else now
+        at = _validate_now(now)
         count = 0
         for cid, st in list(self._states.items()):
             if st.get("status") == "active" and at >= st["expires_at"]:

@@ -9,7 +9,7 @@ Contracts pinned here:
   envelope-version-unknown.
 * journal carries digests only -- never plaintext, never key material.
 * fresh envelope key per seal (ciphertexts differ).
-* taxonomy pin 1063.
+* taxonomy pin 1064.
 """
 
 import hashlib
@@ -35,8 +35,8 @@ class EnvelopeContracts(unittest.TestCase):
                 for i in range(n)]
 
     def test_taxonomy_pin(self):
-        # Wave-257 merge: pin -> 1063.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1063)
+        # Wave-258 merge: pin -> 1064.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1064)
         for c in ("envelope-malformed", "envelope-open-refused",
                   "envelope-recipient-refused", "envelope-seal-refused",
                   "envelope-version-unknown"):

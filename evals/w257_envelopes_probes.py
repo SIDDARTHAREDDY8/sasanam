@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1063  # Wave-257 merge: pin -> 1063.
+TAXONOMY_PIN = 1064  # Wave-258 merge: pin -> 1064.
 
 try:
     from gov import decision_codes
@@ -33,7 +33,7 @@ except ImportError:
     HAVE_MODULE = False
 
 if HAVE_MODULE:
-    # Wave-257 merge: pin -> 1063.
+    # Wave-258 merge: pin -> 1064.
     assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, \
         "taxonomy drift: %d != %d" % (len(decision_codes.TAXONOMY),
                                       TAXONOMY_PIN)

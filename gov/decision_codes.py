@@ -3661,6 +3661,14 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'evidence-quality-empty-evidence': {
+        "domain": 'evidence-quality',
+        "code": 'evidence-quality-empty-evidence',
+        "human": 'evidence quality: the evidence under evaluation is empty; a vacuous gate must never pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'attestation'],
+        "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
+    },
     'evidence-quality-evidence-malformed': {
         "domain": 'evidence-quality',
         "code": 'evidence-quality-evidence-malformed',

@@ -26,11 +26,29 @@ Fail-closed evaluation:
     (refusal, never a silent skip).
   - Malformed expectation shape/kwargs -> evidence-quality-malformed.
   - Malformed evidence shape -> evidence-quality-evidence-malformed.
+  - Empty evidence -> evidence-quality-empty-evidence (refusal).
+    This is the dual of the empty-expectation rule: a vacuous gate
+    must never pass, on either axis.
   - An empty expectation list is refused: a vacuous gate must never
     pass.
   - An internal evaluator error on one expectation becomes a FAILED
     result with exception_info -- never a silent pass, never a
     whole-batch crash. The gate then refuses (fail-closed).
+  - F220/F221: nesting depth is bounded iteratively (200, the shared
+    F218/F219 contract) BEFORE any deepcopy, and every deepcopy is
+    guarded -- raw TypeError/RecursionError from hostile caller
+    objects becomes a machine-coded refusal, never a raw escape.
+
+Design decision (F222): empty evidence is REFUSED, not scored as
+per-expectation FAILED results. The finding allowed either; refusal
+was chosen because (a) it is the same anti-vacuity principle the
+module already applies to empty expectation lists, (b) "no evidence
+presented" is a pipeline-outage signal, a distinct and louder state
+than "evidence checked and failed", and (c) FAILED results with
+zero items evaluated could be misread as benign. An auditor seeing
+evidence-quality-empty-evidence knows the pipeline dropped
+everything; an auditor seeing FAILED results knows checks ran and
+found problems.
 
 Composition with the compliance emitter:
   - emit_with_quality_gate(source, fmt, expectations, evidence, ...)
@@ -71,10 +89,79 @@ EXPECTATION_TYPES = (
 
 MALFORMED = "evidence-quality-malformed"
 EVIDENCE_MALFORMED = "evidence-quality-evidence-malformed"
+EMPTY_EVIDENCE = "evidence-quality-empty-evidence"
 UNKNOWN_EXPECTATION = "evidence-quality-unknown-expectation"
 GATE_FAILED = "evidence-quality-gate-failed"
 
 _EXPORT_MODULE = "gov/evidence_quality.py"
+
+
+# ---------------------------------------------------------------------------
+# Nesting-depth and deepcopy guards (F220/F221)
+# ---------------------------------------------------------------------------
+
+# Real evidence items and expectation metadata are flat (depth < 10 in
+# the existing suites); nothing legitimate approaches this bound. One
+# shared contract across seams: F218 (permit journal), F219
+# (approval policy), F220/F221 (this module).
+_MAX_NESTING_DEPTH = 200
+
+
+def _nesting_depth(obj):
+    """Iterative nesting depth of dict/list/tuple containers.
+
+    Never recurses (an explicit stack), so a hostile deeply-nested
+    input cannot blow the interpreter stack here. Cycle-safe via a
+    seen-set: a cyclic input is reported at its first-repeat depth
+    and is refused by the caller's bound check.
+    """
+    max_depth = 0
+    seen = set()
+    stack = [(obj, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if depth > max_depth:
+            max_depth = depth
+        if isinstance(current, dict):
+            children = current.values()
+        elif isinstance(current, (list, tuple)):
+            children = current
+        else:
+            continue
+        for child in children:
+            if isinstance(child, (dict, list, tuple)):
+                stack.append((child, depth + 1))
+    return max_depth
+
+
+def _check_depth(obj, code, what):
+    """Fail closed before any deepcopy (F221): deepcopy recurses, so
+    the bound must be enforced on the caller's object first."""
+    if _nesting_depth(obj) > _MAX_NESTING_DEPTH:
+        _refuse(code, "%s nesting depth exceeds the %d bound"
+                % (what, _MAX_NESTING_DEPTH))
+
+
+def _safe_deepcopy(obj, code, what):
+    """Deep-copy caller input, mapping raw stdlib failures to machine
+    codes.
+
+    F220: deepcopy-hostile caller objects (e.g. threading.Lock)
+    escape raw TypeError from copy.deepcopy; the machine-code
+    contract requires an evidence-quality-* refusal instead.
+    F221: the defensive except RecursionError (the iterative depth
+    bound above is the primary defense).
+    """
+    try:
+        return copy.deepcopy(obj)
+    except RecursionError:
+        _refuse(code, "%s too deeply nested for a safe copy" % (what,))
+    except (TypeError, ValueError, AttributeError, copy.Error):
+        _refuse(code, "%s is not a copyable plain-data shape"
+                % (what,))
 
 
 class EvidenceQualityError(Exception):
@@ -178,7 +265,12 @@ def _normalize_kwargs(exp_type, kwargs):
                 kwargs, "items_field", "items", exp_type),
             "ref_field": _kw_str(
                 kwargs, "ref_field", "artifact_ref", exp_type),
-            "artifacts": copy.deepcopy(kwargs["artifacts"]),
+            # F220: guarded -- a deepcopy-hostile artifact value must
+            # refuse evidence-quality-malformed, never escape raw
+            # TypeError.
+            "artifacts": _safe_deepcopy(
+                kwargs["artifacts"], MALFORMED,
+                "expect_bundle_complete kwarg 'artifacts'"),
         }
     if exp_type == "expect_fields_present":
         allowed = {"required_fields"}
@@ -233,7 +325,11 @@ def validate_expectation(expectation):
     meta = expectation.get("meta", {})
     if not isinstance(meta, dict):
         _refuse(MALFORMED, "expectation meta must be a dict")
-    normalized["meta"] = copy.deepcopy(meta)
+    # F220/F221: guarded deepcopy -- hostile meta refuses
+    # evidence-quality-malformed, never escapes raw TypeError or
+    # RecursionError.
+    normalized["meta"] = _safe_deepcopy(
+        meta, MALFORMED, "expectation meta")
     return normalized
 
 
@@ -249,6 +345,10 @@ def _require_item_list(evidence, exp_type):
         if not isinstance(item, dict):
             _refuse(EVIDENCE_MALFORMED,
                     "%s: evidence item %d is not a dict" % (exp_type, i))
+    if len(evidence) == 0:
+        _refuse(EMPTY_EVIDENCE,
+                "%s: evidence is empty; a vacuous gate must never "
+                "pass" % (exp_type,))
     return evidence
 
 
@@ -265,6 +365,10 @@ def _require_bundle(evidence, exp_type, items_field):
         if not isinstance(item, dict):
             _refuse(EVIDENCE_MALFORMED,
                     "%s: bundle item %d is not a dict" % (exp_type, i))
+    if len(items) == 0:
+        _refuse(EMPTY_EVIDENCE,
+                "%s: bundle has no items; a vacuous gate must never "
+                "pass" % (exp_type,))
     return items
 
 
@@ -428,8 +532,16 @@ def evaluate(expectations, evidence):
     if not isinstance(expectations, list) or not expectations:
         _refuse(MALFORMED,
                 "expectations must be a non-empty list")
+    # F221: bound nesting BEFORE any deepcopy -- deepcopy recurses,
+    # so the bound must be enforced on the caller's objects first.
+    _check_depth(expectations, MALFORMED, "expectations")
+    _check_depth(evidence, EVIDENCE_MALFORMED, "evidence")
     normalized = [validate_expectation(e) for e in expectations]
-    evidence = copy.deepcopy(evidence)
+    # F220/F221: guarded deepcopy -- deepcopy-hostile caller objects
+    # refuse with a machine code, never escape raw TypeError or
+    # RecursionError.
+    evidence = _safe_deepcopy(
+        evidence, EVIDENCE_MALFORMED, "evidence")
     results = []
     for exp in normalized:
         exp_type = exp["expectation_type"]

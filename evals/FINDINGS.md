@@ -6592,9 +6592,21 @@ change (pin stays 1029).
 
 **Severity rationale:** LOW. Fail-closed (nothing is emitted or passed on the raw path), so the exposure is error-type confusion at the seam, identical to F218's scoping. Scoped below MEDIUM because no integrity property is weakened and no attacker advantage follows: the gate refuses loudly, just not with a machine code.
 
-**Close-when criteria:** (1) no raw `TypeError` escapes `evaluate()`/`validate_expectation()` on deepcopy-hostile caller input -- shapes are validated before deepcopy, or deepcopy is guarded and mapped to the evidence/malformed machine codes; (2) break-first battery: the two deepcopy probes BREAK (raw TypeError) on old code, HELD (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
+**Close-when criteria:** (1) no raw `TypeError` escapes `evaluate()`/`validate_expectation()` on deepcopy-hostile caller input -- shapes are validated before deepcopy, or deepcopy is guarded and mapped to the evidence/malformed machine codes; (2) break-first battery: the two deepcopy probes BREAK (raw TypeError) on old code, HELD (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery). Closed 2026-10-01, wave-258 lane 1:
+iterative `_nesting_depth()` (explicit-stack, cycle-safe) bounds
+evidence/expectations at 200 (the shared F218/F219 contract) BEFORE
+any deepcopy in `evaluate()`; every deepcopy site (evidence,
+`artifacts` kwarg, `meta`) goes through `_safe_deepcopy()`, mapping
+raw TypeError -> evidence-quality-evidence-malformed (evidence) /
+evidence-quality-malformed (expectation side) and defensive
+RecursionError -> the same codes. Red-first: `evals/w258_f220f221_probes.py`
+0/7 -> 7/7 HELD x2 (staging + `env -u GOV_DEPLOYMENT_MODE`);
+wave-257 red-team F220 probes (deepcopy-lock-evidence,
+deepcopy-lock-artifacts) now HELD; tests.test_evidence_quality,
+w256 evidence-quality battery, compliance_emitter, control_profiles,
+decision_codes suites green.
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-258 lane 1).**
 
 ## F221: gov/evidence_quality.py escapes raw RecursionError on deeply-nested evidence instead of a machine code (LOW)
 
@@ -6604,9 +6616,9 @@ change (pin stays 1029).
 
 **Severity rationale:** LOW. Fail-closed, same scoping as F218/F219: error-type confusion at the seam, no integrity property weakened, no attacker advantage beyond a loud refusal.
 
-**Close-when criteria:** (1) no raw `RecursionError` escapes `evaluate()` on deeply-nested evidence -- an iterative depth bound before deepcopy (F218-style) or a guarded deepcopy mapped to a machine code; (2) break-first battery: the deep-nesting probe BREAKs (raw RecursionError) on old code, HELDs (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
+**Close-when criteria:** (1) no raw `RecursionError` escapes `evaluate()` on deeply-nested evidence -- an iterative depth bound before deepcopy (F218-style) or a guarded deepcopy mapped to a machine code; (2) break-first battery: the deep-nesting probe BREAKs (raw RecursionError) on old code, HELDs (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery). Closed 2026-10-01, wave-258 lane 1: iterative `_nesting_depth()` bounds evidence and expectations at 200 (the shared F218/F219 contract) in `evaluate()` before any deepcopy, plus a defensive `except RecursionError` in `_safe_deepcopy()`; deep evidence refuses evidence-quality-evidence-malformed, deep expectations evidence-quality-malformed. Red-first: `evals/w258_f220f221_probes.py` deep-nesting probes (evidence + meta) BREAK on old code, HELD on fixed code x2 (staging + `env -u GOV_DEPLOYMENT_MODE`); boundary measured (depth 200 accepted, 201 refused); wave-257 red-team deep-nesting probe now HELD; adjacent suites green.
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-258 lane 1).**
 
 ## F222: gov/evidence_quality.py reports success on empty evidence -- vacuous gate pass (LOW)
 
@@ -6618,7 +6630,25 @@ change (pin stays 1029).
 
 **Close-when criteria:** (1) `evaluate()` over empty evidence does not report success -- either a machine-coded refusal or per-expectation FAILED results (statistics honestly show zero items evaluated); (2) break-first battery: the empty-evidence probe BREAKs (vacuous success) on old code, HELDs (refused/failed) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_evidence_quality, w256 evidence-quality battery).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-258 lane 2).** Close-when evidence:
+(1) `_require_item_list()` and `_require_bundle()` refuse empty
+evidence with the new machine code `evidence-quality-empty-evidence`
+before any evaluation; the refusal propagates out of `evaluate()`
+(and therefore `emit_with_quality_gate()`) -- no vacuous success is
+possible on either axis. (2) Break-first battery
+`evals/w258_f222_probes.py`: 7 BREAK on the wave-257 base (5 vacuous
+successes + gate emission + absent code), 11/11 HELD on the fixed
+module in staging and `env -u GOV_DEPLOYMENT_MODE`. The wave-257
+red-team F222 probe (`evidence/empty-evidence-vacuous-pass`) now
+HELDs. (3) Adjacent suites green: tests.test_evidence_quality,
+tests.test_decision_codes, tests.test_compliance_emitter,
+tests.test_control_profiles (75/75), w256 evidence-quality battery
+12/12. Design decision (documented in the module docstring): refusal
+was chosen over per-expectation FAILED results -- it is the same
+anti-vacuity principle the module already applies to empty
+expectation lists, and "no evidence presented" (pipeline-outage
+signal) is a distinct, louder state than "evidence checked and
+failed". Taxonomy pin: 1063 -> 1064 (+1 code).
 
 ## F223: gov/short_lived_credentials.py leaks id-existence via a timing side channel (LOW)
 
@@ -6630,7 +6660,10 @@ change (pin stays 1029).
 
 **Close-when criteria:** (1) the unknown-id path performs equivalent dummy HMAC work before refusing (or another construction eliminating the systematic delta), so unknown-id vs secret-mismatch are timing-indistinguishable within noise; (2) break-first battery: the timing probe BREAKs (systematic delta > 1000 ns) on old code, HELDs (delta within noise) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_short_lived_credentials, w256 credentials battery).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-258 lane 3).** Closure evidence:
+(1) In `gov/short_lived_credentials.py`: new `_dummy_binding_check(key, credential_id, secret)` runs one `_secret_binding` HMAC-SHA256 plus one `hmac.compare_digest` against a fixed 64-char dummy target, called on the unknown-id refusal path of `verify()` BEFORE the `UNKNOWN_CODE` refusal -- mirroring the secret-mismatch path's one-HMAC-plus-compare_digest work. No behavioral change to the API-level claim (both paths still raise the same code); no new machine codes (taxonomy stays 1063).
+(2) Break-first battery `evals/w258_f223f224_probes.py`: on pristine wave-257 base, the timing probe BROKE (systematic delta 7976 ns, mismatch slower, median-of-medians over 3x800 samples after warmup); on fixed code, 6/6 HELD in staging AND `env -u GOV_DEPLOYMENT_MODE`, with measured deltas of 163 ns and 219 ns -- within noise, far below the 1000 ns bar. The red-team's own probe `credentials/timing-id-existence-delta` now HELDs (180 ns).
+(3) Wave-257 red-team battery `evals/w257_redteam_probes.py` on the fixed tree: 16/20 HELD; the 4 remaining BREAKs are exactly the F220 (x2), F221, F222 evidence-quality probes (other lanes' findings), not regressions. Adjacent: `tests.test_short_lived_credentials` 29/29 OK, `tests.test_decision_codes` 19/19 OK, `evals/w256_credentials_probes.py` 12/12 HELD.
 
 ## F224: gov/short_lived_credentials.py escapes raw TypeError on non-numeric `now` instead of a machine code (LOW)
 
@@ -6642,7 +6675,34 @@ change (pin stays 1029).
 
 **Close-when criteria:** (1) non-numeric `now` is refused with a `short-lived-credential-malformed` machine code on both `verify()` and `expire_due()`; (2) break-first battery: the non-numeric-now probe BREAKs (raw TypeError) on old code, HELDs (machine-coded refusal) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_short_lived_credentials, w256 credentials battery).
 
+**Status: CLOSED 2026-10-01 (wave-258 lane 3).** Closure evidence:
+(1) In `gov/short_lived_credentials.py`: new `_validate_now(now)` validates the injectable wall-clock hook at both public read seams, `verify()` and `expire_due()`: `None` means time.time(); bool/list/other non-int/float shapes are refused with `short-lived-credential-malformed`; NaN and inf are refused as well (a NaN `now` would silently never trigger expiry since `nan >= expires_at` is False; an inf `now` would silently force expiry). A past numeric `now` is still honored by design (documented test hook, pinned by the control probe). No new machine codes (taxonomy stays 1063).
+(2) Break-first battery `evals/w258_f223f224_probes.py`: on pristine wave-257 base, the non-numeric-`now` probes BROKE (raw TypeError escaped `verify()` and `expire_due()`; bool/list/nan/inf were accepted or escaped); on fixed code, 6/6 HELD in staging AND `env -u GOV_DEPLOYMENT_MODE`, with all non-numeric shapes machine-coded and the past-numeric test hook intact. The red-team's own probe `credentials/non-numeric-now-raw-typeerror` now HELDs.
+(3) Adjacent: `tests.test_short_lived_credentials` 29/29 OK, `tests.test_decision_codes` 19/19 OK, `evals/w256_credentials_probes.py` 12/12 HELD.
+
+
+## F225: gov/control_profiles.py shares one mutable evidence snapshot across all controls -- cross-control contamination (LOW)
+
+**Cells:** wave-258 lane 4 red-team, 2026-10-01. Standing regression pin: `evals/w258_redteam_probes.py` (probe `profiles/cross-control-snapshot-contamination`).
+
+**Defect:** `run_profile()` deep-copies the evidence snapshot ONCE and passes the SAME object to every control's check. A check that mutates the snapshot (adds/removes keys) changes what subsequent controls evaluate: the battery probe shows check C0 writing `snap["poisoned"] = True` and check C1 observing it. The module's stated contract ("caller data is never mutated", F212 lesson) holds for the CALLER, but checks are not isolated from each other. Under check composition from multiple sources -- the InSpec pattern this module adapts explicitly supports vendored control packs -- one compromised or malicious check can poison the evidence view of every later control in the profile, flipping their verdicts, while the profile digest stays valid and the emitted compliance artifact looks legitimate. Per-control isolation is cheap: the module already deep-copies once.
+
+**Severity rationale:** LOW. All checks are supplied by the profile author at runtime; with all-first-party checks there is no exposure (a malicious check author can already write a directly-lying check). The exposure appears only when a profile composes checks from an untrusted or compromised source alongside victim checks -- a real supply-chain shape for vendored control packs, but gated behind that composition choice. Scoped below MEDIUM because the attacker must already hold a check slot in the profile.
+
+**Close-when criteria:** (1) each control's check evaluates against a pristine per-control deep copy of the snapshot (or the snapshot is frozen before evaluation), so a mutating check cannot affect later controls; (2) break-first battery: the contamination probe BREAKs (later check observes the mutation) on old code, HELDs (later check sees a pristine snapshot) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_control_profiles, w257 profiles battery).
+
 **Status: OPEN.**
 
+## F226: gov/control_profiles.py emit_profile_results leaks EvidenceQualityError instead of ControlProfileError on empty quality evidence (LOW)
 
-Next free finding: **F225**. **Open findings: F220, F221, F222, F223, F224.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3; F219 filed 2026-10-01, wave-256 lane 1 red-team, closed 2026-10-01, wave-257 lane 3; F220/F221/F222/F223/F224 filed 2026-10-01, wave-257 lane 4 red-team.)
+**Cells:** wave-258 merge red-first audit, 2026-10-01. Standing regression pin: `evals/w258_redteam_probes.py` (probe `profiles/quality-gate-names-failed-expectations`).
+
+**Defect:** `emit_profile_results(quality_gate=True)` calls `gov/evidence_quality.evaluate()` directly. After the F222 closure, empty quality evidence raises `EvidenceQualityError(evidence-quality-empty-evidence)` from inside `evaluate()`, and it propagates raw through the control-profiles public seam instead of being wrapped as `ControlProfileError` with a `control-profile-*` machine code. The module's contract is that its seam refusals are `ControlProfileError`; a caller catching only `ControlProfileError` misses this refusal entirely. Same defect class as F220/F221/F224 (wrong error type at a public seam).
+
+**Severity rationale:** LOW. Fail-closed and machine-coded -- the refusal carries `evidence-quality-empty-evidence`, no integrity property is weakened, no silent pass. Only the error envelope is wrong; exposure requires a caller that catches only `ControlProfileError` and treats anything else as unexpected.
+
+**Close-when criteria:** (1) `emit_profile_results` with `quality_gate=True` over empty quality evidence raises `ControlProfileError` with a `control-profile-*` machine code (or the pass-through is made an explicit documented seam contract); (2) break-first battery: the probe BREAKs (raw `EvidenceQualityError` escapes) on old code, HELDs (`ControlProfileError`) on fixed code, in both staging and `env -u GOV_DEPLOYMENT_MODE`; (3) adjacent suites green (tests.test_control_profiles, w257 profiles battery, w258_f222 probes).
+
+**Status: OPEN.**
+
+Next free finding: **F227**. **Open findings: F225, F226.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3; F219 filed 2026-10-01, wave-256 lane 1 red-team, closed 2026-10-01, wave-257 lane 3; F220/F221/F222/F223/F224 filed 2026-10-01, wave-257 lane 4 red-team; F220/F221 closed 2026-10-01, wave-258 lane 1; F222 closed 2026-10-01, wave-258 lane 2; F223/F224 closed 2026-10-01, wave-258 lane 3; F225 filed 2026-10-01, wave-258 lane 4 red-team; F226 filed 2026-10-01, wave-258 merge red-first audit.)
