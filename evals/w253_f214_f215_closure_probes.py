@@ -27,7 +27,7 @@ from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import permit_journal as pj  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _PROBES = []
 

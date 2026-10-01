@@ -150,6 +150,9 @@ _NON_CODES = frozenset([
     "user", "agent_action", "lifecycle", "warm_retired",
     "ceremony-tip-manifest", "signer-share-store",
     "verify_chain", "evidence_digest",
+    # Wave-270 lane (feat-evbundle): record-kind discriminators for the
+    # v2 evidence bundle / submission records -- not refusal codes.
+    "evidence-bundle.v2", "evidence-submission.v2", "evidence-artifact.v2",
     # Wave-267 merge: gov/behavioral_sig_packs.py error-message prefixes
     # (function names, not decision codes).
     "enrich_event", "match_pack",

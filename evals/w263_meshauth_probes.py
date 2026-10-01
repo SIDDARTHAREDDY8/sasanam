@@ -32,7 +32,7 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-263 lane 2: pin -> 1137 (8 new mesh-auth-* codes).
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))

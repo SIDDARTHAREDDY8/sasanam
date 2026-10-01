@@ -41,7 +41,7 @@ def _profile(controls, **kw):
 class TestTaxonomyPin(unittest.TestCase):
     def test_pin(self):
         n = len(decision_codes.TAXONOMY)
-        self.assertEqual(n, 1325)  # Wave-269 merge: pin -> 1325.
+        self.assertEqual(n, 1372)  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
     def test_codes_resolve(self):
         for code in ("control-profile-malformed",

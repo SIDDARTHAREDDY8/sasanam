@@ -50,7 +50,7 @@ from gov.intent_slice import judge_queued_action  # noqa: E402
 from gov.memory_provenance import instruction_shaping_reason  # noqa: E402
 from gov.rare_token import RareTokenTracker  # noqa: E402
 
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _RESULTS = []
 

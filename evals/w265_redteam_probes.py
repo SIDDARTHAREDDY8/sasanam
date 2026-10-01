@@ -45,7 +45,7 @@ from gov import detectors as det
 from gov import behavioral_sigs as bsig
 from gov import ed25519
 
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 # Fixed logical clock: all probes use explicit now values, never the
 # wall clock, except where the product defaults are under test.

@@ -44,7 +44,7 @@ except ImportError:
 # Wave-261 feature lane 3: +4 detector-* machine codes -> 1092 -> 1096.
 # Assert on the deduped dict AND on raw source literals (wave-260 lesson:
 # duplicate "code" literals are invisible to len(TAXONOMY)).
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _PROBES = []
 

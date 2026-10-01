@@ -46,7 +46,7 @@ from gov import sandbox as sandbox_mod  # noqa: E402
 HAVE_TIER = "use_landlock" in inspect.signature(
     sandbox_mod.Sandbox.__init__).parameters
 
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 EXPECTED_LANDLOCK_CODES = (
     "sandbox-landlock-unavailable",

@@ -31,6 +31,17 @@ Sasanam design on top of the lattice (ours, not Oak's):
   authorized, unexpired, digest-bound grant AND an audit hook.
   Without the audit hook it refuses (``ifc-audit-required``):
   privilege use is never silent.
+- Grant authenticity (F252): ``issue_grant`` records every minted
+  grant digest in an ``IssuanceRegistry``; ``exercise_privilege``
+  consults the registry and refuses grants that were never issued
+  (``ifc-grant-unissued``) -- a self-minted dict with a valid public
+  digest is attributable as forged, not as tampered. The default
+  registry is process-local; deployments that persist grants across
+  restarts or trust boundaries pass a durable (file-backed)
+  ``IssuanceRegistry`` to BOTH ``issue_grant`` and
+  ``exercise_privilege``. The registry (or its file) is
+  deployment-owned: anyone who can write it can mint grants.
+  Rotation story: ``revoke(digest)`` on compromise, then re-issue.
 
 All public seams fail closed on malformed input
 (``ifc-label-malformed``). Stdlib only. Deterministic: time is an
@@ -39,11 +50,17 @@ explicit ``now`` parameter, never ambient ``now()``.
 Honest limits: label assignment consumes caller-declared
 provenance (a lying caller mislabels); sink policies are
 deployment-declared; this module tracks declared labels, it does
-not discover ground truth.
+not discover ground truth. The in-memory default registry does not
+survive restarts -- a durable registry journal does, replayed in
+order at construction (a corrupt journal refuses loudly with
+``ifc-registry-corrupt``, never silently). The registry is not
+safe for concurrent multi-process appends without external
+coordination.
 """
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -191,12 +208,14 @@ class Endorsement(object):
 
 CODES = (
     "ifc-audit-required",
+    "ifc-grant-unissued",
     "ifc-integrity-flow-denied",
     "ifc-label-malformed",
     "ifc-privilege-denied",
     "ifc-privilege-expired",
     "ifc-privilege-scope-denied",
     "ifc-privilege-unauthorized",
+    "ifc-registry-corrupt",
     "ifc-secrecy-flow-denied",
     "ifc-sink-unmapped",
 )
@@ -322,6 +341,131 @@ def _digest(obj):
 
 
 # ------------------------------------------------------------------
+# Issuance registry (F252: grants authenticate at exercise time)
+# ------------------------------------------------------------------
+
+_GRANT_DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _check_grant_digest(value):
+    if (not isinstance(value, str)
+            or not _GRANT_DIGEST_RE.match(value)):
+        raise _malformed("bad grant digest %r" % (value,))
+    return value
+
+
+class IssuanceRegistry(object):
+    """Records which grant digests the ceremony actually minted.
+
+    ``exercise_privilege`` consults the registry: a grant whose
+    digest was never recorded here refuses with
+    ``ifc-grant-unissued``. This closes F252 -- a self-minted dict
+    carries a valid public digest but was never issued, so it is
+    attributable as forged, not as tampered.
+
+    Two flavors:
+
+    - in-memory (``path=None``, the default): process-local. Grants
+      do not survive restarts, by design.
+    - durable (``path=<file>``): append-only JSONL journal, replayed
+      in order at construction (a corrupt journal refuses loudly
+      with ``ifc-registry-corrupt``, never silently). ``record`` /
+      ``revoke`` append and fsync.
+
+    The registry object (or its file) is deployment-owned: anyone
+    who can write it can mint grants. Rotation story on compromise:
+    ``revoke(digest)`` the affected grants, then re-issue. A revoked
+    digest refuses at exercise exactly like a never-issued one.
+
+    Not safe for concurrent multi-process appends without external
+    coordination (documented honest limit).
+    """
+
+    def __init__(self, path=None):
+        if path is not None and not isinstance(path, str):
+            raise _malformed("registry path must be a string, got %r"
+                             % (path,))
+        self._path = path
+        self._digests = set()
+        if path is not None:
+            self._replay()
+
+    def _replay(self):
+        try:
+            with open(self._path, "r", encoding="utf-8") as handle:
+                lines = handle.read().splitlines()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise OutputIFCError(
+                "ifc-registry-corrupt",
+                "cannot read registry journal %r: %s"
+                % (self._path, exc))
+        for lineno, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except ValueError:
+                raise OutputIFCError(
+                    "ifc-registry-corrupt",
+                    "journal line %d is not JSON" % (lineno,))
+            if (not isinstance(record, dict)
+                    or record.get("event") not in ("issued", "revoked")
+                    or not isinstance(record.get("grant_digest"), str)
+                    or not _GRANT_DIGEST_RE.match(
+                        record["grant_digest"])):
+                raise OutputIFCError(
+                    "ifc-registry-corrupt",
+                    "journal line %d is a malformed record" % (lineno,))
+            if record["event"] == "issued":
+                self._digests.add(record["grant_digest"])
+            else:
+                self._digests.discard(record["grant_digest"])
+
+    def _append(self, event, grant_digest, now):
+        if self._path is None:
+            return
+        line = _canonical({"event": event,
+                           "grant_digest": grant_digest,
+                           "at": now})
+        with open(self._path, "a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def record(self, grant_digest, now=""):
+        """Record a minted grant digest. ``now`` is the issuance
+        timestamp (journal metadata only)."""
+        _check_grant_digest(grant_digest)
+        self._digests.add(grant_digest)
+        self._append("issued", grant_digest, now)
+
+    def revoke(self, grant_digest):
+        """Revoke a grant digest (rotation story). The digest refuses
+        at exercise exactly like a never-issued one."""
+        _check_grant_digest(grant_digest)
+        self._digests.discard(grant_digest)
+        self._append("revoked", grant_digest, "")
+
+    def contains(self, grant_digest):
+        """True iff the digest was issued and not revoked."""
+        return grant_digest in self._digests
+
+
+_DEFAULT_REGISTRY = IssuanceRegistry()
+
+
+def _registry_or_default(registry):
+    if registry is None:
+        return _DEFAULT_REGISTRY
+    if not isinstance(registry, IssuanceRegistry):
+        raise _malformed("registry must be an IssuanceRegistry, got %r"
+                         % (registry,))
+    return registry
+
+
+# ------------------------------------------------------------------
 # Public seams
 # ------------------------------------------------------------------
 
@@ -439,9 +583,14 @@ def combine_outputs(*labeled):
                                 IntegrityLabel(integrity)))
 
 
-def issue_grant(privilege, granted_by, authorization, ttl_seconds, now):
+def issue_grant(privilege, granted_by, authorization, ttl_seconds, now,
+                registry=None):
     """Issue a privilege grant. The authorization evidence is
     validated here; expiry and scope are enforced at exercise time.
+
+    The minted grant digest is recorded in ``registry`` (an
+    ``IssuanceRegistry``; the module default when omitted) so that
+    ``exercise_privilege`` can authenticate it (F252).
     """
     if not isinstance(privilege, dict):
         raise _malformed("privilege must be a dict")
@@ -485,10 +634,11 @@ def issue_grant(privilege, granted_by, authorization, ttl_seconds, now):
     }
     grant = dict(body)
     grant["grant_digest"] = _digest(body)
+    _registry_or_default(registry).record(grant["grant_digest"], now)
     return grant
 
 
-def _check_grant(grant):
+def _check_grant(grant, registry=None):
     if not isinstance(grant, dict):
         raise OutputIFCError("ifc-privilege-unauthorized",
                              "grant must be a dict")
@@ -497,10 +647,16 @@ def _check_grant(grant):
     if not isinstance(digest, str) or _digest(body) != digest:
         raise OutputIFCError("ifc-privilege-unauthorized",
                              "grant digest mismatch: tampered or forged")
+    if not _registry_or_default(registry).contains(digest):
+        raise OutputIFCError(
+            "ifc-grant-unissued",
+            "grant digest %.16s... was never issued by this ceremony: "
+            "self-minted grants are refused" % (digest,))
     return body
 
 
-def exercise_privilege(grant, label, operation, tags, audit, now):
+def exercise_privilege(grant, label, operation, tags, audit, now,
+                       registry=None):
     """Exercise a declassification/endorsement privilege.
 
     Requires: a valid grant (digest-bound, authorized, unexpired),
@@ -508,10 +664,14 @@ def exercise_privilege(grant, label, operation, tags, audit, now):
     ``audit`` hook. The audit hook receives the complete exercise
     record; without it the call refuses (``ifc-audit-required``) --
     privilege use is never silent.
+
+    The grant must have been issued into ``registry`` (an
+    ``IssuanceRegistry``; the module default when omitted):
+    self-minted grants refuse with ``ifc-grant-unissued`` (F252).
     """
     if operation not in ("declassify", "endorse"):
         raise _malformed("bad operation %r" % (operation,))
-    body = _check_grant(grant)
+    body = _check_grant(grant, registry)
     data_label = (_label_from_dict(label)
                   if not isinstance(label, Label) else label)
     tag_set = _check_tag_set(tags, "tags")

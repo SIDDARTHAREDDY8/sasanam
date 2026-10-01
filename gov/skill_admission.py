@@ -56,6 +56,7 @@ import json
 import re
 
 from gov import artifact_rules
+from gov import bundle_scan
 from gov import ed25519
 
 # Machine codes (all registered in gov/decision_codes.py TAXONOMY).
@@ -264,19 +265,82 @@ def _check_signed_envelope(envelope, kind, malformed_code):
     return inner, bytes.fromhex(signature)
 
 
-def admit(signed_layout, links, authority_pub):
+def _scan_artifact_payloads(artifact_bytes, context):
+    """Content-scan caller-presented pickle payloads (wave-270).
+
+    ``artifact_bytes``: dict mapping artifact name -> raw payload
+    bytes, for artifacts the registry believes are pickle-serialized.
+    Non-pickle payloads must NOT be passed -- the scanner fails
+    closed on non-pickle bytes.
+
+    Returns ``(scan_evidence, refusal)`` where ``scan_evidence`` is
+    the auditable record and ``refusal`` is ``None`` or
+    ``{"code", "detail"}`` for a CRITICAL/structural finding.
+    Raises :class:`SkillAdmissionError` on a malformed argument.
+    """
+    if not isinstance(artifact_bytes, dict):
+        raise SkillAdmissionError(
+            SKILL_ADMISSION_LAYOUT_MALFORMED,
+            "artifact_bytes must be a dict of name -> payload bytes")
+    scanned = []
+    advisories = []
+    refusal = None
+    for name in sorted(artifact_bytes.keys()):
+        payload = artifact_bytes[name]
+        if not isinstance(name, str):
+            raise SkillAdmissionError(
+                SKILL_ADMISSION_LAYOUT_MALFORMED,
+                "artifact_bytes keys must be strings")
+        verdict = bundle_scan.scan_pickle_stream(
+            payload, context="%s:%s" % (context, name))
+        scanned.append(name)
+        record = {"artifact": name,
+                  "verdict": verdict["verdict"],
+                  "code": verdict["code"],
+                  "severity": verdict["severity"],
+                  "findings": verdict["findings"],
+                  "evidence_digest": verdict["evidence_digest"],
+                  "payload_bytes": verdict["payload_bytes"]}
+        if verdict["verdict"] == "refuse":
+            advisories.append(record)
+            if refusal is None:
+                refusal = {
+                    "code": verdict["code"],
+                    "detail": "artifact %r refused by content scan: %s"
+                              % (name, verdict["code"])}
+        elif verdict["verdict"] == "advisory":
+            advisories.append(record)
+    scan_evidence = {
+        "scanned": scanned,
+        "verdict": ("refuse" if refusal is not None
+                    else "advisory" if advisories else "clean"),
+        "advisories": advisories,
+    }
+    return scan_evidence, refusal
+
+
+def admit(signed_layout, links, authority_pub, artifact_bytes=None):
     """Admit a skill bundle against its signed layout (registry side).
 
     ``signed_layout``: output of :func:`make_layout`.
     ``links``: list of :func:`make_link` outputs, one per layout step.
     ``authority_pub``: 64-char hex ed25519 public key of the
     registry-known layout authority.
+    ``artifact_bytes``: optional dict mapping artifact name -> raw
+    payload bytes, for artifacts the registry believes are
+    pickle-serialized. Each payload is content-scanned
+    (``gov.bundle_scan``, scan-without-load, never unpickled): a
+    ``refuse`` verdict refuses ingestion with the scanner's machine
+    code and the artifact identity attached; an ``advisory`` verdict
+    is recorded in ``evidence["content_scan"]`` -- loud evidence,
+    never a silent pass, never a denial. ``None`` (default) preserves
+    the legacy behavior byte-identically.
 
     Returns a verdict dict ``{"admitted", "code", "detail",
     "evidence"}``. ``code`` is None on admission, otherwise a
-    registered ``skill-admission-*`` taxonomy code. Never raises on
-    adversarial input -- malformed input is a refused verdict, not an
-    exception (authoring-time helpers raise instead).
+    registered taxonomy code. Never raises on adversarial input --
+    malformed input is a refused verdict, not an exception
+    (authoring-time helpers raise instead).
     """
     evidence = {"layout_id": None, "authority_pub": authority_pub,
                 "steps": []}
@@ -437,6 +501,21 @@ def admit(signed_layout, links, authority_pub):
         evidence["layout_digest"] = hashlib.sha256(
             _canonical_bytes(
                 {"layout_id": layout_id, "steps": steps})).hexdigest()
+
+        # 5. Content scan (wave-270, additive): scan-without-load over
+        #    caller-presented pickle payloads. A refuse verdict refuses
+        #    ingestion with the scanner's machine code and the artifact
+        #    identity; advisories are loud evidence, never denials.
+        #    artifact_bytes=None preserves legacy behavior
+        #    byte-identically (no content_scan key).
+        if artifact_bytes is not None:
+            scan_evidence, refusal = _scan_artifact_payloads(
+                artifact_bytes, "skill-admission:%s" % (layout_id,))
+            evidence["content_scan"] = scan_evidence
+            if refusal is not None:
+                return _refuse(refusal["code"], refusal["detail"],
+                               evidence)
+
         return {"admitted": True, "code": None,
                 "detail": "all %d step(s) verified: layout signature, "
                           "authority/signer separation, link signatures, "

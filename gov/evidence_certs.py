@@ -24,6 +24,12 @@ machine-readable ``evcert-*`` code (see :class:`EvidenceCertError`
 and ``gov/decision_codes.py``):
 
 1. request shape (evcert-malformed-request)
+1b. provisioner-class resolution (evcert-malformed-request) -- when
+    the CA configures provisioner classes, the request must name a
+    known one; ambiguity fails closed
+1c. lifetime: global bounds first (evcert-lifetime-exceeded), then the
+    class's tightening bounds (evcert-provisioner-policy-violated) --
+    the audit trail must tell a client bug from class enforcement
 2. issuer allowlist + assertion expiry
    (evcert-unknown-issuer, evcert-assertion-expired)
 3. approval resolution + identity==decider
@@ -38,7 +44,13 @@ and ``gov/decision_codes.py``):
 
 Lifetime discipline: default 10 minutes, deployment-capped at 60
 minutes; anything over 24 hours requires a configured status-list
-URL (otherwise refused at CA construction).
+URL (otherwise refused at CA construction). Per-provisioner classes
+(``provisioners``) supply their own ``{min_s, default_s, max_s}``
+which tighten the global bounds only -- a class max may never exceed
+the CA global max and a class min may never undercut the global
+floor; widening policies are refused with ValueError at CA
+construction, never silently clamped. A classed issuance records the
+class id at ``<oid_arc>.1.40`` in the certificate extensions.
 
 The legacy corroboration-receipt path (``gov/corroboration_receipt.py``)
 is deliberately untouched: byte-identity is preserved by construction
@@ -93,6 +105,11 @@ _CERT_FIELDS = frozenset({
 
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+# Provisioner-class extension: <oid_arc>.1.40 carries the provisioner
+# class id (string) on classed issuances. <arc>.1.8 is the issuer,
+# <arc>.1.24 the subject.
+_PROV_OID_SUFFIX = ".1.40"
 
 # Single-label wildcard: https://*.suffix where suffix is a dotted host.
 # The * binds exactly one DNS label ([-_a-zA-Z0-9]+) -- it can never span
@@ -206,6 +223,55 @@ def _save_registry(path, registry):
         raise
 
 # ---------------------------------------------------------------------------
+# Per-provisioner lifetime policies
+# ---------------------------------------------------------------------------
+
+_PROV_POLICY_FIELDS = frozenset({"min_s", "default_s", "max_s"})
+
+
+def _validate_provisioners(provisioners, max_lifetime_s):
+    """Normalize ``provisioners`` to {id: {min_s, default_s, max_s}}.
+
+    Tightening-only: a class max may never exceed the CA's global
+    ``max_lifetime_s`` and a class min may never undercut the global
+    floor ``MIN_LIFETIME_S``. Violations raise ValueError at CA
+    construction -- a widening policy is a deployment bug and is never
+    silently clamped.
+    """
+    if provisioners is None:
+        return {}
+    if not isinstance(provisioners, dict):
+        raise ValueError("provisioners must be a dict of "
+                         "provisioner_id -> policy")
+    normalized = {}
+    for prov_id, policy in provisioners.items():
+        if not isinstance(prov_id, str) or not prov_id:
+            raise ValueError("provisioner ids must be non-empty strings")
+        if not isinstance(policy, dict) \
+                or set(policy.keys()) != _PROV_POLICY_FIELDS:
+            raise ValueError(
+                "provisioner %r policy must be exactly "
+                "{min_s, default_s, max_s}" % (prov_id,))
+        vals = policy["min_s"], policy["default_s"], policy["max_s"]
+        if not all(isinstance(v, int) for v in vals):
+            raise ValueError(
+                "provisioner %r lifetimes must be ints" % (prov_id,))
+        min_s, default_s, max_s = vals
+        if not (MIN_LIFETIME_S <= min_s <= default_s <= max_s):
+            raise ValueError(
+                "provisioner %r needs %d <= min_s <= default_s <= max_s"
+                % (prov_id, MIN_LIFETIME_S))
+        if max_s > max_lifetime_s:
+            raise ValueError(
+                "provisioner %r max_s %d widens the CA global max %d; "
+                "class policies tighten only"
+                % (prov_id, max_s, max_lifetime_s))
+        normalized[prov_id] = {"min_s": min_s, "default_s": default_s,
+                               "max_s": max_s}
+    return normalized
+
+
+# ---------------------------------------------------------------------------
 # The CA
 # ---------------------------------------------------------------------------
 
@@ -228,7 +294,16 @@ class EvidenceCA(object):
     issuance -- there is deliberately no bypass switch (D8).
 
     ``oid_arc`` is the private-enterprise OID arc; the issuer and
-    subject land at ``<arc>.1.8`` and ``<arc>.1.24``.
+    subject land at ``<arc>.1.8`` and ``<arc>.1.24``, and a
+    provisioner-class issuance additionally records the class id at
+    ``<arc>.1.40`` (auditable on the certificate).
+
+    ``provisioners`` is an optional dict of provisioner_id ->
+    ``{"min_s", "default_s", "max_s"}``. Class policies tighten the CA
+    global bounds only (class max <= global max, class min >= global
+    floor); a widening or incoherent policy is refused with ValueError
+    at construction. When provisioners are configured, ``issue()``
+    requires a known ``provisioner`` class -- ambiguity fails closed.
     """
 
     def __init__(self, *, kms_provider, ca_key_id, ca_public_key,
@@ -236,7 +311,7 @@ class EvidenceCA(object):
                  anchor_reachable, oid_arc,
                  default_lifetime_s=DEFAULT_LIFETIME_S,
                  max_lifetime_s=DEFAULT_MAX_LIFETIME_S,
-                 status_list_url=None, now=None):
+                 status_list_url=None, now=None, provisioners=None):
         if not isinstance(kms_provider, KmsProvider):
             raise TypeError("kms_provider must be a gov.kms.KmsProvider")
         kms_provider._validate_key_id(ca_key_id)
@@ -265,6 +340,7 @@ class EvidenceCA(object):
             # D9: anything over 24h requires revocation infrastructure.
             raise ValueError(
                 "max_lifetime_s > 24h requires status_list_url")
+        provisioners = _validate_provisioners(provisioners, max_lifetime_s)
         self._kms = kms_provider
         self._ca_key_id = ca_key_id
         self._ca_public_key = bytes(ca_public_key)
@@ -276,7 +352,31 @@ class EvidenceCA(object):
         self._default_lifetime_s = default_lifetime_s
         self._max_lifetime_s = max_lifetime_s
         self._status_list_url = status_list_url
+        self._provisioners = provisioners
         self._now = now or __import__("time").time
+
+    def _resolve_provisioner(self, provisioner):
+        """Return the class policy dict, or None for the legacy path.
+
+        Fail-closed on ambiguity: when classes are configured the
+        requester must name a known one; when none are configured a
+        named class is a shape error. Refusals are
+        evcert-malformed-request.
+        """
+        if not self._provisioners:
+            if provisioner is None:
+                return None
+            raise EvidenceCertError(
+                "evcert-malformed-request",
+                "provisioner %r named but the CA has no provisioner "
+                "classes configured" % (provisioner,))
+        if not isinstance(provisioner, str) \
+                or provisioner not in self._provisioners:
+            raise EvidenceCertError(
+                "evcert-malformed-request",
+                "unknown provisioner class %r; the CA requires a "
+                "configured class" % (provisioner,))
+        return self._provisioners[provisioner]
 
     # -- issuance ----------------------------------------------------------
 
@@ -284,7 +384,8 @@ class EvidenceCA(object):
         return int(self._now())
 
     def issue(self, *, identity_assertion, ephemeral_pub, pop_sig,
-              approval_id, intent_digest, lifetime_s=None):
+              approval_id, intent_digest, lifetime_s=None,
+              provisioner=None):
         """Run the issuance checks in order and mint a certificate.
 
         Returns ``(cert, audit_entry)``. Every refusal raises
@@ -305,14 +406,29 @@ class EvidenceCA(object):
         # (1) request shape
         self._check_shape(identity_assertion, ephemeral_pub, pop_sig,
                           approval_id, intent_digest)
-        lifetime = self._default_lifetime_s if lifetime_s is None \
-            else lifetime_s
+        # (1b) provisioner-class resolution (fail-closed on ambiguity)
+        policy = self._resolve_provisioner(provisioner)
+        eff_default = self._default_lifetime_s \
+            if policy is None else policy["default_s"]
+        lifetime = eff_default if lifetime_s is None else lifetime_s
+        # (1c) lifetime, global bounds first (client bug), then the
+        # class's tightening bounds (class-policy enforcement). A
+        # class refusal is evcert-provisioner-policy-violated, never
+        # the global code -- the audit trail must tell the two apart.
         if not isinstance(lifetime, int) \
                 or not (MIN_LIFETIME_S <= lifetime <= self._max_lifetime_s):
             raise EvidenceCertError(
                 "evcert-lifetime-exceeded",
                 "requested lifetime %r outside [%d, %d]"
                 % (lifetime_s, MIN_LIFETIME_S, self._max_lifetime_s))
+        if policy is not None and not (
+                policy["min_s"] <= lifetime <= policy["max_s"]):
+            raise EvidenceCertError(
+                "evcert-provisioner-policy-violated",
+                "requested lifetime %r outside provisioner %r class "
+                "bounds [%d, %d]"
+                % (lifetime_s, provisioner,
+                   policy["min_s"], policy["max_s"]))
         iss = identity_assertion["iss"]
         sub = identity_assertion["sub"]
         exp = identity_assertion.get("exp")
@@ -369,6 +485,16 @@ class EvidenceCA(object):
         # (7) mint via the KMS, self-check the signature
         not_before = now
         not_after = now + lifetime
+        extensions = {
+            "approval_id": approval_id,
+            "intent_digest": intent_digest,
+            "principal": sub,
+            self._oid_arc + ".1.8": iss,
+            self._oid_arc + ".1.24": sub,
+        }
+        if provisioner is not None:
+            # The provisioner class is auditable on the certificate.
+            extensions[self._oid_arc + _PROV_OID_SUFFIX] = provisioner
         body = {
             "format": CERT_FORMAT,
             "subject_public_key": base64.b64encode(
@@ -378,13 +504,7 @@ class EvidenceCA(object):
             "not_before": not_before,
             "not_after": not_after,
             "eku": CERT_EKU,
-            "extensions": {
-                "approval_id": approval_id,
-                "intent_digest": intent_digest,
-                "principal": sub,
-                self._oid_arc + ".1.8": iss,
-                self._oid_arc + ".1.24": sub,
-            },
+            "extensions": extensions,
             "honest_limits": HONEST_LIMITS_TEXT,
         }
         canonical = _canonical_body(body)
@@ -483,13 +603,18 @@ def _b64_cert_bytes(cert, field, expected_len, code="evcert-malformed-cert"):
     return raw
 
 
-def verify_cert_chain(cert, ca_public_key, now):
+def verify_cert_chain(cert, ca_public_key, now, oid_arc=None):
     """Verify a certificate: shape, validity window, then CA signature.
 
     Returns the normalized cert dict. Refusals:
     evcert-malformed-cert (shape), evcert-cert-expired (window),
     evcert-chain-invalid (signature). The verifier's clock is
     ``now`` (int epoch seconds).
+
+    ``oid_arc`` is optional for backward compatibility: without it the
+    extensions must carry exactly the two issuer/subject OID fields
+    (the pre-provisioner shape). With it, the provisioner-class OID
+    ``<arc>.1.40`` is additionally accepted -- and only that key.
     """
     if not isinstance(cert, dict) or set(cert.keys()) != _CERT_FIELDS:
         raise EvidenceCertError("evcert-malformed-cert",
@@ -553,11 +678,24 @@ def verify_cert_chain(cert, ca_public_key, now):
         raise EvidenceCertError("evcert-malformed-cert",
                                 "extensions carry unexpected fields %r"
                                 % sorted(non_oid))
-    if len(oid_keys) != 2 or not all(
-            isinstance(ext[k], str) and ext[k] for k in oid_keys):
-        raise EvidenceCertError("evcert-malformed-cert",
-                                "extensions must carry exactly two OID "
-                                "fields (issuer, subject)")
+    if oid_arc is None:
+        # Legacy shape: exactly the issuer and subject OID fields.
+        if len(oid_keys) != 2 or not all(
+                isinstance(ext[k], str) and ext[k] for k in oid_keys):
+            raise EvidenceCertError("evcert-malformed-cert",
+                                    "extensions must carry exactly two OID "
+                                    "fields (issuer, subject)")
+    else:
+        # Arc-aware: the provisioner-class OID <arc>.1.40 is the only
+        # permitted extra OID key; issuer/subject remain required.
+        required = {oid_arc + ".1.8", oid_arc + ".1.24"}
+        allowed = required | {oid_arc + _PROV_OID_SUFFIX}
+        if not required <= set(oid_keys) <= allowed or not all(
+                isinstance(ext[k], str) and ext[k] for k in oid_keys):
+            raise EvidenceCertError("evcert-malformed-cert",
+                                    "extensions must carry the issuer and "
+                                    "subject OID fields and at most the "
+                                    "provisioner-class OID field")
     body = {k: v for k, v in cert.items() if k != "ca_signature"}
     canonical = _canonical_body(body)
     ca_sig = _b64_cert_bytes(cert, "ca_signature", 64,
@@ -580,15 +718,19 @@ def cert_digest(cert):
 
 def verify_evidence_signature(*, cert, artifact_bytes, artifact_signature,
                               approval_id, intent_digest, ca_public_key,
-                              verify_time):
+                              verify_time, oid_arc=None):
     """Verify an evidence signature against a certificate.
 
     Order is fixed: chain first, then binding. Chain failures raise
     evcert-malformed-cert / evcert-cert-expired / evcert-chain-invalid;
     any binding failure (wrong key, approval mismatch, intent mismatch)
     raises evcert-binding-invalid. Returns a small verified record.
+    ``oid_arc`` is passed through to :func:`verify_cert_chain` so
+    provisioner-class certificates verify (default: legacy two-OID
+    shape).
     """
-    chain = verify_cert_chain(cert, ca_public_key, verify_time)
+    chain = verify_cert_chain(cert, ca_public_key, verify_time,
+                              oid_arc=oid_arc)
     ext = chain["extensions"]
     if not isinstance(artifact_bytes, (bytes, bytearray)):
         raise EvidenceCertError("evcert-binding-invalid",

@@ -1,6 +1,6 @@
 """Unit tests for gov/policy_exception.py (wave-268 lane).
 
-Pin 1325 is asserted here; repointed by the wave-269 merge coordinator.
+Pin 1372 is asserted here; repointed by the wave-269 merge coordinator.
 """
 
 import hashlib
@@ -13,7 +13,7 @@ import gov.policy_exception as pe
 from gov.signing import Ed25519Verifier
 
 
-PIN = 1325  # Wave-269 merge: pin -> 1325 (lane: 1274 + 6 exception-*).
+PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (lane: 1274 + 6 exception-*).
 
 EXPECTED_CODES = (
     "exception-compensating-validation-failed",

@@ -32,7 +32,7 @@ from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import ed25519  # noqa: E402
 from gov import peer_attestation as pa  # noqa: E402
 
-TAXONOMY_PIN = 1325  # Wave-268 merge. This lane mints no new codes.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
     "taxonomy pin drift: %d != %d"
     % (len(decision_codes.TAXONOMY), TAXONOMY_PIN))

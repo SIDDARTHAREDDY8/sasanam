@@ -1917,6 +1917,54 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    'bundlescan-malformed': {
+        "domain": 'bundle',
+        "code": 'bundlescan-malformed',
+        "human": 'bundle content scan: the payload failed structural validation; refused fail-closed, never unpickled',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundlescan-odd-packaging': {
+        "domain": 'bundle',
+        "code": 'bundlescan-odd-packaging',
+        "human": 'bundle content scan: odd but non-threatening pickle packaging (trailing bytes, multiple STOPs); advisory',
+        "severity": 'low',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundlescan-oversized': {
+        "domain": 'bundle',
+        "code": 'bundlescan-oversized',
+        "human": 'bundle content scan: the payload exceeds the scan size bound; refused before parsing',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundlescan-rce-global': {
+        "domain": 'bundle',
+        "code": 'bundlescan-rce-global',
+        "human": 'bundle content scan: a code-execution sink global with REDUCE in the pickle stream; ingestion refused',
+        "severity": 'critical',
+        "evidence_kinds_required": ['bundle', 'digest', 'scan-report'],
+        "reverify_steps": ['recompute', 'rescan'],
+    },
+    'bundlescan-suspicious-global': {
+        "domain": 'bundle',
+        "code": 'bundlescan-suspicious-global',
+        "human": 'bundle content scan: an exploitable-but-not-executing global (gadget primitive or sink without REDUCE); loud advisory',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest', 'scan-report'],
+        "reverify_steps": ['recompute', 'rescan'],
+    },
+    'bundlescan-unknown-global': {
+        "domain": 'bundle',
+        "code": 'bundlescan-unknown-global',
+        "human": 'bundle content scan: an unnameable global in the pickle stream; loud advisory, the scanner vouches only what it names',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle', 'digest', 'scan-report'],
+        "reverify_steps": ['recompute', 'rescan'],
+    },
     'callauthz-check-error': {
         "domain": 'callauthz',
         "code": 'callauthz-check-error',
@@ -2313,6 +2361,112 @@ TAXONOMY = {
         "code": 'ceremony-unknown-ceremony',
         "human": 'root ceremony: no ceremony exists with this id; the '
                  'action is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-v2-already-consumed': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-already-consumed',
+        "human": 'approval ceremony v2: the approval was already consumed; '
+                 'a second resume is refused (one-shot consumption)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-ambiguous-resume': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-ambiguous-resume',
+        "human": 'approval ceremony v2: more than one approval is pending '
+                 'and the resume did not address one by id; refused rather '
+                 'than binding to an arbitrary approval',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-malformed': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-malformed',
+        "human": 'approval ceremony v2: the request or resume is '
+                 'shape-invalid (ids, verdicts, payloads, journal); refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-payload-tampered': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-payload-tampered',
+        "human": 'approval ceremony v2: the approver receipt is validly '
+                 'signed but does not bind the surfaced payload digest; '
+                 'the resume is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-receipt-invalid': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-receipt-invalid',
+        "human": 'approval ceremony v2: the approver receipt does not '
+                 'verify, names an unregistered reviewer, or is unreadable; '
+                 'the resume is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-schema-invalid': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-schema-invalid',
+        "human": 'approval ceremony v2: the response schema is not a real '
+                 'ResponseSchema type (bare dict refused); the request is '
+                 'refused rather than surfacing an unvalidated schema',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-schema-violation': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-schema-violation',
+        "human": 'approval ceremony v2: the resume value fails the '
+                 'engine-validated response schema; the resume is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-stale-lineage': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-stale-lineage',
+        "human": 'approval ceremony v2: the approval belongs to an '
+                 'abandoned thread lineage; it can never resume — the fork '
+                 're-fires it under a new id instead',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-unknown-approval': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-unknown-approval',
+        "human": 'approval ceremony v2: no such pending approval exists; '
+                 'the resume is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-verdict-arg-mismatch': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-verdict-arg-mismatch',
+        "human": 'approval ceremony v2: the resume value has the wrong '
+                 'type for the verdict (accept/ignore carry none, respond '
+                 'carries str, edit carries an action mapping); refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+    'ceremony-v2-verdict-not-allowed': {
+        "domain": 'ceremony',
+        "code": 'ceremony-v2-verdict-not-allowed',
+        "human": 'approval ceremony v2: the verdict is not in the '
+                 'engine-held allow-list for this approval; refused',
         "severity": 'medium',
         "evidence_kinds_required": ['ceremony'],
         "reverify_steps": ['recompute'],
@@ -4664,6 +4818,94 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt'],
         "reverify_steps": ['recompute'],
     },
+    'evbundle-checkpoint-invalid': {
+        "domain": 'evbundle',
+        "code": 'evbundle-checkpoint-invalid',
+        "human": 'evidence bundle v2: the transparency checkpoint is for a '
+                 'different log, outside the log history, or its root does '
+                 'not recompute from the log leaves',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint'],
+        "reverify_steps": ['re-verify-checkpoint'],
+    },
+
+    'evbundle-consistency-invalid': {
+        "domain": 'evbundle',
+        "code": 'evbundle-consistency-invalid',
+        "human": 'evidence bundle v2: the old and new checkpoints are not '
+                 'consistent (different logs, invalid checkpoint, or the '
+                 'old tree is not a prefix of the new)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['checkpoint'],
+        "reverify_steps": ['re-verify-consistency'],
+    },
+
+    'evbundle-inclusion-unverified': {
+        "domain": 'evbundle',
+        "code": 'evbundle-inclusion-unverified',
+        "human": 'evidence bundle v2: the inclusion proof does not '
+                 'recompute the checkpoint root (forged or stale proof)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['inclusion-proof'],
+        "reverify_steps": ['re-verify-inclusion'],
+    },
+
+    'evbundle-issuance-unverifiable': {
+        "domain": 'evbundle',
+        "code": 'evbundle-issuance-unverifiable',
+        "human": 'evidence bundle v2: no evidence-cert-issued attestation '
+                 'in the audit log for this cert_digest, or the log chain '
+                 'does not verify; issuance is never detached from the log',
+        "severity": 'high',
+        "evidence_kinds_required": ['audit-log'],
+        "reverify_steps": ['re-verify-chain'],
+    },
+
+    'evbundle-join-mismatch': {
+        "domain": 'evbundle',
+        "code": 'evbundle-join-mismatch',
+        "human": 'evidence bundle v2: cross-artifact digests disagree -- '
+                 'the artifact, signature attestation, or issuance '
+                 'attestation do not join on the same cert_digest / '
+                 'artifact_digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['artifact', 'attestation'],
+        "reverify_steps": ['re-check-joins'],
+    },
+
+    'evbundle-malformed': {
+        "domain": 'evbundle',
+        "code": 'evbundle-malformed',
+        "human": 'evidence bundle v2: a bundle, submission, or receipt '
+                 'record is malformed (bad shape, non-dict, bad digest '
+                 'encoding)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle-record'],
+        "reverify_steps": ['re-check-shape'],
+    },
+
+    'evbundle-transparency-unavailable': {
+        "domain": 'evbundle',
+        "code": 'evbundle-transparency-unavailable',
+        "human": 'evidence bundle v2: the transparency provider failed or '
+                 'was unreachable; the log is never silently skipped, so '
+                 'submission refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['transparency-status'],
+        "reverify_steps": ['re-check-provider'],
+    },
+    'evbundle-unauthorized-producer': {
+        "domain": 'evbundle',
+        "code": 'evbundle-unauthorized-producer',
+        "human": 'evidence bundle v2: the producer authorization was '
+                 'missing, wrong-shaped, or rejected (bare digest, forged '
+                 'artifact signature, or ceremony refusal); the digest is '
+                 'NOT authorized for the transparency log',
+        "severity": 'high',
+        "evidence_kinds_required": ['producer-authorization'],
+        "reverify_steps": ['re-verify-producer-auth'],
+    },
+
     'evcert-anchor-unavailable': {
         "domain": 'evcert',
         "code": 'evcert-anchor-unavailable',
@@ -4775,6 +5017,16 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['identity-assertion', 'signature'],
         "reverify_steps": ['re-verify-signature'],
+    },
+    'evcert-provisioner-policy-violated': {
+        "domain": 'evcert',
+        "code": 'evcert-provisioner-policy-violated',
+        "human": 'evidence cert: the requested lifetime is within the CA '
+                 'global bounds but outside the provisioner class '
+                 'tightening bounds; the class policy was enforced',
+        "severity": 'medium',
+        "evidence_kinds_required": ['certificate-request', 'ca-configuration'],
+        "reverify_steps": ['re-check-lifetime-bounds'],
     },
     'evcert-unknown-approval': {
         "domain": 'evcert',
@@ -5867,6 +6119,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['label-record'],
         "reverify_steps": ['recompute'],
     },
+    'ifc-grant-unissued': {
+        "domain": 'ifc',
+        "code": 'ifc-grant-unissued',
+        "human": 'IFC privilege exercise with a grant that was never '
+                 'issued by the ceremony refuses: the digest is valid '
+                 'but no issuance registry recorded it, so the grant '
+                 'is attributable as self-minted (forged), not tampered',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
     'ifc-integrity-flow-denied': {
         "domain": 'ifc',
         "code": 'ifc-integrity-flow-denied',
@@ -5921,6 +6184,17 @@ TAXONOMY = {
                  'refuses: authorization must be human-approval or '
                  'deployment-role with a non-empty reference; tampered or '
                  'forged grants are detected via digest',
+        "severity": 'high',
+        "evidence_kinds_required": ['label-record', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ifc-registry-corrupt': {
+        "domain": 'ifc',
+        "code": 'ifc-registry-corrupt',
+        "human": 'IFC issuance-registry journal is unreadable or corrupt: '
+                 'the registry refuses loudly rather than replaying '
+                 'partial state; no grant authenticates until the '
+                 'deployment repairs the journal',
         "severity": 'high',
         "evidence_kinds_required": ['label-record', 'grant'],
         "reverify_steps": ['recompute'],
@@ -8480,6 +8754,158 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
+    },
+    'ptgrant-arg-bound-violated': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-arg-bound-violated',
+        "human": 'per-tool grant: an invocation argument violates its registered bound',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-attenuation-invalid': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-attenuation-invalid',
+        "human": 'per-tool grant: an attenuation caveat record is malformed or mis-chained',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-audience-mismatch': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-audience-mismatch',
+        "human": 'per-tool grant: the grant audience does not match the server (confused server)',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-cnf-missing': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-cnf-missing',
+        "human": 'per-tool grant: the grant carries no confirmation key binding',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-grant-expired': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-grant-expired',
+        "human": 'per-tool grant: the grant is past its expiry',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-grant-malformed': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-grant-malformed',
+        "human": 'per-tool grant: the grant body fails shape checks',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'ptgrant-grant-not-yet-valid': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-grant-not-yet-valid',
+        "human": 'per-tool grant: the grant is presented before its not-before time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-invalid-target': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-invalid-target',
+        "human": 'per-tool grant: the grant targets a mandate or scope that cannot be issued',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-issuer-unknown': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-issuer-unknown',
+        "human": 'per-tool grant: the grant issuer is not a trusted issuer',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-jti-reused': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-jti-reused',
+        "human": 'per-tool grant: the proof nonce was already consumed (replay refused)',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof', 'store'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-link-unverifiable': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-link-unverifiable',
+        "human": 'per-tool grant: the tool supply-chain link could not be verified',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-mandate-drift': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-mandate-drift',
+        "human": 'per-tool grant: the mandate version moved since the grant was issued',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-max-calls-exhausted': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-max-calls-exhausted',
+        "human": 'per-tool grant: the per-detail call budget is exhausted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'proof', 'store'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-ok': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-ok',
+        "human": 'per-tool grant: the invocation was authorized (emitted as a decision record, not a refusal)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-pop-invalid': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-pop-invalid',
+        "human": 'per-tool grant: the proof-of-possession proof fails binding or signature',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature', 'proof'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-predicate-unknown': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-predicate-unknown',
+        "human": 'per-tool grant: the grant or caveat uses an unregistered predicate',
+        "severity": 'medium',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-signature-invalid': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-signature-invalid',
+        "human": 'per-tool grant: the grant signature fails verification',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-supply-chain-failed': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-supply-chain-failed',
+        "human": 'per-tool grant: the tool supply-chain link digest does not match',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ptgrant-tool-not-covered': {
+        "domain": 'tool_grant',
+        "code": 'ptgrant-tool-not-covered',
+        "human": 'per-tool grant: the invoked tool is not covered by any grant detail',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
     },
     'quarantine-bypass-refused': {
         "domain": 'quarantine',

@@ -70,7 +70,7 @@ def _mk_injector(vault, name="egress-prod", audit=None, sink=None,
 class TestTaxonomyPin(unittest.TestCase):
     def test_pin_1209(self):
         # Lane-local pin: 1205 + 4 credential-strict-* codes.
-        self.assertEqual(len(dc.TAXONOMY), 1325)  # Wave-269 merge: pin -> 1325.
+        self.assertEqual(len(dc.TAXONOMY), 1372)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
     def test_strict_codes_well_formed(self):
         for code in ("credential-strict-config-invalid",

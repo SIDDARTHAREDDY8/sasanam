@@ -42,7 +42,7 @@ from gov import svid_issuer as sv  # noqa: E402
 
 # Wave-261 lane B: pin 1092 -> 1093 (+1 svid-usage-mismatch, F233).
 # Additive only; repointed value-token-only per the wave-256 lesson.
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _PROBES = []
 

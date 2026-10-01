@@ -609,6 +609,7 @@ class DecisionCodeTests(unittest.TestCase):
         'evcert-malformed-cert': 'medium',
         'evcert-malformed-request': 'medium',
         'evcert-pop-invalid': 'high',
+        'evcert-provisioner-policy-violated': 'medium',
         'evcert-unknown-approval': 'medium',
         'evcert-unknown-issuer': 'medium',
     }
@@ -629,7 +630,7 @@ class DecisionCodeTests(unittest.TestCase):
         import gov.decision_codes as dc
         with open(dc.__file__, encoding="utf-8") as f:
             src = f.read()
-        self.assertEqual(src.count("\"code\": '"), 1325)  # Wave-269 merge: 1299 -> 1325.
+        self.assertEqual(src.count("\"code\": '"), 1372)  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
         for code in self.EXPECTED:
             self.assertEqual(src.count("\"code\": '%s'" % code), 1,
                              "code literal %s must appear exactly once"

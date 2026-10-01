@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import incident as inc_mod  # noqa: E402
 
-assert len(decision_codes.TAXONOMY) == 1325, "taxonomy pin 1299"  # Wave-269 merge: pin -> 1325.
+assert len(decision_codes.TAXONOMY) == 1372, "taxonomy pin 1372"  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _PROBES = []
 

@@ -73,7 +73,7 @@ except ImportError:
 
 # Wave-262 feature lane 2: +4 detector-* machine codes -> 1106 -> 1110.
 # Assert on the deduped dict AND on raw source literals (wave-260 lesson).
-TAXONOMY_PIN = 1325  # Wave-269 merge: pin -> 1325.
+TAXONOMY_PIN = 1372  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 _NEW_CODES = ("detector-deprecated", "detector-exception-malformed",
               "detector-unknown-maturity", "detector-unknown-priority")
