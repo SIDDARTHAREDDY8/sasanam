@@ -17,7 +17,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO not in sys.path:
     sys.path.insert(0, REPO)
 
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 STUB = os.environ.get("GOV_PTGRANT_IMPL") == "stub"
 
@@ -355,7 +355,7 @@ def c03_exchange_narrows():
                        mandate_version=14,
                        details=[details_for("read_file", max_calls=10)],
                        lifetime_s=600, now=NOW)
-    child = iss.exchange(parent, issuer_seed=ISS_SEED,
+    child = iss.exchange(parent, parent_holder_seed=HOLDER_SEED,
                          details=[details_for("read_file", max_calls=1)],
                          now=NOW, proof_pub=HOLDER_PUB, lifetime_s=60)
     env = enforce_env()

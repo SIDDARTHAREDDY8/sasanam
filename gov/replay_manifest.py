@@ -248,6 +248,13 @@ class ReplayManifestBuilder(object):
                 "replay-malformed", "env must be a dict")
         try:
             _canonical(env)
+        except RecursionError as e:
+            # json.dumps raises RecursionError (a RuntimeError, not a
+            # ValueError) for deeply-nested structures -- a hostile env
+            # must still surface the coded error (F272).
+            raise ReplayManifestError(
+                "replay-malformed",
+                "env is too deeply nested to serialize: %s" % (e,))
         except (TypeError, ValueError) as e:
             raise ReplayManifestError(
                 "replay-malformed",
@@ -585,12 +592,28 @@ def verify_manifest(manifest, *, receipts=None, receipt_checker=None,
                     "non-empty string" % (seq,))
         if "presentation_digest" in link:
             presentation_digests.add(link["presentation_digest"])
+    # Caller-supplied containers: a non-dict receipts/presentations map
+    # must fail with the coded error, never leak AttributeError (F272).
+    for name, mapping in (("receipts", receipts),
+                          ("presentations", presentations)):
+        if mapping is not None and not isinstance(mapping, dict):
+            raise ReplayManifestError(
+                "replay-malformed",
+                "%s must be a dict mapping digests to statements/bytes, "
+                "not %s" % (name, type(mapping).__name__))
     # Manifest-level digest: the seal covers links AND code pins.
+    # A non-str manifest_digest must fail with the coded error, never
+    # leak TypeError out of hmac.compare_digest (F272).
+    digest = manifest.get("manifest_digest", "")
+    if not isinstance(digest, str):
+        raise ReplayManifestError(
+            "replay-malformed",
+            "manifest_digest must be a string, not %s"
+            % type(digest).__name__)
     recomputed = _sha256_hex(_canonical(
         {"format": MANIFEST_FORMAT, "links": links,
          "code_pins": code_pins}))
-    if not hmac.compare_digest(recomputed,
-                               manifest.get("manifest_digest", "")):
+    if not hmac.compare_digest(recomputed, digest):
         raise ReplayManifestError(
             "replay-broken-chain",
             "manifest_digest does not cover the link list and code pins "

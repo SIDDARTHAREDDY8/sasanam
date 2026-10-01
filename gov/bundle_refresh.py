@@ -45,6 +45,11 @@ import json
 import os
 from datetime import datetime, timezone
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX platforms
+    fcntl = None
+
 from .dsse_envelope import pae
 from .signing import Ed25519Verifier
 
@@ -153,6 +158,17 @@ class BindingError(_ChainBreak):
 
 class SuspendedError(RefreshError):
     """The refresher is suspended: no verified metadata may be served."""
+
+
+class CacheLockedError(RefreshError):
+    """The cache directory is already held by another refresher.
+
+    Advisory inter-process lock (``flock`` on ``<cache_dir>/.refresh.lock``).
+    Concurrent refresh workers must not share a cache dir without
+    locking; the taxonomy code is ``bundle-delivery-cache-locked``.
+    """
+
+    code = "bundle-delivery-cache-locked"
 
 
 class CanonicalError(_ChainBreak, ValueError):
@@ -446,8 +462,20 @@ class BundleRefresher(object):
     ``trusted_root_wire`` is the pinned trust anchor (root vN bytes).
     ``fetch(role, version)`` returns wire bytes, raising
     :class:`FetchNotFound` on a clean miss. ``cache_dir`` holds the
-    write-through cache. ``clock`` returns "now" (defaults to UTC).
+    write-through cache. ``clock`` returns "now" -- an aware datetime,
+    or int/float epoch seconds (an int-epoch
+    :class:`gov.reference_time.AtomicClock` converts at the seam).
+    It defaults to UTC; it is sampled ONCE per :meth:`refresh` and
+    every expiry check in the cycle reads that single reference time
+    (wave-273, TUF pattern). Pass an int-epoch AtomicClock to share
+    the reference with RSL and replay-manifest checks in the same
+    cycle.
     ``max_length`` overrides :data:`DEFAULT_MAX_LENGTH` per role.
+    ``cache_lock`` takes an advisory ``flock`` on
+    ``<cache_dir>/.refresh.lock`` so concurrent refresh workers cannot
+    share a cache dir silently (default off for single-process use;
+    pass ``cache_lock=True`` whenever two workers may share the dir).
+    Release with :meth:`close`.
 
     States: ``"trusted"`` serves; ``"stale"`` serves the last verified
     chain with loud warnings (expiry only); ``"suspended"`` refuses
@@ -456,7 +484,7 @@ class BundleRefresher(object):
     """
 
     def __init__(self, trusted_root_wire, fetch, cache_dir, clock=None,
-                 max_length=None):
+                 max_length=None, cache_lock=False):
         if not callable(fetch):
             raise TypeError("fetch must be callable")
         self._fetch = fetch
@@ -478,6 +506,14 @@ class BundleRefresher(object):
         # versions as the rollback floor. None in the normal path.
         self._rotation_floor = None
 
+        # Per-cycle atomic reference time (wave-273, TUF pattern):
+        # refresh() samples the clock ONCE and every expiry check in
+        # that cycle reads the same reference, so a clock that
+        # advances mid-cycle cannot produce contradictory verdicts.
+        # None outside a refresh() cycle (direct _is_expired calls
+        # then sample the clock normally).
+        self._ref_time = None
+
         # Pin the trust anchor: canonical form + self-threshold.
         env, doc, payload = self._parse("root", trusted_root_wire,
                                         "pinned root")
@@ -492,6 +528,23 @@ class BundleRefresher(object):
                        % (doc["version"], doc["expires"]))
 
         os.makedirs(self._cache_dir, exist_ok=True)
+        self._lock_handle = None
+        if cache_lock:
+            if fcntl is None:
+                raise RefreshError(
+                    "cache_lock requested but fcntl is unavailable")
+            lock_path = os.path.join(self._cache_dir, ".refresh.lock")
+            handle = open(lock_path, "wb")
+            try:
+                fcntl.flock(handle.fileno(),
+                            fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                raise CacheLockedError(
+                    "cache dir %r is already held by another refresher; "
+                    "concurrent refresh workers must not share a cache "
+                    "dir without locking" % (self._cache_dir,))
+            self._lock_handle = handle
         pinned_root = self._root
         pre_versions = self._cached_role_versions()
         self._load_cache()
@@ -549,6 +602,17 @@ class BundleRefresher(object):
         """Suspension cause, or None."""
         return self._reason
 
+    def close(self):
+        """Release the advisory cache lock, if held."""
+        handle, self._lock_handle = self._lock_handle, None
+        if handle is not None:
+            # fcntl cannot be None here: __init__ raises when a lock
+            # is requested on a platform without fcntl.
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
+
     @property
     def warnings(self):
         """Loud notes accumulated (expiry, transport, cache hygiene)."""
@@ -558,7 +622,15 @@ class BundleRefresher(object):
         self._warnings.append(message)
 
     def _now(self):
-        now = self._clock()
+        # Per-cycle atomic reference time (wave-273, TUF pattern): all
+        # expiry checks inside one refresh() read the same sample.
+        now = self._ref_time if self._ref_time is not None \
+            else self._clock()
+        if isinstance(now, (int, float)) and not isinstance(now, bool):
+            # Numeric-epoch clock (e.g. a shared int-epoch AtomicClock,
+            # phase-2 shared-currency contract): convert to aware UTC
+            # datetime at the seam.
+            now = datetime.fromtimestamp(now, tz=timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         return now
@@ -738,8 +810,16 @@ class BundleRefresher(object):
         report names the cause), expiry goes stale with loud warnings,
         transport errors are warnings that keep the current chain.
         Idempotent and safe to retry.
+
+        The clock is sampled ONCE at the start of the cycle (TUF
+        pattern, wave-273): every expiry check in this refresh --
+        root, timestamp, snapshot, targets -- is evaluated against
+        the same reference time, so mid-cycle clock movement cannot
+        produce contradictory verdicts.
         """
         self._reason = None
+        # Atomic reference time for this cycle.
+        self._ref_time = self._clock()
         try:
             self._refresh_roots()
             self._refresh_timestamp()
@@ -757,6 +837,8 @@ class BundleRefresher(object):
             if self._chain_complete():
                 # A completed chain ends any post-rotation bootstrap.
                 self._rotation_floor = None
+        finally:
+            self._ref_time = None
         return RefreshReport(
             self._state, self._warnings, self._reason,
             {role: entry["doc"]["version"]
@@ -1137,6 +1219,22 @@ class BundleRefresher(object):
         if entry is None:
             raise KeyError(name)
         return entry["hashes"]["sha256"], entry["length"]
+
+    def verified_targets_doc(self):
+        """Return the verified top-level targets document.
+
+        Only while the refresher is ``"trusted"``: delegation
+        resolution (``gov/bundle_delivery.py``) is a security boundary
+        like the install gate and never runs on stale or suspended
+        chains. Raises :class:`SuspendedError` otherwise.
+        """
+        if self._state != "trusted" or "targets" not in self._chain:
+            raise SuspendedError(
+                "bundle refresher is %s%s: refusing to serve the "
+                "targets document" % (self._state,
+                                       ": " + self._reason
+                                       if self._reason else ""))
+        return self._chain["targets"]["doc"]
 
 
 def _validate_timestamp_doc(doc, where):

@@ -21,7 +21,6 @@ the security parameter.
 
 import json
 import os
-import queue
 import sys
 import threading
 import hashlib
@@ -29,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import anchor_backend as _ab
+from . import evidence_fanout as _fanout
 from . import log as _log
 from .digest_ref import DigestRef
 
@@ -179,12 +179,18 @@ class Anchorer:
     ``maybe_anchor()`` is the ONLY drive point: call it from run close or
     a timer tick -- never from the enforcement path, never from inside the
     sandbox. It closes the epoch and enqueues; a daemon worker does all
-    backend I/O. ``close()`` anchors on close per the policy and drains.
+    backend I/O. The enqueue goes through a BOUNDED, loss-accounted
+    fan-out queue (:mod:`gov.evidence_fanout`): on full the job is
+    refused and counted (``maybe_anchor`` returns ``"dropped"``), an
+    unanchored record is chained, and :meth:`recover` can requeue it --
+    drops are counted, never silently lost. ``close()`` anchors on close
+    per the policy and drains.
     """
 
     def __init__(self, log, backend, policy=None, anchor_key=None,
                  clock=None, warn=None, max_attempts=5, backoff_base=2.0,
-                 backoff_cap=60.0):
+                 backoff_cap=60.0, fanout_maxsize=1024,
+                 fanout_policy=_fanout.FanoutQueue.COUNTED_DROP):
         self._log = log
         self._backend = backend
         self._policy = policy or AnchorPolicy()
@@ -211,7 +217,22 @@ class Anchorer:
         self._max_attempts = max_attempts
         self._backoff_base = backoff_base
         self._backoff_cap = backoff_cap
-        self._queue = queue.Queue()
+        # Loss-accounted fan-out (wave-273): the anchor job queue is
+        # BOUNDED and every refused item is counted, never silently
+        # lost. Dropped anchor jobs are recoverable: the durable
+        # evidence (chained log + checkpoint) already exists before
+        # enqueue, and _on_fanout_drop chains an unanchored record so
+        # recover() can requeue them. counted-drop is the default
+        # because maybe_anchor must never raise into the enforcement
+        # path; fail-closed is the operator's explicit opt-in.
+        self._queue = _fanout.FanoutQueue(
+            maxsize=fanout_maxsize, policy=fanout_policy,
+            on_drop=self._on_fanout_drop)
+        self._outcome_lock = threading.Lock()
+        self._completed = 0
+        self._failed = 0
+        self._retried = 0
+        self._abandoned = 0
         self._closed = False
         self._timers = []
         # Idempotence guard: the highest end_seq ever closed by this
@@ -293,7 +314,9 @@ class Anchorer:
     def maybe_anchor(self, force=False):
         """Close the epoch per the policy and enqueue the anchor job.
 
-        Returns "queued" | "not-due" | "empty" | "closed" | "already-closed".
+        Returns "queued" | "dropped" | "not-due" | "empty" | "closed" |
+        "already-closed". Under the opt-in fail-closed fan-out policy a
+        full queue RAISES FanoutFullError instead of returning "dropped".
         Performs no network I/O and never blocks the enforcement path: the
         checkpoint it anchors already exists (every append writes one).
         """
@@ -328,17 +351,58 @@ class Anchorer:
             return "not-due"
         closed_id, s, e = self._log.close_epoch()
         self._last_closed_end = e
-        self._enqueue_job(closed_id, s, e, self._clock())
-        return "queued"
+        # "dropped" is an honest signal: the epoch's evidence is durable
+        # (chained log + checkpoint) and the drop is counted in
+        # fanout_stats() with an unanchored record chained, so the
+        # caller can decide (retry later, run recover()).
+        return self._enqueue_job(closed_id, s, e, self._clock())
 
     def _enqueue_job(self, epoch_id, start_seq, end_seq, close_wall,
-                     attempts=0, unanchored_recorded=False):
-        self._queue.put({
+                     attempts=0, unanchored_recorded=False, priority=False):
+        """Enqueue an anchor job. Returns "queued" or "dropped".
+
+        A dropped job is counted in the fan-out stats and its epoch is
+        chained as unanchored (via the queue's on_drop hook) so
+        recover() can requeue it -- a drop is never silent and never a
+        loss of the underlying evidence.
+
+        ``priority=True`` bypasses the bound (never drops): reserved for
+        recover(), where requeueing an already-unanchored epoch must be
+        reliable -- a bounded requeue could drop it again and defeat the
+        healing. Never set on the hot producer path.
+        """
+        job = {
             "epoch_id": epoch_id, "start_seq": start_seq,
             "end_seq": end_seq, "close_wall": close_wall,
             "attempts": attempts,
             "unanchored_recorded": unanchored_recorded,
-        })
+        }
+        if priority:
+            verdict = self._queue.submit_priority(job, reason="recover")
+        else:
+            verdict = self._queue.submit(job, reason="anchor-job")
+        return "queued" if verdict == "accepted" else "dropped"
+
+    def _on_fanout_drop(self, job, reason):
+        """Chain an unanchored record for a queue-full dropped job.
+
+        Best-effort: the durable unanchored record is what makes the
+        drop recoverable. Exceptions are swallowed with a warning (the
+        hook must never break the producer).
+        """
+        try:
+            self._log.append({
+                "event": ANCHOR_UNANCHORED_EVENT,
+                "anchored_epoch_id": job.get("epoch_id"),
+                "checkpoint_seq": job.get("end_seq"),
+                "reason": "fanout-full",
+                "detail": "anchor job refused by the bounded fan-out "
+                          "queue (%s); recover() can requeue" % (reason,),
+                "grade": GRADE_OPERATOR_ONLY,
+            })
+        except Exception as exc:
+            self._warn("could not chain the fanout-drop record: %r"
+                       % (exc,))
 
     def close(self, timeout=30):
         """Anchor on close per the policy, then drain the worker.
@@ -355,14 +419,19 @@ class Anchorer:
         self._closed = True
         for t in self._timers:
             t.cancel()
-        self._queue.put(None)  # stop sentinel
+        # Control-channel enqueue: the stop sentinel bypasses the
+        # fan-out bound so close() can never deadlock on a full queue.
+        self._queue.submit_control(None)
         self._thread.join(timeout=timeout)
 
     def recover(self):
         """Requeue epochs that have an unanchored record but no receipt.
 
         Explicit operator action (e.g. after a restart with a recovered
-        backend). Returns the number of requeued epochs.
+        backend). Requeues bypass the fan-out bound (priority channel):
+        an epoch that already has a chained unanchored record must be
+        requeued reliably -- a bounded requeue could drop it again and
+        defeat the healing. Returns the number of requeued epochs.
         """
         unanchored = {}
         receipted = set()
@@ -398,9 +467,15 @@ class Anchorer:
             if not _log._valid_epoch_id(epoch_id):
                 continue
             self._enqueue_job(epoch_id, int(epoch_id[1:]), cs,
-                              self._clock())
+                              self._clock(), priority=True)
             n += 1
         return n
+
+    def _note_outcome(self, which):
+        """Bump a worker-side outcome counter (completed/failed/retried/
+        abandoned) under the outcome lock."""
+        with self._outcome_lock:
+            setattr(self, "_" + which, getattr(self, "_" + which) + 1)
 
     # -- worker --------------------------------------------------------
     def _worker(self):
@@ -411,11 +486,14 @@ class Anchorer:
                     return
                 self._do_anchor(job)
             except Exception as exc:
+                self._note_outcome("failed")
                 try:
                     self._on_failure(job, exc)
                 except Exception as exc2:
                     self._warn(
                         "anchor failure handler failed: %r" % (exc2,))
+            else:
+                self._note_outcome("completed")
             finally:
                 self._queue.task_done()
 
@@ -501,7 +579,9 @@ class Anchorer:
             t.daemon = True
             self._timers.append(t)
             t.start()
+            self._note_outcome("retried")
         elif retryable:
+            self._note_outcome("abandoned")
             self._warn("epoch %s: retries exhausted; grade stays %s until "
                        "an operator runs recover()" % (
                            job["epoch_id"], GRADE_OPERATOR_ONLY))
@@ -510,7 +590,26 @@ class Anchorer:
         if self._closed:
             return
         job["attempts"] = attempts
-        self._queue.put(job)
+        # Retries also pass through the bounded queue: a refused retry
+        # is counted (reason "retry") and its epoch already has a
+        # chained unanchored record, so recover() can requeue it later.
+        self._queue.submit(job, reason="retry")
+
+    def fanout_stats(self):
+        """Operator-visible loss accounting for the anchor fan-out.
+
+        Submit-side counters come from the bounded queue; worker-side
+        outcome counters from this Anchorer. All counters are monotonic
+        within the process lifetime; the durable loss record is the
+        chained unanchored entries, which recover() reads.
+        """
+        st = self._queue.stats()
+        with self._outcome_lock:
+            st["completed"] = self._completed
+            st["failed"] = self._failed
+            st["retried"] = self._retried
+            st["abandoned"] = self._abandoned
+        return st
 
 
 def _read_entries(log_path):

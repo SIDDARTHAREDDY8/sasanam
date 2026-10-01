@@ -55,7 +55,7 @@ except ImportError:
 # Wave-260 lane-1 base pin. The lane adds 5 poldist-* codes:
 # 1080 -> 1085. If the count moves otherwise, the delta must be
 # explained by a landed taxonomy change -- never repoint blindly.
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _PROBES = []
 

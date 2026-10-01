@@ -142,7 +142,7 @@ else:
 
 # Merge pin: 1443 = 1411 (wave-271 merge) + 32 (8 prodauth + 7 drift/revbind + 9 ingest + 8 oidc).
 # Counted on QUOTED source literals ("code": '...').
-TAXONOMY_PIN = 1443  # Wave-272 merge: pin 1411 -> 1443 (+32 codes: 8 prodauth-* + 7 drift-*/revbind-* + 9 ingest-* + 8 oidc-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _RESULTS = []
 _NOW = 1700000000
@@ -528,7 +528,7 @@ _PROBES = [
 ]
 
 if IMPL == "real":
-    _PROBES.append(("c4-pin-1443", "control", c4_pin_check))
+    _PROBES.append(("c4-pin-1458", "control", c4_pin_check))
 
 
 def _run(pid, kind, fn):

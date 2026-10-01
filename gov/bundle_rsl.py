@@ -34,16 +34,23 @@ carrying the machine ``code``); malformed caller input raises
 Traps from the gittuf teardown that are NOT copied:
 
 - root-metadata expiry unenforced: Sasanam rule files MUST enforce
-  expiry -- ``expires`` is checked at creation, at open, and on every
-  operation (``rsl-rule-expired``).
+  expiry -- ``expires`` is checked at creation and at open against the
+  explicit ``now`` (``rsl-rule-expired``). Per-operation re-checks read
+  the handle's clock: with a frozen int ``now`` (the deterministic
+  default) the re-check is vacuous by construction -- a long-lived
+  handle without a clock does NOT observe wall-clock expiry. Pass
+  ``now`` as a callable clock (e.g. ``time.time``) to
+  ``open_log``/``BundleRSL`` when the deployment needs expiry enforced
+  on every operation (F275).
 - vendored patched DSSE: the rule wire is plain canonical JSON with one
   Ed25519 signature field; no envelope machinery.
 - verify-time-not-prevent-time: gittuf blocks force-pushes at verify
   time; the RSL refuses forks/rollbacks at BOTH times, as stated above.
 
-Determinism: every entry point takes an explicit ``now``; Ed25519
-signatures are deterministic; journal records are canonical JSON. Two
-identical scenarios produce byte-identical journals.
+Determinism: every entry point takes an explicit ``now`` -- a frozen
+int for byte-identical scenarios, or a callable clock when the
+deployment wants per-operation wall-clock freshness (F275). Ed25519
+signatures are deterministic; journal records are canonical JSON.
 
 Honest limits: the RSL authenticates state TRANSITIONS, not bundle
 content -- a correctly-authorized transition to a malicious bundle is
@@ -85,6 +92,28 @@ class RSLError(Exception):
         super(RSLError, self).__init__("%s: %s" % (code, detail))
         self.code = code
         self.detail = detail
+
+
+def _is_epoch_int(value):
+    """True for a real int epoch -- bool is rejected (a programmatic
+    True/False is a nonsense epoch, and JSON never carries one)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _resolve_now(now):
+    """Resolve the explicit ``now`` to an int epoch.
+
+    ``now`` may be a frozen int (deterministic default -- two identical
+    scenarios produce byte-identical journals) or a callable clock
+    returning the current epoch as int or float seconds (e.g.
+    ``time.time`` -- floats are truncated to int seconds to keep the
+    int-epoch discipline) for live expiry on every operation (F275).
+    """
+    value = now() if callable(now) else now
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("now must resolve to an int or float epoch, not %s"
+                         % type(value).__name__)
+    return int(value)
 
 
 # ---------------------------------------------------------------------------
@@ -170,13 +199,24 @@ def _verify_skip_sigs(rule, skip):
 
     An unsigned/forged skip is dishonored (it cannot revoke, and it
     cannot be used to DoS verification); it stays in the log, audit-
-    visible, but powerless.
+    visible, but powerless. A MALFORMED skip (missing fields, wrong
+    shapes) is also dishonored -- it can never brick verification of
+    the whole bundle (F274). Malformation is not a signature failure
+    and is never honored.
     """
-    msg = _canonical({"bundle": skip["bundle"],
-                      "target_seq": skip["target_seq"],
-                      "target_digest": skip["target_digest"],
-                      "reason": skip["reason"]})
-    for kid, sig_hex in (skip.get("signatures") or {}).items():
+    try:
+        msg = _canonical({"bundle": skip["bundle"],
+                          "target_seq": skip["target_seq"],
+                          "target_digest": skip["target_digest"],
+                          "reason": skip["reason"]})
+        signatures = skip.get("signatures")
+        if signatures is not None and not isinstance(signatures, dict):
+            return False
+    except (KeyError, TypeError, AttributeError):
+        # Malformed skip record: dishonored, never honored, and never
+        # allowed to fail the whole-bundle verification (F274).
+        return False
+    for kid, sig_hex in (signatures or {}).items():
         entry = rule["principals"].get(kid)
         if entry is None:
             continue
@@ -239,7 +279,7 @@ def make_rule_file(*, rule_id, bundle, principals, delegations,
     if terminal_key_id not in principals:
         raise ValueError("terminal_key_id %r not in principals" %
                          (terminal_key_id,))
-    if not isinstance(expires, int) or expires <= now:
+    if not isinstance(expires, int) or expires <= _resolve_now(now):
         raise RSLError(RULE_EXPIRED,
                        "rule file expires at %r, now is %r: refusing to "
                        "mint an already-expired rule" % (expires, now))
@@ -285,12 +325,32 @@ def _parse_rule(rule_wire, now):
     body = {k: wire[k] for k in ("schema_version", "rule_id", "bundle",
                                  "principals", "delegations", "terminal",
                                  "expires")}
+    # Shape validation before any attribute/item access: malformed
+    # caller input must raise ValueError (the module-contract error),
+    # never leak raw AttributeError/TypeError (F273).
     term = wire["terminal"]
-    kid = term.get("key_id")
+    if not isinstance(term, dict):
+        raise ValueError("terminal must be an object, not %s"
+                         % type(term).__name__)
     principals = wire["principals"]
+    if not isinstance(principals, dict):
+        raise ValueError("principals must be an object, not %s"
+                         % type(principals).__name__)
+    signatures = wire["signatures"]
+    if not isinstance(signatures, dict):
+        raise ValueError("signatures must be an object, not %s"
+                         % type(signatures).__name__)
+    expires = wire["expires"]
+    if not _is_epoch_int(expires):
+        raise ValueError("expires must be an int epoch, not %s"
+                         % type(expires).__name__)
+    kid = term.get("key_id")
     if kid not in principals:
         raise ValueError("terminal key not in principals")
-    sig_entry = (wire["signatures"] or {}).get("terminal")
+    sig_entry = (signatures or {}).get("terminal")
+    if sig_entry is not None and not isinstance(sig_entry, dict):
+        raise ValueError("signatures.terminal must be an object, not %s"
+                         % type(sig_entry).__name__)
     if not sig_entry or sig_entry.get("key_id") != kid:
         raise RSLError(TERMINAL_UNSIGNED,
                        "rule file carries no terminal signature")
@@ -316,7 +376,7 @@ def _parse_rule(rule_wire, now):
             raise RSLError(THRESHOLD_INVALID,
                            "delegation %r threshold out of range" %
                            (d.get("name"),))
-    if wire["expires"] <= now:
+    if wire["expires"] <= _resolve_now(now):
         raise RSLError(RULE_EXPIRED,
                        "rule file expired at %r (now %r)" %
                        (wire["expires"], now))
@@ -324,7 +384,11 @@ def _parse_rule(rule_wire, now):
 
 
 def open_log(journal_path, rule_wire, now):
-    """Open (or create) the RSL at ``journal_path`` under ``rule_wire``."""
+    """Open (or create) the RSL at ``journal_path`` under ``rule_wire``.
+
+    ``now`` may be a frozen int (deterministic) or a callable clock
+    (live expiry on every operation -- see F275).
+    """
     rule = _parse_rule(rule_wire, now)
     try:
         journal = Journal(journal_path)
@@ -345,6 +409,10 @@ class BundleRSL(object):
         self._journal = journal
         self._rule = rule
         self._now = now
+        # F275: the expiry clock. A frozen int ``now`` preserves the
+        # deterministic discipline; a callable clock is sampled on
+        # every operation so a long-lived handle observes expiry.
+        self._now_fn = lambda: _resolve_now(now)
 
     # -- internal scans -------------------------------------------------
     @staticmethod
@@ -362,10 +430,11 @@ class BundleRSL(object):
         return tip["state_digest"] if tip else None
 
     def _check_expiry(self):
-        if self._rule["expires"] <= self._now:
+        now = self._now_fn()
+        if self._rule["expires"] <= now:
             raise RSLError(RULE_EXPIRED,
                            "rule file expired at %r (now %r)" %
-                           (self._rule["expires"], self._now))
+                           (self._rule["expires"], now))
 
     def _check_bundle(self, bundle):
         _nonempty_str(bundle, "bundle")
@@ -508,10 +577,10 @@ class BundleRSL(object):
         except ValueError as e:
             raise RSLError(TRANSITION_UNAUTHORIZED,
                            "bundle not covered by this rule file: %s" % e)
-        if self._rule["expires"] <= self._now:
+        if self._rule["expires"] <= self._now_fn():
             raise RSLError(RULE_EXPIRED,
                            "rule file expired at %r (now %r)" %
-                           (self._rule["expires"], self._now))
+                           (self._rule["expires"], self._now_fn()))
         states = self._states(journal.records, bundle)
         if not states:
             raise RSLError(TRANSITION_UNAUTHORIZED,
@@ -551,12 +620,24 @@ class BundleRSL(object):
             if rec["type"] != "rsl-skip":
                 continue
             skip = rec["body"]
+            # F274: a malformed skip is dishonored, never allowed to
+            # fail the whole bundle. The dict guard comes FIRST --
+            # a non-dict body has no .get, and reaching for "bundle"
+            # before the guard would brick verification with a raw
+            # AttributeError (the exact DoS class this closes).
+            if not isinstance(skip, dict):
+                continue  # malformed skip: dishonored
             if skip.get("bundle") != bundle:
                 continue
-            if not (0 <= skip.get("target_seq", -1) <= states[-1]["seq"]):
-                continue
+            # Shape-check before the bound comparison (a non-int
+            # target_seq would raise TypeError and brick verification
+            # via LOG_CORRUPT).
+            target_seq = skip.get("target_seq")
+            if not _is_epoch_int(target_seq) \
+                    or not (0 <= target_seq <= states[-1]["seq"]):
+                continue  # malformed skip: dishonored
             if not _verify_skip_sigs(self._rule, skip):
-                continue  # forged/unsigned skip: dishonored, not honored
+                continue  # forged/unsigned/malformed skip: dishonored
             raise RSLError(SKIPPED_REVOKED,
                            "seq %d revoked by skip annotation: %s" %
                            (skip["target_seq"],

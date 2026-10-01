@@ -22,7 +22,7 @@ TTL = 600.0
 NONCE = b"unit-test-nonce"
 ARTIFACT = hashlib.sha256(b"artifact").hexdigest()
 
-TAXONOMY_PIN = 1443  # Wave-270 merge: pin 1325 -> 1372 (+47 codes: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*) (lane: 1299 + 8 sessbind-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 
 def _keys(n=2):

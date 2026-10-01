@@ -943,10 +943,28 @@ class InProcessTransparencyLog(TransparencyLogProvider):
                 "evbundle-malformed",
                 "inclusion_proof/checkpoint have bad shapes")
         _hex64(root, "checkpoint root")
+        # F279: validate proof-element shapes up front -- a None/float
+        # (or otherwise non-coercible) element must raise the coded
+        # error, never leak TypeError out of the RFC 6962 verifier.
+        for i, element in enumerate(hashes):
+            if isinstance(element, str):
+                _hex64(element, "inclusion_proof.hashes[%d]" % i)
+            elif isinstance(element, (bytes, bytearray)) \
+                    and len(element) == 32:
+                pass
+            else:
+                raise EvidenceBundleV2Error(
+                    "evbundle-malformed",
+                    "inclusion_proof.hashes[%d] must be a 64-char hex "
+                    "string or 32 raw bytes, not %s"
+                    % (i, type(element).__name__))
         try:
             recomputed = _r6962_verify_proof(
                 bytes.fromhex(digest), index, hashes, tree_size).hex()
-        except ValueError as e:
+        except (ValueError, TypeError) as e:
+            # Defense-in-depth: with up-front shape validation nothing
+            # uncoded should reach here, but the coded-error contract
+            # (F279) must hold regardless of what the verifier raises.
             raise EvidenceBundleV2Error(
                 "evbundle-inclusion-unverified",
                 "inclusion proof malformed: %s" % (e,))

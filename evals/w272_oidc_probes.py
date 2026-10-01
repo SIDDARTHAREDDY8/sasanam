@@ -46,7 +46,7 @@ from gov import kms as kms_mod  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 # Wave-272 merge pin: 1411 (wave-271 merge) + 32 new codes = 1443.
-TAXONOMY_PIN = 1443
+TAXONOMY_PIN = 1458
 
 OIDC_IMPL = os.environ.get("OIDC_IMPL", "real")
 
@@ -414,7 +414,7 @@ def _green_check():
     out = p.stdout + p.stderr
     fails = re.findall(r"^FAIL: (\S+)", out, re.M)
     errors = re.findall(r"^ERROR: (\S+)", out, re.M)
-    # The taxonomy pin (1443 at the wave-272 merge) is owned by the merge
+    # The taxonomy pin (1458 at the wave-272 merge) is owned by the merge
     # coordinator; every other failure is a real regression.
     non_pin_fails = [f for f in fails if "pin" not in f.lower()]
     ok = not errors and not non_pin_fails

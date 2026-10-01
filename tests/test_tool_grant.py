@@ -6,7 +6,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 from gov import ed25519, tool_grant  # noqa: E402
 
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 ISS_SEED = bytes.fromhex("11" * 32)
 HOLDER_SEED = bytes.fromhex("22" * 32)
@@ -286,7 +286,7 @@ class TestAttenuation(unittest.TestCase):
 class TestExchange(unittest.TestCase):
     def test_narrowing_exchange(self):
         parent = _issue([_details(max_calls=5)])
-        child = _issuer().exchange(parent, issuer_seed=ISS_SEED,
+        child = _issuer().exchange(parent, parent_holder_seed=HOLDER_SEED,
                                    details=[_details(max_calls=1)], now=NOW,
                                    proof_pub=ed25519.publickey(HOLDER_SEED),
                                    lifetime_s=60)
@@ -296,7 +296,7 @@ class TestExchange(unittest.TestCase):
     def test_widening_refused(self):
         parent = _issue([_details(max_calls=1)])
         with self.assertRaises(tool_grant.GrantError) as ctx:
-            _issuer().exchange(parent, issuer_seed=ISS_SEED,
+            _issuer().exchange(parent, parent_holder_seed=HOLDER_SEED,
                                details=[_details(max_calls=5)], now=NOW,
                                proof_pub=ed25519.publickey(HOLDER_SEED),
                                lifetime_s=60)
@@ -305,7 +305,7 @@ class TestExchange(unittest.TestCase):
     def test_parent_survives_exchange(self):
         """RFC 8693 2.1 trap: exchange does not revoke the parent."""
         parent = _issue([_details()])
-        _issuer().exchange(parent, issuer_seed=ISS_SEED,
+        _issuer().exchange(parent, parent_holder_seed=HOLDER_SEED,
                            details=[_details(max_calls=1)], now=NOW,
                            proof_pub=ed25519.publickey(HOLDER_SEED),
                            lifetime_s=60)

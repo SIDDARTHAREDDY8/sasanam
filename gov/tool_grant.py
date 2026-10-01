@@ -72,7 +72,7 @@ _PROOF_SKEW_S = 60
 _MAX_LIFETIME_S = 3600
 
 # ---------------------------------------------------------------------------
-# Decision codes (ptgrant domain; merged taxonomy pin 1443)
+# Decision codes (ptgrant domain; merged taxonomy pin 1458)
 # ---------------------------------------------------------------------------
 
 PTGRANT_CODES = [
@@ -431,14 +431,23 @@ class Issuer:
         sig = ed25519.sign(self._seed, _canonical(body))
         return {"body": body, "sig": _b64(sig), "attenuation": []}
 
-    def exchange(self, parent, *, issuer_seed, details, now, proof_pub,
-                 lifetime_s, act=None):
+    def exchange(self, parent, *, parent_holder_seed, details, now,
+                 proof_pub, lifetime_s, act=None):
         """RFC 8693-style attenuation ceremony: mint a narrower child grant.
 
         The child must be within the parent's rights (identifiers present
         in the parent, bounds narrowed, max_calls not raised, lifetime
         within the parent's remaining window). Anything outside the parent
         refuses ``ptgrant-invalid-target``.
+
+        F285: the exchanger must prove possession of the PARENT grant's
+        cnf key -- ``parent_holder_seed`` is a 32-byte seed whose derived
+        key must match the parent's ``cnf.jkt`` (mirroring attenuate()'s
+        discipline). Read-only access to a parent grant (logs, backups)
+        must not become write access. The old ``issuer_seed`` parameter
+        was REMOVED from the signature: it was silently ignored (the
+        issuer always signs with its own ceremony key, ``self._seed``),
+        and its name promised an authentication that never happened.
 
         TRAP (RFC 8693 2.1, carried honestly): exchanging does NOT revoke
         the parent. The parent remains valid until it expires.
@@ -447,6 +456,14 @@ class Issuer:
         if not pok:
             raise GrantError(pcode, "parent grant is not valid for exchange")
         pbody = parent["body"]
+        if (not isinstance(parent_holder_seed, (bytes, bytearray))
+                or len(parent_holder_seed) != 32):
+            raise GrantError("ptgrant-pop-invalid",
+                             "parent_holder_seed must be a 32-byte seed")
+        if (_jwk_thumbprint(ed25519.publickey(bytes(parent_holder_seed)))
+                != pbody["cnf"]["jkt"]):
+            raise GrantError("ptgrant-pop-invalid",
+                             "exchanger key is not the parent grant's cnf key")
         self._check_details(details)
         pmap = {d["identifier"]: d for d in pbody["authorization_details"]}
         for d in details:
@@ -696,7 +713,9 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     v2 kwargs are backward-compatible: with the defaults (``request_context``
     unset, ``check_registry_pin`` False) behavior is byte-identical to v1.
     ``request_context`` merges request-scoped invocation material into the
-    evaluation view for this one check only; it is never persisted.
+    evaluation view for this one check only; it is never persisted. F287:
+    attenuation ``arg_bound`` caveats read the same args-then-context
+    view as grant-level ``arg_bounds``.
     """
     checked = []
     ok, code, _body = verify_grant(grant, issuer_pub=issuer_pub, now=now)
@@ -730,7 +749,17 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     if not pok:
         return _deny(pcode, pdetail, checked)
 
-    cur = mandate_version_provider(body["mandate_id"])
+    # F286: the provider is called unwrapped at this seam, but the
+    # contract is "Never raises; fail-closed verdicts". Follow the
+    # evaluate_request convention: any store failure is unreachable.
+    try:
+        cur = mandate_version_provider(body["mandate_id"])
+    except Exception:  # noqa: BLE001 -- any store failure is unreachable
+        cur = _UNREACHABLE
+    if cur is _UNREACHABLE:
+        checked.append("mandate:unreachable")
+        return _deny("ptgrant-mandate-unreachable",
+                     "mandate store unreachable", checked)
     if cur != body["mandate_version"]:
         checked.append("mandate:drift")
         return _deny("ptgrant-mandate-drift",
@@ -817,7 +846,15 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
         pred, params = rec["predicate"], rec["params"]
         if pred == "arg_bound":
             arg = params.get("arg")
-            if not eval_predicate(params.get("predicate"), args.get(arg),
+            # F287: caveats use the same args-then-request_context view
+            # as grant-level arg_bounds -- attenuated grants work with
+            # request-scoped attributes instead of falsely denying.
+            val = args.get(arg, _MISSING)
+            if val is _MISSING and ctx is not None:
+                val = ctx.get(arg, _MISSING)
+            if val is _MISSING:
+                val = None  # legacy: predicate against None fails -> deny
+            if not eval_predicate(params.get("predicate"), val,
                                   params.get("params")):
                 checked.append("caveat:arg_bound:violated")
                 return _deny("ptgrant-arg-bound-violated",
@@ -969,9 +1006,12 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
 
     ``verdict_cache`` (optional dict) caches DENIES only, keyed on
     (grant digest, server, tool, args digest, mandate version, registry
-    hash, caller scope set). Deny caching is sound because denying inputs
-    only harden over time: a bumped mandate or tightened registry keeps
-    denying. Allows are never cached, so no stale allow can be served.
+    hash, caller scope set, proof digest, request-context digest). Deny
+    caching is sound because the key binds every input that participates
+    in the verdict: an identical input replays an identical deny
+    (F278 -- a deny cached for one proof/context is never served to a
+    different proof/context). Allows are never cached, so no stale allow
+    can be served.
 
     ``request_context`` is request-scoped invocation material merged into
     the evaluation view for this one check only; it is never persisted.
@@ -1012,16 +1052,25 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
     def _pinned_provider(_mid, _cur=cur):
         return _cur
 
+    # F278: the deny-cache key binds every input that participates in
+    # the verdict -- grant, PROOF (identity), args, request_context,
+    # mandate version, registry hash, caller scopes. A deny cached for
+    # one proof/context is never served to a different proof/context.
+    ctx_view = request_context if request_context is not None else {}
     cache_key = None
     if verdict_cache is not None:
         try:
             gdigest = hashlib.sha256(_canonical(body)).hexdigest()
             adigest = hashlib.sha256(_canonical(args)).hexdigest()
+            pdigest = (hashlib.sha256(_canonical(proof)).hexdigest()
+                       if proof is not None else "no-proof")
+            cdigest = hashlib.sha256(_canonical(ctx_view)).hexdigest()
             cache_key = (gdigest, server_name, tool, adigest, cur,
                          predicate_registry_hash(),
                          tuple(sorted(s for s in scopes
-                                      if isinstance(s, str))))
-        except Exception:  # noqa: BLE001 -- unhashable shapes skip caching
+                                      if isinstance(s, str))),
+                         pdigest, cdigest)
+        except Exception:  # noqa: BLE001 -- unserializable shapes skip caching
             cache_key = None
         if cache_key is not None:
             hit = verdict_cache.get(cache_key)
@@ -1037,8 +1086,7 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
                       tool=tool, args=args, now=now, usage_store=usage_store,
                       mandate_version_provider=_pinned_provider,
                       link_verifier=link_verifier,
-                      request_context=(request_context
-                                       if request_context is not None else {}),
+                      request_context=ctx_view,
                       check_registry_pin=True,
                       max_context_bytes=max_context_bytes)
     verdict["checked"] = checked + verdict.get("checked", [])

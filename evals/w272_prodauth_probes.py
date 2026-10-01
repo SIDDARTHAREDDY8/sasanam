@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 1443  # Wave-272 merge: pin 1411 -> 1443 (+32 codes: 8 prodauth-* + 7 drift-*/revbind-* + 9 ingest-* + 8 oidc-*).
+PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32
@@ -593,7 +593,7 @@ def _c_never_raises(mod):
     return ("BREAK", "garbage token did not raise")
 
 
-@probe("pin/taxonomy-1443", "control")
+@probe("pin/taxonomy-1458", "control")
 def _c_pin(mod):
     import re as _re
     src = open(os.path.join(_REPO, "gov", "decision_codes.py")).read()
@@ -610,7 +610,7 @@ def _c_pin(mod):
                  "prodauth-token-expired", "prodauth-token-invalid")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 8 and once:
-        return ("HELD", "1443 literals, unique, 0 dups, 8 new exactly once")
+        return ("HELD", "1458 literals, unique, 0 dups, 8 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

@@ -37,9 +37,14 @@ Honest limits (listed on every verdict's ``out_of_scope``):
     parsers; EXIF UserComment parsing is best-effort there.
   * The reassembled screen is only as good as the house
     instruction-shaping seam it composes with.
+  * Filler-omitted screening drops at most _MAX_FILLER_OMISSIONS
+    channels per candidate (F282, wave-273): 3+ attacker filler
+    channels between fragments remain a residual; the candidate count
+    is sum(comb(n, k) for k in 0.._MAX_FILLER_OMISSIONS).
 """
 
 import hashlib
+import itertools
 
 from gov import image_screen as _image_screen
 
@@ -118,6 +123,50 @@ def _fail(code, fmt, detail, evidence_extra=None):
 def provenance_of(channel):
     """Return 'rendered' | 'metadata' | 'unknown' for a text channel."""
     return _PROVENANCE.get(channel, "unknown")
+
+
+# ------------------------------------------------------------------
+# F282 (wave-273): filler-omitted reassembly candidates.
+#
+# The reassembly joins channels in file order before screening, but an
+# attacker-controlled benign filler channel interleaved between two
+# fragments breaks the house seam's word span in the plain join
+# ("Ignore\n<filler>\n all previous instructions ..."). The attacker
+# owns chunk ordering, so any ordered subsequence of channels may be
+# the instruction: screen the full join plus every ordered
+# subsequence that omits up to _MAX_FILLER_OMISSIONS channels.
+# Omitting more than 2 is an honest residual (module docstring's
+# honest limits) -- the candidate count is
+# sum(comb(n, k) for k in 0.._MAX_FILLER_OMISSIONS), trivial for
+# real-world channel counts.
+# ------------------------------------------------------------------
+
+_MAX_FILLER_OMISSIONS = 2
+
+
+def _screening_candidates(texts):
+    """Yield reassembled-text candidates for the house screen.
+
+    Same parts as :func:`_reassemble` (non-empty, extraction order):
+    the full join, then every ordered subsequence omitting up to
+    ``_MAX_FILLER_OMISSIONS`` channels. Deduped.
+    """
+    parts = [t for t in texts if t]
+    n = len(parts)
+    seen = set()
+
+    def emit(idxs):
+        joined = _REASSEMBLY_SEPARATOR.join(parts[i] for i in idxs)
+        if joined not in seen:
+            seen.add(joined)
+            yield joined
+
+    full = list(range(n))
+    yield from emit(full)
+    for k in range(1, _MAX_FILLER_OMISSIONS + 1):
+        for omit in itertools.combinations(full, k):
+            omitted = set(omit)
+            yield from emit([i for i in full if i not in omitted])
 
 
 def _reassemble(texts, only=None):
@@ -245,11 +294,21 @@ def screen_image_text(image_bytes, now=None):
                 "out_of_scope": list(_OUT_OF_SCOPE),
             }
         reas = record["reassembled"]
-        reason = _house_reason(reas["all_text"])
+        # F282: screen the full join plus filler-omitted candidates --
+        # any ordered subsequence may be the instruction when the
+        # attacker owns chunk ordering.
+        candidates = list(_screening_candidates(
+            [e["text"] for e in record["texts"]]))
+        reason = None
+        for candidate in candidates:
+            reason = _house_reason(candidate)
+            if reason is not None:
+                break
         evidence = {
             "format": record["format"],
             "instruction_reason": reason,
             "reassembled_digest": reas["all_digest"],
+            "screened_candidates": len(candidates),
             "hit_in_rendered":
                 _house_reason(reas["rendered_text"]) is not None,
             "hit_in_metadata":

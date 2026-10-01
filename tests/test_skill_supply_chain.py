@@ -28,7 +28,7 @@ from gov import skill_supply_chain as sc
 from gov.bundle_refresh import tuf_canonical_json
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 
 def _seed(tag):

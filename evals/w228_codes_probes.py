@@ -156,6 +156,10 @@ _NON_CODES = frozenset([
     # Wave-267 merge: gov/behavioral_sig_packs.py error-message prefixes
     # (function names, not decision codes).
     "enrich_event", "match_pack",
+    # Wave-273 merge: gov/evidence_fanout.py + gov/anchorer.py queue-submit
+    # reasons (drop-accounting labels in `dropped_by_reason`, not refusal
+    # codes).
+    "enqueue", "recover", "anchor-job", "retry",
 ])
 
 

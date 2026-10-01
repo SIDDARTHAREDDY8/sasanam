@@ -22,7 +22,7 @@ import unittest
 
 from gov import bundle_scan as scan
 
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411; this lane adds no codes.
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 SINK_CODE = "bundlescan-rce-global"
 

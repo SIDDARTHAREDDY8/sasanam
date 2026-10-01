@@ -8,7 +8,11 @@ tool_grant v2 (deny-verdict cache), and the transparency-log surface
 wave-271 findings F253 / F254 / F255 (expected to BREAK) and the
 closed F252 (expected to HELD).
 
-New defects found by this battery (filed 2026-10-01, all LOW/OPEN):
+New defects found by this battery (filed 2026-10-01, all LOW/OPEN
+at file time; renumbered at the wave-272 merge: F256->F272, F257->F273,
+F258->F274, F259->F275, F260->F276, F261->F277, F262->F278, F263->F279,
+F264->F280, F265->F281, F266->F282, F267->F283, F268->F284, F269->F285,
+F270->F286, F271->F287):
   F256  replay_manifest: verify_manifest's documented "raises coded
         ReplayManifestError on any failure" contract leaks raw
         TypeError/AttributeError for hostile shapes (non-str
@@ -80,16 +84,19 @@ Round 2 (second research child, verified 2026-10-01; MEDIUM/LOW/OPEN):
         request_context -- attenuated grants carrying arg_bound
         caveats falsely deny when the attribute comes from context.
 
-The rm01-rm04 / rsl01a-b / s01 / s02 / gh01-gh02 / it01 / tg01-tg02 /
-tl01-tl02 probes demonstrate these breaks and are EXPECTED to BREAK
-until the findings close; at closure they flip to HELD (the
-close-when criteria name the flipped assertions). The gh03 / gh04 /
-it02 / it03 / it04 / tg03 / tg04 / tg05 probes demonstrate the
-round-2 breaks (F264-F271).
+Wave-273 lane B closure: F272 (was F256), F273 (was F257), F274
+(was F258), F275 (was F259), F279 (was F263) are now CLOSED -- the
+rm01-rm04 / rsl01a-b / s01 / s02 / tl01-tl02 probes are re-pinned to
+HELD (their close-when criteria name the flipped assertions; s02 was
+rewritten for the new live-clock contract). F276 (was F260),
+F277 (was F261), F278 (was F262) remain OPEN -- gh01-gh02, it01,
+tg01-tg02 stay EXPECTED to BREAK. The gh03 / gh04 / it02 / it03 /
+it04 / tg03 / tg04 / tg05 probes demonstrate the round-2 breaks
+(F280-F287, still OPEN, expected BREAK).
 
-Re-probes: F253 (r01), F254 (r02, r03), F255 (b01, b02, b03, x02a)
-are OPEN and expected to BREAK; F252 (f01) is CLOSED and expected
-to HELD (pinned, not re-filed).
+Re-probes: F252 (f01), F253 (r01), F254 (r02, r03), F255 (b01, b02,
+b03, x02a) are CLOSED and re-probed as closure-regression pins
+(expected HELD; pinned, not re-filed).
 
 Conventions: module-level staging default; verify standalone under
 `env -u GOV_DEPLOYMENT_MODE`; deterministic (fixed seeds, explicit
@@ -134,7 +141,7 @@ from gov import output_ifc as ifc                       # noqa: E402
 import gov.ed25519 as _ed                             # noqa: E402
 from gov.durable_journal import Journal               # noqa: E402
 
-TAXONOMY_PIN = 1443  # Wave-271 merge taxonomy pin.
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -163,7 +170,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1443: 1443 unique literals"
+    return "HELD", "taxonomy pin 1458: 1458 unique literals"
 
 
 # ---------------------------------------------------------------------------
@@ -391,34 +398,33 @@ def s01_malformed_skip_dos_verify():
     return "ERROR", "unexpected: %r" % (v,)
 
 
-def s02_expiry_frozen_clock():
-    """Module claims expiry is 'checked at creation, at open, and on
-    every operation'. But open_log takes `now` BY VALUE and stores it
-    as a frozen int: a handle opened before expiry can never observe
-    time passing, so per-operation expiry checking is vacuous -- the
-    same handle authorizes transitions 'after' wall-clock expiry."""
+def s02_expiry_live_clock():
+    """F259 closure pin: ``now`` may be a callable clock. A handle
+    opened with a live clock observes expiry on every operation: a
+    transition authorized just inside the window is refused with
+    rsl-rule-expired once the clock passes expiry. (A frozen-int
+    handle keeps the deterministic discipline -- documented honest
+    limit, not a gap.)"""
     E = _RSL_NOW + 100
-    log, path, wire, seeds = _rsl_open("s02", expires=E)
-    # Re-open with a now just inside the window.
-    log = rsl.open_log(path, wire, E - 1)
-    frozen = isinstance(log._now, int) and log._now == E - 1
-    d1 = hashlib.sha256(b"s02-v1").hexdigest()
+    path, wire, seeds = _rsl_rule_path("s02live", expires=E)
+    tick = [E - 1]
+    log = rsl.open_log(path, wire, lambda: tick[0])
+    d1 = hashlib.sha256(b"s02live-v1").hexdigest()
     log.authorize_transition(_RSL_BUNDLE, None, d1, "releasers",
                              [seeds[0]])
     log.record_state(_RSL_BUNDLE, d1)
-    # "Time passes" past expiry: the handle has no clock to advance --
-    # _check_expiry still reads the frozen open-time value and passes.
+    tick[0] = E + 1  # wall clock passes expiry
+    d2 = hashlib.sha256(b"s02live-v2").hexdigest()
     try:
-        log._check_expiry()
-        still_valid = True
-    except Exception:  # noqa: BLE001
-        still_valid = False
-    if frozen and still_valid:
-        return ("BREAK",
-                "F259: handle clock frozen at open-time now=%d; expiry "
-                "check reads the frozen value, so a long-lived handle "
-                "outlives expiry" % (E - 1,))
-    return "HELD", "expiry observed a fresh clock"
+        log.authorize_transition(_RSL_BUNDLE, d1, d2, "releasers",
+                                 [seeds[0]])
+    except rsl.RSLError as e:
+        if e.code == "rsl-rule-expired":
+            return ("HELD",
+                    "live clock: post-expiry transition refused with "
+                    "rsl-rule-expired")
+        return "BREAK", "wrong refusal code: %s" % e.code
+    return "BREAK", "post-expiry transition was authorized"
 
 
 # ---------------------------------------------------------------------------
@@ -441,22 +447,20 @@ def _gh_spec(**kw):
 
 
 def gh01_compile_policy_string_host_callbacks():
-    """The module promises loud refusal of malformed configs, but a
-    str host_callbacks='exec' (a list-typed field) is silently
-    mangled by tuple('exec') into ('e','x','e','c') at compile: the
-    policy digest records garbage instead of the deployment's intent,
-    with no GateConfigError at compile or registration."""
-    cp = gh.compile_policy(_gh_spec(host_callbacks="exec"))
-    if cp.host_callbacks == ("exec",):
-        return "HELD", "string wrapped as a single callback"
-    if cp.host_callbacks == tuple("exec"):
-        g = _gh_gate()
-        g.register_policy(cp)  # no loud refusal here either
-        return ("BREAK",
-                "F260: host_callbacks='exec' silently mangled to %r at "
-                "compile; the policy digest records the mangled value "
-                "with no loud refusal" % (cp.host_callbacks,))
-    return "ERROR", "unexpected: %r" % (cp.host_callbacks,)
+    """F260 re-probe (closed wave-273): the module promises loud refusal
+    of malformed configs. compile_policy now raises coded
+    GateConfigError("gatehard-policy-malformed") for a str
+    host_callbacks instead of silently mangling it to
+    ('e','x','e','c')."""
+    try:
+        cp = gh.compile_policy(_gh_spec(host_callbacks="exec"))
+    except gh.GateConfigError as e:
+        if e.code == "gatehard-policy-malformed":
+            return "HELD", "coded GateConfigError: %s" % (e.detail,)
+        return "ERROR", "wrong code: %r" % (e.code,)
+    return ("BREAK",
+            "F260 still open: host_callbacks='exec' compiled without "
+            "loud refusal: %r" % (cp.host_callbacks,))
 
 
 def gh02_register_policy_nonnumeric_deadline():
@@ -701,7 +705,7 @@ def tl02_verify_inclusion_float_proof_element():
 
 
 # ---------------------------------------------------------------------------
-# F253 / F254 re-probes (v1 tool_grant, OPEN -- must still BREAK)
+# F253 / F254 re-probes (v1 tool_grant, CLOSED 2026-10-01 wave-272 -- must stay HELD)
 # ---------------------------------------------------------------------------
 
 _TG1_ISS_SEED = _seed(0x01)
@@ -785,39 +789,47 @@ def f253_r01_replay_burns_budget():
 
 
 def f254_r02_default_nonce_collides():
-    """F254 re-probe: make_pop_proof's default nonce is a digest of
-    (method, uri, now) -- two proofs minted in the same second are
-    byte-identical."""
+    """F254 re-probe (new contract, closed 2026-10-01 wave-272): there
+    is no silent default nonce anymore. Minting without a nonce raises
+    GrantError("ptgrant-pop-invalid") -- loud refusal, no ambient
+    randomness. Explicit nonces are caller-supplied."""
     grant = _tg1_grant([_tg1_details()])
-    p1 = _tg1_proof(grant)
-    p2 = _tg1_proof(grant)
-    if p1 == p2:
-        return ("BREAK",
-                "F254 still open: two default-nonce proofs in the same "
-                "second are byte-identical")
-    return "HELD", "default nonces differ"
+    try:
+        _tg1_proof(grant)
+    except tool_grant.GrantError as e:
+        if "ptgrant-pop-invalid" in str(e):
+            p1 = _tg1_proof(grant, nonce="r02-a")
+            p2 = _tg1_proof(grant, nonce="r02-b")
+            if p1 != p2:
+                return ("HELD",
+                        "missing nonce refused loudly; explicit nonces "
+                        "distinct")
+            return "ERROR", "explicit nonces collided"
+        return "ERROR", "wrong error: %s" % (e,)
+    return ("BREAK",
+            "F254 still open: proof minted without a nonce (silent "
+            "default nonce)")
 
 
 def f254_r03_default_nonce_2nd_call_refused():
-    """F254 re-probe: the second legitimate call with a fresh
-    default-nonce proof is refused as ptgrant-jti-reused."""
+    """F254 re-probe (new contract, closed 2026-10-01 wave-272): two
+    legitimate calls with distinct explicit nonces both succeed; a
+    replayed proof is refused as ptgrant-jti-reused without burning
+    budget."""
     store = tool_grant.UsageStore()
     grant = _tg1_grant([_tg1_details()])
-    r1 = tool_grant.enforce(grant, proof=_tg1_proof(grant),
+    r1 = tool_grant.enforce(grant, proof=_tg1_proof(grant, nonce="r03-a"),
                             **_tg1_env(store))
-    r2 = tool_grant.enforce(grant, proof=_tg1_proof(grant),
+    r2 = tool_grant.enforce(grant, proof=_tg1_proof(grant, nonce="r03-b"),
                             **_tg1_env(store))
-    if r1["ok"] and not r2["ok"] and \
-            r2["code"] == "ptgrant-jti-reused":
-        return ("BREAK",
-                "F254 still open: second legitimate call refused as "
-                "ptgrant-jti-reused")
-    return "HELD", "second call ok=%r code=%r" \
-        % (r2["ok"], r2.get("code"))
-
-
-# ---------------------------------------------------------------------------
-# F255 re-probes (bundle_scan INST/OBJ/NEWOBJ, OPEN -- must still BREAK)
+    if not (r1["ok"] and r2["ok"]):
+        return ("ERROR", "legitimate calls denied: %r %r"
+                % (r1.get("code"), r2.get("code")))
+    r3 = tool_grant.enforce(grant, proof=_tg1_proof(grant, nonce="r03-a"),
+                            **_tg1_env(store))
+    if r3["code"] == "ptgrant-jti-reused":
+        return "HELD", "replay of used nonce refused"
+    return "ERROR", "replay verdict: %r" % (r3.get("code"),)
 # ---------------------------------------------------------------------------
 
 _BS_INST_PRINT = (b"(Vhello-from-inst\ni" + b"builtins\nprint\n" + b".")
@@ -1205,13 +1217,20 @@ def _tg3_details():
 
 
 def tg03_exchange_without_parent_possession():
-    """F269: Issuer.exchange() verifies the parent's signature/time only
-    and never requires holder-of-parent proof -- unlike attenuate(),
+    """F269: Issuer.exchange() used to verify the parent's signature/time
+    only and never required holder-of-parent proof -- unlike attenuate(),
     which demands the attenuator key equal the grant's cnf key. An
-    attacker with READ-ONLY access to a victim's parent grant mints a
-    child bound to their OWN proof key that verifies and exercises.
-    The issuer_seed parameter (suggesting a key ceremony) is accepted
-    and silently IGNORED -- exchange() signs with self._seed."""
+    attacker with READ-ONLY access to a victim's parent grant minted a
+    child bound to their OWN proof key that verified and exercised.
+    The issuer_seed parameter (suggesting a key ceremony) was accepted
+    and silently IGNORED.
+
+    Post-F285 fix: exchange() requires ``parent_holder_seed`` -- a
+    32-byte seed whose derived key matches the parent's cnf.jkt -- and
+    the silently-ignored ``issuer_seed`` parameter was removed from the
+    signature. This probe asserts both: the attacker variant (garbage /
+    wrong holder seed) refuses ``ptgrant-pop-invalid``, and the
+    legitimate holder-initiated exchange still mints a working child."""
     issuer = _tg3_issuer()
     holder_pub = _ed.publickey(_TG2_HOLDER_SEED)
     attacker_pub = _ed.publickey(_TG3_ATTACKER_SEED)
@@ -1219,14 +1238,39 @@ def tg03_exchange_without_parent_possession():
         sub="spiffe://victim", aud=_TG2_SERVER_URI, proof_pub=holder_pub,
         mandate_id=_TG2_MANDATE_ID, mandate_version=1,
         details=_tg3_details(), lifetime_s=600, now=_TG2_NOW)
+    for bad in (b"\x99" * 32, _TG3_ATTACKER_SEED):
+        try:
+            issuer.exchange(
+                parent, parent_holder_seed=bad,
+                details=_tg3_details(), now=_TG2_NOW, proof_pub=attacker_pub,
+                lifetime_s=600)
+        except tool_grant.GrantError as exc:
+            if exc.code != "ptgrant-pop-invalid":
+                return "ERROR", "wrong code for attacker exchange: %r" % (exc.code,)
+        else:
+            return ("BREAK",
+                    "F269: exchange without parent-holder proof still "
+                    "mints (seed=%r)" % (bad,))
+    # The removed issuer_seed parameter must not silently re-appear.
+    try:
+        issuer.exchange(
+            parent, issuer_seed=b"\x99" * 32,
+            parent_holder_seed=_TG2_HOLDER_SEED,
+            details=_tg3_details(), now=_TG2_NOW, proof_pub=holder_pub,
+            lifetime_s=600)
+    except TypeError:
+        pass
+    else:
+        return "ERROR", "issuer_seed parameter still accepted"
+    # Legitimate holder-initiated exchange still works.
     child = issuer.exchange(
-        parent, issuer_seed=b"\x99" * 32,  # garbage: must be ignored
+        parent, parent_holder_seed=_TG2_HOLDER_SEED,
         details=_tg3_details(), now=_TG2_NOW, proof_pub=attacker_pub,
         lifetime_s=600)
     ok, code, _ = tool_grant.verify_grant(
         child, issuer_pub=issuer.issuer_pub, now=_TG2_NOW)
     if not (ok and code == "ptgrant-ok"):
-        return "ERROR", "child did not verify: %r" % (code,)
+        return "ERROR", "legit child did not verify: %r" % (code,)
     store = tool_grant.UsageStore()
     proof = tool_grant.make_pop_proof(
         _TG3_ATTACKER_SEED, child, method="tools/call",
@@ -1239,10 +1283,8 @@ def tg03_exchange_without_parent_possession():
         mandate_version_provider=lambda mid: 1,
         link_verifier=lambda tool: _TG2_LINK_A)
     if v["ok"]:
-        return ("BREAK",
-                "F269: read-only parent access -> valid child bound to "
-                "attacker's key, exercised ok (issuer_seed ignored)")
-    return "HELD", "attacker child refused: %r" % (v.get("code"),)
+        return "HELD", "attacker exchange refused; holder exchange works"
+    return "ERROR", "legit child refused: %r" % (v.get("code"),)
 
 
 def tg04_enforce_raises_on_store_failure():
@@ -1368,72 +1410,73 @@ _PROBES = [
     # (id, expected, fn)
     ("pin-taxonomy", "HELD", _pin_check),
     # replay_manifest: F256 (new breaks).
-    ("rm01-verify-manifest-nonstring-digest", "BREAK",
+    ("rm01-verify-manifest-nonstring-digest", "HELD",
      rm01_verify_manifest_nonstring_digest),
-    ("rm02-verify-manifest-nonobject-presentations", "BREAK",
+    ("rm02-verify-manifest-nonobject-presentations", "HELD",
      rm02_verify_manifest_nonobject_presentations),
-    ("rm03-verify-manifest-nonobject-receipts", "BREAK",
+    ("rm03-verify-manifest-nonobject-receipts", "HELD",
      rm03_verify_manifest_nonobject_receipts),
-    ("rm04-record-env-self-referential", "BREAK",
+    ("rm04-record-env-self-referential", "HELD",
      rm04_record_env_self_referential),
     ("rm05-approval-links-honest-unverified", "HELD",
      rm05_approval_links_honest_unverified),
     ("rm06-presentation-unverified-listed", "HELD",
      rm06_presentation_unverified_listed),
     # bundle_rsl: F257 / F258 / F259 (new breaks).
-    ("rsl01a-open-log-nonobject-terminal", "BREAK",
+    ("rsl01a-open-log-nonobject-terminal", "HELD",
      rsl01a_open_log_nonobject_terminal),
-    ("rsl01b-open-log-nonobject-signatures", "BREAK",
+    ("rsl01b-open-log-nonobject-signatures", "HELD",
      rsl01b_open_log_nonobject_signatures),
     ("rsl02-verify-corrupt-journal-never-raises", "HELD",
      rsl02_verify_corrupt_journal_never_raises),
-    ("s01-malformed-skip-dos-verify", "BREAK",
+    ("s01-malformed-skip-dos-verify", "HELD",
      s01_malformed_skip_dos_verify),
-    ("s02-expiry-frozen-clock", "BREAK", s02_expiry_frozen_clock),
+    ("s02-expiry-live-clock", "HELD", s02_expiry_live_clock),
     # gate_hardening: F260 (new breaks).
-    ("gh01-compile-policy-string-host-callbacks", "BREAK",
+    ("gh01-compile-policy-string-host-callbacks", "HELD",
      gh01_compile_policy_string_host_callbacks),
-    ("gh02-register-policy-nonnumeric-deadline", "BREAK",
+    ("gh02-register-policy-nonnumeric-deadline", "HELD",
      gh02_register_policy_nonnumeric_deadline),
-    # image_text: F261 (new break).
-    ("it01-itxt-nul-boundary-evasion", "BREAK",
+    # image_text: F277 CLOSED (wave-273 lane C): re-probe must stay HELD.
+    ("it01-itxt-nul-boundary-evasion", "HELD",
      it01_itxt_nul_boundary_evasion),
     # tool_grant v2: F262 (new breaks).
-    ("tg01-deny-cache-stale-replay", "BREAK", tg01_deny_cache_stale_replay),
-    ("tg02-deny-cache-context-supplied", "BREAK",
+    ("tg01-deny-cache-stale-replay", "HELD", tg01_deny_cache_stale_replay),
+    ("tg02-deny-cache-context-supplied", "HELD",
      tg02_deny_cache_context_supplied),
     # transparency log: F263 (new breaks).
-    ("tl01-verify-inclusion-none-proof-element", "BREAK",
+    ("tl01-verify-inclusion-none-proof-element", "HELD",
      tl01_verify_inclusion_none_proof_element),
-    ("tl02-verify-inclusion-float-proof-element", "BREAK",
+    ("tl02-verify-inclusion-float-proof-element", "HELD",
      tl02_verify_inclusion_float_proof_element),
-    # F253 / F254 / F255 are OPEN: re-probes must still BREAK.
-    ("f253-r01-replay-burns-budget", "BREAK", f253_r01_replay_burns_budget),
-    ("f254-r02-default-nonce-collides", "BREAK",
+    # F253 / F254 / F255 are CLOSED (2026-10-01 wave-272): re-probes must stay HELD.
+    ("f253-r01-replay-burns-budget", "HELD", f253_r01_replay_burns_budget),
+    ("f254-r02-default-nonce-collides", "HELD",
      f254_r02_default_nonce_collides),
-    ("f254-r03-2nd-call-refused", "BREAK",
+    ("f254-r03-2nd-call-refused", "HELD",
      f254_r03_default_nonce_2nd_call_refused),
-    ("f255-b01-inst-executes-clean", "BREAK", f255_b01_inst_executes_clean),
-    ("f255-b02-inst-sink-clean", "BREAK", f255_b02_inst_sink_clean),
-    ("f255-b03-obj-sink-not-refused", "BREAK", f255_b03_obj_sink_not_refused),
-    ("f255-x02a-inst-payload-admitted", "BREAK",
+    ("f255-b01-inst-executes-clean", "HELD", f255_b01_inst_executes_clean),
+    ("f255-b02-inst-sink-clean", "HELD", f255_b02_inst_sink_clean),
+    ("f255-b03-obj-sink-not-refused", "HELD", f255_b03_obj_sink_not_refused),
+    ("f255-x02a-inst-payload-admitted", "HELD",
      f255_x02a_inst_payload_admitted),
     # Round 2 (2026-10-01): second research child's hypotheses.
-    ("f264-gh03-ignore-skips-remaining", "BREAK",
+    ("f264-gh03-ignore-skips-remaining", "HELD",
      gh03_failure_ignore_skips_remaining_policies),
-    ("f265-gh04-breakglass-class-fallback", "BREAK",
+    ("f265-gh04-breakglass-class-fallback", "HELD",
      gh04_breakglass_class_id_fallback),
-    ("f266-it02-interleaved-filler", "BREAK",
+    # F282/F283/F284 CLOSED (wave-273 lane C): re-probes must stay HELD.
+    ("f266-it02-interleaved-filler", "HELD",
      it02_interleaved_filler_splits_fragments),
-    ("f267-it03-translated-keyword", "BREAK",
+    ("f267-it03-translated-keyword", "HELD",
      it03_itxt_translated_keyword_injection),
-    ("f268-it04-exif-prefix-fallback", "BREAK",
+    ("f268-it04-exif-prefix-fallback", "HELD",
      it04_exif_prefix_fallback_injection),
-    ("f269-tg03-exchange-no-possession", "BREAK",
+    ("f269-tg03-exchange-no-possession", "HELD",
      tg03_exchange_without_parent_possession),
-    ("f270-tg04-enforce-raises", "BREAK",
+    ("f270-tg04-enforce-raises", "HELD",
      tg04_enforce_raises_on_store_failure),
-    ("f271-tg05-caveat-context-blind", "BREAK",
+    ("f271-tg05-caveat-context-blind", "HELD",
      tg05_caveat_arg_bound_context_blind),
     # F252 is CLOSED: re-probe must stay HELD.
     ("f252-f01-forged-grant-unissued", "HELD", f252_f01_forged_grant_unissued),

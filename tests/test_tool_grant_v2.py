@@ -203,15 +203,29 @@ class TestEvaluateRequest(unittest.TestCase):
         self.assertEqual(v2["code"], "ptgrant-arg-attribute-missing")
 
     def test_deny_cache_hit(self):
+        """F278 close-when (3): legitimate deny caching still works --
+        the IDENTICAL proof+context is re-denied from cache."""
+        f = make_fixture()
+        cache = {}
+        v1 = evaluate(f, tg.UsageStore(), "tool_a", {}, "u14", cache=cache)
+        self.assertFalse(v1["ok"])
+        self.assertEqual(len(cache), 1)
+        v2 = evaluate(f, tg.UsageStore(), "tool_a", {}, "u14", cache=cache)
+        self.assertFalse(v2["ok"])
+        self.assertEqual(v2["code"], "ptgrant-arg-attribute-missing")
+        self.assertIn("cache:deny-hit", v2["checked"])
+
+    def test_deny_cache_is_proof_scoped(self):
+        """F278: a deny cached for one proof is NOT served to a fresh
+        proof -- a fresh proof is evaluated on its own merits."""
         f = make_fixture()
         cache = {}
         v1 = evaluate(f, tg.UsageStore(), "tool_a", {}, "u14a", cache=cache)
         self.assertFalse(v1["ok"])
-        self.assertEqual(len(cache), 1)
         v2 = evaluate(f, tg.UsageStore(), "tool_a", {}, "u14b", cache=cache)
         self.assertFalse(v2["ok"])
         self.assertEqual(v2["code"], "ptgrant-arg-attribute-missing")
-        self.assertIn("cache:deny-hit", v2["checked"])
+        self.assertNotIn("cache:deny-hit", v2["checked"])
 
     def test_no_stale_allow_after_mandate_bump(self):
         f = make_fixture()

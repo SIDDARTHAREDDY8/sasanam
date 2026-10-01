@@ -32,10 +32,29 @@ Honest limits (documented, not hidden):
     exceed it, fail-closed.
   * The audit log is in-memory (deployment-owned durability is the
     caller's duty, as with the other in-memory stores in this tree).
+    It is BOUNDED: ``audit_maxlen`` entries by construction (default
+    1024); beyond the bound the oldest entries are evicted and the
+    eviction is counted, never silent (see ``audit_dropped``).
+  * fail-closed discipline applies even to BaseException: a predicate
+    that raises SystemExit or KeyboardInterrupt produces a
+    ``gatehard-gate-error`` deny instead of propagating -- this trades
+    process-interrupt semantics for the fail-closed guarantee at the
+    enforcement path. GeneratorExit is explicitly NOT swallowed: it is
+    re-raised so generator cleanup semantics stay intact (pinned by
+    unit test).
+  * Monitor-but-count accounting (``monitor_deny_counts``,
+    ``monitor_allow_count``, ``monitor_report()``, ``scan_summary()``)
+    is verdict-level in-process counting, NOT kernel enforcement:
+    monitor mode never denies (see ``gatehard-monitor-would-deny``), the
+    counters count what the gate's own logic decided, they are lost on
+    gate restart, and they are not thread-safe under concurrent
+    evaluate() calls -- aggregation is a deployment-level duty.
 
 Stdlib only. Deterministic given explicit ``now`` / ``clock``.
 """
 
+import collections
+import copy
 import hashlib
 import json
 import time
@@ -79,12 +98,26 @@ def compile_policy(spec):
         if k not in spec:
             raise GateConfigError("gatehard-policy-malformed",
                                   "missing spec key: %s" % k)
+    # F276: host_callbacks is a list-typed field. A bare str used to be
+    # silently mangled by tuple('exec') into ('e','x','e','c'), recording
+    # garbage in the policy digest. Refuse loudly instead.
+    hcb = spec["host_callbacks"]
+    if isinstance(hcb, (str, bytes)) or not isinstance(hcb, (list, tuple)):
+        raise GateConfigError(
+            "gatehard-policy-malformed",
+            "host_callbacks must be a list/tuple of str, got %r"
+            % (hcb,))
+    for entry in hcb:
+        if not isinstance(entry, str):
+            raise GateConfigError(
+                "gatehard-policy-malformed",
+                "host_callbacks entries must be str, got %r" % (entry,))
     return CompiledPolicy(
         policy_id=str(spec["policy_id"]),
         predicate_name=str(spec["predicate_name"]),
         predicate=spec["predicate"],
         deadline_s=spec.get("deadline_s"),
-        host_callbacks=tuple(spec["host_callbacks"]),
+        host_callbacks=tuple(hcb),
     )
 
 
@@ -184,9 +217,14 @@ _MODES = ("monitor", "protect")
 
 
 class Gate(object):
+    #: Default audit-store bound (F257). The audit log never grows past
+    #: this many entries; evictions are counted in ``audit_dropped``.
+    DEFAULT_AUDIT_MAXLEN = 1024
+
     def __init__(self, mode="protect", global_deadline_s=None,
                  host_allowlist=frozenset(), now=None, clock=None,
-                 breakglass_issuer_pub=None, exception_issuer_pub=None):
+                 breakglass_issuer_pub=None, exception_issuer_pub=None,
+                 audit_maxlen=None):
         if mode not in _MODES:
             raise GateConfigError(
                 "gatehard-unknown-mode",
@@ -214,13 +252,40 @@ class Gate(object):
         self._clock = clock or time.monotonic
         self._breakglass_issuer_pub = breakglass_issuer_pub
         self._exception_issuer_pub = exception_issuer_pub
+        if audit_maxlen is None:
+            audit_maxlen = Gate.DEFAULT_AUDIT_MAXLEN
+        if (isinstance(audit_maxlen, bool)
+                or not isinstance(audit_maxlen, int)
+                or audit_maxlen <= 0):
+            raise GateConfigError(
+                "gatehard-policy-malformed",
+                "audit_maxlen must be a positive int, got %r"
+                % (audit_maxlen,))
+        self.audit_maxlen = audit_maxlen
+        self.audit_dropped = 0  # evicted audit entries, never silent loss
         self._policies = {}  # digest -> CompiledPolicy
-        self._audit = []
+        self._audit = collections.deque(maxlen=audit_maxlen)
         self._last_runtime = None  # never retained across evaluate()
+        # Monitor-but-count verdict accounting (Tetragon-style,
+        # reimplemented stdlib-only): in monitor mode each enforcement
+        # point that WOULD deny increments the per-code counter, and
+        # each would-allow increments monitor_allow_count. Protect-mode
+        # verdicts never touch these counters.
+        self.monitor_deny_counts = collections.Counter()
+        self.monitor_allow_count = 0
 
     # -- registration ----------------------------------------------------
 
     def register_policy(self, compiled):
+        # F276: a non-numeric deadline_s used to leak a raw ValueError
+        # from float() here. The config contract is loud coded refusal.
+        if compiled.deadline_s is not None:
+            if (isinstance(compiled.deadline_s, bool)
+                    or not isinstance(compiled.deadline_s, (int, float))):
+                raise GateConfigError(
+                    "gatehard-policy-malformed",
+                    "deadline_s must be numeric, got %r"
+                    % (compiled.deadline_s,))
         if compiled.deadline_s is not None and \
                 float(compiled.deadline_s) > self.global_deadline_s:
             raise GateConfigError(
@@ -229,7 +294,7 @@ class Gate(object):
                 "overrides tighten only"
                 % (compiled.deadline_s, self.global_deadline_s))
         self._policies[compiled.digest] = compiled
-        self._audit.append({
+        self._audit_append({
             "ts": self._now(),
             "event": "policy-registered",
             "policy_id": compiled.policy_id,
@@ -242,16 +307,24 @@ class Gate(object):
     def promote_to_protect(self, now=None, reason=""):
         ts = self._now() if now is None else now
         self.mode = "protect"
-        self._audit.append({"ts": ts, "event": "mode-promoted",
+        self._audit_append({"ts": ts, "event": "mode-promoted",
                             "from": "monitor", "to": "protect",
                             "reason": reason})
 
     def demote_to_monitor(self, now=None, reason=""):
         ts = self._now() if now is None else now
         self.mode = "monitor"
-        self._audit.append({"ts": ts, "event": "mode-demoted",
+        self._audit_append({"ts": ts, "event": "mode-demoted",
                             "from": "protect", "to": "monitor",
                             "reason": reason})
+
+    def _audit_append(self, entry):
+        """Append one audit event. The store is bounded (F257): when it
+        is full the oldest entry is evicted and ``audit_dropped`` is
+        incremented so the loss is counted, never silent."""
+        if len(self._audit) == self.audit_maxlen:
+            self.audit_dropped += 1
+        self._audit.append(entry)
 
     def audit_log(self):
         return list(self._audit)
@@ -292,9 +365,18 @@ class Gate(object):
                       tok.signature) is not True:
             return False
         now = self._now()
-        return (tok.not_before <= now < tok.expires_at
-                and tok.request_class
-                == request.get("class", request.get("request_id")))
+        if not (tok.not_before <= now < tok.expires_at):
+            return False
+        # F281: request_class is matched against the request's class
+        # ONLY. The old request.get("class", request.get("request_id"))
+        # fallback let a class-scoped token authorize a REQUEST ID of the
+        # same name, and request_class=None (None == None) was a wildcard
+        # for keyless requests. A request without a class key never
+        # matches a class-scoped token; None never matches anything.
+        cls = tok.request_class
+        if cls is None or not isinstance(cls, str):
+            return False
+        return cls == request.get("class")
 
     # -- evaluation --------------------------------------------------------
 
@@ -307,17 +389,21 @@ class Gate(object):
         verdict = {"allowed": False, "mode": self.mode, "code": code,
                    "detail": detail,
                    "request_id": request.get("request_id", "?")}
-        self._audit.append({"ts": self._now(), "event": "deny",
+        self._audit_append({"ts": self._now(), "event": "deny",
                             "code": code, "detail": detail,
                             "request_id": verdict["request_id"]})
         return verdict
 
     def _monitor_would_deny(self, code, detail, request):
+        # Monitor-but-count: every monitor-mode would-deny mirrors its
+        # protect-mode enforcement point with a per-code counter, so the
+        # deployment can see what protect would do without enforcing it.
+        self.monitor_deny_counts[code] += 1
         verdict = {"allowed": True, "mode": self.mode,
                    "code": "gatehard-monitor-would-deny",
                    "would_deny_code": code, "detail": detail,
                    "request_id": request.get("request_id", "?")}
-        self._audit.append({"ts": self._now(),
+        self._audit_append({"ts": self._now(),
                             "event": "monitor-would-deny",
                             "would_deny_code": code, "detail": detail,
                             "request_id": verdict["request_id"]})
@@ -325,9 +411,31 @@ class Gate(object):
 
     def evaluate(self, request, failure_ignore=None, break_glass=None):
         """Evaluate one request. Never raises for gate discipline:
-        errors and timeouts fail closed. Returns a verdict dict."""
-        request = dict(request or {})
+        errors and timeouts fail closed. Returns a verdict dict.
+
+        Fail-closed extends to BaseException (F256): a predicate that
+        raises SystemExit or KeyboardInterrupt produces a
+        ``gatehard-gate-error`` deny instead of propagating -- this
+        deliberately trades process-interrupt semantics for the
+        fail-closed guarantee at the enforcement path. GeneratorExit is
+        re-raised (never swallowed into a deny) so generator cleanup
+        semantics stay intact.
+
+        The request handed to the predicate is a deep copy (F258): the
+        predicate shares no mutable state with the caller's dict. The
+        per-evaluation copy cost is one deepcopy of the request.
+
+        A valid signed FailureIgnore (F280) is per-policy as documented:
+        the errored policy's error is treated as non-fatal and
+        evaluation CONTINUES through the remaining policies; the
+        ignore-allow verdict is returned only if every remaining policy
+        allows.
+        """
+        # F258: deep copy so the predicate cannot mutate (or smuggle
+        # state out of) the caller's nested request values.
+        request = copy.deepcopy(request or {})
         monitor = (self.mode == "monitor")
+        ignore_used = None
         try:
             for policy in sorted(self._policies.values(),
                                  key=lambda p: p.policy_id):
@@ -348,9 +456,21 @@ class Gate(object):
                         "host callback %r not in allowlist" % (e.args[0],),
                         request)
                     return self._maybe_breakglass(v, request, break_glass)
-                except Exception as e:  # noqa: BLE001 -- fail closed
+                except GeneratorExit:
+                    # F256(3): control-flow exception for generator
+                    # cleanup; swallowing it into a deny would corrupt
+                    # generator semantics. Re-raise (finally still
+                    # discards the runtime).
+                    raise
+                except BaseException as e:  # F256 -- fail closed
                     v = self._policy_errored(policy, e, request,
                                              failure_ignore, monitor)
+                    if v.get("code") == "gatehard-ignore-exception-used":
+                        # F280: a valid ignore is per-policy. Record it
+                        # and CONTINUE evaluating the remaining
+                        # policies instead of returning immediately.
+                        ignore_used = v
+                        continue
                     return self._maybe_breakglass(v, request, break_glass)
                 finally:
                     # fresh discarded runtime: no per-request state kept.
@@ -375,13 +495,25 @@ class Gate(object):
                         "policy %r denied" % (policy.policy_id,),
                         request)
                     return self._maybe_breakglass(v, request, break_glass)
+            if ignore_used is not None:
+                # Every remaining policy allowed: the ignore was valid
+                # and its effect was per-policy as documented. This is
+                # an allowed verdict, so it counts as a monitor
+                # would-allow.
+                if monitor:
+                    self.monitor_allow_count += 1
+                return ignore_used
+            if monitor:
+                self.monitor_allow_count += 1
             verdict = {"allowed": True, "mode": self.mode,
                        "code": None, "detail": "all policies allowed",
                        "request_id": request.get("request_id", "?")}
-            self._audit.append({"ts": self._now(), "event": "allow",
+            self._audit_append({"ts": self._now(), "event": "allow",
                                 "request_id": verdict["request_id"]})
             return verdict
-        except Exception as e:  # noqa: BLE001 -- never raise on discipline
+        except GeneratorExit:
+            raise
+        except BaseException as e:  # noqa: BLE001 -- never raise on discipline
             self._last_runtime = None
             return self._deny("gatehard-gate-error",
                               "gate internal error: %r" % (e,), request)
@@ -390,7 +522,7 @@ class Gate(object):
                         monitor):
         if failure_ignore is not None:
             if self._verify_ignore(failure_ignore, policy.policy_id):
-                self._audit.append(
+                self._audit_append(
                     {"ts": self._now(),
                      "event": "ignore-exception-used",
                      "policy_id": policy.policy_id,
@@ -417,7 +549,7 @@ class Gate(object):
         if tok is None or verdict["allowed"]:
             return verdict
         if self._verify_breakglass(tok, request):
-            self._audit.append({"ts": self._now(),
+            self._audit_append({"ts": self._now(),
                                 "event": "breakglass-used",
                                 "reason": tok.reason,
                                 "request_id": verdict["request_id"]})
@@ -425,7 +557,7 @@ class Gate(object):
                     "code": "gatehard-breakglass-used",
                     "detail": "signed break-glass %r" % (tok.reason,),
                     "request_id": verdict["request_id"]}
-        self._audit.append({"ts": self._now(),
+        self._audit_append({"ts": self._now(),
                             "event": "breakglass-invalid",
                             "request_id": verdict["request_id"]})
         verdict = dict(verdict)
@@ -443,7 +575,8 @@ class Gate(object):
         audit log. Each entry is what protect mode would decide today."""
         out = []
         for req in sorted(requests, key=lambda r: r.get("request_id", "")):
-            req = dict(req)
+            # F258: same deep-copy discipline as evaluate().
+            req = copy.deepcopy(req)
             would = "allow"
             code = None
             try:
@@ -460,7 +593,9 @@ class Gate(object):
                     except _HostCallbackDenied:
                         would, code = "deny", "gatehard-host-callback-denied"
                         break
-                    except Exception:  # noqa: BLE001
+                    except GeneratorExit:
+                        raise
+                    except BaseException:  # noqa: BLE001 -- F256
                         would, code = "deny", "gatehard-gate-error"
                         break
                     if elapsed > deadline:
@@ -469,8 +604,49 @@ class Gate(object):
                     if not result:
                         would, code = "deny", "gatehard-policy-denied"
                         break
-            except Exception:  # noqa: BLE001
+            except GeneratorExit:
+                raise
+            except BaseException:  # noqa: BLE001 -- F256
                 would, code = "deny", "gatehard-gate-error"
             out.append({"request_id": req.get("request_id", "?"),
                         "would": would, "code": code})
         return out
+
+    def monitor_report(self):
+        """Monitor-but-count verdict accounting report.
+
+        Returns the per-code would-deny counters plus the would-allow
+        count accumulated by evaluate() in monitor mode.
+
+        Honest limits: the counters are verdict-level and in-process --
+        they count what the gate's own logic decided, not kernel- or
+        OS-enforced actions (monitor mode never enforces; see
+        gatehard-monitor-would-deny). They are lost when the gate is
+        restarted, and they are not thread-safe under concurrent
+        evaluate() calls -- the discipline is deployment-level
+        aggregation, not this process's dict.
+        """
+        total_deny = sum(self.monitor_deny_counts.values())
+        return {"mode": self.mode,
+                "monitor_would_allow": self.monitor_allow_count,
+                "monitor_would_deny": dict(self.monitor_deny_counts),
+                "monitor_would_deny_total": total_deny,
+                "monitor_evaluations":
+                    self.monitor_allow_count + total_deny}
+
+    def scan_summary(self, requests):
+        """Report what protect would deny today, with counts.
+
+        Runs the read-only audit scanner (scan) over the given requests
+        and aggregates per-code would-deny counts plus the would-allow
+        count. Pure read: the live monitor counters are never touched,
+        so a scan cannot double-count what evaluate() already recorded.
+        """
+        deny = collections.Counter()
+        n_allow = 0
+        for row in self.scan(requests):
+            if row["would"] == "deny":
+                deny[row["code"]] += 1
+            else:
+                n_allow += 1
+        return {"would_allow": n_allow, "would_deny": dict(deny)}

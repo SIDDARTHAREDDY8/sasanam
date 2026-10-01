@@ -219,7 +219,16 @@ def _png_itxt(payload):
     lang_end = payload.find(b"\x00", nul + 3)
     if lang_end < 0:
         raise _Malformed("truncated png iTXt language tag")
-    text = payload[lang_end + 1:]
+    # PNG spec: the translated keyword follows the language tag, NUL
+    # terminated, and only the text AFTER it is the international text.
+    # Everything from lang_end+1 through the translated-keyword NUL is
+    # never displayed by a spec-compliant consumer -- keeping it in
+    # extracted text hands an attacker invisible bytes at a fragment
+    # join (F277 empty keyword; F283 non-empty keyword).
+    translated_end = payload.find(b"\x00", lang_end + 1)
+    if translated_end < 0:
+        raise _Malformed("truncated png iTXt translated keyword")
+    text = payload[translated_end + 1:]
     if comp_flag == 1:
         if comp_method != 0:
             raise _Malformed("unknown png iTXt compression method")
@@ -357,8 +366,8 @@ def _parse_jpeg(data):
             texts.append(("jpeg:com", seg.decode("latin-1")))
         elif marker == 0xE1:  # APP1: EXIF or XMP
             if seg.startswith(b"Exif\x00\x00"):
-                comment, note = _exif_usercomment(seg[6:])
-                if comment is not None:
+                comments, note = _exif_usercomment(seg[6:])
+                for comment in comments:
                     texts.append(("jpeg:exif-usercomment", comment))
                 if note:
                     exif_note = note
@@ -417,21 +426,31 @@ def _exif_field_bytes(tiff, ftype, fcount, val, little):
 
 
 def _exif_usercomment(tiff):
-    """Return (text_or_None, note_or_None). Best-effort: any structural
-    problem yields (None, 'exif-unparseable') instead of failing the
-    whole image."""
+    """Return ([text, ...], note_or_None). Best-effort: any structural
+    problem yields ([], 'exif-unparseable') instead of failing the
+    whole image.
+
+    When the 8-byte charset tag is unrecognized, the field is
+    ambiguous -- the head may be a nonstandard tag or the start of
+    the content itself. BOTH readings are returned: the tag-stripped
+    text (an unrecognized tag's bytes must not sit attacker-positioned
+    at a fragment join, F284) and the whole-field text (tag-omission
+    tolerance: dropping the first 8 bytes of tag-less content would
+    truncate a screened instruction, w269 p12). The screen refuses if
+    either reading is instruction-shaped.
+    """
     try:
         if len(tiff) < 8:
-            return None, "exif-unparseable"
+            return [], "exif-unparseable"
         if tiff[:2] == b"II":
             little = True
         elif tiff[:2] == b"MM":
             little = False
         else:
-            return None, "exif-unparseable"
+            return [], "exif-unparseable"
         magic = _tiff_int(tiff, 2, 2, little)
         if magic != 42:
-            return None, "exif-unparseable"
+            return [], "exif-unparseable"
         ifd_off = _tiff_int(tiff, 4, 4, little)
 
         def find_comment(off, depth):
@@ -440,21 +459,8 @@ def _exif_usercomment(tiff):
             for tag, ftype, fcount, val in _read_ifd_entries(
                     tiff, off, little):
                 if tag == 0x9286 and ftype == 7:  # UserComment
-                    raw = _exif_field_bytes(tiff, ftype, fcount, val,
-                                            little)
-                    if raw is None:
-                        return None
-                    # The spec prefixes an 8-byte charset tag; strip it
-                    # only when recognized. An attacker-controlled
-                    # field may omit it, so an unrecognized head is
-                    # screened whole rather than skipped.
-                    if raw[:8] == b"UNICODE\x00":
-                        return raw[8:].decode("utf-16", "replace")
-                    if raw[:8] == b"ASCII\x00\x00\x00":
-                        return raw[8:].decode("ascii", "replace")
-                    if raw[:8] == b"JIS\x00\x00\x00\x00\x00":
-                        return raw[8:].decode("shift_jis", "replace")
-                    return raw.decode("latin-1")
+                    return _exif_field_bytes(tiff, ftype, fcount, val,
+                                             little)
                 if tag == 0x8769 and ftype == 4 and fcount == 1:
                     sub = _exif_field_bytes(tiff, ftype, fcount, val,
                                             little)
@@ -467,13 +473,31 @@ def _exif_usercomment(tiff):
                             return got
             return None
 
-        comment = find_comment(ifd_off, 0)
-        return comment, (None if comment is not None
-                         else "exif-no-usercomment")
+        raw = find_comment(ifd_off, 0)
+        if raw is None:
+            return [], "exif-no-usercomment"
+        # The spec prefixes an 8-byte charset tag; strip it when
+        # recognized and decode the rest with its charset.
+        if raw[:8] == b"UNICODE\x00":
+            return [raw[8:].decode("utf-16", "replace")], None
+        if raw[:8] == b"ASCII\x00\x00\x00":
+            return [raw[8:].decode("ascii", "replace")], None
+        if raw[:8] == b"JIS\x00\x00\x00\x00\x00":
+            return [raw[8:].decode("shift_jis", "replace")], None
+        whole = raw.decode("latin-1")
+        if len(raw) < 8:
+            # No complete tag could be present; nothing ambiguous.
+            return [whole], None
+        # Unrecognized head: emit both readings (see docstring).
+        stripped = raw[8:].decode("latin-1")
+        readings = [stripped]
+        if whole != stripped:
+            readings.append(whole)
+        return readings, None
     except _Malformed:
-        return None, "exif-unparseable"
+        return [], "exif-unparseable"
     except Exception:  # noqa: BLE001
-        return None, "exif-unparseable"
+        return [], "exif-unparseable"
 
 
 # ------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Unit tests for gov/authorization_combine.py (wave-268 lane).
 
-Pin 1443 is asserted here; repointed by the wave-272 merge coordinator.
+Pin 1458 is asserted here; repointed by the wave-273 merge coordinator.
 """
 
 import re
@@ -366,7 +366,7 @@ class VerdictShapeTests(unittest.TestCase):
 class RegistryTests(unittest.TestCase):
     def test_lane_pin(self):
         # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*); merge coordinator composes.
-        self.assertEqual(len(dc.TAXONOMY), 1443)
+        self.assertEqual(len(dc.TAXONOMY), 1458)
 
     def test_authz_codes_present(self):
         expected = ["authz-allow", "authz-audit-hit",

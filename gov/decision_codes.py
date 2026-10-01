@@ -1877,6 +1877,86 @@ TAXONOMY = {
         "evidence_kinds_required": ['boundary-record', 'vouch-map'],
         "reverify_steps": ['recompute', 'provenance-check'],
     },
+    'bundle-delivery-cache-locked': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-cache-locked',
+        "human": 'bundle delivery: cache directory already held by another refresher; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle', 'cache', 'lock'],
+        "reverify_steps": ['retry'],
+    },
+    'bundle-delivery-delegation-cap-exceeded': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-delegation-cap-exceeded',
+        "human": 'bundle delivery: delegation walk visited more than 32 roles; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle', 'delegation', 'walk'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-delegation-cycle': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-delegation-cycle',
+        "human": 'bundle delivery: a delegation cycle was detected on the trust walk; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'delegation', 'cycle'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-delegation-malformed': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-delegation-malformed',
+        "human": 'bundle delivery: a delegation or delegated-targets document failed structural validation; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle', 'delegation', 'shape'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-delegation-unverified': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-delegation-unverified',
+        "human": 'bundle delivery: a delegated-targets envelope failed the delegation key/threshold check, or eligible delegated metadata is missing; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-expired-authority-refused': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-expired-authority-refused',
+        "human": 'bundle delivery: expired metadata presented as an authority for a target digest; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'delegation', 'expiry'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-expired-bootstrap-refused': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-expired-bootstrap-refused',
+        "human": 'bundle delivery: an expired intermediate could not bootstrap a verified successor; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'delegation', 'expiry'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-mirror-stale': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-mirror-stale',
+        "human": 'bundle delivery: bytes at a versioned URL do not match the bound version or digest; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'mirror', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-shadowed-delegation': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-shadowed-delegation',
+        "human": 'bundle delivery: a terminating delegation provably shadows a later delegation; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'delegation', 'shadowing'],
+        "reverify_steps": ['recompute'],
+    },
+    'bundle-delivery-target-not-found': {
+        "domain": 'bundle',
+        "code": 'bundle-delivery-target-not-found',
+        "human": 'bundle delivery: no visited delegation binds the requested target; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['bundle', 'delegation', 'target'],
+        "reverify_steps": ['recompute'],
+    },
     'bundle-inspection-malformed': {
         "domain": 'bundle',
         "code": 'bundle-inspection-malformed',
@@ -4632,6 +4712,49 @@ TAXONOMY = {
                  'seam speaks; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'egress-ref-data-exfil': {
+        "domain": 'egress',
+        "code": 'egress-ref-data-exfil',
+        "human": 'egress reference screening: an auto-fetchable reference '
+                 'in agent-produced content carries exfiltration-shaped '
+                 'data -- a sensitive-data digest match or an oversized '
+                 'query/fragment payload on a non-allow-listed host; '
+                 'refused (EchoLeak class)',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'egress-refs-malformed': {
+        "domain": 'egress',
+        "code": 'egress-refs-malformed',
+        "human": 'egress reference screening: input is not str/bytes or '
+                 'screening hit an internal error; refused fail-closed, '
+                 'never raises',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'egress-refs-oversized': {
+        "domain": 'egress',
+        "code": 'egress-refs-oversized',
+        "human": 'egress reference screening: content exceeds the byte '
+                 'budget; refused before parsing, never raises',
+        "severity": 'medium',
+        "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'egress-relay-exfil': {
+        "domain": 'egress',
+        "code": 'egress-relay-exfil',
+        "human": 'egress reference screening: an auto-fetchable reference '
+                 'routes through a deployment-declared trusted relay proxy '
+                 'to an external inner target with an exfil-shaped payload '
+                 '(EchoLeak trusted-relay shape); the allow-listed relay '
+                 'is treated as an untrusted channel; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['screen-verdict'],
         "reverify_steps": ['recompute'],
     },
     'empty_reason': {
@@ -10483,6 +10606,18 @@ TAXONOMY = {
                  'remaining defense-in-depth limits only',
         "severity": 'low',
         "evidence_kinds_required": ['assessment'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-real-credential-blocked': {
+        "domain": 'sandbox',
+        "code": 'sandbox-real-credential-blocked',
+        "human": 'sandbox: a value byte-equal to a vault-registered real '
+                 'credential was observed crossing the sandbox boundary '
+                 '(environment, argv, or stdin); refused fail-closed before '
+                 'spawn — the sandboxed (untrusted) side never receives real '
+                 'credentials, only sentinel placeholders',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'sandbox-refused': {

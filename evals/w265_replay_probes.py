@@ -84,7 +84,7 @@ from gov import durable_approval as da  # noqa: E402
 from gov import decision_bom as dbom  # noqa: E402
 from gov.durable_journal import JournalCorrupted  # noqa: E402
 
-TAXONOMY_PIN = 1443  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
+TAXONOMY_PIN = 1458  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 TMP_BASE = "/var/tmp/g265replay"
 Path(TMP_BASE).mkdir(parents=True, exist_ok=True)

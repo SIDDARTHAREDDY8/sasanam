@@ -134,6 +134,7 @@ Honest boundaries (prototype)
 $0, stdlib only, no network calls. Deterministic given the vault.
 """
 
+import hmac
 import re
 import uuid
 from urllib.parse import urlparse
@@ -574,6 +575,44 @@ class SentinelVault(object):
     def sentinel_for(self, credential_id):
         """The minted sentinel for a credential id (test/operator use)."""
         return self._by_cred.get(credential_id)
+
+    def is_registered_real(self, value):
+        """Membership oracle for the sandbox boundary screen (wave-273).
+
+        True iff ``value`` is byte-equal to a REAL credential value
+        registered in this vault (decoys carry ``real=None`` and never
+        match). ``str`` values compare as-is; ``bytes`` compare against
+        the UTF-8 encoding of each registered real, so the byte path is
+        examined rather than skipped. Anything else (None, int, ...)
+        returns False. This is a yes/no oracle only: it returns no
+        values, logs nothing, and serializes nothing — the vault's
+        no-serialization discipline is unchanged.
+
+        Fail-safe direction: exact equality only, never substring or
+        entropy heuristics. A benign high-entropy string can never trip
+        it; a credential embedded inside a larger payload is the
+        ``gov/dlp.py`` heuristic layer's job, not this seam's.
+
+        Complexity is O(registered reals) per call; the boundary screen
+        calls it per child-bound value, so O(env x creds) per run().
+        Fine at expected vault sizes (tens of credentials x tens of env
+        vars, all short-string compare_digest); revisit with a cached
+        frozenset only if the vault grows orders of magnitude.
+        """
+        if isinstance(value, bytes):
+            probes = []
+            for rec in self._entries.values():
+                real = rec.get("real")
+                if real is not None:
+                    probes.append(real.encode("utf-8"))
+            return any(hmac.compare_digest(p, value) for p in probes)
+        if not isinstance(value, str):
+            return False
+        for rec in self._entries.values():
+            real = rec.get("real")
+            if real is not None and hmac.compare_digest(real, value):
+                return True
+        return False
 
     def __len__(self):
         return len(self._entries)

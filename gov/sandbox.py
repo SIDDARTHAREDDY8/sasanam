@@ -14,6 +14,16 @@ Containment model (per call)
 * Fresh, empty temporary working directory per call; removed afterwards.
 * Environment scrubbed: only an explicit allowlist plus caller-supplied
   ``extra_env`` reaches the child. Parent secrets never cross.
+* Wave-273 real-credential boundary screen (GTG-50020): when the sandbox
+  is constructed with ``sentinel_vault=<SentinelVault>``, any value in
+  the child environment, argv, or stdin that is byte-equal to a
+  vault-registered REAL credential refuses fail-closed before spawn
+  (``sandbox-real-credential-blocked`` — loud stderr record + structured
+  receipt, value never logged). The sandboxed (untrusted) side receives
+  only sentinel placeholders. Opt-in: without a vault the behavior is
+  unchanged. Exact-equality only (no substring/entropy heuristics, so no
+  false positives); encoded/embedded crossings are the ``gov/dlp.py``
+  layer's job.
 * New process session (``start_new_session=True``); on timeout the whole
   process *group* is SIGKILLed, so grandchildren die too.
 * Wall-clock timeout enforced by the parent, independent of child clocks.
@@ -1927,7 +1937,7 @@ class Sandbox:
                  deployment_mode="production",
                  refusal_receipt_dir=None,
                  pivot_extra_mounts=None, canary_plant=None,
-                 egress_launcher=None):
+                 egress_launcher=None, sentinel_vault=None):
         if require_netns and not use_netns:
             raise ValueError("require_netns=True conflicts with use_netns=False")
         if require_pidns and not use_pidns:
@@ -2008,6 +2018,18 @@ class Sandbox:
         # wrap -> spawn -> audit, and the sandbox preexec rides along as a
         # preexec_chain entry. STRICT mode never consults the launcher.
         self.egress_launcher = egress_launcher
+        # Wave-273 lane H: optional real-credential boundary screen
+        # (GTG-50020). When a SentinelVault is bound, any child-bound
+        # value byte-equal to a vault-registered REAL credential refuses
+        # fail-closed before spawn. None = legacy behavior (no screen).
+        if (sentinel_vault is not None
+                and not callable(getattr(sentinel_vault,
+                                        "is_registered_real", None))):
+            raise ValueError(
+                "sentinel_vault must expose is_registered_real(value) "
+                "(fail-closed: a vault-shaped object that cannot answer "
+                "the membership question never silently means 'no vault')")
+        self.sentinel_vault = sentinel_vault
         # Wave-51 P1 egress canaries: optional planting hook
         # ``plant(jail_path, child_env) -> env_additions`` (see
         # gov.canary.make_canary_plant). Default None = nothing planted,
@@ -2101,6 +2123,23 @@ class Sandbox:
             raise ValueError("stdin_data exceeds %d bytes"
                              % DEFAULT_MAX_STDIN)
 
+        # Wave-273 lane H (GTG-50020): screen argv/stdin BEFORE any jail
+        # is created — a real credential never gets a child to cross into.
+        # The raw caller env inputs (self.extra_env + per-call extra_env)
+        # are screened here as well: a non-str credential would otherwise
+        # die in _child_env's str handling with an obscure TypeError, and
+        # the loud refusal is the honest fail-closed. The final child
+        # environment (allowed_env passthrough + canary plant additions)
+        # is screened again after assembly, before spawn.
+        raw_env = [("env", k, v)
+                   for src in (self.extra_env, extra_env)
+                   for k, v in (src or {}).items()]
+        self._screen_boundary_for_real_credentials(
+            [("argv", "argv[%d]" % i, a) for i, a in enumerate(argv)]
+            + ([("stdin", "stdin_data", stdin_data)]
+               if stdin_data is not None else [])
+            + raw_env)
+
         jail_ctx = (contextlib.nullcontext(Path(cwd)) if cwd is not None
                     else self.temp_jail())
         with jail_ctx as jail:
@@ -2185,6 +2224,11 @@ class Sandbox:
                                  receipt_dir=self.refusal_receipt_dir)
                 if _canary_env:
                     child_env.update(_canary_env)
+            # Wave-273 lane H (GTG-50020): screen the final child
+            # environment (allowed_env passthrough + extra_env + canary
+            # plant additions) before spawn.
+            self._screen_boundary_for_real_credentials(
+                [("env", k, v) for k, v in child_env.items()])
             # Status pipe: the pre-exec hook reports the per-call ground
             # truth as exactly six bytes —
             #   [net, pid, pivot, privdrop, seccomp, landlock] —
@@ -2456,6 +2500,41 @@ class Sandbox:
                 raise ValueError("NUL byte in argv element")
             clean.append(a)
         return clean
+
+    def _screen_boundary_for_real_credentials(self, triples):
+        """Fail-closed credential screen on the sandbox boundary (wave-273).
+
+        ``triples``: ``(carrier, key, value)`` with carrier in
+        ``{"argv", "stdin", "env"}``. Any child-bound value byte-equal to
+        a vault-registered REAL credential refuses LOUDLY via
+        :func:`_refuse_loud` (``sandbox-real-credential-blocked``) before
+        any child exists. The refusal names the carrier and key only —
+        the credential value NEVER appears in the message or receipt.
+
+        Fail-safe direction is exact equality, never substring or entropy
+        heuristics: benign high-entropy values cannot trip it. A
+        credential embedded inside a larger payload (base64, JSON, ...)
+        is the ``gov/dlp.py`` heuristic layer's job, not this seam's —
+        documented honest limit.
+        """
+        vault = self.sentinel_vault
+        if vault is None:
+            return
+        for carrier, key, value in triples:
+            # The oracle handles str and bytes; other types cannot be
+            # byte-equal to a registered real and are ignored. No
+            # decoding here: the byte path is examined as bytes, never
+            # skipped.
+            if not isinstance(value, (str, bytes)):
+                continue
+            if vault.is_registered_real(value):
+                _refuse_loud(
+                    "real credential observed crossing the sandbox "
+                    "boundary in %s (%s): refusing fail-closed "
+                    "(sandbox-real-credential-blocked)" % (carrier, key),
+                    kind="sandbox-real-credential-blocked",
+                    receipt_dir=self.refusal_receipt_dir,
+                    extra={"carrier": carrier, "key": key})
 
     def _child_env(self, jail, extra_env):
         env = {"PATH": DEFAULT_PATH}
