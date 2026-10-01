@@ -13,7 +13,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 from gov import reconstructed_intent as ri
 from gov import decision_codes
 
-TAXONOMY_PIN = 1222  # Wave-266 lane: 1205 + 3 reconintent-*.
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 
 def _chunk(source_id, text):

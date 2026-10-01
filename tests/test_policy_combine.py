@@ -208,7 +208,7 @@ class TestTaxonomyPin(unittest.TestCase):
         # combine-misuse), additive only; merge coordinator recomposes.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1222)  # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9 callback-*).
+        self.assertEqual(len(decision_codes.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_combine_codes_shape(self):

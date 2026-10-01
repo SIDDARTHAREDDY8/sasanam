@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import detectors as det
 
-TAXONOMY_PIN = 1222
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 _PROBES = []
 

@@ -50,7 +50,7 @@ from gov.intent_slice import judge_queued_action  # noqa: E402
 from gov.memory_provenance import instruction_shaping_reason  # noqa: E402
 from gov.rare_token import RareTokenTracker  # noqa: E402
 
-TAXONOMY_PIN = 1222  # wave-264 merge; this lane adds no gov/ code
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 _RESULTS = []
 

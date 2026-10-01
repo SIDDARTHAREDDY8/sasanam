@@ -14,9 +14,13 @@ spec text is read, copied, imported, or vendored):
   never a runtime check to forget.
 * **Chain of signed delegations.** Each delegation embeds the digest
   of its parent; the chain is verified hop by hop in a fixed order:
-  type -> structure -> parent digest -> signature -> root trust ->
-  attenuation -> time window -> action coverage -> replay. The root
-  issuer must be pinned in the deployment's trust anchors.
+  type -> structure -> parent digest -> custody binding -> signature
+  -> root trust -> attenuation -> time window -> action coverage ->
+  replay. The root issuer must be pinned in the deployment's trust
+  anchors. The custody-binding step (F249) refuses any hop whose
+  issuer is not the presented parent's audience, so a grafted hop
+  from an unrelated keyholder cannot verify even when its digest
+  linkage and attenuation are sound.
 * **Invocation receipts.** :meth:`DelegationVerifier.verify` mints a
   signed receipt per verified invocation, shaped for evidence
   bundles (same discipline as mandate receipts).
@@ -106,6 +110,17 @@ class DelegationSignatureInvalid(DelegationError):
 
 class DelegationParentMismatch(DelegationError):
     code = "delegation-parent-mismatch"
+
+
+class DelegationCustodySplice(DelegationError):
+    """Raised when hop i>0 names an issuer that is not the presented
+    parent's audience (F249). The digest linkage alone cannot bind a
+    hop to its parent: without this check an unrelated keyholder can
+    graft a narrower delegation onto an observed sealed delegation
+    and mint a verifying signed receipt for a fabricated custody
+    path. Custody binding is the UCAN ``issuer == parent.audience``
+    link rule."""
+    code = "delegation-custody-splice"
 
 
 class DelegationRootUntrusted(DelegationError):
@@ -387,6 +402,16 @@ class DelegationVerifier(object):
                     raise DelegationParentMismatch(
                         "hop %d parent_digest does not match the "
                         "presented parent" % i)
+                # Custody binding (F249): a hop can only extend the
+                # delegation it was granted to. The digest linkage
+                # alone does not bind hop i to its parent -- without
+                # this check an unrelated keyholder could graft a
+                # narrower delegation onto an observed sealed
+                # delegation and verify a fabricated custody path.
+                if body["issuer"] != bodies[-1]["audience"]:
+                    raise DelegationCustodySplice(
+                        "hop %d issuer does not match the presented "
+                        "parent's audience" % i)
             self._verify_signature(body, sig_hex)
             if i == 0:
                 if body["issuer"] not in self._anchors:

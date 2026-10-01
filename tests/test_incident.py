@@ -165,7 +165,7 @@ class IncidentLifecycleTest(unittest.TestCase):
             self.assertEqual(entry["domain"], "incident")
             self.assertEqual(entry["code"], code)
             dc.code_for(code)
-        self.assertEqual(len(dc.TAXONOMY), 1222)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(dc.TAXONOMY), 1274)  # Wave-267 merge: pin -> 1274.
 
 
 if __name__ == "__main__":

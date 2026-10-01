@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import control_profiles as cp  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = 1222  # Unchanged: the fix reuses control-profile-malformed.
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 WANT_CODE = "control-profile-malformed"
 

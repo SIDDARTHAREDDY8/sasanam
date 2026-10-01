@@ -81,7 +81,7 @@ class VocabularyCoverageTest(unittest.TestCase):
         # Wave-248 merge: re-pointed to 979 (938 + 41 wave-248 codes: 1 breach-boundary + 9 skill-admission + 2 evidence-envelope + 6 skill-update + 13 identity + 3 combine + 7 artifact), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1222)  # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9 callback-*).
+        self.assertEqual(len(dc.TAXONOMY), 1274)  # Wave-267 merge: 1222 -> 1274 (+1 delegation-custody-splice, +9 corrob-*, +9 verpol-*, +13 supplychain-*, +7 federation-*, +7 behsig-*, +6 policy-delta-*).
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         # 599 = wave-233 merge pin; + 3 wave-234 lane-A octet-digest chain
         # codes (chain-octet-digest-{mismatch,absent}, chain-record-truncated,

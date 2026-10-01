@@ -42,7 +42,7 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-265 closure lane: pin -> 1178 (+1 mesh-auth-not-owner).
-TAXONOMY_PIN = 1222
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))

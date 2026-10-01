@@ -15,7 +15,7 @@ from gov import delegation_chain as dc
 from gov import decision_codes as dcd
 from gov import ed25519
 
-TAXONOMY_PIN = 1222  # Wave-264 merge: 1177. This lane: +9 delegation-*.
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 
 NOW = 4000000000.0
 

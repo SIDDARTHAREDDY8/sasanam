@@ -82,7 +82,15 @@ class Signer(ABC):
 
 
 class Verifier(ABC):
-    """Abstract signature verifier (P2 seam)."""
+    """Abstract signature verifier (P2 seam).
+
+    Implementations MAY expose a ``public_key`` property returning the
+    32-byte Ed25519 public key the verifier checks signatures for
+    (``Ed25519Verifier`` does). ``gov.corroboration_receipt`` uses it
+    for the reviewer-key binding when present and falls back to
+    ``key_id`` otherwise -- key-remote verifiers (e.g. Vault transit)
+    deliberately never expose the raw key, and must keep working.
+    """
 
     @property
     @abstractmethod
@@ -134,6 +142,11 @@ class Ed25519Verifier(Verifier):
     @property
     def key_id(self):
         return self._key_id
+
+    @property
+    def public_key(self):
+        """The 32-byte Ed25519 public key this verifier checks."""
+        return self._pub
 
     def verify(self, data, sig):
         try:

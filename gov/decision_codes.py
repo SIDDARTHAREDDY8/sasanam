@@ -1543,6 +1543,89 @@ TAXONOMY = {
         "evidence_kinds_required": ['ballot', 'constitution'],
         "reverify_steps": ['recompute'],
     },
+    'behsig-correlator-advisory': {
+        "domain": 'behsig',
+        "code": 'behsig-correlator-advisory',
+        "human": 'behavioral-signature v2: the stateful correlator '
+                 'fired above the stateless rule predicates (burst, '
+                 'fire-storm, slow-drip, or ratio gate); journaled '
+                 'advisory with a queued human hold request -- never '
+                 'a denial, never a block',
+        "severity": 'medium',
+        "evidence_kinds_required": ['journal', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-pack-malformed': {
+        "domain": 'behsig',
+        "code": 'behsig-pack-malformed',
+        "human": 'behavioral-signature v2: the signature pack fails '
+                 'schema validation (bad shape, unknown comparator, '
+                 'duplicate name); refused loudly before any rule '
+                 'loads -- malformed packs are never silently passed',
+        "severity": 'high',
+        "evidence_kinds_required": ['pack', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-pack-untrusted': {
+        "domain": 'behsig',
+        "code": 'behsig-pack-untrusted',
+        "human": 'behavioral-signature v2: the signature pack has no '
+                 'valid signature from the configured trust material '
+                 '(tampered, unsigned, or no trust material '
+                 'configured); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['pack', 'signature',
+                                    'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-rule-disabled': {
+        "domain": 'behsig',
+        "code": 'behsig-rule-disabled',
+        "human": 'behavioral-signature v2: a rule references an '
+                 'enrichment field the engine does not know; the '
+                 'rule is disabled with a loud journal record and '
+                 'the rest of the pack still loads -- unknown fields '
+                 'never silently pass and never silently drop a pack',
+        "severity": 'medium',
+        "evidence_kinds_required": ['pack', 'journal'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-rule-eval-failed': {
+        "domain": 'behsig',
+        "code": 'behsig-rule-eval-failed',
+        "human": 'behavioral-signature v2: a rule condition raised '
+                 'during evaluation on one event; the rule was '
+                 'skipped for that event only (transient), the rule '
+                 'itself stays loaded -- evaluation failures never '
+                 'silently pass and never drop a pack',
+        "severity": 'medium',
+        "evidence_kinds_required": ['pack', 'journal'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-tuning-applied': {
+        "domain": 'behsig',
+        "code": 'behsig-tuning-applied',
+        "human": 'behavioral-signature v2: a deployment tuning '
+                 'overlay was applied (added exceptions, raised '
+                 'floors, or a justified stable-rule disable); '
+                 'journaled loudly -- tuning is append/override '
+                 'only, packs are never edited in place',
+        "severity": 'low',
+        "evidence_kinds_required": ['pack', 'journal'],
+        "reverify_steps": ['recompute'],
+    },
+    'behsig-tuning-rejected': {
+        "domain": 'behsig',
+        "code": 'behsig-tuning-rejected',
+        "human": 'behavioral-signature v2: a deployment tuning '
+                 'overlay was refused (threshold below an author '
+                 'floor, unknown rule, an unjustified stable-rule '
+                 'disable, or an exception shape the rule author '
+                 'did not declare); the pack is unchanged',
+        "severity": 'medium',
+        "evidence_kinds_required": ['pack', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'binding_mismatch': {
         "domain": 'lease',
         "code": 'binding_mismatch',
@@ -2994,6 +3077,98 @@ TAXONOMY = {
         "evidence_kinds_required": ['bundle', 'manifest', 'digest'],
         "reverify_steps": ['recompute-digest', 'replay-chain'],
     },
+    # Wave-267 human-corroboration receipts (SB 947). The receipt
+    # proves a keyholder signed a scope-bound statement at a time; it
+    # does NOT prove independent investigation (anti-rubber-stamp
+    # properties belong in the approval ceremony, not the receipt).
+    'corrob-receipt-failed': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-failed',
+        "human": 'human-corroboration receipt: emission failed with an '
+                 'unexpected (non-receipt) error; the decision stands but '
+                 'no receipt was minted; failing closed and loud',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-malformed': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-malformed',
+        "human": 'human-corroboration receipt: the statement, envelope, '
+                 'or VC is malformed (missing fields, bad digests, bad '
+                 'did:key); refusing closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-not-approved': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-not-approved',
+        "human": 'human-corroboration receipt: refusing to mint a '
+                 'corroboration receipt for a decision that was not '
+                 'approved',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-predicate-mismatch': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-predicate-mismatch',
+        "human": 'human-corroboration receipt: the statement predicateType '
+                 'is not the human-corroboration predicate; refusing closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-self-corroboration': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-self-corroboration',
+        "human": 'human-corroboration receipt: the reviewer is the '
+                 'requesting agent; a principal cannot corroborate its '
+                 'own request; refusing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-signature-invalid': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-signature-invalid',
+        "human": 'human-corroboration receipt: the DSSE envelope signature '
+                 'does not verify under the reviewer key; refusing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-subject-mismatch': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-subject-mismatch',
+        "human": 'human-corroboration receipt: the statement subject digest '
+                 'does not match the decision being corroborated; a valid '
+                 'signature alone is not enough; refusing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-receipt-unbound-issuer': {
+        "domain": 'corroboration',
+        "code": 'corrob-receipt-unbound-issuer',
+        "human": 'human-corroboration receipt: the signing/verifying key '
+                 'is not the key the receipt names as reviewer (did:key '
+                 'binding failed); refusing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'corrob-vc-proof-invalid': {
+        "domain": 'corroboration',
+        "code": 'corrob-vc-proof-invalid',
+        "human": 'human-corroboration receipt: the W3C VC DataIntegrityProof '
+                 '(eddsa-jcs-2022) does not verify, or the credential is '
+                 'malformed or not issuer-bound; refusing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt'],
+        "reverify_steps": ['recompute'],
+    },
     'corroboration-key-inequality': {
         "domain": 'corroboration',
         "code": 'corroboration-key-inequality',
@@ -3329,6 +3504,18 @@ TAXONOMY = {
                  "parent's bound on a named key (wei §13 Contains)",
         "severity": 'high',
         "evidence_kinds_required": ['permit', 'parent-permit-bounds'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-custody-splice': {
+        "domain": 'delegation',
+        "code": 'delegation-custody-splice',
+        "human": 'signed delegation chain: hop i>0 names an issuer '
+                 'that is not the presented parent\'s audience; a '
+                 'grafted hop from an unrelated keyholder refuses '
+                 'fail-closed even when digest linkage and '
+                 'attenuation are sound',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
         "reverify_steps": ['recompute'],
     },
     'delegation-decision-mismatch': {
@@ -4536,6 +4723,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['render', 'digest', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'federation-attestation-malformed': {
+        "domain": 'federation',
+        "code": 'federation-attestation-malformed',
+        "human": 'peer attestation: the attestation request is malformed '
+                 '(bad peer id, bad anchor key, bad identity syntax, or '
+                 'bad claim shape); refused loudly at the seam',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'federation-bundle-confusion': {
         "domain": 'federation',
         "code": 'federation-bundle-confusion',
@@ -4582,6 +4779,70 @@ TAXONOMY = {
         "human": 'trust federation: the foreign bundle signature does '
                  'not verify under the relationship-pinned endpoint '
                  'key; the bundle is not installed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-claim-class-denied': {
+        "domain": 'federation',
+        "code": 'federation-claim-class-denied',
+        "human": 'peer attestation: a claim was denied by its tier -- a '
+                 'self-assertable claim key not on the deployment '
+                 'allowlist, or an anchor-signed claim without a valid '
+                 'signature (selector-spoofing is the threat model)',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-double-join': {
+        "domain": 'federation',
+        "code": 'federation-double-join',
+        "human": 'peer attestation: a second registration attempt for an '
+                 'already-bound peer id or anchor key; refused and '
+                 'journaled as a security incident (TOFU)',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-endpoint-unpinned': {
+        "domain": 'federation',
+        "code": 'federation-endpoint-unpinned',
+        "human": 'peer attestation: the cross-domain identity was '
+                 'presented through a bundle endpoint that does not '
+                 'exactly match the pinned relationship endpoint; no '
+                 'auto-discovery, substitution fails closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-identity-unmapped': {
+        "domain": 'federation',
+        "code": 'federation-identity-unmapped',
+        "human": 'peer attestation: the peer presented a valid anchor and '
+                 'possession proof for an identity it was never mapped to; '
+                 'attestation selects from the deployment-authored '
+                 'mapping, it never mints',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-peer-banned': {
+        "domain": 'federation',
+        "code": 'federation-peer-banned',
+        "human": 'peer attestation: a banned peer attempted registration, '
+                 'attestation, or a challenge; bans are per-peer and '
+                 'survive pruning',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'federation-possession-failed': {
+        "domain": 'federation',
+        "code": 'federation-possession-failed',
+        "human": 'peer attestation: the challenge-response '
+                 'proof-of-possession failed (bad signature, wrong key, '
+                 'stale or replayed challenge); bearer presentation is '
+                 'not accepted',
         "severity": 'high',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -7277,11 +7538,50 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-delta-counterexample-raised': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-counterexample-raised',
+        "human": 'policy delta counterexample: an expansion grant is '
+                 'emitted as a concrete review artifact with its boundary '
+                 'verdict and fired checks; queued for human review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-default-deny': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-default-deny',
+        "human": 'policy delta request engine: no allow rule covers the '
+                 'request; denied by engine default, never by implicit '
+                 'allow',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-delta-effect-weakened': {
         "domain": 'policy-delta',
         "code": 'policy-delta-effect-weakened',
         "human": 'policy delta moves a rule effect up the deny < '
                  'require_approval < allow ladder; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-evaluation-error': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-evaluation-error',
+        "human": 'policy delta evaluation hit an error mid-check; the '
+                 'error skips toward deny, never toward allow',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-forbid': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-forbid',
+        "human": 'policy delta request engine: a deny (forbid) rule '
+                 'covers the request; the forbid hard-overrides any '
+                 'allow',
         "severity": 'high',
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
@@ -7314,6 +7614,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-delta-forbid-residual': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-forbid-residual',
+        "human": 'policy delta: a deny (forbid) rule survives that the '
+                 'static check cannot model; the delta is uncheckable, '
+                 'never a vacuous pass, and a request it might cover is '
+                 'Unknown, never fail-open',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-delta-malformed': {
         "domain": 'policy-delta',
         "code": 'policy-delta-malformed',
@@ -7339,6 +7650,15 @@ TAXONOMY = {
         "human": 'policy delta changes an unclassified section whose risk '
                  'direction cannot be assessed from policy text alone; '
                  'flagged for review',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-delta-unknown': {
+        "domain": 'policy-delta',
+        "code": 'policy-delta-unknown',
+        "human": 'policy delta uses a shape the static check cannot '
+                 'model; refused fail-closed, never a vacuous pass',
         "severity": 'medium',
         "evidence_kinds_required": ['policy', 'digest'],
         "reverify_steps": ['recompute'],
@@ -9942,6 +10262,110 @@ TAXONOMY = {
         "evidence_kinds_required": ['credential', 'signature', 'digest'],
         "reverify_steps": ['verify-signature'],
     },
+    'supplychain-delegation-path-unauthorized': {
+        "domain": 'supplychain',
+        "code": 'supplychain-delegation-path-unauthorized',
+        "human": 'supplychain delegation: no delegation covers the skill path; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-delegation-revoked': {
+        "domain": 'supplychain',
+        "code": 'supplychain-delegation-revoked',
+        "human": 'supplychain delegation: a previously trusted delegation is absent from the new document (revocation by absence is loud); refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-delegation-signature-invalid': {
+        "domain": 'supplychain',
+        "code": 'supplychain-delegation-signature-invalid',
+        "human": 'supplychain delegation: the delegation document or authorization statement failed its role threshold; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'supplychain-eval-start-invalid': {
+        "domain": 'supplychain',
+        "code": 'supplychain-eval-start-invalid',
+        "human": 'supplychain: the pinned evaluation start is not a non-negative epoch number; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-frozen': {
+        "domain": 'supplychain',
+        "code": 'supplychain-frozen',
+        "human": 'supplychain: metadata is expired at the pinned evaluation start (freeze); refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-layout-expired': {
+        "domain": 'supplychain',
+        "code": 'supplychain-layout-expired',
+        "human": 'supplychain: the lifecycle layout is expired at the pinned evaluation start; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-layout-signature-invalid': {
+        "domain": 'supplychain',
+        "code": 'supplychain-layout-signature-invalid',
+        "human": 'supplychain: the lifecycle layout failed the authority threshold; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'supplychain-link-chain-broken': {
+        "domain": 'supplychain',
+        "code": 'supplychain-link-chain-broken',
+        "human": 'supplychain: a lifecycle link prev_digest does not chain to the previous link; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-link-unauthorized': {
+        "domain": 'supplychain',
+        "code": 'supplychain-link-unauthorized',
+        "human": 'supplychain: a lifecycle link failed its transition signer threshold; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+    'supplychain-malformed': {
+        "domain": 'supplychain',
+        "code": 'supplychain-malformed',
+        "human": 'supplychain: the delegation, authorization, layout, or link input failed structural validation; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-rollback': {
+        "domain": 'supplychain',
+        "code": 'supplychain-rollback',
+        "human": 'supplychain: the delegation document version is older than trusted (rollback); refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-snapshot-mismatch': {
+        "domain": 'supplychain',
+        "code": 'supplychain-snapshot-mismatch',
+        "human": 'supplychain: the delegation wire digest does not match the pinned snapshot binding (mix-and-match); refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['metadata', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'supplychain-transition-rules-failed': {
+        "domain": 'supplychain',
+        "code": 'supplychain-transition-rules-failed',
+        "human": 'supplychain: a lifecycle transition artifact rules were violated; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['bundle', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'surface-admin-unauthenticated': {
         "domain": 'mcp-surface',
         "code": 'surface-admin-unauthenticated',
@@ -10887,6 +11311,96 @@ TAXONOMY = {
                  'carry the sole critical id-kp-timeStamping EKU',
         "severity": 'high',
         "evidence_kinds_required": ['attestation-section'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-attestation-missing': {
+        "domain": 'verpol',
+        "code": 'verpol-attestation-missing',
+        "human": 'verification policy: a policy authority declares a '
+                 'required attestation but no attestation evidence was '
+                 'presented for it; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'attestation', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-attestation-policy-failed': {
+        "domain": 'verpol',
+        "code": 'verpol-attestation-policy-failed',
+        "human": 'verification policy: attestation evidence was presented '
+                 'but its predicateType does not match the declared type, '
+                 'or the attestation inline policy evaluated false over '
+                 'the payload; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'attestation', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-log-not-anchored': {
+        "domain": 'verpol',
+        "code": 'verpol-log-not-anchored',
+        "human": 'verification policy: the authority requires '
+                 'transparency-log anchoring (required by default; the '
+                 'ClusterImagePolicy quiet skip is inverted) and the '
+                 'packet digest is not anchored; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-malformed-policy': {
+        "domain": 'verpol',
+        "code": 'verpol-malformed-policy',
+        "human": 'verification policy: the policy document failed '
+                 'structural validation (including empty authorities and '
+                 'unknown predicate ops); refused fail-closed at load',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-no-authority-matched': {
+        "domain": 'verpol',
+        "code": 'verpol-no-authority-matched',
+        "human": 'verification policy: no authority in a matching policy '
+                 'verified (unpinned key, unmet threshold, unanchored '
+                 'digest, or failed attestations); failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-no-match': {
+        "domain": 'verpol',
+        "code": 'verpol-no-match',
+        "human": 'verification policy: no verification policy matches '
+                 'this packet; unmatched packets refuse fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-packet-invalid': {
+        "domain": 'verpol',
+        "code": 'verpol-packet-invalid',
+        "human": 'verification policy: the packet failed its own '
+                 'verification (structure, signature, or authority '
+                 'self-consistency) before policy evaluation; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-policy-failed': {
+        "domain": 'verpol',
+        "code": 'verpol-policy-failed',
+        "human": 'verification policy: the outer policy evaluated false '
+                 'over the normalized verification result; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['envelope', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'verpol-uncheckable': {
+        "domain": 'verpol',
+        "code": 'verpol-uncheckable',
+        "human": 'verification policy: the packet could not be checked '
+                 '(evaluation error); refused fail-closed, never a '
+                 'vacuous pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
         "reverify_steps": ['recompute'],
     },
     'vote_already_cast': {

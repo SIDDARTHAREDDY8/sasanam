@@ -150,6 +150,9 @@ _NON_CODES = frozenset([
     "user", "agent_action", "lifecycle", "warm_retired",
     "ceremony-tip-manifest", "signer-share-store",
     "verify_chain", "evidence_digest",
+    # Wave-267 merge: gov/behavioral_sig_packs.py error-message prefixes
+    # (function names, not decision codes).
+    "enrich_event", "match_pack",
 ])
 
 

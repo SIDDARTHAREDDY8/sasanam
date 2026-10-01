@@ -46,7 +46,7 @@ except Exception:  # red phase: module not written yet
     decision_codes = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1222  # Wave-266 lane (reconstructed intent):
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 # pin 1205 -> 1208 (+3 reconintent-*).
 
 EXPECTED_CODES = (

@@ -27,7 +27,7 @@ import time
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1222  # wave-265 merge: 1177 +1 mesh-auth-not-owner
+TAXONOMY_PIN = 1274  # Wave-267 merge: pin -> 1274.
 # +9 callback-* +9 delegation-* +9 discipline-*. This battery adds
 # no gov/ code.
 
