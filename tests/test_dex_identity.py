@@ -329,7 +329,7 @@ class TaxonomyPinTests(unittest.TestCase):
             self.assertIn(code, dc.TAXONOMY)
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(set(dc.TAXONOMY)), 1151)  # Wave-259 merge: pin -> 1106.
+        self.assertEqual(len(set(dc.TAXONOMY)), 1177)  # Wave-259 merge: pin -> 1106.
 
 
 if __name__ == "__main__":

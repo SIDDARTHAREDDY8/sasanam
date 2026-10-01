@@ -411,7 +411,7 @@ class TaxonomyTests(unittest.TestCase):
         self.assertEqual(n, 1151)  # Wave-263 feat-provenance: pin 1136 in-lane; wave-263 merge -> 1151.
         for c in pp.CODES:
             self.assertIn(c, dc.TAXONOMY)
-        self.assertEqual(len(set(dc.TAXONOMY)), 1151)
+        self.assertEqual(len(set(dc.TAXONOMY)), 1177)
 
 
 if __name__ == "__main__":

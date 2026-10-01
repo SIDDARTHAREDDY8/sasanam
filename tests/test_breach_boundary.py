@@ -313,7 +313,7 @@ class TaxonomyTest(unittest.TestCase):
         # breach-boundary-seal-invalid code; additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1151)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1177)  # Wave-258 merge: pin -> 1106.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
 

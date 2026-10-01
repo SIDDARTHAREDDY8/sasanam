@@ -303,8 +303,8 @@ class TaxonomyTest(unittest.TestCase):
     def test_codes_registered(self):
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1151)  # Wave-258 merge: pin -> 1106.
-        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1151)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1177)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1177)  # Wave-258 merge: pin -> 1106.
         for code in (
                 "policy-authoring-compile-refused",
                 "policy-authoring-conflicting-filters",
