@@ -51,9 +51,9 @@ class TaxonomyPinTest(unittest.TestCase):
     def test_taxonomy_pin(self):
         # Wave-250 lane 4: re-pointed to 983 (979 + 4 evidence-graph
         # codes), additive only.
-        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
+        # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1029)
+        self.assertEqual(len(dc.TAXONOMY), 1036)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         for code in ("evidence-graph-ambiguous-link",
                      "evidence-graph-malformed",

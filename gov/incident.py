@@ -17,7 +17,10 @@ Two properties that matter:
    status comes from a deployment-supplied ``finding_status``
    callable; when the provider is absent, raises, or cannot answer
    a finding, resolution is refused fail-closed -- the module never
-   assumes a finding is closed. Every refusal is itself journaled
+   assumes a finding is closed. ``resolve()`` is the ONLY path into
+   the resolved state: ``transition()`` to "resolved" is refused as
+   incident-illegal-transition (F216), so no public API can skip
+   the gate. Every refusal is itself journaled
    (``incident/resolve_refused``), so the audit trail shows the
    attempt.
 
@@ -51,6 +54,14 @@ from . import durable_journal as _dj
 
 # ------------------------------------------------------------------
 # states
+#
+# Single-path resolution (F216 fix, 2026-10-01): "resolved" is NOT a
+# legal transition() target. The only way into the resolved state is
+# resolve(), which runs the fail-closed finding/task checks. Calling
+# transition(incident_id, "resolved") is refused as
+# incident-illegal-transition (journaled as incident/
+# transition_refused, same as every other illegal move), so no public
+# API can skip the resolve() gate.
 
 
 STATES = ("open", "investigating", "contained", "resolved", "closed")
@@ -58,7 +69,7 @@ STATES = ("open", "investigating", "contained", "resolved", "closed")
 LEGAL_TRANSITIONS = {
     "open": ("investigating",),
     "investigating": ("open", "contained"),
-    "contained": ("investigating", "resolved"),
+    "contained": ("investigating",),
     "resolved": ("closed",),
     "closed": (),
 }

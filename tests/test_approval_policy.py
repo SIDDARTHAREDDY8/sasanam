@@ -166,8 +166,8 @@ class RouteTests(unittest.TestCase):
 
 class TaxonomyTests(unittest.TestCase):
     def test_taxonomy_pin(self):
-        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
-        self.assertEqual(len(dc.TAXONOMY), 1029)
+        # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
+        self.assertEqual(len(dc.TAXONOMY), 1036)
 
     def test_new_codes_resolve(self):
         for code in ("approval-policy-malformed",

@@ -4439,6 +4439,72 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'inventory-catalog-card-malformed': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-card-malformed',
+        "human": 'inventory catalog: attached scorecard cards must be a '
+                 'list of dicts; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-dangling-reference': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-dangling-reference',
+        "human": 'inventory catalog: a relationship references an entry '
+                 'name that does not exist; the catalog is refused '
+                 'fail-closed, never loaded with silent orphans',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-duplicate-entry': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-duplicate-entry',
+        "human": 'inventory catalog: two entries share a name; refused '
+                 'fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-entry-malformed': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-entry-malformed',
+        "human": 'inventory catalog: the entry or catalog shape is not '
+                 'well-formed; it is refused instead of guessed',
+        "severity": 'low',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-grant-unresolved': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-grant-unresolved',
+        "human": 'inventory catalog: a grant relationship is not confirmed '
+                 'by the grants provider; refused, never assumed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signal', 'grant'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-seam-unavailable': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-seam-unavailable',
+        "human": 'inventory catalog: grant relationships require a '
+                 'deployment-supplied grants provider; the seam is '
+                 'unavailable so grants are refused fail-closed, never '
+                 'auto-passed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-catalog-unknown-entry': {
+        "domain": 'inventory-catalog',
+        "code": 'inventory-catalog-unknown-entry',
+        "human": 'inventory catalog: operation names an entry that is not '
+                 'in the catalog; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
     'invocation-malformed': {
         "domain": 'jail',
         "code": 'invocation-malformed',

@@ -132,6 +132,46 @@ _GENESIS_DOMAIN = b"PERMIT_JOURNAL:GENESIS:v1"
 _EVENT_FIELDS = ("permit_id", "event_id", "event_type", "issued_at",
                  "mono_ns", "payload", "prev_mac", "mac")
 
+# F218: maximum permitted nesting depth of a payload (dict/list/tuple
+# containers). Rationale: the binding recursion consumer is
+# copy.deepcopy() in _fold_state(), which fails at ~499 nesting levels
+# under the default interpreter recursion limit of 1000 (measured, not
+# assumed) -- so 200 leaves a 2.5x margin. Honest governance payloads
+# are flat metadata (depth < 10 in the existing suites). Payloads deeper
+# than this are refused with permit-journal-misuse BEFORE serialization,
+# the durable write, and state folding -- no partial write.
+_MAX_PAYLOAD_DEPTH = 200
+
+
+def _payload_depth(payload):
+    """Iterative nesting depth of dict/list/tuple containers.
+
+    Never recurses (an explicit stack), so a hostile deeply-nested
+    payload cannot blow the interpreter stack here. Cycle-safe via a
+    seen-set: cycles are reported at their first-repeat depth and are
+    refused later by the serializer's ValueError.
+    """
+    max_depth = 0
+    seen = set()
+    stack = [(payload, 0)]
+    while stack:
+        obj, depth = stack.pop()
+        if id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if depth > max_depth:
+            max_depth = depth
+        if isinstance(obj, dict):
+            children = obj.values()
+        elif isinstance(obj, (list, tuple)):
+            children = obj
+        else:
+            continue
+        for child in children:
+            if isinstance(child, (dict, list, tuple)):
+                stack.append((child, depth + 1))
+    return max_depth
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -436,6 +476,15 @@ class PermitJournal:
         if not isinstance(payload, dict):
             raise PermitJournalRefusal(
                 MISUSE_CODE, "payload must be a dict")
+        if _payload_depth(payload) > _MAX_PAYLOAD_DEPTH:
+            # F218: refuse before serialization, the durable write, and
+            # state folding -- a deeply nested payload would otherwise
+            # escape as a raw RecursionError from copy.deepcopy() in
+            # _fold_state() after the durable write.
+            raise PermitJournalRefusal(
+                MISUSE_CODE,
+                "payload exceeds maximum nesting depth %d"
+                % (_MAX_PAYLOAD_DEPTH,))
         if event_id is None:
             event_id = uuid.uuid4().hex
         if not isinstance(event_id, str) or not event_id:
@@ -454,13 +503,19 @@ class PermitJournal:
             body["mac"] = event_mac(
                 self._key, permit_id, event_id, event_type, issued_at,
                 body["mono_ns"], payload, self._running_mac)
-        except (TypeError, ValueError) as exc:
-            # F214: payload serialization is caller misuse, not a
+        except (TypeError, ValueError, RecursionError) as exc:
+            # F214/F218: payload serialization is caller misuse, not a
             # bypass -- refuse with the machine-code contract instead
-            # of letting a raw TypeError escape the public seam.
-            raise PermitJournalRefusal(
-                MISUSE_CODE,
-                "payload is not JSON-serializable: %s" % (exc,))
+            # of letting a raw TypeError/ValueError (F214) or a raw
+            # RecursionError from a deeply nested payload (F218)
+            # escape the public seam.
+            if isinstance(exc, RecursionError):
+                detail = ("payload exceeds maximum nesting depth: %s"
+                          % (exc,))
+            else:
+                detail = ("payload is not JSON-serializable: %s"
+                          % (exc,))
+            raise PermitJournalRefusal(MISUSE_CODE, detail)
         return body
 
     def _append(self, permit_id, event_type, payload, event_id=None,

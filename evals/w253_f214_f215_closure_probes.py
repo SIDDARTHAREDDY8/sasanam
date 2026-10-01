@@ -27,7 +27,7 @@ from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import permit_journal as pj  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1029
+TAXONOMY_PIN = 1036
 
 _PROBES = []
 

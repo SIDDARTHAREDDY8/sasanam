@@ -301,10 +301,10 @@ policies:
 
 class TaxonomyTest(unittest.TestCase):
     def test_codes_registered(self):
-        # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
+        # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1029)
-        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1029)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1036)
+        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1036)
         for code in (
                 "policy-authoring-compile-refused",
                 "policy-authoring-conflicting-filters",

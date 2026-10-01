@@ -55,6 +55,7 @@ construct can never silently compile to a weaker rule.
 
 import json
 import os
+from collections.abc import Mapping
 
 from .policy import PolicyEngine, KNOWN_TOOLS
 from .yamlmini import parse as _parse_yaml
@@ -650,6 +651,35 @@ def _explain_one(plan_filter, action, context):
     return ok, why
 
 
+def _normalize_action_context(action, context):
+    """Engine-consistent input shapes for the explanation seam.
+
+    The native engine's Request.from_action tolerates None via
+    ``action or {}`` / ``context or {}`` and decides default_deny;
+    the explanation layer mirrors that exactly so the why can
+    never disagree with the verdict. Any other non-mapping shape
+    is a caller error and is refused fail-closed with a machine
+    code (this module's fixture-loader precedent) -- this makes
+    the seam strictly more robust than the engine, which escapes
+    raw AttributeError on truthy non-mapping actions.
+    """
+    if action is None:
+        action = {}
+    elif not isinstance(action, Mapping):
+        raise AuthoringError(
+            MALFORMED_CODE,
+            "explain_candidate needs a mapping action, got %s"
+            % type(action).__name__)
+    if context is None:
+        context = {}
+    elif not isinstance(context, Mapping):
+        raise AuthoringError(
+            MALFORMED_CODE,
+            "explain_candidate needs a mapping context, got %s"
+            % type(context).__name__)
+    return action, context
+
+
 def explain_candidate(compiled, action, context):
     """Per-rule filter explanations for a compiled candidate.
 
@@ -662,6 +692,7 @@ def explain_candidate(compiled, action, context):
             MALFORMED_CODE,
             "explain_candidate needs a CompiledPolicy, got %s"
             % type(compiled).__name__)
+    action, context = _normalize_action_context(action, context)
     out = []
     for plan in compiled.plans:
         frecs = []

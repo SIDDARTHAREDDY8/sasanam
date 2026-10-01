@@ -37,7 +37,7 @@ from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1029  # Wave-254 merge: re-pointed to 1029 (1017 + 5 approval-policy + 7 compliance-emitter), additive
+TAXONOMY_PIN = 1036  # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
 
 _PROBES = []
 

@@ -6523,7 +6523,7 @@ Next free finding: **F216**. **Open findings: none.** (F211 filed 2026-09-30, wa
 
 **Close-when criteria:** (1) `transition()` refuses (or runs the identical finding/task checks as `resolve()`) when `new_state == "resolved"` -- no path to the resolved state skips the checks; (2) break-first battery: the transition-bypass probe BREAKs (resolved with open finding) on old code, HELDs (refused with incident-open-findings or equivalent) on fixed code; (3) adjacent suites green (test_incident, w252 incident battery).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-255 lane 1).** Closure: "resolved" removed from `LEGAL_TRANSITIONS["contained"]` in `gov/incident.py` -- `resolve()` is now the single fail-closed path to the resolved state; `transition(incident_id, "resolved")` is refused as `incident-illegal-transition` and journaled as `incident/transition_refused` (same as every other illegal move). Break-first battery `evals/w255_f216_closure_probes.py`: 2 BREAK / 3 HELD on pristine base, 5/5 HELD on fixed code (staging + `env -u GOV_DEPLOYMENT_MODE`). Adjacent: `tests/test_incident.py` 14/14 OK, `evals/w253_incident_probes.py` green, `evals/w254_redteam_probes.py` F216 probe now HELD (remaining BREAKs are F217/F218, still open).
 
 ## F217: policy_authoring.explain_candidate() escapes raw AttributeError on non-dict action or context=None (LOW)
 
@@ -6535,7 +6535,7 @@ Next free finding: **F216**. **Open findings: none.** (F211 filed 2026-09-30, wa
 
 **Close-when criteria:** (1) `explain_candidate()` validates/normalizes `action` and `context` at the seam -- non-dict action or None context either refuses with a machine code (`policy-authoring-...`) or coerces to the engine's shapes, consistent with the engine's default_deny behavior; (2) break-first battery: both probes BREAK (raw AttributeError) on old code, HELD on fixed code; (3) adjacent suites green (test_policy_authoring, w253 authoring batteries).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-255 lane 2).** Close-when path (1): `explain_candidate()` in `gov/policy_authoring.py` now normalises `action`/`context` at the seam via the new `_normalize_action_context()` helper — `None` coerces to `{}` (engine-consistent: `Request.from_action`'s own `action or {}` / `context or {}` fallbacks, engine decides default_deny, explanation can never disagree), and any other non-`Mapping` shape (str/int/list) is refused fail-closed with `AuthoringError(policy-authoring-malformed)` (this module's fixture-loader precedent). No raw `AttributeError`/`TypeError` escapes any public path; the seam is strictly more robust than the engine itself. Close-when path (2): break-first battery `evals/w255_f217_closure_probes.py` — 6 probes, 5 BREAK (raw AttributeError) on the pristine wave-254 base, 6/6 HELD on fixed code, deterministic across 2 runs (staging + `env -u GOV_DEPLOYMENT_MODE`), synthetic/local, standalone. Close-when path (3): adjacent suites green — test_policy_authoring 17/17 OK, test_policy_harness + test_policy_combine OK, w253 authoring probes HELD, w251 posture battery 12/12 HELD, w254 red-team battery probes `authoring/explain-non-dict-action` and `authoring/explain-none-context` honestly flipped to HELD regression pins (remaining 2 breaks are F216/F218, still OPEN, other lanes). No new decision codes (fix reuses `policy-authoring-malformed`); taxonomy pin stays 1029.
 
 ## F218: PermitJournal.grant() with deeply-nested payload escapes raw RecursionError instead of permit-journal-misuse (LOW)
 
@@ -6547,6 +6547,25 @@ Next free finding: **F216**. **Open findings: none.** (F211 filed 2026-09-30, wa
 
 **Close-when criteria:** (1) `_build_body()`'s serialization guard also catches `RecursionError` (or the payload depth is bounded before serialization) -- no raw recursion error escapes any public append path; (2) break-first battery: the deep-nesting probe BREAKs (raw RecursionError) on old code, HELDs (misuse code) on fixed code; (3) adjacent suites green (test_permit_journal, w250 permit-journal battery).
 
-**Status: OPEN.**
+**Status: CLOSED 2026-10-01 (wave-255 lane 3).** Closure evidence:
+(1) The actual recursion failure was measured to be `copy.deepcopy()`
+in `_fold_state()` (folding happens AFTER the durable append; json's C
+encoder tolerates 3000-level nesting, deepcopy fails at ~499 levels
+under the default limit of 1000), so the fix bounds payload depth
+BEFORE serialization in `_build_body()`: `_payload_depth()` (iterative,
+cycle-safe) refuses payloads deeper than `_MAX_PAYLOAD_DEPTH = 200`
+with `PermitJournalRefusal(permit-journal-misuse)` before any durable
+write -- no raw recursion error escapes any public append path and no
+partial write. The `event_mac()` serialization guard additionally
+catches `RecursionError` as defense-in-depth. (2) New battery
+`evals/w255_f218_closure_probes.py`: 2/7 BREAK on pristine base (raw
+RecursionError escaped), 7/7 HELD on fixed code x2 (staging + clean
+env), including depth-150 accepted / depth-201 refused pins and a
+fresh-reload no-partial-write check. (3) Adjacent green:
+tests.test_permit_journal + permit family 134/134 OK,
+tests.test_posture_cards 17/17 OK, w254 red-team battery 13 HELD / 3
+BREAK (the F218 probe flipped HELD; the remaining 3 BREAK are the
+still-OPEN F216/F217 probes). No new machine codes, no taxonomy
+change (pin stays 1029).
 
-Next free finding: **F219**. **Open findings: F216, F217, F218.**
+Next free finding: **F219**. **Open findings: none.** (F216 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 1; F217 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 2; F218 filed 2026-10-01, wave-254 lane 1 red-team, closed 2026-10-01, wave-255 lane 3.)
