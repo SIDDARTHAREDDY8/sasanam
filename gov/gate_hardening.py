@@ -79,6 +79,20 @@ class GateConfigError(Exception):
 # Policy compilation (compile-once, digest-keyed, deterministic)
 # ---------------------------------------------------------------------------
 
+def _request_id_of(request):
+    """Best-effort request_id extraction that never raises (F291).
+
+    Used on the early deepcopy-failure path in ``evaluate()``/``scan()``,
+    where the caller's request object is hostile (non-copyable) and may
+    not even be a dict -- ``request.get`` itself could raise. Returns "?"
+    as the last resort, matching the modules' other fallbacks.
+    """
+    try:
+        return request.get("request_id", "?")
+    except Exception:  # noqa: BLE001 -- never raise on the error path
+        return "?"
+
+
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode(
         "utf-8")
@@ -425,6 +439,12 @@ class Gate(object):
         predicate shares no mutable state with the caller's dict. The
         per-evaluation copy cost is one deepcopy of the request.
 
+        The deepcopy sits INSIDE the fail-closed boundary (F291): a
+        hostile copy (TypeError on non-copyable values, RecursionError
+        on pathological nesting) becomes a ``gatehard-gate-error``
+        deny instead of propagating. GeneratorExit is re-raised, never
+        swallowed into a deny.
+
         A valid signed FailureIgnore (F280) is per-policy as documented:
         the errored policy's error is treated as non-fatal and
         evaluation CONTINUES through the remaining policies; the
@@ -433,8 +453,24 @@ class Gate(object):
         """
         # F258: deep copy so the predicate cannot mutate (or smuggle
         # state out of) the caller's nested request values.
-        request = copy.deepcopy(request or {})
+        # F291: inside the fail-closed boundary -- a hostile deepcopy
+        # raises (TypeError on non-copyable values, RecursionError on
+        # pathological nesting); it becomes a coded fail-closed deny,
+        # not a raw raise. GeneratorExit is re-raised per F256.
         monitor = (self.mode == "monitor")
+        try:
+            request = copy.deepcopy(request or {})
+        except GeneratorExit:
+            raise
+        except BaseException as e:  # noqa: BLE001 -- F291
+            detail = ("request could not be copied for evaluation: %s: %s"
+                      % (type(e).__name__, e))
+            snap = {"request_id": _request_id_of(request)}
+            v = (self._monitor_would_deny("gatehard-gate-error", detail,
+                                          snap)
+                 if monitor else self._deny("gatehard-gate-error", detail,
+                                            snap))
+            return self._maybe_breakglass(v, snap, break_glass)
         ignore_used = None
         try:
             for policy in sorted(self._policies.values(),
@@ -572,11 +608,23 @@ class Gate(object):
     def scan(self, requests, now=None):
         """Synthesize evaluations against standing inventory in
         deterministic (request_id) order. Read-only: does not touch the
-        audit log. Each entry is what protect mode would decide today."""
+        audit log. Each entry is what protect mode would decide today.
+        A request whose deepcopy fails (F291) yields a fail-closed
+        ``gatehard-gate-error`` row rather than raising."""
         out = []
         for req in sorted(requests, key=lambda r: r.get("request_id", "")):
             # F258: same deep-copy discipline as evaluate().
-            req = copy.deepcopy(req)
+            # F291: inside the per-request try so a hostile deepcopy
+            # becomes a coded fail-closed row, not a raw raise.
+            req_id = _request_id_of(req)
+            try:
+                req = copy.deepcopy(req)
+            except GeneratorExit:
+                raise
+            except BaseException:  # noqa: BLE001 -- F291
+                out.append({"request_id": req_id, "would": "deny",
+                            "code": "gatehard-gate-error"})
+                continue
             would = "allow"
             code = None
             try:
