@@ -116,6 +116,11 @@ wave-261 definitions load and behave identically):
   values replaces the block's ``values``; disabling a block
   (``enabled: false``) fails closed to alert, and the re-arming is
   journaled in the record's ``disabled_but_matched`` list (never silent).
+  F243: a *values* override is journaled too -- every record's
+  ``exception_decision`` carries ``effective_values`` (per block: the
+  values actually evaluated plus ``policy_overridden``) and
+  ``policy_revision`` (the policy revision in force), so a widening
+  override is attributable from the record alone.
 * ``maturity`` -- ``stable`` (default), ``experimental``, or
   ``deprecated``. Unknown tiers are a LOUD ``detector-unknown-maturity``
   refusal; ``deprecated`` detectors refuse to load with the machine code
@@ -646,7 +651,18 @@ class DetectorEngine:
 
     @property
     def detectors(self):
-        return dict(self._detectors)
+        """Registered definitions (a fresh deep copy per access).
+
+        F244: this was ``dict(self._detectors)`` -- a shallow copy
+        whose VALUES were the LIVE validated definition dicts, so a
+        caller could flip maturity/priority/exceptions at runtime and
+        bypass every load-time LOUD refusal with no journal.
+        Deep-copied now: mutating the returned structure (at any
+        depth) cannot change engine or sink behavior. The engine's
+        own store is the only live copy; :meth:`register_all` is the
+        only mutation path.
+        """
+        return copy.deepcopy(self._detectors)
 
     def register(self, definition):
         """Register one detector definition (data dict)."""
@@ -871,7 +887,16 @@ class AlertSink:
     touching the rule. A *disabled* exception fails closed to alert: it
     cannot suppress, and if it would have matched, the re-arming is
     journaled in the record's ``exception_decision["disabled_but_matched"]``
-    -- disabling an exception never silently re-arms the rule.
+    -- disabling an exception never silently re-arms the rule. A *values*
+    override is journaled too (F243): every record's exception decision
+    carries ``effective_values`` (per exception: the values actually
+    evaluated plus ``policy_overridden``) and ``policy_revision`` (this
+    sink's deployment-policy revision, bumped on every ``set_policy``),
+    so a widening override is attributable from the record alone.
+
+    F244: :meth:`DetectorEngine.detectors` returns deep copies, so a
+    caller holding a returned definition cannot mutate the live
+    registration at any depth.
 
     ``journal_path`` (optional) appends every record as a JSONL line to a
     durable journal file, byte-equal to the in-memory journal.
@@ -889,14 +914,24 @@ class AlertSink:
         self._seq = 0
         self._journal_path = journal_path
         self._policy = {}
+        # F243: deployment-policy revision. Bumped on every set_policy;
+        # every alert record carries the revision in force, so an
+        # auditor can tell which policy produced which record and a
+        # set_policy is discoverable from the journal.
+        self._policy_rev = 0
         if policy is not None:
             self.set_policy(policy)
 
     # ------------------------------------------------------- policy
 
     def set_policy(self, policy):
-        """Replace the deployment policy (validated LOUD, fail-closed)."""
+        """Replace the deployment policy (validated LOUD, fail-closed).
+
+        Bumps the policy revision (F243): every subsequent alert
+        record carries the new revision in force.
+        """
         self._policy = self._validate_policy(policy)
+        self._policy_rev += 1
 
     def policy(self):
         """The current deployment policy (a copy)."""
@@ -966,13 +1001,18 @@ class AlertSink:
     # ----------------------------------------------------- evaluation
 
     def _effective_block(self, det_name, block):
-        """The block as modified by deployment policy (values override)."""
+        """The block as modified by deployment policy (values override).
+
+        Returns (effective_block, enabled, values_overridden). F243:
+        the override flag is journaled with every record so a
+        values-override is attributable from the record alone.
+        """
         override = self._policy.get(det_name, {}).get(block["name"], {})
         if "values" not in override:
-            return block, override.get("enabled", True)
+            return block, override.get("enabled", True), False
         effective = dict(block)
         effective["values"] = override["values"]
-        return effective, override.get("enabled", True)
+        return effective, override.get("enabled", True), True
 
     def _evaluate_exceptions(self, definition, event):
         """Evaluate every exception block; return the exception decision.
@@ -982,16 +1022,29 @@ class AlertSink:
         suppress -- but if it *would* have matched, it is listed in
         ``disabled_but_matched`` so the re-arming is never silent. An
         exception check that errors fails closed to alert (no suppression).
+
+        F243: the decision also carries ``effective_values`` (per
+        block: the effective values actually evaluated, plus whether
+        the deployment policy replaced them) and ``policy_revision``
+        (the policy revision in force), so a widening values-override
+        is attributable from the record alone -- the "never silent"
+        promise now covers overrides, not just disables.
         """
         det_name = definition["name"]
         evaluated = []
         matched = []
         disabled_but_matched = []
+        effective_values = {}
         suppressing = None
         for block in definition.get("exceptions", []):
             exc_name = block["name"]
             evaluated.append(exc_name)
-            effective, enabled = self._effective_block(det_name, block)
+            effective, enabled, overridden = self._effective_block(
+                det_name, block)
+            effective_values[exc_name] = {
+                "values": copy.deepcopy(effective["values"]),
+                "policy_overridden": overridden,
+            }
             try:
                 does_match = _exception_block_matches(effective, event)
             except Exception:  # noqa: BLE001 -- fail closed to alert
@@ -1011,6 +1064,8 @@ class AlertSink:
             "suppressing_exception": suppressing,
             "decision": ("suppressed" if suppressing is not None
                          else "no-suppression"),
+            "effective_values": effective_values,
+            "policy_revision": self._policy_rev,
         }
 
     def _record(self, definition, event):

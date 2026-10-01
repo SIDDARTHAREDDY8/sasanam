@@ -35,14 +35,14 @@ B. gov/root_ceremony.py (wave-262 feature lane 3):
      heuristic; the deployment runs the rehearsal).
 
 C. gov/detectors.py alert discipline (wave-262 feature lane 2):
-   - deployment-policy values-overrides are invisible in alert
-     records: a widening override silently re-arms the rule -- the
-     "never silent" promise covers disable (disabled_but_matched)
-     but not override (F243).
-   - DetectorEngine.detectors returns a shallow copy whose values are
-     the LIVE definition dicts: runtime maturity/priority/exception
-     mutation bypasses every load-time LOUD refusal with no journal
-     (F244).
+   - deployment-policy values-overrides were invisible in alert
+     records (F243, CLOSED wave-264): records now carry the
+     effective exception values + policy revision; the probe is a
+     regression pin (HELD when the override is attributable).
+   - DetectorEngine.detectors returned live definition dicts (F244,
+     CLOSED wave-264): the accessor now returns deep copies; the
+     probe is a regression pin (HELD when runtime mutation has no
+     effect, BREAK on regression).
    - control (HELD): disabling an exception fails closed to alert and
      journals disabled_but_matched.
 
@@ -515,25 +515,38 @@ def _p_override_invisible():
 
 
 @probe("detectors/detectors-accessor-runtime-mutation")
-def _p_shallow_copy():
-    """F244: DetectorEngine.detectors returns a shallow copy whose
-    values are the LIVE definition dicts -- runtime mutation of
-    maturity/priority/exceptions bypasses every load-time LOUD
-    refusal with no journal."""
+def _p_deep_copy_accessor():
+    """F244 (CLOSED wave-264): DetectorEngine.detectors must return
+    deep copies -- runtime mutation of the returned structure must
+    not change engine/sink behavior. HELD when the accessor is
+    fix-verified; BREAK if the live definition leaks through again
+    (regression pin for the closure)."""
     eng = det.DetectorEngine()
     eng.register(_det_base(name="w263-mut", priority="critical"))
     sink = det.AlertSink(eng)
     if not sink.may_gate_enforcement("w263-mut"):
         return ("ERROR", "stable detector cannot gate?")
     eng.detectors["w263-mut"]["maturity"] = "experimental"
-    if sink.may_gate_enforcement("w263-mut"):
-        return ("ERROR", "runtime maturity flip had no effect?")
+    if not sink.may_gate_enforcement("w263-mut"):
+        # DEFECT (pre-fix): the flip reached the live definition.
+        sink.process({"type": "probe_event", "flag": True})
+        rec = sink.journal_entries()[-1]
+        if rec["record_type"] != "observation":
+            return ("ERROR", "expected observation, got %r"
+                    % rec["record_type"])
+        return _break(
+            "runtime maturity flip via detectors[...] flipped gating "
+            "True->False and turned an alert into an observation: "
+            "the accessor leaks the live definition (F244 regressed)")
+    # FIXED: the flip hit a copy; the sink still gates and alerts.
     sink.process({"type": "probe_event", "flag": True})
     rec = sink.journal_entries()[-1]
-    if rec["record_type"] != "observation":
-        return ("ERROR", "expected observation, got %r"
-                % rec["record_type"])
-    # exceptions rewritten at runtime, no validation, no journal
+    if rec["record_type"] != "alert":
+        return _break(
+            "maturity mutation reached the live definition by another "
+            "path: match produced %r instead of alert (F244 regressed)"
+            % rec["record_type"])
+    # exceptions rewritten at runtime must have no effect either.
     eng2 = det.DetectorEngine()
     eng2.register(_det_base(name="w263-mut2", priority="notice",
                             exceptions=[_exc_block()]))
@@ -544,13 +557,17 @@ def _p_shallow_copy():
     sink2.process({"type": "probe_event", "flag": True,
                    "host": "attacker.example"})
     rec2 = sink2.journal_entries()[-1]
-    if rec2["record_type"] != "suppressed":
-        return ("ERROR", "runtime exception rewrite had no effect")
-    return _break(
-        "runtime mutation via detectors[...] changed sink behavior "
-        "(maturity stable->experimental flipped gating and turned an "
-        "alert into an observation; exceptions rewritten unvalidated) "
-        "-- load-time refusals bypassed post-load, nothing journaled")
+    if rec2["record_type"] == "suppressed":
+        return _break(
+            "runtime exception rewrite via detectors[...] suppressed "
+            "the alert with no validation and no journal (F244 "
+            "regressed)")
+    if rec2["record_type"] != "alert":
+        return ("ERROR", "expected alert, got %r" % rec2["record_type"])
+    return _held("F244 closed: DetectorEngine.detectors returns deep "
+                 "copies -- runtime maturity flip and exception "
+                 "rewrite via the accessor have no effect; sink still "
+                 "gates and alerts")
 
 
 @probe("detectors/disabled-exception-journaled-control")

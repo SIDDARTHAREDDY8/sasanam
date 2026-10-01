@@ -594,18 +594,25 @@ def _p_record_shape():
     if len(rec["event_digest"]) != 64 or any(
             ch not in "0123456789abcdef" for ch in rec["event_digest"]):
         return _gap("event_digest not 64-hex")
+    # F243 (wave-264): the exception decision now also carries the
+    # effective exception values and the policy revision in force, so
+    # a widening values-override is attributable from the record
+    # alone. Schema pin repointed from the wave-262 shape.
     want_ed = {"evaluated", "matched", "disabled_but_matched",
-               "suppressing_exception", "decision"}
+               "suppressing_exception", "decision", "effective_values",
+               "policy_revision"}
     if set(rec["exception_decision"].keys()) != want_ed:
         return _gap("exception_decision keys wrong: %r"
                     % (sorted(rec["exception_decision"].keys()),))
     if rec["exception_decision"] != {
             "evaluated": [], "matched": [], "disabled_but_matched": [],
-            "suppressing_exception": None, "decision": "no-suppression"}:
+            "suppressing_exception": None, "decision": "no-suppression",
+            "effective_values": {}, "policy_revision": 0}:
         return _gap("exception_decision wrong: %r"
                     % (rec["exception_decision"],))
-    return _held("alert record schema exact; declared priority carried "
-                 "verbatim; exception decision explicit")
+    return _held("alert record schema exact (F243: effective_values + "
+                 "policy_revision); declared priority carried verbatim; "
+                 "exception decision explicit")
 
 
 @probe("w261_additivity")
