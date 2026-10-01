@@ -27,7 +27,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 # Wave-263 merge: pin -> 1151 (+7 recipient-plugin-*, +8 mesh-auth-*,
 # +7 provenance-*).
-TAXONOMY_PIN = 1151
+TAXONOMY_PIN = 1177
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
@@ -291,6 +291,12 @@ def _p_consent_via_mesh():
             required_scopes={"net:fetch"}, now=_NOW + 100)
     except ma.MeshAuthError as e:
         return _held("mesh gate refuses consent token: %s" % e.code)
+    except stl.ScopedListingError as e:
+        # Wave-264 merge: F241 closed -- the consent token now refuses
+        # scope-grant-tampered at the issuer seam before the mesh gate
+        # can wrap it. Fix confirmed at the mesh composition point.
+        return _held("mesh composition refuses consent token at the "
+                     "issuer seam: %s" % e.code)
     return _break(
         "consent token AUTHORIZED as mesh scope-ticket "
         "(subject=%s scopes=%s): F241's missing domain separation "
@@ -602,7 +608,10 @@ def _p_f244():
         return ("ERROR", "stable detector cannot gate?!")
     eng.detectors["w264-mut"]["maturity"] = "experimental"
     if sink.may_gate_enforcement("w264-mut"):
-        return ("ERROR", "runtime maturity flip had no effect?!")
+        # Wave-264 merge: F244 closed -- detectors returns deep copies,
+        # so the runtime mutation correctly has no effect.
+        return _held("F244 fixed: runtime mutation via detectors[...] "
+                     "had no effect on sink behavior")
     return _break("F244 still breaks: runtime mutation via "
                   "detectors[...] changed sink behavior")
 

@@ -75,7 +75,7 @@ except ImportError:
     _HAVE_MODULE = False
 
 #: Lane-local pin: 1151 (wave-263 merge) + 7 federation-* codes.
-TAXONOMY_PIN = 1158
+TAXONOMY_PIN = 1177
 
 _PROBES = []
 

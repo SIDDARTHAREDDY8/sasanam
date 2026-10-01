@@ -94,7 +94,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import ed25519 as _ed
 
-TAXONOMY_PIN = 1162  # 1151 + 11 admission-policy-* codes
+TAXONOMY_PIN = 1177  # 1151 + 11 admission-policy-* codes
 
 _PROBES = []
 

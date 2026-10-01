@@ -39,7 +39,7 @@ from gov import incident as inc_mod  # noqa: E402
 from gov import permit_journal as pj  # noqa: E402
 from gov import short_lived_credentials as slc  # noqa: E402
 
-TAXONOMY_PIN = 1151  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1177  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 

@@ -49,7 +49,7 @@ class TaxonomyPinTests(unittest.TestCase):
         # 1 skill-update code: digest-changed), additive only.
         # Wave-255 lane 4: re-pointed to 1036 (1029 + 7 inventory-catalog), additive
         # only; merge coordinator composed.
-        self.assertEqual(len(dc.TAXONOMY), 1151)  # Wave-258 merge: pin -> 1106.
+        self.assertEqual(len(dc.TAXONOMY), 1177)  # Wave-258 merge: pin -> 1106.
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
 
     def test_expected_codes_pinned(self):

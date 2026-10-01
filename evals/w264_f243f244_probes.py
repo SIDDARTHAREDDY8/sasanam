@@ -42,7 +42,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import detectors as det
 
-TAXONOMY_PIN = 1151
+TAXONOMY_PIN = 1177
 
 _PROBES = []
 

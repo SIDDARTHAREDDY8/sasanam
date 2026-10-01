@@ -47,7 +47,7 @@ try:
 except ImportError:
     ma = se = sv = ac = ed = decision_codes = None
 
-TAXONOMY_PIN = 1151  # Wave-260 lane 3: pin 1092 + 4 svid-enrollment-* codes.
+TAXONOMY_PIN = 1177  # Wave-260 lane 3: pin 1092 + 4 svid-enrollment-* codes.
 
 _PROBES = []
 

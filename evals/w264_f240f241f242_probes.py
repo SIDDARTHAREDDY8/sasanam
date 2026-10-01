@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gov import decision_codes
 from gov import scoped_tool_listing as stl
 
-TAXONOMY_PIN = 1152
+TAXONOMY_PIN = 1177
 
 _PROBES = []
 

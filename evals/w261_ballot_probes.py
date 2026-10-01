@@ -23,7 +23,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1151  # Wave-261 lane 1: pin -> 1106 (9 ballot-* codes).
+TAXONOMY_PIN = 1177  # Wave-261 lane 1: pin -> 1106 (9 ballot-* codes).
 
 try:
     from gov import decision_codes
