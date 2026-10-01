@@ -1773,6 +1773,96 @@ TAXONOMY = {
         "evidence_kinds_required": ['memory', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'ceremony-bad-signature': {
+        "domain": 'ceremony',
+        "code": 'ceremony-bad-signature',
+        "human": 'root ceremony: a keyholder attestation signature does '
+                 'not verify against the claimed key; the attestation is '
+                 'refused, never counted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-digest-mismatch': {
+        "domain": 'ceremony',
+        "code": 'ceremony-digest-mismatch',
+        "human": 'root ceremony: a keyholder attestation references a '
+                 'ceremony digest different from the ceremony under '
+                 'execution; the attestation is refused as a detached '
+                 'approval, never counted',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-double-review': {
+        "domain": 'ceremony',
+        "code": 'ceremony-double-review',
+        "human": 'root ceremony: the keyholder already recorded a review '
+                 'attestation for this ceremony; the duplicate is refused '
+                 'and not double-counted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-malformed-proposal': {
+        "domain": 'ceremony',
+        "code": 'ceremony-malformed-proposal',
+        "human": 'root ceremony: the proposed ceremony event is malformed '
+                 '(unknown event type, bad fingerprint, bad thresholds); '
+                 'no ceremony opens',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-not-keyholder': {
+        "domain": 'ceremony',
+        "code": 'ceremony-not-keyholder',
+        "human": 'root ceremony: the actor is not a named keyholder in '
+                 'the ceremony constitution; the action is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-phase-violation': {
+        "domain": 'ceremony',
+        "code": 'ceremony-phase-violation',
+        "human": 'root ceremony: the requested transition is not legal '
+                 'from the current ceremony phase (propose -> review -> '
+                 'rehearse -> execute -> complete); the transition is '
+                 'refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-private-key-material': {
+        "domain": 'ceremony',
+        "code": 'ceremony-private-key-material',
+        "human": 'root ceremony: the proposal carries private-key-shaped '
+                 'material (forbidden field names); only the public '
+                 'fingerprint may travel in a ceremony; the proposal is '
+                 'refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-quorum-not-reached': {
+        "domain": 'ceremony',
+        "code": 'ceremony-quorum-not-reached',
+        "human": 'root ceremony: execution was attempted without a '
+                 'threshold of keyholder signatures; the execution is '
+                 'refused, never performed',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+
     'ceremony-refused': {
         "domain": 'namespace',
         "code": 'ceremony-refused',
@@ -1781,6 +1871,62 @@ TAXONOMY = {
         "evidence_kinds_required": ['namespace', 'signature', 'quorum'],
         "reverify_steps": ['recompute'],
     },
+    'ceremony-rehearsal-forged': {
+        "domain": 'ceremony',
+        "code": 'ceremony-rehearsal-forged',
+        "human": 'root ceremony: the staged-rehearsal record fails '
+                 'verification (digest mismatch, failed checks, wrong '
+                 'namespace, or fingerprint drift); the ceremony does not '
+                 'advance',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony', 'rehearsal'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-rehearsal-missing': {
+        "domain": 'ceremony',
+        "code": 'ceremony-rehearsal-missing',
+        "human": 'root ceremony: execution was attempted with no passing '
+                 'staged-rehearsal record; the ceremony refuses to advance '
+                 'without rehearsal evidence',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-replayed': {
+        "domain": 'ceremony',
+        "code": 'ceremony-replayed',
+        "human": 'root ceremony: the ceremony id is already completed '
+                 '(superseded) or a completed ceremony was mutated; the '
+                 'replay is refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-routine-path-refused': {
+        "domain": 'ceremony',
+        "code": 'ceremony-routine-path-refused',
+        "human": 'root ceremony: a root-key action was attempted through '
+                 'the routine (KMS/daily) signing path; root-key actions '
+                 'require the full ceremony; the routine attempt is '
+                 'refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'ceremony-unknown-ceremony': {
+        "domain": 'ceremony',
+        "code": 'ceremony-unknown-ceremony',
+        "human": 'root ceremony: no ceremony exists with this id; the '
+                 'action is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ceremony'],
+        "reverify_steps": ['recompute'],
+    },
+
     'chain-octet-digest-absent': {
         "domain": 'audit',
         "code": 'chain-octet-digest-absent',
@@ -3151,6 +3297,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
+    'detector-deprecated': {
+        "domain": 'detector',
+        "code": 'detector-deprecated',
+        "human": 'declarative detectors: the detector declares a deprecated '
+                 'maturity tier; refused fail-closed, nothing registered',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+
     'detector-duplicate-name': {
         "domain": 'detector',
         "code": 'detector-duplicate-name',
@@ -3160,6 +3316,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
+    'detector-exception-malformed': {
+        "domain": 'detector',
+        "code": 'detector-exception-malformed',
+        "human": 'declarative detectors: an alert-discipline exception '
+                 '(allowlist) block is malformed (bad name, misaligned '
+                 'fields/comps/values, unknown comparator, illegal path); '
+                 'refused fail-closed, nothing registered',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+
     'detector-malformed': {
         "domain": 'detector',
         "code": 'detector-malformed',
@@ -3171,6 +3339,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
+    'detector-unknown-maturity': {
+        "domain": 'detector',
+        "code": 'detector-unknown-maturity',
+        "human": 'declarative detectors: the detector declares a maturity '
+                 'tier outside the fixed vocabulary '
+                 '(stable/experimental/deprecated); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+
     'detector-unknown-predicate': {
         "domain": 'detector',
         "code": 'detector-unknown-predicate',
@@ -3181,6 +3360,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
+    'detector-unknown-priority': {
+        "domain": 'detector',
+        "code": 'detector-unknown-priority',
+        "human": 'declarative detectors: the detector declares a priority '
+                 'outside the fixed alert ladder (emergency/alert/critical/'
+                 'error/warning/notice/informational/debug); refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+
     'device-pin-malformed': {
         "domain": 'jail',
         "code": 'device-pin-malformed',
@@ -7880,6 +8071,39 @@ TAXONOMY = {
         "evidence_kinds_required": ['schema'],
         "reverify_steps": ['recompute'],
     },
+    'scope-consent-expired': {
+        "domain": 'scope-listing',
+        "code": 'scope-consent-expired',
+        "human": 'scope-gated listing: an out-of-band consent token was '
+                 'presented after its TTL; the consent is not recorded',
+        "severity": 'medium',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'scope-consent-forged': {
+        "domain": 'scope-listing',
+        "code": 'scope-consent-forged',
+        "human": 'scope-gated listing: a consent token failed MAC '
+                 'verification (forged, wrong key, or malformed); no '
+                 'consent is recorded — there is no path to record '
+                 'approval without the human step',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'scope-consent-unbound': {
+        "domain": 'scope-listing',
+        "code": 'scope-consent-unbound',
+        "human": 'scope-gated listing: a genuine consent token was '
+                 'presented for a different approval/tool/subject than it '
+                 'was minted for; the consent is not recorded',
+        "severity": 'high',
+        "evidence_kinds_required": ['receipt', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
     'scope-grant-tampered': {
         "domain": 'token-scope',
         "code": 'scope-grant-tampered',
@@ -7908,6 +8132,38 @@ TAXONOMY = {
         "evidence_kinds_required": ['key-reference'],
         "reverify_steps": ['recompute'],
     },
+    'scope-listing-denied': {
+        "domain": 'scope-listing',
+        "code": 'scope-listing-denied',
+        "human": 'scope-gated listing: the caller ticket scopes do not '
+                 'cover the tool (exact-match scope comparison; '
+                 'read != read-admin); the call never runs',
+        "severity": 'high',
+        "evidence_kinds_required": ['policy-declaration', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'scope-listing-not-registered': {
+        "domain": 'scope-listing',
+        "code": 'scope-listing-not-registered',
+        "human": 'scope-gated listing: the named tool is not registered '
+                 'in the scope-gated registry; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'scope-listing-unknown-scope': {
+        "domain": 'scope-listing',
+        "code": 'scope-listing-unknown-scope',
+        "human": 'scope-gated listing: a presented scope is outside the '
+                 'deployment-declared scope universe; refused fail-closed '
+                 '(the issuer never mints what it cannot interpret)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy-declaration'],
+        "reverify_steps": ['recompute'],
+    },
+
     'scope-policy-tampered': {
         "domain": 'token-scope',
         "code": 'scope-policy-tampered',

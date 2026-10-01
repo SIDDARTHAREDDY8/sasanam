@@ -36,7 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import short_lived_credentials as slc  # noqa: E402
 
-TAXONOMY_PIN = 1106  # Wave-260 lane B: pin unchanged (no new codes).
+TAXONOMY_PIN = 1129  # Wave-260 lane B: pin unchanged (no new codes).
 
 _PROBES = []
 

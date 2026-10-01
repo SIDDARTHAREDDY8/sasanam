@@ -44,7 +44,7 @@ except ImportError:
 # Wave-261 feature lane 3: +4 detector-* machine codes -> 1092 -> 1096.
 # Assert on the deduped dict AND on raw source literals (wave-260 lesson:
 # duplicate "code" literals are invisible to len(TAXONOMY)).
-TAXONOMY_PIN = 1106
+TAXONOMY_PIN = 1129
 
 _PROBES = []
 
@@ -112,13 +112,20 @@ def _p_pin():
         os.path.abspath(__file__)), "..", "gov",
         "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(detector-[a-z-]+)\'', src)
-    if sorted(set(lits)) != ["detector-cycle", "detector-duplicate-name",
+    # Wave-262 alert lane: +4 detector-* codes (detector-deprecated,
+    # detector-exception-malformed, detector-unknown-maturity,
+    # detector-unknown-priority) -- the expected literal set grows.
+    if sorted(set(lits)) != ["detector-cycle", "detector-deprecated",
+                             "detector-duplicate-name",
+                             "detector-exception-malformed",
                              "detector-malformed",
-                             "detector-unknown-predicate"]:
+                             "detector-unknown-maturity",
+                             "detector-unknown-predicate",
+                             "detector-unknown-priority"]:
         return _gap("detector-* source literals wrong: %r" % (lits,))
-    if len(lits) != 4:
+    if len(lits) != 8:
         return _gap("detector-* literal duplicated in source: %r" % (lits,))
-    return _held("1106 keys; 4 detector-* literals, each exactly once")
+    return _held("1110 keys; 8 detector-* literals, each exactly once")
 
 
 # ------------------------------------------------- injection / dsl

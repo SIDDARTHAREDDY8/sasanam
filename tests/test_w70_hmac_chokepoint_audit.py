@@ -382,6 +382,17 @@ ALLOWED_HMAC_SITES = {
         "group payload integrity tag; key = _kdf(group key material, payload-mac), domain-separated",
     ("gov/key_groups.py", "GroupVault.open", 0):
         "group tag re-verification; key = _kdf(unwrapped group key, payload-mac), domain-separated",
+    # gov/scoped_tool_listing.py (wave-262 lane 1): scope-ticket and
+    # consent-token MACs. The key is DEPLOYMENT-OWNED, passed explicitly
+    # to ScopeTicketIssuer(key, ...) / ConsentIssuer(key, ...); an empty
+    # key refuses fail-closed at construction (no dev-key fallback, no
+    # default). Tickets bind (subject_digest, scopes); consent tokens
+    # bind (approval_id, tool, subject_digest) with a TTL. The MACs are
+    # authenticity bindings on sealed payloads, not credentials.
+    ("gov/scoped_tool_listing.py", "_seal", 0):
+        "scope-ticket/consent seal MAC; deployment-owned key (explicit pass)",
+    ("gov/scoped_tool_listing.py", "_open", 0):
+        "scope-ticket/consent re-verification MAC; deployment-owned key (explicit pass)",
 }
 
 

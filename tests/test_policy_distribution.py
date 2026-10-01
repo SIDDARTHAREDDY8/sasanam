@@ -113,6 +113,35 @@ class SubscriberRefusalTests(unittest.TestCase):
             res = sub.apply(hostile)
             self.assertEqual(res["outcome"], "refused")
 
+    def test_apply_refuses_recursion_hostile_bundle_machine_coded(self):
+        # F235: an UNSIGNED bundle nested far beyond the interpreter's
+        # recursion budget must be refused with a machine code, never
+        # raise RecursionError out of apply() (the "never raises on
+        # hostile input" contract). Hand-crafted bytes, no json on the
+        # attack side.
+        _, sub = self._pair()
+        depth = 30000
+        raw = ('{"v":1,"topic":"policies","version":1,"payload":{"nest":'
+               + "[" * depth + '"x"' + "]" * depth
+               + '},"sig":"' + "0" * 128 + '"}').encode("utf-8")
+        res = sub.apply(raw)  # must not raise
+        self.assertEqual(res["outcome"], "refused")
+        self.assertEqual(res["code"]["code"], "poldist-bundle-malformed")
+        self.assertEqual(res["code"]["domain"], "poldist")
+
+    def test_signed_deep_but_valid_bundle_still_applies(self):
+        # The F235 fix must not bound legitimate depth: a validly
+        # signed bundle nested deep (but within the interpreter's
+        # recursion budget) still verifies and applies.
+        pub, sub = self._pair()
+        payload = "x"
+        for _ in range(800):
+            payload = [payload]
+        res = sub.apply(pub.sign_bundle("policies", 1,
+                                        {"nest": payload}))
+        self.assertEqual(res["outcome"], "applied")
+        self.assertEqual(res["version"], 1)
+
     def test_loaded_head_is_deep_copied(self):
         pub, sub = self._pair()
         payload = {"rules": ["a"]}
@@ -130,7 +159,7 @@ class SubscriberRefusalTests(unittest.TestCase):
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-260 lane 1: pin -> 1085 (+5 poldist-* codes).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1106)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1129)
         for code in ("poldist-bundle-malformed", "poldist-signature-missing",
                      "poldist-signature-mismatch", "poldist-topic-cross",
                      "poldist-version-rollback"):

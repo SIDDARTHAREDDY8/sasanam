@@ -252,6 +252,18 @@ class Subscriber:
             return self._refuse(
                 "poldist-bundle-malformed", raw,
                 "bundle is not UTF-8 JSON")
+        except RecursionError:
+            # F235: hostile unsigned input nested beyond the
+            # interpreter's recursion budget. json.loads raises
+            # RecursionError (a RuntimeError subclass, not ValueError),
+            # which used to escape apply() and kill the subscriber's
+            # loop. It is refused here, machine-coded, like any other
+            # unparseable envelope -- the "never raises on hostile
+            # input" contract holds at every nesting depth.
+            return self._refuse(
+                "poldist-bundle-malformed", raw,
+                "bundle nesting exceeds parser recursion limits "
+                "(recursion-hostile input)")
         if not isinstance(env, dict):
             return self._refuse(
                 "poldist-bundle-malformed", raw,

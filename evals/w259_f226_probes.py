@@ -47,7 +47,7 @@ from gov import control_profiles as cp  # noqa: E402
 from gov import evidence_quality as eq  # noqa: E402
 from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 
-TAXONOMY_PIN = 1106  # Unchanged: the fix reuses control-profile-gate-failed.
+TAXONOMY_PIN = 1129  # Unchanged: the fix reuses control-profile-gate-failed.
 
 
 def _held(detail=""):

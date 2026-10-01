@@ -7,6 +7,9 @@ unknown keys refuse with machine codes. Only key digests are stored.
 
 import hashlib
 import os
+import sys
+import threading
+import time
 import unittest
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
@@ -229,6 +232,124 @@ class RedeemRefusalTest(unittest.TestCase):
             self.assertNotIn("super-secret-unknown-key", e.detail)
         else:
             self.fail("unknown key was not refused")
+
+
+class ConcurrencyTest(unittest.TestCase):
+    """F236: the key table is safe under threads.
+
+    The single-key storm went red pre-fix (3-4 double-issuing trials
+    per 150 in-lane); the lock makes the double-issue interleaving
+    impossible, so these are deterministic green post-fix.
+    """
+
+    def test_concurrent_redeem_single_key_issues_exactly_one_svid(self):
+        auth = _authority()
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-7)  # scheduling pressure only
+        try:
+            for _ in range(150):
+                key = auth.issue_key(spiffe_id=SPIFFE_A, now=NOW)
+                barrier = threading.Barrier(64)
+                results = []
+                rlock = threading.Lock()
+
+                def worker():
+                    barrier.wait()
+                    try:
+                        auth.redeem(key, SPIFFE_A, _PUBKEY, 5, now=NOW)
+                        r = "svid"
+                    except sv.SvidError as e:
+                        r = e.code
+                    with rlock:
+                        results.append(r)
+
+                ths = [threading.Thread(target=worker)
+                       for _ in range(64)]
+                for th in ths:
+                    th.start()
+                for th in ths:
+                    th.join()
+                self.assertEqual(results.count("svid"), 1,
+                                 "double-issue under concurrent redeem")
+        finally:
+            sys.setswitchinterval(old_interval)
+
+    def test_concurrent_redeem_distinct_keys_all_succeed(self):
+        # No false serialization: distinct keys must not trip each
+        # other's burn.
+        auth = _authority()
+        n = 32
+        keys = [auth.issue_key(spiffe_id=SPIFFE_A, now=NOW)
+                for _ in range(n)]
+        barrier = threading.Barrier(n)
+        results = []
+        rlock = threading.Lock()
+
+        def worker(i):
+            barrier.wait()
+            try:
+                auth.redeem(keys[i], SPIFFE_A, _PUBKEY, 5, now=NOW)
+                r = "svid"
+            except sv.SvidError as e:
+                r = e.code
+            with rlock:
+                results.append(r)
+
+        ths = [threading.Thread(target=worker, args=(i,))
+               for i in range(n)]
+        for th in ths:
+            th.start()
+        for th in ths:
+            th.join(30)
+        self.assertFalse(any(th.is_alive() for th in ths),
+                         "a distinct-key redeem hung")
+        self.assertEqual(results.count("svid"), n)
+        self.assertEqual(auth.live_keys(), 0)
+
+    def test_live_keys_survives_concurrent_issue(self):
+        # Pre-fix, 2/2 readers crashed with RuntimeError in-lane.
+        auth = _authority()
+        for _ in range(20):
+            auth.issue_key(now=NOW)
+        stop = threading.Event()
+        errors = []
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    auth.live_keys()
+                except Exception as e:  # noqa: BLE001 -- defect shape
+                    errors.append(e)
+                    return
+
+        def writer():
+            while not stop.is_set():
+                auth.issue_key(now=NOW)
+
+        ths = ([threading.Thread(target=reader) for _ in range(2)]
+               + [threading.Thread(target=writer) for _ in range(2)])
+        for th in ths:
+            th.start()
+        time.sleep(1)
+        stop.set()
+        for th in ths:
+            th.join()
+        self.assertEqual(errors, [])
+
+    def test_lock_released_when_issuance_raises(self):
+        # Issuer raises post-burn (unknown profile): the key stays
+        # burned, the lock is released, later operations proceed.
+        auth = _authority()
+        key = auth.issue_key(spiffe_id=SPIFFE_A, now=NOW)
+        with self.assertRaises(sv.SvidError):
+            auth.redeem(key, SPIFFE_A, _PUBKEY, 5,
+                        profile="no-such-profile", now=NOW)
+        with self.assertRaises(sv.SvidError) as ctx:
+            auth.redeem(key, SPIFFE_A, _PUBKEY, 5, now=NOW)
+        self.assertEqual(ctx.exception.code,
+                         "svid-enrollment-key-replayed")
+        key2 = auth.issue_key(spiffe_id=SPIFFE_A, now=NOW)
+        auth.redeem(key2, SPIFFE_A, _PUBKEY, 5, now=NOW)  # must not hang
 
 
 class CodeRegistrationTest(unittest.TestCase):

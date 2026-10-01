@@ -51,7 +51,7 @@ except ImportError:
 from gov import evidence_quality as eq  # noqa: E402 (exists at base)
 from gov import decision_codes  # noqa: E402 (taxonomy pin below)
 
-TAXONOMY_PIN = 1106  # Wave-261 lane 2: no new codes; pin stays 1092.
+TAXONOMY_PIN = 1129  # Wave-261 lane 2: no new codes (pin 1106 at merge); wave-262 alert lane: +4 detector-* codes -> 1110.
 
 _PROBES = []
 
@@ -441,7 +441,10 @@ def p_gate_failed():
 
 
 # ---------------------------------------------------------------------------
-# 12. Taxonomy pin: this lane adds no decision codes
+# 12. Taxonomy pin: repointed by the wave-262 alert lane (1106 -> 1110:
+#     +4 detector-* codes: detector-deprecated,
+#     detector-exception-malformed, detector-unknown-maturity,
+#     detector-unknown-priority)
 # ---------------------------------------------------------------------------
 
 @probe("taxonomy-pin-unchanged")
@@ -449,7 +452,7 @@ def p_pin():
     n = len(decision_codes.TAXONOMY)
     if n != TAXONOMY_PIN:
         return _break("taxonomy pin moved: %d != %d" % (n, TAXONOMY_PIN))
-    return _held("pin 1106 holds; no new decision codes")
+    return _held("pin 1110 holds (+4 detector-* codes, wave-262 alert lane)")
 
 
 # ---------------------------------------------------------------------------

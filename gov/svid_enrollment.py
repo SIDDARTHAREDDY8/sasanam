@@ -48,7 +48,9 @@ Honest residuals (documented, not solved here):
   - Single-process, in-memory key table: distributed revocation of
     enrollment keys and cross-instance burn atomicity are
     deployment-owned (a shared store behind this API keeps the same
-    burn-before-issue ordering).
+    burn-before-issue ordering). IN-PROCESS concurrency is handled:
+    a lock serializes every key-table check-then-set and live_keys()
+    snapshots the table under it (F236).
   - Bearer keys: whoever holds the key enrolls. Out-of-band delivery
     is the deployment's channel; this module assumes it is secret.
   - The minutes-scale SVID TTL remains the revocation story for the
@@ -57,6 +59,7 @@ Honest residuals (documented, not solved here):
 
 import hashlib
 import secrets
+import threading
 
 from .svid_issuer import (
     SvidError,
@@ -120,6 +123,16 @@ class EnrollmentAuthority(object):
         self._default_ttl = default_key_ttl_seconds
         # digest -> {"issued_at", "expires_at", "used", "bind_spiffe_id"}
         self._records = {}
+        # F236: one non-reentrant lock guards every key-table
+        # check-then-set (redeem's used-check/burn, issue_key's
+        # collision-check/insert) and every iteration (live_keys).
+        # It is never held across self._issuer.issue(): the key is
+        # burned under the lock BEFORE issuance is attempted, so a
+        # second redeem of the same key refuses as replayed even while
+        # the first issuance is still in flight, and an exception in
+        # the issue path cannot wedge the table (`with` releases on
+        # error; no locked method calls another).
+        self._lock = threading.Lock()
 
     def issue_key(self, spiffe_id=None, ttl_seconds=None, now=None):
         """Mint one enrollment key (shown once: the return value).
@@ -142,20 +155,24 @@ class EnrollmentAuthority(object):
                 _SVID_MALFORMED_CODE,
                 "ttl_seconds must be a positive int")
         issued_at = int(_validate_now(now))
-        key = secrets.token_urlsafe(_KEY_BYTES)
-        digest = _key_digest(key)
-        # 192-bit collision with an existing live record is not a
-        # practical event; a fresh draw keeps the table unambiguous.
-        while digest in self._records and \
-                not self._records[digest]["used"]:
+        # F236: collision-check and insert are one atomic step under
+        # the lock, and no live_keys() iteration can meet a table
+        # that is mid-insert.
+        with self._lock:
             key = secrets.token_urlsafe(_KEY_BYTES)
             digest = _key_digest(key)
-        self._records[digest] = {
-            "issued_at": issued_at,
-            "expires_at": issued_at + ttl_seconds,
-            "used": False,
-            "bind_spiffe_id": bind,
-        }
+            # 192-bit collision with an existing live record is not a
+            # practical event; a fresh draw keeps the table unambiguous.
+            while digest in self._records and \
+                    not self._records[digest]["used"]:
+                key = secrets.token_urlsafe(_KEY_BYTES)
+                digest = _key_digest(key)
+            self._records[digest] = {
+                "issued_at": issued_at,
+                "expires_at": issued_at + ttl_seconds,
+                "used": False,
+                "bind_spiffe_id": bind,
+            }
         return key
 
     def redeem(self, key, spiffe_id, public_key, ttl_minutes,
@@ -173,35 +190,44 @@ class EnrollmentAuthority(object):
                 _SVID_MALFORMED_CODE,
                 "enrollment key must be a non-empty string")
         digest = _key_digest(key)
-        record = self._records.get(digest)
-        if record is None:
-            raise SvidError(
-                ENROLLMENT_KEY_UNKNOWN_CODE,
-                "the presented enrollment key matches no issued key; "
-                "refused fail-closed")
-        if record["used"]:
-            raise SvidError(
-                ENROLLMENT_KEY_REPLAYED_CODE,
-                "the presented enrollment key was already consumed; "
-                "replay refused fail-closed")
-        if at >= record["expires_at"]:
-            record["used"] = True  # burn: dead keys do not linger
-            raise SvidError(
-                ENROLLMENT_KEY_EXPIRED_CODE,
-                "the presented enrollment key is expired "
-                "(now >= expires_at); refused fail-closed")
-        bound = record["bind_spiffe_id"]
-        if bound is not None and (
-                not isinstance(spiffe_id, str)
-                or spiffe_id.lower() != bound):
-            record["used"] = True  # burn: misuse retires the key
-            raise SvidError(
-                ENROLLMENT_SPIFFE_MISMATCH_CODE,
-                "the enrollment key is bound to a different spiffe "
-                "id; refused fail-closed")
-        # Burn BEFORE issuance: exactly one SVID per key, even if the
-        # issuer refuses (its codes propagate, the key stays burned).
-        record["used"] = True
+        # F236: the whole find-check-burn sequence is one atomic step
+        # under the lock -- two threads redeeming the same key cannot
+        # both observe used=False. The lock is released BEFORE
+        # issuance: the burn is already recorded, so exactly-once
+        # holds even while issuance is in flight, issuance itself is
+        # not serialized across distinct keys, and an issuer exception
+        # cannot wedge the table.
+        with self._lock:
+            record = self._records.get(digest)
+            if record is None:
+                raise SvidError(
+                    ENROLLMENT_KEY_UNKNOWN_CODE,
+                    "the presented enrollment key matches no issued key; "
+                    "refused fail-closed")
+            if record["used"]:
+                raise SvidError(
+                    ENROLLMENT_KEY_REPLAYED_CODE,
+                    "the presented enrollment key was already consumed; "
+                    "replay refused fail-closed")
+            if at >= record["expires_at"]:
+                record["used"] = True  # burn: dead keys do not linger
+                raise SvidError(
+                    ENROLLMENT_KEY_EXPIRED_CODE,
+                    "the presented enrollment key is expired "
+                    "(now >= expires_at); refused fail-closed")
+            bound = record["bind_spiffe_id"]
+            if bound is not None and (
+                    not isinstance(spiffe_id, str)
+                    or spiffe_id.lower() != bound):
+                record["used"] = True  # burn: misuse retires the key
+                raise SvidError(
+                    ENROLLMENT_SPIFFE_MISMATCH_CODE,
+                    "the enrollment key is bound to a different spiffe "
+                    "id; refused fail-closed")
+            # Burn BEFORE issuance: exactly one SVID per key, even if
+            # the issuer refuses (its codes propagate, the key stays
+            # burned).
+            record["used"] = True
         return self._issuer.issue(spiffe_id, public_key, ttl_minutes,
                                   profile=profile, now=at)
 
@@ -213,4 +239,9 @@ class EnrollmentAuthority(object):
         not sweep-driven, by design (no background expiry thread in
         this in-process authority).
         """
-        return sum(1 for r in self._records.values() if not r["used"])
+        # F236: iterate a snapshot taken under the lock -- a
+        # concurrent issue_key() insert can no longer raise
+        # "dictionary changed size during iteration".
+        with self._lock:
+            records = list(self._records.values())
+        return sum(1 for r in records if not r["used"])

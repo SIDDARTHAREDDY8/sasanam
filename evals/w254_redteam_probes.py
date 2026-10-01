@@ -37,7 +37,7 @@ from gov import permit_journal as pj  # noqa: E402
 from gov import policy_authoring as pa  # noqa: E402
 from gov import posture_cards as pc  # noqa: E402
 
-TAXONOMY_PIN = 1106  # Wave-258 merge: pin -> 1106.
+TAXONOMY_PIN = 1129  # Wave-258 merge: pin -> 1106.
 
 _PROBES = []
 
