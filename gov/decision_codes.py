@@ -414,6 +414,123 @@ TAXONOMY = {
         "evidence_kinds_required": ['envelope', 'inspection', 'policy'],
         "reverify_steps": ['replay-admission'],
     },
+    'admission-policy-attestation-refused': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-attestation-refused',
+        "human": 'admission-time signature policy: no presented '
+                 'attestation satisfies the required predicate for '
+                 'this digest (missing, wrong digest, or '
+                 'unverifiable); failing closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy', 'artifact',
+                                    'attestation'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-authority-unknown': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-authority-unknown',
+        "human": 'admission-time signature policy: policy names an '
+                 'unknown authority type; the policy cannot be loaded',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-digest-changed': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-digest-changed',
+        "human": 'admission-time signature policy: the artifact '
+                 'reference resolves to a different digest at use '
+                 'time than at verify time; use refused -- what was '
+                 'verified is what runs',
+        "severity": 'critical',
+        "evidence_kinds_required": ['admission-policy', 'artifact',
+                                    'decision-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-identity-refused': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-identity-refused',
+        "human": 'admission-time signature policy: the presented '
+                 'keyless identity (issuer, subject) does not match '
+                 'the pinned identity; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-policy', 'artifact',
+                                    'identity-assertion'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-malformed': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-malformed',
+        "human": 'admission-time signature policy: the policy '
+                 'document failed structural validation; refused at '
+                 'load, never at admission time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-not-covered': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-not-covered',
+        "human": 'admission-time signature policy: the artifact '
+                 'matches no policy entry; default deny -- policy '
+                 'precedes discovery',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy', 'artifact'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-signature-refused': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-signature-refused',
+        "human": 'admission-time signature policy: no presented '
+                 'signature verifies under a pinned key for this '
+                 'digest (wrong signer or cross-digest replay); '
+                 'failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-policy', 'artifact',
+                                    'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-transparency-refused': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-transparency-refused',
+        "human": 'admission-time signature policy: no presented '
+                 'transparency-log membership claim verifies for '
+                 'this digest; failing closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy', 'artifact',
+                                    'transparency-receipt'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-unresolvable': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-unresolvable',
+        "human": 'admission-time signature policy: the artifact tag '
+                 'cannot be resolved to a digest; never admit what '
+                 'you cannot resolve',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy', 'artifact'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-unsigned': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-unsigned',
+        "human": 'admission-time signature policy: the matched entry '
+                 'demands a key authority but the artifact presents '
+                 'no signature at all; failing closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['admission-policy', 'artifact'],
+        "reverify_steps": ['recompute'],
+    },
+    'admission-policy-vacuous': {
+        "domain": 'admission-policy',
+        "code": 'admission-policy-vacuous',
+        "human": 'admission-time signature policy: the policy has no '
+                 'entries or an entry has no authorities -- it '
+                 'admits nothing and cannot be constructed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['admission-policy'],
+        "reverify_steps": ['recompute'],
+    },
     'admission-severity-exceeded': {
         "domain": 'admission',
         "code": 'admission-severity-exceeded',
