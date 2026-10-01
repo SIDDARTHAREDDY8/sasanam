@@ -415,6 +415,16 @@ ALLOWED_HMAC_SITES = {
         "scope-ticket/consent seal MAC; deployment-owned key (explicit pass)",
     ("gov/scoped_tool_listing.py", "_open", 0):
         "scope-ticket/consent re-verification MAC; deployment-owned key (explicit pass)",
+    # gov/bounded_mandates.py (wave-264): the open/closed mandate seal
+    # MAC. The key is DEPLOYMENT-OWNED: passed explicitly as mac_key to
+    # the issuer/verifier constructors and validated by _check_key
+    # (>=16 bytes, fail closed mandate-malformed; no default, no
+    # dev-key fallback, never hard-coded or derived in-repo). The MAC
+    # is domain-separated (gov-mandate-open/v1, gov-mandate-closed/v1)
+    # and binds the approver-signed mandate bounds; the audit seam
+    # re-verifies closed ⊆ open by recomputing the same MAC.
+    ("gov/bounded_mandates.py", "seal_body", 0):
+        "mandate seal MAC; deployment-owned key (explicit pass, >=16B)",
 }
 
 

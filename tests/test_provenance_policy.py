@@ -408,7 +408,7 @@ class OfflineBundleAdapterTests(unittest.TestCase):
 class TaxonomyTests(unittest.TestCase):
     def test_pin_and_codes(self):
         n = len(dc.TAXONOMY)
-        self.assertEqual(n, 1151)  # Wave-263 feat-provenance: pin 1136 in-lane; wave-263 merge -> 1151.
+        self.assertEqual(n, 1177)  # Wave-263 feat-provenance: pin 1136 in-lane; wave-263 merge -> 1151.
         for c in pp.CODES:
             self.assertIn(c, dc.TAXONOMY)
         self.assertEqual(len(set(dc.TAXONOMY)), 1177)
