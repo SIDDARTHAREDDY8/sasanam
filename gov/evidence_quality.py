@@ -39,6 +39,15 @@ Fail-closed evaluation:
     guarded -- raw TypeError/RecursionError from hostile caller
     objects becomes a machine-coded refusal, never a raw escape.
 
+Wave-261 correction pipeline: every refusal raised by _refuse()
+carries a gov.failure_actions.FailResult naming the prescribed
+on-fail action (malformed evidence item -> filter with the field
+path; empty evidence / expectation-shape violations -> exception;
+failed gate -> refrain). evaluate() still raises (default behavior
+unchanged); evaluate_with_action() returns (None, FailResult) so a
+caller can opt into failure_actions.apply_action(). No new decision
+codes: refusals re-raise their own machine code.
+
 Design decision (F222): empty evidence is REFUSED, not scored as
 per-expectation FAILED results. The finding allowed either; refusal
 was chosen because (a) it is the same anti-vacuity principle the
@@ -70,12 +79,14 @@ import json
 from datetime import datetime, timezone
 
 from gov import compliance_emitter
+from gov import failure_actions as _fa
 
 __all__ = [
     "EXPECTATION_TYPES",
     "EvidenceQualityError",
     "emit_with_quality_gate",
     "evaluate",
+    "evaluate_with_action",
     "validate_expectation",
 ]
 
@@ -179,15 +190,52 @@ def _safe_deepcopy(obj, code, what):
 
 
 class EvidenceQualityError(Exception):
-    """Fail-closed evidence-quality refusal carrying a taxonomy code."""
+    """Fail-closed evidence-quality refusal carrying a taxonomy code.
 
-    def __init__(self, message, code):
+    Wave-261: every refusal also carries a FailResult
+    (gov.failure_actions) naming the prescribed on-fail action, so
+    callers can opt into the correction pipeline via
+    evaluate_with_action() / failure_actions.apply_action(). Default
+    behavior is unchanged: the refusal still raises.
+    """
+
+    def __init__(self, message, code, fail_result=None):
         super().__init__(message)
         self.code = code
+        self.fail_result = fail_result
 
 
-def _refuse(code, detail):
-    raise EvidenceQualityError("%s: %s" % (code, detail), code)
+# Prescribed on-fail action per refusal code (wave-261 correction
+# pipeline). Malformed evidence prescribes filter (the offending item
+# is redactable); empty evidence and expectation-shape violations
+# prescribe exception (a vacuous gate must refuse loudly, and caller
+# bugs must not be auto-repaired); a failed gate prescribes refrain
+# (stop the emission step, continue the run).
+_PRESCRIBED_ACTION = {
+    MALFORMED: _fa.OnFailAction.EXCEPTION,
+    EVIDENCE_MALFORMED: _fa.OnFailAction.FILTER,
+    EMPTY_EVIDENCE: _fa.OnFailAction.EXCEPTION,
+    UNKNOWN_EXPECTATION: _fa.OnFailAction.EXCEPTION,
+    GATE_FAILED: _fa.OnFailAction.REFRAIN,
+}
+
+
+def _refuse(code, detail, diagnostics=None, action=None):
+    """Raise the machine-coded refusal, carrying its FailResult.
+
+    diagnostics: advisory dict (e.g. {"field_path": "[1]"} for a
+      filterable malformed item). action: optional override of the
+      per-code prescription (must be vocabulary-known; unknown values
+      fall back to the per-code default, never to a weaker action).
+    """
+    prescribed = _PRESCRIBED_ACTION.get(code, _fa.DEFAULT_ACTION)
+    if action is not None and _fa.is_known_action(action):
+        prescribed = action
+    raise EvidenceQualityError(
+        "%s: %s" % (code, detail), code,
+        fail_result=_fa.FailResult(
+            code=code, action=prescribed, detail=detail,
+            diagnostics=diagnostics))
 
 
 def _check_str(value, what, code=MALFORMED):
@@ -353,12 +401,16 @@ def validate_expectation(expectation):
 
 def _require_item_list(evidence, exp_type):
     if not isinstance(evidence, list):
+        # Whole-shape violation: nothing redactable -> exception, not
+        # the per-code filter default.
         _refuse(EVIDENCE_MALFORMED,
-                "%s: evidence must be a list of dicts" % (exp_type,))
+                "%s: evidence must be a list of dicts" % (exp_type,),
+                action=_fa.OnFailAction.EXCEPTION)
     for i, item in enumerate(evidence):
         if not isinstance(item, dict):
             _refuse(EVIDENCE_MALFORMED,
-                    "%s: evidence item %d is not a dict" % (exp_type, i))
+                    "%s: evidence item %d is not a dict" % (exp_type, i),
+                    {"field_path": "[%d]" % (i,)})
     if len(evidence) == 0:
         _refuse(EMPTY_EVIDENCE,
                 "%s: evidence is empty; a vacuous gate must never "
@@ -369,16 +421,19 @@ def _require_item_list(evidence, exp_type):
 def _require_bundle(evidence, exp_type, items_field):
     if not isinstance(evidence, dict):
         _refuse(EVIDENCE_MALFORMED,
-                "%s: bundle evidence must be a dict" % (exp_type,))
+                "%s: bundle evidence must be a dict" % (exp_type,),
+                action=_fa.OnFailAction.EXCEPTION)
     items = evidence.get(items_field)
     if not isinstance(items, list):
         _refuse(EVIDENCE_MALFORMED,
                 "%s: bundle field %r must be a list" % (exp_type,
-                                                       items_field))
+                                                       items_field),
+                action=_fa.OnFailAction.EXCEPTION)
     for i, item in enumerate(items):
         if not isinstance(item, dict):
             _refuse(EVIDENCE_MALFORMED,
-                    "%s: bundle item %d is not a dict" % (exp_type, i))
+                    "%s: bundle item %d is not a dict" % (exp_type, i),
+                    {"field_path": "%s[%d]" % (items_field, i)})
     if len(items) == 0:
         _refuse(EMPTY_EVIDENCE,
                 "%s: bundle has no items; a vacuous gate must never "
@@ -607,6 +662,30 @@ def evaluate(expectations, evidence):
 
 
 # ---------------------------------------------------------------------------
+# Opt-in correction-pipeline entry point (wave-261)
+# ---------------------------------------------------------------------------
+
+def evaluate_with_action(expectations, evidence):
+    """Evaluate, returning the refusal as data instead of raising it.
+
+    Returns (report, None) on success; (None, FailResult) on refusal.
+    The caller feeds the FailResult to
+    gov.failure_actions.apply_action() to execute the prescribed
+    on-fail action (or honor the agentic action-request). Default
+    behavior is unchanged: evaluate() still raises.
+    """
+    try:
+        return (evaluate(expectations, evidence), None)
+    except EvidenceQualityError as exc:
+        fail_result = exc.fail_result
+        if fail_result is None:  # defensive: never invent a code
+            fail_result = _fa.FailResult(
+                code=exc.code, action=_fa.DEFAULT_ACTION,
+                detail=str(exc))
+        return (None, fail_result)
+
+
+# ---------------------------------------------------------------------------
 # Quality gate in front of the compliance emitter
 # ---------------------------------------------------------------------------
 
@@ -624,6 +703,7 @@ def emit_with_quality_gate(source, fmt, expectations, evidence,
                   if not r["success"]]
         _refuse(GATE_FAILED,
                 "quality gate refused emission; failed expectations: "
-                "%s" % (", ".join(failed),))
+                "%s" % (", ".join(failed),),
+                {"failed_expectations": failed})
     return compliance_emitter.emit(source, fmt, findings=findings,
                                    generated_at=generated_at)

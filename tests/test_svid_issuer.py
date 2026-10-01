@@ -112,6 +112,23 @@ class IssueTests(unittest.TestCase):
         claims = _verifier().verify(doc, now=NOW)
         self.assertEqual(claims["spiffe_id"], "spiffe://example.org/agent/a")
 
+    def test_now_validated_first(self):
+        # F234 (F228 shape): a non-numeric `now` refuses svid-malformed
+        # before any identity/profile/TTL refusal decision.
+        with self.assertRaises(sv.SvidError) as ctx:
+            _issuer().issue("not-a-spiffe-id", _PUBKEY, ttl_minutes=5,
+                            now="yesterday")
+        self.assertEqual(ctx.exception.code, "svid-malformed")
+        with self.assertRaises(sv.SvidError) as ctx:
+            _issuer().issue("spiffe://example.org/agent/a", _PUBKEY,
+                            ttl_minutes=0, now="yesterday")
+        self.assertEqual(ctx.exception.code, "svid-malformed")
+        with self.assertRaises(sv.SvidError) as ctx:
+            _issuer().issue("spiffe://example.org/agent/a", _PUBKEY,
+                            ttl_minutes=5, profile="nope",
+                            now="yesterday")
+        self.assertEqual(ctx.exception.code, "svid-malformed")
+
 
 class VerifyTests(unittest.TestCase):
     def test_expired(self):
@@ -203,6 +220,56 @@ class VerifyTests(unittest.TestCase):
         claims = _verifier().verify(doc, now=NOW - 10.0)
         self.assertEqual(claims["spiffe_id"], "spiffe://example.org/agent/a")
 
+    def test_now_validated_first(self):
+        # F234 (F228 shape): `now` is validated before ANY refusal
+        # decision in verify() -- a non-numeric `now` refuses
+        # svid-malformed regardless of SVID validity.
+        good = _doc()
+        bad_sig = dict(good)
+        bad_sig["issuer_signature"] = "00" * 64
+        for bad_svid in (None, bad_sig, {"spiffe_id": "x"}):
+            with self.assertRaises(sv.SvidError) as ctx:
+                _verifier().verify(bad_svid, now="yesterday")
+            self.assertEqual(ctx.exception.code, "svid-malformed",
+                             repr(bad_svid)[:40])
+        with self.assertRaises(sv.SvidError) as ctx:
+            _verifier().verify(good, now="yesterday")
+        self.assertEqual(ctx.exception.code, "svid-malformed")
+
+    def test_expected_usage_enforced(self):
+        # F233: the SVID's SIGNED usage list must cover expected_usage.
+        mesh = _issuer().issue("spiffe://example.org/agent/a", _PUBKEY,
+                               ttl_minutes=5, profile="mesh-control",
+                               now=NOW)
+        self.assertEqual(mesh["usage"], ["mesh-control"])
+        with self.assertRaises(sv.SvidError) as ctx:
+            _verifier().verify(mesh, now=NOW,
+                               expected_usage="workload-auth")
+        self.assertEqual(ctx.exception.code, "svid-usage-mismatch")
+        # Matching usage verifies; omitted expected_usage keeps the
+        # old behavior (usage returned in claims, unenforced).
+        claims = _verifier().verify(mesh, now=NOW,
+                                    expected_usage="mesh-control")
+        self.assertEqual(claims["usage"], ["mesh-control"])
+        claims = _verifier().verify(mesh, now=NOW)
+        self.assertEqual(claims["usage"], ["mesh-control"])
+        # A malformed expected_usage is a caller error.
+        for bad in (123, "", ["mesh-control"]):
+            with self.assertRaises(sv.SvidError) as ctx:
+                _verifier().verify(mesh, now=NOW, expected_usage=bad)
+            self.assertEqual(ctx.exception.code, "svid-malformed",
+                             repr(bad))
+
+    def test_usage_tamper_dies_at_signature(self):
+        # F233: the usage check runs over the signed body only -- a
+        # tampered usage never reaches the usage comparison as a pass.
+        doc = _doc()
+        doc["usage"] = ["mesh-control"]
+        with self.assertRaises(sv.SvidError) as ctx:
+            _verifier().verify(doc, now=NOW,
+                               expected_usage="mesh-control")
+        self.assertEqual(ctx.exception.code, "svid-signature-invalid")
+
     def test_multi_root_rotation(self):
         doc = _issuer(issuer_seed=_OTHER_SEED,
                       key_id="test-issuer-2").issue(
@@ -285,15 +352,66 @@ class MeshControlTests(unittest.TestCase):
             gate.admit(_doc(), now=NOW)
         self.assertEqual(ctx.exception.code, "svid-acl-denied")
 
+    def test_policy_usages_binding(self):
+        # F233 (admit seam): a policy-bound usage list refuses a
+        # verified SVID whose signed usage is outside it, with
+        # svid-acl-denied; a covered usage still admits.
+        gate = sv.MeshControl(
+            _verifier(),
+            {"allow": ["spiffe://example.org/agent/"],
+             "usages": ["workload-auth"]})
+        mesh = _issuer().issue("spiffe://example.org/agent/a", _PUBKEY,
+                               ttl_minutes=5, profile="mesh-control",
+                               now=NOW)
+        with self.assertRaises(sv.SvidError) as ctx:
+            gate.admit(mesh, now=NOW)
+        self.assertEqual(ctx.exception.code, "svid-acl-denied")
+        self.assertEqual(gate.admit(_doc(), now=NOW),
+                         "spiffe://example.org/agent/a")
+
+    def test_admit_expected_usage_passthrough(self):
+        # F233: per-call expected_usage threads through admit() to the
+        # verifier seam (svid-usage-mismatch on mismatch).
+        gate = self._gate(["spiffe://example.org/agent/"])
+        mesh = _issuer().issue("spiffe://example.org/agent/a", _PUBKEY,
+                               ttl_minutes=5, profile="mesh-control",
+                               now=NOW)
+        with self.assertRaises(sv.SvidError) as ctx:
+            gate.admit(mesh, now=NOW, expected_usage="workload-auth")
+        self.assertEqual(ctx.exception.code, "svid-usage-mismatch")
+        self.assertEqual(
+            gate.admit(mesh, now=NOW, expected_usage="mesh-control"),
+            "spiffe://example.org/agent/a")
+
+    def test_bad_usages_policy_refused(self):
+        for bad_usages in ("workload-auth", [], [""], [None],
+                           ["workload-auth", 42]):
+            with self.assertRaises(sv.SvidError):
+                sv.MeshControl(_verifier(),
+                               {"allow": ["spiffe://example.org/"],
+                                "usages": bad_usages})
+
+    def test_now_validated_first_at_admit(self):
+        # F234: admit() validates `now` via verify() before any
+        # refusal decision.
+        gate = self._gate(["spiffe://example.org/agent/"])
+        bad_sig = _doc()
+        bad_sig["issuer_signature"] = "00" * 64
+        with self.assertRaises(sv.SvidError) as ctx:
+            gate.admit(bad_sig, now="yesterday")
+        self.assertEqual(ctx.exception.code, "svid-malformed")
+
 
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-259 lane 3: pin 1080 -> 1074 (+10 svid-* codes).
-        self.assertEqual(len(dc.TAXONOMY), 1092)
+        # Wave-261 lane B (F233): pin 1092 -> 1093 (+1 svid-usage-mismatch).
+        self.assertEqual(len(dc.TAXONOMY), 1106)
         for code in ("svid-missing", "svid-malformed",
                      "svid-identity-malformed", "svid-ttl-unbounded",
                      "svid-ttl-stretched", "svid-trust-domain-mismatch",
-                     "svid-issuer-unknown", "svid-signature-invalid",
+                     "svid-usage-mismatch", "svid-issuer-unknown",
+                     "svid-signature-invalid",
                      "svid-expired", "svid-acl-denied"):
             self.assertIn(code, dc.TAXONOMY)
             self.assertEqual(dc.TAXONOMY[code]["domain"], "svid")

@@ -130,7 +130,7 @@ class SubscriberRefusalTests(unittest.TestCase):
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-260 lane 1: pin -> 1085 (+5 poldist-* codes).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1092)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1106)
         for code in ("poldist-bundle-malformed", "poldist-signature-missing",
                      "poldist-signature-mismatch", "poldist-topic-cross",
                      "poldist-version-rollback"):

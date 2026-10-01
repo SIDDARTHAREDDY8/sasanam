@@ -43,7 +43,7 @@ from gov import transparency_log as tl  # noqa: E402
 # Wave-260 base pin: no taxonomy codes added or removed by this lane.
 # If the count moves, the delta must be explained by a landed taxonomy
 # change -- never repoint blindly (replace the VALUE only).
-TAXONOMY_PIN = 1092  # Wave-259 merge: pin -> 1092; wave-260 redteam adds none.
+TAXONOMY_PIN = 1106  # Wave-261 merge: pin -> 1106 (1092 + 1 svid-usage-mismatch + 9 ballot-* + 4 detector-*); wave-260 redteam adds none.
 
 _PROBES = []
 
@@ -101,13 +101,21 @@ def _kg_code(fn):
 
 @probe("transparency/tail-truncation-invisible-to-verify-log")
 def _p_f230():
+    # Wave-261 closure: verify_log grew a witnessed-state comparison
+    # (expected_head / expected_size). The probe now witnesses the
+    # latest signed head BEFORE truncation and checks the truncated
+    # log against it -- keyless (auditor mode). Pin-probe updated by
+    # the wave-261 lane A closure; the no-arg self-consistency check
+    # cannot see truncation by design (documented residual).
     seed = bytes.fromhex("cc" * 32)
     d = _tmpdir()
     log = tl.TransparencyLog(d, signing_key=seed)
     for tag in ("aa", "bb", "cc", "dd", "ee"):
         log.append(tag * 32)
+    witness = log.latest_head()  # witnessed out-of-band (size 5)
     ok_before, _ = tl.TransparencyLog(
-        d, public_key=bytes.fromhex(log._log_id)).verify_log()
+        d, public_key=bytes.fromhex(log._log_id)).verify_log(
+            expected_head=witness)
     if not ok_before:
         return ("ERROR", "pristine log did not verify before tampering")
     # Attacker with write access to the log directory (no signing key)
@@ -120,14 +128,13 @@ def _p_f230():
             f.write("\n".join(lines[:-1]) + "\n")
     reopened = tl.TransparencyLog(
         d, public_key=bytes.fromhex(log._log_id))
-    ok, detail = reopened.verify_log()
-    conflicts = reopened.detect_equivocation()
-    if ok and not conflicts:
+    ok, detail = reopened.verify_log(expected_head=witness)
+    if ok:
         return _break(
-            "verify_log=True (%s) and no equivocation after deleting "
-            "the last append from both files" % detail)
-    return _held("truncation detected: verify=%s conflicts=%d"
-                 % (ok, len(conflicts)))
+            "verify_log(expected_head=witness)=True (%s) after "
+            "deleting the last append from both files" % detail)
+    return _held("truncation detected vs witnessed head: %s"
+                 % detail[:80])
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +202,8 @@ def _p_f232():
 
 
 # ---------------------------------------------------------------------------
-# F233: SVID usage field is signed but never enforced
+# F233 (CLOSED wave-261 lane B): SVID usage now enforced at both seams.
+# The probe pins the closure: mismatches must refuse with machine codes.
 # ---------------------------------------------------------------------------
 
 @probe("svid/usage-never-enforced-by-verifier-or-mesh")
@@ -208,17 +216,30 @@ def _p_f233():
                              wk, 5, profile="mesh-control")
     assert workload_svid["usage"] == ["workload-auth"]
     assert mesh_svid["usage"] == ["mesh-control"]
-    # Neither verify() nor admit() takes an expected usage: the signed
-    # usage field is returned in claims but constrains nothing.
-    mesh_acl = sv.MeshControl(verifier,
-                              {"allow": ["spiffe://example.org/workload"]})
-    admitted = mesh_acl.admit(mesh_svid)
-    claims = verifier.verify(mesh_svid)
-    if admitted and claims["usage"] == ["mesh-control"]:
-        return _break(
-            "mesh-control SVID admitted to a workload ACL "
-            "(%s); usage is claims-only" % admitted)
-    return _held("usage mismatch refused")
+    # (a) verifier seam: expected usage not covered by the SVID's
+    # signed usage list -> svid-usage-mismatch.
+    vcode = _svid_code(lambda: verifier.verify(
+        mesh_svid, expected_usage="workload-auth"))
+    # (b) admit seam: MeshControl binds allowed usages per policy ->
+    # svid-acl-denied.
+    mesh_acl = sv.MeshControl(
+        verifier,
+        {"allow": ["spiffe://example.org/workload"],
+         "usages": ["workload-auth"]})
+    acode = _svid_code(lambda: mesh_acl.admit(mesh_svid))
+    # (c) per-call expected_usage threads through admit() to the
+    # verifier seam.
+    pcode = _svid_code(lambda: sv.MeshControl(
+        verifier,
+        {"allow": ["spiffe://example.org/workload"]}).admit(
+            mesh_svid, expected_usage="workload-auth"))
+    if vcode == sv.SVID_USAGE_MISMATCH_CODE and \
+            acode == sv.SVID_ACL_DENIED_CODE and \
+            pcode == sv.SVID_USAGE_MISMATCH_CODE:
+        return _held("usage mismatch refused at both seams "
+                     "(svid-usage-mismatch / svid-acl-denied)")
+    return _break("usage enforcement gap: verify=%s admit-usages=%s "
+                  "admit-expected=%s" % (vcode, acode, pcode))
 
 
 # ---------------------------------------------------------------------------

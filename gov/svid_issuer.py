@@ -38,6 +38,9 @@ Machine codes (domain "svid", all registered in gov/decision_codes.py):
   callers cannot mint longer-lived SVIDs than policy allows.
 * ``svid-trust-domain-mismatch`` -- the SVID's trust domain is not
   the verifier's; a foreign trust domain is never accepted.
+* ``svid-usage-mismatch`` -- the SVID's signed usage list does not
+  cover the expected usage (F233); refused fail-closed, never
+  downgraded.
 * ``svid-issuer-unknown`` -- issuer key id not in the pinned trust
   bundle.
 * ``svid-signature-invalid`` -- issuer signature does not verify under
@@ -84,6 +87,7 @@ __all__ = [
     "SVID_TTL_UNBOUNDED_CODE",
     "SVID_TTL_STRETCHED_CODE",
     "SVID_TRUST_DOMAIN_MISMATCH_CODE",
+    "SVID_USAGE_MISMATCH_CODE",
     "SVID_ISSUER_UNKNOWN_CODE",
     "SVID_SIGNATURE_INVALID_CODE",
     "SVID_EXPIRED_CODE",
@@ -100,6 +104,7 @@ SVID_IDENTITY_MALFORMED_CODE = "svid-identity-malformed"
 SVID_TTL_UNBOUNDED_CODE = "svid-ttl-unbounded"
 SVID_TTL_STRETCHED_CODE = "svid-ttl-stretched"
 SVID_TRUST_DOMAIN_MISMATCH_CODE = "svid-trust-domain-mismatch"
+SVID_USAGE_MISMATCH_CODE = "svid-usage-mismatch"
 SVID_ISSUER_UNKNOWN_CODE = "svid-issuer-unknown"
 SVID_SIGNATURE_INVALID_CODE = "svid-signature-invalid"
 SVID_EXPIRED_CODE = "svid-expired"
@@ -342,9 +347,14 @@ class TestSvidIssuer(object):
         """Mint an SVID. TTL is in MINUTES and is profile-capped.
 
         Fail-closed: unbounded/malformed TTL, stretched TTL, malformed
-        identity, or unknown profile refuse with machine codes.
+        identity, or unknown profile refuse with machine codes. `now`
+        is validated FIRST (F234, the F228 shape): a non-finite/bool/
+        non-numeric `now` refuses svid-malformed before any identity,
+        profile, or TTL refusal decision. A past numeric `now` is
+        honored by design (documented test hook).
         Returns the SVID dict (JSON-safe).
         """
+        at = _validate_now(now)
         trust_domain, _path = _parse_spiffe_id(spiffe_id)
         _check_public_key(public_key)
         prof = self._policy.get(profile)
@@ -364,7 +374,7 @@ class TestSvidIssuer(object):
                 "ttl_minutes %d exceeds profile %r max of %d minutes: "
                 "callers cannot stretch SVID lifetimes"
                 % (ttl_minutes, profile, prof["max_ttl_minutes"]))
-        issued_at = int(_validate_now(now))
+        issued_at = int(at)
         expires_at = issued_at + ttl_minutes * 60
         doc = {
             "spiffe_id": spiffe_id.lower(),
@@ -418,14 +428,34 @@ class SvidVerifier(object):
                 "trust_domain must be a valid trust domain string")
         self._trust_domain = td
 
-    def verify(self, svid, now=None):
+    def verify(self, svid, now=None, expected_usage=None):
         """Verify a presented SVID. Returns the identity claims dict.
 
-        Fail-closed order: presence, structure, trust domain, issuer
-        pinned, signature, expiry. A missing SVID, an expired SVID, a
-        foreign trust domain, or a signature mismatch REFUSES -- the
-        verifier never downgrades to a deployment-vouched identity.
+        Fail-closed order: `now` first (F234), presence, structure,
+        trust domain, issuer pinned, signature, usage (only when
+        expected_usage is given), expiry. A missing SVID, an expired
+        SVID, a foreign trust domain, a signature mismatch, or a usage
+        outside the expected usage REFUSES -- the verifier never
+        downgrades to a deployment-vouched identity.
+
+        `expected_usage` (F233) binds the verification to one usage:
+        the SVID's SIGNED usage list must cover it, else
+        svid-usage-mismatch. The check runs after signature
+        verification because the usage field is only trustworthy once
+        the signature over it verifies. Omitted (None) keeps the old
+        behavior: usage is returned in the claims, unenforced.
         """
+        # F234 (F228 shape): `now` is validated before ANY refusal
+        # decision -- a non-numeric/bool/NaN/inf `now` refuses
+        # svid-malformed regardless of SVID validity.
+        at = _validate_now(now)
+        if expected_usage is not None and (
+                not isinstance(expected_usage, str) or
+                not expected_usage):
+            raise SvidError(
+                SVID_MALFORMED_CODE,
+                "expected_usage must be a non-empty usage string "
+                "or None")
         if svid is None:
             raise SvidError(
                 SVID_MISSING_CODE,
@@ -494,7 +524,16 @@ class SvidVerifier(object):
                 SVID_SIGNATURE_INVALID_CODE,
                 "SVID issuer signature does not verify under the pinned "
                 "root for key id %r" % (key_id,))
-        at = _validate_now(now)
+        # F233: the usage check runs over the SIGNED body only -- the
+        # signature above authenticates the usage list, so a tampered
+        # usage can never pass this check.
+        if expected_usage is not None and \
+                expected_usage not in svid["usage"]:
+            raise SvidError(
+                SVID_USAGE_MISMATCH_CODE,
+                "SVID usage %r does not cover expected usage %r: "
+                "the SVID is not authorized for this use"
+                % (svid["usage"], expected_usage))
         if at >= svid["expires_at"]:
             raise SvidError(
                 SVID_EXPIRED_CODE,
@@ -519,8 +558,12 @@ class MeshControl(object):
     """Admit mesh peers by verified SVID against a default-deny ACL.
 
     The policy is data (headscale's ACL-file shape): ``{"allow":
-    [<spiffe-id prefixes>]}``. The SVID is verified FIRST -- an
-    unverified, expired, or foreign-domain SVID never reaches the ACL.
+    [<spiffe-id prefixes>]}``, optionally with ``"usages": [<usage
+    strings>]`` binding this control plane to the SVID usages it
+    admits (F233: a workload route binds ``["workload-auth"]`` so a
+    mesh-control SVID is refused even when its identity allowlists).
+    The SVID is verified FIRST -- an unverified, expired,
+    foreign-domain, or usage-mismatched SVID never reaches the ACL.
     There is no flag, env var, or fallback that admits a peer without
     a verified SVID: the gate cannot be downgraded to a
     deployment-vouched identity.
@@ -551,21 +594,47 @@ class MeshControl(object):
         # "spiffe://example.org/agent" and ".../agent/x" but never
         # ".../agents-evil/x" (prefix confusion refused by construction).
         self._allow = [p.lower().rstrip("/") for p in allow]
+        # F233: optional per-policy usage binding. When present, an
+        # admitted SVID's signed usage list must intersect it, else
+        # svid-acl-denied (the admit-seam refusal).
+        usages = policy.get("usages")
+        if usages is not None:
+            if not isinstance(usages, list) or not usages or any(
+                    not isinstance(u, str) or not u for u in usages):
+                raise SvidError(
+                    SVID_MALFORMED_CODE,
+                    "policy['usages'] must be a non-empty list of "
+                    "usage strings when present")
+            usages = list(usages)
+        self._usages = usages
 
-    def admit(self, svid, now=None):
+    def admit(self, svid, now=None, expected_usage=None):
         """Admit one peer. Returns the verified spiffe_id.
 
         Raises :class:`SvidError` with the SVID's refusal code when
-        verification fails, or ``svid-acl-denied`` when the verified
-        identity matches no allowlist prefix (default-deny).
+        verification fails (including ``svid-usage-mismatch`` when a
+        per-call expected usage is not covered by the SVID's signed
+        usage list), or ``svid-acl-denied`` when the verified identity
+        matches no allowlist prefix (default-deny) or its usage is
+        outside this control plane's bound usages.
         """
-        claims = self._verifier.verify(svid, now=now)
+        claims = self._verifier.verify(svid, now=now,
+                                       expected_usage=expected_usage)
         spiffe_id = claims["spiffe_id"]
         for prefix in self._allow:
             if spiffe_id == prefix or \
                     spiffe_id.startswith(prefix + "/"):
-                return spiffe_id
-        raise SvidError(
-            SVID_ACL_DENIED_CODE,
-            "peer %r matches no allowlist prefix (default-deny)"
-            % (spiffe_id,))
+                break
+        else:
+            raise SvidError(
+                SVID_ACL_DENIED_CODE,
+                "peer %r matches no allowlist prefix (default-deny)"
+                % (spiffe_id,))
+        if self._usages is not None and not any(
+                u in self._usages for u in claims["usage"]):
+            raise SvidError(
+                SVID_ACL_DENIED_CODE,
+                "peer %r presents usage %r, outside this control "
+                "plane's bound usages %r (default-deny)"
+                % (spiffe_id, claims["usage"], self._usages))
+        return spiffe_id

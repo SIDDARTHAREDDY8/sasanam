@@ -1343,6 +1343,89 @@ TAXONOMY = {
         "evidence_kinds_required": ['lease', 'timestamp', 'revocation-registry'],
         "reverify_steps": ['check-expiry', 'check-revocation'],
     },
+    'ballot-bad-signature': {
+        "domain": 'ballot',
+        "code": 'ballot-bad-signature',
+        "human": 'ballot governance: the vote signature does not verify '
+                 'against the member key; the vote is refused, never counted',
+        "severity": 'high',
+        "evidence_kinds_required": ['ballot', 'vote', 'signature'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'ballot-double-vote': {
+        "domain": 'ballot',
+        "code": 'ballot-double-vote',
+        "human": 'ballot governance: the member already voted on this '
+                 'ballot; the second vote is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'vote'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-late-vote': {
+        "domain": 'ballot',
+        "code": 'ballot-late-vote',
+        "human": 'ballot governance: the vote arrived after the ballot was '
+                 'resolved; the late vote is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'vote'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-malformed-proposal': {
+        "domain": 'ballot',
+        "code": 'ballot-malformed-proposal',
+        "human": 'ballot governance: the proposal or vote payload is '
+                 'malformed; refused at admission',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'proposal'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-not-member': {
+        "domain": 'ballot',
+        "code": 'ballot-not-member',
+        "human": 'ballot governance: the proposer or voter is not a '
+                 'consortium member; refused, never counted',
+        "severity": 'high',
+        "evidence_kinds_required": ['ballot', 'constitution', 'vote'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-quorum-not-reached': {
+        "domain": 'ballot',
+        "code": 'ballot-quorum-not-reached',
+        "human": 'ballot governance: the electorate is exhausted without '
+                 'an adoption outcome; the ballot is explicitly rejected, '
+                 'never silently adopted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'vote'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-unknown-ballot': {
+        "domain": 'ballot',
+        "code": 'ballot-unknown-ballot',
+        "human": 'ballot governance: the ballot id is unknown; the '
+                 'operation is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-unknown-ballot-type': {
+        "domain": 'ballot',
+        "code": 'ballot-unknown-ballot-type',
+        "human": 'ballot governance: the proposal names a ballot type not '
+                 'in the constitution; refused at admission',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'constitution'],
+        "reverify_steps": ['recompute'],
+    },
+    'ballot-vote-hook-failed': {
+        "domain": 'ballot',
+        "code": 'ballot-vote-hook-failed',
+        "human": 'ballot governance: the programmable vote() or resolve() '
+                 'hook failed or broke its contract; the vote or resolution '
+                 'is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ballot', 'constitution'],
+        "reverify_steps": ['recompute'],
+    },
     'binding_mismatch': {
         "domain": 'lease',
         "code": 'binding_mismatch',
@@ -3057,6 +3140,45 @@ TAXONOMY = {
         "human": 'approval and delegation: the depth limit was exceeded',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'detector-cycle': {
+        "domain": 'detector',
+        "code": 'detector-cycle',
+        "human": 'declarative detectors: the subscribes graph contains a '
+                 'cycle; refused fail-closed, nothing registered',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'detector-duplicate-name': {
+        "domain": 'detector',
+        "code": 'detector-duplicate-name',
+        "human": 'declarative detectors: a detector name is already '
+                 'registered; refused fail-closed, engine state unchanged',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'detector-malformed': {
+        "domain": 'detector',
+        "code": 'detector-malformed',
+        "human": 'declarative detectors: the detector definition fails '
+                 'structural validation (bad name/version, empty '
+                 'predicates, bad produced schema, bad threat metadata, '
+                 'dangling subscription); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
+        "reverify_steps": ['recompute'],
+    },
+    'detector-unknown-predicate': {
+        "domain": 'detector',
+        "code": 'detector-unknown-predicate',
+        "human": 'declarative detectors: a predicate uses an op outside '
+                 'the closed DSL, an illegal field path (dunder traversal, '
+                 'bad shape), or a malformed operand; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['detector-definition'],
         "reverify_steps": ['recompute'],
     },
     'device-pin-malformed': {
@@ -8792,6 +8914,16 @@ TAXONOMY = {
         "code": 'svid-ttl-unbounded',
         "human": 'SVID issuance: no explicit TTL in minutes was '
                  'requested; an unbounded TTL is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'svid-usage-mismatch': {
+        "domain": 'svid',
+        "code": 'svid-usage-mismatch',
+        "human": 'SVID identity: the presented SVID\'s signed usage list '
+                 'does not cover the expected usage; refused fail-closed, '
+                 'never downgraded',
         "severity": 'medium',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],

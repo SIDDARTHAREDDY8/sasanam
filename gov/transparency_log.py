@@ -24,8 +24,9 @@ Public seam::
       .consistency_proof(old_size, new_size=None) -> proof dict
       .latest_head() -> head dict
       .heads() -> [head dict]
-      .verify_log() -> (ok, detail)
-      .detect_equivocation(heads=None) -> [conflict dicts]
+      .verify_log(expected_size=None, expected_head=None)
+          -> (ok, detail)
+      .detect_equivocation(heads=None, strict=False) -> [conflict dicts]
     verify_tree_head(tree_head, log_pubkey_hex) -> bool
     verify_inclusion(bundle_digest_hex, proof, tree_head,
                      log_pubkey_hex=None) -> bool
@@ -58,10 +59,18 @@ standard as the Rekor note in our conventions:
   - A single view: a malicious operator can sign two different heads
     at the same tree size (equivocation / split view). This module
     DETECTS equivocation among the heads it is shown
-    (:meth:`TransparencyLog.detect_equivocation`) but cannot prevent
-    it: witnesses must compare signed heads out-of-band. There is
+    (:meth:`TransparencyLog.detect_equivocation`, signature-verified
+    heads only) but cannot prevent it: witnesses must compare signed
+    heads out-of-band, e.g. via
+    :meth:`TransparencyLog.verify_log`'s ``expected_head`` /
+    ``expected_size`` witnessed-state comparison. There is
     deliberately no in-repo gossip protocol (cf. ``gov/merkle.py``);
     claiming otherwise would overstate the design.
+  - Tail truncation: with no witnessed state, ``verify_log()`` is a
+    self-consistency check only -- a truncated-but-internally-
+    consistent log verifies True. Shrinking the log below a
+    previously witnessed size IS detectable, keylessly, with
+    ``verify_log(expected_head=...)`` / ``expected_size=...``.
 * Timestamps are operator wall-clock. Monotonicity is enforced on
   append (backdated appends are refused) but the clock itself is
   trusted -- a lying clock is outside this module's threat model.
@@ -223,10 +232,19 @@ class TransparencyLog(object):
                     "no log at %r and no signing_key: refusing to "
                     "create a log nobody can append to" % (self._path,))
             if not os.path.isdir(self._path):
-                os.makedirs(self._path)
-            with open(log_id_path, "w",
-                      encoding="utf-8") as f:
-                f.write(expect_pub.hex() + "\n")
+                try:
+                    os.makedirs(self._path)
+                except OSError as e:
+                    raise TransparencyLogError(
+                        "cannot create log directory %r: %s"
+                        % (self._path, e))
+            try:
+                with open(log_id_path, "w",
+                          encoding="utf-8") as f:
+                    f.write(expect_pub.hex() + "\n")
+            except OSError as e:
+                raise TransparencyLogError(
+                    "cannot write %s: %s" % (LOG_ID_FILE, e))
         try:
             with open(log_id_path, encoding="utf-8") as f:
                 log_id = f.read().strip()
@@ -242,19 +260,29 @@ class TransparencyLog(object):
 
         self._leaves = []
         leaves_path = os.path.join(self._path, LEAVES_FILE)
+        if os.path.lexists(leaves_path) and not os.path.isfile(
+                leaves_path):
+            raise TransparencyLogError(
+                "%s exists but is not a regular file: storage is "
+                "corrupt" % (LEAVES_FILE,))
         if os.path.isfile(leaves_path):
-            with open(leaves_path, encoding="utf-8") as f:
-                for lineno, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        raise TransparencyLogError(
-                            "leaves.jsonl line %d is not JSON: "
-                            "storage is corrupt" % (lineno,))
-                    self._leaves.append(rec)
+            try:
+                with open(leaves_path, encoding="utf-8") as f:
+                    leaf_lines = f.read().splitlines()
+            except OSError as e:
+                raise TransparencyLogError(
+                    "cannot read %s: %s" % (LEAVES_FILE, e))
+            for lineno, line in enumerate(leaf_lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    raise TransparencyLogError(
+                        "leaves.jsonl line %d is not JSON: "
+                        "storage is corrupt" % (lineno,))
+                self._leaves.append(rec)
         self._stack = _merkle.MerkleStack()
         for rec in self._leaves:
             try:
@@ -267,23 +295,33 @@ class TransparencyLog(object):
 
         self._heads = []
         heads_path = os.path.join(self._path, HEADS_FILE)
+        if os.path.lexists(heads_path) and not os.path.isfile(
+                heads_path):
+            raise TransparencyLogError(
+                "%s exists but is not a regular file: storage is "
+                "corrupt" % (HEADS_FILE,))
         if os.path.isfile(heads_path):
-            with open(heads_path, encoding="utf-8") as f:
-                for lineno, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        head = json.loads(line)
-                    except ValueError:
-                        raise TransparencyLogError(
-                            "heads.jsonl line %d is not JSON: storage "
-                            "is corrupt" % (lineno,))
-                    if not isinstance(head, dict):
-                        raise TransparencyLogError(
-                            "heads.jsonl line %d is not an object: "
-                            "storage is corrupt" % (lineno,))
-                    self._heads.append(head)
+            try:
+                with open(heads_path, encoding="utf-8") as f:
+                    head_lines = f.read().splitlines()
+            except OSError as e:
+                raise TransparencyLogError(
+                    "cannot read %s: %s" % (HEADS_FILE, e))
+            for lineno, line in enumerate(head_lines, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    head = json.loads(line)
+                except ValueError:
+                    raise TransparencyLogError(
+                        "heads.jsonl line %d is not JSON: storage "
+                        "is corrupt" % (lineno,))
+                if not isinstance(head, dict):
+                    raise TransparencyLogError(
+                        "heads.jsonl line %d is not an object: "
+                        "storage is corrupt" % (lineno,))
+                self._heads.append(head)
 
     # -- operator ----------------------------------------------------
 
@@ -310,9 +348,13 @@ class TransparencyLog(object):
                     % (ts, self._leaves[-1]["appended_at"]))
         index = len(self._leaves)
         rec = _leaf_record(index, bundle_digest, ts)
-        with open(os.path.join(self._path, LEAVES_FILE), "a",
-                  encoding="utf-8") as f:
-            f.write(_canonical(rec).decode("utf-8") + "\n")
+        try:
+            with open(os.path.join(self._path, LEAVES_FILE), "a",
+                      encoding="utf-8") as f:
+                f.write(_canonical(rec).decode("utf-8") + "\n")
+        except OSError as e:
+            raise TransparencyLogError(
+                "cannot append to %s: %s" % (LEAVES_FILE, e))
         self._leaves.append(rec)
         self._stack.append(_leaf_hash(index, bundle_digest, ts))
 
@@ -324,9 +366,13 @@ class TransparencyLog(object):
         }
         sig = _ed.sign(self._seed, _sth_body(head))
         head["signature"] = bytes(sig).hex()
-        with open(os.path.join(self._path, HEADS_FILE), "a",
-                  encoding="utf-8") as f:
-            f.write(_canonical(head).decode("utf-8") + "\n")
+        try:
+            with open(os.path.join(self._path, HEADS_FILE), "a",
+                      encoding="utf-8") as f:
+                f.write(_canonical(head).decode("utf-8") + "\n")
+        except OSError as e:
+            raise TransparencyLogError(
+                "cannot append to %s: %s" % (HEADS_FILE, e))
         self._heads.append(head)
         return dict(head)
 
@@ -398,25 +444,122 @@ class TransparencyLog(object):
 
     # -- audit ---------------------------------------------------------
 
-    def verify_log(self):
+    def verify_log(self, expected_size=None, expected_head=None):
         """Full self-audit: recompute everything from leaves.jsonl.
 
         Checks leaf indexes are 0..n-1, digests well-formed,
         timestamps parse and are monotonic, every head's tree size
         runs 1..n with the recomputed root, every head signature
         verifies under the log key, and every head's log_id matches.
+
+        Witnessed-state comparison (the tail-truncation detector):
+        pass a previously witnessed ``expected_head`` (a signed tree
+        head seen out-of-band) or a witnessed ``expected_size``. The
+        witnessed head's signature is re-verified under this log's
+        key -- keyless, since the log_id IS the public key, so an
+        auditor needs no signing key. Returns (False, reason) when
+        the current log is shorter than the witnessed state (the tail
+        was deleted, or the witness saw a divergent view), when the
+        witnessed head does not verify, or when the witnessed head's
+        root disagrees with the current log's prefix at that size
+        (history rewritten or forked view). An unverifiable witnessed
+        head is never treated as witnessed state.
+
+        Honest residual: with no witnessed state this is a
+        self-consistency check only -- a truncated-but-internally-
+        consistent log verifies True. Detecting shrinkage needs a
+        witness.
+
         Returns (True, detail) / (False, reason); never raises on
-        corrupt data.
+        corrupt data. Misuse of the witnessed-state arguments (a
+        non-int/negative ``expected_size``, or ``expected_size``
+        disagreeing with the witnessed head's tree size) raises
+        TransparencyLogError.
         """
+        witness = self._check_witness_args(expected_size,
+                                           expected_head)
         try:
-            return self._verify_log_inner()
+            return self._verify_log_inner(witness)
         except TransparencyLogError as e:
             return False, str(e)
         except (OSError, ValueError, KeyError, TypeError) as e:
             return False, "log unreadable: %s: %s" % (
                 type(e).__name__, e)
 
-    def _verify_log_inner(self):
+    def _check_witness_args(self, expected_size, expected_head):
+        """Validate witnessed-state arguments for verify_log.
+
+        Argument misuse (programming error) raises
+        TransparencyLogError. An unverifiable witnessed head is
+        *data*, not misuse: it is reported in the verdict, never
+        treated as witnessed state. Returns None when no witnessed
+        state was given, else a dict with keys ``verified`` (bool),
+        ``size`` (int) and ``root`` (hex str or None).
+        """
+        head_ok = True
+        head_size = head_root = None
+        if expected_head is not None:
+            # verify_tree_head never raises; a bad witness is data.
+            if verify_tree_head(expected_head, self._log_id):
+                head_size = expected_head["tree_size"]
+                head_root = expected_head["root_hash"]
+            else:
+                head_ok = False
+        size = head_size
+        if expected_size is not None:
+            if (not isinstance(expected_size, int)
+                    or isinstance(expected_size, bool)
+                    or expected_size < 0):
+                raise TransparencyLogError(
+                    "expected_size must be a non-negative int, got %r"
+                    % (expected_size,))
+            if head_size is not None and expected_size != head_size:
+                raise TransparencyLogError(
+                    "expected_size %d disagrees with the witnessed "
+                    "head's tree_size %d"
+                    % (expected_size, head_size))
+            size = expected_size
+        if expected_head is None and expected_size is None:
+            return None
+        return {"verified": head_ok, "size": size, "root": head_root}
+
+    def _witness_check(self, witness, n):
+        """Compare the current log against witnessed state.
+
+        Returns None when there is nothing to report, else the
+        (False, reason) verdict. Only called after the internal
+        self-audit passed, so the leaves are well-formed.
+        """
+        if witness is None:
+            return None
+        if not witness["verified"]:
+            return (False,
+                    "the witnessed head does not verify under this "
+                    "log's key: refusing to compare against "
+                    "unverifiable witnessed state")
+        m = witness["size"]
+        if n < m:
+            return (False,
+                    "log holds %d leaves but the witnessed state "
+                    "commits to tree size %d: the log shrank (tail "
+                    "deleted) or the witness saw a divergent view"
+                    % (n, m))
+        if witness["root"] is not None:
+            prefix = _merkle.MerkleStack()
+            for h in self._leaf_hashes(m):
+                prefix.append(h)
+            prefix_root = prefix.root().hex()
+            if prefix_root != witness["root"]:
+                return (False,
+                        "witnessed head at tree size %d commits to "
+                        "root %s... but the current log's prefix at "
+                        "that size recomputes %s...: history was "
+                        "rewritten or the witness saw a forked view"
+                        % (m, witness["root"][:16],
+                           prefix_root[:16]))
+        return None
+
+    def _verify_log_inner(self, witness=None):
         n = len(self._leaves)
         prev_ts = None
         for pos, rec in enumerate(self._leaves):
@@ -463,29 +606,55 @@ class TransparencyLog(object):
             if not verify_tree_head(head, self._log_id):
                 return False, (
                     "head at tree size %d has a bad signature" % size)
+        witness_verdict = self._witness_check(witness, n)
+        if witness_verdict is not None:
+            return witness_verdict
         if n == 0:
             return True, "empty log: nothing to check"
         return True, "ok: %d leaves, %d heads verify" % (n, n)
 
-    def detect_equivocation(self, heads=None):
+    def detect_equivocation(self, heads=None, strict=False):
         """Detect equivocation among a set of signed heads.
 
-        Groups heads by tree_size; any size with more than one
-        distinct root_hash is a conflicting view of the log at that
-        size -- durable evidence of operator misbehavior (the CT
-        split-view). Returns a list of conflict dicts (empty = none
+        Only heads whose STH signature verifies under this log's key
+        (log_id-bound: the signature must cover this log's identity)
+        participate in conflict grouping. Unsigned, forged,
+        foreign-key, or malformed heads are skipped: they can never
+        become operator-misbehavior evidence, so a JSON object handed
+        to the detector cannot manufacture a false accusation
+        (alarm-fatigue vector). With ``strict=True`` the detector
+        instead refuses to adjudicate when any head is unverifiable,
+        raising TransparencyLogError naming them as invalid input --
+        reported distinctly, never as equivocation evidence.
+
+        Groups the verified heads by tree_size; any size with more
+        than one distinct root_hash is a conflicting view of the log
+        at that size -- durable evidence of operator misbehavior (the
+        CT split-view). Returns a list of conflict dicts (empty = none
         detected). Only sees the heads it is given: collecting heads
         from independent witnesses is out-of-band by design.
         """
         heads = self._heads if heads is None else heads
-        by_size = {}
+        verified = []
+        invalid = 0
         for h in heads:
-            if not isinstance(h, dict):
-                continue
-            size = h.get("tree_size")
-            root = h.get("root_hash")
-            if not isinstance(size, int) or not isinstance(root, str):
-                continue
+            # verify_tree_head never raises: it is the False-gate for
+            # non-dicts, malformed heads, bad signatures, and foreign
+            # log_ids alike.
+            if verify_tree_head(h, self._log_id):
+                verified.append(h)
+            else:
+                invalid += 1
+        if strict and invalid:
+            raise TransparencyLogError(
+                "%d head(s) did not verify under this log's key: "
+                "refusing to adjudicate unverifiable input as "
+                "equivocation evidence (invalid input, not a "
+                "conflict)" % (invalid,))
+        by_size = {}
+        for h in verified:
+            size = h["tree_size"]
+            root = h["root_hash"]
             by_size.setdefault(size, set()).add(root)
         conflicts = []
         for size in sorted(by_size):

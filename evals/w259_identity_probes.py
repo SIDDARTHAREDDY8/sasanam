@@ -41,7 +41,7 @@ except ImportError:
     sv = None
     decision_codes = None
 
-TAXONOMY_PIN = 1092  # Wave-259 lane 3: pin 1092 + 10 svid-* codes.
+TAXONOMY_PIN = 1106  # Wave-259 lane 3: pin 1092 + 10 svid-* codes.
 
 _PROBES = []
 

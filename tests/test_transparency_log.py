@@ -264,5 +264,156 @@ class TestAudit(unittest.TestCase):
             tl.TransparencyLog(path, signing_key=other)
 
 
+class TestWitnessedState(unittest.TestCase):
+    """F230: verify_log(expected_size/expected_head) detects the log
+    shrinking below previously witnessed state."""
+
+    def _truncated(self, n=5, keep=4):
+        seed = _seed()
+        path = _tmpdir()
+        log = tl.TransparencyLog(path, signing_key=seed)
+        for d in _digests(n):
+            log.append(d)
+        witness = log.latest_head()
+        for fname in (tl.LEAVES_FILE, tl.HEADS_FILE):
+            fpath = os.path.join(path, fname)
+            with open(fpath, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            with open(fpath, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines[:keep]) + "\n")
+        reopened = tl.TransparencyLog(
+            path, public_key=bytes.fromhex(_pub_hex(seed)))
+        return reopened, witness
+
+    def test_truncation_detected_vs_witnessed_head(self):
+        reopened, witness = self._truncated()
+        ok, detail = reopened.verify_log(expected_head=witness)
+        self.assertFalse(ok)
+        self.assertIn("shrank", detail)
+
+    def test_truncation_detected_vs_witnessed_size(self):
+        reopened, _witness = self._truncated()
+        ok, detail = reopened.verify_log(expected_size=5)
+        self.assertFalse(ok)
+        self.assertIn("shrank", detail)
+
+    def test_no_false_alarm_without_truncation(self):
+        seed = _seed()
+        path = _tmpdir()
+        log = tl.TransparencyLog(path, signing_key=seed)
+        for d in _digests(5):
+            log.append(d)
+        witness = log.latest_head()
+        ok, detail = log.verify_log(expected_head=witness)
+        self.assertTrue(ok, detail)
+        ok, detail = log.verify_log(expected_size=5)
+        self.assertTrue(ok, detail)
+
+    def test_older_witnessed_head_no_false_alarm(self):
+        seed = _seed()
+        path = _tmpdir()
+        log = tl.TransparencyLog(path, signing_key=seed)
+        for d in _digests(5):
+            log.append(d)
+        witness2 = [h for h in log.heads()
+                    if h["tree_size"] == 2][0]
+        ok, detail = log.verify_log(expected_head=witness2)
+        self.assertTrue(ok, detail)
+
+    def test_forged_witnessed_head_refused_not_raised(self):
+        reopened, witness = self._truncated()
+        forged = dict(witness)
+        forged["root_hash"] = "ff" * 32
+        forged["signature"] = "00" * 128
+        self.assertFalse(
+            tl.verify_tree_head(forged, reopened._log_id))
+        ok, detail = reopened.verify_log(expected_head=forged)
+        self.assertFalse(ok)
+        self.assertIn("does not verify", detail)
+
+    def test_expected_size_misuse_raises(self):
+        seed = _seed()
+        log = tl.TransparencyLog(_tmpdir(), signing_key=seed)
+        log.append(_digests(1)[0])
+        for bad in (-1, True, "5", 2.0):
+            with self.assertRaises(tl.TransparencyLogError,
+                                   msg="expected_size %r" % (bad,)):
+                log.verify_log(expected_size=bad)
+
+    def test_expected_size_head_disagreement_raises(self):
+        seed = _seed()
+        log = tl.TransparencyLog(_tmpdir(), signing_key=seed)
+        for d in _digests(3):
+            log.append(d)
+        witness = log.latest_head()
+        with self.assertRaises(tl.TransparencyLogError):
+            log.verify_log(expected_size=2, expected_head=witness)
+
+
+class TestEquivocationVerification(unittest.TestCase):
+    """F231: only signature-valid heads feed equivocation detection."""
+
+    def test_unsigned_head_ignored_by_default(self):
+        seed = _seed()
+        log = tl.TransparencyLog(_tmpdir(), signing_key=seed)
+        head = log.append(_digests(1)[0])
+        forged = dict(head)
+        forged["root_hash"] = "ff" * 32
+        forged["signature"] = "00" * 128
+        self.assertFalse(tl.verify_tree_head(forged, _pub_hex(seed)))
+        self.assertEqual(log.detect_equivocation([head, forged]), [])
+
+    def test_strict_reports_invalid_input(self):
+        seed = _seed()
+        log = tl.TransparencyLog(_tmpdir(), signing_key=seed)
+        head = log.append(_digests(1)[0])
+        forged = dict(head)
+        forged["root_hash"] = "ff" * 32
+        forged["signature"] = "00" * 128
+        with self.assertRaises(tl.TransparencyLogError):
+            log.detect_equivocation([head, forged], strict=True)
+
+    def test_strict_ok_on_valid_heads(self):
+        seed = _seed()
+        log = tl.TransparencyLog(_tmpdir(), signing_key=seed)
+        for d in _digests(2):
+            log.append(d)
+        self.assertEqual(
+            log.detect_equivocation(log.heads(), strict=True), [])
+
+
+class TestOperatorIoErrors(unittest.TestCase):
+    """F232: operator-path I/O failures arrive as
+    TransparencyLogError, never raw OSError."""
+
+    def test_init_on_path_that_is_a_file(self):
+        fd, fpath = tempfile.mkstemp(prefix="w261tl-file-", dir="/var/tmp")
+        os.close(fd)
+        try:
+            with self.assertRaises(tl.TransparencyLogError):
+                tl.TransparencyLog(fpath, signing_key=_seed())
+        finally:
+            os.unlink(fpath)
+
+    def test_append_when_leaves_is_a_directory(self):
+        seed = _seed()
+        path = _tmpdir()
+        log = tl.TransparencyLog(path, signing_key=seed)
+        log.append(_digests(1)[0])
+        os.remove(os.path.join(path, tl.LEAVES_FILE))
+        os.mkdir(os.path.join(path, tl.LEAVES_FILE))
+        with self.assertRaises(tl.TransparencyLogError):
+            log.append(_digests(2)[1])
+
+    def test_reopen_when_leaves_not_a_regular_file(self):
+        seed = _seed()
+        path = _tmpdir()
+        tl.TransparencyLog(path, signing_key=seed)
+        os.mkdir(os.path.join(path, tl.LEAVES_FILE))
+        with self.assertRaises(tl.TransparencyLogError):
+            tl.TransparencyLog(
+                path, public_key=bytes.fromhex(_pub_hex(seed)))
+
+
 if __name__ == "__main__":
     unittest.main()
