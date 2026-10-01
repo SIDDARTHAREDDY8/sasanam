@@ -6460,4 +6460,33 @@ Concretely: install skill v1 with digest A (pin A). Then present record v1 with 
 
 **Status: CLOSED 2026-09-30 (wave-250 lane 1).** Close-when path (1): the installed map is now `{name: (version, digest)}` (the legacy bare-int form is refused as `skill-update-malformed`); a same-version reinstall with a different digest is refused with the new taxonomy code `skill-update-digest-changed` (taxonomy 979 -> 980). Break-first verification: `evals/w250_f211_closure_probes.py` (5 probes) reports BREAK on the pre-fix module (the F211 break shape: same-version digest substitution allowed) and 5/5 HELD on the fixed module, deterministic across 2 runs (staging + `env -u GOV_DEPLOYMENT_MODE`), synthetic/local, standalone. The standing w249 red-team pin `update/same-version-digest-substitution` flipped BREAK -> HELD (refused: skill-update-digest-changed); the w248 skill-update battery is 13/13 HELD with the new `same-version-digest-change-refused` probe. Idempotent identical-bytes reinstall stays allowed. Adjacent suites green: test_skill_update 30/30, w248 battery 13/13, w249 redteam 15/15, test_wiring 12/12. No overstatement: the primary pin-matching boundary is unchanged; this closes the idempotency-promise gap only.
 
-Next free finding: **F212**. **Open findings: none.** (F211 filed 2026-09-30, wave-249 lane 2 red-team, closed 2026-09-30, wave-250 lane 1.)
+Next free finding: **F212**. **Open findings: F212, F213.** (F211 filed 2026-09-30, wave-249 lane 2 red-team, closed 2026-09-30, wave-250 lane 1; F212 and F213 filed 2026-09-30, wave-251 lane 3 red-team.)
+
+## F212: DecisionLog trusts caller-held CombinedDecision mutability — post-append mutation hides or fabricates equivocation evidence (LOW)
+
+**Cells:** wave-251 lane 3 red-team, 2026-09-30. Standing regression pin: `evals/w251_redteam_probes.py` (20 probes: 3 BREAK / 17 HELD, deterministic across 2 runs — staging + `env -u GOV_DEPLOYMENT_MODE` — synthetic/local, standalone), preserved as the permanent pin.
+
+**Defect:** `gov/decision_log.py`'s `DecisionLog.append()` computes the leaf hash from the canonical leaf bytes at append time (correct), but stores the caller's live `CombinedDecision` object reference in `_entries_data`. `detect_equivocation()` later reads `combined.effect` and `_policy_key(combined)` from that live object. `CombinedDecision.effect` is a plain mutable attribute ("Immutable-ish value object" per its docstring — the immutability is a convention, not enforced). A caller that mutates the object after appending corrupts the detection view while the leaf hashes still commit to the original bytes:
+
+- **Hide:** append allow + deny (same request digest, same policy-revision set) — detection correctly finds 1 equivocation; then `d_allow.effect = "deny"` — `detect_equivocation()` now returns [] (probe `log/post-append-mutation-hides`).
+- **Fabricate:** append allow + allow — no equivocation; then `d2.effect = "deny"` — `detect_equivocation()` returns a proof that `verify(log)` accepts (`log/post-append-mutation-fabricates`), while the leaf hash still equals `hash_leaf` of the true allow/allow canonical bytes (proven in-probe against a pristine twin). The evidence presented to an auditor is cryptographically "verified" but its effect labels are lies.
+
+**Severity rationale:** LOW. Exploitation requires the logging caller (the operator's own pipeline, in-process) to mutate a logged object — a buggy or adversarial in-process caller. An external attacker cannot reach in. The leaf hashes remain tamper-evident: a byte-level re-audit recomputing canonical leaf bytes recovers the truth, so the corruption is detectable by a diligent auditor, just not by the module's own API. Scoped below MEDIUM because the Merkle integrity layer itself holds; this is the detection-view layer trusting object identity over snapshotted values.
+
+**Close-when criteria:** (1) `append()` snapshots the detection-relevant fields at append time — store `(request_digest, effect, policy_key)` (immutable values) instead of (or in addition to) the live object, and `detect_equivocation()` reads only the snapshots; (2) a break-first battery at the public seam showing the mutation probes BREAK on the old code and HELD on the fixed code (post-append mutation no longer moves detection; fabricated proof impossible); (3) adjacent suites green (test_decision_log, w250 decision-log battery).
+
+**Status: OPEN** (filed 2026-09-30, wave-251 lane 3 red-team).
+
+## F213: EquivocationProof.verify() raises IndexError on out-of-range leaf index instead of returning False (LOW)
+
+**Cells:** wave-251 lane 3 red-team, 2026-09-30. Standing regression pin: `evals/w251_redteam_probes.py` (probe `log/bogus-proof-index`), same battery as F212.
+
+**Defect:** `gov/decision_log.py`'s `EquivocationProof.verify(log)` indexes `log._leaf_hash_at(self.index_a)` / `(self.index_b)` with no bounds check. A hand-constructed `EquivocationProof` carrying an out-of-range index (e.g. index 999 on a 1-leaf log, with matching tree_size/root) makes `verify()` raise `IndexError: list index out of range` instead of returning `False`. The module's own fail-closed convention at the log seam is "True or raise DecisionLogError" for proof checks, and the pure verifiers return bool — a verifier that crashes on hostile input is the fail-open direction (an auditor's verification harness that treats "no exception" as "checked" would misread the crash, and a crash is a DoS vector against any service that verifies submitted proofs).
+
+**Severity rationale:** LOW. `EquivocationProof` objects are constructed in-process (proofs are not serialized — `to_dict()` omits proofs and leaf hashes), so an attacker cannot deliver one across a trust boundary today; the exposure is a robustness wart at a verification seam, not a bypass. Scoped below MEDIUM because there is no evidence-integrity impact: no false verification is possible, only a crash.
+
+**Close-when criteria:** (1) `verify()` bounds-checks both indices (and tree_size consistency) and returns `False` for any out-of-range or malformed proof instead of raising; (2) break-first battery: the bogus-index probe BREAKs (raises) on old code, HELDs (returns False) on fixed code; (3) adjacent suites green.
+
+**Status: OPEN** (filed 2026-09-30, wave-251 lane 3 red-team).
+
+Next free finding: **F214**. **Open findings: F212, F213.**

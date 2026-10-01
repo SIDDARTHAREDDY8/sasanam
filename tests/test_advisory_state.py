@@ -77,7 +77,9 @@ class TaxonomyPinTest(unittest.TestCase):
         # (advisory-input-malformed). Additive only; the merge
         # coordinator repoints the global pins.
         # Wave-246 merge: re-pointed lane-local pin to the composed 936 (was lane-local 896); additive only.
-        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # only; merge coordinator composed.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1004)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_new_code_resolves(self):

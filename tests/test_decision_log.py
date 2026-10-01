@@ -359,7 +359,9 @@ class SthTests(unittest.TestCase):
 
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
-        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # only; merge coordinator composed.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1004)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
         for code in ("decision-log-malformed",
                      "decision-log-request-mismatch",

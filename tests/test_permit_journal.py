@@ -42,7 +42,9 @@ class TaxonomyPinTest(_Base):
     def test_taxonomy_pin_988(self):
         # Wave-250 lane 3: 979 + 9 permit-journal codes, additive only;
         # merge coordinator recomposes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # only; merge coordinator composed.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1004)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_new_codes_registered(self):

@@ -5724,6 +5724,45 @@ TAXONOMY = {
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'policy-harness-malformed': {
+        "domain": 'policy-harness',
+        "code": 'policy-harness-malformed',
+        "human": 'policy harness: malformed fixture, expected outcome, or '
+                 'policy file (unparseable or wrong shape); refused '
+                 'fail-closed, never skipped',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-harness-missing-expected': {
+        "domain": 'policy-harness',
+        "code": 'policy-harness-missing-expected',
+        "human": 'policy harness: a fixture has no expected outcome file; '
+                 'refused fail-closed rather than evaluated without an '
+                 'oracle',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-harness-no-policies': {
+        "domain": 'policy-harness',
+        "code": 'policy-harness-no-policies',
+        "human": 'policy harness: the policies dir is missing or has no '
+                 'loadable policy files; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+    'policy-harness-unknown-format': {
+        "domain": 'policy-harness',
+        "code": 'policy-harness-unknown-format',
+        "human": 'policy harness: unknown file format in policies/ or '
+                 'fixtures/ (expected *.yaml/*.yml policies, *.json '
+                 'fixtures); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
     'policy-needs-unimplemented-feature': {
         "domain": 'jail',
         "code": 'policy-needs-unimplemented-feature',
@@ -5771,6 +5810,33 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['bundle', 'inspection', 'digest'],
         "reverify_steps": ['recompute'],
+    },
+    'posture-card-malformed': {
+        "domain": 'posture-card',
+        "code": 'posture-card-malformed',
+        "human": 'posture cards: malformed assessment state, summary, or '
+                 'issue input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'posture-card-unknown-track': {
+        "domain": 'posture-card',
+        "code": 'posture-card-unknown-track',
+        "human": 'posture cards: maturity level requested for a track '
+                 'outside the closed track vocabulary; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'posture-card-unverifiable': {
+        "domain": 'posture-card',
+        "code": 'posture-card-unverifiable',
+        "human": 'posture cards: VSA-style summary signature does not '
+                 'verify against the issuer key',
+        "severity": 'high',
+        "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['verify-signature'],
     },
     'posture-refused': {
         "domain": 'posture',

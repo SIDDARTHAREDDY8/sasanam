@@ -365,7 +365,9 @@ class PinTests(unittest.TestCase):
         # eight lane commits by direct byte-verification.
         # Wave-245 merge: re-pointed to 895 (32 additive wave-245 codes: 8 mcp-oauth + 5 spawn-context + 3 registry-acceptance + 7 delegation-freshness + 4 egress-propagation + 5 jwks), additive only, comment + assert.
         # Wave-247 lane 1: re-pointed to 938 (936 + 2 uri-normalize codes: uri-host-invalid, uri-host-unparseable), additive only; merge coordinator recomposes.
-        self.assertEqual(len(dc.TAXONOMY), 997)
+        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # only; merge coordinator composed.
+        self.assertEqual(len(dc.TAXONOMY), 1004)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes: 1 skill-update digest-changed + 4 decision-log + 9 permit-journal + 4 evidence-graph), additive only; merge coordinator composed.
         for code in ("honesty-baseline-tampered",
                      "honesty-baseline-unforced",

@@ -28,7 +28,9 @@ def _blobs():
 class PackBasicsTest(unittest.TestCase):
     def test_taxonomy_pin_945(self):
         # Wave-248 lane 7: re-pointed to 945 (938 + 7 artifact-pack codes), additive only; merge coordinator recomposes.
-        self.assertEqual(len(decision_codes.TAXONOMY), 997)
+        # Wave-251 merge: re-pointed to 1004 (997 + 7 codes), additive
+        # only; merge coordinator composed.
+        self.assertEqual(len(decision_codes.TAXONOMY), 1004)
         # Wave-250 merge: re-pointed to 997 (979 + 18 wave-250 codes), additive only; merge coordinator composed.
 
     def test_new_codes_registered(self):
