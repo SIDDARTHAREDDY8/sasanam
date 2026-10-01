@@ -20,6 +20,9 @@ surface).
 Screening rules (deterministic, stdlib-only), evaluated per reference:
   1. Non-external refs (relative paths, fragments) and non-http(s)
      schemes are not egress -- allowed, recorded as such.
+     Scheme-relative refs (``//host/path``) carry a network location and
+     are client-resolved as https-external, so they ARE egress and are
+     screened like absolute https URLs (F288).
   2. Trusted-relay rule: a ref routed through a deployment-declared
      trusted relay (host + path prefix) whose decoded inner target is
      external (not in ``allowed_hosts``) AND carries an exfil-shaped
@@ -357,16 +360,29 @@ _INNER_PARAMS = ("url", "u")
 
 def _split_url(url):
     """Parse a URL; return (scheme, host, path, query, fragment) or None
-    when the URL is not absolute-external."""
+    when the URL is not external.
+
+    Scheme-relative URLs (``//host/path``) carry an empty scheme but a
+    real network location. Clients resolve them against the client
+    scheme (https on auto-fetch surfaces), so they are treated as
+    ``https``-external and screened -- never waved through as
+    "not-external" (F288). Genuinely relative refs (``/path``,
+    ``#frag``, ``img.png``) have no netloc and stay None."""
     try:
         parts = urllib.parse.urlsplit(url.strip())
     except Exception:  # noqa: BLE001
         return None
-    if not parts.scheme or not parts.netloc:
+    if not parts.netloc:
         return None
-    if parts.scheme.lower() not in ("http", "https"):
+    scheme = parts.scheme.lower() if parts.scheme else ""
+    if not scheme:
+        # Scheme-relative: client-resolved as https-external (F288).
+        return ("https", parts.hostname.lower() if parts.hostname
+                else "", parts.path or "", parts.query or "",
+                parts.fragment or "")
+    if scheme not in ("http", "https"):
         return ("other", "", "", "", "")
-    return (parts.scheme.lower(), parts.hostname.lower() if parts.hostname
+    return (scheme, parts.hostname.lower() if parts.hostname
             else "", parts.path or "", parts.query or "",
             parts.fragment or "")
 
@@ -388,6 +404,32 @@ def _relay_inner_target(query):
             except Exception:  # noqa: BLE001
                 return value
     return None
+
+
+# Decode rounds for the digest leg: single- and double-encoded tokens
+# are defeated; decoding stops early once stable (F289).
+_DECODE_ROUNDS = 3
+
+
+def _canon_text(text, plus):
+    """Bounded iterative percent-decode to the server-side view.
+
+    ``plus=True`` uses form-query semantics (``unquote_plus``: ``+``
+    means space); ``plus=False`` uses ``unquote`` (``+`` is literal).
+    Decodes repeatedly until the value stops changing or the round cap
+    is hit, so double-encoding cannot re-arm (F289). Never raises."""
+    try:
+        cur = text or ""
+        decode = (urllib.parse.unquote_plus if plus
+                  else urllib.parse.unquote)
+        for _ in range(_DECODE_ROUNDS):
+            nxt = decode(cur)
+            if nxt == cur:
+                break
+            cur = nxt
+        return cur
+    except Exception:  # noqa: BLE001 -- never raise
+        return text or ""
 
 
 def _payload_tokens(query, fragment):
@@ -416,8 +458,20 @@ def _digest_matches(tokens, policy):
 def _data_shaped(query, fragment, policy):
     """The two-keyed exfil shape: sensitive-digest match OR oversized
     query/fragment payload. Returns a note string when data-shaped,
-    else None. Shared by the relay rule and the data rule."""
-    tokens = _payload_tokens(query, fragment)
+    else None. Shared by the relay rule and the data rule.
+
+    Digest tokenization runs on the percent-DECODED query/fragment
+    (F289): the client percent-decodes before sending, so the decoded
+    view is the server-side view the digest list must be compared
+    against. Query decoding uses form semantics (``unquote_plus``),
+    fragment decoding uses ``unquote`` (``+`` is literal in fragments).
+    Decoding is bounded-iterative (default 3 rounds) so single- AND
+    double-encoded tokens cannot re-arm; it stops early when stable.
+    The size leg stays on the RAW query/fragment: percent-encoding
+    only inflates, so raw is the conservative (never smaller) view."""
+    dec_q = _canon_text(query, plus=True)
+    dec_f = _canon_text(fragment, plus=False)
+    tokens = _payload_tokens(dec_q, dec_f)
     hit = _digest_matches(tokens, policy)
     if hit is not None:
         return "sensitive digest match in ref payload"

