@@ -63,6 +63,19 @@ Honest boundaries (also in IDENTITY_DESIGN.md §4/§8):
   exposes a ``revocation_checker`` seam (reference: ``RevocationLedger``).
   Default is TTL-only — short TTLs paper over revocation; true
   propagation is a STATED BOUNDARY, not a hidden gap.
+* Resource (wave-278, RFC 8707 steal): delegation tokens MAY carry
+  a signed ``resource`` claim (the canonical https URI of the intended
+  MCP server / tool endpoint). The verifier declares the resource at
+  the use seam (``authorize_action`` / ``enforce_tool_call`` /
+  ``bind``); a missing or mismatched claim is refused fail-closed as
+  ``DelegationBindingError`` — token passthrough is refused, not
+  prevented by convention. Spawn inherits the parent's resource (never
+  a parameter), mirroring the ``aud`` inheritance. When the verifier
+  declares nothing, behavior is byte-identical to the pre-binding
+  tree (verifier-declared, the wave-86 audience precedent). Honest
+  residual: the executor's tool seam is tool-name based and carries no
+  server URI today, so it cannot declare a resource — the binding is
+  enforced at the seams that do declare one.
 * The human-signature seam: in the local/test model the human's public
   key is provisioned by the deployment into the trust roster
   out-of-band; in production this is the deployer's identity key. The
@@ -102,6 +115,30 @@ MAX_TTL_S = 86400
 CLOCK_SKEW_S = 300
 # Spawn-lineage depth cap: deeper chains are a design smell (swarm control).
 MAX_DELEGATION_DEPTH = 8
+
+
+def _check_resource(resource, what="resource"):
+    """Validate an RFC 8707 resource indicator (fail-fast at issuance).
+
+    The resource is the canonical URI of the protected resource the
+    credential is issued for (the MCP server / tool endpoint). None =
+    unbound (legacy). A non-URI value is refused loudly at mint: a
+    malformed binding minted into a token would be unverifiable
+    theater. Comparison at verification is byte-for-byte on the
+    canonical form validated here.
+    """
+    if resource is None:
+        return None
+    if not isinstance(resource, str) or not resource:
+        raise ValueError("%s must be a canonical https URI or None"
+                         % (what,))
+    if not resource.startswith("https://") or len(resource) <= len("https://"):
+        raise ValueError("%s must be a canonical https URI (RFC 8707 "
+                         "discipline), got %r" % (what, resource))
+    if any(ch.isspace() for ch in resource):
+        raise ValueError("%s must not contain whitespace: %r"
+                         % (what, resource))
+    return resource
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +281,7 @@ def _scope_covers(parent_scope, child_scope):
 # ---------------------------------------------------------------------------
 
 def _base_token(token_kind, signer, subject, session_id, claims,
-                ttl_s, now, *, audience=None):
+                ttl_s, now, *, audience=None, resource=None):
     if token_kind not in TOKEN_KINDS:
         raise ValueError("unknown token_kind %r" % (token_kind,))
     if not isinstance(subject, str) or not subject:
@@ -257,6 +294,9 @@ def _base_token(token_kind, signer, subject, session_id, claims,
             not isinstance(audience, str) or not audience):
         raise ValueError("audience must be a non-empty string (the "
                          "deployment id) or None")
+    # Wave-278 (RFC 8707 steal): the resource indicator is validated
+    # fail-fast at issuance so a malformed binding can never be minted.
+    resource = _check_resource(resource)
     ttl_s = DEFAULT_TTL_S if ttl_s is None else ttl_s
     if (isinstance(ttl_s, bool) or not isinstance(ttl_s, (int, float))
             or ttl_s <= 0 or ttl_s > MAX_TTL_S):
@@ -280,6 +320,14 @@ def _base_token(token_kind, signer, subject, session_id, claims,
         # not to an authorization fact), so the signature covers it and
         # no re-signing can move a token across deployments.
         body["aud"] = audience
+    if resource is not None:
+        # Wave-278 (RFC 8707 steal): the resource indicator. Top-level
+        # envelope like aud — it binds the token to the intended
+        # protected resource (the MCP server / tool endpoint), not to
+        # an authorization fact — so the signature covers it and no
+        # re-signing can move a token across servers (token passthrough
+        # is refused at verification, not prevented by convention).
+        body["resource"] = resource
     body["sig"] = _sign_body(signer, body)
     return body
 
@@ -330,7 +378,8 @@ def issue_agent_token(authority_signer, agent_id, role, principal,
 def issue_delegation(human_signer, delegator_user_id, user_token,
                      agent_token, scope, session_id,
                      revocation_endpoint, audit_urls=None,
-                     ttl_s=None, now=None, audience=None, card_kid=None):
+                     ttl_s=None, now=None, audience=None, card_kid=None,
+                     resource=None):
     """Issue the human-signed delegation token (depth 0).
 
     ``human_signer``: the HUMAN DELEGATOR's key (``gov.signing.Signer``).
@@ -345,6 +394,14 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
 
     ``audience``: optional deployment id bound into the signed envelope
     (wave-86, F132) — the verifier refuses the token outside it.
+
+    ``resource``: optional RFC 8707 resource indicator (wave-278) — the
+    canonical https URI of the protected resource (MCP server / tool
+    endpoint) this delegation is issued for. Bound into the signed
+    envelope; the verifier refuses the token when presented for a
+    different resource (token passthrough refused fail-closed). None
+    (default) = unbound: pre-binding behavior, byte-identical. A
+    malformed URI is refused loudly here, at issuance — never minted.
 
     ``card_kid``: optional A2A Agent Card key id binding this delegation
     to a card-verified foreign-agent identity. The deployment sets this
@@ -388,7 +445,8 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
         "card_kid": card_kid,
     }
     return _base_token("delegation", human_signer, agent_token["subject"],
-                       session_id, claims, ttl_s, now, audience=audience)
+                       session_id, claims, ttl_s, now, audience=audience,
+                       resource=resource)
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +631,8 @@ def _clean_keymap(mapping, what):
 # ---------------------------------------------------------------------------
 
 def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
-                 expected_session=None, expected_audience=None):
+                 expected_session=None, expected_audience=None,
+                 expected_resource=None):
     """Verify one token against ``trusted_keys`` ({key_id: pub}).
 
     Checks: well-formed envelope, ``token_kind``, issuer in the roster,
@@ -583,6 +642,15 @@ def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
     mismatched audience is refused as :class:`DelegationBindingError`
     (cross-deployment replay). Returns the token's ``claims`` dict.
     Raises a :class:`DelegationError` subclass fail-closed.
+
+    ``expected_resource`` (wave-278, RFC 8707): the canonical URI of the
+    protected resource this verification is for. When set, the token's
+    signed ``resource`` claim must equal it byte-for-byte — a missing
+    or mismatched claim is refused as :class:`DelegationBindingError`
+    (token passthrough: the token was not issued for this server).
+    When None (default), no resource check runs — the aud precedent:
+    binding is verifier-declared, and undeclared verifiers keep
+    byte-identical behavior.
     """
     ref = _now_dt(now)
     if not isinstance(token, dict):
@@ -616,6 +684,13 @@ def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
                 "(cross-deployment replay refused: the token was issued "
                 "for a different deployment)" % (aud,
                                                  expected_audience))
+    if expected_resource is not None:
+        res = token.get("resource")
+        if res != expected_resource:
+            raise DelegationBindingError(
+                "token resource %r does not match the declared resource "
+                "%r (token passthrough refused: the token was not issued "
+                "for this server)" % (res, expected_resource))
     nbf = _parse_time(token.get("not_before"), "not_before")
     exp = _parse_time(token.get("expires_at"), "expires_at")
     skew = timedelta(seconds=CLOCK_SKEW_S)
@@ -636,7 +711,8 @@ def verify_token(token, trusted_keys, *, now=None, expected_kind=None,
 
 def verify_delegation_chain(delegation_token, parent_chain, trust,
                             user_token, agent_token, *, now=None,
-                            expected_session=None, expected_audience=None):
+                            expected_session=None, expected_audience=None,
+                            expected_resource=None):
     """Verify a full delegation chain, root (human) to leaf.
 
     ``parent_chain``: ancestor delegation tokens, root-first (may be
@@ -656,6 +732,16 @@ def verify_delegation_chain(delegation_token, parent_chain, trust,
     :class:`DelegationBindingError`. When unset, a loud one-time
     stderr disclosure states that cross-deployment confused-deputy
     replay is not prevented.
+
+    Resource (wave-278, RFC 8707): ``expected_resource`` is the
+    canonical URI of the protected resource this chain is presented
+    for. When set, every delegation hop's signed ``resource`` claim
+    must equal it — a hop minted for another server (or with no
+    resource claim at all) fails the chain closed here, at
+    verification. Spawn inherits the parent's resource (never a
+    parameter), so a well-formed chain is resource-uniform; a
+    hand-crafted mixed-resource chain is refused hop-by-hop. When
+    unset, no resource check runs (verifier-declared, like audience).
 
     Depth (wave-86 defense-in-depth): the hop depth is re-checked
     against :data:`MAX_DELEGATION_DEPTH` at verification, not just at
@@ -677,7 +763,8 @@ def verify_delegation_chain(delegation_token, parent_chain, trust,
         claims = verify_token(
             tok, _roster_for_depth(trust, i, tok), now=ref,
             expected_kind="delegation", expected_session=session,
-            expected_audience=expected_audience)
+            expected_audience=expected_audience,
+            expected_resource=expected_resource)
         depth = claims.get("delegation_depth")
         if depth != i:
             raise DelegationSignatureError(
@@ -804,8 +891,15 @@ class DelegationContext:
         self._bound = False
         self._leaf_claims = None
 
-    def bind(self, now=None):
-        """Verify everything. Returns self. Raises fail-closed."""
+    def bind(self, now=None, *, expected_resource=None):
+        """Verify everything. Returns self. Raises fail-closed.
+
+        ``expected_resource`` (wave-278, RFC 8707): the canonical URI
+        of the protected resource this context is bound for. When set,
+        every delegation hop's signed ``resource`` claim must match —
+        a chain minted for another server (or with no resource claim)
+        refuses to bind. When None (default), no resource check runs.
+        """
         if self.delegation_token is None:
             # The agent-without-delegation case, caught HERE (not as a
             # confusing signature error deeper in): fail closed by
@@ -819,7 +913,8 @@ class DelegationContext:
             self.delegation_token, self.parent_chain, self.trust,
             self.user_token, self.agent_token, now=now,
             expected_session=self.session_id,
-            expected_audience=self.trust.audience)
+            expected_audience=self.trust.audience,
+            expected_resource=expected_resource)
         self._bound = True
         return self
 
@@ -848,10 +943,15 @@ class DelegationContext:
         Effective permission = user permissions ∩ agent capabilities ∩
         delegation scope, evaluated as a conjunction per action (intensional
         — wildcards make the set unlistable, so the gate is a predicate,
-        not a list). ``action`` is ``"tool:<name>"``.
+        not a list). ``action`` is ``"tool:<name>"``. ``resource`` is the
+        RFC 8707 resource indicator (wave-278): when declared, the token
+        chain's signed resource claim must match it (see
+        :func:`authorize_action`).
 
         Raises :class:`DelegationRequiredError` (no/unbound context),
-        :class:`DelegationExpiredError`, :class:`DelegationRevokedError`,
+        :class:`DelegationExpiredError`,
+        :class:`DelegationBindingError` (session/audience/resource
+        mismatch — token passthrough refused), :class:`DelegationRevokedError`,
         or :class:`DelegationScopeError` — all fail-closed. Returns an
         audit dict on success.
         """
@@ -886,14 +986,23 @@ def authorize_action(ctx, action, resource=None, *, now=None,
     """Enforce the permission intersection for one action.
 
     ``ctx``: a BOUND :class:`DelegationContext`. ``action``:
-    ``"tool:<name>"``. The gate:
+    ``"tool:<name>"``. ``resource`` (wave-278, RFC 8707): the canonical
+    https URI of the protected resource (MCP server / tool endpoint)
+    this action is presented to. When set, every delegation hop's
+    signed ``resource`` claim must equal it — a token minted for
+    another server (or with no resource claim) is refused as
+    :class:`DelegationBindingError` (token passthrough refused
+    fail-closed). When None (default), no resource check runs: binding
+    is verifier-declared, and undeclared uses keep byte-identical
+    behavior (the wave-86 audience precedent). The gate:
 
     1. context present, bound, and carrying a delegation token —
        otherwise :class:`DelegationRequiredError` (THE fail-closed-by-
        construction case: this function is called in code before policy
        evaluation, so policy text cannot waive it);
     2. the delegation token (and ancestors) still in-window and
-       session-bound;
+       session-bound — and, when ``resource`` is declared,
+       resource-bound to the declared resource;
     3. revocation seam: any revoked token in the chain (leaf or
        ancestor) → :class:`DelegationRevokedError`;
     4. the conjunction: user permissions AND agent capabilities AND
@@ -905,7 +1014,6 @@ def authorize_action(ctx, action, resource=None, *, now=None,
     cross-app delegation receipt (Row 18: distinct ``sub``/``act``
     attribution), minted from the bound context at authorization time.
     """
-    _ = resource  # v1 scope language is tool-granular (design §8)
     ref = _now_dt(now)
     if ctx is None or not isinstance(ctx, DelegationContext):
         raise DelegationRequiredError(
@@ -920,13 +1028,17 @@ def authorize_action(ctx, action, resource=None, *, now=None,
             "delegation cannot act (fail closed by construction, not by "
             "policy text)")
     # Re-check window + binding at use time (bind() verified signatures;
-    # time passes — expiry is checked per action).
+    # time passes — expiry is checked per action). When the caller
+    # declares the resource, every hop's signed resource claim must
+    # match it: a delegation minted for another server presented here
+    # is the confused-deputy shape, refused fail-closed.
     chain = ctx.parent_chain + [ctx.delegation_token]
     for tok in chain:
         verify_token(tok, _roster_for_depth(
             ctx.trust, tok["claims"]["delegation_depth"], tok),
             now=ref, expected_kind="delegation",
-            expected_session=ctx.session_id)
+            expected_session=ctx.session_id,
+            expected_resource=resource)
     # Revocation seam: leaf AND ancestors (a revoked parent invalidates
     # the chain — that is the point of propagation). A checker that
     # ERRORS fails closed as a revocation-system failure: without a
@@ -979,13 +1091,20 @@ def authorize_action(ctx, action, resource=None, *, now=None,
 
 
 def enforce_tool_call(ctx, identity, tool, *, now=None,
-                       revocation_checker=None):
+                       revocation_checker=None, resource=None):
     """Executor-facing gate: one tool call through the identity layer.
 
     ``identity``: the ``AgentIdentity`` the executor is acting as (its
     run must match the context's session — cross-run token use is
-    replay and is refused). Raises :class:`DelegationError` fail-closed;
-    returns the audit dict on success.
+    replay and is refused). ``resource`` (wave-278, RFC 8707): the
+    canonical https URI of the protected resource (MCP server / tool
+    endpoint) the call targets. When declared, the delegation chain's
+    signed resource claim must match it — token passthrough refused
+    fail-closed. When None (default), no resource check runs (the
+    executor's tool seam is tool-name based and carries no server URI
+    today; binding is verifier-declared). Raises
+    :class:`DelegationError` fail-closed; returns the audit dict on
+    success.
     """
     agent_id = getattr(identity, "agent_id", None)
     run_id = getattr(identity, "run_id", None)
@@ -1005,7 +1124,8 @@ def enforce_tool_call(ctx, identity, tool, *, now=None,
                 "acting identity %r does not match the delegation's "
                 "subject %r (delegation issued to a different agent)"
                 % (agent_id, leaf_subject))
-    verdict = authorize_action(ctx, "tool:" + str(tool), now=now,
+    verdict = authorize_action(ctx, "tool:" + str(tool), resource,
+                               now=now,
                                revocation_checker=revocation_checker)
     verdict["agent_id"] = agent_id
     return verdict
@@ -1076,9 +1196,14 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
     # compromised parent re-target its delegation at another
     # deployment; inheritance makes that shape unrepresentable.
     parent_aud = parent_ctx.delegation_token.get("aud")
+    # Wave-278 (RFC 8707): the resource indicator is likewise inherited
+    # from the parent's token — never a parameter. A sub-agent cannot
+    # re-target its delegation at another server; the spawn chain stays
+    # resource-uniform by construction.
+    parent_resource = parent_ctx.delegation_token.get("resource")
     return _base_token("delegation", parent_signer, sub_agent_id,
                        parent_ctx.session_id, claims, ttl_s, now,
-                       audience=parent_aud)
+                       audience=parent_aud, resource=parent_resource)
 
 
 # ---------------------------------------------------------------------------

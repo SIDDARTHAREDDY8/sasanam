@@ -300,6 +300,26 @@ class TripFatigueTracker:
         # key -> [window_id, count, last_touched_now]
         self._store = {}
 
+    def _window_of(self, now):
+        """Window id for a ``now`` value. Total: never raises.
+
+        Finite floats coerce via ``int()`` so their window ids match
+        their int counterparts (the natural ``time.time()`` shape).
+        Bools, non-finite floats, and non-numeric ``now`` values map to
+        ``None`` -- and a ``None`` window starts a fresh window on every
+        call (the documented contract), never an eternal one (F299).
+        """
+        if isinstance(now, bool):
+            return None
+        if isinstance(now, int):
+            return now // self._window_s
+        if isinstance(now, float):
+            try:
+                return int(now) // self._window_s
+            except (ValueError, OverflowError):
+                return None
+        return None
+
     def note_trip(self, *, decoy, agent_key, now):
         """Record one trip. Returns an accounting dict.
 
@@ -309,13 +329,14 @@ class TripFatigueTracker:
         afterwards (gateway writes a compact summary carrying
         ``suppressed``). ``window_count`` is the trip count in the
         current window. Total on hostile input (keys coerced; a
-        non-int ``now`` starts a fresh window rather than raising).
+        non-int ``now`` starts a fresh window rather than raising:
+        finite floats coerce via ``int()`` and window normally; other
+        non-int ``now`` values start a fresh window per call).
         """
         key = (_tracker_key(decoy), _tracker_key(agent_key))
-        window = now // self._window_s if isinstance(now, int) \
-            and not isinstance(now, bool) else None
+        window = self._window_of(now)
         rec = self._store.get(key)
-        if rec is None or rec[0] != window:
+        if rec is None or window is None or rec[0] != window:
             if rec is None and len(self._store) >= self._max_keys:
                 # Bounded store: evict the oldest-touched entry.
                 oldest = min(self._store.items(),

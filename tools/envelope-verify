@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Standalone battery-evidence-envelope verifier (standard library only).
+
+Verifies an envelope file produced by ``gov/battery_envelope.py`` WITHOUT
+the repository installed and WITHOUT trusting the emitter. Usage::
+
+    python3 envelope-verify <envelope.json> [--format text|json]
+
+Exit codes: 0 = VERIFIED · 1 = FAILED · 3 = usage error.
+
+Checks (mirrors gov/battery_envelope.py::verify_envelope):
+  V1  envelope format/schema known
+  V2  run_digest recomputes over header + all sample digests
+  V3  every sample_digest recomputes in chain order (per-sample tamper)
+  V4  verdict/expected vocabulary; verdict == expected per sample
+      (the verifier re-checks the recorded expectations)
+  V5  oracle consistency: oracle=violating requires expected BREAK,
+      oracle=clean requires expected HELD (re-derives expectations from
+      the oracle declarations, so forging verdict AND expected together
+      still refuses)
+  V6  header completeness (battery, engine_version, git_sha,
+      taxonomy_pin, deployment_mode)
+  V7  sample_count matches the samples list
+
+WHAT THIS DOES NOT PROVE (printed on every run):
+the verifier re-computes digests and re-derives expectations from the
+envelope's own declarations; it does NOT re-run the battery or the
+engine. An envelope whose samples were fabricated consistently (fake
+oracle declarations for fake probe cases) verifies as self-consistent --
+integrity is not truth. The battery_digest binds which battery file the
+run claims to be; re-running that battery must reproduce the verdicts.
+Timestamps are emitter wall-clock. No auditor or regulator has accepted
+this format.
+
+$0 spend. No network. Pure Python, no dependencies.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+
+FORMAT = "battery-evidence-envelope"
+SCHEMA_VERSION = "1.0"
+
+MAX_SAMPLES = 10000
+MAX_ENVELOPE_BYTES = 64 * 1024 * 1024
+
+_SAMPLE_DOMAIN = b"battery-envelope-sample/v1\x00"
+_RUN_DOMAIN = b"battery-envelope-run/v1\x00"
+_SAMPLE_GENESIS = "SAMPLE-GENESIS"
+
+_VERDICTS = ("BREAK", "HELD", "ERROR")
+_ORACLES = ("violating", "clean")
+_ORACLE_EXPECTED = {"violating": "BREAK", "clean": "HELD"}
+
+HONESTY = (
+    "WHAT THIS DOES NOT PROVE: digests and expectations are re-computed "
+    "from the envelope's own declarations; the verifier does NOT re-run "
+    "the battery or the engine. A consistently-fabricated envelope is "
+    "self-consistent -- integrity is not truth. battery_digest binds the "
+    "claimed battery file; re-running it must reproduce the verdicts. "
+    "Timestamps are emitter wall-clock."
+)
+
+
+def _canonical(obj):
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, default=str).encode("utf-8")
+
+
+class Fail(Exception):
+    pass
+
+
+def _req(cond, check, detail):
+    if not cond:
+        raise Fail("%s: %s" % (check, detail))
+
+
+def verify(envelope):
+    """Run checks V1..V7. Returns the header dict. Raises Fail."""
+    _req(isinstance(envelope, dict), "V1",
+         "envelope must be a JSON object")
+    _req(envelope.get("format") == FORMAT, "V1",
+         "unknown format %r" % (envelope.get("format"),))
+    _req(envelope.get("schema_version") == SCHEMA_VERSION, "V1",
+         "unknown schema %r" % (envelope.get("schema_version"),))
+
+    header = envelope.get("header")
+    _req(isinstance(header, dict), "V6", "header must be an object")
+    for key in ("battery", "battery_version", "battery_digest",
+                "engine_version", "git_sha", "ran_at",
+                "deployment_mode", "taxonomy_pin", "sample_count",
+                "run_digest"):
+        _req(header.get(key) not in (None, ""), "V6",
+             "missing %r" % key)
+    _req(isinstance(header["taxonomy_pin"], int), "V6",
+         "taxonomy_pin must be int")
+    _req(isinstance(header["sample_count"], int), "V6",
+         "sample_count must be int")
+
+    samples = envelope.get("samples")
+    _req(isinstance(samples, list), "V7", "samples must be a list")
+    _req(len(samples) <= MAX_SAMPLES, "V7",
+         "%d exceed cap %d" % (len(samples), MAX_SAMPLES))
+    _req(len(samples) == header["sample_count"], "V7",
+         "header says %d, got %d"
+         % (header["sample_count"], len(samples)))
+
+    prev = _SAMPLE_GENESIS
+    for i, sample in enumerate(samples):
+        tag = "sample %d (%s)" % (i, sample.get("sample_id"))
+        _req(isinstance(sample, dict), "V3", "%s not an object" % tag)
+        for key in ("sample_id", "sample_seq", "oracle", "expected",
+                    "verdict", "note", "sample_digest"):
+            _req(sample.get(key) not in (None, ""), "V3",
+                 "%s missing %r" % (tag, key))
+        _req(sample["sample_seq"] == i + 1, "V3",
+             "%s bad seq %r" % (tag, sample["sample_seq"]))
+        _req(sample["oracle"] in _ORACLES, "V5",
+             "%s bad oracle %r" % (tag, sample["oracle"]))
+        _req(sample["expected"] in _VERDICTS, "V4",
+             "%s bad expected %r" % (tag, sample["expected"]))
+        _req(sample["verdict"] in _VERDICTS, "V4",
+             "%s bad verdict %r" % (tag, sample["verdict"]))
+        _req(sample["verdict"] == sample["expected"], "V4",
+             "%s verdict %r != expected %r"
+             % (tag, sample["verdict"], sample["expected"]))
+        if sample["expected"] != "ERROR":
+            want = _ORACLE_EXPECTED[sample["oracle"]]
+            _req(sample["expected"] == want, "V5",
+                 "%s oracle %r requires expected %r, got %r"
+                 % (tag, sample["oracle"], want, sample["expected"]))
+        body = {k: v for k, v in sample.items()
+                if k != "sample_digest"}
+        recomputed = hashlib.sha256(
+            _SAMPLE_DOMAIN + prev.encode("utf-8") + b"\x00"
+            + _canonical(body)).hexdigest()
+        _req(recomputed == sample["sample_digest"], "V3",
+             "%s digest mismatch (tampered)" % tag)
+        prev = sample["sample_digest"]
+
+    digests = b"".join(
+        s["sample_digest"].encode("utf-8") for s in samples)
+    header_no_digest = {k: v for k, v in header.items()
+                        if k != "run_digest"}
+    recomputed_run = hashlib.sha256(
+        _RUN_DOMAIN + _canonical(header_no_digest) + b"\x00"
+        + digests).hexdigest()
+    _req(recomputed_run == header["run_digest"], "V2",
+         "run digest mismatch (tampered)")
+    return header
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(
+        description="Verify a battery evidence envelope (stdlib only).")
+    ap.add_argument("envelope", help="path to the envelope JSON file")
+    ap.add_argument("--format", choices=("text", "json"), default="text")
+    args = ap.parse_args(argv)
+
+    try:
+        size = os.path.getsize(args.envelope)
+    except OSError as exc:
+        print("FAILED: cannot stat envelope: %s" % exc)
+        return 3
+    if size > MAX_ENVELOPE_BYTES:
+        print("FAILED: envelope %d bytes exceed cap %d (refusing "
+              "before parse)" % (size, MAX_ENVELOPE_BYTES))
+        return 1
+    try:
+        with open(args.envelope, encoding="utf-8") as f:
+            envelope = json.load(f)
+    except (OSError, ValueError) as exc:
+        print("FAILED: cannot parse envelope: %s" % exc)
+        return 1
+
+    try:
+        header = verify(envelope)
+    except Fail as exc:
+        if args.format == "json":
+            print(json.dumps({"status": "FAILED", "check": str(exc),
+                              "honesty": HONESTY}))
+        else:
+            print("FAILED: %s" % exc)
+            print(HONESTY)
+        return 1
+
+    summary = {
+        "status": "VERIFIED",
+        "battery": header["battery"],
+        "battery_version": header["battery_version"],
+        "samples": header["sample_count"],
+        "taxonomy_pin": header["taxonomy_pin"],
+        "git_sha": header["git_sha"],
+        "honesty": HONESTY,
+    }
+    if args.format == "json":
+        print(json.dumps(summary, indent=2))
+    else:
+        print("VERIFIED: battery=%s samples=%d taxonomy_pin=%d "
+              "git_sha=%s" % (header["battery"],
+                              header["sample_count"],
+                              header["taxonomy_pin"],
+                              header["git_sha"]))
+        print(HONESTY)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

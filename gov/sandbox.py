@@ -1937,7 +1937,8 @@ class Sandbox:
                  deployment_mode="production",
                  refusal_receipt_dir=None,
                  pivot_extra_mounts=None, canary_plant=None,
-                 egress_launcher=None, sentinel_vault=None):
+                 egress_launcher=None, sentinel_vault=None,
+                 network_policy=None, audit=None):
         if require_netns and not use_netns:
             raise ValueError("require_netns=True conflicts with use_netns=False")
         if require_pidns and not use_pidns:
@@ -2030,6 +2031,32 @@ class Sandbox:
                 "(fail-closed: a vault-shaped object that cannot answer "
                 "the membership question never silently means 'no vault')")
         self.sentinel_vault = sentinel_vault
+        # Wave-278 lane 3: optional per-sandbox network policy (the e2b
+        # steal, clean-room). A gov.sandbox_egress.SandboxEgressController
+        # whose CURRENT policy the wall proxy consults per request;
+        # update_network_policy() mutates it mid-run. None = legacy
+        # behavior (no policy object, no lifecycle events).
+        if network_policy is not None:
+            from gov import sandbox_egress as _se
+            if not isinstance(network_policy,
+                              _se.SandboxEgressController):
+                raise ValueError(
+                    "network_policy must be a "
+                    "gov.sandbox_egress.SandboxEgressController (fail-closed: "
+                    "a policy-shaped object the proxy cannot consult never "
+                    "silently means 'no policy')")
+        if audit is not None and not callable(audit):
+            raise ValueError("audit must be callable(kind, detail) or None")
+        self.network_policy = network_policy
+        self._audit = audit
+        self._emit("sandbox-created", {
+            "cage_mode": self.cage_mode,
+            "deployment_mode": self.deployment_mode,
+            "policy_version": (network_policy.current.version
+                               if network_policy is not None else None),
+            "policy_hash": (network_policy.current.policy_hash
+                            if network_policy is not None else None),
+        })
         # Wave-51 P1 egress canaries: optional planting hook
         # ``plant(jail_path, child_env) -> env_additions`` (see
         # gov.canary.make_canary_plant). Default None = nothing planted,
@@ -2045,6 +2072,39 @@ class Sandbox:
         self.landlock_capable = self.use_landlock and landlock_available()
 
     # -- public API -------------------------------------------------------
+
+    def _emit(self, kind, detail):
+        """Best-effort lifecycle event. Audit failure must neither open
+        nor close the sandbox: the enforcement decision already
+        happened; this records it. Mirrors the launcher's _emit."""
+        a = self._audit
+        if a is None:
+            return
+        try:
+            a(kind, detail)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def update_network_policy(self, data):
+        """Replace the live egress policy mid-run (the e2b
+        ``updateNetwork`` analog, wave-278 lane 3).
+
+        Malformed input raises
+        ``gov.sandbox_egress.PolicyRefusedError`` loudly and the OLD
+        policy keeps serving -- the wall never serves a half-parsed
+        policy. With no attached controller, raises SandboxError
+        (fail-closed: cannot update what was never bound).
+        """
+        if self.network_policy is None:
+            raise SandboxError(
+                "no network policy attached to this sandbox "
+                "(fail-closed: cannot update what was never bound)")
+        new_policy = self.network_policy.update(data)
+        self._emit("sandbox-policy-updated", {
+            "version": new_policy.version,
+            "policy_hash": new_policy.policy_hash,
+        })
+        return new_policy
 
     @contextlib.contextmanager
     def temp_jail(self):
@@ -2122,6 +2182,16 @@ class Sandbox:
         if stdin_data is not None and len(stdin_data) > DEFAULT_MAX_STDIN:
             raise ValueError("stdin_data exceeds %d bytes"
                              % DEFAULT_MAX_STDIN)
+        # Wave-278 lane 3: lifecycle event. Records the program name
+        # and argc -- never full argv/stdin (they may carry secrets);
+        # the policy version names the egress posture of this run.
+        self._emit("sandbox-run", {
+            "program": argv[0] if argv else None,
+            "argc": len(argv),
+            "policy_version": (self.network_policy.current.version
+                               if self.network_policy is not None
+                               else None),
+        })
 
         # Wave-273 lane H (GTG-50020): screen argv/stdin BEFORE any jail
         # is created — a real credential never gets a child to cross into.

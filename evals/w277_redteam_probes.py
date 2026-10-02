@@ -483,7 +483,7 @@ def cl02_future_still_breaks():
 
 
 PROBES = [
-    ("dc-fatigue-float-eternal", "BREAK", dc_fatigue_float_eternal),
+    ("dc-fatigue-float-eternal", "HELD", dc_fatigue_float_eternal),  # F299 CLOSED wave-278 (float now rolls windows)
     ("dc-trip-denies", "HELD", dc_trip_denies),
     ("dc-mint-refusal", "HELD", dc_mint_refusal),
     ("dc-denial-never-suppressed", "HELD", dc_denial_never_suppressed),
@@ -500,6 +500,19 @@ PROBES = [
     ("cl01-dup-still-breaks", "HELD", cl01_dup_still_breaks),
     ("cl02-future-still-breaks", "HELD", cl02_future_still_breaks),
 ]
+
+BATTERY_VERSION = "277.0"
+
+# Evidence-envelope oracle declarations (gov/battery_envelope.py;
+# terminal-bench two-sided pattern): every probe case declares whether
+# it is a golden attack case ("violating" -- the defect must still
+# reproduce, i.e. expected BREAK) or a golden benign case ("clean" --
+# the closure must hold, i.e. expected HELD). The standalone verifier
+# (tools/envelope-verify) re-derives expectations from these
+# declarations, so a forged "all green" run refuses at V5.
+ORACLE = {pid: ("violating" if expected == "BREAK" else "clean")
+          for pid, expected, _fn in PROBES}
+ORACLE["pin-taxonomy-1486"] = "clean"
 
 
 def green_check():
@@ -555,6 +568,22 @@ def main():
                               name, note))
     print("probes: %d BREAK / %d HELD / %d ERROR; mismatches: %d"
           % (n_break, n_held, n_err, n_mismatch))
+    # Evidence envelope (wave-278): every battery run emits a
+    # digest-sealed, auditor-replayable evidence envelope as an
+    # artifact. Emission is fail-open with respect to the battery's own
+    # verdicts (a broken emitter must not flip probe results), but
+    # loud: the envelope path or the failure is always printed.
+    try:
+        import gov.battery_envelope as _be
+        artifact = os.path.join(REPO, "evals", "artifacts",
+                                "w277_redteam.envelope.json")
+        _be.emit_for_probe_results(
+            "w277_redteam_probes", BATTERY_VERSION, __file__,
+            _RESULTS, artifact_path=artifact, oracle_by_id=ORACLE)
+        print("[envelope] emitted %s" % artifact)
+    except Exception as exc:  # noqa: BLE001
+        print("[envelope] FAILED: %s: %s"
+              % (type(exc).__name__, exc))
     return 0 if (n_err == 0 and n_mismatch == 0) else 1
 
 

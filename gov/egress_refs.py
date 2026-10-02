@@ -635,3 +635,22 @@ def rail_verdict_of(record):
     """
     from . import rail_verdict as _rv
     return _rv.from_screen_verdict(record, stage="egress-screening")
+
+
+def screen_egress_url(url, policy=None):
+    """Screen one absolute URL string against an EgressPolicy.
+
+    Returns ``(verdict, code, note)``; never raises. This is the L7
+    seam the sandbox wall proxy consults for plaintext-HTTP egress
+    (wave-278 lane 3): the digest leg decodes to stability (F296), so
+    percent-encoded payloads cannot evade the sensitive-digest match
+    at the proxy layer the way they could at the L3-only wall.
+    An internal error refuses fail-closed.
+    """
+    try:
+        pol = policy if policy is not None else _default_policy()
+        verdict, code, note = _screen_ref({"url": url or ""}, pol)
+        return (verdict, code, note)
+    except Exception:  # noqa: BLE001 -- never raise; fail closed
+        return ("refuse", "egress-refs-malformed",
+                "screen_egress_url internal error")

@@ -1276,18 +1276,73 @@ class StubDnsServer(threading.Thread):
 
 class StubProxyServer(threading.Thread):
     def __init__(self, allowlist_path, dns_host, dns_port,
-                 deny_log_path=None):
+                 deny_log_path=None, network_policy=None, auditor=None):
+        """Wave-278 lane 3: ``network_policy`` is an optional
+        ``gov.sandbox_egress.SandboxEgressController`` (or a bare
+        ``SandboxNetworkPolicy``). When attached, the proxy consults
+        the LIVE policy per request -- mid-run updates take effect
+        immediately -- and runs the L7 screening leg
+        (``gov.egress_refs.screen_egress_url``, decode-to-stability)
+        on plaintext-HTTP absolute-form requests. ``auditor`` is an
+        optional ``SandboxEgressAuditor`` receiving an
+        ``egress-attempt`` event per request (allowed AND denied).
+        Both default to None: legacy behavior (file allowlist, deny
+        log only) is byte-for-byte unchanged."""
         super().__init__(daemon=True)
         self.allowlist_path = allowlist_path
         self.dns_host = dns_host
         self.dns_port = dns_port
         self.deny_log_path = deny_log_path
+        self.network_policy = network_policy
+        self.auditor = auditor
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((SIM_PROXY_HOST, 0))
         self.port = self._sock.getsockname()[1]
         self._sock.listen(64)
         self._stop_event = threading.Event()
+
+    def _live_policy(self):
+        """The current SandboxNetworkPolicy, or None for legacy mode.
+        Never raises (a policy-holder fault degrades to legacy file
+        mode rather than crashing the broker thread)."""
+        np = self.network_policy
+        if np is None:
+            return None
+        try:
+            cur = np.current if hasattr(np, "current") else np
+        except Exception:  # noqa: BLE001
+            return None
+        return cur
+
+    def _audit_attempt(self, method, host, port, verdict, rule,
+                       policy_version=None):
+        a = self.auditor
+        if a is None:
+            return
+        try:
+            a.event("egress-attempt", {
+                "method": method,
+                "host": host,
+                "port": port,
+                "verdict": verdict,
+                "rule": rule,
+                "policy_version": policy_version,
+            })
+        except Exception:  # noqa: BLE001 -- audit never breaks the wall
+            pass
+
+    def _policy_allows(self, host, port):
+        """Destination check against the live policy, or the legacy
+        file allowlist when no policy is attached."""
+        policy = self._live_policy()
+        if policy is not None:
+            try:
+                return bool(policy.allows(host, port)), policy.version
+            except Exception:  # noqa: BLE001
+                return False, None
+        key = "%s:%d" % (str(host).lower(), port)
+        return key in self._allowlist(), None
 
     def _allowlist(self):
         allowed = set()
@@ -1333,6 +1388,20 @@ class StubProxyServer(threading.Thread):
                 except OSError:
                     pass
 
+    def _screen_l7(self, url):
+        """L7 screening of one absolute URL against the live policy's
+        digest/budget view. Never raises; an internal fault refuses
+        fail-closed (a broken screen must not become a bypass)."""
+        try:
+            from gov.egress_refs import screen_egress_url
+            policy = self._live_policy()
+            refs_policy = (policy.to_egress_refs_policy()
+                           if policy is not None else None)
+            return screen_egress_url(url, policy=refs_policy)
+        except Exception:  # noqa: BLE001
+            return ("refuse", "egress-refs-malformed",
+                    "proxy L7 screening fault (fail-closed)")
+
     def _handle(self, conn):
         try:
             conn.settimeout(5.0)
@@ -1369,10 +1438,36 @@ class StubProxyServer(threading.Thread):
             except ValueError:
                 port = -1
             key = "%s:%d" % (host.lower(), port)
-            if key not in self._allowlist():
+            allowed, policy_version = self._policy_allows(host, port)
+            if not allowed:
                 conn.sendall(b"HTTP/1.1 403 denied by egress wall\r\n\r\n")
                 self._deny("DENY-CONNECT %s" % key)
+                self._audit_attempt(method, host, port, "deny",
+                                    "destination-deny", policy_version)
                 return
+            # Wave-278 lane 3: L7 leg for plaintext-HTTP absolute-form
+            # requests. The wall sees the full URL on this path (unlike
+            # CONNECT, whose TLS bytes tunnel opaquely by design), so
+            # the decode-to-stability screening applies: a 4x-encoded
+            # sensitive token in the query is refused with
+            # egress-ref-data-exfil even though the host is allowlisted.
+            # Runs only when a live policy is attached; legacy file
+            # mode is untouched.
+            if method != "CONNECT" and self._live_policy() is not None:
+                url = ("http://" + hostport
+                       + path_suffix.decode("ascii", "replace"))
+                verdict, code, note = self._screen_l7(url)  # noqa: F841
+                self._audit_attempt(method, host, port, verdict,
+                                    code or "l7-clean", policy_version)
+                if verdict == "refuse":
+                    conn.sendall(
+                        ("HTTP/1.1 403 denied by egress wall: %s\r\n\r\n"
+                         % code).encode("ascii", "replace"))
+                    self._deny("DENY-L7 %s %s" % (key, code))
+                    return
+            else:
+                self._audit_attempt(method, host, port, "allow",
+                                    "destination-allow", policy_version)
             # Confined resolution ONLY — never the host resolver.
             ip = dns_query(self.dns_host, self.dns_port, host.lower())
             if not ip:

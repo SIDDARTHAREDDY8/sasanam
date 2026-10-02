@@ -212,6 +212,28 @@ class TestTripFatigueTracker(unittest.TestCase):
         r = tr.note_trip(decoy=None, agent_key=["x"], now="soon")
         self.assertIn("emit_full", r)
 
+    def test_float_now_windows_like_int_f299(self):
+        # F299: a float `now` (the natural time.time() shape) must roll
+        # windows exactly like its int counterpart -- never an eternal
+        # window (emit_full False forever after 5 trips).
+        tr = dg.TripFatigueTracker(window_s=300, full_events_per_window=5)
+        res = [tr.note_trip(decoy="d", agent_key="a", now=100.0 + i * 400.0)
+               for i in range(12)]
+        self.assertTrue(all(r["emit_full"] for r in res))
+        self.assertTrue(all(r["window_count"] == 1 for r in res))
+
+    def test_nonnumeric_now_starts_fresh_window_f299(self):
+        # Docstring contract: a non-int `now` starts a fresh window
+        # rather than raising -- per call, not one shared window.
+        tr = dg.TripFatigueTracker(window_s=300, full_events_per_window=5)
+        for now in ("2026-10-01T00:00:00+00:00", None, True,
+                    float("nan"), float("inf")):
+            res = [tr.note_trip(decoy="d", agent_key="a", now=now)
+                   for _ in range(8)]
+            self.assertTrue(
+                all(r["emit_full"] and r["window_count"] == 1 for r in res),
+                "now=%r" % (now,))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -65,6 +65,7 @@ from .rekor_anchor import (
     _r6962_root,
     _r6962_verify_proof,
 )
+from . import rekor_v2_witness as _rvw
 
 BUNDLE_FORMAT = "evidence-bundle.v2"
 SUBMISSION_FORMAT = "evidence-submission.v2"
@@ -1087,10 +1088,71 @@ def make_log(*, producer_auth_verifier=None, log_id=None, now=None):
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _maybe_attach_v2_witness(digest, *, rekor_v2_witness,
+                             witness_signature_b64, witness_pubkey_pem):
+    """Second-witness attach for an issued bundle digest (wave-278).
+
+    The env flag ``GOV_REKOR_V2_WITNESS`` is the master switch: when it
+    is off (the default), this returns None and the caller must leave
+    the issuance record untouched (byte-identical to the unwired
+    behavior). When it is on, the same digest the primary local anchor
+    committed is attached as a SECOND witness via
+    ``gov.rekor_v2_witness`` and the witness record is returned for
+    filing under the submission's ``"witnesses"`` audit metadata.
+
+    ``rekor_v2_witness`` is an optional caller-configured
+    ``RekorV2Witness`` (carries the TUF SigningConfig / injected
+    client); when omitted the witness is constructed from the
+    environment. ``witness_signature_b64`` / ``witness_pubkey_pem``
+    are the Ed25519ph witness signature material the caller holds --
+    key custody stays with the caller; this seam only passes the
+    material through to the entry. Missing material degrades honestly
+    to a ``"failed"`` record, never a raise.
+
+    ``RekorV2Witness.attach()`` never raises by contract; a
+    non-conforming witness object that raises anyway is degraded to a
+    ``"failed"`` record rather than breaking issuance -- the witness
+    is never a gate on the product path.
+    """
+    if not _rvw.witness_enabled():
+        return None
+    witness = rekor_v2_witness
+    if witness is None:
+        witness = _rvw.RekorV2Witness()
+    attach = getattr(witness, "attach", None)
+    if not callable(attach):
+        return {
+            "witness": _rvw.WITNESS_NAME,
+            "status": _rvw.STATUS_FAILED,
+            "reason": "non-conforming witness object: no attach()",
+            "evidentiary_grade": _rvw.EVIDENTIARY_GRADE,
+            "authority_proof": False,
+            "log_generation": None,
+            "receipt": None,
+            "recorded_at": None,
+        }
+    try:
+        return attach(digest, signature_b64=witness_signature_b64,
+                      pubkey_pem=witness_pubkey_pem)
+    except Exception as e:  # noqa: BLE001 -- the witness is not a gate
+        return {
+            "witness": _rvw.WITNESS_NAME,
+            "status": _rvw.STATUS_FAILED,
+            "reason": "non-conforming witness raised %s: %s"
+                      % (type(e).__name__, e),
+            "evidentiary_grade": _rvw.EVIDENTIARY_GRADE,
+            "authority_proof": False,
+            "log_generation": None,
+            "receipt": None,
+            "recorded_at": None,
+        }
+
+
 def submit_evidence(*, artifact_body, cert, artifact_signature,
                     approval_id, intent_digest, audit_log_path,
                     ca_public_key, verify_time, transparency_log=None,
-                    now=None):
+                    now=None, rekor_v2_witness=None,
+                    witness_signature_b64=None, witness_pubkey_pem=None):
     """Seal an evidence artifact and submit it to the transparency log.
 
     Order: seal (chain-then-binding; ``evcert-*`` failures propagate),
@@ -1100,6 +1162,18 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
     log submission. Provider failures fail closed as
     ``evbundle-transparency-unavailable`` -- the log is never silently
     skipped.
+
+    Second witness (wave-278): ``rekor_v2_witness`` is an optional
+    caller-configured ``gov.rekor_v2_witness.RekorV2Witness``;
+    ``witness_signature_b64`` / ``witness_pubkey_pem`` are the
+    Ed25519ph witness signature material the caller holds. The env
+    flag ``GOV_REKOR_V2_WITNESS`` is the master switch -- with it off
+    (the default) the returned submission is byte-identical to the
+    unwired behavior and no witness is consulted. With it on, the
+    bundle digest is attached as a second witness and the record is
+    filed under the submission's ``"witnesses"`` metadata; the
+    primary local anchor is unchanged, and any witness failure
+    degrades to a ``"failed"`` record without raising.
     """
     sealed = seal_evidence(artifact_body=artifact_body, cert=cert,
                            artifact_signature=artifact_signature,
@@ -1131,12 +1205,19 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
             "evbundle-transparency-unavailable",
             "transparency provider %r failed: %r"
             % (getattr(log, "provider_name", "?"), e))
-    return {"kind": SUBMISSION_FORMAT,
-            "sealed": sealed,
-            "issuance_ref": {"cert_digest": sealed["cert_digest"],
-                             "audit_log_path": audit_log_path},
-            "transparency_receipt": receipt,
-            "honest_claims": _HONEST_CLAIMS}
+    result = {"kind": SUBMISSION_FORMAT,
+              "sealed": sealed,
+              "issuance_ref": {"cert_digest": sealed["cert_digest"],
+                               "audit_log_path": audit_log_path},
+              "transparency_receipt": receipt,
+              "honest_claims": _HONEST_CLAIMS}
+    witness_record = _maybe_attach_v2_witness(
+        digest, rekor_v2_witness=rekor_v2_witness,
+        witness_signature_b64=witness_signature_b64,
+        witness_pubkey_pem=witness_pubkey_pem)
+    if witness_record is not None:
+        _rvw.record_in_metadata(result, witness_record)
+    return result
 
 
 def verify_submission(*, submission, audit_log_path, ca_public_key,
@@ -1196,7 +1277,8 @@ def submit_evidence_with_producer_claim(
         intent_digest, audit_log_path, ca_public_key, verify_time,
         identity_token, identity_issuer_public_key, producer_registry,
         requested_scope, claim_public_key,
-        transparency_log=None, now=None):
+        transparency_log=None, now=None, rekor_v2_witness=None,
+        witness_signature_b64=None, witness_pubkey_pem=None):
     """Claim-path submission: the evidence-cert ceremony MUST
     establish producer authorization BEFORE the transparency log sees
     the digest.
@@ -1216,6 +1298,11 @@ def submit_evidence_with_producer_claim(
     embedded at issuance time by
     ``EvidenceCA.issue(producer_authz_claim=...)``; this function
     never mints -- it verifies what the attestation carries.
+
+    Second witness (wave-278): same contract as ``submit_evidence`` --
+    ``rekor_v2_witness`` / ``witness_signature_b64`` /
+    ``witness_pubkey_pem``; the env flag ``GOV_REKOR_V2_WITNESS`` is
+    the master switch; flag-off returns the exact historical record.
     """
     now_s = _now_int(now)
     # (1) The ceremony: token -> producer, registry -> scope.
@@ -1275,11 +1362,18 @@ def submit_evidence_with_producer_claim(
             "evbundle-transparency-unavailable",
             "transparency provider %r failed: %r"
             % (getattr(log, "provider_name", "?"), e))
-    return {"kind": SUBMISSION_FORMAT,
-            "sealed": sealed,
-            "issuance_ref": {"cert_digest": sealed["cert_digest"],
-                             "audit_log_path": audit_log_path},
-            "transparency_receipt": receipt,
-            "producer_authz": {"producer": producer,
-                               "scope": requested_scope},
-            "honest_claims": _HONEST_CLAIMS}
+    result = {"kind": SUBMISSION_FORMAT,
+              "sealed": sealed,
+              "issuance_ref": {"cert_digest": sealed["cert_digest"],
+                               "audit_log_path": audit_log_path},
+              "transparency_receipt": receipt,
+              "producer_authz": {"producer": producer,
+                                 "scope": requested_scope},
+              "honest_claims": _HONEST_CLAIMS}
+    witness_record = _maybe_attach_v2_witness(
+        digest, rekor_v2_witness=rekor_v2_witness,
+        witness_signature_b64=witness_signature_b64,
+        witness_pubkey_pem=witness_pubkey_pem)
+    if witness_record is not None:
+        _rvw.record_in_metadata(result, witness_record)
+    return result

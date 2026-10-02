@@ -4443,6 +4443,267 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     pass
         return target, entry
 
+    def elicit_decision(self, approval_id, response, rationale=None,
+                        decided_by="human-operator", rationale_schema=None):
+        """Wave-278 lane 5: tri-state elicitation decision.
+
+        Thin seam over the elicitation contract
+        (``gov/elicitation_contract.py`` -- ADAPT of MCP
+        ``elicitation/create``, 2026-07-28 RC, mechanism only). All
+        contract logic -- response vocabulary, flat rationale schema,
+        secret ban, re-prompt budget -- lives in that module; this
+        method only sequences the queue-side checks and delegates the
+        terminal disposition to the existing paths. ``decide()``
+        itself is untouched: its behavior is byte-identical for all
+        current callers.
+
+        ``response`` must be exactly ``"accept"`` | ``"decline"`` |
+        ``"cancel"``. ``rationale`` is a flat dict validated against
+        ``rationale_schema`` (default
+        ``elicitation_contract.DEFAULT_RATIONALE_SCHEMA``); a decline
+        REQUIRES a non-empty schema-valid rationale, accept/cancel
+        allow an absent rationale (validated when present).
+
+        Sequencing (fail-closed throughout; every refusal is
+        audit-logged BEFORE the ValueError propagates, mirroring
+        decide()'s attempt-logging discipline):
+
+        1. response vocabulary check;
+        2. record lookup (unknown id -> ``elicitation_refused``);
+        3. decide()'s pre-checks, via the same internal helpers --
+           pending status, separation of duties (requester alias via
+           ``target["agent_id"]`` and the delegator lineage via
+           ``_delegator_lineage_ids``), the F38 integrity digest via
+           ``_pending_record_content_ok``, and the S3 packet
+           re-verification via ``_packet_digest_ok``;
+        4. rationale schema + contract validation (malformed schema,
+           missing/invalid rationale -> ``elicitation_refused``;
+           failed validation does NOT burn the re-prompt budget);
+        5. secret ban: credential-shaped material in the rationale ->
+           LOUD ``elicitation_secret_detected`` event (decider bound,
+           secret never echoed), the record stays pending;
+        6. re-prompt budget: ``elicitation_attempts`` persisted on the
+           record; at ``MAX_ELICITATIONS`` (3) well-formed
+           elicitations are refused with ``elicitation_budget_exhausted``;
+        7. burn one attempt (crash-atomic ``_rewrite``; for cancel the
+           burn rides the same write as the cancellation), then
+           dispatch:
+
+           * accept -> ``decide(approved=True, reason=rationale or
+             default)`` -- decide()'s own gates (ceremony integrity,
+             cooling-off, approver shield, fatigue, type-to-confirm)
+             still apply;
+           * decline -> ``decide(approved=False, reason=rationale)`` --
+             the rationale is chained into the audit log through
+             decide()'s existing reason logging
+             (``decision_reason`` + the ``approval_decision`` entry);
+           * cancel -> the elicitation was dismissed WITHOUT a
+             decision. The record is NOT left pending silently:
+             status becomes ``"cancelled"`` (re-MACed with the
+             decider bound, F43) with an ``elicitation_cancelled``
+             audit event. The executor only executes
+             ``status == "approved"`` records
+             (``ToolExecutor._execute_approved_locked``), so a
+             cancelled record can never execute.
+
+        Raises ``elicitation_contract.ElicitationError`` (a
+        ValueError) on every refusal; returns ``(record, log_entry)``
+        like decide().
+        """
+        from gov import elicitation_contract as _ec
+        request_id = _ec.new_request_id()
+
+        def _refuse(event, note, record=None, **extra):
+            try:
+                _entry = {
+                    "event": event,
+                    "run_id": (record or {}).get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": (record or {}).get("tool"),
+                    "approval_id": approval_id,
+                    "request_id": request_id,
+                    "elicitation_response": response,
+                    "decided_by": decided_by,
+                    "related_agent": (record or {}).get("agent_id"),
+                    "reason": note,
+                }
+                _entry.update(extra)
+                self._log(_entry)
+            except Exception:
+                # The refusal stands regardless; a logging outage must
+                # not turn a refusal into a decision.
+                pass
+            raise _ec.ElicitationError(note)
+
+        # 1. Tri-state vocabulary.
+        if response not in _ec.ELICITATION_RESPONSES:
+            _refuse("elicitation_refused",
+                    "unknown elicitation response %r: must be one of "
+                    "%s" % (response,
+                            "/".join(_ec.ELICITATION_RESPONSES)))
+
+        # 2. Record lookup.
+        target = None
+        for _r in self.all():
+            if _r["id"] == approval_id:
+                target = _r
+                break
+        if target is None:
+            _refuse("elicitation_refused",
+                    "elicitation attempted on unknown approval id")
+
+        # 3. decide()'s pre-checks, via the same internal helpers --
+        # pending + separation of duties + integrity digest + packet
+        # re-verification, BEFORE any contract validation or budget
+        # touch. (Mirrors decide()'s order and messages; the helpers
+        # themselves are shared, not duplicated.)
+        if target.get("status") != "pending":
+            _refuse("elicitation_refused",
+                    "elicitation attempted on %s approval"
+                    % (target.get("status"),),
+                    target)
+        if decided_by == target.get("agent_id"):
+            _refuse(
+                "elicitation_refused",
+                "separation of duties: requesting agent attempted to "
+                "elicit its own approval",
+                target)
+        _deleg_ids = _delegator_lineage_ids(target)
+        if decided_by is not None and decided_by in _deleg_ids:
+            _refuse(
+                "elicitation_refused",
+                "separation of duties: delegating agent attempted to "
+                "elicit an approval queued under its delegation grant",
+                target)
+        if not _pending_record_content_ok(target):
+            _refuse(
+                "elicitation_refused",
+                "elicitation refused: the pending record failed "
+                "integrity verification (tampered after queueing)",
+                target)
+        if not _packet_digest_ok(target):
+            _refuse(
+                "elicitation_refused",
+                "elicitation refused: the decision packet failed "
+                "re-verification (tampered after display)",
+                target)
+
+        # 4. Rationale schema + contract. Failed validation refuses
+        # WITHOUT burning the re-prompt budget.
+        try:
+            _schema = _ec.validate_flat_schema(
+                rationale_schema if rationale_schema is not None
+                else _ec.DEFAULT_RATIONALE_SCHEMA)
+        except _ec.ElicitationError as _exc:
+            _refuse("elicitation_refused",
+                    "rationale schema rejected: %s" % (_exc,), target)
+        if response == "decline":
+            if not isinstance(rationale, dict) or not rationale:
+                _refuse(
+                    "elicitation_refused",
+                    "decline requires a non-empty schema-valid "
+                    "rationale: the elicitation contract refuses "
+                    "reasonless rejections",
+                    target)
+        if rationale is not None:
+            try:
+                _ec.validate_rationale(rationale, _schema)
+            except _ec.ElicitationError as _exc:
+                _refuse("elicitation_refused",
+                        "rationale failed schema validation: %s"
+                        % (_exc,),
+                        target)
+
+        # 5. Secret ban: the server MUST NOT traffic secrets over the
+        # elicitation channel. Fail closed -- the response is REFUSED,
+        # the record stays pending, and the LOUD event binds the
+        # decider without ever echoing the secret.
+        if rationale is not None:
+            _blob = _ec.render_rationale(response, rationale)
+            if _ec.credential_material_present(_blob):
+                _refuse(
+                    "elicitation_secret_detected",
+                    "credential-shaped material detected in the "
+                    "elicitation rationale: response REFUSED, the "
+                    "record stays pending, and the value is withheld "
+                    "from this log (never echo secrets)",
+                    target,
+                    rationale_keys=sorted(rationale.keys()))
+
+        # 6. Re-prompt budget: only well-formed elicitations reach
+        # here, so reaching here burns one attempt.
+        try:
+            _attempts = int(target.get("elicitation_attempts") or 0)
+        except (TypeError, ValueError):
+            _attempts = 0
+        if _attempts >= _ec.MAX_ELICITATIONS:
+            _refuse(
+                "elicitation_budget_exhausted",
+                "elicitation budget exhausted: %d well-formed "
+                "elicitations already recorded for approval %r "
+                "(max %d); further elicitations are refused "
+                "fail-closed, the record keeps its current state"
+                % (_attempts, approval_id, _ec.MAX_ELICITATIONS),
+                target,
+                elicitation_attempts=_attempts)
+        _burned = _attempts + 1
+
+        # 7a. Cancel: dismissed WITHOUT a decision. Never leave the
+        # record pending silently -- terminal "cancelled" status in
+        # the same atomic write as the budget burn, re-MACed with the
+        # decider bound (F43). The executor's approved sweep only
+        # executes status == "approved", so a cancelled record can
+        # never execute.
+        if response == "cancel":
+            target["status"] = "cancelled"
+            target["decided_by"] = decided_by
+            target["decided_at"] = _utcnow()
+            target["elicitation_attempts"] = _burned
+            target["args_digest"] = approval_record_digest(target)
+            # NOTE: all() re-parses from disk, so the mutated target
+            # must be spliced into the rewritten records explicitly
+            # (same discipline as decide()).
+            self._rewrite(lambda records: [
+                target if r["id"] == target["id"] else r
+                for r in records])
+            entry = self._log({
+                "event": "elicitation_cancelled",
+                "run_id": target.get("run_id"),
+                "agent_id": "human-operator",
+                "role": "approver",
+                "principal": "human-operator",
+                "tool": target.get("tool"),
+                "approval_id": target["id"],
+                "request_id": request_id,
+                "decided_by": decided_by,
+                "related_agent": target.get("agent_id"),
+                "elicitation_attempts": _burned,
+                "reason": ("the elicitation was dismissed without a "
+                           "decision: approval %r is cancelled and "
+                           "will never execute" % (target["id"],)),
+            })
+            return target, entry
+
+        # 7b. Accept/decline: burn the attempt, then delegate the
+        # terminal disposition to decide() -- its gates (ceremony
+        # integrity, cooling-off, approver shield, fatigue escalation,
+        # type-to-confirm) still apply, and the rationale rides its
+        # existing reason logging into the audit trail.
+        self._rewrite(lambda records: [
+            dict(r, elicitation_attempts=_burned)
+            if r["id"] == target["id"] else r for r in records])
+        if rationale is not None:
+            _reason = _ec.render_rationale(response, rationale)
+        else:
+            _reason = _ec.DEFAULT_ACCEPT_REASON
+        if response == "accept":
+            return self.decide(approval_id, True, _reason,
+                               decided_by=decided_by)
+        return self.decide(approval_id, False, _reason,
+                           decided_by=decided_by)
+
     def revoke(self, approval_id, reason, revoker):
         """Wave-131 (row-7 revoke-after-approve): revoke an approval so
         it can never be consumed.
