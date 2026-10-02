@@ -1,6 +1,6 @@
 """Unit tests for gov/policy_exception.py (wave-268 lane).
 
-Pin 1493 is asserted here; repointed by the wave-275 merge coordinator.
+Pin 1494 is asserted here; repointed by the wave-275 merge coordinator.
 """
 
 import hashlib

@@ -12823,6 +12823,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'tool-guardrail-tripwire': {
+        "domain": 'guardrail',
+        "code": 'tool-guardrail-tripwire',
+        "human": 'a per-tool guardrail halted the run (raise_exception) or '
+                 'the guard itself failed: loud fail-closed halt, distinct '
+                 'from policy refusals',
+        "severity": 'high',
+        "evidence_kinds_required": ['guardrail-tripwire'],
+        "reverify_steps": ['recompute'],
+    },
     'tool-scope-undeclared': {
         "domain": 'token-scope',
         "code": 'tool-scope-undeclared',
