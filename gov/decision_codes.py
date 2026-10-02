@@ -5192,6 +5192,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['checkpoint'],
         "reverify_steps": ['re-verify-consistency'],
     },
+    'evbundle-contract-refused': {
+        "domain": 'evbundle',
+        "code": 'evbundle-contract-refused',
+        "human": 'evidence bundle v2: the artifact body fails the evidence '
+                 'contract for its invocation class (missing or malformed '
+                 'materials, out-of-vocabulary decision, or unknown class); '
+                 'refused at seal time, fail-closed -- a signed bundle '
+                 'attests both integrity and compliance',
+        "severity": 'medium',
+        "evidence_kinds_required": ['contract'],
+        "reverify_steps": ['re-verify-contract'],
+    },
     'evbundle-inclusion-unverified': {
         "domain": 'evbundle',
         "code": 'evbundle-inclusion-unverified',

@@ -1,0 +1,33 @@
+# Evidence contract: tool_execution (revision 1)
+#
+# Declares what a sealed evidence bundle for an approved tool run MUST
+# contain before the sealer signs. The sealer (gov/evidence_bundle_v2.py)
+# is the authority: it validates this contract at seal time with the
+# same validator the assembler pre-checks use, so the two cannot drift
+# (Chainloop PR #3465 steal: signature != compliance).
+apiVersion: sasanam.dev/v1
+kind: EvidenceContract
+invocation_class: tool_execution
+revision: 1
+description: >-
+  A tool that ran under an approval. The bundle must bind the run to
+  the approval receipt, the approved intent, the tool's output digest,
+  the elicitation outcome that authorized it, and the policy version
+  that governed it.
+materials:
+  - name: approval_id
+    kind: required_string
+    description: join key to the approval receipt that authorized this run
+  - name: intent_digest
+    kind: digest64
+    description: sha256 (hex) of the canonical approved intent
+  - name: tool_output_digest
+    kind: digest64
+    description: sha256 (hex) of the canonical tool output bytes
+  - name: decision
+    kind: enum
+    vocabulary: [approve, decline, cancel]
+    description: elicitation tri-state outcome that authorized the run
+  - name: policy_version
+    kind: required_string
+    description: policy version string that governed the invocation

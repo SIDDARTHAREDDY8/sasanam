@@ -59,6 +59,7 @@ from . import log as _audit_log
 from .ed25519 import sign as _ed_sign
 from .ed25519 import verify as _ed_verify
 from gov import decode_trust as _dt
+from gov import evidence_contract as _evcontract
 from .rekor_anchor import (
     _r6962_inclusion_proof,
     _r6962_leaf,
@@ -139,7 +140,8 @@ def build_artifact(body):
 
 
 def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
-                  intent_digest, ca_public_key, verify_time):
+                  intent_digest, ca_public_key, verify_time,
+                  invocation_class=None):
     """Seal an evidence artifact: chain-then-bind the producer's
     signature, then build the signature attestation.
 
@@ -148,6 +150,19 @@ def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
     ``_dt.seal_evidence``) seals a TrustEvidence over bytes for the
     trusted-decode paths. Same verb, different ceremonies; do not
     confuse them.
+
+    Seal-time contract authority (wave-279, Chainloop PR #3465 steal):
+    a body declaring ``invocation_class`` is validated against that
+    class's evidence contract (``gov/evidence_contracts/*.yaml``) by
+    the SAME validator the assembler pre-check
+    (``gov.evidence_contract.precheck_artifact``) uses -- the sealer,
+    not the assembler, decides compliance, and the two cannot drift.
+    A body failing the contract is refused with the coded verdict
+    ``evbundle-contract-refused`` (fail-closed); a signed bundle
+    therefore attests BOTH integrity and compliance. A body declaring
+    no class takes the legacy path (no contract applies); an unknown
+    class is refused. ``invocation_class`` here overrides the body's
+    own declaration.
 
     ``artifact_signature`` is the 64-byte Ed25519 signature over the
     canonical artifact-body bytes, made by the certificate's subject
@@ -164,6 +179,16 @@ def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
         raise EvidenceBundleV2Error(
             "evbundle-malformed",
             "artifact_signature must be 64 bytes")
+    # Contract BEFORE signature verification: fail-closed on content
+    # before crypto. The coded verdict is evbundle-contract-refused;
+    # the machine-readable violations ride on the error.
+    try:
+        _evcontract.validate_or_raise(artifact_body=artifact_body,
+                                      invocation_class=invocation_class)
+    except _evcontract.ContractRefused as e:
+        err = EvidenceBundleV2Error(_evcontract.CONTRACT_CODE, e.detail)
+        err.violations = e.violations
+        raise err
     artifact, digest = build_artifact(artifact_body)
     # Chain first, then binding -- raises evcert-* on any failure.
     verify_evidence_signature(cert=cert,
@@ -1152,7 +1177,8 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
                     approval_id, intent_digest, audit_log_path,
                     ca_public_key, verify_time, transparency_log=None,
                     now=None, rekor_v2_witness=None,
-                    witness_signature_b64=None, witness_pubkey_pem=None):
+                    witness_signature_b64=None, witness_pubkey_pem=None,
+                    invocation_class=None):
     """Seal an evidence artifact and submit it to the transparency log.
 
     Order: seal (chain-then-binding; ``evcert-*`` failures propagate),
@@ -1180,7 +1206,8 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
                            approval_id=approval_id,
                            intent_digest=intent_digest,
                            ca_public_key=ca_public_key,
-                           verify_time=verify_time)
+                           verify_time=verify_time,
+                           invocation_class=invocation_class)
     find_issuance_attestation(audit_log_path=audit_log_path,
                              cert_digest=sealed["cert_digest"])
     digest = sealed["artifact"]["artifact_digest"]
@@ -1278,7 +1305,8 @@ def submit_evidence_with_producer_claim(
         identity_token, identity_issuer_public_key, producer_registry,
         requested_scope, claim_public_key,
         transparency_log=None, now=None, rekor_v2_witness=None,
-        witness_signature_b64=None, witness_pubkey_pem=None):
+        witness_signature_b64=None, witness_pubkey_pem=None,
+        invocation_class=None):
     """Claim-path submission: the evidence-cert ceremony MUST
     establish producer authorization BEFORE the transparency log sees
     the digest.
@@ -1317,12 +1345,17 @@ def submit_evidence_with_producer_claim(
             "producer_registry must be a ProducerRegistry")
     producer_registry.check(producer, requested_scope)
     # (2) Seal + issuance join (honest layering: evcert-* propagate).
+    # Seal-time contract authority: the sealer validates the body's
+    # invocation-class contract here (evbundle-contract-refused on
+    # failure) -- it is re-checked at this seam even when the caller
+    # pre-checked, because the sealer is the authority.
     sealed = seal_evidence(artifact_body=artifact_body, cert=cert,
                            artifact_signature=artifact_signature,
                            approval_id=approval_id,
                            intent_digest=intent_digest,
                            ca_public_key=ca_public_key,
-                           verify_time=verify_time)
+                           verify_time=verify_time,
+                           invocation_class=invocation_class)
     issuance = find_issuance_attestation(
         audit_log_path=audit_log_path,
         cert_digest=sealed["cert_digest"])

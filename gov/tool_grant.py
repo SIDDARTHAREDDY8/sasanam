@@ -73,7 +73,7 @@ _PROOF_SKEW_S = 60
 _MAX_LIFETIME_S = 3600
 
 # ---------------------------------------------------------------------------
-# Decision codes (ptgrant domain; merged taxonomy pin 1493)
+# Decision codes (ptgrant domain; merged taxonomy pin 1494)
 # ---------------------------------------------------------------------------
 
 PTGRANT_CODES = [

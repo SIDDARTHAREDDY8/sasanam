@@ -1,0 +1,28 @@
+# Evidence contract: redteam_probe (revision 1)
+#
+# Declares what a sealed evidence bundle for a red-team probe result
+# MUST contain before the sealer signs. Enforced seal-side by the
+# shared validator (Chainloop PR #3465 steal: signature != compliance).
+apiVersion: sasanam.dev/v1
+kind: EvidenceContract
+invocation_class: redteam_probe
+revision: 1
+description: >-
+  An adversarial probe result sealed as evidence. The bundle must
+  identify the probe, bind it to the battery digest it ran in, and
+  record the expected and actual verdicts from the fixed vocabulary.
+materials:
+  - name: probe_id
+    kind: required_string
+    description: stable identifier of the probe
+  - name: battery_digest
+    kind: digest64
+    description: sha256 (hex) of the canonical battery definition
+  - name: expected
+    kind: enum
+    vocabulary: [BREAK, HELD, ERROR]
+    description: expected probe verdict
+  - name: actual
+    kind: enum
+    vocabulary: [BREAK, HELD, ERROR]
+    description: observed probe verdict

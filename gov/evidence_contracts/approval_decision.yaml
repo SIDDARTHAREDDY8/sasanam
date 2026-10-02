@@ -1,0 +1,27 @@
+# Evidence contract: approval_decision (revision 1)
+#
+# Declares what a sealed evidence bundle for an approval decision MUST
+# contain before the sealer signs. Enforced seal-side by the shared
+# validator (Chainloop PR #3465 steal: signature != compliance).
+apiVersion: sasanam.dev/v1
+kind: EvidenceContract
+invocation_class: approval_decision
+revision: 1
+description: >-
+  A human/agent approval decision (elicitation tri-state). The bundle
+  must carry the approval join key, the tri-state decision, the decider
+  identity, and a non-empty rationale so the decision is auditable.
+materials:
+  - name: approval_id
+    kind: required_string
+    description: join key to the approval record
+  - name: decision
+    kind: enum
+    vocabulary: [approve, decline, cancel]
+    description: elicitation tri-state decision
+  - name: decider
+    kind: required_string
+    description: identity of the deciding principal
+  - name: rationale
+    kind: required_string
+    description: non-empty rationale for the decision

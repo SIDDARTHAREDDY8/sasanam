@@ -88,7 +88,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 # Merge pin: 1411 (wave-270 merge). Counted on QUOTED source literals
 # ("code": '...') -- the bare '"code": ' substring overcounts by 2.
-TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -129,7 +129,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1493: 1493 unique literals"
+    return "HELD", "taxonomy pin 1494: 1494 unique literals"
 
 
 def _seed(i):

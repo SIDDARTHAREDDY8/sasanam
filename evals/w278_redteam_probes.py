@@ -95,7 +95,7 @@ import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 import gov.rekor_v2_witness as rw                     # noqa: E402
 
-TAXONOMY_PIN = 1493  # Wave-277 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1494  # Wave-277 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -122,7 +122,7 @@ def _pin_check():
         return "BREAK", "duplicate code literals in taxonomy"
     if literals != sorted(literals):
         return "BREAK", "taxonomy literals not sorted"
-    return "HELD", "taxonomy pin 1493: 1493 unique sorted literals"
+    return "HELD", "taxonomy pin 1494: 1494 unique sorted literals"
 
 
 # ---------------------------------------------------------------------------
