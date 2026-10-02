@@ -355,8 +355,8 @@ class TestTaxonomy(unittest.TestCase):
 
     def test_pin(self):
         from gov import decision_codes as dc
-        self.assertEqual(len(dc.TAXONOMY), 1726)
-        self.assertEqual(len(set(dc.TAXONOMY)), 1726)
+        self.assertEqual(len(dc.TAXONOMY), 1730)
+        self.assertEqual(len(set(dc.TAXONOMY)), 1730)
         self.assertEqual(sorted(dc.TAXONOMY), list(dc.TAXONOMY))
 
 

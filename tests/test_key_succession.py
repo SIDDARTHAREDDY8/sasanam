@@ -371,8 +371,8 @@ class DecisionCodeTest(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(__file__), "..",
                                 "gov", "decision_codes.py")).read()
         codes = _re.findall(r"\"code\":\s*'([a-z][a-z0-9-_.]*)'", src)
-        self.assertEqual(len(codes), 1727)
-        self.assertEqual(len(set(codes)), 1727)
+        self.assertEqual(len(codes), 1730)
+        self.assertEqual(len(set(codes)), 1730)
         self.assertEqual(codes, sorted(codes))
 
 

@@ -75,7 +75,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-290 merge: pin 1706 -> 1710 (+4 provenance-rebuild-*).
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _results = []
 
@@ -117,7 +117,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1726/1726/0 sorted")
+    _record("pin-taxonomy", "HELD", "1730/1730/0 sorted")
 
 
 # ---------------------------------------------------------------------------

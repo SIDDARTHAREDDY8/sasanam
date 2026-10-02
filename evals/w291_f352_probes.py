@@ -46,7 +46,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-290 merge: pin 1706 -> 1710 (+4 provenance-rebuild-*). F352 lane
 # mints no new decision codes.
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _results = []
 
@@ -69,7 +69,7 @@ def p_taxonomy_pin():
                        "taxonomy pin drift: %d literals, want %d"
                        % (len(lits), TAXONOMY_PIN))
     _record("pin-taxonomy", "HELD",
-            "taxonomy pin 1726 holds (raw source literals)")
+            "taxonomy pin 1730 holds (raw source literals)")
 
 
 def _boom(ev):

@@ -14,7 +14,7 @@ from gov import delegation_chain as dc
 from gov import decision_codes as dcd
 from gov import ed25519
 
-TAXONOMY_PIN = 1726  # Wave-291 lane 6: pin 1710 -> 1715 (+5 delegation-*).; Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*); Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
+TAXONOMY_PIN = 1730  # Wave-291 lane 6: pin 1710 -> 1715 (+5 delegation-*).; Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*); Wave-293 lane 2: pin 1730 -> 1730 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
 
 NOW = 4000000000.0
 NONCE_A = "aa" * 16

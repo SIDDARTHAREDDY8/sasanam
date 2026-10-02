@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # F326 adds no new decision codes (reuses recipient-policy-invalid);
 # pin stays at the wave-285 value 1641.
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _RESULTS = []
 

@@ -44,7 +44,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1727  # Wave-293 lane 3: pin 1723 -> 1727 (+4 keysuccession-*)
+TAXONOMY_PIN = 1730  # Wave-293 lane 3: pin 1730 -> 1730 (+4 keysuccession-*)
 
 _results = []
 
@@ -87,7 +87,7 @@ def p_taxonomy_pin():
         if want not in lits:
             return _record("pin-taxonomy", "BREAK",
                            "missing expected code %r" % want)
-    _record("pin-taxonomy", "HELD", "1727 raw literals, unique, sorted")
+    _record("pin-taxonomy", "HELD", "1730 raw literals, unique, sorted")
 
 
 def _import_ks():

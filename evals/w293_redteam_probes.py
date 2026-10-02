@@ -39,7 +39,7 @@ Re-pins at the public seams:
   F311-F359 (CLOSED) -- 0 BREAK expected (w291_redteam, w290_redteam,
       w290_rebuild, w291_delegation, w292_f356, w292_sweep,
       w292_revocation, w292_delegation_decay subprocesses).
-  F360 (OPEN at base) -- 4 BREAK expected-open (w292_redteam:
+  F360 (CLOSED by wave-293 lane 1) -- 0 BREAK expected (w292_redteam:
       ob-pubkey-hex-uncoded, ob-manifest-enveloped-uncoded,
       ob-ledger-line-uncoded, ob-manifest-json-uncoded).
 
@@ -78,7 +78,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-292 merge: pin 1715 -> 1723 (+4 revocation-* +4 delegation-*).
-TAXONOMY_PIN = 1723
+TAXONOMY_PIN = 1730
 
 _results = []
 
@@ -120,7 +120,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1723/1723/0 sorted")
+    _record("pin-taxonomy", "HELD", "1730/1730/0 sorted")
 
 
 def _seed():
@@ -1052,7 +1052,7 @@ def _run_battery(rel, expected_breaks, label):
 
 def p_repins():
     before = len(_results)
-    _run_battery("evals/w292_redteam_probes.py", 4, "w292")
+    _run_battery("evals/w292_redteam_probes.py", 0, "w292")  # wave-293 merge: F360 closed
     _run_battery("evals/w292_f356_probes.py", 0, "w292-f356")
     _run_battery("evals/w292_sweep_probes.py", 0, "w292-sweep")
     _run_battery("evals/w292_revocation_probes.py", 0, "w292-revocation")

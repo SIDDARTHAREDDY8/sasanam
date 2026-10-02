@@ -12,7 +12,7 @@ from gov import evidence_anchor as _ea
 from gov import evidence_receipt as _er
 from gov import timestamp_authority as tsa
 
-TAXONOMY_PIN = 1726  # Wave-287 lane 6: pin 1660 -> 1667 (+7 tsa-*).; Wave-287 merge: pin 1667 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*); Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*); Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
+TAXONOMY_PIN = 1730  # Wave-287 lane 6: pin 1660 -> 1667 (+7 tsa-*).; Wave-287 merge: pin 1667 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*); Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*); Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-293 lane 2: pin 1730 -> 1730 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
 
 TSA_SEED = bytes(range(32))
 TSA_PUB = _ed25519.publickey(TSA_SEED).hex()

@@ -310,7 +310,7 @@ class FindingsMdTest(unittest.TestCase):
         # parse exceptions on corrupt bundle files); F360 closed
         # 2026-10-02, wave-293 lane 1 (all four parse sites refuse
         # coded OfflineBundleError; w293_f360 0 BREAK / 10 HELD;
-        # w292_redteam 0 BREAK; taxonomy pin 1723 unchanged);
+        # w292_redteam 0 BREAK; taxonomy pin 1730 unchanged);
         # F361-F363 filed then closed 2026-10-02, wave-293 lane 6
         # (uncoded-exception sweep of wave-292 modules: revocation_status
         # verify seams, verify_monitor_report, digest_of circular

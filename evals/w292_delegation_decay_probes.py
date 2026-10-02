@@ -57,7 +57,7 @@ from gov import ed25519  # noqa: E402
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _results = []
 
@@ -150,7 +150,7 @@ def p_taxonomy_pin():
             ok = False
     # delegation-expired is reused, not re-minted (lane-6 precedent).
     if ok:
-        _record("pin-taxonomy", "HELD", "1726/1726/0 sorted")
+        _record("pin-taxonomy", "HELD", "1730/1730/0 sorted")
     else:
         _record("pin-taxonomy", "BREAK",
                 "taxonomy pin mismatch: %d literals" % len(codes))

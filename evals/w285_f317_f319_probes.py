@@ -49,7 +49,7 @@ sys.path.insert(0, os.path.join(REPO, "evals"))
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-284 merge: pin 1587 -> 1621. No new decision codes in this lane.
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _results = []
 

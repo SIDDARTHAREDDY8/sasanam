@@ -50,7 +50,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-292 merge: pin 1715 -> 1723 (+8 revocation/delegation codes).
 # This lane mints no new codes (all escapes map to existing ones).
-TAXONOMY_PIN = 1723
+TAXONOMY_PIN = 1730
 
 _results = []
 
@@ -92,7 +92,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1723/1723/0 sorted")
+    _record("pin-taxonomy", "HELD", "1730/1730/0 sorted")
 
 
 # ---------------------------------------------------------------------------

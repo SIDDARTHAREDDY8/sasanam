@@ -47,7 +47,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g287-ear")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-287 lane 8: pin 1660 -> 1670 (+10 trustvec-* codes).; Wave-287 merge: pin 1670 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 1726
+TAXONOMY_PIN = 1730
 
 _RESULTS = []
 
