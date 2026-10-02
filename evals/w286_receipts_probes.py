@@ -39,7 +39,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g286-receipts")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-286 lane 7: pin 1641 -> 1647 (+6 receipt-* codes).
-TAXONOMY_PIN = 1715
+TAXONOMY_PIN = 1723
 
 _RESULTS = []
 

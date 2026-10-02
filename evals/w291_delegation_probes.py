@@ -41,7 +41,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1715
+TAXONOMY_PIN = 1723  # Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*)
 
 _results = []
 
@@ -77,7 +77,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1715/1715/0 sorted")
+    _record("pin-taxonomy", "HELD", "1723/1723/0 sorted")
 
 
 # ---------------------------------------------------------------------------
@@ -153,6 +153,7 @@ def _delegate(seed, held, audience, caps, parent=None, **kw):
            "capabilities": caps,
            "not_before": NOW - 100.0,
            "not_after": NOW + 3600.0,
+           "ttl": 3700,
            "parent": parent}
     req.update(kw)
     return dc.delegate(seed, held, req)

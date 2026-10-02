@@ -4,7 +4,7 @@ Covers proof-of-possession invocation, ceremony nonce binding
 (composition with wave-289's ceremony_binding), bounded root policy,
 and the narrowing guarantees in gov/delegation_chain.py.
 
-Pin is lane-local (1715 base + 5 delegation-* = 1715); the wave
+Pin is lane-local (1723 base + 5 delegation-* = 1723); the wave
 merge coordinator repoints the rest of the tree.
 """
 
@@ -14,7 +14,7 @@ from gov import delegation_chain as dc
 from gov import decision_codes as dcd
 from gov import ed25519
 
-TAXONOMY_PIN = 1715  # Wave-291 lane 6: pin 1710 -> 1715 (+5 delegation-*).
+TAXONOMY_PIN = 1723  # Wave-291 lane 6: pin 1710 -> 1715 (+5 delegation-*).; Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*)
 
 NOW = 4000000000.0
 NONCE_A = "aa" * 16
@@ -38,6 +38,7 @@ def _delegate(seed, held, audience, caps, parent=None, **kw):
            "capabilities": caps,
            "not_before": NOW - 100.0,
            "not_after": NOW + 3600.0,
+           "ttl": 3700,
            "parent": parent}
     req.update(kw)
     return dc.delegate(seed, held, req)

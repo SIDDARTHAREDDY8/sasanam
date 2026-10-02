@@ -118,6 +118,8 @@ THREAT MODEL (read this before trusting a provenance claim):
 import hashlib
 import json
 import re
+
+from gov import revocation_status as _revocation
 import time
 
 from gov import ed25519 as _ed25519
@@ -226,9 +228,15 @@ class BuilderPolicy:
     without one. Empty by default -- re-derivation is opt-in per
     builder, never a silent default that changes the admission
     posture.
+
+    ``revocation_required`` names revocation ids (rids) whose signed
+    status must be presented and enforced at verify time (opt-in
+    revocation demand, same posture: empty by default, never a
+    silent default).
     """
 
-    def __init__(self, policy_id, builders, rebuild_required=()):
+    def __init__(self, policy_id, builders, rebuild_required=(),
+                 revocation_required=()):
         if not isinstance(policy_id, str) or \
                 not _BUILDER_ID_RE.match(policy_id):
             _fail(ENVELOPE_MALFORMED, "policy id fails grammar")
@@ -267,6 +275,23 @@ class BuilderPolicy:
                       "rebuild_required names unknown builder %r" % (bid,))
             req.add(bid)
         self.rebuild_required = frozenset(req)
+        # Revocation demand (opt-in): rids whose signed status must be
+        # presented and enforced at verify time. Empty by default --
+        # revocation enforcement changes no default admission posture
+        # (honest default: enforcement stays opt-in until the
+        # key-succession ceremony exists).
+        if not isinstance(revocation_required,
+                          (list, tuple, set, frozenset)):
+            _fail(ENVELOPE_MALFORMED,
+                  "revocation_required must be a sequence of rids")
+        rreq = set()
+        for rid in revocation_required:
+            if not isinstance(rid, str) or \
+                    not _revocation.RID_GRAMMAR.match(rid):
+                _fail(ENVELOPE_MALFORMED,
+                      "revocation_required rid fails grammar: %r" % (rid,))
+            rreq.add(rid)
+        self.revocation_required = frozenset(rreq)
         self.policy_id = policy_id
 
     def pubkey_for(self, builder_id):
@@ -352,7 +377,10 @@ def seal_provenance(claim, signer_seed):
     seed = bytes(signer_seed)
     if len(seed) != 32:
         _fail(ENVELOPE_MALFORMED, "signer seed is not 32 bytes")
-    keyid = claim.get("builder", {}).get("keyid", "")
+    builder = claim.get("builder")
+    if not isinstance(builder, dict):
+        _fail(ENVELOPE_MALFORMED, "claim.builder must be a dict")
+    keyid = builder.get("keyid", "")
     sig = _ed25519.sign(seed, _canonical(claim)).hex()
     return {"provenance": claim, "signature": sig, "keyid": keyid}
 
@@ -400,7 +428,8 @@ def _check_claim_shape(claim):
 
 def verify_provenance(envelope, builder_policy,
                       allow_unverified_materials=False,
-                      require_rebuild=False, material_bytes=None):
+                      require_rebuild=False, material_bytes=None,
+                      revocation_gate=None, revocation_statuses=()):
     """Verify a provenance envelope LOUD. Returns True.
 
     Checks, in order: envelope shape -> claim shape (the honesty
@@ -421,6 +450,19 @@ def verify_provenance(envelope, builder_policy,
     ``provenance-rebuild-mismatch``. A builder named in the policy's
     ``rebuild_required`` set triggers the same demand even without
     the kwarg (strict builder policy).
+
+    Revocation demand (opt-in): when the policy's
+    ``revocation_required`` is non-empty, the caller must pass a
+    ``revocation_gate`` (a ``gov.revocation_status.RevocationGate``
+    bound to the pinned registry key) and signed status envelopes in
+    ``revocation_statuses`` covering every demanded rid. The gate
+    verifies and enforces each status: a retired rid refuses
+    ``revocation-retired-reuse``, a revoked rid refuses
+    ``revocation-revoked``, missing coverage refuses
+    ``revocation-status-unverifiable``. A non-empty demand without a
+    gate refuses fail-closed -- a demand without a trust anchor is a
+    misconfiguration, never a silent pass. With an empty
+    ``revocation_required`` the default posture is unchanged.
     """
     if not isinstance(envelope, dict):
         _fail(ENVELOPE_MALFORMED, "envelope must be a dict")
@@ -464,6 +506,15 @@ def verify_provenance(envelope, builder_policy,
         builder_id in builder_policy.rebuild_required
     if need_rebuild:
         _rederive_and_compare(claim, builder_policy, material_bytes)
+    need_revocation = bool(builder_policy.revocation_required)
+    if need_revocation:
+        if revocation_gate is None:
+            _fail(_revocation.STATUS_UNVERIFIABLE,
+                  "policy demands revocation status for rids %r but no "
+                  "revocation gate was supplied: demand without a trust "
+                  "anchor refuses fail-closed"
+                  % (sorted(builder_policy.revocation_required),))
+        revocation_gate.require_all(revocation_statuses)
     _emit({"event": "provenance-verified", "builder": builder_id,
            "artifact": claim["artifact"]["digest"],
            "digest": claim_digest(claim)})
@@ -600,7 +651,13 @@ def check_rebuild_recipe(recipe, material_uris):
     inputs = recipe.get("inputs")
     if not isinstance(inputs, list) or not inputs:
         _fail(REBUILD_INVALID, "recipe inputs must be a non-empty list")
-    known = set(material_uris or [])
+    if material_uris is None:
+        material_uris = []
+    if not isinstance(material_uris, (list, tuple, set, frozenset)) or \
+            any(not isinstance(uri, str) for uri in material_uris):
+        _fail(REBUILD_INVALID,
+              "material_uris must be a sequence of URI strings")
+    known = set(material_uris)
     for uri in inputs:
         if not isinstance(uri, str) or uri not in known:
             _fail(REBUILD_INVALID,
@@ -687,11 +744,19 @@ def _check_rebuild_step(step, i, inputs):
 def execute_rebuild(recipe, material_bytes):
     """Execute a validated recipe over verifier-supplied material bytes.
 
-    Returns the 32-byte digest (the recipe must end with a terminal
-    ``sha256`` step -- enforced by check_rebuild_recipe). The caller
-    must validate the recipe first; execution trusts nothing and still
-    bounds every operation (fail closed on budget violations).
+    The recipe is self-validated here (``check_rebuild_recipe`` over
+    the supplied materials): malformed recipes refuse LOUD and coded
+    (``provenance-rebuild-invalid`` / ``provenance-rebuild-transform-
+    unknown``), so no caller can bypass the registration gate by
+    calling this seam directly. Returns the 32-byte digest (the recipe
+    must end with a terminal ``sha256`` step). Execution trusts nothing
+    and still bounds every operation (fail closed on budget
+    violations).
     """
+    # F356: the registration gate cannot be bypassed -- a direct call
+    # self-validates before touching the materials.
+    check_rebuild_recipe(recipe, set(material_bytes)
+                         if isinstance(material_bytes, dict) else set())
     total = 0
     for uri in recipe["inputs"]:
         blob = material_bytes.get(uri) \

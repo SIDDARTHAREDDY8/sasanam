@@ -4605,6 +4605,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-lineage-overflow': {
+        "domain": 'delegation',
+        "code": 'delegation-lineage-overflow',
+        "human": 'signed delegation chain: the verifier retirement '
+                 'lineage is full; a new succession was refused '
+                 'fail-closed rather than evicting lineage',
+        "severity": 'medium',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-malformed': {
         "domain": 'delegation',
         "code": 'delegation-malformed',
@@ -4632,6 +4642,17 @@ TAXONOMY = {
         "human": 'capability assessment: the delegation is not allowlisted',
         "severity": 'medium',
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-orphaned-branch': {
+        "domain": 'delegation',
+        "code": 'delegation-orphaned-branch',
+        "human": 'signed delegation chain: a presented chain routes '
+                 'through a retired hop into a child that is not the '
+                 'registered successor -- a forked branch minted under '
+                 'a retired leaf; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-parent-mismatch': {
@@ -4664,6 +4685,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-retired-reuse': {
+        "domain": 'delegation',
+        "code": 'delegation-retired-reuse',
+        "human": 'signed delegation chain: a retired (superseded) '
+                 'delegation was presented after its succession; reuse '
+                 'of a retired credential is a revocation event, not '
+                 'an authentication failure; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-root-exceeds-policy': {
         "domain": 'delegation',
         "code": 'delegation-root-exceeds-policy',
@@ -4691,6 +4723,16 @@ TAXONOMY = {
                  'signature failed to verify; refused fail-closed',
         "severity": 'high',
         "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-stale-lineage': {
+        "domain": 'delegation',
+        "code": 'delegation-stale-lineage',
+        "human": 'signed delegation chain: a delegation from a '
+                 'superseded generation was presented while a newer '
+                 'succession exists; stale lineage refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],
     },
     'delegation-state-mismatch': {
@@ -8422,6 +8464,19 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['egress', 'policy', 'consent'],
         "reverify_steps": ['recompute'],
+    },
+    'issuance-monitor-misissuance': {
+        "domain": 'issuance',
+        "code": 'issuance-monitor-misissuance',
+        "human": 'issuance monitoring: the signed monitor report carries '
+                 'misissuance findings (unexpected issuer key, rid '
+                 'collision, cross-issuer duplicate, out-of-window '
+                 'issuance, or malformed entries), or the monitor report '
+                 'itself is unverifiable; detection feeds revocation',
+        "severity": 'high',
+        "evidence_kinds_required": ['issuance-log', 'signature',
+                                   'monitor-report'],
+        "reverify_steps": ['verify-signature', 'check-revocation'],
     },
     'issuer-malformed': {
         "domain": 'authorization_receipt',
@@ -12565,6 +12620,29 @@ TAXONOMY = {
         "evidence_kinds_required": ['revocation-registry', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'revocation-retired-reuse': {
+        "domain": 'revocation',
+        "code": 'revocation-retired-reuse',
+        "human": 'credential revocation lineage: a retired credential '
+                 '(rotation successor named) was presented again; reuse '
+                 'of a retired credential is a REVOCATION EVENT, not an '
+                 'authentication failure -- refused LOUD',
+        "severity": 'high',
+        "evidence_kinds_required": ['revocation-registry', 'signature',
+                                   'revocation-status'],
+        "reverify_steps": ['verify-signature', 'check-revocation'],
+    },
+    'revocation-revoked': {
+        "domain": 'revocation',
+        "code": 'revocation-revoked',
+        "human": 'credential revocation lineage: the presented credential '
+                 'has been revoked; revoked credentials are refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['revocation-registry', 'signature',
+                                   'revocation-status'],
+        "reverify_steps": ['verify-signature', 'check-revocation'],
+    },
     'revocation-sink-nonatomic': {
         "domain": 'revocation',
         "code": 'revocation-sink-nonatomic',
@@ -12584,6 +12662,18 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['verification-result'],
         "reverify_steps": ['recompute'],
+    },
+    'revocation-status-unverifiable': {
+        "domain": 'revocation',
+        "code": 'revocation-status-unverifiable',
+        "human": 'credential revocation lineage: the revocation status '
+                 'envelope is malformed, signed by the wrong key, or '
+                 'covers an unknown rid; unknown is never active -- '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['revocation-registry', 'signature',
+                                   'revocation-status'],
+        "reverify_steps": ['verify-signature', 'check-revocation'],
     },
     'revoke_not_authorized': {
         "domain": 'approval',

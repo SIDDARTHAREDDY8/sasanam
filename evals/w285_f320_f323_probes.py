@@ -31,7 +31,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-285 lane 4 adds +1 inventory-identity-collision code (1621 -> 1622).; Wave-285 lane 4: pin 1621 -> 1622 (+1 inventory-identity-collision).
-TAXONOMY_PIN = 1715
+TAXONOMY_PIN = 1723
 
 _results = []
 

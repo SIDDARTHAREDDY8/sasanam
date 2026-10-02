@@ -297,7 +297,17 @@ class FindingsMdTest(unittest.TestCase):
         # wave-291 lane 3 (admission-registry freeze); F356 filed OPEN
         # 2026-10-02 by the wave-291 independent red team
         # (execute_rebuild never self-validates: malformed -> bare
-        # KeyError; unknown op silently passes bytes through).
+        # KeyError; unknown op silently passes bytes through); F356
+        # closed 2026-10-02, wave-292 lane 1 (execute_rebuild
+        # self-validates with check_rebuild_recipe at the seam top;
+        # w292_f356 0 BREAK / 13 HELD); F357-F359 filed then closed
+        # 2026-10-02, wave-292 lane 6 (uncoded-exception sweep:
+        # seal_provenance builder, check_rebuild_recipe material_uris,
+        # digest_of; w292_sweep 0 BREAK / 17 HELD); F360 filed OPEN
+        # 2026-10-02 by the wave-292 independent red team (as F357,
+        # renumbered at the wave-292 merge per the wave-272
+        # earliest-filed rule: verify_enveloped_ledger leaks uncoded
+        # parse exceptions on corrupt bundle files).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -306,9 +316,9 @@ class FindingsMdTest(unittest.TestCase):
                     "F336", "F337", "F338", "F339", "F340", "F341",
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
                     "F349", "F350", "F351", "F352", "F353", "F354",
-                    "F355"):
+                    "F355", "F356", "F357", "F358", "F359"):
             self.assertEqual(reg.get(num).state, "verified")
-        self.assertEqual(reg.get("F356").state, "open")
+        self.assertEqual(reg.get("F360").state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")
         self.assertGreaterEqual(len(reg.all()), 200)

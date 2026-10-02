@@ -27,7 +27,7 @@ import time
 
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
-TAXONOMY_PIN = 1715  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*); Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*)
+TAXONOMY_PIN = 1723  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*); Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*)
 # +9 callback-* +9 delegation-* +9 discipline-*. This battery adds
 # no gov/ code.
 
@@ -56,6 +56,7 @@ def _root_delegation(seedR, pubA, caps, nonce="n-root"):
         seedR, None,
         {"audience": pubA, "capabilities": caps,
          "not_before": NOW - 100, "not_after": NOW + 3600,
+         "ttl": 3700,
          "parent": None, "nonce": nonce})
 
 
@@ -79,6 +80,7 @@ def p_splice_unrelated_issuer():
         {"audience": pubX,
          "capabilities": [{"with": "fs:/docs", "can": ["read"]}],
          "not_before": NOW - 100, "not_after": NOW + 3600,
+         "ttl": 3700,
          "parent": root, "nonce": "n-splice"})
     assert splice["delegation"]["issuer"] !=\
         root["delegation"]["audience"], "harness: keys collided"
@@ -109,6 +111,7 @@ def p_splice_narrower_caps():
         {"audience": pubX,
          "capabilities": [{"with": "fs:/docs", "can": ["read"]}],
          "not_before": NOW - 100, "not_after": NOW + 3600,
+         "ttl": 3700,
          "parent": root, "nonce": "n-splice-narrow"})
     v = dc.DelegationVerifier([pubR])
     try:
@@ -131,6 +134,7 @@ def p_legit_chain_control():
         seedA, caps,
         {"audience": pubB, "capabilities": caps,
          "not_before": NOW - 100, "not_after": NOW + 3600,
+         "ttl": 3700,
          "parent": root, "nonce": "n-legit"})
     v = dc.DelegationVerifier([pubR], seed=os.urandom(32))
     try:
@@ -157,6 +161,7 @@ def p_attenuation_still_enforced():
         {"audience": pubB,
          "capabilities": [{"with": "fs:/", "can": ["read"]}],
          "not_before": NOW - 100, "not_after": NOW + 3600,
+         "ttl": 3700,
          "parent": root, "nonce": "n-wide"})
     v = dc.DelegationVerifier([pubR])
     try:

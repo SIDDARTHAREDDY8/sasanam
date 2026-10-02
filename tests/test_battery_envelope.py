@@ -131,8 +131,8 @@ class EmitVerifyTest(unittest.TestCase):
             src = f.read()
         literals = re.findall(
             r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
-        self.assertEqual(len(literals), 1715)
-        self.assertEqual(len(set(literals)), 1715)
+        self.assertEqual(len(literals), 1723)
+        self.assertEqual(len(set(literals)), 1723)
 
     def test_schema_shape(self):
         schema = be.envelope_schema()

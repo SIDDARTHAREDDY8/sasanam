@@ -297,7 +297,7 @@ class TaxonomyTest(unittest.TestCase):
                      "inventory-row-malformed", "inventory-schema-mismatch",
                      "inventory-unregistered"):
             self.assertIn(code, decision_codes.TAXONOMY)
-        self.assertEqual(len(decision_codes.TAXONOMY), 1715)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1723)
 
     def test_no_duplicate_code_literals(self):
         import re

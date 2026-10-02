@@ -15,8 +15,9 @@ spec text is read, copied, imported, or vendored):
 * **Chain of signed delegations.** Each delegation embeds the digest
   of its parent; the chain is verified hop by hop in a fixed order:
   type -> structure -> parent digest -> custody binding -> signature
-  -> root trust -> attenuation -> time window -> action coverage ->
-  replay. The root issuer must be pinned in the deployment's trust
+  -> root trust -> root policy -> ceremony -> attenuation -> time
+  window -> decay -> lineage -> action coverage -> replay. The root
+  issuer must be pinned in the deployment's trust
   anchors. The custody-binding step (F249) refuses any hop whose
   issuer is not the presented parent's audience, so a grafted hop
   from an unrelated keyholder cannot verify even when its digest
@@ -43,6 +44,24 @@ spec text is read, copied, imported, or vendored):
   refuses ``delegation-root-exceeds-policy``. The root remains the
   trust assumption (like a CA) -- the policy bounds it, it does not
   derive it.
+* **Decay with theft lineage (wave-292).** Every delegation carries
+  ``issued_at`` + ``ttl_seconds`` (+ a ``generation`` counter);
+  ``delegate()`` requires an explicit ``ttl`` -- there are no
+  unbounded delegations. Expiry (``issued_at + ttl_seconds``) is
+  verified at each hop (``delegation-expired``); pre-decay records
+  without the new fields are refused fail-closed (treated as
+  expired). ``rotate()`` re-issues a leaf in its slot (same
+  delegator, narrowing-only, ``generation + 1``) and mints a signed
+  succession record binding retired_digest -> successor_digest.
+  ``DelegationVerifier.register_succession()`` keeps a bounded
+  retirement lineage: presenting a retired leaf is a REVOCATION
+  EVENT (``delegation-retired-reuse``), not an auth failure; the
+  immediate predecessor is tolerated once (RECENT_PREV) with the
+  tolerance declared in the signed receipt; a forked child under a
+  retired leaf refuses ``delegation-orphaned-branch``; a superseded
+  generation refuses ``delegation-stale-lineage``; a full lineage
+  refuses new successions fail-closed
+  (``delegation-lineage-overflow``) -- lineage is never evicted.
 * **Capabilities are ``{with, can}`` pairs (UCAN-shaped).**
   ``with`` names the resource namespace (a prefix hierarchy:
   ``fs:/docs`` sits under ``fs:/``); ``can`` names the granted
@@ -90,7 +109,9 @@ signing seed are deployment-owned (no key ceremony here);
 ``audience`` is a recorded intent, not a proof of presentation --
 use :meth:`DelegationVerifier.verify_invocation` when presentation
 must be proven; replay/seen state is in-memory per verifier
-instance; the verifier sees the action's ``{with, can}`` shape, never
+instance; the retirement lineage is likewise in-memory and bounded
+(1024 successions -- deployments needing durable revocation persist
+it or re-register successions from the journal); the verifier sees the action's ``{with, can}`` shape, never
 the action payload. Wave-291 honest limitations: a compromised
 intermediate key is the compromised-host class (the chain still
 verifies; the narrowing proof only shows what was authorized, not
@@ -113,14 +134,24 @@ from . import ed25519
 DELEGATION_TYPE = "delegation.ucan.1"
 RECEIPT_TYPE = "delegation.receipt.1"
 INVOCATION_RECEIPT_TYPE = "delegation.invocation-receipt.1"
+SUCCESSION_TYPE = "delegation.succession.1"
 
 SIGN_DOMAIN = b"gov-delegation-sign/v1\x00"
 RECEIPT_DOMAIN = b"gov-delegation-receipt/v1\x00"
 POP_DOMAIN = b"gov-delegation-pop/v1\x00"
+SUCCESSION_DOMAIN = b"gov-delegation-succession/v1\x00"
 
 _POP_CHALLENGE_MIN = 16
 _POP_CHALLENGE_MAX = 1024
 _CEREMONY_NONCE_HEX_MIN = 16  # 64 bits of verifier challenge
+
+# Wave-292: ttl is a bounded relative lifetime. The cap is generous
+# (2**40 seconds ~ 35k years) -- its job is to refuse nonsense and
+# negative/zero lifetimes, not to pick a deployment policy.
+_TTL_MAX = 2 ** 40
+# Wave-292: bounded retirement lineage per verifier instance. Full
+# means fail-closed (DelegationLineageOverflow), never eviction.
+_LINEAGE_MAX = 1024
 
 _PUB_HEX_LEN = 64
 _SIG_HEX_LEN = 128
@@ -217,6 +248,36 @@ class DelegationRootExceedsPolicy(DelegationError):
     code = "delegation-root-exceeds-policy"
 
 
+class DelegationRetiredReuse(DelegationError):
+    """Raised when a retired (superseded) delegation is presented
+    after its succession was registered. Reuse of a retired
+    credential is a REVOCATION EVENT, not an authentication failure:
+    loud, coded, fail-closed."""
+    code = "delegation-retired-reuse"
+
+
+class DelegationOrphanedBranch(DelegationError):
+    """Raised when a presented chain routes through a retired hop
+    into a child that is not the registered successor -- a forked
+    branch minted under a retired leaf's authority after succession.
+    The branch is orphaned: refused fail-closed."""
+    code = "delegation-orphaned-branch"
+
+
+class DelegationStaleLineage(DelegationError):
+    """Raised when a presented delegation belongs to a superseded
+    generation while a newer succession exists. Stale lineage is
+    refused fail-closed."""
+    code = "delegation-stale-lineage"
+
+
+class DelegationLineageOverflow(DelegationError):
+    """Raised by register_succession when the verifier's retirement
+    lineage is full. New successions are refused fail-closed; the
+    lineage is never evicted to make room."""
+    code = "delegation-lineage-overflow"
+
+
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True,
                       separators=(",", ":")).encode("utf-8")
@@ -224,7 +285,12 @@ def _canonical(obj):
 
 def digest_of(body):
     """SHA-256 hex digest of the canonical delegation body bytes."""
-    return hashlib.sha256(_canonical(body)).hexdigest()
+    try:
+        raw = _canonical(body)
+    except TypeError:
+        raise DelegationMalformed(
+            "delegation body must be JSON-serializable")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _is_hex(s, length):
@@ -273,6 +339,44 @@ def _check_now(now):
         raise DelegationMalformed(
             "now must be numeric, got %s" % type(now).__name__)
     return now
+
+
+def _check_ttl(ttl):
+    """Validate an explicit ttl (wave-292).
+
+    The ttl is REQUIRED at issue: there are no unbounded
+    delegations. It must be a positive number bounded by _TTL_MAX.
+    """
+    if ttl is None:
+        raise DelegationMalformed(
+            "ttl is required: delegations carry a bounded lifetime "
+            "(issued_at + ttl_seconds); unbounded delegations are "
+            "not issuable")
+    if isinstance(ttl, bool) or not isinstance(ttl, (int, float)):
+        raise DelegationMalformed(
+            "ttl must be numeric, got %s" % type(ttl).__name__)
+    if not 0 < ttl <= _TTL_MAX:
+        raise DelegationMalformed(
+            "ttl must be in (0, 2**40] seconds, got %r" % (ttl,))
+    return ttl
+
+
+def _check_issued_at(issued_at):
+    if isinstance(issued_at, bool) or \
+            not isinstance(issued_at, (int, float)):
+        raise DelegationMalformed(
+            "issued_at must be numeric, got %s"
+            % type(issued_at).__name__)
+    return issued_at
+
+
+def _check_generation(generation):
+    if isinstance(generation, bool) or \
+            not isinstance(generation, int) or generation < 0:
+        raise DelegationMalformed(
+            "generation must be a non-negative int, got %r"
+            % (generation,))
+    return generation
 
 
 def _with_covered(child_with, parent_with):
@@ -342,6 +446,27 @@ def _seal_body(body):
         raise DelegationMalformed("audience must be 64 hex chars")
     capabilities = _check_capabilities(body.get("capabilities"))
     _check_window(body.get("not_before"), body.get("not_after"))
+    # Wave-292 decay fields. A pre-decay record (no issued_at /
+    # ttl_seconds / generation) is treated as expired and refused
+    # fail-closed: it is never grandfathered into the new verifier.
+    issued_at = body.get("issued_at")
+    ttl_seconds = body.get("ttl_seconds")
+    generation = body.get("generation")
+    if issued_at is None or ttl_seconds is None or generation is None:
+        raise DelegationExpired(
+            "pre-decay delegation record without "
+            "issued_at/ttl_seconds/generation; treated as expired "
+            "and refused fail-closed")
+    issued_at = _check_issued_at(issued_at)
+    ttl_seconds = _check_ttl(ttl_seconds)
+    generation = _check_generation(generation)
+    if not body["not_before"] <= issued_at:
+        raise DelegationMalformed(
+            "issued_at must not precede not_before")
+    if not body["not_after"] == issued_at + ttl_seconds:
+        raise DelegationMalformed(
+            "not_after must equal issued_at + ttl_seconds: the ttl "
+            "is the single source of the decay bound")
     parent_digest = body.get("parent_digest")
     if parent_digest is not None and \
             not _is_hex(parent_digest, _DIGEST_HEX_LEN):
@@ -358,6 +483,9 @@ def _seal_body(body):
         "capabilities": capabilities,
         "not_before": body["not_before"],
         "not_after": body["not_after"],
+        "issued_at": issued_at,
+        "ttl_seconds": ttl_seconds,
+        "generation": generation,
         "nonce": nonce,
         "parent_digest": parent_digest,
         "ceremony_nonce": ceremony_nonce,
@@ -382,6 +510,10 @@ def delegate(seed, held, request):
     capabilities the issuer holds (None for a root grant from the
     issuer's own authority). ``request``: dict with ``audience``
     (64-hex pubkey), ``capabilities``, ``not_before``/``not_after``,
+    ``ttl`` (REQUIRED, wave-292: the bounded relative lifetime in
+    seconds; ``not_after`` must equal ``issued_at + ttl``),
+    optional ``issued_at`` (defaults to ``not_before``),
+    optional ``generation`` (defaults to 0; ``rotate()`` sets it),
     optional ``nonce``, optional ``ceremony_nonce`` (the verifier's
     challenge in hex, >= 64 bits, binding the delegation to the
     ceremony it is minted for), and ``parent`` (a sealed parent
@@ -402,6 +534,19 @@ def delegate(seed, held, request):
     if not _is_hex(audience, _PUB_HEX_LEN):
         raise DelegationMalformed("audience must be 64 hex chars")
     _check_window(request.get("not_before"), request.get("not_after"))
+    ttl = _check_ttl(request.get("ttl"))
+    issued_at = request.get("issued_at")
+    if issued_at is None:
+        issued_at = request["not_before"]
+    issued_at = _check_issued_at(issued_at)
+    generation = _check_generation(request.get("generation", 0))
+    if not request["not_before"] <= issued_at:
+        raise DelegationMalformed(
+            "issued_at must not precede not_before")
+    if not request["not_after"] == issued_at + ttl:
+        raise DelegationMalformed(
+            "not_after must equal issued_at + ttl: the ttl is the "
+            "single source of the decay bound")
     parent = request.get("parent")
     if parent is None:
         parent_digest = None
@@ -422,6 +567,9 @@ def delegate(seed, held, request):
         "capabilities": capabilities,
         "not_before": request["not_before"],
         "not_after": request["not_after"],
+        "issued_at": issued_at,
+        "ttl_seconds": ttl,
+        "generation": generation,
         "nonce": nonce,
         "parent_digest": parent_digest,
         "ceremony_nonce": ceremony_nonce,
@@ -429,6 +577,115 @@ def delegate(seed, held, request):
     sig = ed25519.sign(bytes(seed),
                        SIGN_DOMAIN + _canonical(body)).hex()
     return {"delegation": body, "signature": sig}
+
+
+def rotate(seed, parent, retired_leaf, request):
+    """Rotate a delegation leaf: retire the old, issue the new.
+
+    ``seed``: the delegator's 32-byte Ed25519 seed -- it MUST
+    correspond to the retired leaf's issuer; only the delegator can
+    rotate. ``parent``: the sealed parent the successor occupies the
+    slot under (None for a root rotation -- the successor is a new
+    root). ``retired_leaf``: the sealed delegation being retired.
+    ``request``: like :func:`delegate`'s request, but ``audience``
+    and ``capabilities`` default to the retired leaf's (rotation
+    re-issues to the same holder unless told otherwise) and
+    ``generation`` is forced to ``retired.generation + 1``.
+    ``ttl`` is required, exactly as in :func:`delegate`.
+
+    Returns ``(successor, succession)`` where ``successor`` is the
+    sealed new leaf and ``succession`` is the signed succession
+    record (``delegation.succession.1``) binding retired_digest ->
+    successor_digest under the delegator's key. Rotation can only
+    narrow: widening the retired leaf's capabilities refuses
+    ``delegation-would-widen`` at issue.
+    """
+    if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
+        raise DelegationMalformed("seed must be 32 bytes")
+    retired_body, _ = _check_sealed(retired_leaf)
+    if ed25519.publickey(bytes(seed)).hex() != retired_body["issuer"]:
+        raise DelegationMalformed(
+            "rotation seed does not match the retired leaf's issuer; "
+            "only the delegator can rotate a delegation")
+    if not isinstance(request, dict):
+        raise DelegationMalformed("request must be a dict")
+    req = dict(request)
+    req["parent"] = parent
+    req.setdefault("audience", retired_body["audience"])
+    req.setdefault("capabilities", retired_body["capabilities"])
+    req["generation"] = retired_body["generation"] + 1
+    # The successor is a new delegation: it gets a fresh window.
+    # Callers may pass not_before/not_after explicitly (e.g. tests
+    # pinning a fixed clock); otherwise the window opens at
+    # issued_at (defaulting to now) and closes at issued_at + ttl.
+    # A missing ttl is left for delegate() to refuse coded.
+    if req.get("not_before") is None:
+        req["not_before"] = req.get("issued_at", time.time())
+    if req.get("not_after") is None and req.get("ttl") is not None:
+        req["not_after"] = req["not_before"] + req["ttl"]
+    successor = delegate(seed, retired_body["capabilities"], req)
+    retired_at = request.get("retired_at")
+    if retired_at is None:
+        retired_at = time.time()
+    if isinstance(retired_at, bool) or \
+            not isinstance(retired_at, (int, float)):
+        raise DelegationMalformed(
+            "retired_at must be numeric, got %s"
+            % type(retired_at).__name__)
+    succession_nonce = request.get("succession_nonce")
+    if succession_nonce is None:
+        succession_nonce = secrets.token_hex(16)
+    if not isinstance(succession_nonce, str) or not succession_nonce:
+        raise DelegationMalformed(
+            "succession_nonce must be a non-empty string")
+    succession_body = {
+        "type": SUCCESSION_TYPE,
+        "retired_digest": digest_of(retired_body),
+        "successor_digest": digest_of(successor["delegation"]),
+        "issuer": retired_body["issuer"],
+        "retired_at": retired_at,
+        "generation": retired_body["generation"] + 1,
+        "nonce": succession_nonce,
+    }
+    succession_sig = ed25519.sign(
+        bytes(seed),
+        SUCCESSION_DOMAIN + _canonical(succession_body)).hex()
+    return successor, {"delegation": succession_body,
+                       "signature": succession_sig}
+
+
+def _check_succession(succession):
+    """Validate a succession record's shape; returns the body."""
+    if not isinstance(succession, dict):
+        raise DelegationMalformed("succession must be a dict")
+    body = succession.get("delegation")
+    if not isinstance(body, dict):
+        raise DelegationMalformed("succession body must be a dict")
+    if body.get("type") != SUCCESSION_TYPE:
+        raise DelegationMalformed(
+            "unknown succession type %r" % (body.get("type"),))
+    for field in ("retired_digest", "successor_digest"):
+        if not _is_hex(body.get(field), _DIGEST_HEX_LEN):
+            raise DelegationMalformed(
+                "succession %s must be 64 hex chars" % field)
+    if not _is_hex(body.get("issuer"), _PUB_HEX_LEN):
+        raise DelegationMalformed(
+            "succession issuer must be 64 hex chars")
+    retired_at = body.get("retired_at")
+    if isinstance(retired_at, bool) or \
+            not isinstance(retired_at, (int, float)):
+        raise DelegationMalformed(
+            "succession retired_at must be numeric")
+    _check_generation(body.get("generation"))
+    nonce = body.get("nonce")
+    if not isinstance(nonce, str) or not nonce:
+        raise DelegationMalformed(
+            "succession nonce must be a non-empty string")
+    sig = succession.get("signature")
+    if not _is_hex(sig, _SIG_HEX_LEN):
+        raise DelegationSignatureInvalid(
+            "succession signature must be 128 hex chars")
+    return body, sig
 
 
 class DelegationVerifier(object):
@@ -475,6 +732,11 @@ class DelegationVerifier(object):
         self._seed = bytes(seed) if seed is not None else None
         self._root_policy = root_policy
         self._seen = set()
+        # Wave-292 theft lineage: retired_digest -> successor_digest,
+        # bounded; full refuses fail-closed (never evicted).
+        self._retired = {}
+        # Retired digests whose single RECENT_PREV tolerance was used.
+        self._tolerated = set()
 
     def _verify_signature(self, body, sig_hex):
         try:
@@ -505,13 +767,147 @@ class DelegationVerifier(object):
                 "hop %d is not bound to the expected ceremony; "
                 "cross-ceremony replay refused fail-closed" % i)
 
+    def _check_lineage(self, digests):
+        """Theft-lineage check over the verified hop digests (wave-292).
+
+        Returns the lineage note for the receipt (None when no
+        retired hop was presented). Order: stale generation first,
+        then leaf reuse (RECENT_PREV tolerated once), then orphaned
+        branches. Every refusal is loud and coded; presenting a
+        retired leaf is a revocation event, never a quiet failure.
+        """
+        note = None
+        last = len(digests) - 1
+        for i, digest in enumerate(digests):
+            if digest not in self._retired:
+                continue
+            successor = self._retired[digest]
+            if successor in self._retired:
+                raise DelegationStaleLineage(
+                    "hop %d presents a delegation from a superseded "
+                    "generation; a newer succession exists; stale "
+                    "lineage refused fail-closed" % i)
+            if i == last:
+                if digest in self._tolerated:
+                    raise DelegationRetiredReuse(
+                        "retired delegation presented again; reuse of "
+                        "a retired credential is a revocation event, "
+                        "not an authentication failure; refused "
+                        "fail-closed")
+                # RECENT_PREV: the immediate predecessor. In-flight
+                # retries race the succession broadcast; the first
+                # presentation is tolerated, and the tolerance is
+                # declared in the signed receipt.
+                self._tolerated.add(digest)
+                note = "recent-prev-tolerated"
+            elif digests[i + 1] != successor:
+                raise DelegationOrphanedBranch(
+                    "hop %d is retired and the presented child is not "
+                    "its registered successor; forked branch orphaned; "
+                    "refused fail-closed" % i)
+            else:
+                raise DelegationRetiredReuse(
+                    "chain routes through retired delegation at hop "
+                    "%d; reuse of a retired credential is a "
+                    "revocation event; refused fail-closed" % i)
+        return note
+
+    def register_succession(self, retired_leaf, successor, succession):
+        """Register a delegation succession (rotation) with this
+        verifier.
+
+        ``retired_leaf`` / ``successor``: sealed delegations.
+        ``succession``: the signed succession record from
+        :func:`rotate`. Structural binding enforced: the successor
+        must occupy the retired leaf's slot (same parent digest),
+        be issued by the same delegator, carry
+        ``generation == retired.generation + 1``, narrow (never
+        widen) the retired capabilities, and the succession record
+        must be signed by the delegator binding
+        retired_digest -> successor_digest.
+
+        A full lineage (``_LINEAGE_MAX`` entries) refuses the new
+        succession fail-closed with
+        ``delegation-lineage-overflow`` -- lineage is never evicted.
+        Re-registering the identical succession is idempotent; a
+        conflicting one is malformed.
+        """
+        retired_body, _ = _check_sealed(retired_leaf)
+        successor_body, _ = _check_sealed(successor)
+        self._verify_signature(retired_body,
+                               retired_leaf["signature"])
+        self._verify_signature(successor_body, successor["signature"])
+        succession_body, succession_sig = _check_succession(succession)
+        if succession_body["issuer"] != retired_body["issuer"]:
+            raise DelegationMalformed(
+                "succession issuer must be the retired leaf's issuer; "
+                "only the delegator declares a succession")
+        retired_digest = digest_of(retired_body)
+        successor_digest = digest_of(successor_body)
+        if succession_body["retired_digest"] != retired_digest:
+            raise DelegationMalformed(
+                "succession retired_digest does not match the "
+                "presented retired leaf")
+        if succession_body["successor_digest"] != successor_digest:
+            raise DelegationMalformed(
+                "succession successor_digest does not match the "
+                "presented successor")
+        if retired_digest == successor_digest:
+            raise DelegationMalformed(
+                "succession cannot retire a delegation into itself")
+        if successor_body["issuer"] != retired_body["issuer"]:
+            raise DelegationMalformed(
+                "successor must be issued by the retired leaf's "
+                "delegator")
+        if successor_body["parent_digest"] != \
+                retired_body["parent_digest"]:
+            raise DelegationMalformed(
+                "successor must occupy the retired leaf's slot "
+                "(same parent_digest)")
+        if successor_body["generation"] != retired_body["generation"] + 1:
+            raise DelegationMalformed(
+                "successor generation must be retired.generation + 1")
+        if succession_body["generation"] != retired_body["generation"] + 1:
+            raise DelegationMalformed(
+                "succession generation must be retired.generation + 1")
+        if not _caps_covered(successor_body["capabilities"],
+                             retired_body["capabilities"]):
+            raise DelegationAttenuationInverted(
+                "rotation may only narrow the retired capabilities")
+        try:
+            sig = bytes.fromhex(succession_sig)
+            pub = bytes.fromhex(succession_body["issuer"])
+        except ValueError:
+            raise DelegationSignatureInvalid(
+                "succession signature or issuer is not valid hex")
+        if ed25519.verify(
+                pub,
+                SUCCESSION_DOMAIN + _canonical(succession_body),
+                sig) is not True:
+            raise DelegationSignatureInvalid(
+                "succession signature failed to verify")
+        if retired_digest in self._retired:
+            if self._retired[retired_digest] == successor_digest:
+                return retired_digest  # idempotent re-registration
+            raise DelegationMalformed(
+                "a conflicting succession is already registered for "
+                "this retired digest")
+        if len(self._retired) >= _LINEAGE_MAX:
+            raise DelegationLineageOverflow(
+                "retirement lineage is full (%d entries); new "
+                "successions refused fail-closed rather than "
+                "evicting lineage" % _LINEAGE_MAX)
+        self._retired[retired_digest] = successor_digest
+        return retired_digest
+
     def _verify_chain(self, chain, action, now, expected_ceremony_nonce):
         """The full chain-verification order.
 
-        Returns ``(bodies, receipt)``. Type -> structure -> parent
-        digest -> custody binding -> signature -> root trust -> root
-        policy -> ceremony -> attenuation -> time window -> action
-        coverage -> replay.
+        Returns ``(bodies, chain_digest, act_with, act_can, now,
+        lineage_note)``. Type -> structure -> parent digest ->
+        custody binding -> signature -> root trust -> root policy ->
+        ceremony -> attenuation -> time window -> decay -> lineage ->
+        action coverage -> replay.
         """
         now = _check_now(time.time() if now is None else now)
         if not isinstance(chain, list) or not chain:
@@ -531,6 +927,7 @@ class DelegationVerifier(object):
             expected_ceremony_nonce)
 
         bodies = []
+        digests = []
         prev_digest = None
         for i, sealed in enumerate(chain):
             body, sig_hex = _check_sealed(sealed)
@@ -580,8 +977,22 @@ class DelegationVerifier(object):
             if not body["not_before"] <= now <= body["not_after"]:
                 raise DelegationExpired(
                     "hop %d is outside its validity window" % i)
+            # Wave-292 decay: the ttl bound is verified at each hop,
+            # not in policy code. (Consistent with not_after by
+            # construction; the explicit check names the decay
+            # refusal.)
+            if now > body["issued_at"] + body["ttl_seconds"]:
+                raise DelegationExpired(
+                    "hop %d exceeded its issued_at + ttl_seconds "
+                    "decay bound" % i)
             bodies.append(body)
-            prev_digest = digest_of(body)
+            digest = digest_of(body)
+            digests.append(digest)
+            prev_digest = digest
+
+        # Wave-292 theft lineage, before action coverage: a retired
+        # credential is a revocation matter, not a request matter.
+        lineage_note = self._check_lineage(digests)
 
         leaf = bodies[-1]
         covered = any(
@@ -597,7 +1008,7 @@ class DelegationVerifier(object):
             raise DelegationReplay(
                 "this (chain, action) was already verified")
         self._seen.add(replay_key)
-        return bodies, prev_digest, act_with, act_can, now
+        return bodies, prev_digest, act_with, act_can, now, lineage_note
 
     def _mint_receipt(self, receipt_type, chain_digest, act_with,
                       act_can, now, extra):
@@ -626,13 +1037,17 @@ class DelegationVerifier(object):
         ``expected_ceremony_nonce``: optional verifier-supplied
         challenge the chain's delegations must be bound to.
         Returns a signed invocation receipt on success; raises a
-        machine-coded :class:`DelegationError` otherwise.
+        machine-coded :class:`DelegationError` otherwise. When the
+        presented leaf is a tolerated RECENT_PREV retired
+        delegation, the receipt carries
+        ``"lineage": "recent-prev-tolerated"``.
         """
-        _, prev_digest, act_with, act_can, verified_now = \
+        _, prev_digest, act_with, act_can, verified_now, lineage_note = \
             self._verify_chain(chain, action, now,
                                expected_ceremony_nonce)
+        extra = {"lineage": lineage_note} if lineage_note else {}
         return self._mint_receipt(RECEIPT_TYPE, prev_digest, act_with,
-                                  act_can, verified_now, {})
+                                  act_can, verified_now, extra)
 
     def _pop_signing_bytes(self, invoker_pubkey_hex, pop_challenge,
                            leaf_digest):
@@ -711,14 +1126,15 @@ class DelegationVerifier(object):
         # Proof is valid; now the full chain checks (which also
         # record the replay mark -- only reached after a valid
         # proof).
-        _, prev_digest, act_with, act_can, verified_now = \
+        _, prev_digest, act_with, act_can, verified_now, lineage_note = \
             self._verify_chain(chain, action, now,
                                expected_ceremony_nonce)
+        extra = {"lineage": lineage_note} if lineage_note else {}
         return self._mint_receipt(
             INVOCATION_RECEIPT_TYPE, prev_digest, act_with, act_can,
             verified_now,
-            {"invoker": invoker_pubkey_hex,
-             "pop_challenge": challenge.hex()})
+            dict({"invoker": invoker_pubkey_hex,
+                  "pop_challenge": challenge.hex()}, **extra))
 
     def receipt(self, *args, **kwargs):
         """Convenience alias kept for the mandate-embedding seam.
