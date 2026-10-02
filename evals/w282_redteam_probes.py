@@ -71,7 +71,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1621  # Wave-281 merge: 1541 -> 1563; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-281 merge: 1541 -> 1563; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _results = []
 
@@ -487,7 +487,7 @@ def e_pa_edit_diff_chained():
     edited = {"to": "v@synthetic.local", "subject": "s2", "body": "b"}
     r = ledger.resume("a4", "approved", edited_args=edited,
                       decided_by="human-1")
-    if r["edited"] and r["args"] == edited and \
+    if r["edited"] and r["args"] == edited and\
             r["final_args_digest"] != r["proposal_digest"]:
         _record("pa-edit-diff-chained", "HELD",
                 "edit-before-approve applies edits with diff digests")

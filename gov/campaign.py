@@ -41,6 +41,7 @@ import os
 
 from gov import attack_ledger as al
 from gov import battery_lang as bl
+from gov import secret_canonicalizer as _sc
 
 _GENESIS = "0" * 64
 _SCHEMA_VERSION = 1
@@ -390,6 +391,37 @@ def _record_digest(prev, record):
     return _digest(prev + "|" + al._canonical(body))
 
 
+def _sanitize_free_text(text, *, location):
+    """F319: attacker-influenced free text is routed through the
+    secret_canonicalizer seam (the F306/F310/F311 composition)
+    before it reaches the evidence file. Span-level redaction with
+    kind-preserving ``[REDACTED:<kind>]`` placeholders -- redaction
+    is marked, never silent elision; verdicts are untouched."""
+    sanitized, _findings = _sc.sanitize(text, location=location)
+    return sanitized
+
+
+def _sanitize_args_map(args_map):
+    """F319: args_map values are attacker-influenced free text. Walk
+    the mapping recursively and sanitize every string VALUE
+    (structure-preserving: keys pass through untouched -- top-level
+    keys are atomic refs needed for replay lookup -- as do
+    non-string values). Returns ``(redacted_map, original_digest)``;
+    the digest binds the original args for tamper evidence."""
+    def _walk(node):
+        if isinstance(node, dict):
+            return {k: _walk(v) for k, v in node.items()}
+        if isinstance(node, tuple):
+            return tuple(_walk(v) for v in node)
+        if isinstance(node, list):
+            return [_walk(v) for v in node]
+        if isinstance(node, str):
+            return _sc.sanitize(node, location="campaign/args-map")[0]
+        return node
+
+    return _walk(args_map), _digest(al._canonical(args_map))
+
+
 class CampaignWriter(object):
     """Chains campaign records into a JSONL evidence file at run time."""
 
@@ -514,7 +546,18 @@ class CampaignRunner(object):
             approve_fn=None, elevation_granted=False):
         """Plan and execute a campaign. Returns the campaign id (the
         start record's digest). All records are hash-chained into
-        ``evidence_path``."""
+        ``evidence_path``.
+
+        F319: attacker-influenced free text (``args_map`` values,
+        executor notes, parser notes) is routed through the
+        secret_canonicalizer seam before writing -- the evidence
+        file carries ``[REDACTED:<kind>]`` placeholders, never raw
+        credential-shaped bytes. ``args_map_digest`` binds the
+        ORIGINAL args for tamper evidence; execution still uses the
+        original args. Replay re-executes with the redacted args as
+        recorded (a replay whose args were redacted may show
+        verdict-drift -- the expected signal that its inputs differ
+        from the original run)."""
         planner = PLANNERS.get(planner_id)
         if planner is None:
             raise CampaignError("unknown planner %r (want one of %s)"
@@ -536,6 +579,11 @@ class CampaignRunner(object):
             resolved.append({"ref": ref, "guid": guid,
                              "name": spec["name"], "spec": spec})
 
+        # F319: the evidence record carries the SANITIZED args; the
+        # digest binds the original for tamper evidence. Execution
+        # below keeps using the original args_map.
+        redacted_args, args_digest = _sanitize_args_map(args_map)
+
         writer = CampaignWriter(evidence_path)
         try:
             campaign_id = writer.write_start({
@@ -547,7 +595,8 @@ class CampaignRunner(object):
                 "seed_facts": seed_norm,
                 "atomics": [{"ref": r["ref"], "guid": r["guid"],
                              "name": r["name"]} for r in resolved],
-                "args_map": args_map,
+                "args_map": redacted_args,
+                "args_map_digest": args_digest,
                 "max_steps": max_steps,
                 "manual_approve": bool(manual_approve),
                 "elevation_granted": bool(elevation_granted),
@@ -645,18 +694,35 @@ class CampaignRunner(object):
             verdict = "ERROR"
 
         produced = []
+        produces_suppressed = []
         for entry in spec.get("produces", []):
             on = entry["on"]
             if on == "break" and verdict != "BREAK":
                 continue
             if on == "held" and verdict != "HELD":
                 continue
+            if on == "always" and verdict not in ("BREAK", "HELD"):
+                # F324: an ERROR step produced nothing (the step verdict is
+                # always "ERROR" here -- the bl.run_atomic "atomic-error"
+                # result verdict is mapped to it above). Writing the static
+                # value as if the atomic produced it would fabricate
+                # evidence (and can close objectives-met with breaks=0).
+                # "always" means "any completed verdict" -- the suppression
+                # is recorded on the step record with its coded emission,
+                # never silent.
+                produces_suppressed.append({
+                    "fact": entry["fact"], "on": on,
+                    "code": "campaign-produces-suppressed",
+                    "verdict": verdict})
+                continue
             self._store.set_fact(entry["fact"], entry["value"],
                                  entry["type"], source="produced",
                                  choices=entry.get("choices"))
             produced.append(entry["fact"])
 
-        parser_note = self._run_parser(spec, result)
+        parser_note, parser_suppressed = self._run_parser(spec, result,
+                                                          verdict)
+        produces_suppressed.extend(parser_suppressed)
 
         writer.write_step({
             "record_type": "campaign-step",
@@ -667,33 +733,44 @@ class CampaignRunner(object):
             "atomic_name": aname,
             "arg_digest": _digest(al._canonical(args)),
             "verdict": verdict,
-            "executor_note": str(result.get("executor_note") or "")[:400],
+            # F319: executor notes are attacker-influenced free text --
+            # sanitize before the evidence write (sanitize first so
+            # detection sees the full text, then cap).
+            "executor_note": _sanitize_free_text(
+                str(result.get("executor_note") or ""),
+                location="campaign/step/executor-note")[:400],
             "requires": spec.get("requires", []),
             "produced_facts": produced,
-            "parser_note": parser_note,
+            "produces_suppressed": produces_suppressed,
+            "parser_note": _sanitize_free_text(
+                parser_note, location="campaign/step/parser-note"),
             "facts_snapshot": self._store.snapshot(),
         })
         return verdict
 
-    def _run_parser(self, spec, result):
+    def _run_parser(self, spec, result, verdict):
         """Caldera parsers: harvest typed facts from the outcome.
 
         Parsed facts must be declared in ``produces`` with a matching
         type; anything else is refused LOUD (recorded in the step's
         parser_note, never written). A raising parser is recorded,
-        never fatal.
+        never fatal. Returns ``(note, suppressed)`` where ``suppressed``
+        lists parser facts withheld because the step did not complete
+        (F324: an ERROR/atomic-error step produced nothing, so a parser
+        must not fabricate facts for it either).
         """
         parser = spec.get("fact_parser")
         if parser is None:
-            return ""
+            return "", []
         try:
             parsed = parser(dict(result))
         except Exception as e:  # noqa: BLE001 -- recorded, never fatal
-            return "fact_parser raised %s: %s" % (type(e).__name__, e)
+            return "fact_parser raised %s: %s" % (type(e).__name__, e), []
         if not isinstance(parsed, list):
-            return "fact_parser returned non-list %r" % (type(parsed),)
+            return ("fact_parser returned non-list %r" % (type(parsed),)), []
         declared = {p["fact"]: p for p in spec.get("produces", [])}
         notes = []
+        suppressed = []
         for i, item in enumerate(parsed):
             if (not isinstance(item, dict) or "fact" not in item
                     or "value" not in item):
@@ -711,10 +788,22 @@ class CampaignRunner(object):
                              % (i, item["fact"], item["value"],
                                 decl["type"]))
                 continue
+            if verdict not in ("BREAK", "HELD"):
+                # F324 residual: an ERROR/atomic-error step produced
+                # nothing; a parser writing facts for it would fabricate
+                # evidence exactly like an on="always" produce. Withheld
+                # with the coded emission, never silent.
+                suppressed.append({
+                    "fact": item["fact"], "on": decl["on"],
+                    "code": "campaign-produces-suppressed",
+                    "verdict": verdict, "source": "parser"})
+                notes.append("item %d: fact %r suppressed on %s verdict "
+                             "-- recorded" % (i, item["fact"], verdict))
+                continue
             self._store.set_fact(item["fact"], item["value"],
                                  decl["type"], source="parser",
                                  choices=decl.get("choices"))
-        return "; ".join(notes)
+        return "; ".join(notes), suppressed
 
 
 def campaign_summary(path):
@@ -745,7 +834,8 @@ def replay_campaign(path, registry, *, evidence_path=None,
 
     Rebuilds the run from the campaign-start record, executes into a
     fresh evidence file, and diffs per step
-    (atomic_guid, verdict, produced_facts, facts_snapshot). Returns a
+    (atomic_guid, verdict, produced_facts, facts_snapshot,
+    produces_suppressed). Returns a
     list of diff dicts; empty means identical. A verdict-drift entry
     is the regression signal (the attack-ledger replay precedent).
 
@@ -760,6 +850,12 @@ def replay_campaign(path, registry, *, evidence_path=None,
     - the elevation bit comes from the CALLER (``elevation_granted``),
       never from the evidence file. A file bit that disagrees with the
       caller's decision is noted in the returned diffs, not honored.
+
+    F319 note: the start record's ``args_map`` is the SANITIZED form
+    (``[REDACTED:<kind>]`` placeholders); replay re-executes with
+    those args as recorded. A replay whose args were redacted may
+    show verdict-drift -- the expected signal that its inputs differ
+    from the original run, not a defect in the replay itself.
     """
     records = read_campaign_records(path)
     starts = [r for r in records if r["record_type"] == "campaign-start"]
@@ -840,6 +936,14 @@ def replay_campaign(path, registry, *, evidence_path=None,
             diffs.append({"step_index": i, "kind": "snapshot-drift",
                           "before": old["facts_snapshot"],
                           "after": new["facts_snapshot"]})
+        elif al._canonical(old.get("produces_suppressed", [])) != \
+                al._canonical(new.get("produces_suppressed", [])):
+            # F324: the suppression record is audit evidence -- a replay
+            # that drops or alters it must drift loudly. .get()-guarded:
+            # pre-change evidence has no such key.
+            diffs.append({"step_index": i, "kind": "suppression-drift",
+                          "before": old.get("produces_suppressed", []),
+                          "after": new.get("produces_suppressed", [])})
     if len(new_steps) < len(old_steps):
         for j in range(len(new_steps), len(old_steps)):
             diffs.append({"step_index": j, "kind": "missing-step"})

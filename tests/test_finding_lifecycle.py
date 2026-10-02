@@ -274,14 +274,15 @@ class FindingsMdTest(unittest.TestCase):
     def test_parses_current_findings(self):
         reg = fl.load_findings_md(self.PATH)
         # F311 closed at the wave-283 merge; F312-F315 closed at the
-        # wave-284 merge (lane 1); F318 closed at the wave-285 merge
-        # (lane 1); F316, F317, F319-F324 filed OPEN by the wave-284
-        # independent red team.
+        # wave-284 merge (lane 1); F316-F324 filed OPEN by the wave-284
+        # independent red team, closed at the wave-285 merge (lanes 1-4);
+        # F325-F330 filed OPEN by the wave-285 independent red team.
         self.assertEqual(reg.get("F311").state, "verified")
-        for num in ("F312", "F313", "F314", "F315", "F318"):
+        for num in ("F312", "F313", "F314", "F315", "F316", "F317",
+                    "F318", "F319", "F320", "F321", "F322", "F323",
+                    "F324"):
             self.assertEqual(reg.get(num).state, "verified")
-        for num in ("F316", "F317", "F319", "F320",
-                    "F321", "F322", "F323", "F324"):
+        for num in ("F325", "F326", "F327", "F328", "F329", "F330"):
             self.assertEqual(reg.get(num).state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")

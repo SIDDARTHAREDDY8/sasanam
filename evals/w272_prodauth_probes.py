@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32
@@ -203,7 +203,7 @@ def _build(mod):
         identity_issuer_public_key=_ISSUER_PUB, requested_scope=SCOPE,
         subject_key_id=fx.key_id, approval_id=APPROVAL,
         claim_signing_key=_CLAIM_SEED, now=lambda: NOW)
-    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8") \
+    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8")\
         + hashlib.sha256(fx.pub).digest()
     fx.cert, fx.entry = ca.issue(
         identity_assertion={"iss": ISSUER, "sub": "alice",
@@ -312,7 +312,7 @@ def _p_forged_claim(mod):
     forged = dict(fx.claim)
     forged["signature"] = base64.b64encode(b"0" * 64).decode("ascii")
     seed, pub = _keypair(0x09)
-    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8") \
+    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8")\
         + hashlib.sha256(pub).digest()
     try:
         fx.ca.issue(
@@ -336,7 +336,7 @@ def _p_claim_swap(mod):
         return ("BREAK", "foil verifies any claim")
     seed2, pub2 = _keypair(0x02)
     key_id2 = hashlib.sha256(pub2).hexdigest()[:16]
-    chal2 = b"evcert-pop-v1" + APPROVAL.encode("utf-8") \
+    chal2 = b"evcert-pop-v1" + APPROVAL.encode("utf-8")\
         + hashlib.sha256(pub2).digest()
     cert2, _e2 = fx.ca.issue(
         identity_assertion={"iss": ISSUER, "sub": "alice",
@@ -405,7 +405,7 @@ def _p_no_claim(mod):
         audit_log_path=leg_audit,
         anchor_reachable=lambda: True, oid_arc=ARC, now=lambda: NOW)
     seed, pub = _keypair(0x07)
-    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8") \
+    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8")\
         + hashlib.sha256(pub).digest()
     cert, _e = ca2.issue(
         identity_assertion={"iss": ISSUER, "sub": "alice",
@@ -451,7 +451,7 @@ def _c_benign(mod):
         ca_public_key=fx.ca_pub,
         verify_time=NOW, transparency_log=tlog,
         require_producer_claim=True, claim_public_key=_CLAIM_PUB)
-    if out.get("verified") is True and out.get("producer_authz") == \
+    if out.get("verified") is True and out.get("producer_authz") ==\
             {"producer": "alice", "scope": SCOPE}:
         return ("HELD", "claim path round-trips")
     return ("BREAK", "benign claim path did not verify: %r" % (out,))
@@ -552,7 +552,7 @@ def _c_legacy(mod):
         audit_log_path=leg_audit,
         anchor_reachable=lambda: True, oid_arc=ARC, now=lambda: NOW)
     seed, pub = _keypair(0x07)
-    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8") \
+    chal = b"evcert-pop-v1" + APPROVAL.encode("utf-8")\
         + hashlib.sha256(pub).digest()
     cert, entry = ca_leg.issue(
         identity_assertion={"iss": ISSUER, "sub": "alice",

@@ -48,7 +48,7 @@ from gov import reconstructed_intent as reconintent  # noqa: E402
 from gov.signing import Ed25519Verifier  # noqa: E402
 import gov.ed25519 as ed25519  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _EVAL_START = "2026-10-01T00:00:00Z"
 _NOW = "2026-10-01T12:00:00Z"
@@ -395,7 +395,7 @@ def _p_authz_provider():
         {"configured": {"timeout_ms": 1000}})
     v = authz.evaluate(bundle, _REQ,
                        authorizer=lambda pid, req: (True, "yes"))
-    if v["decision"] == "deny" and \
+    if v["decision"] == "deny" and\
             v["code"] == "authz-provider-misconfigured":
         return ("HELD", "unconfigured provider failed closed")
     return ("BREAK", "provider confusion admitted: %s" % v["code"])
@@ -417,7 +417,7 @@ def _p_authz_timeout():
         return (True, "eventually")
 
     v = authz.evaluate(bundle, _REQ, authorizer=slow)
-    if v["decision"] == "deny" and \
+    if v["decision"] == "deny" and\
             v["code"] == "authz-provider-misconfigured":
         return ("HELD", "provider timeout failed closed")
     return ("BREAK", "provider timeout misbehaved: %s" % v["code"])
@@ -470,7 +470,7 @@ def _p_authz_shadow_default():
               {"actions": ["tool.call"]}, shadow=True),
     ])
     v = authz.evaluate(bundle, _REQ)
-    if v["admitted"] and v["code"] == "authz-allow" and \
+    if v["admitted"] and v["code"] == "authz-allow" and\
             v["shadow_results"]:
         return ("RESIDUAL",
                 "shadow-only ALLOW bundle default-allows "
@@ -516,7 +516,7 @@ def _p_authz_custom_allow():
         {"p": {"timeout_ms": 1000}})
     v = authz.evaluate(bundle, _REQ,
                        authorizer=lambda pid, req: (True, "fine"))
-    if v["admitted"] and v["code"] == "authz-allow" and \
+    if v["admitted"] and v["code"] == "authz-allow" and\
             "custom-ok" in v["matched_rules"]:
         return ("HELD", "custom allow continued; allow rule granted; "
                         "custom match attributed")
@@ -679,7 +679,7 @@ def _p_exc_validation():
     ctx = _exc_ctx(resource={"tool": "db.dump", "target": "prod.live"})
     d = pexc.apply("test-policy", "test.rule", ctx, _EVAL_START, excs)
     codes = [c for c, _ in d.detail]
-    if d.kind == "no-skip" and \
+    if d.kind == "no-skip" and\
             "exception-compensating-validation-failed" in codes:
         return ("HELD", "failed validation refused the grant")
     return ("BREAK", "failed validation still granted: %s" % d.kind)
@@ -699,7 +699,7 @@ def _p_exc_identities():
         return ("ERROR", "grant failed unexpectedly: %s" % d.kind)
     rec = pexc.to_skip_record(d, "test-policy", "test.rule",
                               _exc_ctx(), _EVAL_START)
-    if rec["exception_ids"] == ["exc-1"] and rec.get("digest") and \
+    if rec["exception_ids"] == ["exc-1"] and rec.get("digest") and\
             rec["code"] == "exception-granted-with-attribution":
         return ("HELD", "skip carries identities; digest-linked "
                         "record names exc-1")
@@ -719,7 +719,7 @@ def _p_exc_deny_veto():
     d = pexc.apply("test-policy", "test.rule", _exc_ctx(), _EVAL_START,
                    excs)
     out = pexc.rule_outcome(True, d)
-    if out["outcome"] == "skip" and \
+    if out["outcome"] == "skip" and\
             out["code"] == "exception-granted-with-attribution":
         return ("RESIDUAL",
                 "outcome is 'skip' (never 'pass') at this seam, but "

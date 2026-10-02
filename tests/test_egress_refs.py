@@ -22,7 +22,7 @@ from gov import egress_refs as er  # noqa: E402
 
 # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10
 # bundle-delivery-* + 4 egress-ref-*).
-TAXONOMY_PIN = 1621  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 EXPECTED_CODES = (
     "egress-ref-data-exfil",

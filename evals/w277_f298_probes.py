@@ -31,7 +31,7 @@ sys.path.insert(0, REPO)
 
 from gov import coverage_ledger as cl  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -98,7 +98,7 @@ def f298b_logbook_not_bricked():
         entry = L.score("tx", 4, proof_method="redteam",
                         scored_at=_iso(now))
     except cl.CoverageLedgerError as exc:
-        return "BREAK", "honest score refused after refused future: %s" \
+        return "BREAK", "honest score refused after refused future: %s"\
             % exc.code
     if entry["score"] != 4:
         return "BREAK", "wrong entry appended"
@@ -183,7 +183,7 @@ def f298g_chain_verifies_after_refusal():
     try:
         L.score("tx", 4, proof_method="redteam", scored_at=_iso(now))
     except cl.CoverageLedgerError as exc:
-        return "BREAK", "honest append refused (logbook bricked): %s" \
+        return "BREAK", "honest append refused (logbook bricked): %s"\
             % exc.code
     if L.verify_all() != 1:
         return "BREAK", "chain did not verify"

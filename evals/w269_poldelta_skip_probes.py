@@ -46,7 +46,7 @@ from gov import policy_exception as pe
 from gov import ed25519
 from gov.signing import Ed25519Verifier
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 EVAL_START = "2026-10-01T12:00:00Z"
 POLICY_NAME = "delta-policy"
@@ -254,8 +254,8 @@ def _p3():
     if d.get("matched_rule") is not None:
         checks.append("matched_rule %r" % d.get("matched_rule"))
     skips = d.get("exception_skips", [])
-    if len(skips) != 1 or skips[0].get("rule") != "a" or \
-            skips[0].get("vetoed") is not False or \
+    if len(skips) != 1 or skips[0].get("rule") != "a" or\
+            skips[0].get("vetoed") is not False or\
             skips[0].get("exception_ids") != ["exc-allow-1"]:
         checks.append("exception_skips %r" % (skips,))
     if checks:
@@ -307,7 +307,7 @@ def _p6():
     excs = _loaded(keys, [_wire(keys, "exc-old-2", ["d"],
                                 expires_at="2020-01-01T00:00:00Z")])
     d = pd.evaluate(DENY_POLICY, REQ_OK, **_seam(excs))
-    if d.get("decision") != "Deny" or \
+    if d.get("decision") != "Deny" or\
             d.get("reason") != "policy-delta-forbid":
         return False, "decision %r (deny-veto active again)" % (d,)
     if d.get("exception_skips") != []:
@@ -327,7 +327,7 @@ def _p7():
                     **_seam(excs, policy_name=None))
     if d.get("decision") != "Allow":
         return False, "decision %r (exceptions without a policy name " \
-            "must be inert, fail-closed toward enforcement)" % \
+            "must be inert, fail-closed toward enforcement)" %\
             d.get("decision")
     return True, "nameless exceptions are inert"
 
@@ -361,7 +361,7 @@ def _p9():
             "not be silently dropped), got %d" % len(cxs)
     cx = cxs[0]
     skips = cx.get("exception_skips", [])
-    if len(skips) != 1 or skips[0].get("rule") != "llm-evil" or \
+    if len(skips) != 1 or skips[0].get("rule") != "llm-evil" or\
             skips[0].get("exception_ids") != ["exc-evil-1"]:
         return False, "exception_skips %r (skipped rule must appear " \
             "with its exception identity)" % (skips,)
@@ -388,7 +388,7 @@ def _p11():
     r = pd.counterexamples(DENY_CAND, CURRENT, BOUNDARY_WIDE,
                            **_seam(excs))
     if r.get("verdict") != "uncheckable":
-        return False, "verdict %r (deny veto must survive skipping)" \
+        return False, "verdict %r (deny veto must survive skipping)"\
             % r.get("verdict")
     if "policy-delta-forbid-residual" not in r.get("failed_checks", []):
         return False, "failed_checks %r" % r.get("failed_checks")

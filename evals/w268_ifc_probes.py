@@ -34,7 +34,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _IMPL = os.environ.get("GOV_IFC_IMPL", "gov.output_ifc")
 
@@ -394,7 +394,7 @@ def _p_audited():
     except Exception as e:  # noqa: BLE001
         return False, "exercise raised: %r" % (e,)
     if len(records) != 1:
-        return False, "expected exactly one audit record, got %d" \
+        return False, "expected exactly one audit record, got %d"\
             % len(records)
     rec = records[0]
     for key in ("event", "operation", "tags", "grant_digest",
@@ -402,7 +402,7 @@ def _p_audited():
         if key not in rec:
             return False, "audit record missing %r" % (key,)
     if res["label"].get("secrecy") != []:
-        return False, "declassification did not clear tag: %r" \
+        return False, "declassification did not clear tag: %r"\
             % (res["label"],)
     return True, "exercise leaves complete audit evidence"
 
@@ -419,7 +419,7 @@ def _p_declass_egress():
     except Exception as e:  # noqa: BLE001
         return False, "declassify-then-egress raised: %r" % (e,)
     if not r.get("allowed") or len(records) != 1:
-        return False, "legit declassify flow broken: %r %d" \
+        return False, "legit declassify flow broken: %r %d"\
             % (r, len(records))
     return True, "authorized declassification unblocks egress with evidence"
 

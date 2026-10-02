@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-teleport")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -164,7 +164,7 @@ def p_expired_decide_refused():
         ar.review(store, rec["request_id"], reviewer="agent:bob",
                   approve=True, now=_NOW + 1000)
     except ar.AccessRequestError as e:
-        if e.code == "access-request-terminal-refused" and \
+        if e.code == "access-request-terminal-refused" and\
                 store.get(rec["request_id"])["state"] == "EXPIRED":
             _record("p_expired_decide_refused", "HELD",
                     "expired request transitioned EXPIRED at read time; "
@@ -274,7 +274,7 @@ def p_grant_ttl_bound():
     d_exp = eg.check_grant(principal="agent:alice", action="tool:db_query",
                            tuples=tuples,
                            check_conditions={"now": _NOW + 10 + 601})
-    if d_ok["allowed"] and not d_exp["allowed"] and \
+    if d_ok["allowed"] and not d_exp["allowed"] and\
             d_exp["code"] == "delegation-ephemeral-grant-refused":
         _record("p_grant_ttl_bound", "HELD",
                 "minted grant allows before expiry, refuses after "
@@ -351,8 +351,8 @@ def p_join_key_evidence():
     kinds = [e["event"] for e in events]
     joins = {e["join_key"] for e in events}
     replayed = ar.replay_state(log, jid)
-    if kinds == ["submitted", "review", "approved", "grant-issued"] and \
-            joins == {jid} and replayed == "APPROVED" and \
+    if kinds == ["submitted", "review", "approved", "grant-issued"] and\
+            joins == {jid} and replayed == "APPROVED" and\
             grant["join_key"] == jid:
         _record("p_join_key_evidence", "HELD",
                 "decision<->evidence joined by join_key; offline replay "
@@ -423,7 +423,7 @@ def p_snapshot_restore():
     snap = store.snapshot()
     store2 = ar.AccessRequestStore.restore(snap)
     r2 = store2.get(rec["request_id"])
-    if r2 is not None and r2["state"] == "PENDING" and \
+    if r2 is not None and r2["state"] == "PENDING" and\
             len(r2["reviews"]) == 1:
         _record("p_snapshot_restore", "HELD",
                 "store snapshot/restore round-trips pending state "

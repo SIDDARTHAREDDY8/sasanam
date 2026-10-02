@@ -49,7 +49,7 @@ except Exception:  # red phase: module not written yet
 from gov import skill_admission as _sa
 from gov import decision_codes as _dc
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 EXPECTED_CODES = (
     "bundlescan-rce-global",
@@ -227,7 +227,7 @@ def p03_rce_eval():
 
 def p04_gadget_getattr():
     v = _scan(_p_getattr())
-    if v["code"] == "bundlescan-suspicious-global" \
+    if v["code"] == "bundlescan-suspicious-global"\
             and v["verdict"] == "advisory":
         return "HELD", "getattr gadget flagged HIGH advisory"
     return "BREAK", "verdict=%s code=%s" % (v["verdict"], v["code"])
@@ -235,7 +235,7 @@ def p04_gadget_getattr():
 
 def p05_unknown_custom_global():
     v = _scan(_p_widget())
-    if v["code"] == "bundlescan-unknown-global" \
+    if v["code"] == "bundlescan-unknown-global"\
             and v["verdict"] == "advisory":
         return "HELD", "unknown custom class flagged MEDIUM advisory"
     return "BREAK", "verdict=%s code=%s" % (v["verdict"], v["code"])
@@ -286,7 +286,7 @@ def p11_seam_critical_refuses():
         verdict = _seam_admit({"model.pkl": _p_rce_os_system()})
     except TypeError:
         return "BREAK", "admit() has no artifact_bytes seam (red phase)"
-    if verdict["admitted"] is False \
+    if verdict["admitted"] is False\
             and verdict["code"] == "bundlescan-rce-global":
         ev = verdict.get("evidence", {}).get("content_scan", {})
         if "model.pkl" in str(ev):
@@ -326,7 +326,7 @@ def c02_benign_datetime():
 def c03_legacy_admit_untouched():
     layout, links, auth_pub = _valid_admission()
     verdict = _sa.admit(layout, links, auth_pub)
-    if verdict["admitted"] is True \
+    if verdict["admitted"] is True\
             and "content_scan" not in verdict.get("evidence", {}):
         return "HELD", "legacy admit path byte-identical"
     return "BREAK", "admitted=%s evidence-keys=%s" % (

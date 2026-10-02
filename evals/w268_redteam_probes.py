@@ -56,7 +56,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 import gov.decision_packet as dp  # noqa: E402
 import gov.ed25519 as ed25519  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 
 def _seed(tag):
@@ -966,7 +966,7 @@ def d01_residual_forbid_unknown():
         d = poldelta.evaluate(pol, req)
     except Exception as exc:  # noqa: BLE001
         return ("ERROR", "evaluate raised: %r" % (exc,))
-    if d["decision"] == "Unknown" \
+    if d["decision"] == "Unknown"\
             and d["reason"] == "policy-delta-forbid-residual":
         return ("HELD", "residual forbid => Unknown, never Allow")
     return ("BREAK", "residual deny mishandled: %r" % (d,))
@@ -1025,7 +1025,7 @@ def d03_attribution_no_drift():
                 if k != "evidence_digest"}
         if poldelta._digest_record(body) != cx["evidence_digest"]:
             return ("BREAK", "counterexample evidence digest mismatch")
-    if set(gate["failed_checks"]) == union \
+    if set(gate["failed_checks"]) == union\
             and set(rec["failed_checks"]) == set(gate["failed_checks"]):
         return ("HELD",
                 "attribution matches the gate verbatim: %s"
@@ -1086,10 +1086,10 @@ def d04_exception_skip_forward():
                           exceptions=_granted("deny-x", "exc-d1"),
                           **seam)
     sk = d.get("exception_skips", [])
-    if d["decision"] != "Deny" or \
-            d.get("reason") != "policy-delta-forbid" or \
-            len(sk) != 1 or sk[0].get("rule") != "deny-x" or \
-            sk[0].get("vetoed") is not True or \
+    if d["decision"] != "Deny" or\
+            d.get("reason") != "policy-delta-forbid" or\
+            len(sk) != 1 or sk[0].get("rule") != "deny-x" or\
+            sk[0].get("vetoed") is not True or\
             sk[0].get("exception_ids") != ["exc-d1"]:
         return ("BREAK", "skip cleared/misattributed a deny: %r"
                 % (d,))
@@ -1100,9 +1100,9 @@ def d04_exception_skip_forward():
                           exceptions=_granted("llm", "exc-a1"),
                           **seam)
     sk = d.get("exception_skips", [])
-    if d["decision"] != "Deny" or \
-            d.get("reason") != "policy-delta-default-deny" or \
-            len(sk) != 1 or sk[0].get("vetoed") is not False or \
+    if d["decision"] != "Deny" or\
+            d.get("reason") != "policy-delta-default-deny" or\
+            len(sk) != 1 or sk[0].get("vetoed") is not False or\
             sk[0].get("exception_ids") != ["exc-a1"]:
         return ("BREAK", "skip mis-handled an allow grant: %r"
                 % (d,))
@@ -1140,7 +1140,7 @@ def d04_exception_skip_forward():
         return ("BREAK", "skipped grant dropped from attribution: "
                 "%r" % (r,))
     sk = cxs[0].get("exception_skips", [])
-    if len(sk) != 1 or sk[0].get("rule") != "llm-evil" or \
+    if len(sk) != 1 or sk[0].get("rule") != "llm-evil" or\
             sk[0].get("exception_ids") != ["exc-e1"]:
         return ("BREAK", "skipped grant misattributed: %r"
                 % (cxs[0],))

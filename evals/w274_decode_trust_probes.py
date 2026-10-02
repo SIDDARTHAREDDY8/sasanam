@@ -35,7 +35,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _TMP = tempfile.mkdtemp(prefix="w274dt-")
@@ -110,7 +110,7 @@ def _png_bytes(keyword=b"Title", text=b"hello"):
         return struct.pack(">I", len(data)) + c + struct.pack(
             ">I", zlib.crc32(c) & 0xFFFFFFFF)
     ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
-    itxt = keyword + b"\x00" + bytes([0, 0]) + b"\x00\x00" + b"\x00" \
+    itxt = keyword + b"\x00" + bytes([0, 0]) + b"\x00\x00" + b"\x00"\
         + text
     raw = b"\x00" + b"\x00" * 3
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)

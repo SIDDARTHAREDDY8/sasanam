@@ -747,6 +747,73 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'anchor-checkpoint-invalid': {
+        "domain": 'anchor',
+        "code": 'anchor-checkpoint-invalid',
+        "human": 'anchor: the transparency-log checkpoint is malformed or '
+                 'its operator signature does not verify; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-inclusion-mismatch': {
+        "domain": 'anchor',
+        "code": 'anchor-inclusion-mismatch',
+        "human": 'anchor: the inclusion proof does not chain the claimed '
+                 'leaf to the checkpoint root; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-index-unpublished': {
+        "domain": 'anchor',
+        "code": 'anchor-index-unpublished',
+        "human": 'anchor: the claimed log index is not covered by any '
+                 'published checkpoint (publication never awaited); refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-leaf-mismatch': {
+        "domain": 'anchor',
+        "code": 'anchor-leaf-mismatch',
+        "human": 'anchor: the bundle digest claimed by the receipt is not '
+                 'the leaf anchored at the claimed index; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-log-corrupt': {
+        "domain": 'anchor',
+        "code": 'anchor-log-corrupt',
+        "human": 'anchor: the POSIX tile store is structurally inconsistent '
+                 'with state or checkpoints (tamper-evident trip); refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-no-signer': {
+        "domain": 'anchor',
+        "code": 'anchor-no-signer',
+        "human": 'anchor: publication requested on a log handle with no '
+                 'operator signer key; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'anchor-witness-quorum-failed': {
+        "domain": 'anchor',
+        "code": 'anchor-witness-quorum-failed',
+        "human": 'anchor: fewer than the pinned quorum of witnesses '
+                 'cosigned the checkpoint; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'approval-capability-dead': {
         "domain": 'scoped',
         "code": 'approval-capability-dead',
@@ -2476,6 +2543,18 @@ TAXONOMY = {
                  'with no pending request; refused fail-closed',
         "severity": 'medium',
         "evidence_kinds_required": ['journal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'campaign-produces-suppressed': {
+        "domain": 'campaign',
+        "code": 'campaign-produces-suppressed',
+        "human": 'campaign: a produces entry with on="always" was withheld '
+                 'because the step verdict was ERROR/atomic-error -- an '
+                 'atomic that raised produced nothing, so writing the '
+                 'static value would fabricate evidence; the suppression '
+                 'is recorded on the step record, never silent',
+        "severity": 'low',
+        "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
     'cancellation-unauthorized': {
@@ -6164,6 +6243,25 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['check-evidence-present', 'check-evidence-verifiable'],
     },
+    'exception-baseline-drift': {
+        "domain": 'exception',
+        "code": 'exception-baseline-drift',
+        "human": 'governed exception: the live exception set drifted beyond the pinned '
+                 'baseline, or the baseline document was tampered with; refusing LOUD',
+        "severity": 'high',
+        "evidence_kinds_required": ['exception-record', 'baseline'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-close-refused': {
+        "domain": 'exception',
+        "code": 'exception-close-refused',
+        "human": 'governed exception: an attempt to close a finding through the exception '
+                 'seam was refused; exceptions annotate findings as exception-suppressed '
+                 'but can never close them',
+        "severity": 'high',
+        "evidence_kinds_required": ['exception-record', 'finding'],
+        "reverify_steps": ['recompute'],
+    },
     'exception-compensating-validation-failed': {
         "domain": 'exception',
         "code": 'exception-compensating-validation-failed',
@@ -6175,12 +6273,50 @@ TAXONOMY = {
         "evidence_kinds_required": ['exception-record', 'validation-result'],
         "reverify_steps": ['recompute', 'replay-match'],
     },
+    'exception-declaration-invalid': {
+        "domain": 'exception',
+        "code": 'exception-declaration-invalid',
+        "human": 'governed exception: the exception or check declaration is '
+                 'malformed -- a future created_at, an empty check category, '
+                 'or another invalid declaration field; the grant or '
+                 'registration was refused LOUD',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record', 'validation-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-duplicate': {
+        "domain": 'exception',
+        "code": 'exception-duplicate',
+        "human": 'governed exception: the same exception declaration was already granted; '
+                 'the existing grant stands',
+        "severity": 'low',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-duplicate-check': {
+        "domain": 'exception',
+        "code": 'exception-duplicate-check',
+        "human": 'governed exception: a check id is already registered in the check '
+                 'registry; registration is idempotent by refusal',
+        "severity": 'low',
+        "evidence_kinds_required": ['check-registry'],
+        "reverify_steps": ['recompute'],
+    },
     'exception-expired': {
         "domain": 'exception',
         "code": 'exception-expired',
         "human": 'policy exception: the exception is past its expiresAt at '
                  'the pinned evaluation time and was skipped fail-closed '
                  'toward enforcement; expired exceptions grant nothing',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-expiry-invalid': {
+        "domain": 'exception',
+        "code": 'exception-expiry-invalid',
+        "human": 'governed exception: the exception expiry is in the past or beyond the '
+                 'maximum TTL; there are no permanent exceptions',
         "severity": 'medium',
         "evidence_kinds_required": ['exception-record'],
         "reverify_steps": ['recompute'],
@@ -6194,6 +6330,15 @@ TAXONOMY = {
         "severity": 'low',
         "evidence_kinds_required": ['exception-record'],
         "reverify_steps": ['recompute', 'replay-match'],
+    },
+    'exception-justification-missing': {
+        "domain": 'exception',
+        "code": 'exception-justification-missing',
+        "human": 'governed exception: the exception declaration has no justification or '
+                 'one shorter than the minimum length; justification is mandatory',
+        "severity": 'medium',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
     },
     'exception-malformed': {
         "domain": 'exception',
@@ -6216,6 +6361,25 @@ TAXONOMY = {
         "evidence_kinds_required": ['exception-record', 'decision-trail'],
         "reverify_steps": ['recompute'],
     },
+    'exception-scope-mismatch': {
+        "domain": 'exception',
+        "code": 'exception-scope-mismatch',
+        "human": 'governed exception: the exception scope does not cover the evaluated '
+                 'scope, or the declared scope is malformed; exceptions are scoped to '
+                 'their resource, tool, or policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['exception-record', 'scope'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-unapproved-approver': {
+        "domain": 'exception',
+        "code": 'exception-unapproved-approver',
+        "human": 'governed exception: the approver is not in the configured approver set, '
+                 'or no approvers are configured; exceptions are never open by default',
+        "severity": 'high',
+        "evidence_kinds_required": ['exception-record', 'approver'],
+        "reverify_steps": ['recompute'],
+    },
     'exception-unauthorized-authorship': {
         "domain": 'exception',
         "code": 'exception-unauthorized-authorship',
@@ -6226,6 +6390,23 @@ TAXONOMY = {
         "severity": 'high',
         "evidence_kinds_required": ['exception-record', 'signature-verification'],
         "reverify_steps": ['recompute', 'reverify-signature'],
+    },
+    'exception-unknown-check': {
+        "domain": 'exception',
+        "code": 'exception-unknown-check',
+        "human": 'governed exception: the check id is not registered in the check '
+                 'registry; only registered checks can be excepted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['check-registry'],
+        "reverify_steps": ['recompute'],
+    },
+    'exception-unknown-digest': {
+        "domain": 'exception',
+        "code": 'exception-unknown-digest',
+        "human": 'governed exception: the exception digest is unknown to the store',
+        "severity": 'low',
+        "evidence_kinds_required": ['exception-record'],
+        "reverify_steps": ['recompute'],
     },
     'expected-participant-missing': {
         "domain": 'participants',
@@ -7921,6 +8102,17 @@ TAXONOMY = {
                  'in the catalog; refused fail-closed',
         "severity": 'low',
         "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-identity-collision': {
+        "domain": 'inventory-query',
+        "code": 'inventory-identity-collision',
+        "human": 'an inventory table seed or extension-provider fetch '
+                 'contained two rows with the same identity; the rows '
+                 'would silently shadow (last-write-wins) and hide '
+                 'content from the drift audit; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'inventory-pack-drift': {

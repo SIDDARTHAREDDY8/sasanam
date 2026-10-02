@@ -43,7 +43,7 @@ from gov.memory_provenance import (  # noqa: E402
 # Lane-local taxonomy pin: 1411 (wave-270 merge) + 4 imgtext-* codes.
 # Counted on raw quoted source literals (the corrected method:
 # bare '"code": ' overcounts helper occurrences).
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 EXPECTED_CODES = (
     "imgtext-malformed",
@@ -404,9 +404,9 @@ def _c9(impl):
     img = _png([_png_text("Comment", full)])
     v = impl.screen_image_text(img)
     if v.get("verdict") != "refuse":
-        return "BREAK", "single-chunk instruction not refused: %r" \
+        return "BREAK", "single-chunk instruction not refused: %r"\
             % (v.get("verdict"),)
-    return "HELD", "single-chunk refused by both (code=%s)" \
+    return "HELD", "single-chunk refused by both (code=%s)"\
         % (v.get("code"),)
 
 
@@ -513,7 +513,7 @@ def main():
     for name, verdict, want, note in bad:
         print("MISMATCH %s got=%s want=%s %s" % (name, verdict, want,
                                                 note))
-    failed = bool(bad) or not det or \
+    failed = bool(bad) or not det or\
         any(v not in ("HELD", "SKIPPED") for _, v, _ in green)
     print("RESULT %s" % ("FAIL" if failed else "OK"))
     return 1 if failed else 0

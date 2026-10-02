@@ -42,7 +42,7 @@ POP_DOMAIN = b"evcert-pop-v1"
 NOW = 1790860000
 ARC = "1.3.6.1.4.1.99999"
 PROV_OID = ARC + ".1.40"
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 
 def _keypair(seed_byte):
@@ -193,7 +193,7 @@ def p04_request_above_class_max(tmpdir):
     """Within global bounds but above the class max -> new code."""
     ca, absent = _ca_or_absent(tmpdir, {"agent": AGENT})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request(lifetime_s=2400, provisioner="agent")
     v1, d1 = _expect_code(
@@ -203,9 +203,9 @@ def p04_request_above_class_max(tmpdir):
                                provisioner="agent")
     try:
         cert, _ = ca.issue(**req2)
-        v2 = "HELD" if cert["not_after"] - cert["not_before"] == 1800 \
+        v2 = "HELD" if cert["not_after"] - cert["not_before"] == 1800\
             else "ERROR"
-        d2 = "class-max request issues with class-max lifetime" \
+        d2 = "class-max request issues with class-max lifetime"\
             if v2 == "HELD" else "wrong lifetime minted"
     except Exception as e:  # noqa: BLE001
         v2, d2 = "ERROR", "valid class-max request refused: %r" % (
@@ -221,7 +221,7 @@ def p05_request_below_class_min(tmpdir):
     """Within global bounds but below the class min -> new code."""
     ca, absent = _ca_or_absent(tmpdir, {"agent": AGENT})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request(lifetime_s=120, provisioner="agent")
     return _expect_code(
@@ -233,7 +233,7 @@ def p06_global_check_still_first(tmpdir):
     not the class code."""
     ca, absent = _ca_or_absent(tmpdir, {"agent": AGENT})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request(lifetime_s=7200, provisioner="agent")
     v1, d1 = _expect_code(
@@ -254,7 +254,7 @@ def p07_class_required_and_known(tmpdir):
     -> malformed. No silent default class."""
     ca, absent = _ca_or_absent(tmpdir, {"agent": AGENT})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request()  # no provisioner
     v1, d1 = _expect_code(lambda: ca.issue(**req),
@@ -278,7 +278,7 @@ def p08_provisioner_in_extensions(tmpdir):
     ca_pub = FakeKmsProvider(["ca-key-1"]).test_signing_public_key("ca-key-1")
     ca, absent = _ca_or_absent(tmpdir, {"agent-runtime": AGENT})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request(provisioner="agent-runtime")
     try:
@@ -290,8 +290,8 @@ def p08_provisioner_in_extensions(tmpdir):
     except Exception as e:  # noqa: BLE001
         return "ERROR", "valid classed issuance failed: %r" % (
             getattr(e, "code", e),)
-    v1, d1 = ("HELD", "class recorded at %s" % PROV_OID) \
-        if cert["extensions"].get(PROV_OID) == "agent-runtime" \
+    v1, d1 = ("HELD", "class recorded at %s" % PROV_OID)\
+        if cert["extensions"].get(PROV_OID) == "agent-runtime"\
         else ("BREAK", "provisioner OID missing/wrong: %r"
               % sorted(cert["extensions"]))
     # arc-aware verify accepts
@@ -314,8 +314,8 @@ def p08_provisioner_in_extensions(tmpdir):
         oid_keys = sorted(k for k in cert2["extensions"]
                           if "." in k and k[0].isdigit())
         want = sorted([ARC + ".1.8", ARC + ".1.24"])
-        v4, d4 = ("HELD", "legacy cert extension set unchanged") \
-            if oid_keys == want \
+        v4, d4 = ("HELD", "legacy cert extension set unchanged")\
+            if oid_keys == want\
             else ("BREAK", "legacy extension set changed: %r" % oid_keys)
     except Exception as e:  # noqa: BLE001
         v4, d4 = "ERROR", "legacy issuance failed: %r" % (
@@ -371,7 +371,7 @@ def p10_class_default_applies(tmpdir):
     """No lifetime_s -> the class default (not the global default)."""
     ca, absent = _ca_or_absent(tmpdir, {"reviewer": REVIEWER})
     if absent:
-        return ("BREAK", absent) if not absent.startswith("ERROR") \
+        return ("BREAK", absent) if not absent.startswith("ERROR")\
             else ("ERROR", absent)
     req, _, _ = _good_request(provisioner="reviewer")
     try:
@@ -404,7 +404,7 @@ def p11_taxonomy_pin(tmpdir):
         return "ERROR", "total literals %d, want %d" % (n_total, TAXONOMY_PIN)
     if n_new != 1:
         return "ERROR", "new code literal count %d, want 1" % n_new
-    if entry is None or entry.get("domain") != "evcert" \
+    if entry is None or entry.get("domain") != "evcert"\
             or entry.get("severity") != "medium":
         return "ERROR", "registry entry wrong: %r" % (entry,)
     return "HELD", "1579 literals, new code unique, domain/severity exact"
@@ -465,7 +465,7 @@ def _run_green_checks():
         env["TMPDIR"] = tempfile.mkdtemp(prefix="g270green-", dir="/var/tmp")
         os.makedirs(env["TMPDIR"], exist_ok=True)
         try:
-            cmd = [py, "-m", name] if kind == "battery" \
+            cmd = [py, "-m", name] if kind == "battery"\
                 else [py, "-m", "unittest", name]
             r = subprocess.run(cmd, cwd=_REPO, env=env,
                                capture_output=True, text=True, timeout=600)

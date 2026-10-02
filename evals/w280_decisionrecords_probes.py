@@ -33,7 +33,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w280-decisionrecords")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-279 merge. New decision codes only if needed.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-279 merge. New decision codes only if needed.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -204,7 +204,7 @@ def p_matched_provenance():
     pdp = cr.CheckResources(cr.compile_bundle(_base_bundle()), _fresh_log())
     resp = pdp.check(_req())
     d = resp.results["read"]
-    if d.effect == "allow" and d.matched_rule_id == "read-own" \
+    if d.effect == "allow" and d.matched_rule_id == "read-own"\
             and d.reason == "owners may read their documents":
         return _record("p_matched_provenance", "HELD",
                        "allow names rule read-own + its declared reason")
@@ -220,7 +220,7 @@ def p_derived_role_grants():
     pdp = cr.CheckResources(cr.compile_bundle(_base_bundle()), _fresh_log())
     yes = pdp.check(_req()).results["read"]
     no = pdp.check(_req(owner="mallory")).results["read"]
-    if yes.effect == "allow" and "owner" in yes.derived_roles \
+    if yes.effect == "allow" and "owner" in yes.derived_roles\
             and no.effect == "deny":
         return _record("p_derived_role_grants", "HELD",
                        "owner derived iff resource.attr.owner == principal.id")
@@ -236,7 +236,7 @@ def p_derived_role_recorded():
     pdp = cr.CheckResources(cr.compile_bundle(_base_bundle()), log)
     pdp.check(_req())
     recs = cr.decision_records(log)
-    if len(recs) == 1 and recs[0]["derived_roles"] == ["owner"] \
+    if len(recs) == 1 and recs[0]["derived_roles"] == ["owner"]\
             and recs[0]["principal_id"] == "alice":
         return _record("p_derived_role_recorded", "HELD",
                        "decision record carries derived_roles=['owner']")
@@ -255,8 +255,8 @@ def p_record_chained_at_decision_time():
     if len(recs) != 2:
         return _record("p_record_chained_at_decision_time", "BREAK",
                        "expected 2 records, got %d" % (len(recs),))
-    if recs[0]["prev_decision_record_digest"] != "genesis" \
-            or recs[1]["prev_decision_record_digest"] != \
+    if recs[0]["prev_decision_record_digest"] != "genesis"\
+            or recs[1]["prev_decision_record_digest"] !=\
             recs[0]["record_digest"]:
         return _record("p_record_chained_at_decision_time", "BREAK",
                        "per-writer chain broken")
@@ -280,7 +280,7 @@ def p_tamper_detected():
     pdp.check(_req(actions=("read", "delete")))
     recs = cr.decision_records(log)
     mutated = [dict(r) for r in recs]
-    mutated[0]["effect"] = "allow" if mutated[0]["effect"] == "deny" \
+    mutated[0]["effect"] = "allow" if mutated[0]["effect"] == "deny"\
         else "deny"
     dropped = recs[:1]
     if cr.verify_decision_records(mutated):

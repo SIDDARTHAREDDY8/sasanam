@@ -52,7 +52,7 @@ sys.path.insert(0, REPO)
 from gov import delegation_tokens as _dt  # noqa: E402
 from gov.identity import AgentIdentity  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _SID = "sess-w278"
@@ -136,7 +136,7 @@ def _bound_ctx(keys, trust=None, session=_SID, resource=_MISSING_SENTINEL,
         parent_chain=[],
         trust=trust or keys.trust(),
         session_id=session)
-    kw = {} if bind_resource is _MISSING_SENTINEL \
+    kw = {} if bind_resource is _MISSING_SENTINEL\
         else {"expected_resource": bind_resource}
     ctx.bind(**kw)
     return ctx

@@ -30,7 +30,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w279-guardev")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -177,7 +177,7 @@ def p_advisory_flagged_not_blocked():
         mode="advisory", event_scope="during_call", fn=deny,
         input_bytes=b"a", intentional_block_types=(PolicyBlock,))
     recs = ge.guardrail_run_records(log)
-    if allowed is not False or rec["outcome"] != "advisory_flagged" \
+    if allowed is not False or rec["outcome"] != "advisory_flagged"\
             or recs[0]["outcome"] != "advisory_flagged":
         return _record("p_advisory_flagged_not_blocked", "BREAK",
                        "advisory mishandled: allowed=%r outcome=%r"

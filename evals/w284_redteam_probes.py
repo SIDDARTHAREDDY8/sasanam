@@ -61,7 +61,7 @@ import w283_redteam_probes as _W283  # noqa: E402
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-283 merge: pin 1579 -> 1587 (+2 finding-* +6 inventory-*).
-TAXONOMY_PIN = 1621
+TAXONOMY_PIN = 1641
 
 _results = []
 
@@ -199,7 +199,7 @@ def h_sc_allowlist_registry():
     # a different rule set must be refused. Probe: construct, register,
     # persist, reload cross-rule-set.
     try:
-        reg = sc.FingerprintRegistry() if hasattr(sc, "FingerprintRegistry") \
+        reg = sc.FingerprintRegistry() if hasattr(sc, "FingerprintRegistry")\
             else None
     except Exception:
         reg = None
@@ -639,23 +639,29 @@ def h_cp_replay_deterministic():
 # ---------------------------------------------------------------------------
 
 def f_fl_close_old_missing_reproduced():
-    """F316: close_old_findings must not close on a scan entry missing
-    'reproduced'."""
+    """F316 (CLOSED wave-285 lane 2): close_old_findings must refuse LOUD
+    (FindingLifecycleError) on a scan entry missing 'reproduced' -- the
+    finding stays open, never a fabricated mitigated transition."""
     fl, reg = _fl_registry()
     n, _ = reg.file_finding(
         title="f316", seam="s", attack_shape="a", close_when="c",
         severity="high", reporter="r", wave=284)
-    reg.close_old_findings({n: {"battery": "b", "commit": "c"}},
-                           wave=284, actor="sweep")
-    f = reg.get(n)
-    if f.state == "mitigated":
-        _record("fl-close-old-missing-reproduced", "BREAK",
-                "F316: malformed scan (no reproduced) closed an OPEN "
-                "finding -> mitigated with fabricated evidence")
-    else:
-        _record("fl-close-old-missing-reproduced", "HELD",
-                "malformed scan refused loudly; finding still %s"
-                % (f.state,))
+    try:
+        reg.close_old_findings({n: {"battery": "b", "commit": "c"}},
+                               wave=284, actor="sweep")
+    except fl.FindingLifecycleError as e:
+        f = reg.get(n)
+        if f.state == "open":
+            _record("fl-close-old-missing-reproduced", "HELD",
+                    "malformed scan refused loudly; finding still open: %s"
+                    % (e,))
+        else:
+            _record("fl-close-old-missing-reproduced", "BREAK",
+                    "loud refusal but finding left state=%r" % (f.state,))
+        return
+    _record("fl-close-old-missing-reproduced", "BREAK",
+            "F316: malformed scan (no reproduced) closed an OPEN "
+            "finding -> mitigated with fabricated evidence")
 
 
 def f_sc_decode_depth_evasion():
@@ -853,7 +859,10 @@ def f_fl_md_import_default_verified():
 
 
 def f_cp_produces_always_on_error():
-    """F324: produces on='always' must not fire on ERROR verdicts."""
+    """F324 (CLOSED wave-285 lane 2): produces on='always' must not fire
+    on ERROR verdicts -- the fact is withheld, the suppression is
+    recorded with code campaign-produces-suppressed, and objectives stay
+    unmet."""
     from gov import campaign as cp
     sys.path.insert(0, os.path.join(REPO, "evals"))
     from _w284_helpers import raising_spec
@@ -875,14 +884,26 @@ def f_cp_produces_always_on_error():
              if r["record_type"] == "campaign-close"][0]
     steps = [r for r in recs
              if r["record_type"] == "campaign-step"]
+    suppressed = (steps[0].get("produces_suppressed", []) if steps else [])
     if (close.get("objectives_met") is True
             and all(s["verdict"] == "ERROR" for s in steps)):
         _record("cp-produces-always-on-error", "BREAK",
                 "F324: ERROR-step campaign closed objectives-met "
                 "(breaks=%s)" % (close.get("breaks"),))
-    else:
+    elif (close.get("objectives_met") is not True
+            and all(s["verdict"] == "ERROR" for s in steps)
+            and "goal.flag" not in steps[0].get("facts_snapshot", {})
+            and [e.get("fact") for e in suppressed] == ["goal.flag"]
+            and all(e.get("code") == "campaign-produces-suppressed"
+                    for e in suppressed)):
         _record("cp-produces-always-on-error", "HELD",
-                "objectives not met by ERROR steps")
+                "fact withheld on ERROR; suppression recorded with code")
+    else:
+        _record("cp-produces-always-on-error", "BREAK",
+                "unexpected campaign shape: objectives_met=%r steps=%r "
+                "suppressed=%r" % (close.get("objectives_met"),
+                                   [s.get("verdict") for s in steps],
+                                   suppressed))
 
 
 # ---------------------------------------------------------------------------

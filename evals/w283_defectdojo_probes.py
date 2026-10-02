@@ -44,7 +44,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g283-defectdojo")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-283 lane 5: 1579 -> 1581 (+2 finding-* codes).
-TAXONOMY_PIN = 1621  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -397,6 +397,22 @@ def p_findings_md_load():
                        % (None if got is None else got.state))
     for num in ("F312", "F313", "F314", "F315"):
         ent = reg.get(num)
+        if ent is None or ent.state != "verified":
+            return _record("p-findings-md-load", "BREAK",
+                           "%s parsed as %r, want 'verified'"
+                           % (num, None if ent is None else ent.state))
+    # F312-F315 closed at the wave-284 merge (lane 1); F316-F324 closed
+    # at the wave-285 merge (lanes 1-4); F325-F330 filed OPEN by the
+    # wave-285 independent red team.
+    for num in ("F316", "F317", "F318", "F319", "F320",
+                "F321", "F322", "F323", "F324"):
+        ent = reg.get(num)
+        if ent is None or ent.state != "verified":
+            return _record("p-findings-md-load", "BREAK",
+                           "%s parsed as %r, want 'verified'"
+                           % (num, None if ent is None else ent.state))
+    for num in ("F325", "F326", "F327", "F328", "F329", "F330"):
+        ent = reg.get(num)
         if ent is None or ent.state != "open":
             return _record("p-findings-md-load", "BREAK",
                            "%s parsed as %r, want 'open'"
@@ -418,8 +434,8 @@ def p_findings_md_load():
         return _record("p-findings-md-load", "BREAK",
                        "malformed identity hashes: %r" % bad[:3])
     _record("p-findings-md-load", "HELD",
-            "%d FINDINGS.md entries parsed; F311 closed, F312-F315 open, "
-            "F310/F309/F306 closed"
+            "%d FINDINGS.md entries parsed; F311-F324 closed, "
+            "F325-F330 open, F310/F309/F306 closed"
             % len(reg.all()))
 
 

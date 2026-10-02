@@ -65,7 +65,7 @@ REV = "ab" * 32          # audit-chain revision referenced by the bundle
 REV_STALE = "cd" * 32    # an old revision
 ISSUER_SEED = bytes([0xA5]) * 32  # deployment freshness-issuer key
 OTHER_SEED = bytes([0x5A]) * 32   # a forger's key
-PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
@@ -172,7 +172,7 @@ def _make_ca(tmpdir, audit_name="audit.jsonl", key_id="ca-key-1", **over):
 
 def _issue_cert(ca, seed_byte=0x01, approval_id=APPROVAL, sub="alice"):
     seed, pub = _keypair(seed_byte)
-    chal = POP_DOMAIN + approval_id.encode("utf-8") \
+    chal = POP_DOMAIN + approval_id.encode("utf-8")\
         + hashlib.sha256(pub).digest()
     req = {"identity_assertion": {"iss": ISSUER, "sub": sub,
                                  "exp": NOW + 3600},
@@ -218,12 +218,12 @@ def _submission(tmpdir, *, revision=REV, body_extra=None, tamper=None,
         raw = bytearray(base64.b64decode(
             submission["sealed"]["signature_attestation"]["signature"]))
         raw[0] ^= 0x01
-        submission["sealed"]["signature_attestation"]["signature"] = \
+        submission["sealed"]["signature_attestation"]["signature"] =\
             base64.b64encode(bytes(raw)).decode("ascii")
     if tamper == "root":
         submission = copy.deepcopy(submission)
         root = submission["transparency_receipt"]["root"]
-        submission["transparency_receipt"]["root"] = \
+        submission["transparency_receipt"]["root"] =\
             ("0" if root[0] != "0" else "1") + root[1:]
     return submission, ca, log, fake
 
@@ -292,7 +292,7 @@ def _tmp():
 def p_c01(mod):
     gate, submission, _d = _fixture(_tmp(), mod)
     v = gate.admit(bundle_id="b1", submission=submission, verify_time=NOW)
-    if v["verdict"] != "admit" or v["code"] != "ingest-admit" \
+    if v["verdict"] != "admit" or v["code"] != "ingest-admit"\
             or v["blocked"]:
         return ("BREAK", "benign not admitted: %r" % (v,))
     rep = gate.scan_report("b1")
@@ -332,7 +332,7 @@ def p_c03(mod):
     gate = _gate(mod, tmp, log=log, binding=binding, horizon=3600,
                  mode="audit")
     v = gate.admit(bundle_id="b3", submission=submission, verify_time=NOW)
-    if v["verdict"] != "audit-recorded" or v["blocked"] \
+    if v["verdict"] != "audit-recorded" or v["blocked"]\
             or v["code"] != "ingest-stale-revision":
         return ("BREAK", "audit mode misbehaved: %r" % (v,))
     return ("HELD", "audit mode recorded the would-deny, did not block")
@@ -343,7 +343,7 @@ def p_c04(mod):
     gate, _s, _d = _fixture(_tmp(), mod)
     v = gate.evaluate(bundle_id="x", submission={"garbage": 1},
                       verify_time=NOW)
-    if v["verdict"] != "deny" or v["code"] != "ingest-malformed" \
+    if v["verdict"] != "deny" or v["code"] != "ingest-malformed"\
             or not v["blocked"]:
         return ("BREAK", "hostile not fail-closed: %r" % (v,))
     return ("HELD", "hostile submission denied, no raise")
@@ -643,7 +643,7 @@ def p_a12(mod):
     gate.set_policy(tight)
     s = gate.scan(now=NOW + 120, verify_time=NOW + 120)
     rep = gate.scan_report("ba12")
-    if s["drifted"] != 1 or rep is None or not rep["drift"] \
+    if s["drifted"] != 1 or rep is None or not rep["drift"]\
             or rep["code"] != "ingest-stale-revision":
         return ("BREAK", "drift not detected: %r %r" % (s, rep))
     events = gate.drift_events()
@@ -677,7 +677,7 @@ def p_a14(mod):
     gate.set_policy(tight)
     s = gate.scan(now=NOW + 120, verify_time=NOW + 120)
     rep = gate.scan_report("ba14")
-    if s["drifted"] != 1 or rep is None or not rep["drift"] \
+    if s["drifted"] != 1 or rep is None or not rep["drift"]\
             or rep["code"] != "ingest-stale-revision":
         return ("BREAK", "audit-mode drift not detected: %r %r" % (s, rep))
     events = gate.drift_events()

@@ -75,7 +75,7 @@ from gov import decoy_grants as dg                    # noqa: E402
 import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-276 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-276 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -200,7 +200,7 @@ def dc_trip_denies():
     grant = _issue([_detail("read_file")])
     v = tg.enforce(grant, proof=_proof(grant), tool="admin_shell",
                    args={}, **_env(decoy_registry=dg.DecoyRegistry()))
-    if not v.get("ok") and v.get("code") == "decoy-grant-tripped" \
+    if not v.get("ok") and v.get("code") == "decoy-grant-tripped"\
             and isinstance(v.get("decoy_trip"), dict):
         return "HELD", "decoy trip denies with evidence event"
     return "BREAK", "code=%r ok=%r" % (v.get("code"), v.get("ok"))
@@ -338,7 +338,7 @@ def pv_mixed_routed():
                              driving_units=[user_u.unit_id,
                                             issue_u.unit_id])
     d = prov.grant_check(req, lab)
-    if not d.allowed and d.routed_to_approval \
+    if not d.allowed and d.routed_to_approval\
             and d.code == "provlabel-mixed-provenance":
         return "HELD", "toxic flow routed (mixed-provenance)"
     return "BREAK", "F294 regressed: allowed=%r code=%r" % (

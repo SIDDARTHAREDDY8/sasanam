@@ -27,7 +27,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w280-fga")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*).; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*).; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -365,7 +365,7 @@ def p_batch_no_shortcircuit():
         {"principal": "agent:alice", "action": "tool:db_query"},
     ]
     vec = eg.batch_check(checks, [t], check_conditions={"now": _NOW})
-    if len(vec) == 3 and vec[0]["allowed"] and not vec[1]["allowed"] \
+    if len(vec) == 3 and vec[0]["allowed"] and not vec[1]["allowed"]\
             and vec[2]["allowed"]:
         _record("p_batch_no_shortcircuit", "HELD",
                 "decision vector complete, no short-circuit")
@@ -388,7 +388,7 @@ def p_expand_tree_material():
     body = {k: v for k, v in tree.items() if k != "tree_digest"}
     canon = _json.dumps(body, sort_keys=True, separators=(",", ":"),
                         ensure_ascii=True, default=str).encode()
-    if tree.get("matched") is True and tree.get("children") \
+    if tree.get("matched") is True and tree.get("children")\
             and hashlib.sha256(canon).hexdigest() == tree.get("tree_digest"):
         _record("p_expand_tree_material", "HELD",
                 "resolution tree with digest binding")

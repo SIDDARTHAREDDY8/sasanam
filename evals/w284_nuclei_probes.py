@@ -48,7 +48,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-284 lane 4: +4 manifest-* codes (unsigned, malformed,
 # selection-invalid, signature-invalid).
-TAXONOMY_PIN = 1621  # Wave-283 merge: 1579 -> 1587 (+2 finding-* + 6 inventory-*); Wave-284 lane 4: pin 1587 -> 1591 (+4 manifest-*).; Wave-284 merge: pin 1591 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-283 merge: 1579 -> 1587 (+2 finding-* + 6 inventory-*); Wave-284 lane 4: pin 1587 -> 1591 (+4 manifest-*).; Wave-284 merge: pin 1591 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 

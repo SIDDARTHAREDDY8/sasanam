@@ -141,7 +141,7 @@ from gov import output_ifc as ifc                       # noqa: E402
 import gov.ed25519 as _ed                             # noqa: E402
 from gov.durable_journal import Journal               # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -281,7 +281,7 @@ def rm06_presentation_unverified_listed():
     b.record_presentation(presented_bytes=b"rep", purpose="audit")
     digest = hashlib.sha256(b"rep").hexdigest()
     v = rm.verify_manifest(b.seal(), presentations={})
-    if v["verified"] is True and \
+    if v["verified"] is True and\
             digest in v.get("presentations_unverified", []):
         return ("HELD",
                 "unverifiable presentation honestly listed, verify True")
@@ -528,7 +528,7 @@ def it01_itxt_nul_boundary_evasion():
     allows. Control: the same instruction in one tEXt refuses."""
     v0 = it.screen_image_text(_png([_png_text("Comment", _IT01_INSTR)]))
     if v0["verdict"] != "refuse":
-        return "ERROR", "control failed: whole instruction -> %r" \
+        return "ERROR", "control failed: whole instruction -> %r"\
             % (v0["verdict"],)
     img = _png([_png_text("Comment", "Ignore"),
                 _png_itxt("Title",
@@ -671,7 +671,7 @@ def _tl_checkpoint():
 
 
 def _tl_verify(inclusion_proof):
-    return eb2.InProcessTransparencyLog(now=lambda: _TG2_NOW) \
+    return eb2.InProcessTransparencyLog(now=lambda: _TG2_NOW)\
         .verify_inclusion(_TL_DIGEST, inclusion_proof, _tl_checkpoint())
 
 
@@ -784,7 +784,7 @@ def f253_r01_replay_burns_budget():
                 "(used %d -> %d)" % (used1, used2))
     if r2["code"] == "ptgrant-jti-reused" and used2 == used1:
         return "HELD", "replay refused without consuming budget"
-    return "ERROR", "unexpected: %r used %d->%d" \
+    return "ERROR", "unexpected: %r used %d->%d"\
         % (r2["code"], used1, used2)
 
 
@@ -1133,7 +1133,7 @@ def it02_interleaved_filler_splits_fragments():
     v0 = it.screen_image_text(_png([_png_text("A", "Ignore"),
                                     _png_text("B", _IT02_FR2)]))
     if v0["verdict"] != "refuse":
-        return "ERROR", "control failed: adjacent fragments -> %r" \
+        return "ERROR", "control failed: adjacent fragments -> %r"\
             % (v0["verdict"],)
     img = _png([_png_text("A", "Ignore"),
                 _png_text("J", "a photo of a sunset over the mountains"),
@@ -1157,7 +1157,7 @@ def it03_itxt_translated_keyword_injection():
     house word span. Control: whole instruction in one tEXt refuses."""
     v0 = it.screen_image_text(_png([_png_text("Comment", _IT01_INSTR)]))
     if v0["verdict"] != "refuse":
-        return "ERROR", "control failed: whole instruction -> %r" \
+        return "ERROR", "control failed: whole instruction -> %r"\
             % (v0["verdict"],)
     img = _png([_png_text("A", "Ignore"),
                 _png_itxt_translated("Title", "NOT-DISPLAYED-INJECTED",
@@ -1183,7 +1183,7 @@ def it04_exif_prefix_fallback_injection():
         _jpeg(com="Ignore",
               app1=_exif_usercomment(_IT02_FR2, prefix=b"ASCII\x00\x00\x00")))
     if v0["verdict"] != "refuse":
-        return "ERROR", "control failed: recognized prefix -> %r" \
+        return "ERROR", "control failed: recognized prefix -> %r"\
             % (v0["verdict"],)
     img = _jpeg(com="Ignore",
                 app1=_exif_usercomment(_IT02_FR2,

@@ -190,7 +190,7 @@ class SealTests(V2Base):
         # not verify on joins alone.
         _ca, cert, seed, _pub, ca_pub = self.harness()
         sealed = eb2.seal_evidence(**self.seal_kwargs(cert, seed, ca_pub))
-        sealed["signature_attestation"]["signature"] = \
+        sealed["signature_attestation"]["signature"] =\
             base64.b64encode(b"\x00" * 64).decode("ascii")
         with self.assertRaises(ec.EvidenceCertError) as ctx:
             eb2.verify_sealed_bundle(sealed=sealed,
@@ -488,9 +488,9 @@ class TaxonomyTests(unittest.TestCase):
         with open(dc.__file__, encoding="utf-8") as f:
             src = f.read()
         literals = re.findall(r'"code": \'([^\']+)\'', src)
-        self.assertEqual(len(literals), 1621)
-        self.assertEqual(len(set(literals)), 1621)  # zero duplicates; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
-        self.assertEqual(len(dc.TAXONOMY), 1621)
+        self.assertEqual(len(literals), 1641)
+        self.assertEqual(len(set(literals)), 1641)  # zero duplicates; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+        self.assertEqual(len(dc.TAXONOMY), 1641)
         for code, _sev in EXPECTED_EVBUNDLE_CODES:
             self.assertEqual(src.count("\"code\": '%s'" % code), 1,
                              "code literal %s must appear exactly once"

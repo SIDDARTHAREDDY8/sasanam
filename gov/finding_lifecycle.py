@@ -146,6 +146,11 @@ SLA_WAVES = {"high": 1, "medium": 2, "low": 3}
 
 _SEVERITIES = tuple(SLA_WAVES)
 
+#: Severity rank for escalation comparisons (F322): a higher rank means
+#: a tighter SLA clock. Dedup must never silently inherit a WEAKER
+#: (lower-rank) SLA.
+_SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
 
 class Transition:
     """One evidence-carrying state transition."""
@@ -227,6 +232,13 @@ def _require_closure_evidence(to_state, evidence):
             raise FindingLifecycleError(
                 "closure to %r requires red-first evidence (missing %s)"
                 % (to_state, ",".join(missing)))
+        # F316: key presence alone is not evidence -- a None/empty battery
+        # or commit would record a closure backed by nothing.
+        empty = [k for k in ("battery", "commit") if not evidence.get(k)]
+        if empty:
+            raise FindingLifecycleError(
+                "closure to %r requires non-empty red-first evidence "
+                "(empty %s)" % (to_state, ",".join(empty)))
     if to_state in ("false_positive", "risk_accepted"):
         if not evidence.get("note"):
             raise FindingLifecycleError(
@@ -265,13 +277,32 @@ class FindingRegistry:
         """File a finding. Returns ``(number, kind)`` where kind is
         ``"filed"`` for a new identity or ``"duplicate"`` when the identity
         already exists (the filing is appended to the canonical record's
-        provenance; no new F-number is consumed)."""
+        provenance; no new F-number is consumed). A duplicate filing whose
+        severity outranks the canonical severity ESCALATES the canonical
+        record (F322) -- the registry never silently inherits a weaker
+        SLA."""
+        if severity not in _SEVERITIES:
+            raise FindingLifecycleError(
+                "unknown severity %r" % severity)
         ident = finding_identity(title, seam, attack_shape, close_when,
                                  fields=self.default_fields)
         if ident in self._by_identity:
             canon = self._by_number[self._by_identity[ident]]
-            canon.filings.append({"reporter": reporter, "wave": wave,
-                                  "title": title})
+            filing = {"reporter": reporter, "wave": wave, "title": title,
+                      "severity": severity}
+            canon.filings.append(filing)
+            if _SEVERITY_RANK[severity] > _SEVERITY_RANK[canon.severity]:
+                # F322: severity-blind dedup let a HIGH filing inherit a
+                # pre-seeded LOW's 3-wave SLA. A filing that outranks the
+                # canonical severity ESCALATES the canonical record --
+                # never silently inherits the weaker SLA. Downgrades are
+                # never applied (the canonical keeps its tightest SLA).
+                old = canon.severity
+                canon.severity = severity
+                canon.scan_notes.append(
+                    "severity escalated %s -> %s by duplicate filing "
+                    "(reporter %s, wave %s)" % (old, severity, reporter,
+                                                wave))
             return canon.number, "duplicate"
         number = "F%d" % self.next_number
         self.next_number += 1
@@ -381,17 +412,38 @@ class FindingRegistry:
         "commit": ...}``. An OPEN finding whose break-first probe no longer
         reproduces transitions to ``mitigated`` carrying the scan as
         evidence. UNDER_REVIEW (human triage) is NEVER overridden; the scan
-        is recorded as a note instead."""
+        is recorded as a note instead. ``reproduced`` must be an explicit
+        bool -- a malformed entry raises ``FindingLifecycleError`` LOUD and
+        aborts the sweep (entries already processed stay processed; the
+        rest defer to the next sweep)."""
         mitigated = []
         for number, result in scan.items():
             f = self.get(number)
             if f is None or f.state in _SLA_EXCLUDED:
                 continue
+            if not isinstance(result, dict):
+                # F316: a non-dict scan value would escape as an uncoded
+                # AttributeError on .get -- refuse LOUD with the coded
+                # lifecycle error instead.
+                raise FindingLifecycleError(
+                    "scan entry for %s is not a dict (got %r); refusing "
+                    "to close" % (number, result))
+            reproduced = result.get("reproduced")
+            if not isinstance(reproduced, bool):
+                # F316: fail-closed on malformed scan input. An absent (or
+                # non-boolean) break-first verdict is not evidence of
+                # anything; the old fall-through fabricated a "mitigated"
+                # transition with a fabricated evidence note. Loud here,
+                # never a closure, never a silent skip.
+                raise FindingLifecycleError(
+                    "scan entry for %s has no explicit boolean "
+                    "'reproduced' (got %r); refusing to close"
+                    % (number, reproduced))
             note = {"battery": result.get("battery"),
                     "probes": result.get("probes"),
                     "commit": result.get("commit"), "wave": wave,
-                    "reproduced": result.get("reproduced")}
-            if result.get("reproduced"):
+                    "reproduced": reproduced}
+            if reproduced:
                 f.scan_notes.append(note)
                 continue
             if f.state == "under_review":
@@ -461,7 +513,12 @@ def _entry_fields(number, title, body):
             sev = m.group(1).lower()
             title = _SEV_DASH_RE.sub(" ", title).strip(" \u2014-")
     sev = sev or "low"
-    status = "verified"
+    # F323: a marker-less entry previously imported as "verified",
+    # silently closing legacy OPEN findings (verified is SLA- and
+    # metrics-excluded). Marker-less entries are unexamined prose: they
+    # import as "open" so a human triages them; "verified" requires an
+    # explicit **Status:** CLOSED marker.
+    status = "open"
     m = _STATUS_RE.search(body)
     if m:
         status = "open" if m.group(1).upper() == "OPEN" else "verified"
@@ -484,8 +541,12 @@ def load_findings_md(path, default_fields=("seam", "attack_shape",
 
     Identity is computed over (cells -> seam, defect -> attack_shape,
     close-when -> close_when) with the given field set; the parse is
-    heuristic by design (the file is prose) and every entry keeps its raw
-    status mapping open/verified only -- nothing is inferred beyond that.
+    heuristic by design (the file is prose). Status maps explicitly:
+    ``**Status:** OPEN`` -> ``open``, ``**Status:** CLOSED`` ->
+    ``verified``; entries with no ``**Status:**`` marker import as
+    ``open`` (F323 -- never silently closed as ``verified``). Severity
+    defaults to low when no severity marker is present. Nothing else is
+    inferred.
     """
     with open(path, encoding="utf-8") as fh:
         src = fh.read()

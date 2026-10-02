@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w280-shields")
 os.environ.setdefault("TMPDIR", "/var/tmp/g280-shields")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1621  # Wave-279 merge pin. This lane adds NO decision codes.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-279 merge pin. This lane adds NO decision codes.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _RESULTS = []
 
@@ -462,7 +462,7 @@ def p_shields_labels_boundary():
     if not mods:
         return
     sr, _ = mods
-    from gov.guardrail_evidence import guardrail_run_records, \
+    from gov.guardrail_evidence import guardrail_run_records,\
         verify_guardrail_records
     log, w = _fresh_log()
     reg = sr.ShieldRegistry()
@@ -479,8 +479,8 @@ def p_shields_labels_boundary():
                 "records failed verification")
         return
     by_id = {r["guardrail_id"]: r for r in recs}
-    if by_id["shield:local-check"]["labels"] == {"provider_kind": "inline"} \
-            and by_id["shield:remote-check"]["labels"] == \
+    if by_id["shield:local-check"]["labels"] == {"provider_kind": "inline"}\
+            and by_id["shield:remote-check"]["labels"] ==\
             {"provider_kind": "remote"}:
         _record("p_shields_labels_boundary", "HELD",
                 "provider_kind is a first-class record label, digested")
@@ -517,7 +517,7 @@ def p_evaltask_bundle_feed():
         from gov.log import read_entries
         found = [e for e in read_entries(log.path)
                  if e.get("event") == "eval-task-result"]
-        if manifest.get("chain_verified") and len(found) == 1 \
+        if manifest.get("chain_verified") and len(found) == 1\
                 and found[0]["package"] == pkg:
             _record("p_evaltask_bundle_feed", "HELD",
                     "eval result bound to the log and rode the sealed bundle")

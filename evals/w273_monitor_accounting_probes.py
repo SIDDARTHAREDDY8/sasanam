@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from gov import gate_hardening as gh  # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 NOW = 1700000000
 
@@ -70,8 +70,8 @@ def _mon_gate(**kw):
     (None, break-detail) when the accounting API is absent (red on base).
     """
     g = _gate(mode="monitor", **kw)
-    if not hasattr(g, "monitor_deny_counts") \
-            or not hasattr(g, "monitor_report") \
+    if not hasattr(g, "monitor_deny_counts")\
+            or not hasattr(g, "monitor_report")\
             or not hasattr(g, "scan_summary"):
         return None, "no monitor-but-count accounting on this tree"
     return g, None
@@ -91,7 +91,7 @@ def m01_monitor_policy_denied_counted():
           and v["code"] == "gatehard-monitor-would-deny"
           and v["would_deny_code"] == "gatehard-policy-denied"
           and g.monitor_deny_counts.get("gatehard-policy-denied") == 1)
-    return ok, "would-deny counted: %r" \
+    return ok, "would-deny counted: %r"\
         % (dict(g.monitor_deny_counts),)
 
 
@@ -107,7 +107,7 @@ def m02_monitor_callback_denied_counted():
     ok = (v["allowed"] is True
           and v["would_deny_code"] == "gatehard-host-callback-denied"
           and g.monitor_deny_counts.get("gatehard-host-callback-denied") == 1)
-    return ok, "host-callback would-deny counted: %r" \
+    return ok, "host-callback would-deny counted: %r"\
         % (dict(g.monitor_deny_counts),)
 
 
@@ -126,7 +126,7 @@ def m03_monitor_timeout_counted():
     ok = (v["allowed"] is True
           and v["would_deny_code"] == "gatehard-gate-timeout"
           and g.monitor_deny_counts.get("gatehard-gate-timeout") == 1)
-    return ok, "timeout would-deny counted: %r" \
+    return ok, "timeout would-deny counted: %r"\
         % (dict(g.monitor_deny_counts),)
 
 
@@ -141,7 +141,7 @@ def m04_monitor_gate_error_counted():
     ok = (v["allowed"] is True
           and v["would_deny_code"] == "gatehard-gate-error"
           and g.monitor_deny_counts.get("gatehard-gate-error") == 1)
-    return ok, "gate-error would-deny counted: %r" \
+    return ok, "gate-error would-deny counted: %r"\
         % (dict(g.monitor_deny_counts),)
 
 
@@ -154,7 +154,7 @@ def m05_monitor_allow_counted():
     ok = (v["allowed"] is True
           and g.monitor_allow_count == 1
           and len(g.monitor_deny_counts) == 0)
-    return ok, "would-allow=%d deny-codes=%r" \
+    return ok, "would-allow=%d deny-codes=%r"\
         % (g.monitor_allow_count, dict(g.monitor_deny_counts))
 
 
@@ -171,7 +171,7 @@ def m06_protect_mode_not_counted():
           and v["code"] == "gatehard-policy-denied"
           and len(g.monitor_deny_counts) == 0
           and g.monitor_allow_count == 0)
-    return ok, "protect deny kept out of monitor counters: %r" \
+    return ok, "protect deny kept out of monitor counters: %r"\
         % (dict(g.monitor_deny_counts),)
 
 
@@ -227,7 +227,7 @@ def m09_scan_summary_does_not_mutate_counters():
     ok = (dict(g.monitor_deny_counts) == before
           and s["would_deny"].get("gatehard-policy-denied") == 1
           and s["would_allow"] == 1)
-    return ok, "counters unchanged=%r summary=%r" \
+    return ok, "counters unchanged=%r summary=%r"\
         % (dict(g.monitor_deny_counts), s)
 
 

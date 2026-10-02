@@ -95,7 +95,7 @@ import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 import gov.rekor_v2_witness as rw                     # noqa: E402
 
-TAXONOMY_PIN = 1621  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -224,7 +224,7 @@ def _f297_ledger():
 def f297_dup_denominator_honest():
     """[t1,t2,t1,t2,t1] reports 100.0% over denom 2, removed=3."""
     r = _f297_ledger().emit_coverage(["t1", "t2", "t1", "t2", "t1"], "pm")
-    if r["percentage"] == 100.0 and r["denominator"] == 2 \
+    if r["percentage"] == 100.0 and r["denominator"] == 2\
             and r["duplicates_removed"] == 3:
         return "HELD", "pct=100.0 denom=2 removed=3"
     return "BREAK", "dishonest report: %r" % (
@@ -522,7 +522,7 @@ def f294_mixed_routed():
                              driving_units=[user_u.unit_id,
                                             issue_u.unit_id])
     d = prov.grant_check(req, lab)
-    if not d.allowed and d.routed_to_approval \
+    if not d.allowed and d.routed_to_approval\
             and d.code == "provlabel-mixed-provenance":
         return "HELD", "toxic flow routed (module seam)"
     return "BREAK", "F294 regressed: allowed=%r code=%r" % (

@@ -24,10 +24,14 @@ Contract summary:
   group naming the secret span, separating the match from the secret.
   Structured findings carry ``secret_digest`` (sha256 of the secret
   span), never the raw bytes.
-* Decode layers -- base64 / hex / percent-encoded layers are scanned up
-  to ``MAX_DECODE_DEPTH`` (gitleaks' ``--max-decode-depth``); findings
-  are tagged with ``encoding`` and the decoded bytes never leave the
-  engine.
+* Decode layers -- base64 / hex / percent-encoded layers are
+  unwrapped recursively until no more layers decode, bounded by
+  ``MAX_DECODE_DEPTH``; hitting the bound fails CLOSED (the over-deep
+  span is itself reported as a finding, so unbounded nesting can
+  never be silent). A decode that is valid but not printable is not
+  abandoned: its maximal printable runs are scanned (F317 --
+  binary-padded base64 evasion). Findings are tagged with
+  ``encoding`` and the decoded bytes never leave the engine.
 * Composite proximity -- the generic high-entropy rule only fires when
   a credential keyword is adjacent to the token (proximity-bounded),
   so far-apart entropy is silent.
@@ -86,8 +90,19 @@ __all__ = [
 #: means re-running the full red-first battery below.
 RULESET_PIN = "gitleaks-rule-contract/2026-10-02/curated-v1"
 
-#: Maximum decode-layer depth (gitleaks --max-decode-depth analog).
-MAX_DECODE_DEPTH = 2
+#: Maximum decode-layer depth. Layers are unwrapped recursively
+#: until no more decodeable spans remain; hitting the bound fails
+#: CLOSED (an over-deep span is reported as a finding rather than
+#: trusted). F317: the old depth-2 cap let triple-nested base64
+#: evade detection. The bound is a DoS guard (each layer multiplies
+#: work), not a detection contract -- reaching it is itself a
+#: signal, never silence.
+MAX_DECODE_DEPTH = 10
+
+#: Minimum printable-run length scanned inside a non-printable
+#: decode (F317: binary-padded base64 evasion). Shorter runs cannot
+#: carry a credential shape (the shortest rule secret is 16 chars).
+_MIN_PRINTABLE_RUN = 16
 
 #: Streaming overlap: a secret span longer than this cannot be caught
 #: when split across chunks (documented bound; PEM blocks and tokens
@@ -452,27 +467,33 @@ def _is_mostly_printable(data):
     return printable / len(data) >= 0.6
 
 
-def _decode_layers(text, depth=0):
-    """Yield (decoded_text, encoding, enc_offset, enc_len) for each
-    decodeable span, up to MAX_DECODE_DEPTH. The decoded bytes never
-    leave this module except as digests inside findings. Nested layers
-    keep the OUTERMOST encoded span (that is what gets redacted)."""
-    if depth >= MAX_DECODE_DEPTH:
-        return
-    spans = []
+def _decode_spans(text):
+    """Yield (decoded_text, encoding, enc_offset, enc_len) for ONE
+    decode layer (no recursion -- see _decode_layers).
+
+    A span whose full decode is valid but not printable is NOT
+    abandoned (F317): its maximal printable runs are yielded with the
+    outermost encoded span, so binary-padded encodings cannot hide a
+    credential in the printable remainder."""
     for m in _B64_CANDIDATE.finditer(text):
         cand = m.group(0)
         decoded = _try_b64(cand)
-        if decoded is None:
-            # LOW-2 hardening: a maximal base64-alphabet run can merge
-            # adjacent junk with an encoded secret; retry 4-char-aligned
-            # suffixes of the run's tail before abandoning it.
-            decoded, cut = _try_b64_suffixes(cand)
-            if decoded is not None:
-                spans.append((decoded, "base64", m.start() + cut,
-                              len(cand) - cut))
+        if decoded is not None:
+            yield decoded, "base64", m.start(), len(cand)
             continue
-        spans.append((decoded, "base64", m.start(), len(cand)))
+        # LOW-2 hardening: a maximal base64-alphabet run can merge
+        # adjacent junk with an encoded secret; retry 4-char-aligned
+        # suffixes of the run's tail before abandoning it.
+        decoded, cut = _try_b64_suffixes(cand)
+        if decoded is not None:
+            yield decoded, "base64", m.start() + cut, len(cand) - cut
+            continue
+        # F317: valid base64, non-printable decode (binary padding) --
+        # scan the printable runs inside the raw bytes.
+        raw = _raw_b64(cand)
+        if raw is not None:
+            for run in _printable_runs(raw):
+                yield run, "base64", m.start(), len(cand)
     for m in _HEX_CANDIDATE.finditer(text):
         cand = m.group(0)
         if len(cand) % 2:
@@ -481,9 +502,12 @@ def _decode_layers(text, depth=0):
             raw = bytes.fromhex(cand)
         except ValueError:
             continue
-        if _is_mostly_printable(raw):
-            spans.append((raw.decode("utf-8", errors="replace"),
-                          "hex", m.start(), len(cand)))
+        decoded = _printable_text(raw)
+        if decoded is not None:
+            yield decoded, "hex", m.start(), len(cand)
+        else:
+            for run in _printable_runs(raw):
+                yield run, "hex", m.start(), len(cand)
     for m in _PCT_CANDIDATE.finditer(text):
         cand = m.group(0)
         try:
@@ -499,10 +523,30 @@ def _decode_layers(text, depth=0):
             raw = b"".join(out)
         except ValueError:
             continue
-        if _is_mostly_printable(raw):
-            spans.append((raw.decode("utf-8", errors="replace"),
-                          "percent", m.start(), len(cand)))
-    for decoded, encoding, enc_offset, enc_len in spans:
+        decoded = _printable_text(raw)
+        if decoded is not None:
+            yield decoded, "percent", m.start(), len(cand)
+        else:
+            for run in _printable_runs(raw):
+                yield run, "percent", m.start(), len(cand)
+
+
+def _decode_layers(text, depth=0):
+    """Yield (decoded_text, encoding, enc_offset, enc_len) for each
+    decodeable span, recursing until no more layers decode.
+
+    Bounded by MAX_DECODE_DEPTH: a span still decodeable AT the bound
+    yields a ("", "<chain>+depth-bound", enc_offset, enc_len) marker
+    instead of its decoded text -- scan() turns the marker into a
+    fail-closed finding, so unbounded nesting is reported and
+    redacted, never silently trusted. Nested layers keep the
+    OUTERMOST encoded span (that is what gets redacted)."""
+    if depth > MAX_DECODE_DEPTH:
+        return
+    for decoded, encoding, enc_offset, enc_len in _decode_spans(text):
+        if depth == MAX_DECODE_DEPTH:
+            yield "", encoding + "+depth-bound", enc_offset, enc_len
+            continue
         yield decoded, encoding, enc_offset, enc_len
         # Recurse one layer deeper (nested encoding evasion); the
         # redact span stays the outermost encoded span.
@@ -511,17 +555,46 @@ def _decode_layers(text, depth=0):
             yield deeper, encoding + "+" + enc2, enc_offset, enc_len
 
 
-def _try_b64(cand):
-    """Decode a base64 candidate; None when not decodeable/printable."""
+def _raw_b64(cand):
+    """Raw decoded bytes of a base64 candidate; None when invalid."""
     if len(cand) % 4:
         return None
     try:
-        raw = base64.b64decode(cand, validate=True)
+        return base64.b64decode(cand, validate=True)
     except (binascii.Error, ValueError):
         return None
+
+
+def _printable_text(raw):
+    """Decode bytes to str when mostly printable; else None."""
     if not _is_mostly_printable(raw):
         return None
     return raw.decode("utf-8", errors="replace")
+
+
+def _printable_runs(raw, *, min_len=_MIN_PRINTABLE_RUN):
+    """Maximal printable runs (>= min_len chars) inside raw bytes."""
+    runs = []
+    cur = bytearray()
+    for b in raw:
+        if 32 <= b < 127 or b in (9, 10, 13):
+            cur.append(b)
+        elif len(cur) >= min_len:
+            runs.append(bytes(cur).decode("utf-8", errors="replace"))
+            cur = bytearray()
+        else:
+            cur = bytearray()
+    if len(cur) >= min_len:
+        runs.append(bytes(cur).decode("utf-8", errors="replace"))
+    return runs
+
+
+def _try_b64(cand):
+    """Decode a base64 candidate; None when not decodeable/printable."""
+    raw = _raw_b64(cand)
+    if raw is None:
+        return None
+    return _printable_text(raw)
 
 
 def _try_b64_suffixes(cand):
@@ -545,7 +618,28 @@ def _try_b64_suffixes(cand):
 # Scan
 # ---------------------------------------------------------------------------
 
+def _depth_bound_finding(span_text, encoding, enc_offset, enc_len,
+                        location):
+    """Fail-closed finding for over-deep encoding nesting (F317).
+
+    The span was still decodeable at MAX_DECODE_DEPTH, so its full
+    content could not be verified -- it is reported (and redacted)
+    rather than trusted. Carries only digests, never raw bytes, like
+    every other finding."""
+    digest = hashlib.sha256(span_text.encode("utf-8")).hexdigest()
+    return SecretFinding(
+        detector="decode-depth-bound", kind="over-deep-encoding",
+        secret_digest=digest,
+        fingerprint=_fingerprint("decode-depth-bound", digest, location),
+        offset=enc_offset, length=enc_len,
+        span_offset=enc_offset, span_length=enc_len,
+        location=location, encoding=encoding,
+        entropy=_shannon_entropy(span_text), tags=("decode",))
+
+
 def _rules_for(text_lower):
+    """The keywords cheap prefilter: a rule runs only when one of its
+    keywords occurs in the text (rules with no keywords always run)."""
     """The keywords cheap prefilter: a rule runs only when one of its
     keywords occurs in the text (rules with no keywords always run)."""
     return [r for r in RULES
@@ -590,6 +684,13 @@ def scan(text, *, location=""):
     # Decode layers: the redact span is the whole ENCODED span in the
     # original text (never the decoded-local span).
     for decoded, encoding, enc_offset, enc_len in _decode_layers(text):
+        if encoding.split("+")[-1] == "depth-bound":
+            # F317: over-deep nesting fails CLOSED -- the span is
+            # reported and redacted, never silently trusted.
+            span_text = text[enc_offset:enc_offset + enc_len]
+            findings.append(_depth_bound_finding(
+                span_text, encoding, enc_offset, enc_len, location))
+            continue
         loc = location + "+%s@%d" % (encoding, enc_offset)
         for rule in _rules_for(decoded.lower()):
             findings.extend(_rule_hits(rule, decoded, location=loc,

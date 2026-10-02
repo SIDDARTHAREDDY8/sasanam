@@ -22,7 +22,7 @@ os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TAXONOMY_PIN = 1621  # Wave-284 lane 7: pin 1587 -> 1593 (+6 sandbox-policy-*).; Wave-284 merge: pin 1593 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-284 lane 7: pin 1587 -> 1593 (+6 sandbox-policy-*).; Wave-284 merge: pin 1593 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _PROBES = []
 

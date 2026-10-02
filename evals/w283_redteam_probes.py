@@ -60,7 +60,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1621  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _results = []
 
@@ -586,7 +586,7 @@ def _green_checks():
         ("evals/w280_shields_probes.py", None, True),
         ("evals/w282_f310_probes.py", None, True),
     ]
-    # w282_redteam: F311 expected-open (2 BREAK: transform + deny pins).
+    # w282_redteam: F311 CLOSED since the wave-283 merge (0 BREAK; pins HELD).
     for rel, expect_break, no_break in checks:
         path = os.path.join(REPO, rel)
         d = tempfile.mkdtemp(prefix="w283-green-")
@@ -631,16 +631,17 @@ def _green_checks():
     else:
         out = proc.stdout
         breaks = [ln for ln in out.splitlines() if "[BREAK]" in ln]
-        f311 = [b for b in breaks if "f311-" in b]
+        # Wave-285 merge: F311 CLOSED since the wave-283 merge; the
+        # w282_redteam F311 pins are HELD (0 BREAK), not 2 BREAK.
         if proc.returncode != 0:
             _record("w282_redteam_probes.py", "ERROR",
                     "green check exit=%d" % (proc.returncode,))
-        elif len(breaks) == 2 and len(f311) == 2:
+        elif len(breaks) == 0:
             _record("w282_redteam_probes.py", "HELD",
-                    "green: exactly the 2 expected F311 BREAKs")
+                    "green: 0 BREAK (F311 closed, pins HELD)")
         else:
             _record("w282_redteam_probes.py", "BREAK",
-                    "expected exactly 2 F311 BREAKs; got %s" % (breaks[:5],))
+                    "expected 0 BREAK (F311 closed); got %s" % (breaks[:5],))
 
 
 # ---------------------------------------------------------------------------

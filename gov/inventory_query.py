@@ -395,6 +395,10 @@ class QueryRegistry(object):
         Snapshot semantics: each scheduled scan re-registers the FULL
         current observation set, so a pinned identity absent from the
         new set reads as ``withdrawn`` rather than lingering forever.
+
+        Fail-closed: duplicate identities within one seed refuse LOUD
+        with ``inventory-identity-collision`` (F321) -- rows are never
+        silently shadowed.
         """
         if table_name not in CORE_TABLES and table_name not in self._providers:
             raise InventoryError(
@@ -410,8 +414,16 @@ class QueryRegistry(object):
                 _validate_core_row(table_name, row)
             digest = row_digest(row)
             identity = self._identity_of(table_name, row)
-            fresh[self._identity_key(identity)] = (dict(row), digest,
-                                                   identity)
+            ikey = self._identity_key(identity)
+            if ikey in fresh:
+                # F321: duplicate identities silently shadow (last-write
+                # wins), letting a degenerate provider or operator input
+                # hide rows from every query and pack. Refuse LOUD.
+                raise InventoryError(
+                    "inventory-identity-collision: table %r seeded with "
+                    "duplicate identity %r; refusing (no silent "
+                    "shadowing)" % (table_name, identity))
+            fresh[ikey] = (dict(row), digest, identity)
             digests.append(digest)
         self._tables[table_name] = fresh
         return digests
@@ -483,8 +495,17 @@ class QueryRegistry(object):
         for row in rows:
             digest = row_digest(row)  # malformed -> InventoryError
             identity = self._identity_of(table_name, row)
-            out[self._identity_key(identity)] = (dict(row), digest,
-                                                 identity)
+            ikey = self._identity_key(identity)
+            if ikey in out:
+                # F321: the extension-provider path takes rows from
+                # provider code (a plug-in boundary); a coarse
+                # identity_columns choice would silently collapse rows
+                # and hide them from the drift audit. Refuse LOUD.
+                raise InventoryError(
+                    "inventory-identity-collision: provider for table "
+                    "%r fetched duplicate identity %r; refusing (no "
+                    "silent shadowing)" % (table_name, identity))
+            out[ikey] = (dict(row), digest, identity)
         return out
 
     def _snapshot(self, table_name):
@@ -667,22 +688,6 @@ class QueryRegistry(object):
                     unregistered, key=self._identity_key),
                 "withdrawn": sorted(withdrawn, key=self._identity_key),
                 "released": sorted(released, key=self._identity_key),
-            })
-            for ikey, pin in ((k, v) for k, v in
-                              ((self._identity_key(p["identity"]), p)
-                               for p in pinned)):
-                if ikey not in seen:
-                    withdrawn.append(pin["identity"])
-            qreps.append({
-                "name": q.get("name", "?"),
-                "checked": len(seen),
-                "clean": len(seen) - len(drifted) - len(unregistered),
-                "drifted": sorted(drifted,
-                                  key=lambda d: self._identity_key(
-                                      d["identity"])),
-                "unregistered": sorted(
-                    unregistered, key=self._identity_key),
-                "withdrawn": sorted(withdrawn, key=self._identity_key),
             })
         return {"pack_name": pack.get("pack_name", "unnamed"),
                 "queries": qreps,

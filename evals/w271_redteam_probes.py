@@ -88,7 +88,7 @@ from gov.signing import Ed25519Signer, Ed25519Verifier  # noqa: E402
 
 # Merge pin: 1411 (wave-270 merge). Counted on QUOTED source literals
 # ("code": '...') -- the bare '"code": ' substring overcounts by 2.
-TAXONOMY_PIN = 1621  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1641  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -295,7 +295,7 @@ def r06_max_calls_edge():
                             **_tg_env(store))
     r2 = tool_grant.enforce(grant, proof=_tg_proof(grant, nonce="r06-b"),
                             **_tg_env(store))
-    if r1["code"] == "ptgrant-ok" \
+    if r1["code"] == "ptgrant-ok"\
             and r2["code"] == "ptgrant-max-calls-exhausted":
         return "HELD", "budget edge exact: 1 ok, 2nd exhausted"
     return "BREAK", "edge wrong: %r then %r" % (r1["code"], r2["code"])
@@ -403,7 +403,7 @@ def c01_id_confusion_verdicts():
     gate, _ = _ac_gate()
     r1 = _ac_request(gate, verdicts=["accept"])
     r2 = _ac_request(gate, verdicts=["ignore"])
-    if r1["approval_id"] == r2["approval_id"] and \
+    if r1["approval_id"] == r2["approval_id"] and\
             r2["allowed_verdicts"] == ["accept"]:
         return ("HELD",
                 "by-design idempotency: same 4-tuple -> same approval; "
@@ -671,7 +671,7 @@ def b05_mangled_getattr_advisory():
 def b06_truncated_malformed():
     res = bundle_scan.scan_pickle_stream(_bs_truncated())
     codes = [f["code"] for f in res["findings"]]
-    if res["verdict"] == "refuse" and \
+    if res["verdict"] == "refuse" and\
             "bundlescan-malformed" in codes:
         return "HELD", "truncated stream refused bundlescan-malformed"
     return "ERROR", "unexpected: %r %r" % (res["verdict"], codes)
@@ -1170,7 +1170,7 @@ def x02a_inst_payload_admitted():
 def x02b_reduce_payload_refused():
     """Control: the REDUCE os.system payload is refused at admission."""
     verdict = _x02_admit(_bs_reduce_evil())
-    if verdict["admitted"] is False \
+    if verdict["admitted"] is False\
             and verdict["code"] == "bundlescan-rce-global":
         return "HELD", "REDUCE payload refused bundlescan-rce-global"
     return "BREAK", "REDUCE payload NOT refused: %r" % (verdict,)
@@ -1194,7 +1194,7 @@ def x03a_presentation_wrong_session():
     pres = sess_a.present(digest, _EB_NOW, 600, b"w271-nonce-1")
     v_ok = sess_a.verify_presentation(pres, digest, _EB_NOW)
     v_wrong = sess_b.verify_presentation(pres, digest, _EB_NOW)
-    if v_ok["ok"] is True and v_wrong["ok"] is False \
+    if v_ok["ok"] is True and v_wrong["ok"] is False\
             and v_wrong["code"] == "sessbind-malformed":
         return "HELD", "presentation verifies in-session; refused cross-session"
     return "BREAK", "binding failure: %r / %r" % (v_ok, v_wrong)
