@@ -7772,6 +7772,68 @@ TAXONOMY = {
         "evidence_kinds_required": ['signal'],
         "reverify_steps": ['recompute'],
     },
+    'inventory-pack-drift': {
+        "domain": 'inventory-query',
+        "code": 'inventory-pack-drift',
+        "human": 'a scheduled inventory query pack drifted from its '
+                 'pinned rows (content changed under a pinned identity); '
+                 'the row is held fail-closed until re-pinned',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-pack-unpinned': {
+        "domain": 'inventory-query',
+        "code": 'inventory-pack-unpinned',
+        "human": 'a query pack was executed without a committed pin; '
+                 'packs never establish a new baseline silently; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-provider-failed': {
+        "domain": 'inventory-query',
+        "code": 'inventory-provider-failed',
+        "human": 'an inventory extension provider crashed or '
+                 'violated the closed provider API (bad table list, '
+                 'non-list rows); the table is unobservable, so the '
+                 'query refuses fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-row-malformed': {
+        "domain": 'inventory-query',
+        "code": 'inventory-row-malformed',
+        "human": 'an inventory table row failed shape validation '
+                 '(unknown table, undeclared column, missing identity '
+                 'column, non-JSON value); refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-schema-mismatch': {
+        "domain": 'inventory-query',
+        "code": 'inventory-schema-mismatch',
+        "human": 'an inventory table or extension provider declared a '
+                 'schema version other than the pinned version, or named '
+                 'an unknown table; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'inventory-unregistered': {
+        "domain": 'inventory-query',
+        "code": 'inventory-unregistered',
+        "human": 'a scheduled inventory query pack observed a row with '
+                 'no pin (first sighting); the discovery plane is '
+                 'untrusted, so the row is held fail-closed until '
+                 'first pinned',
+        "severity": 'medium',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'invocation-malformed': {
         "domain": 'jail',
         "code": 'invocation-malformed',
