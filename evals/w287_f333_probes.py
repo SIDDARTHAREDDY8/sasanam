@@ -31,7 +31,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*).
-TAXONOMY_PIN = 1684
+TAXONOMY_PIN = 1700
 
 _results = []
 
@@ -51,7 +51,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate codes")
     if codes != sorted(codes):
         return _record("pin-taxonomy", "BREAK", "codes unsorted")
-    _record("pin-taxonomy", "HELD", "1684/1684/0 sorted")
+    _record("pin-taxonomy", "HELD", "1700/1700/0 sorted")
 
 
 def p_policy_rejects_dup_keys():

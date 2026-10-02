@@ -244,9 +244,12 @@ def bind_receipt(anchored, operator_seed, witness_policy=None,
 
     ``operator_seed`` must be the log's own operator seed -- a mismatch
     refuses LOUD at issuance (fail fast) instead of minting a receipt
-    that is dead on arrival at verify time. Witness cosigning mirrors
-    the anchor module's fail-fast quorum rule: the witness set is
-    checked against the pinned policy BEFORE the receipt is returned.
+    that is dead on arrival at verify time. The inclusion tuple is
+    re-verified (bundle_digest -> checkpoint root) before signing, so a
+    fabricated anchor dict cannot mint a dead operator-signed receipt
+    (F337). Witness cosigning mirrors the anchor module's fail-fast
+    quorum rule: the witness set is checked against the pinned policy
+    BEFORE the receipt is returned.
 
     Re-binding the same anchor receipt twice yields two receipts over
     the identical (index, size, root) -- only ``issued_at`` differs --
@@ -282,7 +285,32 @@ def bind_receipt(anchored, operator_seed, witness_policy=None,
                          "signature does not verify under the "
                          "seed-derived key")
 
+    # F337: re-verify the inclusion tuple BEFORE signing. The
+    # operator-seed fail-fast above proves the caller holds the
+    # operator key; it says nothing about the anchor dict's honesty.
+    # A fabricated anchor (bundle_digest swapped) would otherwise mint
+    # an operator-signed receipt that verify_receipt_offline rejects --
+    # dead-on-arrival issuance. Refuse LOUD here instead.
     proof = anchored["inclusion_proof"]
+    if not isinstance(proof, dict):
+        _fail(MALFORMED, "inclusion_proof must be an object")
+    if proof.get("leaf_index") != anchored["log_index"] or \
+            proof.get("tree_size") != body["size"]:
+        _fail(INCLUSION_MISMATCH,
+              "inclusion proof index/size does not match the anchor "
+              "receipt and checkpoint")
+    _check_digest(anchored["bundle_digest"], "bundle_digest")
+    leaf_hash = _ea._hash_leaf(bytes.fromhex(anchored["bundle_digest"]))
+    try:
+        chained = _ea.verify_inclusion(leaf_hash, proof, body["root"])
+    except _ea.AnchorError:
+        _fail(INCLUSION_MISMATCH,
+              "inclusion proof shape rejected by the Merkle verifier")
+    if chained is not True:
+        _fail(INCLUSION_MISMATCH,
+              "inclusion path does not chain the anchor bundle_digest "
+              "to the checkpoint root: refusing to sign")
+
     payload = {
         "vds": _VDS,
         "origin": body["origin"],

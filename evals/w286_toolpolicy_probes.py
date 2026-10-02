@@ -48,7 +48,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g286-toolpolicy")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-286 lane 8: pin 1652 -> 1652 (+11 toolcall-* codes).
-TAXONOMY_PIN = 1684
+TAXONOMY_PIN = 1700
 
 _RESULTS = []
 
@@ -426,8 +426,17 @@ def p_drift_refused():
                       "message": "ok"}]}
     pol = tcp.compile_policy(dict(doc))
     pin = pol.digest
-    # Tamper after compile: the pin must no longer match.
-    pol._doc["rules"][0]["action"] = "DENY"
+    # F340: the compiled document is deep-frozen -- tampering after
+    # compile is blocked at the source (TypeError), so no drifted
+    # document can reach bind(). A freeze-bypassing wholesale replacement
+    # is still caught by bind()'s pin re-verification.
+    try:
+        pol._doc["rules"][0]["action"] = "DENY"
+    except TypeError:
+        _record("drift-refused", "HELD",
+                "compiled policy frozen: post-compile mutation blocked "
+                "at the source")
+        return
     try:
         tcp.bind(pol, pin)
     except tcp.ToolCallPolicyError as e:

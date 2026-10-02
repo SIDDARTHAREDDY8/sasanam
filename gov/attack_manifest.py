@@ -899,6 +899,18 @@ def _check_regex_safety(pattern, where):
         raise RegexUnsafe("%s: pattern %r refused: %s" % (where, pattern, e))
 
 
+def check_regex_safety(pattern, where):
+    """Public seam for the backtracking-safety gate (F325 mechanism).
+
+    Other modules route caller-triggerable regexes through this instead
+    of duplicating the analysis (F339: ``gov/tool_call_policy.py``).
+    Raises :class:`RegexUnsafe` (a coded manifest-regex-unsafe
+    ManifestError); callers translate it to their own coded refusal --
+    never let it escape raw across module seams.
+    """
+    return _check_regex_safety(pattern, where)
+
+
 # ---------------------------------------------------------------------------
 # Template validation + normalization
 # ---------------------------------------------------------------------------

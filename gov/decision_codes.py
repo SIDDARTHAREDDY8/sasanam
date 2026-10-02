@@ -411,6 +411,29 @@ TAXONOMY = {
         "evidence_kinds_required": ['type-definition'],
         "reverify_steps": ['recompute'],
     },
+    'admission-at-risk-accepted': {
+        "domain": 'admission',
+        "code": 'admission-at-risk-accepted',
+        "human": 'evidence admission: a refused admission was accepted at '
+                 'operator risk through a live governed exception; the '
+                 'refusal record is unchanged (SKIPPED-shaped, never an '
+                 'upgrade)',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record', 'exception-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'admission-check-failed': {
+        "domain": 'admission',
+        "code": 'admission-check-failed',
+        "human": 'evidence admission: a required check has no usable '
+                 'outcome (missing or malformed); admission refuses '
+                 'fail-closed rather than running blind',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-conjunction-refused': {
         "domain": 'admission',
         "code": 'admission-conjunction-refused',
@@ -427,6 +450,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['envelope', 'inspection', 'policy'],
         "reverify_steps": ['replay-admission'],
     },
+    'admission-exception-refused': {
+        "domain": 'admission',
+        "code": 'admission-exception-refused',
+        "human": 'evidence admission: accept-at-risk refused -- no live '
+                 'covering exception, the refusal was caused by the '
+                 'integrity floor (which no exception can override), or '
+                 'the decision was not a REFUSE',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-format-unknown': {
         "domain": 'admission',
         "code": 'admission-format-unknown',
@@ -451,6 +486,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['envelope', 'inspection', 'policy'],
         "reverify_steps": ['replay-admission'],
     },
+    'admission-integrity-floor-violated': {
+        "domain": 'admission',
+        "code": 'admission-integrity-floor-violated',
+        "human": 'evidence admission: an integrity-floor check '
+                 '(signature-valid, digest-binds) failed; refused -- the '
+                 'floor is non-overridable by policy, override, skip '
+                 'level, or exception',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-issuer-untrusted': {
         "domain": 'admission',
         "code": 'admission-issuer-untrusted',
@@ -467,6 +514,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['envelope', 'inspection', 'policy'],
         "reverify_steps": ['replay-admission'],
     },
+    'admission-no-applicable-policy': {
+        "domain": 'admission',
+        "code": 'admission-no-applicable-policy',
+        "human": 'evidence admission: the evidence kind matches no policy '
+                 'scope and no default_level is declared; refused, never '
+                 'defaulted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record', 'policy'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-policy-attestation-refused': {
         "domain": 'admission-policy',
         "code": 'admission-policy-attestation-refused',
@@ -511,6 +569,19 @@ TAXONOMY = {
                                     'identity-assertion'],
         "reverify_steps": ['recompute'],
     },
+    'admission-policy-invalid': {
+        "domain": 'admission',
+        "code": 'admission-policy-invalid',
+        "human": 'evidence admission: the admission-policy document failed '
+                 'validation -- malformed shape, vacuous scope list, '
+                 'unknown check name, or an attempt to lower an '
+                 'integrity-floor check below strict; refused at compile '
+                 'time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['policy'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-policy-malformed': {
         "domain": 'admission-policy',
         "code": 'admission-policy-malformed',
@@ -584,6 +655,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['admission-policy'],
         "reverify_steps": ['recompute'],
     },
+    'admission-refused': {
+        "domain": 'admission',
+        "code": 'admission-refused',
+        "human": 'evidence admission: evidence refused at its effective '
+                 'trust level (strict failed checks, or raised override '
+                 'failed)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'admission-severity-exceeded': {
         "domain": 'admission',
         "code": 'admission-severity-exceeded',
@@ -10464,6 +10546,50 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'signature'],
         "reverify_steps": ['verify-signature'],
     },
+    'posture-endorsement-missing': {
+        "domain": 'posture',
+        "code": 'posture-endorsement-missing',
+        "human": 'runtime posture: a claim lacks its separately-sourced '
+                 'endorsement slot (every claim must carry one); the '
+                 'record was not minted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'posture-endorsement-not-independent': {
+        "domain": 'posture',
+        "code": 'posture-endorsement-not-independent',
+        "human": 'runtime posture: an endorsement slot is sourced from '
+                 'the record\'s own producer -- endorsements must be '
+                 'separately sourced; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record', 'endorsement'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'posture-invalid-shape': {
+        "domain": 'posture',
+        "code": 'posture-invalid-shape',
+        "human": 'runtime posture: the attestation record or its claims '
+                 'are malformed (non-mapping, missing fields, bad types); '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'posture-nonce-invalid': {
+        "domain": 'posture',
+        "code": 'posture-nonce-invalid',
+        "human": 'runtime posture: eat_nonce is missing, below the 64-bit '
+                 'minimum, or does not match the appraisal request '
+                 '(possible replay); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record', 'nonce'],
+        "reverify_steps": ['recompute'],
+    },
+
     'posture-refused': {
         "domain": 'posture',
         "code": 'posture-refused',
@@ -10472,6 +10598,28 @@ TAXONOMY = {
         "evidence_kinds_required": ['signal', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'posture-signature-invalid': {
+        "domain": 'posture',
+        "code": 'posture-signature-invalid',
+        "human": 'runtime posture: the operator signature over the '
+                 'attestation record did not verify -- the record is '
+                 'forged or tampered',
+        "severity": 'high',
+        "evidence_kinds_required": ['record', 'signature'],
+        "reverify_steps": ['verify-signature'],
+    },
+
+    'posture-submod-invalid': {
+        "domain": 'posture',
+        "code": 'posture-submod-invalid',
+        "human": 'runtime posture: a submod measurement entry is '
+                 'malformed or its digest is not 64-hex; refused '
+                 'fail-closed so substitution cannot hide in shape',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'precommit_refused': {
         "domain": 'precommit',
         "code": 'precommit_refused',
@@ -14520,12 +14668,38 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-exception-scope-mismatch': {
+        "domain": 'toolcall',
+        "code": 'toolcall-exception-scope-mismatch',
+        "human": 'toolcall: suppression refused -- the governed exception '
+                 'scope does not bind to the suppressed alert: a ("tool", X) '
+                 'scope must name (fnmatch-cover) the alert tool, and a '
+                 '("policy", P) scope must name the compiled policy by name '
+                 'or digest; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'toolcall-exception-suppressed': {
         "domain": 'toolcall',
         "code": 'toolcall-exception-suppressed',
         "human": 'toolcall: the DENY alert was suppressed under a live '
                  'governed exception (SKIPPED with the exception digest, '
-                 'never PASSED); the verdict stays DENY',
+                 'never PASSED); the record carries the actual decision '
+                 'verdict (DENY for enforced denials, ALLOW for '
+                 'audit-mode would-denys)',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-invalid-call': {
+        "domain": 'toolcall',
+        "code": 'toolcall-invalid-call',
+        "human": 'toolcall: ill-typed decide() input refused LOUD -- '
+                 'tool/operation must be non-empty strings and args keys '
+                 'must be strings (no uncoded TypeError escapes)',
         "severity": 'low',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -14583,6 +14757,18 @@ TAXONOMY = {
                  'policies decide only under pinned, reviewable documents',
         "severity": 'high',
         "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-regex-unsafe': {
+        "domain": 'toolcall',
+        "code": 'toolcall-regex-unsafe',
+        "human": 'toolcall: an arg-matcher regex was refused by the '
+                 'shared backtracking-safety gate (F325 mechanism) -- the '
+                 'pattern is exponential-backtracking-prone and '
+                 'caller-triggerable; refused fail-closed at compile time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
 

@@ -53,6 +53,7 @@ import json
 import os
 import re
 import secrets
+import stat
 
 from .kms import KmsError, _utcnow
 
@@ -122,7 +123,12 @@ def generate_pin_key(path):
     """Create a fresh random pin key and persist it (0600, atomic).
 
     Refuses LOUD (``keyset-pin-key-invalid``) if the path already exists
-    -- a pin key is a trust anchor and is never silently overwritten.
+    -- a pin key is a trust anchor and is never silently overwritten --
+    and on any other custody-seam failure: a stale ``<path>.tmp`` from
+    a crashed earlier generation, an uncreatable directory, or a failed
+    write all refuse coded (F335). The stale-tmp refusal names the
+    recovery: the tmp file is NOT a live key file and must be removed
+    manually (the module never deletes files it did not create).
     Returns the key bytes."""
     if not isinstance(path, str) or not path:
         raise KeysetError("keyset-pin-key-invalid",
@@ -132,30 +138,63 @@ def generate_pin_key(path):
                           "pin key file %r already exists: refusing to "
                           "overwrite a trust anchor" % (path,))
     directory = os.path.dirname(os.path.abspath(path))
-    os.makedirs(directory, exist_ok=True)
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key directory %r not creatable: %s"
+                          % (directory, exc))
     key = secrets.token_bytes(PIN_KEY_BYTES)
     tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key generation blocked by stale %r (left "
+                          "by an earlier crashed generation): it is NOT "
+                          "a live key file -- remove it manually and "
+                          "retry" % (tmp,))
+    except OSError as exc:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key temp file %r not creatable: %s"
+                          % (tmp, exc))
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(key)
-    except OSError:
+        os.replace(tmp, path)
+    except OSError as exc:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise KeysetError("keyset-pin-key-invalid",
-                          "pin key write failed for %r" % (path,))
-    os.replace(tmp, path)
+                          "pin key write failed for %r: %s"
+                          % (path, exc))
     return key
 
 
 def load_pin_key(path):
     """Load a persisted pin key. Refuses LOUD (``keyset-pin-key-invalid``)
-    on any problem: missing/unreadable file or wrong key size."""
+    on any problem: missing/unreadable file, wrong key size, or a key
+    file that is group/other-readable -- the pin key is a
+    deployment-held secret and the module enforces its own "separate
+    0600 file" precondition at load (F336). The permission check runs
+    before any key bytes are read."""
     if not isinstance(path, str) or not path:
         raise KeysetError("keyset-pin-key-invalid",
                           "pin key path must be a non-empty string")
+    try:
+        mode = os.stat(path).st_mode
+    except OSError as exc:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key file %r unreadable: %s" % (path, exc))
+    perms = stat.S_IMODE(mode)
+    if perms & 0o077:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key file %r has mode %o (group/other-"
+                          "readable): the pin key must live in a 0600 "
+                          "file; tighten permissions or regenerate the "
+                          "key" % (path, perms))
     try:
         with open(path, "rb") as handle:
             key = handle.read()
@@ -291,11 +330,13 @@ class KmsKeyset:
     recomputed without it (F329).
 
     Trust model (honest): the pin key lives in a separate 0600 file
-    (see :func:`generate_pin_key`/:func:`load_pin_key`). A writer who
-    holds only the keyset document -- not the pin key -- cannot forge
-    a valid pin. A holder of the pin key is the authorized operator and
-    can re-pin; that is the intended use of :meth:`_repin`, never a
-    back door for untrusted input.
+    (see :func:`generate_pin_key`/:func:`load_pin_key`), and
+    :func:`load_pin_key` enforces the precondition at load -- a
+    group/other-readable key file is refused LOUD before any key bytes
+    are read (F336). A writer who holds only the keyset document --
+    not the pin key -- cannot forge a valid pin. A holder of the pin
+    key is the authorized operator and can re-pin; that is the intended
+    use of :meth:`_repin`, never a back door for untrusted input.
     """
 
     def __init__(self, doc, pin_key):
@@ -400,7 +441,11 @@ class KmsKeyset:
                               "audit_chain must be a list")
         want = cls._mac_for(doc, pin_key)
         got = doc.get("keyset_digest")
-        if not isinstance(got, str) or not hmac.compare_digest(got, want):
+        # Non-ASCII candidates make hmac.compare_digest raise a raw
+        # TypeError (F335); the check is explicit so the seam stays
+        # coded.
+        if (not isinstance(got, str) or not got.isascii()
+                or not hmac.compare_digest(got, want)):
             raise KeysetError("keyset-verify-failed",
                               "keyset_digest mismatch: the document was "
                               "edited out of band (or the wrong pin key "
@@ -427,20 +472,32 @@ class KmsKeyset:
         wall-clock ``at`` fields are excluded by construction (see module
         docstring). Unlike the pre-F329 unkeyed digest, the MAC cannot be
         recomputed by a writer holding only the document -- out-of-band
-        edits are detectable by any holder of the pin key."""
-        keys = [{"key_id": e["key_id"],
-                 "provider_name": e["provider_name"],
-                 "status": e["status"]} for e in doc["keys"]]
-        head = (doc["audit_chain"][-1]["digest"]
-                if doc["audit_chain"] else _GENESIS_DIGEST)
-        body = _canonical({"format": doc["format"],
-                           "template": doc["template"],
-                           "keys": keys,
-                           "primary_key_id": doc["primary_key_id"],
-                           "ceremony": {"phase": doc["ceremony"]["phase"],
-                                        "new_key_id": doc["ceremony"]
-                                        ["new_key_id"]},
-                           "audit_head": head})
+        edits are detectable by any holder of the pin key.
+
+        Structural extraction is fail-closed: any malformed document --
+        missing or wrongly-typed keys, audit entries without digests,
+        non-mapping entries -- refuses with a coded
+        ``keyset-verify-failed`` (F335), never a raw KeyError/TypeError.
+        Callers never have to pre-validate; a malformed document simply
+        cannot carry a valid pin."""
+        try:
+            keys = [{"key_id": e["key_id"],
+                     "provider_name": e["provider_name"],
+                     "status": e["status"]} for e in doc["keys"]]
+            head = (doc["audit_chain"][-1]["digest"]
+                    if doc["audit_chain"] else _GENESIS_DIGEST)
+            body = _canonical({"format": doc["format"],
+                               "template": doc["template"],
+                               "keys": keys,
+                               "primary_key_id": doc["primary_key_id"],
+                               "ceremony": {"phase": doc["ceremony"]["phase"],
+                                            "new_key_id": doc["ceremony"]
+                                            ["new_key_id"]},
+                               "audit_head": head})
+        except (KeyError, TypeError, IndexError,
+                AttributeError) as exc:
+            raise KeysetError("keyset-verify-failed",
+                              "malformed keyset document: %s" % (exc,))
         return hmac.new(pin_key, _PIN_LABEL + body,
                         hashlib.sha256).hexdigest()
 

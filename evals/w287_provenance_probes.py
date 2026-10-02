@@ -39,7 +39,7 @@ REPO = os.environ.get("GOV_BATTERY_REPO") or os.path.dirname(_HERE)
 sys.path.insert(0, REPO)
 
 # Wave-287 lane 7: pin 1660 -> 1667 (+7 evidence-provenance codes).; Wave-287 merge: pin 1667 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 1684
+TAXONOMY_PIN = 1700
 
 _RESULTS = []
 
@@ -455,7 +455,7 @@ def p_taxonomy_pin():
     if lits != sorted(lits):
         _record("p-taxonomy-pin", "BREAK", "literals unsorted")
         return
-    _record("p-taxonomy-pin", "HELD", "1684/1684/0 sorted")
+    _record("p-taxonomy-pin", "HELD", "1700/1700/0 sorted")
 
 
 # -- depth-1 green checks ------------------------------------------------

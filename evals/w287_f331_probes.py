@@ -10,7 +10,7 @@ anchor-* domain (F327-class coded-refusal contract).
 
 No new decision codes: the fix reuses anchor-checkpoint-invalid,
 anchor-log-corrupt, and anchor-inclusion-mismatch. Taxonomy pin
-unchanged at 1684.
+unchanged at 1700.
 
 Run:
   mkdir -p /var/tmp/g287-f331 && TMPDIR=/var/tmp/g287-f331 \
@@ -40,7 +40,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe
 # +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*). This lane adds
 # no decision codes: the fix reuses existing anchor-* codes.
-TAXONOMY_PIN = 1684
+TAXONOMY_PIN = 1700
 
 _results = []
 
@@ -66,7 +66,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1684/1684/0 sorted")
+    _record("pin-taxonomy", "HELD", "1700/1700/0 sorted")
 
 
 _BODY = {"origin": "o", "size": 1, "root": b"x" * 32, "timestamp": 1,

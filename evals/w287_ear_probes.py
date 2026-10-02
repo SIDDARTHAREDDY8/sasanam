@@ -47,7 +47,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g287-ear")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-287 lane 8: pin 1660 -> 1670 (+10 trustvec-* codes).; Wave-287 merge: pin 1670 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 1684
+TAXONOMY_PIN = 1700
 
 _RESULTS = []
 
@@ -86,7 +86,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1684/1684/0 sorted")
+    _record("pin-taxonomy", "HELD", "1700/1700/0 sorted")
 
 
 def _register_test_scheme(tv):

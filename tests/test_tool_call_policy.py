@@ -291,11 +291,29 @@ class PinDriftTest(unittest.TestCase):
         self.assertEqual(len(binding.decisions()), 1)
 
     def test_drift_refused(self):
+        # F340: the compiled document is deep-frozen -- post-compile
+        # mutation is blocked at the source, so no drifted document can
+        # reach bind().
+        pol = tcp.compile_policy(_doc([_allow_rule()]))
+        with self.assertRaises(TypeError):
+            pol._doc["rules"][0]["action"] = "DENY"
+        with self.assertRaises(TypeError):
+            pol._doc["mode"] = "audit"
+
+    def test_wholesale_replace_detected_at_bind_and_decide(self):
+        # A freeze-bypassing wholesale _doc replacement is caught by the
+        # pin re-verification at bind() and at every decide().
         pol = tcp.compile_policy(_doc([_allow_rule()]))
         pin = pol.digest
-        pol._doc["rules"][0]["action"] = "DENY"
+        binding = tcp.bind(pol, pin)
+        evil = dict(_doc([_allow_rule()]))
+        evil["mode"] = "audit"
+        object.__setattr__(pol, "_doc", evil)
         with self.assertRaises(tcp.ToolCallPolicyError) as cm:
             tcp.bind(pol, pin)
+        self.assertEqual(cm.exception.code, "toolcall-policy-drift")
+        with self.assertRaises(tcp.ToolCallPolicyError) as cm:
+            binding.decide(_caller("agent-a"), "shell", "exec", {})
         self.assertEqual(cm.exception.code, "toolcall-policy-drift")
 
 

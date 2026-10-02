@@ -145,11 +145,12 @@ class OfflineVerifyTest(unittest.TestCase):
                          "inclusion-receipt-malformed")
 
     def test_inclusion_mismatch_when_proof_bad_but_signed(self):
-        # The inclusion path is inside the signed payload, so a
-        # tampered path normally trips receipt-signature-invalid. This
-        # test covers the genuine inclusion-mismatch path: the operator
-        # signs a BAD proof (models a log serving a corrupt proof),
-        # the signature verifies, and the Merkle check refuses.
+        # Wave-288 lane 1 (F337): bind_receipt now re-verifies the
+        # inclusion tuple BEFORE signing, so an operator can no longer
+        # sign a bad proof (the old scenario -- minting a dead receipt
+        # the offline verifier then rejects). The refusal moved from
+        # verify time to issuance time, with the same coded
+        # receipt-inclusion-mismatch refusal.
         with tempfile.TemporaryDirectory() as tmp:
             log, pub, seed = _fresh_log(tmp)
             for _ in range(3):
@@ -159,9 +160,8 @@ class OfflineVerifyTest(unittest.TestCase):
         first = bad["inclusion_proof"]["hashes"][0]
         bad["inclusion_proof"]["hashes"][0] = \
             ("00" if first[:2] != "00" else "ff") + first[2:]
-        rcpt = er.bind_receipt(bad, seed)
         with self.assertRaises(er.ReceiptError) as ctx:
-            er.verify_receipt_offline(rcpt, pub)
+            er.bind_receipt(bad, seed)
         self.assertEqual(ctx.exception.code,
                          "receipt-inclusion-mismatch")
 

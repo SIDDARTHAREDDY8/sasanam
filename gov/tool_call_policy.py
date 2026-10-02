@@ -47,9 +47,11 @@ Composition, not duplication:
 * Policy violations route through ``gov/governed_exceptions.py``: a DENY
   verdict can be suppressed only via a live, governed exception (scope
   kind ``tool`` or ``policy``); suppression reports SKIPPED with the
-  exception digest, never PASSED, and the verdict stays DENY -- an
-  exception is accepted-risk evidence, not a bypass. There is no ad-hoc
-  skip parameter on :meth:`CompiledToolPolicy.decide`.
+  exception digest, never PASSED, and records the actual decision's
+  verdict (DENY for enforced denials; ALLOW for audit-mode would-denys,
+  which denied nothing) -- an exception is accepted-risk evidence, not
+  a bypass. There is no ad-hoc skip parameter on
+  :meth:`CompiledToolPolicy.decide`.
 
 Honest boundary (documented, not hidden): the policy decides on DECLARED
 call shapes (caller identity claim, tool name, operation, args). It does
@@ -65,9 +67,11 @@ All refusals are LOUD: coded :class:`ToolCallPolicyError`, never silent.
 import copy
 import fnmatch
 import hashlib
+import hmac
 import json
 import re
 import time
+from types import MappingProxyType
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -87,9 +91,9 @@ MODES = frozenset({"enforce", "audit"})
 #: Closed arg-matcher vocabulary. Unknown matchers are refused at compile.
 ARG_MATCHERS = frozenset({"equals", "prefix", "regex", "any_of"})
 
-#: Maximum regex length at compile (F325 lesson: validate at schema time;
-#: catastrophic backtracking remains a documented residual -- keep patterns
-#: small and anchored).
+#: Maximum regex length at compile (F325 lesson: validate at schema time).
+#: Backtracking-prone patterns are refused at compile by the shared F325
+#: safety gate (F339); keep patterns small and anchored anyway.
 MAX_REGEX_LEN = 256
 
 #: Closed verdict vocabulary.
@@ -113,6 +117,17 @@ NO_ALLOW = "toolcall-no-allow"
 AUDIT_WOULD_DENY = "toolcall-audit-would-deny"
 EXCEPTION_SUPPRESSED = "toolcall-exception-suppressed"
 NO_COVERING_EXCEPTION = "toolcall-no-covering-exception"
+SCOPE_MISMATCH = "toolcall-exception-scope-mismatch"
+REGEX_UNSAFE = "toolcall-regex-unsafe"
+INVALID_CALL = "toolcall-invalid-call"
+
+# Shared backtracking-safety gate (F325 mechanism): arg-matcher regexes are
+# caller-triggerable at decide time, so the same static analysis that
+# guards attack_manifest templates guards tool-call policies (F339).
+# Imported at module level via the public seam: gov.attack_manifest has
+# no dependency on this module (verified: no import cycle).
+from gov.attack_manifest import RegexUnsafe as _RegexUnsafe
+from gov.attack_manifest import check_regex_safety as _rx_safety_gate
 
 __all__ = [
     "POLICY_FORMAT",
@@ -150,13 +165,41 @@ class ToolCallPolicyError(ValueError):
 # Canonical digest (same shape as the governed-exceptions seam)
 # ---------------------------------------------------------------------------
 
+def _json_default(obj):
+    # Frozen containers (F340) serialize back to their plain JSON shape so
+    # the content digest is a pure function of the document, frozen or not.
+    if isinstance(obj, MappingProxyType):
+        return dict(obj)
+    raise TypeError("object of type %s is not JSON serializable"
+                    % type(obj).__name__)
+
+
 def _canonical(obj):
     return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True).encode("utf-8")
+                      ensure_ascii=True, default=_json_default).encode("utf-8")
 
 
 def _digest(obj):
     return hashlib.sha256(_canonical(obj)).hexdigest()
+
+
+def _freeze(obj):
+    """Deep-freeze a validated policy document (F340; F330 pattern).
+
+    dict -> MappingProxyType, list/tuple -> tuple, set -> frozenset.
+    Post-compile in-process mutation then fails at the source instead of
+    silently changing decisions under a still-valid pin. The freeze is
+    digest-transparent: _canonical serializes the frozen shape back to
+    the plain JSON form, so pins minted before the freeze keep working.
+    """
+    if isinstance(obj, dict):
+        return MappingProxyType(
+            {key: _freeze(value) for key, value in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return tuple(_freeze(value) for value in obj)
+    if isinstance(obj, (set, frozenset)):
+        return frozenset(_freeze(value) for value in obj)
+    return obj
 
 
 def policy_digest(doc):
@@ -275,6 +318,17 @@ def _validate_arg_matchers(args, rule_idx):
             except re.error as e:
                 _refuse("rule %d: arg %r: regex does not compile: %s"
                         % (rule_idx, arg_name, e))
+            # F339: route the shared F325 backtracking-safety gate. Arg
+            # values are caller-controlled at decide time, so a
+            # backtracking-prone pattern is a caller-triggerable hang of
+            # the authorization decision. The ManifestError is translated
+            # to this module's coded refusal (never let it escape raw --
+            # the F342 class).
+            try:
+                _rx_safety_gate(operand,
+                                "rule %d: arg %r" % (rule_idx, arg_name))
+            except _RegexUnsafe as e:
+                _refuse(str(e), code=REGEX_UNSAFE)
         elif matcher == "any_of":
             if (not isinstance(operand, (list, tuple)) or not operand
                     or not all(isinstance(v, (str, int, float, bool))
@@ -380,21 +434,44 @@ def _rule_matches_shape(rule, caller_identity, tool, operation):
     return True
 
 
+def _value_evaluable(spec, value):
+    """Can this matcher be meaningfully evaluated against this value?
+
+    A present-but-ill-typed value (None, or a type the matcher can never
+    match) can never positively satisfy the matcher, so under DENY
+    semantics it must be treated as missing (fail-closed match, the F338
+    fix) rather than as a non-match that lets the call fall through to
+    an ALLOW. The matcher's operand types are closed at validation, so
+    this mirrors the validation contract exactly.
+    """
+    matcher = next(iter(spec))
+    if matcher in ("equals", "prefix", "regex"):
+        return isinstance(value, str)
+    if matcher == "any_of":
+        return isinstance(value, (str, int, float, bool))
+    return False  # unreachable: validated at compile
+
+
 def _args_satisfy(rule, args, deny_semantics):
     """Arg-constraint evaluation.
 
     deny_semantics=True (DENY rules): a missing arg counts as a MATCH
-    (fail-closed on under-specification -- the Istio TCP lesson).
+    (fail-closed on under-specification -- the Istio TCP lesson). F338:
+    a null or ill-typed arg value is the wire-equivalent of a missing
+    arg (common JSON serializers emit null for unset optionals), so it
+    counts as a MATCH too -- otherwise {"cmd": None} silently opts out
+    of an explicit DENY carve-out.
     deny_semantics=False (ALLOW/AUDIT/CUSTOM rules): every constrained arg
     must be present and satisfy its matcher.
     """
     constraints = rule.get("args", {})
     for arg_name, spec in constraints.items():
         present = arg_name in args
-        if deny_semantics and not present:
-            continue  # missing attr matches for DENY: fail closed
-        if not _match_value(spec, present,
-                            args.get(arg_name)):
+        value = args.get(arg_name)
+        if deny_semantics and (not present
+                               or not _value_evaluable(spec, value)):
+            continue  # missing or ill-typed: fail closed (match)
+        if not _match_value(spec, present, value):
             return False
     return True
 
@@ -483,13 +560,23 @@ class CallDecision:
 
 
 class CompiledToolPolicy:
-    """One compiled tool-call policy: the enforceable decision procedure."""
+    """One compiled tool-call policy: the enforceable decision procedure.
+
+    IMMUTABLE after compilation (F340; the F330 pattern): ``_doc`` is
+    deep-frozen (MappingProxyType/tuple), so a post-bind in-process
+    mutation -- mode flip, rule neutering -- fails at the source instead
+    of silently changing decisions under a still-valid pin. The freeze is
+    digest-transparent, so pins minted before the fix keep working.
+    :class:`PolicyBinding` additionally re-verifies the pin against the
+    live document on every ``decide()``, catching even a freeze-bypassing
+    wholesale replacement as ``toolcall-policy-drift``.
+    """
 
     def __init__(self, doc):
         # Deep copy: later mutation of the caller's dict cannot silently
         # change the compiled policy; _doc is the compiled record and the
         # pin covers it (drift detection compares against it).
-        self._doc = copy.deepcopy(doc)
+        self._doc = _freeze(copy.deepcopy(doc))
         self.digest = _digest(self._doc)
         self._alerts = []
 
@@ -579,9 +666,26 @@ class CompiledToolPolicy:
         DENY (Sasanam is fail-closed; Istio's "no ALLOW policies => allow"
         optimizes for traffic flow, not containment).
         """
+        # F342: ill-typed public inputs refuse LOUD with a coded refusal
+        # instead of crashing uncoded (fnmatch TypeError) or silently
+        # deciding (operation=None). Arg VALUES are not type-checked here:
+        # a present null value is F338's seam (still OPEN), not this one.
+        if not isinstance(tool, str) or not tool:
+            raise ToolCallPolicyError(
+                "decide tool must be a non-empty string; got %r"
+                % (tool,), code=INVALID_CALL)
+        if not isinstance(operation, str) or not operation:
+            raise ToolCallPolicyError(
+                "decide operation must be a non-empty string; got %r"
+                % (operation,), code=INVALID_CALL)
         if args is not None and not isinstance(args, dict):
             _refuse("decide args must be a dict; got %r" % (type(args),))
         args = dict(args) if args else {}
+        for _key in args:
+            if not isinstance(_key, str):
+                raise ToolCallPolicyError(
+                    "decide args keys must be strings; got %r" % (_key,),
+                    code=INVALID_CALL)
         identity = self._check_caller(caller)
         self._audit_rules(identity, tool, operation, args)
 
@@ -673,6 +777,19 @@ class PolicyBinding:
         self._decisions = []
 
     def decide(self, caller, tool, operation, args=None, now=None):
+        # F340: re-verify the pin against the LIVE document on every
+        # decision. The frozen _doc blocks item mutation at the source;
+        # this catches even a freeze-bypassing wholesale replacement
+        # (object.__setattr__) as toolcall-policy-drift. compare_digest
+        # is verification-only (no key material) -- out of scope for the
+        # W70 HMAC allowlist by that test's own documented boundary.
+        live = _digest(self._compiled._doc)
+        if not hmac.compare_digest(live, self.pin):
+            raise ToolCallPolicyError(
+                "tool-call policy drift at decide time: the compiled "
+                "document no longer matches its pin; re-review and "
+                "re-pin before deciding",
+                code=POLICY_DRIFT)
         decision = self._compiled.decide(caller, tool, operation, args,
                                          now=now)
         self._decisions.append(decision.to_dict())
@@ -711,9 +828,16 @@ def suppress_with_exception(compiled, alert_identity_hash, store,
     The covering exception must be live in ``store`` (a
     ``gov.governed_exceptions.ExceptionStore``); the scope kind must be
     ``tool`` or ``policy`` and its value must name the denied tool or the
-    policy. The alert is re-recorded with Action=SKIPPED and the exception
-    digest attached -- never PASSED, and the verdict stays DENY: an
-    exception is accepted-risk evidence, not a bypass. A covering but
+    policy -- and that binding is ENFORCED, not a caller discipline: a
+    ``("tool", X)`` scope must fnmatch-cover the suppressed alert's tool,
+    and a ``("policy", P)`` scope must name this compiled policy (its
+    name or digest). Anything else refuses LOUD and coded
+    (``toolcall-exception-scope-mismatch``). The alert is re-recorded
+    with Action=SKIPPED and the exception digest attached -- never
+    PASSED. The record carries the ACTUAL decision's verdict (F341):
+    DENY for an enforced denial, ALLOW for an audit-mode would-deny
+    (nothing was denied -- audit mode does not enforce). An exception
+    is accepted-risk evidence, not a bypass. A covering but
     expired/revoked exception refuses LOUD via the store's own contract.
     """
     from gov import governed_exceptions as ge
@@ -726,6 +850,39 @@ def suppress_with_exception(compiled, alert_identity_hash, store,
             "exception scope for tool-call suppression must be "
             "(kind, value) with kind in ('tool', 'policy')",
             code=POLICY_INVALID)
+    # Bind the scope to the suppressed alert BEFORE consulting the
+    # store: the scope is a claim about THIS alert, and an unbound
+    # scope is refused even when a live exception covers it (F334).
+    target = None
+    for alert in compiled.alerts():
+        if alert.get("runtime_identity_hash") == alert_identity_hash:
+            target = alert
+            break
+    if target is None:
+        raise ToolCallPolicyError(
+            "suppression refused: no recorded alert matches identity "
+            "hash %r; the scope cannot be bound to an unknown alert"
+            % (alert_identity_hash,),
+            code=SCOPE_MISMATCH)
+    scope_kind, scope_value = scope[0], scope[1]
+    if scope_kind == "tool":
+        alert_tool = target.get("tool")
+        if not (isinstance(alert_tool, str) and
+                isinstance(scope_value, str) and
+                fnmatch.fnmatchcase(alert_tool, scope_value)):
+            raise ToolCallPolicyError(
+                "suppression refused: exception scope ('tool', %r) does "
+                "not name the suppressed alert's tool %r"
+                % (scope_value, alert_tool),
+                code=SCOPE_MISMATCH)
+    else:  # ("policy", P): P must name THIS compiled policy.
+        if not (isinstance(scope_value, str) and
+                scope_value in (compiled.name, compiled.digest)):
+            raise ToolCallPolicyError(
+                "suppression refused: exception scope ('policy', %r) "
+                "does not name this compiled policy (%r)"
+                % (scope_value, compiled.name),
+                code=SCOPE_MISMATCH)
     outcome = store.evaluate(check_id, tuple(scope), lambda: True,
                              now=now)
     if outcome.get("status") != "SKIPPED":
@@ -736,13 +893,24 @@ def suppress_with_exception(compiled, alert_identity_hash, store,
             "verdict cannot be suppressed ad-hoc" % (scope, check_id),
             code=NO_COVERING_EXCEPTION)
     exc_digest = outcome["exception_digest"]
-    # Find the alert being suppressed (best effort: match by identity
-    # hash; the suppression record carries the hash either way).
-    target = None
-    for alert in compiled.alerts():
-        if alert.get("runtime_identity_hash") == alert_identity_hash:
-            target = alert
-            break
+    # F341: the record must state the ACTUAL decision's verdict. An
+    # audit-mode would-deny was never a denial -- its decision was ALLOW
+    # (audit mode does not enforce) -- so hardcoding "DENY" corrupts the
+    # evidence. Derive the verdict from the suppressed alert instead.
+    # (target is bound above before the store consult; unknown alerts
+    # were refused there, so it is never None here.)
+    would_deny = (target.get("action") == "AUDIT"
+                  and target.get("result") == "would-deny")
+    verdict = "ALLOW" if would_deny else "DENY"
+    if would_deny:
+        message = ("audit-mode would-deny alert suppressed under a live "
+                   "governed exception (SKIPPED, never PASSED): the call "
+                   "was ALLOWED -- audit mode does not enforce, so no "
+                   "denial occurred")
+    else:
+        message = ("DENY verdict stands; the violation alert is "
+                   "suppressed under a live governed exception "
+                   "(SKIPPED, never PASSED)")
     record = {
         "record_type": ALERT_RECORD_TYPE,
         "timestamp": time.time(),
@@ -753,14 +921,12 @@ def suppress_with_exception(compiled, alert_identity_hash, store,
         "scope": list(scope),
         "action": "SKIPPED",
         "result": "suppressed",
-        "verdict": "DENY",
+        "verdict": verdict,
         "code": EXCEPTION_SUPPRESSED,
         "exception_digest": exc_digest,
-        "message": "DENY verdict stands; the violation alert is "
-                   "suppressed under a live governed exception "
-                   "(SKIPPED, never PASSED)",
+        "message": message,
     }
-    if target is not None:
+    if target is not None:  # always set: unknown alerts refused above
         record["suppressed_alert"] = dict(target)
     compiled._record(record)  # _record emits; no second _emit here
     return record
