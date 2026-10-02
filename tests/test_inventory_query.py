@@ -297,7 +297,7 @@ class TaxonomyTest(unittest.TestCase):
                      "inventory-row-malformed", "inventory-schema-mismatch",
                      "inventory-unregistered"):
             self.assertIn(code, decision_codes.TAXONOMY)
-        self.assertEqual(len(decision_codes.TAXONOMY), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1750)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete); Wave-295 merge: pin 1743 -> 1750 (+8: 1 toolcall-secret-scan-incomplete + 3 toolcall-predicate-* + 4 coord-state-*)
 
     def test_no_duplicate_code_literals(self):
         import re
