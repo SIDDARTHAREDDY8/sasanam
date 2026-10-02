@@ -273,7 +273,10 @@ class FindingsMdTest(unittest.TestCase):
 
     def test_parses_current_findings(self):
         reg = fl.load_findings_md(self.PATH)
-        self.assertEqual(reg.get("F311").state, "open")
+        # F311 was open at lane time; the wave-283 merge closed it.
+        self.assertEqual(reg.get("F311").state, "verified")
+        for num in ("F312", "F313", "F314", "F315"):
+            self.assertEqual(reg.get(num).state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")
         self.assertGreaterEqual(len(reg.all()), 200)

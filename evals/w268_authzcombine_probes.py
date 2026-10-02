@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 1587; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).  # Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
+TAXONOMY_PIN = 1587  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _STUB_SRC = '''
 """Permissive stub: allows every request. Red-phase foil only."""
