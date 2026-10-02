@@ -57,7 +57,7 @@ import gov.attestors as at                             # noqa: E402
 import gov.image_text as it                            # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1486  # Wave-276 F294 closure: +1 code
+TAXONOMY_PIN = 1493  # Wave-276 F294 closure: +1 code
 # (provlabel-mixed-provenance). Value-only repoint; the pin still
 # counts raw "code" literals in gov/decision_codes.py.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -84,7 +84,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1486: 1486 unique literals"
+    return "HELD", "taxonomy pin 1493: 1493 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -318,7 +318,7 @@ def rv02_combine_precedence():
 
 
 _PROBES = [
-    ("pin-taxonomy-1486", "HELD", _pin_check),
+    ("pin-taxonomy-1493", "HELD", _pin_check),
     # decode_trust / image_text: F292 (closed wave-276 lane f292: trusted
     # path now routes through screen_image_text; re-pinned BREAK->HELD).
     # ASI: ASI01

@@ -31,7 +31,7 @@ sys.path.insert(0, REPO)
 
 from gov import coverage_ledger as cl  # noqa: E402
 
-TAXONOMY_PIN = 1486  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry)
+TAXONOMY_PIN = 1493  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -56,7 +56,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1486: 1486 unique literals"
+    return "HELD", "taxonomy pin 1493: 1493 unique literals"
 
 
 def _qsrc():
@@ -256,7 +256,7 @@ def green_check():
 
 def main():
     pin_verdict, pin_note = _pin_check()
-    _RESULTS.append(("pin-taxonomy-1486", "HELD", pin_verdict,
+    _RESULTS.append(("pin-taxonomy-1493", "HELD", pin_verdict,
                      pin_verdict == "HELD", pin_note))
     for pid, expected, fn in PROBES:
         _run(pid, expected, fn)

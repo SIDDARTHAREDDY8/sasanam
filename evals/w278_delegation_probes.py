@@ -52,7 +52,7 @@ sys.path.insert(0, REPO)
 from gov import delegation_tokens as _dt  # noqa: E402
 from gov.identity import AgentIdentity  # noqa: E402
 
-TAXONOMY_PIN = 1486  # Wave-277 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1493  # Wave-277 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _SID = "sess-w278"
@@ -82,7 +82,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1486: 1486 unique literals"
+    return "HELD", "taxonomy pin 1493: 1493 unique literals"
 
 
 class _Keys(object):
@@ -347,7 +347,7 @@ def _p_audience_orthogonal():
 
 
 _PROBES = [
-    ("pin-taxonomy-1486", "HELD", _pin_check),
+    ("pin-taxonomy-1493", "HELD", _pin_check),
     ("rsrc-cross-server-refused", "HELD", _p_cross_server_refused),
     ("rsrc-same-server-allowed", "HELD", _p_same_server_allowed),
     ("rsrc-passthrough-gate", "HELD", _p_passthrough_gate),

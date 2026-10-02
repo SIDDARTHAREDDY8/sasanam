@@ -22,7 +22,7 @@ from gov import egress_refs as er  # noqa: E402
 
 # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10
 # bundle-delivery-* + 4 egress-ref-*).
-TAXONOMY_PIN = 1486
+TAXONOMY_PIN = 1493
 
 EXPECTED_CODES = (
     "egress-ref-data-exfil",

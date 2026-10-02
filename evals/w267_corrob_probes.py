@@ -62,7 +62,7 @@ except Exception:  # red phase: module not written yet
     _cr = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 # pin 1222 -> 1231 (+9 corrob-*/corrob-vc-*).
 
 EXPECTED_CODES = (

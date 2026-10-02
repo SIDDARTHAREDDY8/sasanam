@@ -242,8 +242,8 @@ def red_c02_pin():
     import re
     src = (REPO_ROOT / "gov" / "decision_codes.py").read_text()
     codes = re.findall(r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
-    if len(codes) == 1486 and len(set(codes)) == 1486:
-        situation("c02", "pin 1486/1486/0", "HELD")
+    if len(codes) == 1493 and len(set(codes)) == 1493:
+        situation("c02", "pin 1493/1493/0", "HELD")
     else:
         situation("c02", "pin drift: %d/%d" % (len(codes),
                                                len(set(codes))), "BREAK")

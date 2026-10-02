@@ -45,7 +45,7 @@ from gov import detectors as det
 from gov import behavioral_sigs as bsig
 from gov import ed25519
 
-TAXONOMY_PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 # Fixed logical clock: all probes use explicit now values, never the
 # wall clock, except where the product defaults are under test.

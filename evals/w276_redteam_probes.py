@@ -78,7 +78,7 @@ import gov.instruction_provenance as prov              # noqa: E402
 import gov.attestors as at                             # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1486  # Wave-275 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1493  # Wave-275 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -103,7 +103,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1486: 1486 unique literals"
+    return "HELD", "taxonomy pin 1493: 1493 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -597,7 +597,7 @@ def green_check():
 
 def main():
     pin_verdict, pin_note = _pin_check()
-    _RESULTS.append(("pin-taxonomy-1486", "HELD", pin_verdict,
+    _RESULTS.append(("pin-taxonomy-1493", "HELD", pin_verdict,
                      pin_verdict == "HELD", pin_note))
     for pid, expected, fn in PROBES:
         _run(pid, expected, fn)

@@ -85,7 +85,7 @@ import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 import gov.rekor_v2_witness as rw                     # noqa: E402
 
-TAXONOMY_PIN = 1486  # Wave-277 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1493  # Wave-277 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -112,7 +112,7 @@ def _pin_check():
         return "BREAK", "duplicate code literals in taxonomy"
     if literals != sorted(literals):
         return "BREAK", "taxonomy literals not sorted"
-    return "HELD", "taxonomy pin 1486: 1486 unique sorted literals"
+    return "HELD", "taxonomy pin 1493: 1493 unique sorted literals"
 
 
 # ---------------------------------------------------------------------------
@@ -362,8 +362,16 @@ def rekor_attach_skipped_never_raises():
     return "BREAK", "flag-off attach status=%r" % (rec.get("status"),)
 
 
-def rekor_not_wired_into_product():
-    """The witness is not called by any product module (by design)."""
+def rekor_wired_with_contract():
+    """The v2 witness is wired into issuance ONLY at the evidence_bundle_v2
+    seam, behind the GOV_REKOR_V2_WITNESS master flag, and never gates it.
+
+    (wave-278 merge: the rekorwire lane deliberately wired the witness into
+    evidence_bundle_v2.py, so the old "not wired by design" property is
+    superseded. The wiring contract itself -- flag-off byte-identical,
+    flag-on second-witness-only, failures degrade to honest "failed"
+    records -- is probed red-first by evals/w278_rekor_wire_probes.py.)
+    """
     govdir = os.path.join(REPO, "gov")
     callers = []
     for fn in sorted(os.listdir(govdir)):
@@ -373,9 +381,15 @@ def rekor_not_wired_into_product():
             src = fh.read()
         if "rekor_v2_witness" in src or "RekorV2Witness" in src:
             callers.append(fn)
-    if not callers:
-        return "HELD", "no product callers (flag-off no-op verified)"
-    return "BREAK", "unexpected product callers: %s" % (callers,)
+    if callers != ["evidence_bundle_v2.py"]:
+        return "BREAK", "unexpected wiring surface: %s" % (callers,)
+    src = open(os.path.join(govdir, "evidence_bundle_v2.py"),
+               encoding="utf-8").read()
+    if "GOV_REKOR_V2_WITNESS" not in src:
+        return "BREAK", "wiring not gated on the master env flag"
+    if "_maybe_attach_v2_witness" not in src:
+        return "BREAK", "wiring helper missing"
+    return "HELD", "witness wired only at evidence_bundle_v2, flag-gated"
 
 
 # ---------------------------------------------------------------------------
@@ -564,11 +578,11 @@ PROBES = [
     ("rekor-flag-parsing-strict", "HELD", rekor_flag_parsing_strict),
     ("rekor-attach-skipped-never-raises", "HELD",
      rekor_attach_skipped_never_raises),
-    ("rekor-not-wired-into-product", "HELD", rekor_not_wired_into_product),
+    ("rekor-wired-with-contract", "HELD", rekor_wired_with_contract),  # wave-278 merge: supersedes the old not-wired property (rekorwire lane wired it); asserts the wiring surface is flag-gated and minimal
     # F300: unwired F294 closure (NEW finding)
     ("f300-unwired", "BREAK", f300_unwired),
     # F299 re-pin (OPEN)
-    ("f299-float-eternal", "BREAK", f299_float_eternal),
+    ("f299-float-eternal", "HELD", f299_float_eternal),  # F299 CLOSED wave-278 (float now rolls windows)
     # F292-F295 closure re-pins
     ("f292-trusted-screens", "HELD", f292_trusted_screens),
     ("f292-benign-allows", "HELD", f292_benign_allows),
@@ -617,7 +631,7 @@ def green_check():
 
 def main():
     pin_verdict, pin_note = _pin_check()
-    _RESULTS.append(("pin-taxonomy-1486", "HELD", pin_verdict,
+    _RESULTS.append(("pin-taxonomy-1493", "HELD", pin_verdict,
                      pin_verdict == "HELD", pin_note))
     for pid, expected, fn in PROBES:
         _run(pid, expected, fn)
