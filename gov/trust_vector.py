@@ -8,10 +8,10 @@ stdlib-only reimplementation of the *mechanisms*; no upstream code,
 schemas, or prose are vendored.
 
 Mechanisms stolen:
-* the four-part pipeline -- evidence extraction, trust anchors,
-  endorsements (golden values), appraisal policy -- as four separate
-  stores: the thing measured, the values it is compared against, and
-  the policy that decides are never the same object;
+* the four-part pipeline -- evidence extraction, producer
+  allowlists, endorsements (golden values), appraisal policy -- as
+  four separate stores: the thing measured, the values it is compared
+  against, and the policy that decides are never the same object;
 * the endorsement slot: every evidence claim carries a separately
   sourced endorsement slot that the verifier checks WITHOUT trusting
   the producer (wave-286 design rule -- the endorsement gap was
@@ -59,10 +59,15 @@ Composition, not duplication:
   evidence, never an upgrade.
 
 Honest limitations (documented, not hidden): the vector is only as
-good as its endorsement sources; trust anchors are pinned out of
-band; appraisal runs over declared claims, not observed runtime;
-operator-claimed timestamps; no endorsement ever means insufficient,
-never affirmed.
+good as its endorsement sources; appraisal runs over declared claims,
+not observed runtime; operator-claimed timestamps; no endorsement ever
+means insufficient, never affirmed; operator-trust is a NAME-ALLOWLIST
+over declared producer_id values -- the evidence model carries no
+signatures anywhere, so there is no key-pinned authentication behind
+it (F343: the former `trust_anchors` producer-id -> key-id contract
+was renamed to `trusted_producers` producer-id -> authority label and
+the key ids removed precisely because they were never consulted).
+Submission is itself the privileged act in this model.
 
 All refusals are LOUD: coded :class:`TrustVectorError`, never silent.
 """
@@ -131,8 +136,17 @@ class TrustVectorError(ValueError):
 # ---------------------------------------------------------------------------
 
 def _canonical(obj):
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"),
-                      ensure_ascii=True)
+    """Canonical JSON bytes for digest binding. The digest model only
+    binds JSON-serializable claim values; anything else refuses LOUD
+    with ``trustvec-evidence-invalid`` (F344) rather than escaping as
+    an uncoded ``TypeError`` from ``json.dumps``."""
+    try:
+        return json.dumps(obj, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=True)
+    except (TypeError, ValueError) as exc:
+        raise TrustVectorError(
+            "claim/endorsement value is not JSON-serializable: %s" % (exc,),
+            code=EVIDENCE_INVALID)
 
 
 def _digest(obj):
@@ -365,12 +379,19 @@ def endorse(evidence, claim_name, expected_value, source_id):
 # ---------------------------------------------------------------------------
 
 class AppraisalPolicy(object):
-    """A compiled, digest-bound appraisal policy document."""
+    """A compiled, digest-bound appraisal policy document.
 
-    def __init__(self, policy_id, scheme_id, trust_anchors, digest, doc):
+    ``trusted_producers`` is a name-allowlist: producer id -> a
+    non-empty authority label (e.g. "release-authority"). There is no
+    key material in the contract -- see the honest-limitations block
+    at module top.
+    """
+
+    def __init__(self, policy_id, scheme_id, trusted_producers,
+                 digest, doc):
         self.policy_id = policy_id
         self.scheme_id = scheme_id
-        self.trust_anchors = trust_anchors
+        self.trusted_producers = trusted_producers
         self.digest = digest
         self.doc = doc
 
@@ -394,16 +415,25 @@ def compile_policy(doc):
         raise TrustVectorError(
             "policy needs a non-empty scheme_id", code=POLICY_INVALID)
     get_scheme(scheme_id)  # unknown scheme refuses LOUD here
-    anchors = doc.get("trust_anchors", {})
-    if (not isinstance(anchors, dict)
+    if "trust_anchors" in doc:
+        raise TrustVectorError(
+            "trust_anchors was renamed to trusted_producers (F343): "
+            "the producer-id -> key-id contract overpromised -- the "
+            "evidence model carries no signatures, so the key ids "
+            "were never consulted. Use trusted_producers (producer "
+            "id -> non-empty authority label) instead.",
+            code=POLICY_INVALID)
+    producers = doc.get("trusted_producers", {})
+    if (not isinstance(producers, dict)
             or not all(isinstance(k, str) and k
                        and isinstance(v, str) and v
-                       for k, v in anchors.items())):
+                       for k, v in producers.items())):
         raise TrustVectorError(
-            "trust_anchors must map producer id -> key id",
+            "trusted_producers must map producer id -> non-empty "
+            "authority label",
             code=POLICY_INVALID)
     digest = _digest(doc)
-    return AppraisalPolicy(policy_id, scheme_id, dict(anchors), digest,
+    return AppraisalPolicy(policy_id, scheme_id, dict(producers), digest,
                            dict(doc))
 
 
@@ -498,7 +528,10 @@ def _grade_dimension(evidence, endorsements, policy, dimension):
         return worst
 
     if rule == RULE_OPERATOR_TRUST:
-        if evidence.producer_id in policy.trust_anchors:
+        # F343: name-allowlist over the DECLARED producer_id. There are
+        # no signatures in the evidence model, so this is not
+        # authentication -- submission is the privileged act.
+        if evidence.producer_id in policy.trusted_producers:
             return AFFIRMED
         return INSUFFICIENT
 

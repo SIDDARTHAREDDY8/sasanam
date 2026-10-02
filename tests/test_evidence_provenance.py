@@ -167,6 +167,25 @@ class TestAnchorGate(unittest.TestCase):
         receipt = ea.anchor(log, "ab" * 32)
         self.assertEqual(receipt["bundle_digest"], "ab" * 32)
 
+    def test_raising_sink_does_not_break_verification(self):
+        # F345: a broken audit sink must never break provenance
+        # verification (the timestamp_authority precedent): the sink
+        # failure is isolated, never the sink's raw exception type at
+        # a public seam.
+        seed, policy = _builder()
+        env = _sealed(seed)
+
+        def bad_sink(evt):
+            raise RuntimeError("sink is down")
+
+        ep.set_emit(bad_sink)
+        try:
+            self.assertIs(ep.verify_provenance(env, policy), True)
+        finally:
+            ep.set_emit(None)
+        # The raising sink must not leak into subsequent verifications.
+        self.assertIs(ep.verify_provenance(env, policy), True)
+
 
 class TestGraph(unittest.TestCase):
     def test_records_structural_hasslsa(self):

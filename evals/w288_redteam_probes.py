@@ -63,7 +63,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance
 # +10 trustvec-*).
-TAXONOMY_PIN = 1700
+TAXONOMY_PIN = 1706
 
 _results = []
 
@@ -167,12 +167,30 @@ def _f343_scheme():
 def p_f343_operator_trust_name_only():
     from gov import trust_vector as tv
     scheme_id = _f343_scheme()
+    # F343 closed wave-289 lane 1: the key-implying trust_anchors field
+    # refuses LOUD (coded trustvec-policy-invalid) at compile time; the
+    # contract is now the honest trusted_producers name-allowlist.
+    try:
+        tv.compile_policy(
+            {"format": tv.POLICY_FORMAT, "policy_id": "w288p1",
+             "scheme_id": scheme_id,
+             "trust_anchors": {"prodA": "keyid-AAAAAAAAAAAAAAAA"}})
+    except tv.TrustVectorError as e:
+        if e.code == tv.POLICY_INVALID:
+            return _record("f343-operator-trust-name-only", "HELD",
+                           "old trust_anchors field refuses LOUD coded "
+                           "%s; trusted_producers name-allowlist is the "
+                           "documented contract" % (e.code,))
+        return _record("f343-operator-trust-name-only", "BREAK",
+                       "old field refuses but with unexpected code %s"
+                       % (e.code,))
     pol = tv.compile_policy(
         {"format": tv.POLICY_FORMAT, "policy_id": "w288p1",
          "scheme_id": scheme_id,
-         "trust_anchors": {"prodA": "keyid-AAAAAAAAAAAAAAAA"}})
+         "trusted_producers": {"prodA": "release-authority"}})
     # No signatures exist in this module: the producer is a bare
-    # string and the key id is never consulted.
+    # string and affirmation is a name-allowlist match (documented
+    # in the module's honest-limitations block).
     ev = tv.submit_evidence(scheme_id, {"fw": "1.0"}, "prodA")
     d = tempfile.mkdtemp(prefix="w288-f343-")
     pinpath = os.path.join(d, "pins.json")
@@ -187,7 +205,8 @@ def p_f343_operator_trust_name_only():
                        "never consulted (no signature exists in the "
                        "evidence model) -- key rotation is theater")
     _record("f343-operator-trust-name-only", "HELD",
-            "operator-trust requires key-based producer verification")
+            "trusted_producers name-allowlist affirms; the old "
+            "key-implying trust_anchors field refuses LOUD at compile")
 
 
 # ---------------------------------------------------------------------------

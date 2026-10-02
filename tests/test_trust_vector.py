@@ -53,7 +53,7 @@ def _policy(policy_id="ut-policy", anchors=None):
         "format": "sasanam-appraisal-policy/v1",
         "policy_id": policy_id,
         "scheme_id": "ut-firmware/v1",
-        "trust_anchors": anchors or {},
+        "trusted_producers": anchors or {},
     })
 
 
@@ -165,6 +165,22 @@ class TestFailClosed(unittest.TestCase):
                  "debug_fuse": False, "nope": 1}, "p")
         self.assertEqual(cm.exception.code, tv.EVIDENCE_INVALID)
 
+    def test_nonjson_claim_refused_coded(self):
+        # F344: a set nested in a list claim must refuse LOUD with the
+        # coded trustvec-evidence-invalid, never an uncoded TypeError.
+        desc = tv.SchemeDescriptor(scheme_id="ut-nonjson/v1",
+                                   claim_grammar={"items": "list"},
+                                   dimensions=[])
+        try:
+            tv.register_scheme(desc)
+        except tv.TrustVectorError as e:
+            if e.code != tv.SCHEME_DUPLICATE:
+                raise
+        with self.assertRaises(tv.TrustVectorError) as cm:
+            tv.submit_evidence("ut-nonjson/v1",
+                               {"items": [{"s": {1, 2}}]}, "p")
+        self.assertEqual(cm.exception.code, tv.EVIDENCE_INVALID)
+
     def test_self_endorsement_refused(self):
         _scheme()
         ev = _evidence(producer="prod-a")
@@ -208,7 +224,7 @@ class TestFailClosed(unittest.TestCase):
             "format": "sasanam-appraisal-policy/v1",
             "policy_id": "ut-policy-x",
             "scheme_id": "ut-firmware/v1",
-            "trust_anchors": {}})
+            "trusted_producers": {}})
         # evidence scheme != policy scheme: build a second scheme
         desc = tv.SchemeDescriptor(
             scheme_id="ut-other/v1",
@@ -343,7 +359,7 @@ class TestRegistry(unittest.TestCase):
         pol = tv.compile_policy({
             "format": "sasanam-appraisal-policy/v1",
             "policy_id": "ut-hook-pol", "scheme_id": "ut-hooked/v1",
-            "trust_anchors": {"prod-a": "key-1"}})
+            "trusted_producers": {"prod-a": "key-1"}})
         ear = tv.appraise(ev, [], pol, _pins(pol))
         self.assertEqual(ear["vector"]["config_integrity"],
                          "contraindicated")

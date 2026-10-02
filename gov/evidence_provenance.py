@@ -135,8 +135,19 @@ def set_emit(emit):
 
 
 def _emit(event):
-    if _EMIT is not None:
+    """Emit an audit event to the installed sink. A broken audit sink
+    must never break provenance issuance or verification: the sink
+    failure is isolated (the failure mode is recorded in this
+    docstring/comment, not the event -- the same trade-off as
+    ``gov/timestamp_authority.py`` and ``gov/governed_exceptions.py``),
+    never the sink's raw exception type escaping at a public seam
+    (F345)."""
+    if _EMIT is None:
+        return
+    try:
         _EMIT(dict(event))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

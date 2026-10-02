@@ -47,7 +47,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g287-ear")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-287 lane 8: pin 1660 -> 1670 (+10 trustvec-* codes).; Wave-287 merge: pin 1670 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 1700
+TAXONOMY_PIN = 1706
 
 _RESULTS = []
 
@@ -123,12 +123,12 @@ def _evidence(tv, claims=None, producer="prod-a"):
         producer)
 
 
-def _policy(tv, trust_anchors=None):
+def _policy(tv, trusted_producers=None):
     doc = {
         "format": "sasanam-appraisal-policy/v1",
         "policy_id": "probe-policy",
         "scheme_id": "test-firmware/v1",
-        "trust_anchors": trust_anchors or {},
+        "trusted_producers": trusted_producers or {},
     }
     return tv.compile_policy(doc)
 
@@ -161,7 +161,7 @@ def p_vector_not_boolean():
     # Endorsement CONTRADICTS the evidence on fw_digest: a boolean check
     # over the rest would pass, the vector must not.
     end = tv.endorse(ev, "fw_digest", "ff" * 32, "endorser-1")
-    pol = _policy(tv, trust_anchors={"prod-a": "key-1"})
+    pol = _policy(tv, trusted_producers={"prod-a": "key-1"})
     ear = tv.appraise(ev, [end], pol, _pins(tv, pol))
     if not isinstance(ear, dict) or "vector" not in ear:
         return _record("vector-not-boolean", "BREAK",
@@ -341,7 +341,7 @@ def p_require_affirmed_gate():
 
     # (a) fully affirmed ear passes
     ev = _evidence(tv)
-    pol = _policy(tv, trust_anchors={"prod-a": "key-1"})
+    pol = _policy(tv, trusted_producers={"prod-a": "key-1"})
     ends = [tv.endorse(ev, "fw_digest", "ab" * 32, "endorser-1"),
             tv.endorse(ev, "fw_version", "1.2.3", "endorser-1")]
     ear_ok = tv.appraise(ev, ends, pol, _pins(tv, pol))
@@ -481,7 +481,7 @@ def p_scheme_plugin_registry():
                             "prod-a")
     pol_doc = {"format": "sasanam-appraisal-policy/v1",
                "policy_id": "hook-policy", "scheme_id": "test-hooked/v1",
-               "trust_anchors": {"prod-a": "key-1"}}
+               "trusted_producers": {"prod-a": "key-1"}}
     pol = tv.compile_policy(pol_doc)
     ear = tv.appraise(ev, [], pol, _pins(tv, pol))
     if ear["vector"].get("config_integrity") != "contraindicated":
@@ -507,7 +507,7 @@ def p_scheme_plugin_registry():
                              {"fw_digest": "ab" * 32}, "prod-a")
     pol2_doc = {"format": "sasanam-appraisal-policy/v1",
                 "policy_id": "badhook-policy",
-                "scheme_id": "test-badhook/v1", "trust_anchors": {}}
+                "scheme_id": "test-badhook/v1", "trusted_producers": {}}
     pol2 = tv.compile_policy(pol2_doc)
     try:
         tv.appraise(ev2, [], pol2, _pins(tv, pol2))

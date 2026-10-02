@@ -3119,6 +3119,68 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'challenge-anchor-mismatch': {
+        "domain": 'challenge',
+        "code": 'challenge-anchor-mismatch',
+        "human": 'ceremony binding: the anchor receipt does not cover the '
+                 'record\'s (content digest, nonce, purpose) tuple -- the '
+                 'anchor was substituted from a different ceremony; '
+                 'refused, never verified',
+        "severity": 'high',
+        "evidence_kinds_required": ['anchor', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'challenge-invalid-shape': {
+        "domain": 'challenge',
+        "code": 'challenge-invalid-shape',
+        "human": 'ceremony binding: the challenge-bound record or its '
+                 'issuance arguments are malformed (bad shape, bad digest, '
+                 'bad purpose); the record was not minted or is not '
+                 'verified',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'challenge-nonce-invalid': {
+        "domain": 'challenge',
+        "code": 'challenge-nonce-invalid',
+        "human": 'ceremony binding: the challenge nonce is shorter than '
+                 'the 64-bit floor (RFC 9711 minimum); the record was not '
+                 'minted or is not verified',
+        "severity": 'medium',
+        "evidence_kinds_required": ['record'],
+        "reverify_steps": ['recompute'],
+    },
+    'challenge-nonce-mismatch': {
+        "domain": 'challenge',
+        "code": 'challenge-nonce-mismatch',
+        "human": 'ceremony binding: the record\'s challenge nonce does not '
+                 'match the appraisal request -- possible replay into a '
+                 'different ceremony; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['record', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'challenge-purpose-mismatch': {
+        "domain": 'challenge',
+        "code": 'challenge-purpose-mismatch',
+        "human": 'ceremony binding: the record\'s challenge purpose does '
+                 'not match the appraisal request -- possible purpose '
+                 'confusion; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['record', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'challenge-signature-invalid': {
+        "domain": 'challenge',
+        "code": 'challenge-signature-invalid',
+        "human": 'ceremony binding: the operator signature over the '
+                 '(nonce, purpose, content digest) tuple did not verify -- '
+                 'the record is forged or tampered; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature'],
+        "reverify_steps": ['recompute'],
+    },
     'channel-identity-unattested': {
         "domain": 'attested-channel',
         "code": 'channel-identity-unattested',
