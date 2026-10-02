@@ -39,7 +39,7 @@ REPO = os.environ.get("GOV_BATTERY_REPO") or os.path.dirname(_HERE)
 sys.path.insert(0, REPO)
 
 # Wave-287 lane 7: pin 1660 -> 1667 (+7 evidence-provenance codes).; Wave-287 merge: pin 1667 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*)
-TAXONOMY_PIN = 1730  # wave-290 lane 6: 1706 -> 1710
+TAXONOMY_PIN = 1742  # wave-290 lane 6: 1706 -> 1710
 
 _RESULTS = []
 

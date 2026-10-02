@@ -45,7 +45,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1730
+TAXONOMY_PIN = 1742
 
 _results = []
 
@@ -81,7 +81,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1730/1730/0 sorted")
+    _record("pin-taxonomy", "HELD", "1742/1742/0 sorted")
 
 
 try:

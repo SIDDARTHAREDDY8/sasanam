@@ -46,7 +46,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*).
-TAXONOMY_PIN = 1730
+TAXONOMY_PIN = 1742
 
 _results = []
 
@@ -69,7 +69,7 @@ def p_taxonomy_pin():
                        "taxonomy pin drift: %d literals, want %d"
                        % (len(lits), TAXONOMY_PIN))
     _record("pin-taxonomy", "HELD",
-            "taxonomy pin 1730 holds (raw source literals)")
+            "taxonomy pin 1742 holds (raw source literals)")
 
 
 def _posture_parts(producer_id="operator"):

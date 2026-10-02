@@ -101,7 +101,7 @@ VERDICTS = frozenset({"ALLOW", "DENY"})
 
 #: Closed rejection-layer vocabulary (Istio identity-first layering, plus
 #: the declared-sequence layer from gov/tool_rules.py).
-REJECTION_LAYERS = frozenset({"authn", "authz", "custom", "sequence"})
+REJECTION_LAYERS = frozenset({"authn", "authz", "custom", "sequence", "schema"})
 
 #: Record type for per-decision alert evidence.
 ALERT_RECORD_TYPE = "toolcall-policy-alert"
@@ -584,6 +584,11 @@ class CompiledToolPolicy:
         # bind_rule_set is called. Stored beside the policy, not inside
         # _doc, so binding a rule set never changes the policy pin.
         self._tool_rule_set = None
+        # Opt-in typed-schema layer (gov/tool_schemas.py): None until
+        # bind_schema_registry is called. Stored beside the policy, not
+        # inside _doc, so binding a schema set never changes the policy
+        # pin.
+        self._tool_schema_set = None
 
     def bind_rule_set(self, rule_set):
         """Opt-in: bind a compiled tool-rule set to this policy.
@@ -600,6 +605,26 @@ class CompiledToolPolicy:
                     % (type(rule_set),))
         self._tool_rule_set = rule_set
         return rule_set
+
+    def bind_schema_registry(self, schema_set):
+        """Opt-in: bind a compiled tool-schema set to this policy.
+
+        From then on every :meth:`decide` also runs schema validation
+        (after the authn and declared-sequence layers): type/range/shape
+        mismatches, undeclared tools/args, and secret-shaped values
+        surface as coded ``toolcall-schema-*`` / ``toolcall-secret-``
+        ``in-args`` DENY decisions at this same seam. The validated args
+        (with optional defaults injected) flow into the CUSTOM/DENY/ALLOW
+        rules. With no schema set bound, ``decide`` behaves exactly as
+        before.
+        """
+        from gov import tool_schemas as _tool_schemas
+        if not isinstance(schema_set,
+                          _tool_schemas.CompiledToolSchemaSet):
+            _refuse("bind_schema_registry needs a CompiledToolSchemaSet; "
+                    "got %r" % (type(schema_set),))
+        self._tool_schema_set = schema_set
+        return schema_set
 
     @property
     def name(self):
@@ -696,6 +721,12 @@ class CompiledToolPolicy:
         dicts with a ``tool`` key); ``context_flags`` feeds Conditional
         flag predicates. Both default to empty (no constraint beyond the
         rules themselves).
+
+        When a tool-schema set is bound (see :meth:`bind_schema_registry`),
+        schema validation runs right after the sequence layer -- before
+        AUDIT/CUSTOM/DENY/ALLOW -- so a shape violation can never be
+        rescued by a permissive policy rule. The validated args (with
+        optional defaults injected) flow into the policy rules.
         """
         # F342: ill-typed public inputs refuse LOUD with a coded refusal
         # instead of crashing uncoded (fnmatch TypeError) or silently
@@ -736,6 +767,23 @@ class CompiledToolPolicy:
                     or "toolcall-sequence-violated"
                 return self._deny(None, None, identity, tool, operation,
                                   args, code, "sequence", message=str(e))
+        # Typed-schema layer (opt-in): a bound schema set closes the
+        # tool inventory and enforces declared field types and bounds.
+        # Violations refuse LOUD and coded at this same seam; audit mode
+        # records them as would-deny like every other layer (no silent
+        # pass, no special casing). The validated args -- with optional
+        # defaults injected -- flow into the AUDIT/CUSTOM/DENY/ALLOW
+        # rules below.
+        if self._tool_schema_set is not None:
+            try:
+                args = self._tool_schema_set.validate_args(tool, args)
+            except Exception as e:  # noqa: BLE001 -- the checker only
+                # raises coded ToolSchemaError; anything else is still a
+                # coded refusal, never an uncoded escape (F351 class).
+                code = getattr(e, "code", None) \
+                    or "toolcall-schema-invalid"
+                return self._deny(None, None, identity, tool, operation,
+                                  args, code, "schema", message=str(e))
         self._audit_rules(identity, tool, operation, args)
 
         near_misses = []

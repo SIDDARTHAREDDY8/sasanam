@@ -462,7 +462,10 @@ def verify_provenance(envelope, builder_policy,
     ``revocation-status-unverifiable``. A non-empty demand without a
     gate refuses fail-closed -- a demand without a trust anchor is a
     misconfiguration, never a silent pass. With an empty
-    ``revocation_required`` the default posture is unchanged.
+    ``revocation_required`` the default posture is unchanged. A gate
+    whose ``required_rids`` do not cover every demanded rid refuses
+    fail-closed -- a stale gate is a misconfiguration, never a silent
+    pass.
     """
     if not isinstance(envelope, dict):
         _fail(ENVELOPE_MALFORMED, "envelope must be a dict")
@@ -514,6 +517,20 @@ def verify_provenance(envelope, builder_policy,
                   "revocation gate was supplied: demand without a trust "
                   "anchor refuses fail-closed"
                   % (sorted(builder_policy.revocation_required),))
+        # F364: the gate's coverage is bound to the policy's demand.
+        # A gate whose required_rids do not cover every demanded rid
+        # is a stale gate -- the uncovered demand would silently pass.
+        # Misconfiguration refuses fail-closed, never a silent pass.
+        uncovered = sorted(set(builder_policy.revocation_required)
+                           - set(revocation_gate.required_rids))
+        if uncovered:
+            _fail(_revocation.STATUS_UNVERIFIABLE,
+                  "policy demands revocation status for rids %r but the "
+                  "supplied revocation gate covers only rids %r: uncovered "
+                  "demand %r refuses fail-closed (a stale gate is a "
+                  "misconfiguration, never a silent pass)"
+                  % (sorted(builder_policy.revocation_required),
+                     sorted(revocation_gate.required_rids), uncovered))
         revocation_gate.require_all(revocation_statuses)
     _emit({"event": "provenance-verified", "builder": builder_id,
            "artifact": claim["artifact"]["digest"],

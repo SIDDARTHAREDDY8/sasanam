@@ -8638,11 +8638,117 @@ the gate covers it.
 `rvc-provenance-demand-coverage-gap` flips to HELD; (3) adjacent batteries stay
 green.
 
-**Status: OPEN** (filed 2026-10-02, wave-293 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-294 lane 1). `verify_provenance`
+now binds the gate's coverage to the policy demand: when
+`set(gate.required_rids)` does not cover
+`set(builder_policy.revocation_required)`, verification refuses coded
+`revocation-status-unverifiable` (fail-closed; a stale gate is a
+misconfiguration, never a silent pass). No new codes; taxonomy pin
+stays 1730. Red-first battery `evals/w294_f364_probes.py`: base
+1 BREAK / 7 HELD / 0 ERROR -> 0 BREAK / 8 HELD / 0 ERROR
+(staging and `env -u GOV_DEPLOYMENT_MODE`); the w293 red-team probe
+`rvc-provenance-demand-coverage-gap` flips HELD. Adjacent suites:
+`tests.test_evidence_provenance`, `tests.test_provenance_policy`,
+`tests.test_finding_lifecycle` 79/79 OK; depth-1 green checks
+w293_redteam 0 BREAK, w292_revocation 0 BREAK.
 
 **Renumber:** filed by the wave-293 independent red team as F361 (2026-10-02, ~19:57 UTC); the wave-293 sweep lane filed F361-F363 first (~19:53 UTC) and keeps them per the wave-272 earliest-filed rule, so this finding is renumbered to **F364**.
 
-Next free finding: **F365**. **Open findings: F364.**
+## F365: tool_rules secret-shape gate silently allows secrets beyond its scan bounds (LOW)
+
+**Cells:** wave-294 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w294_redteam_probes.py` (probes `tr-depth5-secret-bypass`,
+`tr-64kb-secret-bypass`).
+
+**Defect:** `gov/tool_rules.py`'s secret-shape gate scans arg values with
+two hard bounds -- `MAX_SECRET_DEPTH = 4` and a 64KB scan budget
+(`MAX_SECRET_SCAN_BYTES`). When args exceed either bound the scan simply
+stops and the call is ALLOWED: a secret nested at depth 5
+(`{"a":{"b":{"c":{"d":{"e":"sk-..."}}}}}`) is never scanned
+(`_scan_value` returns False at depth > 4 without inspecting the
+string), and a secret placed past byte 65536 of a single large string
+arg is never scanned (only `value[:budget]` is searched). Reproduced:
+both calls return `{"allowed": True}` on the wave-293 base. The module's
+own convention for scan bounds is to refuse beyond-bound input coded --
+`_check_history_shape` refuses a session history longer than
+`MAX_HISTORY_SCAN` with `toolcall-sequence-violated` instead of
+silently evaluating a prefix. The secret gate does the opposite:
+beyond-bound args are silently allowed, so the documented bound IS the
+bypass for anyone who reads the open product code.
+
+**Severity rationale:** LOW. The gate is an opt-in, bounded heuristic by
+design (shape-based detection; the lane-2 report documents the bounded
+pattern set); defeating it grants no privilege -- it only defeats the
+"secrets never as tool arguments" tripwire, and secrets in args are
+already a misuse the typed-context direction is meant to replace. But
+the inconsistency is real: one bound in the same module refuses
+fail-closed, the other silently allows, and the module doc frames the
+gate as fail-closed ("fail-closed on match") without naming the
+silent-allow-beyond-bound behavior.
+
+**Close-when criteria:** (1) `check_call` refuses coded (existing
+`toolcall-secret-in-args` or a new code) when the secret scan cannot
+complete within its bounds -- depth beyond `MAX_SECRET_DEPTH` or budget
+exhausted mid-scan -- i.e. unevaluatable args refuse fail-closed,
+consistent with the `MAX_HISTORY_SCAN` convention; (2) probes
+`tr-depth5-secret-bypass` and `tr-64kb-secret-bypass` flip to HELD;
+(3) adjacent batteries stay green.
+
+**Documented residuals (probed, NOT filed):** base64-encoded PEM blocks
+and secrets split across two arg values also evade the gate (confirmed
+by probes `tr-base64-pem-residual`, `tr-split-secret-residual`). These
+are inherent to the bounded pattern set -- there is no falsifiable
+close-when for arbitrary encodings that does not demand the impossible
+-- so they stay documented residuals per the lane-2 report.
+
+**Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
+
+## F366: key_succession.advance(record=...) is not atomic -- a malformed advance record poisons the ceremony (LOW)
+
+**Cells:** wave-294 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w294_redteam_probes.py` (probes `ks-advance-record-not-atomic`,
+`ks-from-records-atomic`).
+
+**Defect:** the operator path `KeySuccession.advance(record=envelope)`
+validates the mandatory overlap window AFTER applying the phase
+transition: it calls `_apply_record` (phase -> "completing", record
+appended, digest marked seen) and only then `_check_window(window)`.
+A well-signed advance record with a missing (or out-of-bounds) window
+raises coded `keysuccession-window-missing` but leaves the ceremony at
+phase "completing" with `_overlap_window = None`,
+`overlap_window_seconds = None`, `_completing_at = None` -- a state
+unreachable via the seed path (which checks the window BEFORE applying)
+and unreachable via the auditor path `from_records` (which checks the
+window before mutating and refuses the same chain cleanly). The two
+verifier paths therefore disagree on the same record chain: the auditor
+refuses it, the operator is left holding a poisoned ceremony whose
+old-key material fails closed as retired-reuse even though no valid
+ceremony ever completed. Reproduced on the wave-293 base: after the
+refusal, `c.phase == "completing"` and `c._overlap_window is None`.
+
+**Severity rationale:** LOW. Fail-closed direction (the old key becomes
+unusable; the new key still verifies at "completing"); requires the
+operator to feed a malformed record -- no attacker bypass without the
+old key. But it breaks the ceremony's atomicity invariant and creates
+operator/auditor path disagreement on identical input, which is exactly
+the class of inconsistency an auditor replay is meant to exclude.
+
+**Close-when criteria:** (1) `advance(record=...)` validates
+`overlap_window_seconds` via `_check_window` BEFORE `_apply_record`
+(or rolls the ceremony back on validation failure), so a malformed
+advance record leaves the ceremony at "prepared" with no mutation;
+(2) probe `ks-advance-record-not-atomic` flips to HELD;
+(3) the operator path and `from_records` agree on malformed chains
+(probe `ks-from-records-atomic` stays HELD); (4) adjacent batteries
+stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
+
+Next free finding: **F367**. **Open findings: F365, F366.** (F364 filed
+2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
+at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
+at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
+closed 2026-10-02, wave-294 lane 1)
 
 ## Renumber map (wave-293 merge)
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).

@@ -8,7 +8,7 @@ with gov/tool_call_policy.py's decide seam.
 Base: wave-292 push 36176e57508aa24c23159e3e6ff44d842b74ed5a
 (verified via git rev-parse HEAD before work).
 
-Pin 1730 -> 1730 (+3 toolcall-*: sequence-violated, secret-in-args,
+Pin 1742 -> 1742 (+3 toolcall-*: sequence-violated, secret-in-args,
 rule-compile-invalid); the repoint is tree-wide (value-token-only,
 code/comment splitter, history comments extended), so adjacent batteries'
 own pin probes stay green.
@@ -41,9 +41,9 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-# Wave-293 lane 2: pin 1730 -> 1730 (+3 toolcall-*: sequence-violated,
+# Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated,
 # secret-in-args, rule-compile-invalid).
-TAXONOMY_PIN = 1730
+TAXONOMY_PIN = 1742
 
 try:
     from gov import tool_rules as TR
@@ -480,7 +480,7 @@ def p_binding_auto_history():
 
 # ---------------------------------------------------------------------------
 # Depth-1 green checks: adjacent batteries must stay green. The lane's
-# tree-wide pin repoint (1730 -> 1730) keeps every adjacent battery's own
+# tree-wide pin repoint (1742 -> 1742) keeps every adjacent battery's own
 # pin probe green, so expectations are the batteries' intrinsic counts.
 # ---------------------------------------------------------------------------
 

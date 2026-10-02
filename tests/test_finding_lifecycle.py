@@ -310,11 +310,19 @@ class FindingsMdTest(unittest.TestCase):
         # parse exceptions on corrupt bundle files); F360 closed
         # 2026-10-02, wave-293 lane 1 (all four parse sites refuse
         # coded OfflineBundleError; w293_f360 0 BREAK / 10 HELD;
-        # w292_redteam 0 BREAK; taxonomy pin 1730 unchanged);
+        # w292_redteam 0 BREAK; taxonomy pin 1742 unchanged);
         # F361-F363 filed then closed 2026-10-02, wave-293 lane 6
         # (uncoded-exception sweep of wave-292 modules: revocation_status
         # verify seams, verify_monitor_report, digest_of circular
-        # ValueError; w293_sweep 0 BREAK / 25 HELD).
+        # ValueError; w293_sweep 0 BREAK / 25 HELD); F364 filed OPEN
+        # 2026-10-02 by the wave-293 independent red team (as F361,
+        # renumbered at the wave-293 merge per the wave-272
+        # earliest-filed rule: verify_provenance silently drops
+        # revocation demand for rids outside the gate's coverage);
+        # F364 closed 2026-10-02, wave-294 lane 1 (gate coverage bound
+        # to the policy demand: uncovered demand refuses coded
+        # revocation-status-unverifiable; w294_f364 0 BREAK / 8 HELD;
+        # w293_redteam 0 BREAK; taxonomy pin 1742 unchanged).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -324,7 +332,7 @@ class FindingsMdTest(unittest.TestCase):
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
                     "F349", "F350", "F351", "F352", "F353", "F354",
                     "F355", "F356", "F357", "F358", "F359", "F360",
-                    "F361", "F362", "F363"):
+                    "F361", "F362", "F363", "F364"):
             self.assertEqual(reg.get(num).state, "verified")
         self.assertGreaterEqual(reg.next_number, 365)
         self.assertEqual(reg.get("F310").state, "verified")

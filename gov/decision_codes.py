@@ -3949,6 +3949,54 @@ TAXONOMY = {
         "evidence_kinds_required": ['evidence', 'attestation'],
         "reverify_steps": ['recompute'],
     },
+    'coord-lease-denied': {
+        "domain": 'coord-lease',
+        "code": 'coord-lease-denied',
+        "human": 'coord-lease: acquire refused -- an unexpired lease '
+                 'already covers the scope; authority is leased, never '
+                 'held; the current holder and fencing token are named '
+                 'in the refusal -- refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-lease-expired': {
+        "domain": 'coord-lease',
+        "code": 'coord-lease-expired',
+        "human": 'coord-lease: the lease expired -- every grant carries '
+                 'an expiry and expired authority is unusable at every '
+                 'seam (acquire/renew/write/verify); re-acquire for a '
+                 'new generation with a higher fencing token -- refused '
+                 'fail-closed (pre-decay: before any state change)',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-lease-fencing': {
+        "domain": 'coord-lease',
+        "code": 'coord-lease-fencing',
+        "human": 'coord-lease: stale fencing token refused -- the token '
+                 'presented is not the current token for the scope; '
+                 'zombie writes from a superseded generation die here, '
+                 'as do token replays from older generations -- refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-lease-invalid': {
+        "domain": 'coord-lease',
+        "code": 'coord-lease-invalid',
+        "human": 'coord-lease: malformed lease material or call -- bad '
+                 'scope/holder grammar, non-positive or unbounded ttl, '
+                 'bad authority key, unsigned or tampered lease, '
+                 'non-circular-JSON structure; every refusal carries a '
+                 'coded decision, never a bare traceback -- refused '
+                 'fail-closed at the seam',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'corpus-expired': {
         "domain": 'corpus',
         "code": 'corpus-expired',
@@ -14929,6 +14977,31 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-budget-exhausted': {
+        "domain": 'toolcall',
+        "code": 'toolcall-budget-exhausted',
+        "human": 'toolcall: the invocation filter pipeline refused to '
+                 'reserve the declared cost -- the caller would exceed its '
+                 'per-window budget cap (used + outstanding + declared); '
+                 'refused fail-closed before the tool ran',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-budget-reserve-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-budget-reserve-invalid',
+        "human": 'toolcall: a budget reservation was malformed -- '
+                 'non-positive or non-finite amount, undeclared scope, '
+                 'duplicate reservation for the call, actual cost above the '
+                 'reserved amount (overrun), or an unknown reservation '
+                 'token; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'toolcall-call-denied': {
         "domain": 'toolcall',
         "code": 'toolcall-call-denied',
@@ -14983,6 +15056,18 @@ TAXONOMY = {
                  'never PASSED); the record carries the actual decision '
                  'verdict (DENY for enforced denials, ALLOW for '
                  'audit-mode would-denys)',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-filter-frozen': {
+        "domain": 'toolcall',
+        "code": 'toolcall-filter-frozen',
+        "human": 'toolcall: a filter was added to an invocation pipeline '
+                 'stack after construction -- the stack is frozen at build '
+                 '(F330/F340 pattern); post-freeze mutation would change '
+                 'decisions under a still-valid digest; refused fail-closed',
         "severity": 'low',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -15078,6 +15163,53 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-schema-compile-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-schema-compile-invalid',
+        "human": 'toolcall: a declared tool-schema set document failed '
+                 'compile-time validation (unknown field type, undeclared '
+                 'or malformed shape, unbounded string/list/dict, unsafe '
+                 'pattern); the schema set never compiles -- refused '
+                 'fail-closed at compile time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-schema-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-schema-invalid',
+        "human": 'toolcall: a tool call failed schema validation (ill-typed '
+                 'args, undeclared arg, missing required field, type/range/'
+                 'shape mismatch, pattern or choices violation); the call '
+                 'never executes -- refused fail-closed at decide time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-schema-secret-field': {
+        "domain": 'toolcall',
+        "code": 'toolcall-schema-secret-field',
+        "human": 'toolcall: a tool-schema document declared a credential-'
+                 'like field name (bounded credential token list); '
+                 'credentials travel in typed execution context, never in '
+                 'the call schema -- refused fail-closed at compile time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-schema-unknown-tool': {
+        "domain": 'toolcall',
+        "code": 'toolcall-schema-unknown-tool',
+        "human": 'toolcall: a tool call named a tool outside the bound '
+                 'schema set; undeclared tools do not exist -- refused '
+                 'fail-closed at decide time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'toolcall-secret-in-args': {
         "domain": 'toolcall',
         "code": 'toolcall-secret-in-args',
@@ -15115,6 +15247,19 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolfilter-skip-denied': {
+        "domain": 'toolcall',
+        "code": 'toolfilter-skip-denied',
+        "human": 'toolcall: an invocation-pipeline filter violated the '
+                 'chain contract -- it returned without calling next() and '
+                 'without a coded refusal (the invocation was swallowed), '
+                 'called next() twice (double execution), crashed uncoded, '
+                 'or the audit signer misbehaved; refused fail-closed -- '
+                 'skipping never silently allows',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'transaction-expired': {
         "domain": 'transaction',
         "code": 'transaction-expired',
