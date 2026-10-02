@@ -46,7 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(
 
 # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 1495
+TAXONOMY_PIN = 1541
 
 _STUB_SRC = '''
 """Permissive stub: allows every request. Red-phase foil only."""

@@ -180,11 +180,17 @@ class RunBuilder:
         self._prev_digest = _SAMPLE_GENESIS
 
     def record(self, sample_id, *, oracle, expected, verdict, note,
-               input_digest=None):
+               input_digest=None, metadata=None):
         """Append one probe-case evidence record.
 
         ``oracle``: "violating" (golden attack case) or "clean"
         (golden benign case). ``expected``/``verdict``: BREAK/HELD/ERROR.
+
+        ``metadata``: optional extra JSON-canonicalizable mapping attached
+        as the ``lang`` field (wave-280 battery language: the
+        plugin/strategy/grader triple, so envelope rows stay
+        machine-readable). It is digest-covered like every other field;
+        ``None`` keeps the emitted shape byte-identical to before.
         """
         if not sample_id or not isinstance(sample_id, str):
             _refuse("envelope-bad-sample", "sample_id must be a "
@@ -218,6 +224,16 @@ class RunBuilder:
         }
         if input_digest is not None:
             sample["input_digest"] = str(input_digest)
+        if metadata is not None:
+            if not isinstance(metadata, dict):
+                _refuse("envelope-bad-sample",
+                        "metadata must be a mapping")
+            try:
+                _canonical(metadata)
+            except Exception as exc:
+                _refuse("envelope-bad-sample",
+                        "metadata not canonicalizable: %s" % exc)
+            sample["lang"] = metadata
         body = _canonical(sample)
         if len(body) > MAX_SAMPLE_BYTES:
             _refuse("envelope-sample-too-large",

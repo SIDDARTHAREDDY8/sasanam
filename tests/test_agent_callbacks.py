@@ -14,7 +14,7 @@ class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-265 lane (callback seams): pin -> 1186 (1177 + 9
         # callback-*).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1495)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(decision_codes.TAXONOMY), 1541)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
         for code in ac.CODES:
             self.assertIn(code, decision_codes.TAXONOMY)
 
@@ -24,7 +24,7 @@ class TaxonomyPinTests(unittest.TestCase):
         lits = [a or b for a, b in
                 re.findall(r'"code": \'([^\']+)\'|"code": "([^"]+)"',
                            src)]
-        self.assertEqual(len(lits), 1495)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(lits), 1541)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
         self.assertEqual(len(set(lits)), len(lits))
 
 

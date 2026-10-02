@@ -47,7 +47,7 @@ sys.path.insert(0, REPO)
 
 from gov import decoy_grants as dg  # noqa: E402
 
-TAXONOMY_PIN = 1495  # Wave-279 merge pin; this lane adds no codes.
+TAXONOMY_PIN = 1541  # Wave-279 merge pin; this lane adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []

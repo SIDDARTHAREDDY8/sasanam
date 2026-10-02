@@ -83,6 +83,11 @@ Honest boundaries (also in IDENTITY_DESIGN.md §4/§8):
   act, not a cryptographic proof.
 * Scope language v1 is tool-granular (``"tool:<name>"`` / ``"tool:*"``);
   resource-scoped entries are future work.
+* Single-use leases (wave-280, ``gov/ephemeral_grants.py``): a
+  delegation minted with ``lease="single-use"`` requires per-invocation
+  contextual tuples at the check seam and is refused on replay through
+  an in-process spent-lease registry. Cross-process replay is a STATED
+  BOUNDARY (same class as the revocation seam's boundary above).
 
 $0 spend, synthetic/local only. No credentials, no network.
 """
@@ -95,6 +100,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import ed25519 as _ed
 from . import signing as _signing
+from . import ephemeral_grants as _eg
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -165,6 +171,18 @@ class DelegationExpiredError(DelegationError):
 
 class DelegationBindingError(DelegationError):
     """Token presented in a session it was not issued for (replay)."""
+
+
+class EphemeralGrantError(_eg.EphemeralGrantError, DelegationError):
+    """Ephemeral-grant refusal raised at the delegation seam (wave-280).
+
+    Multiple-inheritance bridge: catchable both as the pure module's
+    ``ephemeral_grants.EphemeralGrantError`` (machine code
+    ``delegation-ephemeral-grant-refused``) and as the seam's
+    ``DelegationError`` — so the executor's ``except DelegationError``
+    refusal path audit-logs the denial instead of crashing on a raw
+    exception. The seam raises THIS class, never ``_eg``'s directly.
+    """
 
 
 class DelegationScopeError(DelegationError):
@@ -379,7 +397,7 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
                      agent_token, scope, session_id,
                      revocation_endpoint, audit_urls=None,
                      ttl_s=None, now=None, audience=None, card_kid=None,
-                     resource=None):
+                     resource=None, *, lease=None):
     """Issue the human-signed delegation token (depth 0).
 
     ``human_signer``: the HUMAN DELEGATOR's key (``gov.signing.Signer``).
@@ -410,7 +428,18 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
     subject equals the card identity registered for this kid (the
     identity-proof layer). Local (non-card) delegations leave it None.
     The kid sits in the SIGNED claims, so no re-signing can swap it.
+
+    ``lease``: optional ``"single-use"`` (wave-280, ephemeral grants).
+    A single-use lease REQUIRES contextual tuples on every check
+    request (``authorize_action(..., contextual_tuples=...)``) and is
+    refused on replay through a spent-lease registry -- the concrete
+    single-use-lease mechanism. None (default) = multi-use: the
+    pre-lease behavior, byte-identical (the claim is absent from the
+    signed claims unless set).
     """
+    if lease not in (None, "single-use"):
+        raise ValueError("lease must be None or 'single-use', got %r"
+                         % (lease,))
     if not isinstance(delegator_user_id, str) or not delegator_user_id:
         raise ValueError("delegator_user_id must be a non-empty string")
     if not isinstance(revocation_endpoint, str) or not revocation_endpoint:
@@ -444,6 +473,10 @@ def issue_delegation(human_signer, delegator_user_id, user_token,
         # verifier enforces subject == registered card identity.
         "card_kid": card_kid,
     }
+    if lease is not None:
+        # Single-use lease flag (wave-280): the claim is ABSENT unless
+        # set, so default issuance stays byte-identical.
+        claims["lease"] = lease
     return _base_token("delegation", human_signer, agent_token["subject"],
                        session_id, claims, ttl_s, now, audience=audience,
                        resource=resource)
@@ -937,7 +970,9 @@ class DelegationContext:
         return delegation_receipt(self)
 
     def authorize(self, action, resource=None, *, now=None,
-                  revocation_checker=None):
+                  revocation_checker=None, contextual_tuples=None,
+                  check_conditions=None, spent_ledger=None,
+                  consequential=False, decision_writer=None):
         """The permission intersection, enforced.
 
         Effective permission = user permissions ∩ agent capabilities ∩
@@ -956,7 +991,12 @@ class DelegationContext:
         audit dict on success.
         """
         return authorize_action(self, action, resource, now=now,
-                                revocation_checker=revocation_checker)
+                                revocation_checker=revocation_checker,
+                                contextual_tuples=contextual_tuples,
+                                check_conditions=check_conditions,
+                                spent_ledger=spent_ledger,
+                                consequential=consequential,
+                                decision_writer=decision_writer)
 
     def spawn(self, sub_agent_id, sub_scope, parent_signer, *,
               ttl_s=None, now=None):
@@ -982,7 +1022,9 @@ class DelegationContext:
 
 
 def authorize_action(ctx, action, resource=None, *, now=None,
-                     revocation_checker=None):
+                     revocation_checker=None, contextual_tuples=None,
+                     check_conditions=None, spent_ledger=None,
+                     consequential=False, decision_writer=None):
     """Enforce the permission intersection for one action.
 
     ``ctx``: a BOUND :class:`DelegationContext`. ``action``:
@@ -1008,6 +1050,23 @@ def authorize_action(ctx, action, resource=None, *, now=None,
     4. the conjunction: user permissions AND agent capabilities AND
        delegation scope must each allow the action — otherwise
        :class:`DelegationScopeError`.
+    5. (wave-280, ephemeral grants): the per-invocation contextual-tuple
+       check. A single-use lease (``claims["lease"] == "single-use"``)
+       REQUIRES ``contextual_tuples`` — without them the request is
+       refused as :class:`EphemeralGrantError` (coded
+       ``delegation-ephemeral-grant-refused``); the tuples must name the
+       lease and satisfy their conditions, and the lease ref is spent
+       through ``spent_ledger`` (replay refuses coded). A single-use
+       lease with NO registry is refused too (fail closed: without a
+       registry the single-use guarantee cannot be enforced, so the
+       lease would silently degrade to multi-use). Callers may also
+       pass tuples for multi-use tokens: they are an additional
+       enforcement input, evaluated the same way. ``consequential``
+       marks write-shaped actions so ``can_invoke_readonly`` tuples
+       cannot authorize them. ``decision_writer`` (a
+       ``ephemeral_grants.GrantDecisionWriter``) records the decision
+       dict into the chained audit log AT DECISION TIME — allowed and
+       coded-refused alike — before the verdict leaves this seam.
 
     Returns ``{"action", "allowed_by", "delegation_token_ref",
     "session_id", "receipt"}`` for the audit record — ``receipt`` is the
@@ -1076,6 +1135,42 @@ def authorize_action(ctx, action, resource=None, *, now=None,
             "action %r denied by the permission intersection "
             "(user ∩ agent ∩ delegation scope); denied at: %s"
             % (action, ", ".join(denied)))
+    # Wave-280 (ephemeral grants, OpenFGA-pattern contextual tuples):
+    # per-invocation enforcement input. A single-use lease REQUIRES
+    # tuples; multi-use callers may pass them as an additional input.
+    lease = ctx._leaf_claims.get("lease")
+    if lease == "single-use" or contextual_tuples is not None:
+        if lease == "single-use" and not contextual_tuples:
+            raise EphemeralGrantError(
+                "single-use lease requires contextual_tuples on the "
+                "check request (the tuple is the per-invocation grant)")
+        if lease == "single-use" and spent_ledger is None:
+            # Fail closed (the revocation seam applies the same rule:
+            # without a trustworthy non-revoked answer there is no
+            # authorization): without a registry the single-use
+            # guarantee cannot be enforced, so a bare single-use lease
+            # would silently degrade to multi-use (unlimited replays).
+            raise EphemeralGrantError(
+                "single-use lease requires a spent-lease registry "
+                "(spent_ledger=...): without one, replay cannot be "
+                "refused")
+        principal = "agent:" + str(ctx.delegation_token.get("subject"))
+        lease_ref = token_ref(ctx.delegation_token) \
+            if lease == "single-use" else None
+        decision = _eg.check_grant(
+            principal, action, contextual_tuples or [],
+            check_conditions,
+            consequential=consequential,
+            lease_ref=lease_ref,
+            spent_ledger=spent_ledger)
+        if decision_writer is not None:
+            # Recorded AT DECISION TIME (never batched later): both
+            # allowed and coded-refused decisions land in the chained
+            # audit log before the verdict leaves this seam.
+            decision_writer.record(decision, principal)
+        if not decision["allowed"]:
+            raise EphemeralGrantError(
+                decision.get("code_detail") or "ephemeral grant refused")
     return {
         "action": action,
         "allowed_by": allowed_by,
@@ -1091,7 +1186,10 @@ def authorize_action(ctx, action, resource=None, *, now=None,
 
 
 def enforce_tool_call(ctx, identity, tool, *, now=None,
-                       revocation_checker=None, resource=None):
+                       revocation_checker=None, resource=None,
+                       contextual_tuples=None, check_conditions=None,
+                       spent_ledger=None, consequential=False,
+                       decision_writer=None):
     """Executor-facing gate: one tool call through the identity layer.
 
     ``identity``: the ``AgentIdentity`` the executor is acting as (its
@@ -1126,7 +1224,12 @@ def enforce_tool_call(ctx, identity, tool, *, now=None,
                 % (agent_id, leaf_subject))
     verdict = authorize_action(ctx, "tool:" + str(tool), resource,
                                now=now,
-                               revocation_checker=revocation_checker)
+                               revocation_checker=revocation_checker,
+                               contextual_tuples=contextual_tuples,
+                               check_conditions=check_conditions,
+                               spent_ledger=spent_ledger,
+                               consequential=consequential,
+                               decision_writer=decision_writer)
     verdict["agent_id"] = agent_id
     return verdict
 
@@ -1136,7 +1239,7 @@ def enforce_tool_call(ctx, identity, tool, *, now=None,
 # ---------------------------------------------------------------------------
 
 def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
-                    *, ttl_s=None, now=None):
+                    *, ttl_s=None, now=None, lease=None):
     """Issue a sub-agent's delegation token (the spawn-lineage primitive).
 
     Signed by the PARENT agent's key; carries a SUBSET of the parent's
@@ -1144,6 +1247,11 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
     issuance AND at chain verification); chained to the parent's token
     by ``parent_token_hash``; ``delegation_depth`` = parent + 1 (cap
     :data:`MAX_DELEGATION_DEPTH`, the swarm control).
+
+    ``lease`` (wave-280): explicit override for the single-use flag.
+    When None (default), the parent's lease flag is INHERITED — never a
+    widening: a single-use delegation's child is single-use too (the
+    wave-86 audience / wave-278 resource inheritance precedent).
 
     The user/agent token hashes are INHERITED from the parent — the
     chain records the full path back to the originating user (MongoDB
@@ -1201,6 +1309,17 @@ def spawn_sub_agent(parent_ctx, sub_agent_id, sub_scope, parent_signer,
     # re-target its delegation at another server; the spawn chain stays
     # resource-uniform by construction.
     parent_resource = parent_ctx.delegation_token.get("resource")
+    # Wave-280: the single-use lease flag is inherited unless explicitly
+    # overridden — a spawn can never widen a single-use lease into a
+    # multi-use one.
+    child_lease = parent_claims.get("lease") if lease is None else lease
+    if child_lease not in (None, "single-use"):
+        raise ValueError("lease must be None or 'single-use', got %r"
+                         % (child_lease,))
+    if child_lease is not None:
+        # Signed-claims material: added BEFORE _base_token signs, so the
+        # flag is covered by the parent's signature like aud/resource.
+        claims["lease"] = child_lease
     return _base_token("delegation", parent_signer, sub_agent_id,
                        parent_ctx.session_id, claims, ttl_s, now,
                        audience=parent_aud, resource=parent_resource)

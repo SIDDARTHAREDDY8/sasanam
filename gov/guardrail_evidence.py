@@ -36,7 +36,11 @@ SCHEMA_VERSION = "1.0"
 RECORD_TYPE = "guardrail-run"
 
 MODES = ("blocking", "advisory", "logging_only")
-EVENT_SCOPES = ("pre_call", "during_call", "post_call", "tool_call")
+# Wave-280 adds the agent-loop shield gates (ogx-ai/ogx input_shields /
+# output_shields): the inbound turn and the outbound response/tool call.
+# Additive: every pre-wave-280 scope keeps its meaning.
+EVENT_SCOPES = ("pre_call", "during_call", "post_call", "tool_call",
+                "input_shield", "output_shield")
 OUTCOMES = ("allow", "intentional_block", "advisory_flagged",
             "technical_failure")
 
@@ -52,6 +56,13 @@ RECORD_FIELDS = (
     "input_digest",
     "started_at", "duration_ms",
     "decision_effect", "policy_id",
+    # Wave-280: first-class labels (e.g. a shield's provider_kind, so a
+    # remote-boundary crossing is machine-readable on the record, not
+    # buried in an opaque input digest). Additive and backward
+    # compatible: records written before labels existed simply lack
+    # the key, and the verifier only digests keys a record actually
+    # carries -- old digests still recompute.
+    "labels",
     "prev_guardrail_record_digest", "record_digest",
 )
 
@@ -100,10 +111,17 @@ class GuardrailEvidenceWriter:
     def record(self, guardrail_id, guardrail_name, *, mode="blocking",
                event_scope="pre_call", outcome, rationale="",
                input_bytes=b"", duration_ms=0.0, started_at=None,
-               decision_effect=None, policy_id=None):
+               decision_effect=None, policy_id=None, labels=None):
         """Build, digest, chain, and append one guardrail-run record.
 
         Returns the stored entry (as returned by ``log.append``).
+
+        ``labels`` is an optional dict of short string keys to short
+        string values (e.g. ``{"provider_kind": "remote"}``), stored on
+        the record and covered by its digest -- first-class
+        machine-readable metadata an auditor can filter on, not
+        free-text rationale. Refused unless JSON-serializable
+        str->str.
 
         Fail-closed: if ``log.append`` raises (log full, lock failure,
         ...), the exception propagates and the caller must not treat
@@ -127,6 +145,17 @@ class GuardrailEvidenceWriter:
                 "outcome must be one of %s, got %r" % (OUTCOMES, outcome))
         if not isinstance(input_bytes, (bytes, bytearray)):
             raise GuardrailEvidenceError("input_bytes must be bytes")
+        if labels is not None:
+            if not isinstance(labels, dict) or not all(
+                    isinstance(k, str) and isinstance(v, str)
+                    for k, v in labels.items()):
+                raise GuardrailEvidenceError(
+                    "labels must be a dict of str -> str")
+            try:
+                json.dumps(labels, sort_keys=True)
+            except (TypeError, ValueError):
+                raise GuardrailEvidenceError(
+                    "labels must be JSON-serializable")
         rationale = str(rationale or "")
         record = {
             "record_type": RECORD_TYPE,
@@ -143,6 +172,7 @@ class GuardrailEvidenceWriter:
             "duration_ms": float(duration_ms),
             "decision_effect": decision_effect,
             "policy_id": policy_id,
+            "labels": dict(labels) if labels is not None else None,
             "prev_guardrail_record_digest": self._last_digest,
         }
         record["record_digest"] = _digest(_canonical(record))
@@ -179,8 +209,14 @@ def verify_guardrail_records(records):
             return False
         if rec.get("prev_guardrail_record_digest") != prev:
             return False
-        body = {k: rec.get(k) for k in RECORD_FIELDS
-                if k != "record_digest"}
+        # Wave-280: digest only the keys the record actually carries.
+        # Records written before the ``labels`` field existed lack the
+        # key entirely; excluding absent keys keeps their digests
+        # recomputing (backward compatible), while removing ``labels``
+        # from a labeled record still fails honestly (its digest was
+        # computed WITH the field).
+        body = {k: rec[k] for k in RECORD_FIELDS
+                if k != "record_digest" and k in rec}
         if rec.get("record_digest") != _digest(_canonical(body)):
             return False
         prev = rec["record_digest"]
@@ -189,7 +225,8 @@ def verify_guardrail_records(records):
 
 def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
                   event_scope="pre_call", fn, args=(), kwargs=None,
-                  input_bytes=b"", intentional_block_types=()):
+                  input_bytes=b"", intentional_block_types=(),
+                  labels=None):
     """Execute ``fn`` as a guardrail run with a standardized evidence record.
 
     Classification (the intentional-block vs technical-failure
@@ -210,6 +247,9 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
     and failures are recorded and ``fn``'s exception (if any) is
     swallowed only after the record lands -- the run continues. Use
     only for shadow deployments.
+
+    ``labels`` (optional dict of str->str) is attached to the record
+    and covered by its digest.
     """
     if kwargs is None:
         kwargs = {}
@@ -230,7 +270,8 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
             guardrail_id, guardrail_name, mode=mode,
             event_scope=event_scope, outcome=outcome,
             rationale="%s: %s" % (type(exc).__name__, exc),
-            input_bytes=input_bytes, duration_ms=_elapsed_ms())
+            input_bytes=input_bytes, duration_ms=_elapsed_ms(),
+            labels=labels)
         if mode in ("advisory", "logging_only"):
             return False, rec
         raise
@@ -239,7 +280,8 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
             guardrail_id, guardrail_name, mode=mode,
             event_scope=event_scope, outcome="technical_failure",
             rationale="%s: %s" % (type(exc).__name__, exc),
-            input_bytes=input_bytes, duration_ms=_elapsed_ms())
+            input_bytes=input_bytes, duration_ms=_elapsed_ms(),
+            labels=labels)
         if mode == "logging_only":
             return False, rec
         raise GuardrailFailureError(
@@ -249,7 +291,8 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
     rec = writer.record(
         guardrail_id, guardrail_name, mode=mode, event_scope=event_scope,
         outcome="allow", rationale="guard passed",
-        input_bytes=input_bytes, duration_ms=_elapsed_ms())
+        input_bytes=input_bytes, duration_ms=_elapsed_ms(),
+        labels=labels)
     return True, rec
 
 

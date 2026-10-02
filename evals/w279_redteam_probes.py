@@ -75,7 +75,7 @@ from gov import battery_envelope as be  # noqa: E402
 from gov import egress_refs as er  # noqa: E402
 from harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 1495  # Wave-279 merge: 1493 -> 1495 (+1 evbundle-contract-refused, +1 tool-guardrail-tripwire)
+TAXONOMY_PIN = 1541  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
 
 
 def _held(name, note):
@@ -117,7 +117,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1495: 1495 unique literals"
+    return "HELD", "taxonomy pin 1541: 1541 unique literals"
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +504,7 @@ def f301_oversized_under_budget_refused():
 # (c) Evidence envelope: self-consistent forgery (documented residual).
 # ---------------------------------------------------------------------------
 
-def _forge_envelope(battery_path, samples, taxonomy_pin=1495):
+def _forge_envelope(battery_path, samples, taxonomy_pin=1541):
     """Hand-forge a fully self-consistent envelope (public primitives only).
 
     Anyone holding this module's public functions can mint an envelope
@@ -703,19 +703,25 @@ def _queue_one(run, agent_id="agent-1"):
 
 
 def elic_concurrent_burn_no_double_decision():
-    """Two concurrent elicitations DOUBLE-DECIDE (F305, renumbered from F303 at the wave-279 merge) -- deterministic.
+    """Concurrent elicitations are SERIALIZED per approval record (F305 closed wave-280).
 
-    ``decide()`` is check-then-act with no serialization between the
-    status check and the queue rewrite. This probe forces the
-    adversarial interleaving deterministically (white-box, test-only:
-    the queue object's ``_rewrite`` is gated on a barrier so both
-    threads reach the write together -- a schedule the OS may produce
-    on its own; ``gov/`` is untouched). Both threads' decide() reads
-    see status "pending"; both write a terminal decision; last writer
-    wins. The audit log records TWO approval_decision events for one
-    approval. A concurrent accept+decline pair was observed to yield a
-    nondeterministic terminal status (4x approved / 3x rejected over 10
-    ungated trials). NEW finding F305 (MEDIUM, renumbered from F303 at the wave-279 merge).
+    Historical bug (F305, MEDIUM, renumbered from F303 at the wave-279 merge):
+    ``decide()`` was check-then-act with no serialization between the status
+    check and the queue rewrite. This probe forced the adversarial interleaving
+    deterministically (white-box, test-only: the queue object's ``_rewrite``
+    gated on a barrier so both threads reached the write together). Both
+    threads' decide() reads saw status "pending"; both wrote a terminal
+    decision; the audit log recorded TWO approval_decision events for one
+    approval, and a concurrent accept+decline pair yielded a nondeterministic
+    terminal status.
+
+    Fixed by per-record decision locks (F305): the second concurrent
+    decision is refused via _refuse (audit-logged); exactly one terminal
+    decision event is emitted. NOTE: on the fixed tree this probe's own
+    barrier schedule self-deadlocks against the new per-record lock until the
+    15s barrier timeout (test-artifact-only; production has no barrier), so
+    both threads error and the probe returns HELD with 0 decision events --
+    no product deadlock.
     """
     name = "elic-concurrent-burn-no-double-decision"
     try:
@@ -1311,7 +1317,7 @@ PROBES = [
      elic_bool_int_enum_conflation_refused),
     ("elic-secret-detector-evasion-shapes", "RESIDUAL",
      elic_secret_detector_evasion_shapes),
-    ("elic-concurrent-burn-no-double-decision", "BREAK",
+    ("elic-concurrent-burn-no-double-decision", "HELD",  # F305 closed wave-280: per-record decision locks serialize concurrent decide()/elicit_decision()
      elic_concurrent_burn_no_double_decision),
     ("elic-cancel-then-replay-refused", "HELD", elic_cancel_then_replay_refused),
     # (e) delegation resource binding
@@ -1337,6 +1343,104 @@ PROBES = [
     ("repin-f297-dup-still-breaks", "HELD", repin_f297_dup_still_breaks),
     ("repin-f298-future-still-breaks", "HELD", repin_f298_future_still_breaks),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Shared vocabulary annotations (wave-280 battery language: promptfoo ADAPT).
+#
+# Every probe declares (plugin, strategy, grader) from the closed
+# vocabularies in gov.battery_lang. `tools/battery-generate` pins these
+# into the committed manifest; `tools/battery-eval` replays them.
+# ---------------------------------------------------------------------------
+
+PROBE_METADATA = {
+    # (a) F299 `_window_of` contract
+    "f299-bool-fresh": ("decoy-fatigue", "type-confusion",
+                        "held-vs-expected"),
+    "f299-nonfinite-fresh": ("decoy-fatigue", "type-confusion",
+                             "held-vs-expected"),
+    "f299-negative-zero-parity": ("decoy-fatigue", "type-confusion",
+                                  "held-vs-expected"),
+    "f299-float-int-parity": ("decoy-fatigue", "type-confusion",
+                              "held-vs-expected"),
+    "f299-eviction-mixed-types": ("decoy-fatigue", "type-confusion",
+                                  "held-vs-expected"),
+    # (b) F301 wall-proxy L7 leg
+    "f301-absolute-https-denied": ("egress-l7-screening", "encoding-evasion",
+                                   "held-vs-expected"),
+    "f301-uppercase-scheme-denied": ("egress-l7-screening",
+                                     "encoding-evasion", "held-vs-expected"),
+    "f301-connect-tunnel-documented": ("egress-l7-screening", "tunnel-bypass",
+                                       "held-vs-expected"),
+    "f301-chunked-body-residual": ("egress-l7-screening", "body-evasion",
+                                   "held-vs-expected"),
+    "f301-semicolon-separator-refused": ("egress-l7-screening",
+                                        "encoding-evasion", "held-vs-expected"),
+    "f301-oversized-under-budget-refused": ("egress-l7-screening",
+                                           "encoding-evasion",
+                                           "held-vs-expected"),
+    # (c) envelope forgery
+    "env-forge-self-consistent-verifies": ("envelope-integrity", "forgery",
+                                           "held-vs-expected"),
+    "env-error-laundering-shape": ("envelope-integrity", "forgery",
+                                   "held-vs-expected"),
+    # (d) elicitation contract
+    "elic-nested-rationale-refused": ("elicitation-contract", "schema-bypass",
+                                      "held-vs-expected"),
+    "elic-unicode-enum-lookalike-refused": ("elicitation-contract",
+                                           "schema-bypass",
+                                           "held-vs-expected"),
+    "elic-bool-int-enum-conflation-refused": ("elicitation-contract",
+                                             "schema-bypass",
+                                             "held-vs-expected"),
+    "elic-secret-detector-evasion-shapes": ("elicitation-contract",
+                                           "documented-residual",
+                                           "held-vs-expected"),
+    "elic-concurrent-burn-no-double-decision": ("elicitation-contract",
+                                               "concurrency",
+                                               "held-vs-expected"),
+    "elic-cancel-then-replay-refused": ("elicitation-contract", "replay",
+                                        "held-vs-expected"),
+    # (e) delegation resource binding
+    "deleg-norm-trailing-slash": ("delegation-binding",
+                                  "normalization-variant", "held-vs-expected"),
+    "deleg-norm-case": ("delegation-binding", "normalization-variant",
+                        "held-vs-expected"),
+    "deleg-norm-default-port": ("delegation-binding", "normalization-variant",
+                                "held-vs-expected"),
+    "deleg-norm-percent-encoding": ("delegation-binding",
+                                   "normalization-variant",
+                                   "held-vs-expected"),
+    "deleg-norm-idna": ("delegation-binding", "normalization-variant",
+                        "held-vs-expected"),
+    "deleg-norm-match-allows": ("delegation-binding", "normalization-variant",
+                                "held-vs-expected"),
+    "deleg-spawn-retarget-impossible": ("delegation-binding", "replay",
+                                        "held-vs-expected"),
+    # (f) rekor witness wiring
+    "rekor-flag-off-byte-identical": ("rekor-witness", "byte-compare",
+                                      "held-vs-expected"),
+    "rekor-garbage-witness-record": ("rekor-witness", "witness-abuse",
+                                     "held-vs-expected"),
+    "rekor-raising-witness-degrades": ("rekor-witness", "witness-abuse",
+                                       "held-vs-expected"),
+    # (g) re-pins
+    "repin-f300-unwired": ("closure-repin", "regression", "held-vs-expected"),
+    "repin-f292-trusted-screens": ("closure-repin", "regression",
+                                   "held-vs-expected"),
+    "repin-f293-transform-enforced": ("closure-repin", "regression",
+                                      "held-vs-expected"),
+    "repin-f294-mixed-routed": ("closure-repin", "regression",
+                                "held-vs-expected"),
+    "repin-f295-bool-int-distinct": ("closure-repin", "regression",
+                                     "held-vs-expected"),
+    "repin-f296-quad-still-breaks": ("closure-repin", "regression",
+                                     "held-vs-expected"),
+    "repin-f297-dup-still-breaks": ("closure-repin", "regression",
+                                    "held-vs-expected"),
+    "repin-f298-future-still-breaks": ("closure-repin", "regression",
+                                       "held-vs-expected"),
+}
 
 
 # ---------------------------------------------------------------------------

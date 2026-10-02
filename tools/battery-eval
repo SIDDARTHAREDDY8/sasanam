@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Eval (replay) a committed battery manifest, emit evidence rows.
+
+The eval step of the generate -> commit -> eval discipline: replays the
+pinned manifest deterministically, grades every probe, and emits
+machine-readable evidence rows (probe_id, plugin_id, strategy_id,
+grading_result) as JSONL plus an optional sealed evidence envelope via
+gov.battery_envelope (envelope-eligible verdicts only: the envelope
+vocabulary is BREAK/HELD/ERROR; RESIDUAL probes live in the rows only).
+
+Usage::
+
+    python3 battery-eval <manifest.json> [--rows PATH] [--envelope PATH]
+
+Defaults: --rows <manifest-stem>.rows.jsonl next to the manifest;
+--envelope <manifest-stem>.envelope.json next to the manifest.
+
+Exit codes: 0 = all graded PASS · 1 = some FAIL/ERROR or refusal ·
+3 = usage error.
+"""
+
+import os
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO, os.path.join(REPO, "tests"), os.path.join(REPO, "evals")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+from gov import battery_lang as bl  # noqa: E402
+
+
+def main(argv):
+    args = [a for a in argv[1:] if not a.startswith("--")]
+    opts = [a for a in argv[1:] if a.startswith("--")]
+    rows = envelope = None
+    for o in opts:
+        if o.startswith("--rows="):
+            rows = o.split("=", 1)[1]
+        elif o.startswith("--envelope="):
+            envelope = o.split("=", 1)[1]
+        else:
+            print("battery-eval: unknown option %r" % o, file=sys.stderr)
+            return 3
+    if len(args) != 1:
+        print(__doc__, file=sys.stderr)
+        return 3
+    manifest = args[0]
+    stem = os.path.splitext(os.path.basename(manifest))[0]
+    base = os.path.dirname(os.path.abspath(manifest))
+    if rows is None:
+        rows = os.path.join(base, stem + ".rows.jsonl")
+    if envelope is None:
+        envelope = os.path.join(base, stem + ".envelope.json")
+    try:
+        summary = bl.eval_manifest(manifest, rows_path=rows,
+                                   envelope_path=envelope)
+    except bl.BatteryLanguageError as exc:
+        print("battery-eval: REFUSED %s" % exc, file=sys.stderr)
+        return 1
+    s = summary["summary"]
+    print("battery-eval: %s manifest %s: %d PASS / %d FAIL / %d ERROR"
+          % (summary["battery"], summary["manifest_digest"][:12],
+             s["PASS"], s["FAIL"], s["ERROR"]))
+    print("battery-eval: rows %s" % summary["rows_path"])
+    print("battery-eval: envelope %s" % summary["envelope_path"])
+    return 0 if (s["FAIL"] == 0 and s["ERROR"] == 0) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

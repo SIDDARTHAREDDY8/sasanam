@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Generate (and commit) a battery manifest from a probe module.
+
+The generate step of the promptfoo-adapted generate -> commit -> eval
+discipline: pins every probe's (plugin, strategy, grader, expected) into a
+reviewable committed artifact. Usage::
+
+    python3 battery-generate <module-path> <battery> <battery-version> \\
+        [--target-commit SHA] [--out PATH]
+
+<module-path> is a probe-module file (e.g. evals/w279_redteam_probes.py)
+or a dotted module name. The module must expose PROBES and PROBE_METADATA
+(see gov.battery_lang); unannotated or unknown-vocabulary probes refuse
+fail-closed.
+
+Exit codes: 0 = manifest written · 1 = refusal · 3 = usage error.
+"""
+
+import importlib.util
+import os
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO, os.path.join(REPO, "tests")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+from gov import battery_lang as bl  # noqa: E402
+
+
+def _load_probe_module(spec):
+    if spec.endswith(".py") or os.sep in spec:
+        path = spec if os.path.isabs(spec) else os.path.join(REPO, spec)
+        name = os.path.splitext(os.path.basename(path))[0]
+        loader = importlib.util.spec_from_file_location(name, path)
+        if loader is None or loader.loader is None:
+            print("battery-generate: cannot load %r" % spec,
+                  file=sys.stderr)
+            return None
+        mod = importlib.util.module_from_spec(loader)
+        sys.modules[name] = mod
+        loader.loader.exec_module(mod)
+        return mod
+    return bl._import_module(spec)
+
+
+def _usage():
+    print(__doc__, file=sys.stderr)
+    return 3
+
+
+def main(argv):
+    args = [a for a in argv[1:] if not a.startswith("--")]
+    opts = [a for a in argv[1:] if a.startswith("--")]
+    target = ""
+    out = None
+    for o in opts:
+        if o.startswith("--target-commit="):
+            target = o.split("=", 1)[1]
+        elif o.startswith("--out="):
+            out = o.split("=", 1)[1]
+        else:
+            print("battery-generate: unknown option %r" % o,
+                  file=sys.stderr)
+            return 3
+    if len(args) != 3:
+        return _usage()
+    module_spec, battery, version = args
+    module = _load_probe_module(module_spec)
+    if module is None:
+        return 1
+    if not target:
+        # No in-repo git subprocesses (wave-36 supply-chain probe fails
+        # closed on them): the commit is explicit, never scraped.
+        target = "unknown"
+    if out is None:
+        out = os.path.join(REPO, "evals", "batteries",
+                           "%s.battery.json" % battery)
+    try:
+        manifest = bl.generate_manifest(module, battery, version,
+                                        target_commit=target)
+        loaded = bl.write_manifest(out, manifest)
+    except bl.BatteryLanguageError as exc:
+        print("battery-generate: REFUSED %s" % exc, file=sys.stderr)
+        return 1
+    print("battery-generate: %s (%d probes, digest %s)"
+          % (out, len(loaded["probes"]), bl.manifest_digest(loaded)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

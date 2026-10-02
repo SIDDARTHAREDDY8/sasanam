@@ -1700,6 +1700,132 @@ TAXONOMY = {
         "evidence_kinds_required": ['ballot', 'constitution'],
         "reverify_steps": ['recompute'],
     },
+    'battery-lang-bad-manifest': {
+        "domain": 'battery',
+        "code": 'battery-lang-bad-manifest',
+        "human": 'battery language: the committed manifest is malformed '
+                 '(unknown format, missing fields, empty probe list, or '
+                 'duplicate probe ids); refused fail-closed, never '
+                 'eval-evaluated',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-bad-metadata': {
+        "domain": 'battery',
+        "code": 'battery-lang-bad-metadata',
+        "human": 'battery language: a probe metadata entry is not a '
+                 '(plugin, strategy, grader) triple of registered ids; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-bad-module': {
+        "domain": 'battery',
+        "code": 'battery-lang-bad-module',
+        "human": 'battery language: the probe module named by the manifest '
+                 'cannot be imported; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-bad-probe': {
+        "domain": 'battery',
+        "code": 'battery-lang-bad-probe',
+        "human": 'battery language: a manifest probe entry is malformed '
+                 '(missing field, unregistered plugin/strategy/grader, or '
+                 'expected outside the verdict vocabulary); refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-bad-probe-entry': {
+        "domain": 'battery',
+        "code": 'battery-lang-bad-probe-entry',
+        "human": 'battery language: a PROBES entry is not a '
+                 '(probe_id, expected, callable) triple with a registered '
+                 'expected verdict; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-expected-drift': {
+        "domain": 'battery',
+        "code": 'battery-lang-expected-drift',
+        "human": 'battery language: the probe module expectations drifted '
+                 'from the committed manifest (the manifest is the contract); '
+                 'eval refused fail-closed until the manifest is regenerated',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-no-metadata': {
+        "domain": 'battery',
+        "code": 'battery-lang-no-metadata',
+        "human": 'battery language: the probe module exposes no '
+                 'PROBE_METADATA mapping; unannotated modules cannot '
+                 'generate a committed manifest (no unlabeled probes)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-no-probes': {
+        "domain": 'battery',
+        "code": 'battery-lang-no-probes',
+        "human": 'battery language: the probe module exposes no PROBES '
+                 'list; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-probe-missing': {
+        "domain": 'battery',
+        "code": 'battery-lang-probe-missing',
+        "human": 'battery language: a manifest probe id is absent from the '
+                 'probe module; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-unannotated': {
+        "domain": 'battery',
+        "code": 'battery-lang-unannotated',
+        "human": 'battery language: one or more probes lack vocabulary '
+                 'metadata; generate refused so no unlabeled probe enters a '
+                 'committed suite',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-unknown-grader': {
+        "domain": 'battery',
+        "code": 'battery-lang-unknown-grader',
+        "human": 'battery language: the grader id is not registered; '
+                 'refused fail-closed (no LLM judges, deterministic only)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-unknown-plugin': {
+        "domain": 'battery',
+        "code": 'battery-lang-unknown-plugin',
+        "human": 'battery language: the plugin id is not in the registered '
+                 'attack vocabulary; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
+    'battery-lang-unknown-strategy': {
+        "domain": 'battery',
+        "code": 'battery-lang-unknown-strategy',
+        "human": 'battery language: the strategy id is not in the registered '
+                 'delivery vocabulary; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['manifest'],
+        "reverify_steps": ['regenerate-manifest'],
+    },
     'behsig-correlator-advisory': {
         "domain": 'behsig',
         "code": 'behsig-correlator-advisory',
@@ -4006,6 +4132,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-ephemeral-grant-refused': {
+        "domain": 'delegation',
+        "code": 'delegation-ephemeral-grant-refused',
+        "human": 'ephemeral grant (contextual tuple): no tuple authorized '
+                 'the invocation, a tuple condition failed at check time, '
+                 'a single-use lease was presented without its contextual '
+                 'tuple, or the lease was already spent; refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'grant-decision'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-expired': {
         "domain": 'delegation',
         "code": 'delegation-expired',
@@ -5079,6 +5217,207 @@ TAXONOMY = {
         "severity": 'medium',
         "evidence_kinds_required": ['approval-record', 'capsule', 'digest'],
         "reverify_steps": ['recompute-approval-digest', 'recompute-action-digest'],
+    },
+    'evaltask-bad-dataset-id': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-dataset-id',
+        "human": 'eval task: dataset_id must be a non-empty string; the '
+                 'dataset declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-sample': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-sample',
+        "human": 'eval task: a dataset sample is malformed; the dataset '
+                 'declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-samples': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-samples',
+        "human": 'eval task: the dataset sample list is malformed or empty; '
+                 'the dataset declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-score': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-score',
+        "human": 'eval task: a grader returned a score outside the [0,1] '
+                 'contract; the run is refused fail-closed (no silent zeros)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-scoring-id': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-scoring-id',
+        "human": 'eval task: scoring_id must be a non-empty string; the '
+                 'scoring-function declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-scoring-refs': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-scoring-refs',
+        "human": 'eval task: an eval task references an unknown dataset or '
+                 'scoring function; the task declaration is refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-target': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-target',
+        "human": 'eval task: the evaluation target must be callable; the '
+                 'task declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-bad-task-id': {
+        "domain": 'evidence',
+        "code": 'evaltask-bad-task-id',
+        "human": 'eval task: eval_task_id must be a non-empty string; the '
+                 'task declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-dataset-changed': {
+        "domain": 'evidence',
+        "code": 'evaltask-dataset-changed',
+        "human": 'eval task: the dataset digest no longer matches the pinned '
+                 'digest (dataset changed under a pinned task); refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-duplicate-dataset': {
+        "domain": 'evidence',
+        "code": 'evaltask-duplicate-dataset',
+        "human": 'eval task: a dataset id is already registered; the '
+                 'duplicate declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-duplicate-scoring-function': {
+        "domain": 'evidence',
+        "code": 'evaltask-duplicate-scoring-function',
+        "human": 'eval task: a scoring-function id is already registered; '
+                 'the duplicate declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-duplicate-task': {
+        "domain": 'evidence',
+        "code": 'evaltask-duplicate-task',
+        "human": 'eval task: an eval-task id is already registered; the '
+                 'duplicate declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-grader-changed': {
+        "domain": 'evidence',
+        "code": 'evaltask-grader-changed',
+        "human": 'eval task: the scoring-function source digest no longer '
+                 'matches the pinned digest (grader changed under a pinned '
+                 'task); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-grader-crashed': {
+        "domain": 'evidence',
+        "code": 'evaltask-grader-crashed',
+        "human": 'eval task: the scoring function crashed; loud failure, no '
+                 'partial evidence, the run produces no result',
+        "severity": 'high',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-not-json': {
+        "domain": 'evidence',
+        "code": 'evaltask-not-json',
+        "human": 'eval task: eval-task evidence material is not JSON-'
+                 'serializable; the package is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-scoring-not-callable': {
+        "domain": 'evidence',
+        "code": 'evaltask-scoring-not-callable',
+        "human": 'eval task: the registered scoring function is not '
+                 'callable; the declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-scoring-source-unavailable': {
+        "domain": 'evidence',
+        "code": 'evaltask-scoring-source-unavailable',
+        "human": 'eval task: the scoring-function source is unavailable for '
+                 'digest pinning; the declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-target-crashed': {
+        "domain": 'evidence',
+        "code": 'evaltask-target-crashed',
+        "human": 'eval task: the evaluation target crashed; loud failure, '
+                 'no partial evidence, the run produces no result',
+        "severity": 'high',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-unknown-dataset': {
+        "domain": 'evidence',
+        "code": 'evaltask-unknown-dataset',
+        "human": 'eval task: an eval task references a dataset id the '
+                 'registry never declared; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-unknown-scoring-function': {
+        "domain": 'evidence',
+        "code": 'evaltask-unknown-scoring-function',
+        "human": 'eval task: an eval task references a scoring-function id '
+                 'the registry never declared; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-unknown-task': {
+        "domain": 'evidence',
+        "code": 'evaltask-unknown-task',
+        "human": 'eval task: a run was requested for an eval-task id the '
+                 'registry never declared; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
+    },
+    'evaltask-unverifiable': {
+        "domain": 'evidence',
+        "code": 'evaltask-unverifiable',
+        "human": 'eval task: an unverifiable eval result cannot be packaged '
+                 'as evidence; packaging is refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['eval-task-result'],
+        "reverify_steps": ['recompute'],
     },
     'evaluation-incomplete-details': {
         "domain": 'evaluation',
@@ -11617,6 +11956,98 @@ TAXONOMY = {
                  'accept',
         "severity": 'medium',
         "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-bad-id': {
+        "domain": 'guardrail',
+        "code": 'shield-bad-id',
+        "human": 'shield registry: shield_id must be a non-empty string; '
+                 'the declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-bad-params': {
+        "domain": 'guardrail',
+        "code": 'shield-bad-params',
+        "human": 'shield registry: shield params must be JSON-serializable; '
+                 'the declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-bad-provider-kind': {
+        "domain": 'guardrail',
+        "code": 'shield-bad-provider-kind',
+        "human": 'shield registry: unknown shield provider kind; the '
+                 'declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-bad-verdict': {
+        "domain": 'guardrail',
+        "code": 'shield-bad-verdict',
+        "human": 'shield registry: a shield returned a verdict outside the '
+                 'allow/violation contract; fail-closed, the run is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-duplicate-id': {
+        "domain": 'guardrail',
+        "code": 'shield-duplicate-id',
+        "human": 'shield registry: a shield id is already registered; the '
+                 'duplicate declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-no-run': {
+        "domain": 'guardrail',
+        "code": 'shield-no-run',
+        "human": 'shield registry: the shield declares no runnable check; '
+                 'attaching it is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-non-verdict': {
+        "domain": 'guardrail',
+        "code": 'shield-non-verdict',
+        "human": 'shield registry: a shield run returned a non-verdict '
+                 'object; fail-closed, the run is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-remote-no-endpoint': {
+        "domain": 'guardrail',
+        "code": 'shield-remote-no-endpoint',
+        "human": 'shield registry: a remote shield declared no http(s) '
+                 'endpoint; the declaration is refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-unknown-id': {
+        "domain": 'guardrail',
+        "code": 'shield-unknown-id',
+        "human": 'shield registry: an attach list named a shield id the '
+                 'registry never declared; refused fail-closed rather than '
+                 'silently skipping the shield',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'shield-violation': {
+        "domain": 'guardrail',
+        "code": 'shield-violation',
+        "human": 'shield registry: a shield raised its declared intentional-'
+                 'block signal (violation verdict); the guarded action is '
+                 'refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
         "reverify_steps": ['recompute'],
     },
     'short-lived-credential-chain-broken': {

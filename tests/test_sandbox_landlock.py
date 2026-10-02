@@ -208,7 +208,7 @@ class LandlockTaxonomyTest(unittest.TestCase):
 
     def test_pin(self):
         # Local pin for this lane: base 1205 + 3 landlock codes.
-        self.assertEqual(len(dcd.TAXONOMY), 1495)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(dcd.TAXONOMY), 1541)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
 
 
 class LandlockEnvConfigTest(unittest.TestCase):

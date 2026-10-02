@@ -203,5 +203,82 @@ class PolicyEvidenceAdapterTests(unittest.TestCase):
         self.assertTrue(ge.verify_guardrail_records(recs))
 
 
+class LabelsTests(unittest.TestCase):
+    """Wave-280: first-class ``labels`` on guardrail-run records."""
+
+    def test_labels_stored_and_digested(self):
+        w, log = _writer()
+        w.record("g-1", "one", outcome="allow", input_bytes=b"1",
+                 labels={"provider_kind": "remote"})
+        recs = ge.guardrail_run_records(log)
+        self.assertEqual(recs[0]["labels"],
+                         {"provider_kind": "remote"})
+        self.assertTrue(ge.verify_guardrail_records(recs))
+
+    def test_labels_covered_by_digest(self):
+        w, log = _writer()
+        w.record("g-1", "one", outcome="allow", input_bytes=b"1",
+                 labels={"provider_kind": "inline"})
+        recs = ge.guardrail_run_records(log)
+        recs[0]["labels"] = {"provider_kind": "remote"}
+        self.assertFalse(ge.verify_guardrail_records(recs))
+
+    def test_labels_removal_fails_honestly(self):
+        w, log = _writer()
+        w.record("g-1", "one", outcome="allow", input_bytes=b"1",
+                 labels={"provider_kind": "remote"})
+        recs = ge.guardrail_run_records(log)
+        del recs[0]["labels"]
+        self.assertFalse(ge.verify_guardrail_records(recs))
+
+    def test_bad_labels_refused(self):
+        w, _ = _writer()
+        with self.assertRaises(ge.GuardrailEvidenceError):
+            w.record("g-1", "one", outcome="allow",
+                     labels={"k": 1})
+        with self.assertRaises(ge.GuardrailEvidenceError):
+            w.record("g-1", "one", outcome="allow",
+                     labels=[("k", "v")])
+
+    def test_run_guardrail_passes_labels(self):
+        w, log = _writer()
+        ok, rec = ge.run_guardrail(
+            w, guardrail_id="g", guardrail_name="g",
+            fn=lambda: None, labels={"provider_kind": "inline"})
+        self.assertTrue(ok)
+        self.assertEqual(rec["labels"], {"provider_kind": "inline"})
+        self.assertTrue(ge.verify_guardrail_records(
+            ge.guardrail_run_records(log)))
+
+    def test_pre_labels_records_still_verify(self):
+        # Backward compatibility: a record written before the labels
+        # field existed (no "labels" key at all) must still verify --
+        # the verifier digests only the keys a record carries.
+        import hashlib
+        import json
+        from gov.guardrail_evidence import RECORD_TYPE, SCHEMA_VERSION
+        rec = {
+            "record_type": RECORD_TYPE,
+            "schema_version": SCHEMA_VERSION,
+            "guardrail_id": "g-old",
+            "guardrail_name": "g-old",
+            "guardrail_mode": "blocking",
+            "event_scope": "pre_call",
+            "outcome": "allow",
+            "rationale": "old",
+            "rationale_digest": hashlib.sha256(b"old").hexdigest(),
+            "input_digest": hashlib.sha256(b"1").hexdigest(),
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "duration_ms": 1.0,
+            "decision_effect": None,
+            "policy_id": None,
+            "prev_guardrail_record_digest": "genesis",
+        }
+        rec["record_digest"] = hashlib.sha256(json.dumps(
+            rec, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=True).encode("utf-8")).hexdigest()
+        self.assertTrue(ge.verify_guardrail_records([rec]))
+
+
 if __name__ == "__main__":
     unittest.main()

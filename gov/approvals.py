@@ -73,6 +73,47 @@ def _utcnow():
 _MISSING = object()
 
 
+def _validate_stakes_tier(stakes_tier):
+    """Wave-280 (HumanLayer ADAPT): validate the declared 4-tier stakes.
+
+    The vocabulary lives in gov.human_approval_contract (single source
+    of truth); the import is lazy because that module must not import
+    gov.policy (which imports gov.approvals -- a cycle). None passes
+    through for records queued by paths with no declared contract.
+    """
+    if stakes_tier is None:
+        return None
+    from .human_approval_contract import validate_stakes
+    return validate_stakes(stakes_tier)
+
+
+def _validate_edited_args(edited_args):
+    """Wave-280 (HumanLayer ADAPT): validate human-edited args.
+
+    The human operator is the trust principal for edits (not the
+    agent), so agent-side redaction does not apply -- but the shape
+    is still fail-closed: a dict with string keys whose values are
+    JSON-serializable. The edit is audit-chained (approval_args_edited
+    carries old/new digests), never silent.
+    """
+    if not isinstance(edited_args, dict):
+        raise ValueError(
+            "decide() refused: edited_args must be a dict, got %s"
+            % type(edited_args).__name__)
+    for key in edited_args:
+        if not isinstance(key, str):
+            raise ValueError(
+                "decide() refused: edited_args keys must be strings, "
+                "got %r" % (key,))
+    try:
+        serialized = json.dumps(edited_args, sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "decide() refused: edited_args must be JSON-serializable: %s"
+            % (exc,))
+    return json.loads(serialized)
+
+
 def _reconcile_marker_cache_mac(key, key_epoch, body_canonical):
     """R17 (F71): domain-separated MAC for the reconcile
     marker-verdict cache body (everything but ``mac``). The cache
@@ -377,6 +418,21 @@ _SECURITY_PAYLOAD_FIELDS = (
     # their digests fail verification automatically after the upgrade
     # -- queued items must be decided or drained before upgrading.
     "review_opened_at", "review_resolved_at", "review_latency_ms",
+    # Wave-280 (HumanLayer ADAPT): the function-layer contract fields.
+    # stakes_tier is the declared 4-tier stakes of the request (the
+    # registry's authority, not agent framing); human_outcome names the
+    # human's outcome vocabulary (approved / edited -- "edited" means
+    # the human approved MODIFIED args, bound below via args);
+    # request_expired / request_expired_at mark the timed-out wait
+    # (fail-closed: decide() refuses expired records, so flipping the
+    # flag back cannot resurrect a dead request). Missing binds as
+    # None, exactly like every other field -- FAIL-CLOSED UPGRADE
+    # (same precedent as F34/F38/R11/D1/wave-24/F101/F103/H3):
+    # records queued BEFORE this change do not carry these fields, so
+    # their digests fail verification automatically after the upgrade
+    # -- queued items must be decided or drained before upgrading.
+    "stakes_tier", "human_outcome",
+    "request_expired", "request_expired_at",
 )
 
 
@@ -1503,6 +1559,26 @@ def _score_factors(record, queue_records, anomaly_ids=(), ignore_history=False):
         factors.append("persuasion markers in agent prose +%d (advisory: "
                        "manipulation-shaped framing detected)"
                        % PERSUASION_RISK_BUMP)
+    # Wave-280 (HumanLayer ADAPT): the declared 4-tier stakes of the
+    # request maps onto the existing risk continuum. Monotone and
+    # escalation-only -- it can only raise the score, never lower it --
+    # so declared stakes flow into the EXISTING approval-level
+    # machinery: a harder auto-approve bar (maybe_auto_approve),
+    # cooling-off (>=80), and the capture-tier approver shield
+    # (>=70 via packet_risk_score). The tier is MAC-bound on the
+    # record (see _SECURITY_PAYLOAD_FIELDS), so this factor is a pure
+    # function of stored fields and is identical at every call site
+    # (queue-time stamp, risk listings, auto-approve scoring). Records
+    # queued without a declared tier (stakes_tier None, the default
+    # for every pre-wave-280 path) score exactly as before.
+    _stakes = record.get("stakes_tier")
+    if _stakes is not None:
+        from .human_approval_contract import STAKES_RISK_BUMP
+        _bump = STAKES_RISK_BUMP.get(_stakes, 0)
+        if _bump > 0:
+            score += _bump
+            factors.append("declared stakes tier %s +%d"
+                           % (_stakes, _bump))
     return min(100, score), factors
 
 
@@ -2815,6 +2891,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # atomic within the process; without the lock two threads can
         # both observe an unused ticket and both consume it.
         self._bg_ticket_lock = threading.Lock()
+        # F305: per-record decision locks. The terminal decision path
+        # (decide()/elicit_decision cancel) is check-then-act with no
+        # serialization; two threads could both observe "pending" and
+        # both emit a terminal decision. Each entry is
+        # [threading.RLock(), waiter_count]; entries are created on
+        # demand and evicted when the count reaches zero, so the map
+        # holds only locks with live holders/waiters and cannot grow.
+        # Guard discipline: _decision_locks_guard is NEVER acquired
+        # while a per-record lock is held, and a per-record lock is
+        # NEVER acquired while the guard is held -- the two cannot
+        # deadlock. RLock (not Lock): elicit_decision's cancel path
+        # takes the same record lock that decide() takes, and nested
+        # same-thread acquisition must not self-deadlock.
+        self._decision_locks = {}
+        self._decision_locks_guard = threading.Lock()
 
     def set_identity_verifier(self, verifier):
         """F26: install the executor's minted-identity check.
@@ -3321,7 +3412,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               matched_rules=None, tool_digest=None, deferred_effect=None,
               capability_verdict=None, intent_slice_verdict=None,
               skill_id=None, skill_attested_digest=None,
-              delegation_receipt=None, instruction_provenance=None):
+              delegation_receipt=None, instruction_provenance=None,
+              stakes_tier=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3389,6 +3481,14 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         the queue MACed an attacker-supplied run_id). Missing
         identity, a non-AgentIdentity, an unminted identity, or an
         identity for another run is refused fail-closed.
+
+        Wave-280 (HumanLayer ADAPT): ``stakes_tier`` is the
+        human-approval stakes label for this request —
+        ``"low"``/``"medium"``/``"high"``/``"critical"`` (see
+        ``gov/human_approval_contract.py`` ``validate_stakes``).
+        Validated (unknown tiers refused fail-closed), stamped on
+        the record, and MAC-bound. None when the caller did not
+        declare one.
         """
         if caller_identity is None:
             raise TypeError(
@@ -3584,6 +3684,24 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # None when no provenance context is installed or the grant
             # seam allowed the action (advisory-only) -- never omitted.
             "instruction_provenance": instruction_provenance,
+            # Wave-280 (HumanLayer ADAPT): the declared 4-tier stakes
+            # of the request -- the registry's authority (see
+            # gov.human_approval_contract), not agent framing.
+            # MAC-bound via _SECURITY_PAYLOAD_FIELDS. None for records
+            # queued by paths that never declared a contract.
+            "stakes_tier": _validate_stakes_tier(stakes_tier),
+            # Wave-280 (HumanLayer ADAPT): the human's outcome
+            # vocabulary -- "edited" means the human approved MODIFIED
+            # args (bound via args at decision time). None until
+            # decide(). MAC-bound via _SECURITY_PAYLOAD_FIELDS.
+            "human_outcome": None,
+            # Wave-280 (HumanLayer ADAPT): the timed-out-wait marker.
+            # mark_request_expired() sets it; decide() refuses expired
+            # records, so the flag can never be flipped back to
+            # resurrect a dead request. MAC-bound via
+            # _SECURITY_PAYLOAD_FIELDS.
+            "request_expired": False,
+            "request_expired_at": None,
             "deferred_effect": (json.loads(json.dumps(
                 deferred_effect, sort_keys=True, default=str))
                 if deferred_effect is not None else None),
@@ -3816,6 +3934,39 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 return r
         return None
 
+    def _decision_lock(self, approval_id):
+        """Return the per-record decision RLock for ``approval_id`` (F305).
+
+        The registry entry's waiter count is incremented under the
+        guard; the caller MUST pair this with
+        ``_release_decision_lock`` in a finally, AFTER releasing the
+        per-record lock. The guard is released before the per-record
+        lock is acquired -- never nested -- so the two cannot
+        deadlock.
+        """
+        with self._decision_locks_guard:
+            entry = self._decision_locks.get(approval_id)
+            if entry is None:
+                entry = [threading.RLock(), 0]
+                self._decision_locks[approval_id] = entry
+            entry[1] += 1
+            return entry[0]
+
+    def _release_decision_lock(self, approval_id, lock):
+        """Decrement the waiter count; evict the entry at zero (F305).
+
+        Must be called AFTER the per-record lock has been released.
+        Eviction at zero waiters is race-free: a zero count means no
+        thread holds or waits on this lock, so no thread can be
+        between get-or-create and acquire.
+        """
+        with self._decision_locks_guard:
+            entry = self._decision_locks.get(approval_id)
+            if entry is not None and entry[0] is lock:
+                entry[1] -= 1
+                if entry[1] <= 0:
+                    del self._decision_locks[approval_id]
+
     def _rewrite(self, fn_or_records):
         """Rewrite the queue file.
 
@@ -3841,7 +3992,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
     def decide(self, approval_id, approved, reason,
                decided_by="human-operator", shield_ack=None,
                challenge_answers=None, typed_scope=None,
-               review_opened_at=None):
+               review_opened_at=None, edited_args=None):
         # Wave-173: ``review_opened_at`` is epoch seconds observed by the
         # decision instrument (web UI render time, CLI render time), or
         # None when the instrument could not observe review start. The
@@ -3854,6 +4005,21 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         record that is no longer pending) are also appended to the audit
         log before the ValueError propagates, so abuse of the approval
         workflow itself leaves a trace.
+
+        Wave-280 (HumanLayer ADAPT): ``edited_args`` is the human's
+        MODIFIED arg set. Approve-path only: a human may EDIT the
+        action while approving (outcome ``edited``). It is validated
+        (dict, string keys, JSON-serializable), applied BEFORE the
+        decision re-MAC, and recorded as its own
+        ``approval_args_edited`` chain entry with old/new digests and
+        the changed keys. Passing ``edited_args`` with
+        ``approved=False`` is refused fail-closed.
+
+        Wave-280 (HumanLayer ADAPT): ``decide()`` refuses records
+        whose ``request_expired`` marker is set (the
+        ``ApprovalQueue.mark_request_expired()`` timeout path) — the
+        request is dead, the agent must re-issue it; a late human
+        decision can never resurrect it.
 
         Wave-145 (row-11) type-to-confirm: ``typed_scope`` is the
         human's TYPED narrowed scope. It is required -- and checked
@@ -3880,6 +4046,45 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         challenge (proof of engagement with the governor's signals,
         not the agent's framing). Rejections never need the handshake;
         standard-tier records ignore the new arguments.
+        """
+
+        # F305: serialize terminal decisions per approval
+        # record. _decide_locked is check-then-act (status
+        # check -> queue rewrite); without the per-record
+        # lock two threads could both observe "pending" and
+        # both emit a terminal approval_decision. Exactly
+        # one thread's decision lands; the loser re-reads
+        # the decided record inside the lock and is refused.
+        # The registry is refcounted and evicted at zero
+        # waiters, so it cannot grow. RLock: the same
+        # thread may re-enter via elicit_decision's cancel
+        # path or a post-decision hook.
+        _f305_lock = self._decision_lock(approval_id)
+        try:
+            with _f305_lock:
+                return self._decide_locked(
+                    approval_id, approved, reason,
+                    decided_by=decided_by,
+                    shield_ack=shield_ack,
+                    challenge_answers=challenge_answers,
+                    typed_scope=typed_scope,
+                    review_opened_at=review_opened_at,
+                    edited_args=edited_args)
+        finally:
+            # Refcount decrement AFTER the per-record lock
+            # is released: the registry guard is never
+            # acquired while a per-record lock is held, so
+            # the two cannot deadlock (F305).
+            self._release_decision_lock(approval_id, _f305_lock)
+
+    def _decide_locked(self, approval_id, approved, reason,
+               decided_by="human-operator", shield_ack=None,
+               challenge_answers=None, typed_scope=None,
+               review_opened_at=None, edited_args=None):
+        """Terminal decision implementation (F305).
+
+        Do not call directly: use decide(), which holds
+        the per-record decision lock. See decide().
         """
         records = self.all()
         target = None
@@ -3965,6 +4170,23 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 agent_id=target.get("agent_id"), role=target.get("role"),
                 tool=target.get("tool"))
             raise ValueError("approval %r is already %s" % (approval_id, target["status"]))
+        # Wave-280 (HumanLayer ADAPT): a timed-out wait is dead. The
+        # human wait lapsed (mark_request_expired stamped the record
+        # and audit-logged approval_timeout); a LATER human decision
+        # cannot resurrect it -- the request must be re-issued. This
+        # mirrors the T11/T12 bridge-wait semantics for native
+        # records. Fail-closed, audit-logged.
+        if target.get("request_expired"):
+            _log_attempt(
+                "rejected_attempt",
+                "decision attempted on an expired (timed-out) approval "
+                "request -- the human wait lapsed; the request is dead "
+                "and cannot be decided",
+                agent_id=target.get("agent_id"), role=target.get("role"),
+                tool=target.get("tool"))
+            raise ValueError(
+                "approval %r expired: the human wait timed out -- the "
+                "request is dead; re-issue it" % (approval_id,))
         # F38 (R10): verify the PENDING digest BEFORE re-MACing. The
         # re-MAC below re-seals whatever fields are present at decision
         # time — without this check, tampering between queue() and
@@ -4346,6 +4568,34 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         target["decided_by"] = decided_by
         target["decided_at"] = _utcnow()
         target["decision_reason"] = reason
+        # Wave-280 (HumanLayer ADAPT): the human approves MODIFIED args.
+        # This is approve-only: a rejection cannot carry an edit
+        # (fail-closed). The edit is applied BEFORE the re-MAC below, so
+        # the decision digest binds the EDITED args -- the executor's
+        # approval_digest_ok() then verifies exactly what the human
+        # approved, and a post-decision args swap breaks the MAC. The
+        # S3 packet check above already verified the DISPLAYED (original)
+        # content: the human saw the original and chose to edit it. The
+        # approval_args_edited chain entry (below) records old/new
+        # digests with its own entry, so the modification is audit
+        # evidence, never silent. Content trust: edited args are
+        # human-supplied, so agent-side redaction does not apply (the
+        # human is the trust principal) -- documented residual.
+        _edit_old_digest = None
+        if edited_args is not None:
+            if not approved:
+                _log_attempt(
+                    "rejected_attempt",
+                    "edited_args supplied on a rejection -- an edit is "
+                    "approve-only",
+                    agent_id=target.get("agent_id"), role=target.get("role"),
+                    tool=target.get("tool"))
+                raise ValueError(
+                    "decide() refused: edited_args requires approved=True "
+                    "-- a rejection cannot carry edited args")
+            _edit_old_digest = approval_record_digest(target)
+            target["args"] = _validate_edited_args(edited_args)
+            target["human_outcome"] = "edited"
         # Wave-173: stamp the review-timing triple BEFORE the re-MAC so
         # the MAC binds it (see _SECURITY_PAYLOAD_FIELDS). Unusable
         # instrument input fails safe to explicit nulls -- unobserved,
@@ -4378,6 +4628,35 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         self._rewrite(lambda records: [
             target if r["id"] == target["id"] else r for r in records])
 
+        # Wave-280 (HumanLayer ADAPT): the edit gets its OWN chain
+        # entry -- old args digest -> new args digest, the decider, the
+        # changed keys. This is the audit evidence for "the human
+        # approved something other than what the agent asked for".
+        if _edit_old_digest is not None:
+            try:
+                self._log({
+                    "event": "approval_args_edited",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target["tool"],
+                    "decision": "approved",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": target["id"],
+                    "decided_by": decided_by,
+                    "related_agent": target["agent_id"],
+                    "old_args_digest": _edit_old_digest,
+                    "new_args_digest": target["args_digest"],
+                    "edited_arg_keys": sorted(target["args"].keys()),
+                    "reason": ("human edited the requested args at "
+                               "decision time: the record now carries the "
+                               "EDITED args; the displayed preview was "
+                               "generated from the original args"),
+                })
+            except Exception:
+                pass
+
         approver = AgentIdentity(
             agent_id="human-operator",
             role="approver",
@@ -4398,6 +4677,12 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             "policy_hash": target.get("policy_hash"),
             "decision": "approved" if approved else "rejected",
             "policy_id": target["policy_id"],
+            # Wave-280 (HumanLayer ADAPT): the human's outcome
+            # vocabulary. "edited" means the human approved MODIFIED
+            # args -- the approval_args_edited chain entry above carries
+            # the old/new digests. None on the legacy approve/reject
+            # path.
+            "human_outcome": target.get("human_outcome"),
             # Wave-79 (totality): the human's outcome names the rule
             # that queued the ticket (stored, MAC-bound, at queue time).
             "policy_version": target.get("policy_version", "approvals-d1"),
@@ -4807,52 +5092,106 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         # executes status == "approved", so a cancelled record can
         # never execute.
         if response == "cancel":
-            target["status"] = "cancelled"
-            target["decided_by"] = decided_by
-            target["decided_at"] = _utcnow()
-            target["elicitation_attempts"] = _burned
-            target["args_digest"] = approval_record_digest(target)
-            # NOTE: all() re-parses from disk, so the mutated target
-            # must be spliced into the rewritten records explicitly
-            # (same discipline as decide()).
-            self._rewrite(lambda records: [
-                target if r["id"] == target["id"] else r
-                for r in records])
-            entry = self._log({
-                "event": "elicitation_cancelled",
-                "run_id": target.get("run_id"),
-                "agent_id": "human-operator",
-                "role": "approver",
-                "principal": "human-operator",
-                "tool": target.get("tool"),
-                "approval_id": target["id"],
-                "request_id": request_id,
-                "decided_by": decided_by,
-                "related_agent": target.get("agent_id"),
-                "elicitation_attempts": _burned,
-                "reason": ("the elicitation was dismissed without a "
-                           "decision: approval %r is cancelled and "
-                           "will never execute" % (target["id"],)),
-            })
-            return target, entry
+            # F305: the cancel write is a terminal disposition on the
+            # same record decide() writes -- take the same per-record
+            # lock and re-read under it. A concurrent decide() that
+            # landed between the pre-checks and this write makes the
+            # record non-pending here; the cancel is then refused
+            # (audit-logged, ElicitationError) instead of silently
+            # overwriting the decision.
+            _f305_lock = self._decision_lock(approval_id)
+            try:
+                with _f305_lock:
+                    _fresh = None
+                    for _r in self.all():
+                        if _r["id"] == approval_id:
+                            _fresh = _r
+                            break
+                    if _fresh is None or _fresh.get("status") != "pending":
+                        _refuse(
+                            "elicitation_refused",
+                            "cancel refused: approval %r is already %s"
+                            % (approval_id, (_fresh or {}).get("status")),
+                            _fresh if _fresh is not None else target,
+                            failure_class=_rem.FAILURE_PRECHECK)
+                    target = _fresh
+                    target["status"] = "cancelled"
+                    target["decided_by"] = decided_by
+                    target["decided_at"] = _utcnow()
+                    target["elicitation_attempts"] = _burned
+                    target["args_digest"] = approval_record_digest(target)
+                    # NOTE: all() re-parses from disk, so the mutated
+                    # target must be spliced into the rewritten records
+                    # explicitly (same discipline as decide()).
+                    self._rewrite(lambda records: [
+                        target if r["id"] == target["id"] else r
+                        for r in records])
+                    entry = self._log({
+                        "event": "elicitation_cancelled",
+                        "run_id": target.get("run_id"),
+                        "agent_id": "human-operator",
+                        "role": "approver",
+                        "principal": "human-operator",
+                        "tool": target.get("tool"),
+                        "approval_id": target["id"],
+                        "request_id": request_id,
+                        "decided_by": decided_by,
+                        "related_agent": target.get("agent_id"),
+                        "elicitation_attempts": _burned,
+                        "reason": ("the elicitation was dismissed without a "
+                                   "decision: approval %r is cancelled and "
+                                   "will never execute" % (target["id"],)),
+                    })
+                    return target, entry
+            finally:
+                self._release_decision_lock(approval_id, _f305_lock)
 
         # 7b. Accept/decline: burn the attempt, then delegate the
         # terminal disposition to decide() -- its gates (ceremony
         # integrity, cooling-off, approver shield, fatigue escalation,
         # type-to-confirm) still apply, and the rationale rides its
         # existing reason logging into the audit trail.
-        self._rewrite(lambda records: [
-            dict(r, elicitation_attempts=_burned)
-            if r["id"] == target["id"] else r for r in records])
-        if rationale is not None:
-            _reason = _ec.render_rationale(response, rationale)
-        else:
-            _reason = _ec.DEFAULT_ACCEPT_REASON
-        if response == "accept":
-            return self.decide(approval_id, True, _reason,
-                               decided_by=decided_by)
-        return self.decide(approval_id, False, _reason,
-                           decided_by=decided_by)
+        #
+        # F305: the burn AND the decide must hold the per-record
+        # decision lock across a re-read. The burn is a read-modify-
+        # write on the same record decide() terminally disposes; left
+        # unlocked, a concurrent cancel's 7a rewrite can land between
+        # the burn's read and write, and the burn's stale-base splice
+        # then clobbers the status back to "pending" (lost update) --
+        # decide() would read "pending" under its lock and emit a
+        # second terminal decision on a cancelled record. Holding the
+        # lock here serializes 7b against 7a and decide(): the loser
+        # re-reads a non-pending record and is refused. RLock, so the
+        # nested decide() acquisition by this same thread is safe.
+        _f305_lock = self._decision_lock(approval_id)
+        try:
+            with _f305_lock:
+                _fresh = None
+                for _r in self.all():
+                    if _r["id"] == approval_id:
+                        _fresh = _r
+                        break
+                if _fresh is None or _fresh.get("status") != "pending":
+                    _refuse(
+                        "elicitation_refused",
+                        "elicitation refused: approval %r is already %s"
+                        % (approval_id, (_fresh or {}).get("status")),
+                        _fresh if _fresh is not None else target,
+                        failure_class=_rem.FAILURE_PRECHECK)
+                self._rewrite(lambda records: [
+                    dict(r, elicitation_attempts=_burned)
+                    if r["id"] == target["id"] else r for r in records])
+                if rationale is not None:
+                    _reason = _ec.render_rationale(response, rationale)
+                else:
+                    _reason = _ec.DEFAULT_ACCEPT_REASON
+                if response == "accept":
+                    return self.decide(approval_id, True, _reason,
+                                       decided_by=decided_by)
+                return self.decide(approval_id, False, _reason,
+                                   decided_by=decided_by)
+        finally:
+            self._release_decision_lock(approval_id, _f305_lock)
 
     def revoke(self, approval_id, reason, revoker):
         """Wave-131 (row-7 revoke-after-approve): revoke an approval so
@@ -5562,6 +5901,109 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                        "later human decision is audit-only and can never "
                        "execute (T11/T12)."
                        % (reason, target.get("status"))),
+        })
+        return target, entry
+
+    def mark_request_expired(self, approval_id, reason):
+        """Wave-280 (HumanLayer ADAPT): mark that a human wait timed out.
+
+        Sets the MACed ``request_expired``/``request_expired_at``
+        fields (re-MACed) and audits ``approval_timeout``. Unlike the
+        bridge wait (T11: late decisions are audit-only but permitted),
+        a timed-out NATIVE request is DEAD: ``decide()`` refuses
+        expired records outright (fail-closed), so a late human
+        decision can never resurrect the request -- the agent must
+        re-issue it.
+
+        Fail-closed: the record's pending digest is verified BEFORE
+        the marker is set (a tampered record is refused, not marked);
+        decided or already-expired records are refused (only a pending
+        request can time out); executed records are refused as an
+        anomaly. The marker cannot be cleared without the log key, and
+        no API offers clearing.
+        """
+        records = self.all()
+        target = None
+        for r in records:
+            if r["id"] == approval_id:
+                target = r
+                break
+        if target is None:
+            raise ValueError("approval id %r not found" % approval_id)
+        if target.get("request_expired"):
+            raise ValueError(
+                "mark_request_expired refused: approval %r is already "
+                "expired" % approval_id)
+        if target.get("status") != "pending":
+            raise ValueError(
+                "mark_request_expired refused: approval %r is %s, not "
+                "pending -- only a pending request can time out"
+                % (approval_id, target.get("status")))
+        if target.get("executed"):
+            try:
+                self._log({
+                    "event": "request_expired_after_execution",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "anomaly",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("request expiry reported for an "
+                               "ALREADY-EXECUTED record -- the TOCTOU "
+                               "resolved the other way; operator "
+                               "investigates. No state changed."),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "mark_request_expired refused: approval %r already "
+                "executed" % approval_id)
+        if not _pending_record_content_ok(target):
+            try:
+                self._log({
+                    "event": "request_expired_refused",
+                    "run_id": target.get("run_id"),
+                    "agent_id": "human-operator",
+                    "role": "approver",
+                    "principal": "human-operator",
+                    "tool": target.get("tool"),
+                    "decision": "refused",
+                    "policy_id": target.get("policy_id"),
+                    "approval_id": approval_id,
+                    "related_agent": target.get("agent_id"),
+                    "reason": ("mark_request_expired refused: the record "
+                               "failed integrity verification (tampered "
+                               "after queueing); the marker was not set"),
+                })
+            except Exception:
+                pass
+            raise ValueError(
+                "mark_request_expired refused: approval %r failed "
+                "integrity verification -- marker not set" % approval_id)
+        target["request_expired"] = True
+        target["request_expired_at"] = _utcnow()
+        target["args_digest"] = approval_record_digest(target)
+        self._rewrite(lambda records: [
+            target if r["id"] == target["id"] else r for r in records])
+        entry = self._log({
+            "event": "approval_timeout",
+            "run_id": target.get("run_id"),
+            "agent_id": "human-operator",
+            "role": "approver",
+            "principal": "human-operator",
+            "tool": target.get("tool"),
+            "decision": "timeout",
+            "policy_id": target.get("policy_id"),
+            "approval_id": approval_id,
+            "request_expired_at": target["request_expired_at"],
+            "related_agent": target.get("agent_id"),
+            "reason": ("human wait timed out: %s. The request is dead -- "
+                       "decide() refuses expired records (fail-closed); "
+                       "the agent must re-issue the request." % (reason,)),
         })
         return target, entry
 

@@ -46,7 +46,7 @@ sys.path.insert(0, REPO)
 
 from gov import decoy_grants as dg  # noqa: E402
 
-TAXONOMY_PIN = 1495  # Wave-277 merge pin; this lane adds no codes.
+TAXONOMY_PIN = 1541  # Wave-277 merge pin; this lane adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -71,7 +71,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1495: 1495 unique literals"
+    return "HELD", "taxonomy pin 1541: 1541 unique literals"
 
 
 def _new_tracker():
