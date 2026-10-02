@@ -442,7 +442,11 @@ def verify_enveloped_ledger(bundle_dir, envelope_pubkey=None):
                 "bundle has no ENVELOPE_PUBKEY.hex and no pubkey was "
                 "provided")
         with open(pub_path, encoding="utf-8") as f:
-            envelope_pubkey = bytes.fromhex(f.read().strip())
+            try:
+                envelope_pubkey = bytes.fromhex(f.read().strip())
+            except ValueError:
+                raise OfflineBundleError(
+                    "ENVELOPE_PUBKEY.hex is not valid hex")
     pub = bytes(envelope_pubkey)
     if len(pub) != 32:
         raise OfflineBundleError("envelope pubkey is not 32 bytes")
@@ -470,10 +474,14 @@ def verify_enveloped_ledger(bundle_dir, envelope_pubkey=None):
     legacy_path = os.path.join(bundle_dir, "ledger.jsonl")
     legacy = []
     with open(legacy_path, encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             line = line.strip()
             if line:
-                legacy.append(json.loads(line))
+                try:
+                    legacy.append(json.loads(line))
+                except ValueError:
+                    raise OfflineBundleError(
+                        "ledger.jsonl line %d is not JSON" % (lineno,))
     if len(records) != len(legacy):
         raise OfflineBundleError(
             "enveloped ledger has %d records, legacy ledger has %d"
@@ -490,7 +498,11 @@ def verify_enveloped_ledger(bundle_dir, envelope_pubkey=None):
     if not os.path.isfile(manifest_env_path):
         raise OfflineBundleError("bundle has no manifest.enveloped.json")
     with open(manifest_env_path, encoding="utf-8") as f:
-        manifest_env = json.load(f)
+        try:
+            manifest_env = json.load(f)
+        except ValueError:
+            raise OfflineBundleError(
+                "manifest.enveloped.json is not JSON")
     try:
         opened_manifest = _ee.open_manifest(manifest_env, pub)
     except _ee.EvidenceEnvelopeError as exc:
@@ -498,7 +510,10 @@ def verify_enveloped_ledger(bundle_dir, envelope_pubkey=None):
             "sealed manifest failed to open: %s" % (exc,))
     with open(os.path.join(bundle_dir, "manifest.json"),
               encoding="utf-8") as f:
-        legacy_manifest = json.load(f)
+        try:
+            legacy_manifest = json.load(f)
+        except ValueError:
+            raise OfflineBundleError("manifest.json is not JSON")
     if opened_manifest != legacy_manifest:
         raise OfflineBundleError(
             "sealed manifest does not match manifest.json")

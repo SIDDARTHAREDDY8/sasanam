@@ -307,7 +307,10 @@ class FindingsMdTest(unittest.TestCase):
         # 2026-10-02 by the wave-292 independent red team (as F357,
         # renumbered at the wave-292 merge per the wave-272
         # earliest-filed rule: verify_enveloped_ledger leaks uncoded
-        # parse exceptions on corrupt bundle files).
+        # parse exceptions on corrupt bundle files); F360 closed
+        # 2026-10-02, wave-293 lane 1 (all four parse sites refuse
+        # coded OfflineBundleError; w293_f360 0 BREAK / 10 HELD;
+        # w292_redteam 0 BREAK; taxonomy pin 1723 unchanged).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -316,9 +319,9 @@ class FindingsMdTest(unittest.TestCase):
                     "F336", "F337", "F338", "F339", "F340", "F341",
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
                     "F349", "F350", "F351", "F352", "F353", "F354",
-                    "F355", "F356", "F357", "F358", "F359"):
+                    "F355", "F356", "F357", "F358", "F359", "F360"):
             self.assertEqual(reg.get(num).state, "verified")
-        self.assertEqual(reg.get("F360").state, "open")
+        self.assertGreaterEqual(reg.next_number, 361)
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")
         self.assertGreaterEqual(len(reg.all()), 200)
