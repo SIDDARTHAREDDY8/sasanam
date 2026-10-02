@@ -8789,11 +8789,150 @@ probes still OPEN), `w293_key_succession` 0 BREAK. No new decision
 codes; taxonomy pin unchanged at 1742 (raw literals verified).
 Commit made locally with trailer; lane 2 reports and stops.
 
-Next free finding: **F367**. **Open findings: none.** (F364 filed
+
+## F367: coordination_lease.acquire with a future-dated issued_at bypasses coord-lease-denied and evicts a live lease (LOW)
+
+**Cells:** wave-295 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w295_redteam_probes.py` (probe `lease-future-issued-preempts`).
+
+**Defect:** `LeaseManager.acquire` evaluates the "an unexpired lease already
+covers the scope" check at the caller-supplied `issued_at`
+(`live = self._live(scope, issued_at)`) instead of at grant time. An
+`acquire` with a future-dated `issued_at` (past the current lease's
+`not_after`) passes the check, is granted, and OVERWRITES the manager's
+single per-scope slot -- evicting the currently-live, non-overlapping
+lease. The preempted holder's subsequent `check_write` then refuses
+(reproduced: `coord-lease-fencing`, token generation advanced under them).
+The docstring promises "coded `coord-lease-denied` when an unexpired lease
+already covers the scope"; at grant time the old lease does cover the
+scope, so the bypass contradicts the documented contract. The window is
+narrow (it requires the issuing authority seed -- the documented
+compromised-host class -- or a badly skewed authority clock), and the
+direction is denial of the legitimate holder rather than a privilege
+grant, hence LOW.
+
+**Severity rationale:** LOW. Requires the authority seed (or authority
+clock skew); the seed holder can already mint arbitrary leases. But the
+eviction is silent -- no `coord-lease-denied`, no release -- and it breaks
+the standing "authority is leased, never held" invariant for the current
+holder, whose valid grant dies without any ceremony.
+
+**Close-when criteria:** (1) `acquire` refuses coded `coord-lease-denied`
+when a lease is live at grant time regardless of the new lease's claimed
+`issued_at` (or the manager queues non-overlapping future grants instead
+of evicting the live record); (2) probe `lease-future-issued-preempts`
+flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+
+## F368: invocation_pipeline invoke-time drift digest covers filter names only -- same-name replacement bypasses toolcall-filter-frozen (LOW)
+
+**Cells:** wave-295 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w295_redteam_probes.py` (probes `pipeline-drift-samename`,
+`pipeline-drift-othername`).
+
+**Defect:** `FilterStack.invoke` re-verifies `_stack_digest`, which digests
+`[_filter_name(fn) for fn in filters]` -- function `__name__` strings only.
+A wholesale in-process replacement of `_filters` with same-named functions
+keeps the digest byte-identical, so the drift check passes and the
+replacement filters execute inside the "unavoidable" pipeline (reproduced:
+a same-named evil filter ran and rewrote the result). No SHA-256 preimage
+is needed -- the digest is name-based, not code-based. The class docstring
+claims "even a freeze-bypassing wholesale replacement of `_filters` is
+caught as `toolcall-filter-frozen`"; that claim is falsified by the
+same-name swap (a different-named replacement IS caught, probe
+`pipeline-drift-othername` HELD).
+
+**Severity rationale:** LOW. Requires in-process access, and the module's
+honest boundary already says filters are trusted in-process code -- but the
+drift check exists precisely to catch in-process replacement (the
+CompiledToolPolicy pattern), and its documented guarantee does not hold.
+The practical effect is limited to weakening a defense-in-depth tripwire,
+not granting a new privilege.
+
+**Close-when criteria:** (1) the invoke-time drift digest covers filter
+code identity (e.g. a stable fingerprint of each filter's code object),
+so a wholesale `_filters` replacement with same-named functions refuses
+coded `toolcall-filter-frozen`, while the unchanged stack's digest stays
+stable across invocations; (2) probe `pipeline-drift-samename` flips to
+HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+
+## F369: invocation_pipeline.audit_log() returns shallow copies aliasing the stored records (LOW)
+
+**Cells:** wave-295 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w295_redteam_probes.py` (probe `pipeline-audit-aliasing`).
+
+**Defect:** `FilterStack.audit_log` promises "copies of the signed per-call
+records" but returns `[dict(entry) for entry in log]` -- a shallow copy.
+The nested `record` dict is shared with the stored entry: mutating the
+returned `record` (e.g. flipping `outcome`) rewrites what subsequent
+`audit_log()` calls return (reproduced). Any signature verification over
+the tampered record would fail (detectable), and reaching the seam already
+requires in-process access, so this is an API-hygiene defect, not a
+forgery primitive -- but the documented "copies" promise is false.
+
+**Severity rationale:** LOW. In-process only; tampering is detectable via
+the record signature. The defect is the violated copy contract on an
+accountability seam.
+
+**Close-when criteria:** (1) `audit_log()` returns deep copies -- mutating
+the returned record (including nested dicts) does not affect subsequent
+`audit_log()` results; (2) probe `pipeline-audit-aliasing` flips to HELD;
+(3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+
+## F370: tool_schemas call-time validation never name-checks dict keys nested in arg values -- credential-named keys pass both gates (LOW)
+
+**Cells:** wave-295 independent red-team, 2026-10-02. Standing regression pins:
+`evals/w295_redteam_probes.py` (probes `schema-nested-credkey-1`,
+`schema-nested-credkey-2`).
+
+**Defect:** the credential-field gate runs at COMPILE time on declared
+field names only; the call-time gate checks string VALUES against
+secret SHAPES only. Dict keys nested inside arg values are never
+name-checked: `{"config": {"password": "hunter2"}}` and the two-level
+`{"config": {"db": {"secret": "hunter2"}}}` both validate clean (the
+values are not secret-shaped, the keys are never inspected), so a
+credential travels as a tool argument past both gates. Top-level args are
+safe (undeclared args refuse), but any declared dict field is an
+uninspected smuggling channel. This is the seam the wave-295 brief
+explicitly named ("nested 'secret' two levels deep").
+
+**Severity rationale:** LOW. The value still has to be a non-shape
+plaintext credential (shape-based values are already refused); defeating
+the gate grants no privilege, only passage for the "credentials never as
+tool arguments" tripwire. But the design rule is explicit -- credentials
+travel in typed execution context, never in the call schema -- and the
+dict-value channel is entirely uninspected.
+
+**Close-when criteria:** (1) call-time dict validation refuses coded
+(`toolcall-secret-in-args` or a new code) when any nested dict key
+normalizes to a credential token under the module's existing
+normalization; (2) probes `schema-nested-credkey-1` and
+`schema-nested-credkey-2` flip to HELD; (3) adjacent batteries stay green.
+
+**Documented residuals (probed, NOT filed):** leetspeak field names
+(`passw0rd` compiles -- the token list is documented as bounded; closing
+it is an unbounded arms race, same class as F365's base64-PEM residual);
+secret-shaped author-declared DEFAULTS are injected without the call-time
+secret check (`for_default=True` skips it) -- the schema author is
+trusted, so this is author misuse, not an attacker primitive.
+
+**Status: OPEN** (filed 2026-10-02, wave-295 independent red-team).
+
+## Renumber map (wave-293 merge)
+- Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).
+- Independent red team (L4) filed its own F361 at ~19:57 UTC — renumbered to F364 (LOW, OPEN: revocation-demand coverage gap in verify_provenance).
+- F360 CLOSED by L1; F361-F363 CLOSED by L6.
+Next free finding: **F371**. **Open findings: F367, F368, F369, F370.** (F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
-closed 2026-10-02, wave-294 lane 1)
+closed 2026-10-02, wave-294 lane 1; F367/F368/F369/F370 filed 2026-10-02,
+wave-295 independent red-team, OPEN)
 
 ## Renumber map (wave-293 merge)
 - Sweep lane (L6) filed F361-F363 at ~19:53 UTC — keeps the numbers (earliest-filed, wave-272 rule).
