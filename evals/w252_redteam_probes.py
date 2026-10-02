@@ -49,7 +49,7 @@ from gov.decision_log import (  # noqa: E402
 )
 from gov.policy import PolicyEngine  # noqa: E402
 
-TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _PROBES = []
 

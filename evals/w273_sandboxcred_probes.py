@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from gov import sandbox as sb  # noqa: E402
 from gov import sentinel_substitution as sent  # noqa: E402
 
-TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 IMPL = os.environ.get("SANDBOXCRED_IMPL", "real")
 
