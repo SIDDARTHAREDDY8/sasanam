@@ -3997,6 +3997,51 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'coord-state-bound': {
+        "domain": 'coord-state',
+        "code": 'coord-state-bound',
+        "human": 'coord-state: DAG bound exceeded -- more than 1024 '
+                 'changes, payload over 4096 bytes, change depth over '
+                 '256, too many parents, or an oversized string value; '
+                 'refused fail-closed at ingest -- the DAG cannot grow '
+                 'without limit',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-state-forgery': {
+        "domain": 'coord-state',
+        "code": 'coord-state-forgery',
+        "human": 'coord-state: change signature does not verify under '
+                 'the claimed author key -- a fork with a forged '
+                 'signature is refused, never merged',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-state-invalid': {
+        "domain": 'coord-state',
+        "code": 'coord-state-invalid',
+        "human": 'coord-state: malformed change or call -- bad actor '
+                 'id/key grammar, non-positive or gapped seq, unsigned '
+                 'or tampered change, unknown author key, or circular '
+                 'structure; every refusal carries a coded decision, '
+                 'never a bare traceback -- refused fail-closed at the '
+                 'seam',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'coord-state-overwrite': {
+        "domain": 'coord-state',
+        "code": 'coord-state-overwrite',
+        "human": 'coord-state: seq slot already holds a different signed '
+                 'change -- overwriting a signed change is refused; '
+                 'shared state merges, never overwrites',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'corpus-expired': {
         "domain": 'corpus',
         "code": 'corpus-expired',
