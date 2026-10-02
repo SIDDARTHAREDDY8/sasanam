@@ -1108,8 +1108,12 @@ class ToolExecutor:
                  # component_id)} wins for attribution;
                  # discovery_mcp_map={server_id: (scope, agent_host,
                  # component_id)} attributes the mcp_server framing
-                 # kwarg; discovery_observe_one(tool_name) is the
-                 # deployment's sandboxed change-time observation.
+                 # kwarg; discovery_observe_one(tool_key) is the
+                 # deployment's sandboxed change-time observation and
+                 # receives the FULL 4-part tool key (scope,
+                 # agent_host, component_id, tool_name) -- F315: the
+                 # re-observation binds to the pinned identity, never
+                 # the name alone.
                  # discovery_pin_path optionally names the JSON pin
                  # file (existing but corrupt refuses construction
                  # LOUD; stored pins merge into the live registry at

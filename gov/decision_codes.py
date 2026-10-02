@@ -4921,6 +4921,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'discovery-emit-failed': {
+        "domain": 'discovery-scan',
+        "code": 'discovery-emit-failed',
+        "human": 'the audit sink refused a discovery drift/re-pin event '
+                 'after a bounded retry; the event is in the in-memory '
+                 'drift list only -- the registry fails LOUD rather than '
+                 'letting drift go unaudited (F313)',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'discovery-identity-mismatch': {
         "domain": 'mcp-discovery',
         "code": 'discovery-identity-mismatch',
@@ -5305,6 +5316,16 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'envelope-aad-mismatch': {
+        "domain": 'envelope',
+        "code": 'envelope-aad-mismatch',
+        "human": 'encrypted bundle envelope: the bundle digest or bundle id '
+                 'does not match the envelope\'s authenticated binding '
+                 '(bundle-swapping attempt); refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'envelope-bad-header': {
         "domain": 'envelope',
         "code": 'envelope-bad-header',
@@ -5318,6 +5339,28 @@ TAXONOMY = {
         "code": 'envelope-bad-sample',
         "human": 'battery evidence envelope: a sample record is malformed (unknown oracle, bad verdict vocabulary, or broken chain link); the envelope is refused',
         "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-custody-unavailable': {
+        "domain": 'envelope',
+        "code": 'envelope-custody-unavailable',
+        "human": 'encrypted bundle envelope: a custody recipient has no '
+                 'wrap/unwrap provider configured (the KMS/Vault seam is '
+                 'undeployed); refused fail-closed rather than silently '
+                 'skipping the recipient',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-mac-failed': {
+        "domain": 'envelope',
+        "code": 'envelope-mac-failed',
+        "human": 'encrypted bundle envelope: the encrypt-then-MAC tag or '
+                 'the envelope header MAC does not verify (tampered '
+                 'ciphertext, tag, or header); the plaintext is never '
+                 'returned unverified',
+        "severity": 'high',
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
@@ -5352,6 +5395,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'envelope-recipient-unknown': {
+        "domain": 'envelope',
+        "code": 'envelope-recipient-unknown',
+        "human": 'encrypted bundle envelope: the envelope carries no key '
+                 'wrap for the requesting recipient id; only listed '
+                 'recipients may unwrap -- refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-rekey-refused': {
+        "domain": 'envelope',
+        "code": 'envelope-rekey-refused',
+        "human": 'encrypted bundle envelope: the re-keying ceremony '
+                 '(rotate/updatekeys) was attempted by a party that cannot '
+                 'open the current envelope; refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'envelope-sample-too-large': {
         "domain": 'envelope',
         "code": 'envelope-sample-too-large',
@@ -5369,11 +5432,32 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'envelope-signature-invalid': {
+        "domain": 'envelope',
+        "code": 'envelope-signature-invalid',
+        "human": 'encrypted bundle envelope: no authorship signature '
+                 'verifies under a trusted sealer key (unsigned envelope '
+                 'or unknown signer); a MAC proves integrity, not '
+                 'authorship -- refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'envelope-too-many-samples': {
         "domain": 'envelope',
         "code": 'envelope-too-many-samples',
         "human": 'battery evidence envelope: the run declares more samples than the envelope budget allows; the envelope is refused',
         "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'envelope-unwrap-failed': {
+        "domain": 'envelope',
+        "code": 'envelope-unwrap-failed',
+        "human": 'encrypted bundle envelope: the per-recipient data-key '
+                 'unwrap failed (wrong key, tampered wrap, or provider '
+                 'failure); refused without revealing which check failed',
+        "severity": 'high',
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
@@ -6699,6 +6783,73 @@ TAXONOMY = {
         "human": 'approval and delegation: the grant has been revoked',
         "severity": 'medium',
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-ambiguous-link': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-ambiguous-link',
+        "human": 'guac evidence graph: an identity selector matched more '
+                 'than one node; refused fail-closed rather than guessing '
+                 '(GUAC-pattern corroboration graph)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-bad-spec': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-bad-spec',
+        "human": 'guac evidence graph: a query Spec named an unknown field '
+                 'or edge kind; refused fail-closed (no raw query language)',
+        "severity": 'low',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-claim-conflict': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-claim-conflict',
+        "human": 'guac evidence graph: quorum disagreement on a subject '
+                 '(both CertifyBad and CertifyGood verified); the graph '
+                 'never picks a side, blast radius refuses the subject',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-envelope-refused': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-envelope-refused',
+        "human": 'guac evidence graph: a DSSE claim envelope failed strict '
+                 'parse, signature threshold, payload-type binding, or '
+                 'actor/signer binding at ingest; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-malformed': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-malformed',
+        "human": 'guac evidence graph: malformed node, edge, or claim '
+                 'input; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-overflow': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-overflow',
+        "human": 'guac evidence graph: a node, edge, or claim add would '
+                 'exceed the configured cap; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
+        "reverify_steps": ['recompute'],
+    },
+    'guac-graph-unlinked': {
+        "domain": 'guac-graph',
+        "code": 'guac-graph-unlinked',
+        "human": 'guac evidence graph: an edge or query referenced a node '
+                 'not in the graph; refused fail-closed rather than '
+                 'leaving a dangling reference',
+        "severity": 'medium',
+        "evidence_kinds_required": ['evidence'],
         "reverify_steps": ['recompute'],
     },
     'guardplugin-bad-hook': {
@@ -8081,6 +8232,86 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'keyset-bad-template': {
+        "domain": 'kms',
+        "code": 'keyset-bad-template',
+        "human": 'kms master-key keyset: unknown or versionless key '
+                 'template (templates bind the primitive choice to a '
+                 'version; undeclared primitives are refused)',
+        "severity": 'low',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-ceremony-incomplete': {
+        "domain": 'kms',
+        "code": 'keyset-ceremony-incomplete',
+        "human": 'kms master-key keyset: rotation ceremony refused -- a '
+                 'ceremony is already in progress, the phase does not '
+                 'permit the step (e.g. promote before roll-out '
+                 'verification), or there is no ceremony to abandon',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-duplicate-key': {
+        "domain": 'kms',
+        "code": 'keyset-duplicate-key',
+        "human": 'kms master-key keyset: duplicate key id refused at '
+                 'declaration or parse time (no shadowing, no silent '
+                 'override)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-key-destroyed': {
+        "domain": 'kms',
+        "code": 'keyset-key-destroyed',
+        "human": 'kms master-key keyset: operation refused -- the key is '
+                 'DESTROYED (terminal; refuses wrap, unwrap, and every '
+                 'further transition)',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-key-disabled': {
+        "domain": 'kms',
+        "code": 'keyset-key-disabled',
+        "human": 'kms master-key keyset: operation refused -- the key is '
+                 'DISABLED (no new wraps; old records still verify)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-primary-not-enabled': {
+        "domain": 'kms',
+        "code": 'keyset-primary-not-enabled',
+        "human": 'kms master-key keyset: the designated primary is not '
+                 'enabled, or an operation would leave the keyset without '
+                 'an enabled primary (destroy/disable the primary without '
+                 'a promoted successor)',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-unknown-key': {
+        "domain": 'kms',
+        "code": 'keyset-unknown-key',
+        "human": 'kms master-key keyset: unknown key id (or malformed '
+                 'keyset document); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keyset-verify-failed': {
+        "domain": 'kms',
+        "code": 'keyset-verify-failed',
+        "human": 'kms master-key keyset: verification failed -- digest '
+                 'mismatch on the keyset document, broken audit chain, or '
+                 'exhausted roll-out verification window',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'kid-ambiguity': {
         "domain": 'agent_card',
         "code": 'kid-ambiguity',
@@ -8326,6 +8557,47 @@ TAXONOMY = {
         "human": 'version manifest: refused by policy',
         "severity": 'medium',
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'manifest-selection-invalid': {
+        "domain": 'manifest',
+        "code": 'manifest-selection-invalid',
+        "human": 'attack manifest: a -tc selection expression failed to '
+                 'parse or named an unknown field; refused fail-closed '
+                 '(never silently select everything or nothing)',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'manifest-signature-invalid': {
+        "domain": 'manifest',
+        "code": 'manifest-signature-invalid',
+        "human": 'attack manifest: an Ed25519 template signature failed '
+                 'verification (tampered body, wrong key, or bad envelope); '
+                 'refused before any matcher evaluated',
+        "severity": 'high',
+        "evidence_kinds_required": ['signature', 'message', 'key'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'manifest-template-malformed': {
+        "domain": 'manifest',
+        "code": 'manifest-template-malformed',
+        "human": 'attack manifest: a template failed schema validation '
+                 '(bad id/version, unknown severity, bad matcher or '
+                 'extractor shape); refused at load, never at run',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'manifest-template-unsigned': {
+        "domain": 'manifest',
+        "code": 'manifest-template-unsigned',
+        "human": 'attack manifest: an unsigned template was aimed at a '
+                 'production trust target without a recorded explicit '
+                 'opt-out; refused (unsigned templates run only against '
+                 'isolated fixtures)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'mapping-drift': {
@@ -11000,6 +11272,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'recipient-policy-invalid': {
+        "domain": 'envelope',
+        "code": 'recipient-policy-invalid',
+        "human": 'encrypted bundle envelope: the recipient policy is '
+                 'invalid (bad public key, unknown recipient type, '
+                 'duplicate ids, or empty recipient list); the policy is '
+                 'the auditable key config -- refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'recompute-absent-refusal-no-coverage': {
         "domain": 'recompute',
         "code": 'recompute-absent-refusal-no-coverage',
@@ -11776,6 +12059,68 @@ TAXONOMY = {
                  'remaining defense-in-depth limits only',
         "severity": 'low',
         "evidence_kinds_required": ['assessment'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-drift': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-drift',
+        "human": 'sandbox: the live sandbox-policy document differs from '
+                 'its committed pin (any diff, including subset/superset '
+                 'changes, is a drift); refused fail-closed -- a sandbox '
+                 'never runs under a changed policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-host-mismatch': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-host-mismatch',
+        "human": 'sandbox: the sandbox policy declares isolation '
+                 'requirements (namespaces) the host/executor cannot '
+                 'enforce; refused fail-closed rather than running '
+                 'degraded under a stronger declaration',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-invalid': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-invalid',
+        "human": 'sandbox: the sandbox-policy document or syscall rule is '
+                 'malformed (unknown field, bad grammar, pin-store '
+                 'corruption); refused at compile time, fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-kill': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-kill',
+        "human": 'sandbox: the compiled syscall policy killed a syscall '
+                 'decision; emitted as a digest-bound audit event per '
+                 'execution',
+        "severity": 'low',
+        "evidence_kinds_required": ['signal'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-no-default': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-no-default',
+        "human": 'sandbox: the syscall policy declares no explicit DEFAULT '
+                 'action; fail-closed by construction (no DEFAULT -> KILL) '
+                 '-- refused at compile time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'sandbox-policy-unpinned': {
+        "domain": 'sandbox',
+        "code": 'sandbox-policy-unpinned',
+        "human": 'sandbox: execution was attempted under a sandbox policy '
+                 'with no committed pin; refused fail-closed -- sandboxes '
+                 'run only under pinned, reviewable policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
         "reverify_steps": ['recompute'],
     },
     'sandbox-real-credential-blocked': {

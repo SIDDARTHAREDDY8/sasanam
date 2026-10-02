@@ -130,6 +130,17 @@ class DiscoveryResultMalformed(DiscoveryScanError):
     code = "discovery-result-malformed"
 
 
+class DiscoveryEmitFailed(DiscoveryScanError):
+    """An audit event (drift/re-pin) could not be emitted to the sink.
+
+    F313: the drift event is chained into the HMAC log by the
+    deployment's sink; a dead sink must never read as "no drift".
+    Bounded retry, then LOUD fail-closed -- never silent.
+    """
+
+    code = "discovery-emit-failed"
+
+
 def validate_scope(scope):
     """Fail LOUD on a scope outside the closed vocabulary."""
     if scope not in SCOPES:
@@ -191,9 +202,44 @@ def _require_shape(component):
         if not isinstance(d, dict) or not d.get("name"):
             raise DiscoveryResultMalformed(
                 "every definition needs a 'name'")
+        # F314: observation sources are UNTRUSTED by design, and the
+        # pin store joins key parts with "|". A name carrying the
+        # separator (or any non-string/empty name) is rejected LOUD at
+        # the trust boundary -- one hostile name must never be able
+        # to brick RegistryStore.load() for every other pin.
+        name = d.get("name")
+        if not isinstance(name, str) or not name:
+            raise DiscoveryResultMalformed(
+                "definition name must be a non-empty string, got %r"
+                % (type(name).__name__,))
+        if "|" in name:
+            raise DiscoveryResultMalformed(
+                "definition name %r carries the pin-store separator "
+                "'|': rejected at the observation trust boundary"
+                % (name,))
     return {"scope": scope, "agent_host": agent_host,
             "component_type": ctype, "source_path": source_path,
             "component_id": component_id, "definitions": definitions}
+
+
+def _validate_tool_key(tool_key):
+    """Validate a 4-part discovery tool key at the trust boundary.
+
+    F314: every part must be a non-empty string and none may carry
+    the "|" pin-store separator. A hostile part refuses LOUD here
+    instead of corrupting the store for every other pin.
+    """
+    if (not isinstance(tool_key, tuple) or len(tool_key) != 4
+            or not all(isinstance(p, str) and p for p in tool_key)):
+        raise DiscoveryResultMalformed(
+            "tool key must be a 4-tuple of non-empty strings, got %r"
+            % (tool_key,))
+    for part in tool_key:
+        if "|" in part:
+            raise DiscoveryResultMalformed(
+                "tool key part %r carries the pin-store separator '|': "
+                "rejected at the trust boundary" % (part,))
+    return tool_key
 
 
 def discovery_key_for_tool(tool, tool_to_component=None,
@@ -287,7 +333,10 @@ class ToolDefinitionRegistry(object):
     (the sandbox boundary: they run inside the deployment's sandbox,
     never fetched by this registry). ``observe()`` returns an
     iterable of observation dicts (see ``_require_shape``);
-    ``observe_one(tool_name)`` returns one definition dict or None.
+    ``observe_one(tool_key)`` receives the FULL 4-part tool key
+    ``(scope, agent_host, component_id, tool_name)`` (F315: the
+    re-observation binds to the pinned identity, never the name
+    alone) and returns one definition dict or None.
     """
 
     def __init__(self, emit=None):
@@ -314,12 +363,25 @@ class ToolDefinitionRegistry(object):
         self._emit = emit
 
     def _record_event(self, event):
+        # The in-memory list is the local record (survives a dead
+        # sink); the sink chains the event into the HMAC log. F313:
+        # a dead sink is NEVER silent -- one bounded retry, then a
+        # LOUD fail-closed refusal. Callers (check_at_use,
+        # approve_repin) must let this propagate: drift with no audit
+        # trail is a compromise-shaped gap, not a clean bill.
         self._drift_events.append(event)
         if self._emit is not None:
-            try:
-                self._emit(event)
-            except Exception:  # noqa: BLE001 - emit must never break scan
-                pass
+            for _ in range(2):
+                try:
+                    self._emit(event)
+                except Exception:  # noqa: BLE001 - bounded retry, then loud
+                    continue
+                return
+            raise DiscoveryEmitFailed(
+                "discovery-emit-failed: audit sink refused the %r event "
+                "after a retry; the event is in the in-memory drift list "
+                "only and the registry refuses to proceed silently"
+                % (event.get("event"),))
 
     @staticmethod
     def _digest_event(kind, key, before, after):
@@ -494,10 +556,19 @@ class ToolDefinitionRegistry(object):
         compares against the pin. Returns ``(ok, code, detail)``;
         ``ok=False`` means the executor must DENY fail-closed.
 
+        F315: ``observe_one`` receives the FULL 4-part ``tool_key``
+        (scope, agent_host, component_id, tool_name), never the name
+        alone -- the re-observation binds to the same identity the
+        pin was taken under, so a same-name shadow cannot substitute
+        a different component's definition. An observed definition
+        whose ``name`` does not match the key's tool name refuses
+        LOUD (identity mismatch).
+
         An unobservable tool (``observe_one`` returns None or raises)
         fails CLOSED (``discovery-result-malformed``): a watcher
         failure never reads as clean (the skill_watch precedent).
         """
+        _validate_tool_key(tool_key)
         if tool_key in self._quarantine:
             code = ("discovery-definition-drift"
                     if tool_key in self._pins
@@ -511,7 +582,7 @@ class ToolDefinitionRegistry(object):
                     "tool %r has no definition pin (first sighting "
                     "held fail-closed)" % (tool_key[3],))
         try:
-            current = observe_one(tool_key[3])
+            current = observe_one(tool_key)
         except Exception as e:  # noqa: BLE001 - fail closed, loud
             current = None
             # Type name only: the observer's exception text could
@@ -527,6 +598,15 @@ class ToolDefinitionRegistry(object):
                     "fail-closed" % (tool_key[3],
                                      (" (%s)" % _obs_err)
                                      if _obs_err else ""))
+        if current.get("name") != tool_key[3]:
+            # F315: the observer served a definition for a DIFFERENT
+            # tool name than the pinned identity -- a same-name
+            # shadow. Quarantine and refuse LOUD.
+            self._quarantine.add(tool_key)
+            return (False, "discovery-result-malformed",
+                    "tool %r identity mismatch at use time: observed "
+                    "definition names %r; held fail-closed"
+                    % (tool_key[3], current.get("name")))
         digest = definition_digest(current)
         if digest != self._pins[tool_key]:
             self._quarantine.add(tool_key)
@@ -543,6 +623,7 @@ class ToolDefinitionRegistry(object):
 
     def request_repin(self, tool_key):
         """Open a governed re-pin request for a quarantined tool."""
+        _validate_tool_key(tool_key)
         if tool_key not in self._quarantine:
             raise DiscoveryScanError(
                 "discovery-result-malformed: re-pin requested for "
@@ -557,12 +638,18 @@ class ToolDefinitionRegistry(object):
         bait-and-switch protection). A mismatch refuses and the hold
         stands. On success the pin updates and the hold lifts.
 
+        F315: ``observe_one`` receives the FULL 4-part ``tool_key``,
+        and the fresh observation's ``name`` must match the key's
+        tool name -- a same-name shadow serving a different
+        component's definition refuses LOUD (identity mismatch).
+
         In scheduled-scan-only deployments (no executor-level
         ``discovery_observe_one``) the operator supplies a one-shot
         ``observe_one`` here: the re-pin still binds to a fresh
         observation, so ``observe_one=None`` always refuses -- the
         bait-and-switch protection is never waived.
         """
+        _validate_tool_key(tool_key)
         if tool_key not in self._pending_repin:
             raise DiscoveryScanError(
                 "discovery-result-malformed: no pending re-pin "
@@ -574,16 +661,17 @@ class ToolDefinitionRegistry(object):
         fresh = None
         if observe_one is not None:
             try:
-                fresh = observe_one(tool_key[3])
+                fresh = observe_one(tool_key)
             except Exception:  # noqa: BLE001 - unobservable: refuse
                 fresh = None
         if (not isinstance(fresh, dict) or not fresh.get("name")
+                or fresh.get("name") != tool_key[3]
                 or definition_digest(fresh) != new_digest):
             raise DiscoveryScanError(
                 "discovery-result-malformed: re-pin for tool %r "
                 "refused: new_digest does not match the freshly "
-                "observed definition (bait-and-switch protection)"
-                % (tool_key[3],))
+                "observed definition for the pinned identity "
+                "(bait-and-switch protection)" % (tool_key[3],))
         self._pins[tool_key] = new_digest
         self._quarantine.discard(tool_key)
         del self._pending_repin[tool_key]

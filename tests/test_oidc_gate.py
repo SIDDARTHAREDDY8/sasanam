@@ -37,7 +37,7 @@ FIXTURE_SEED = bytes([0xA0]) * 32
 FIXTURE_PUB = ed.publickey(FIXTURE_SEED)
 
 # Wave-272 merge pin: 1411 (wave-271 merge) + 32 new codes = 1443.
-LANE_PIN = 1587  # Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
+LANE_PIN = 1621  # Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 
 def _b64u(b):

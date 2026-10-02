@@ -435,6 +435,32 @@ ALLOWED_HMAC_SITES = {
     # enforcement denials.
     ("gov/approval_discipline.py", "_silence_mac", 0):
         "silence seal MAC; deployment-owned key (explicit pass, >=16B)",
+    # gov/bundle_envelope.py (wave-284 lane 6, sops-pattern STEAL): the
+    # evidence-bundle envelope AEAD. Keys are EPHEMERAL and never
+    # persisted: a fresh random 256-bit data key per sealed bundle
+    # (secrets.token_bytes; 32 bytes enforced at the aead seam), and
+    # per-recipient wrap keys derived via X25519 ephemeral-static ECDH
+    # + HKDF-SHA256 from an ephemeral shared secret that lives in
+    # memory only during wrap/unwrap. The sealing host is the trust
+    # boundary (module docstring: NOT AES-GCM, pure-Python, ladder not
+    # constant-time). Every HMAC use is domain-separated under the
+    # module _DOMAIN ("ctr\x00" stream vs "tag\x00" EtM tag vs
+    # "header-mac\x00"); nonces are 192-bit random, never
+    # caller-supplied. Custody story per site:
+    ("gov/bundle_envelope.py", "_hkdf_extract", 0):
+        "HKDF-Extract; key = per-wrap random aad_salt, msg = ephemeral ECDH shared secret (memory-only)",
+    ("gov/bundle_envelope.py", "_hkdf_expand", 0):
+        "HKDF-Expand; key = PRK from _hkdf_extract (ephemeral, per wrap)",
+    ("gov/bundle_envelope.py", "_xor_stream", 0):
+        "HMAC-CTR stream cipher; key = per-bundle fresh 256-bit data key",
+    ("gov/bundle_envelope.py", "aead_seal", 0):
+        "EtM tag; key = 32-byte data key (enforced) or ECDH-derived wrap key",
+    ("gov/bundle_envelope.py", "aead_open", 0):
+        "EtM tag verification (compare_digest, before decrypt); key = data/wrap key as sealed",
+    ("gov/bundle_envelope.py", "_seal_with_key", 0):
+        "envelope header MAC at seal; key = per-bundle fresh data key",
+    ("gov/bundle_envelope.py", "open_envelope", 0):
+        "envelope header MAC re-verification; key = unwrapped data key (refuses on mismatch)",
 }
 
 

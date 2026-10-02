@@ -562,6 +562,14 @@ def _seal_rows(manifest, rows, envelope_path):
 ATOMIC_MANIFEST_FORMAT = "sasanam-atomic-manifest/1"
 ATOMIC_ARG_TYPES = ("str", "int", "float", "bool", "enum")
 
+#: Non-forgeable normalization marker for atomic specs. ``object()``
+#: identity cannot be forged by a plain caller dict: only
+#: ``validate_atomic_spec`` (in this module) holds a reference. A
+#: forged ``_atomic_normalized`` key falls through to full
+#: re-validation and is refused LOUD as ``atomic-spec-invalid``.
+#: (F312: the old ``True`` marker was forgeable by any caller.)
+_NORMALIZED = object()
+
 _GUID_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -860,12 +868,11 @@ def validate_atomic_spec(spec):
     }
     norm["guid"] = guid or hashlib.sha256(
         _canonical(_atomic_serializable(norm))).hexdigest()
-    # Normalization marker: set ONLY here. _ensure_atomic_spec trusts a
-    # dict as already-normalized iff it carries this marker -- a raw dict
-    # that merely contains a "guid" key is still schema-gated. (Guard
-    # against programmer error, not a trust boundary: a caller can forge
-    # the marker, but only by reaching into this module's privates.)
-    norm["_atomic_normalized"] = True
+    # Normalization marker: set ONLY here as the module-private
+    # _NORMALIZED sentinel (identity, not equality). A forged plain
+    # dict key can never be the sentinel, so _ensure_atomic_spec
+    # falls through to full validation and refuses LOUD (F312).
+    norm["_atomic_normalized"] = _NORMALIZED
     return norm
 
 
@@ -896,8 +903,17 @@ def _check_arg_value(aname, atype, choices, value, role,
 
 
 def _ensure_atomic_spec(spec):
-    if isinstance(spec, dict) and spec.get("_atomic_normalized") is True:
-        return spec
+    if isinstance(spec, dict):
+        marker = spec.get("_atomic_normalized")
+        if marker is _NORMALIZED:
+            return spec
+        if "_atomic_normalized" in spec:
+            # F312: a forged marker (anything that is not the
+            # module-private sentinel) is a programmer error that
+            # skips schema validation -- refuse LOUD, never trust it.
+            _atomic_refuse("atomic-spec-invalid",
+                           "forged _atomic_normalized marker: spec must "
+                           "pass validate_atomic_spec")
     return validate_atomic_spec(spec)
 
 

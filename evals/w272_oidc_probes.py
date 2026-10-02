@@ -46,7 +46,7 @@ from gov import kms as kms_mod  # noqa: E402
 from gov.decision_codes import TAXONOMY  # noqa: E402
 
 # Wave-272 merge pin: 1411 (wave-271 merge) + 32 new codes = 1443.
-TAXONOMY_PIN = 1587  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
+TAXONOMY_PIN = 1621  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 OIDC_IMPL = os.environ.get("OIDC_IMPL", "real")
 

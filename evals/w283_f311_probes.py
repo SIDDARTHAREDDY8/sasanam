@@ -52,7 +52,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1587  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).
+TAXONOMY_PIN = 1621  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _results = []
 
@@ -78,7 +78,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1587/1587/0 sorted")
+    _record("pin-taxonomy", "HELD", "1588/1588/0 sorted")
 
 
 # Synthetic credential-shaped fixture (same shape as the red team's;

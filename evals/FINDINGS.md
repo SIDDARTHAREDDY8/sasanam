@@ -7779,7 +7779,7 @@ Next free finding: **F312**. **Open findings: none.** (F311 filed 2026-10-02, wa
 
 **Close-when criteria:** (1) `_ensure_atomic_spec` no longer trusts the public marker alone -- either validate every dict through `validate_atomic_spec` (marker deleted after normalization) or scope the marker so a forged one cannot skip the gate; (2) probe `atomic-forged-marker` flips to HELD; (3) adjacent batteries (`evals/w280_batterylang_probes.py`, atomic suites) stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-283 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-284 lane 1). **Closure record:** forged `_atomic_normalized` marker now refused LOUD with coded `atomic-spec-invalid` (module-private identity sentinel; `w284_f312_315_probes.py` f312-forged-marker HELD, f312-valid-spec-runs HELD; `w283_redteam` atomic-forged-marker re-verified HELD)
 
 ## F313: Failing audit emit silently drops drift events (audit gap) (LOW)
 
@@ -7793,7 +7793,7 @@ Next free finding: **F312**. **Open findings: none.** (F311 filed 2026-10-02, wa
 
 **Close-when criteria:** (1) a failing emit on a drift/unregistered/re-pin event is never silent -- either the event is durably queued (survives restart) for retry, or the failure is loud (coded refusal/marker) rather than `pass`; (2) probe `discovery-emit-failure-drops-event` flips to HELD; (3) adjacent batteries (`evals/w282_agentscan_probes.py`) stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-283 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-284 lane 1). **Closure record:** dead audit sink now fails LOUD with coded `discovery-emit-failed` after one bounded retry (new decision code, taxonomy pin 1587 -> 1588); event kept in the in-memory drift list; `w284_f312_315_probes.py` f313 probes HELD; `w283_redteam` discovery-emit-failure-drops-event re-verified HELD
 
 ## F314: Untrusted `|` in a tool name permanently bricks the pin store (LOW)
 
@@ -7807,7 +7807,7 @@ Next free finding: **F312**. **Open findings: none.** (F311 filed 2026-10-02, wa
 
 **Close-when criteria:** (1) tool/agent_host/component names containing `|` are refused (or escaped) at the observation boundary, or the store serialization is injection-proof; (2) probe `discovery-pipe-in-name-bricks-store` flips to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-283 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-284 lane 1). **Closure record:** `|` in observed definition names refused LOUD at the observation trust boundary (`_require_shape`), and tool-key parts validated in `check_at_use`/`request_repin`/`approve_repin`; the pin store can no longer be bricked by hostile input; probes HELD; `w283_redteam` discovery-pipe-in-name-bricks-store re-verified HELD
 
 ## F315: Re-pin binds to the fresh observation by tool NAME only; a same-name shadow lifts the wrong hold (LOW)
 
@@ -7821,6 +7821,132 @@ Next free finding: **F312**. **Open findings: none.** (F311 filed 2026-10-02, wa
 
 **Close-when criteria:** (1) the re-observation binds to the full tool identity -- `observe_one` receives the 4-part key (or the name plus component attribution), or `approve_repin` refuses when the fresh observation's provenance is ambiguous; (2) probe `discovery-repin-binds-by-name-only` flips to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-283 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-284 lane 1). **Closure record:** `observe_one` now receives the FULL 4-part tool key (contract change, in-repo call sites updated); observed-definition name must match the pinned identity (identity-mismatch refuses LOUD); probes HELD; `w283_redteam` discovery-repin-binds-by-name-only re-verified HELD
 
-Next free finding: **F316**. **Open findings: F312, F313, F314, F315.** (F311 filed 2026-10-02, wave-282 independent red-team (GuardChain transform/deny/PluginDeny evidence echoes credential-shaped plugin details; same defect class as F306/F310, different emission site), closed 2026-10-02, wave-283 lane 1; F312 filed 2026-10-02, wave-283 independent red-team (forged _atomic_normalized marker skips atomic schema validation; bare KeyError escapes), OPEN; F313 filed 2026-10-02, wave-283 independent red-team (failing audit emit silently drops discovery drift events), OPEN; F314 filed 2026-10-02, wave-283 independent red-team (untrusted | in tool name bricks the pin store), OPEN; F315 filed 2026-10-02, wave-283 independent red-team (re-pin binds by tool name only; same-name shadow lifts the wrong hold), OPEN; F310 filed 2026-10-02, wave-281 independent red-team as F309 (shield-detail echo into guardrail-run audit records; same defect class as F306, different emission site), renumbered F309->F310 at the wave-281 merge - lane 8 filed F309 first at 03:58:25 UTC, red-team at 04:03:59 UTC, per the wave-272 earliest-filed rule; the red-team's F310 (stale manifest) is a duplicate of lane 8's F309 and is not a separate finding; closed 2026-10-02, wave-282 lane 1; F306 filed 2026-10-02, wave-280 red-team (triad guard-record secret echo), closed 2026-10-02, wave-281 lane 1; F307 filed 2026-10-02, wave-280 red-team (provenance plan-trace omission), closed 2026-10-02, wave-281 lane 2; F308 filed as F306 and closed 2026-10-02, wave-280 lane 3 (single-use lease cross-process replay: accepted stated boundary, documented; renumbered F306->F308 at the wave-280 merge - the wave-280 red-team lane filed F306 first at 03:08:56 UTC, lane 3 at 03:16:30 UTC); (F302 filed 2026-10-02, wave-279 lane 2, closed 2026-10-02, wave-279 lane 2; F300 closed 2026-10-02, wave-279 lane 1; F304 filed 2026-10-02, wave-279 red-team (renumbered from F302 at the wave-279 merge: sealer lane filed F302 first at 02:34:19 UTC and keeps the number per the wave-272 earliest-filed rule), closed 2026-10-02, wave-280 lane 1; F305 filed 2026-10-02, wave-279 red-team (renumbered from F303), closed 2026-10-02, wave-280 lane 2; F299 closed 2026-10-02, wave-278 f299 lane; wave-281 merge: taxonomy pin 1541 -> 1563 (+1 provlabel-omitted-driver +5 access-request-* +2 pending-approval-* +4 casbin-* +10 guardplugin-*); F306/F307/F309 closed; F310 OPEN; w281_redteam battery: F310 BREAK expected-open, rest HELD; wave-282 merge: taxonomy pin 1563 -> 1579 (+3 discovery-* +6 atomic-* +4 ratify-* +3 attackpath-*); F310 closed (wave-282 lane 1); F311 OPEN (wave-282 red team); w282_redteam battery: F311 BREAK expected-open, rest HELD; wave-283 red-team: taxonomy pin 1579 unchanged (no new decision codes); F311 re-pinned OPEN (4 BREAK probes); F310 re-pinned CLOSED (2 HELD probes); F312-F315 filed (all LOW); w283_redteam battery: 4 F311 + 4 F312-F315 BREAK expected-open, 19 HELD; wave-283 lane 1: F311 CLOSED (w283_f311 battery 0 BREAK / 13 HELD; w282_redteam F311 probes re-verified HELD (0 BREAK / 29 HELD); w283_redteam F311 probes now HELD); wave-283 merge: taxonomy pin 1579 -> 1587 (+2 finding-* +6 inventory-*); F311 CLOSED; F312-F315 OPEN; w283_redteam battery on the merge: 4 F312-F315 BREAK expected-open, 23 HELD)
+## F316: close_old_findings treats a scan entry missing `reproduced` as closure -- fail-open mitigation with fabricated evidence (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `fl-close-old-missing-reproduced`).
+
+**Defect:** `FindingRegistry.close_old_findings` (`gov/finding_lifecycle.py:378`) reads `result.get("reproduced")`; a scan entry that omits the `reproduced` key (or sets it falsy) falls through to the mitigate path, transitioning an OPEN finding to `mitigated`. The recorded evidence note literally asserts "break-first probe no longer reproduces" with `reproduced: None` -- fabricated closure evidence from malformed input. `_require_closure_evidence` only checks key presence of `battery`/`commit`, so values may be `None`. A buggy or hostile scan feed can silently close real findings (SLA clock stops, metrics drop the finding).
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): missing `reproduced` -> mitigated, confirmed by the battery (OPEN HIGH -> mitigated with the fabricated note); falsifiable: malformed scan entries raising `FindingLifecycleError` (loud) flips the probe to HELD. H2 (alternative, FALSIFIED): absence is a valid "no longer reproduces" signal -- falsified: the lane's own docstring frames the sweep as break-first evidence; an absent verdict is not evidence of anything.
+
+**Severity rationale:** LOW. In-process library; the scan feed is deployment-supplied, so exploitation needs feed influence. Filed because closure is the most consequential transition in the state machine and it happens on malformed input with fabricated evidence.
+
+**Close-when criteria:** (1) a scan entry without an explicit boolean `reproduced` is refused loudly (or recorded as a note, never a closure); (2) probe `fl-close-old-missing-reproduced` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F317: Decode-layer detection evasion -- triple-nested base64 and binary-padded single base64 defeat credential_material_present (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probes `sc-decode-depth-evasion`, `sc-decode-printability-evasion`).
+
+**Defect:** the `secret_canonicalizer` decode contract (the F306 family's detection seam) has two attacker-controllable evasions. (a) `_decode_layers` caps at `MAX_DECODE_DEPTH = 2` (`gov/secret_canonicalizer.py:455,78`): a triple-base64-nested credential shape returns `False` from `credential_material_present` while trivially decoding to a live key. (b) `_try_b64` abandons any candidate whose decode is not >=0.6 printable (`_is_mostly_printable`, line 448): a single-base64-encoded credential padded with binary bytes returns `False`. Both were verified red with the literal key bytes absent from every encoding layer (no vacuous pass). The lane's own battery pins only single-layer decode detection; neither bound is pinned as documented behavior. Defeating detection means credential-shaped bytes cross the F306-family emission funnels undetected.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): triple-b64 of a live key shape evades detection, confirmed by the battery; falsifiable: raising the depth bound or recursing until no more layers flips the probe to HELD. H2 (confirmed): binary-padded single-b64 evades the printability gate, confirmed by the battery; falsifiable: scanning the printable remainder of an abandoned decode flips the probe to HELD. H3 (alternative, FALSIFIED): the depth bound is a documented contract -- falsified: the module docstring presents decode layers as an evasion-semantics feature, and no probe documents the depth-2 bound as intended.
+
+**Severity rationale:** LOW. The evasion needs an attacker who can shape the emitted bytes; the fix is defense-in-depth on the detection seam. Filed because the F306 family funnels route through this seam, so detection evasion is emission-funnel evasion.
+
+**Close-when criteria:** (1) triple-nested and binary-padded encodings of credential shapes are detected (or the bounds are pinned as documented contract with a fail-closed rationale); (2) probes `sc-decode-depth-evasion`, `sc-decode-printability-evasion` flip to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F318: replay_campaign executes unverified evidence -- manual_approve downgraded to always-approve, elevation bit taken from the file (MEDIUM)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `cp-replay-unverified-evidence`).
+
+**Defect:** `replay_campaign` (`gov/campaign.py:741`) re-executes a campaign from an evidence file without ever calling `verify_campaign_records` -- the chain that exists precisely to detect tampering is ignored. A forged JSONL containing only a `campaign-start` line (no valid chain; `verify_campaign_records` returns False on it) was replayed and the step EXECUTED (battery: 1 step ran). Worse, the replay hardcodes `manual_approve=False, approve_fn=lambda name: True` even when the start record says `manual_approve: true` -- the human-approval gate is silently downgraded, leaving only an advisory `replay-note` diff emitted after execution. And `elevation_granted=start.get("elevation_granted", False)` takes the privilege bit from the unverified file. The combination -- unverified chain, approval downgrade, file-controlled elevation -- is a privileged re-execution path with none of the original run's gates.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): forged evidence replays and executes, confirmed by the battery (step ran, elevation bit honored, approval downgraded); falsifiable: verifying the chain before execution and refusing unverified files flips the probe to HELD. H2 (alternative, PARTIALLY TRUE): replay needs the registry, so the caller is already privileged -- accepted as a mitigating caveat: a caller that can invoke replay can also call `run()` directly with elevation. Filed anyway because the replay API is presented as the verification path ("deterministic re-run ... and diffs"), its contract is evidence-integrity, and the silent approval downgrade plus file-controlled elevation are exactly the defects a chain-verifying replay should not have.
+
+**Severity rationale:** MEDIUM. The blast radius is bounded by caller privilege (the registry is caller-supplied), but the defect class -- a verification path that does not verify -- undermines the evidence story the campaign layer sells, and the always-approve downgrade is silent except for an after-the-fact note.
+
+**Close-when criteria:** (1) `replay_campaign` verifies the evidence chain (via `verify_campaign_records`) and refuses unverified files loudly; (2) a `manual_approve: true` start record is never replayed with always-approve (refuse, or re-prompt through a caller-supplied approval); (3) probe `cp-replay-unverified-evidence` flips to HELD; (4) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F319: Campaign evidence is an un-sanitized emission site -- raw credential-shaped args/executor notes land in the campaign JSONL (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `cp-evidence-emission-echo`).
+
+**Defect:** same defect class as F306 (triad), F310 (shields), F311 (GuardChain) -- a new emission site echoing credential-shaped data with no secret scan on the path. `CampaignWriter` writes attacker-influenced free text with no `secret_canonicalizer` call anywhere in `gov/campaign.py`: the campaign-start record carries the FULL `args_map` in plaintext (while steps deliberately use `arg_digest`), the step record carries `executor_note` (raw executor output, `[:400]`), and `parser_note` embeds raw exception text. Battery: after a campaign whose args and executor note contained a synthetic key shape, the evidence file contained the raw bytes twice (the canonicalizer itself flags 1 finding on the file -- the raw bytes are present). The wave-283 merge composed the canonicalizer into every other emission funnel; the campaign evidence path was not wired.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): raw key bytes in the campaign JSONL, confirmed by the battery (bytes present in start + step records); falsifiable: routing start/step records through `sanitize()` (the `guard_plugins.py:439` precedent) flips the probe to HELD. H2 (alternative, FALSIFIED): campaign evidence is not an audit log -- falsified: it is hash-chained, presented as evidence ("genesis-chained JSONL evidence"), and the F306 family promise is that secret bytes do not reach evidence records.
+
+**Severity rationale:** LOW. Same as F311: the exposure is log-shaped credential material, not a decision bypass. The executor/args are deployment-supplied, so the leak needs attacker-influenced tool output or args.
+
+**Close-when criteria:** (1) campaign-start/step records route attacker-influenced free text (`args_map`, `executor_note`, `parser_note`) through the `secret_canonicalizer` seam before writing; (2) probe `cp-evidence-emission-echo` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F320: run_query_pack emits duplicate report entries per query -- second lacks `released`, withdrawals double-counted (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `iq-pack-report-duplication`).
+
+**Defect:** `QueryRegistry.run_query_pack` (`gov/inventory_query.py:589`) appends the per-query report block twice: the first append (lines 659-669) carries `released`; then the withdrawn loop repeats (lines 671-675, double-appending every withdrawal) and a second `qreps.append` (lines 676-687) omits `released`. Battery: one query yields `len(report["queries"]) == 2`; after a withdrawal, entry 1's `withdrawn` contains the identity twice and `released` is `None`. Any scheduler/consumer indexing reports positionally or reading `qrep["released"]` sees corrupt data (releases look still-held on the duplicate entry, withdrawals inflated). Enforcement (hold placement) is unaffected -- this is report integrity, the thing the deployment's scheduler consumes.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): duplicate entries with doubled withdrawals and missing `released`, confirmed by the battery; falsifiable: one entry per query, each carrying `released`, flips the probe to HELD. H2 (alternative, FALSIFIED): consumers can dedupe -- falsified: the dedupe burden is not in any contract, and doubled withdrawals change consumer semantics.
+
+**Severity rationale:** LOW. Report corruption only; holds are placed correctly. Filed because the pack report is the scheduled audit's output surface and silent double-counting corrupts downstream automation.
+
+**Close-when criteria:** (1) `report["queries"]` has exactly one entry per pack query, each carrying `released`, no duplicated withdrawals; (2) probe `iq-pack-report-duplication` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F321: Duplicate identity rows silently shadow in register_table_rows/_extension_rows -- a degenerate provider hides rows (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `iq-identity-collision-shadowing`).
+
+**Defect:** both `register_table_rows` (`gov/inventory_query.py:392`, line ~410) and `_extension_rows` (line 479) key rows by identity with plain dict assignment -- last-write-wins, no error. Battery: seeding `agents` with two rows sharing `agent_id` "a1" keeps only the second, silently. A compromised or degenerate extension provider can hide rows from every query and pack by declaring coarse `identity_columns` (e.g. `("scope",)`) so all rows collapse onto one identity; the pin then binds the attacker-chosen survivor and the dropped rows are invisible to the drift audit. `row_digest`'s pre-seed stripping is correctly closed; identity collision is the remaining shadowing primitive.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): duplicate identities silently collapse, confirmed by the battery (one row visible, no error); falsifiable: duplicate identities raising `InventoryError` (loud) flips the probe to HELD. H2 (alternative, FALSIFIED): seeding is operator action, so collisions are the operator's bug -- falsified: the extension-provider path takes rows from provider code (a plug-in boundary), and fail-closed is the module's own contract for provider misbehavior.
+
+**Severity rationale:** LOW. Needs provider-side control (plug-in boundary) or operator error; the pack audit then binds the wrong survivor. Filed because silent row-shadowing is exactly the shape a supply-chain inventory must refuse.
+
+**Close-when criteria:** (1) duplicate identities within one seed/fetch raise `InventoryError` loudly (or the pack refuses to pin over them); (2) probe `iq-identity-collision-shadowing` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F322: Severity-blind identity dedup -- a HIGH filing dedups onto a pre-seeded LOW canonical and inherits the 3-wave SLA (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `fl-severity-blind-dedup`).
+
+**Defect:** `FindingRegistry.file_finding` (`gov/finding_lifecycle.py:263`) dedups on identity-hash alone and ignores severity: the duplicate branch appends to `filings` and returns the canonical number without comparing severity. Battery: pre-file a LOW with a given (seam, attack_shape, close_when); a later HIGH filing with the same shape returns `kind="duplicate"` on the LOW's number, severity stays `low` -- the HIGH gets a 3-wave SLA instead of 1 and never appears in metrics as high. This is a pre-emption attack on the SLA clock (plant a LOW, downgrade the real HIGH) and also the benign unlucky-parallel-lane case.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): HIGH dedups onto LOW with no severity handling, confirmed by the battery; falsifiable: escalating the canonical severity (or filing separately / raising) flips the probe to HELD. H2 (alternative, FALSIFIED): dedup is about shape, severity is triage's job -- falsified: the registry itself drives the SLA clock from severity, so the registry cannot be severity-blind at the same time.
+
+**Severity rationale:** LOW. Needs a pre-seeded colliding LOW (attacker with registry access or an unlucky parallel lane); the consequence is SLA dilution, not silent closure.
+
+**Close-when criteria:** (1) a filing whose severity differs from the canonical identity escalates the canonical severity, files separately, or raises -- never silently inherits the weaker SLA; (2) probe `fl-severity-blind-dedup` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F323: load_findings_md defaults entries without **Status:** to verified -- legacy OPEN findings silently closed on import (LOW)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `fl-md-import-default-verified`).
+
+**Defect:** `_entry_fields` (`gov/finding_lifecycle.py:452`) sets `status = "verified"` when the entry body has no `**Status:**` marker, despite the `load_findings_md` docstring claiming "nothing is inferred beyond that". Battery: a legacy prose entry with no status marker imports as `verified` (and a `(MEDIUM)` title-end marker still parses severity correctly -- that part holds). `verified` is SLA-excluded (`_SLA_EXCLUDED`) and metrics-excluded, so a legacy OPEN finding lacking the marker is silently closed on import: no evidence, no transition, no SLA. The import path is the registry's onboarding ramp for the whole prose history.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): marker-less entry imports as verified, confirmed by the battery; falsifiable: defaulting to `open`/`under_review` (loud triage) flips the probe to HELD. H2 (alternative, FALSIFIED): the prose history always has markers -- falsified: the heuristic is advertised for legacy prose, which by definition may not follow the current convention.
+
+**Severity rationale:** LOW. Import-time only; the consequence is silent closure of legacy findings in the registry's view.
+
+**Close-when criteria:** (1) entries without an explicit status marker import as `open` or `under_review` (never `verified`), or are flagged for human triage; (2) probe `fl-md-import-default-verified` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+## F324: produces on="always" fires on ERROR verdicts -- campaign closes objectives-met with zero real execution (MEDIUM)
+
+**Cells:** wave-284 independent red-team, 2026-10-02. Standing regression pins: `evals/w284_redteam_probes.py` (probe `cp-produces-always-on-error`).
+
+**Defect:** `CampaignRunner._run_one` (`gov/campaign.py:623`, lines 650-652) filters `produces` entries only for `on=="break"` (needs BREAK) and `on=="held"` (needs HELD); `on=="always"` (a registered `_PRODUCES_ON` value, `battery_lang.py:684`) passes for EVERY verdict, including `ERROR`/`atomic-error` (executor raised, dependency refused). The static `entry["value"]` is written to the FactStore, and `_eval_goals` then counts it toward `objectives-met`. Battery: an atomic whose executor raises, with `produces=[{fact: goal.flag, on: always}]` and an `eq` objective, closes `objectives-met`, `objectives_met: true`, `breaks: 0`, step verdict ERROR. The evidence claims the objective was met; nothing actually executed.
+
+**Ranked falsifiable hypotheses:** H1 (confirmed): ERROR-step campaign closes objectives-met, confirmed by the battery (objectives_met true, breaks 0); falsifiable: `always` meaning "any completed verdict" (excluding errors) flips the probe to HELD. H2 (alternative, FALSIFIED): `always` is documented to include errors -- falsified: the static value is written as if the atomic produced it; an atomic that raised produced nothing, so the fact is false and the evidence is false.
+
+**Severity rationale:** MEDIUM. Evidence integrity: `objectives_met` is the campaign's success signal (the thing a design partner or auditor consumes); a crashing atomic can manufacture it. The blast radius is bounded by registry control (the produces entry is declared by the atomic author), but the false-success evidence is exactly what the campaign layer sells.
+
+**Close-when criteria:** (1) `on="always"` does not fire on ERROR/atomic-error verdicts (or the campaign distinguishes "objectives met by error" loudly); (2) probe `cp-produces-always-on-error` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-284 independent red-team).
+
+Next free finding: **F325**. **Open findings: F316, F317, F318, F319, F320, F321, F322, F323, F324.** (F311 filed 2026-10-02, wave-282 independent red-team (GuardChain transform/deny/PluginDeny evidence echoes credential-shaped plugin details; same defect class as F306/F310, different emission site), closed 2026-10-02, wave-283 lane 1; F312 filed 2026-10-02, wave-283 independent red-team (forged _atomic_normalized marker skips atomic schema validation; bare KeyError escapes), closed 2026-10-02, wave-284 lane 1; F313 filed 2026-10-02, wave-283 independent red-team (failing audit emit silently drops discovery drift events), closed 2026-10-02, wave-284 lane 1; F314 filed 2026-10-02, wave-283 independent red-team (untrusted | in tool name bricks the pin store), closed 2026-10-02, wave-284 lane 1; F315 filed 2026-10-02, wave-283 independent red-team (re-pin binds by tool name only; same-name shadow lifts the wrong hold), closed 2026-10-02, wave-284 lane 1; F310 filed 2026-10-02, wave-281 independent red-team as F309 (shield-detail echo into guardrail-run audit records; same defect class as F306, different emission site), renumbered F309->F310 at the wave-281 merge - lane 8 filed F309 first at 03:58:25 UTC, red-team at 04:03:59 UTC, per the wave-272 earliest-filed rule; the red-team's F310 (stale manifest) is a duplicate of lane 8's F309 and is not a separate finding; closed 2026-10-02, wave-282 lane 1; F306 filed 2026-10-02, wave-280 red-team (triad guard-record secret echo), closed 2026-10-02, wave-281 lane 1; F307 filed 2026-10-02, wave-280 red-team (provenance plan-trace omission), closed 2026-10-02, wave-281 lane 2; F308 filed as F306 and closed 2026-10-02, wave-280 lane 3 (single-use lease cross-process replay: accepted stated boundary, documented; renumbered F306->F308 at the wave-280 merge - the wave-280 red-team lane filed F306 first at 03:08:56 UTC, lane 3 at 03:16:30 UTC); (F302 filed 2026-10-02, wave-279 lane 2, closed 2026-10-02, wave-279 lane 2; F300 closed 2026-10-02, wave-279 lane 1; F304 filed 2026-10-02, wave-279 red-team (renumbered from F302 at the wave-279 merge: sealer lane filed F302 first at 02:34:19 UTC and keeps the number per the wave-272 earliest-filed rule), closed 2026-10-02, wave-280 lane 1; F305 filed 2026-10-02, wave-279 red-team (renumbered from F303), closed 2026-10-02, wave-280 lane 2; F299 closed 2026-10-02, wave-278 f299 lane; wave-281 merge: taxonomy pin 1541 -> 1563 (+1 provlabel-omitted-driver +5 access-request-* +2 pending-approval-* +4 casbin-* +10 guardplugin-*); F306/F307/F309 closed; F310 OPEN; w281_redteam battery: F310 BREAK expected-open, rest HELD; wave-282 merge: taxonomy pin 1563 -> 1579 (+3 discovery-* +6 atomic-* +4 ratify-* +3 attackpath-*); F310 closed (wave-282 lane 1); F311 OPEN (wave-282 red team); w282_redteam battery: F311 BREAK expected-open, rest HELD; wave-283 red-team: taxonomy pin 1579 unchanged (no new decision codes); F311 re-pinned OPEN (4 BREAK probes); F310 re-pinned CLOSED (2 HELD probes); F312-F315 filed (all LOW); w283_redteam battery: 4 F311 + 4 F312-F315 BREAK expected-open, 19 HELD; wave-283 lane 1: F311 CLOSED (w283_f311 battery 0 BREAK / 13 HELD; w282_redteam F311 probes re-verified HELD (0 BREAK / 29 HELD); w283_redteam F311 probes now HELD); wave-283 merge: taxonomy pin 1579 -> 1587 (+2 finding-* +6 inventory-*); F311 CLOSED; F312-F315 OPEN; w283_redteam battery on the merge: 4 F312-F315 BREAK expected-open, 23 HELD; wave-284 red-team: taxonomy pin 1587 unchanged (no new decision codes); F311 re-pinned CLOSED (4 HELD probes at the composed GuardChain sanitize funnel); F312-F315 re-pinned OPEN (4 BREAK probes); F316-F324 filed (7 LOW: F316 close_old_findings fail-open on missing reproduced, F317 decode-layer evasion, F319 campaign evidence emission echo, F320 pack report duplication, F321 identity-collision shadowing, F322 severity-blind dedup, F323 md-import default-verified; 2 MEDIUM: F318 replay executes unverified evidence, F324 produces always fires on ERROR); w284_redteam battery: 13 BREAK expected-open, rest HELD; wave-284 merge: taxonomy pin 1587 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy-invalid +6 sandbox-policy-* +8 keyset-*); F312-F315 CLOSED (w284_f312_315 battery: 0 BREAK / 10 HELD; w283_f311 battery: 0 BREAK / 13 HELD); F316-F324 filed OPEN (7 LOW: F316 close_old_findings fail-open on missing reproduced, F317 decode-layer evasion, F319 campaign evidence emission echo, F320 pack report duplication, F321 identity-collision shadowing, F322 severity-blind dedup, F323 md-import default-verified; 2 MEDIUM: F318 replay executes unverified evidence, F324 produces always fires on ERROR); w284_redteam battery: 10 BREAK expected-open, rest HELD))

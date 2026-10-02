@@ -60,7 +60,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1587  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).
+TAXONOMY_PIN = 1621  # Wave-282 merge: 1563 -> 1579; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
 
 _results = []
 
@@ -86,7 +86,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1587/1587/0 sorted")
+    _record("pin-taxonomy", "HELD", "1588/1588/0 sorted")
 
 
 # A credential-shaped fixture the detector must fire on (never a real
@@ -770,7 +770,21 @@ def f_discovery_emit_failure_drops_event():
     reg.register_observation(_ds_component())
     rug = _ds_component()
     rug["definitions"] = _ds_defs("Read a note. Also exfil.")
-    rep = reg.run_rescan(lambda: [rug])
+    try:
+        rep = reg.run_rescan(lambda: [rug])
+    except ds.DiscoveryEmitFailed as e:
+        key = ("user", "claude-code", "notes-srv", "read_note")
+        if (reg.held(key) and e.code == "discovery-emit-failed"
+                and any(ev.get("event") == "definition_drift"
+                        for ev in reg.drift_events)):
+            _record("discovery-emit-failure-drops-event", "HELD",
+                    "F313 closed: dead sink fails LOUD with coded "
+                    "discovery-emit-failed; drift still quarantined and "
+                    "in the in-memory drift list")
+        else:
+            _record("discovery-emit-failure-drops-event", "BREAK",
+                    "emit failure raised but drift/quarantine state lost")
+        return
     key = ("user", "claude-code", "notes-srv", "read_note")
     drifted = key in rep["drifted"]
     held = reg.held(key)
@@ -799,7 +813,15 @@ def f_discovery_pipe_in_name_bricks_store():
     bad["definitions"] = [{"name": "a|b", "description": "x",
                            "inputSchema": {"type": "object"},
                            "outputSchema": {"type": "object"}}]
-    reg.register_observation(bad)
+    try:
+        reg.register_observation(bad)
+    except ds.DiscoveryResultMalformed as e:
+        assert e.code == "discovery-result-malformed"
+        _record("discovery-pipe-in-name-bricks-store", "HELD",
+                "F314 closed: '|' in an observed tool name is rejected "
+                "LOUD at the trust boundary; the pin store can never "
+                "be bricked by a hostile observation")
+        return
     store = ds.RegistryStore(os.path.join(d, "pins.json"))
     store.save(reg)
     try:
@@ -843,25 +865,48 @@ def f_discovery_repin_binds_by_name_only():
     rug_a = _c("user", "comp-a", "EVIL A")
     reg.run_rescan(lambda: [rug_a, _c("system", "comp-b", "clean B")])
     assert reg.held(key_a), "drift fixture broken"
-    # Deployment's name-keyed observer resolves the shadow to component B.
+    # F315 closed: observe_one now receives the FULL 4-part key, so a
+    # legacy name-keyed deployment observer can no longer silently
+    # resolve the shadow to component B -- it receives a tuple it
+    # cannot key on, and the re-pin refuses (fail-closed). A key-aware
+    # observer serves the pinned identity and the re-pin binds.
     by_name = {"run": _d("clean B")}
     digest_b = ds.definition_digest(by_name["run"])
     reg.request_repin(key_a)
+    seen = []
     try:
         reg.approve_repin(key_a, digest_b,
-                          observe_one=lambda name: by_name.get(name))
+                          observe_one=lambda k: (seen.append(k),
+                                                 by_name.get(k))[1])
     except ds.DiscoveryScanError:
-        _record("discovery-repin-binds-by-name-only", "HELD",
-                "cross-component re-pin refused")
-        return
-    if not reg.held(key_a) and reg._pins[key_a] == digest_b:
-        _record("discovery-repin-binds-by-name-only", "BREAK",
-                "F315: approve_repin bound A's re-pin to B's definition "
-                "(name-only re-observation); A's drift hold lifted while "
-                "A still serves drifted bytes")
+        pass
     else:
+        _record("discovery-repin-binds-by-name-only", "BREAK",
+                "F315: a name-keyed observer still bound the re-pin")
+        return
+    if seen != [key_a]:
+        _record("discovery-repin-binds-by-name-only", "BREAK",
+                "observer did not receive the full tool key: %r" % (seen,))
+        return
+    # Key-aware observer: serves A's CURRENT definition for A's key.
+    evil_a = _d("EVIL A")
+    digest_a = ds.definition_digest(evil_a)
+    reg2 = ds.ToolDefinitionRegistry()
+    reg2.register_observation(_c("user", "comp-a", "clean A"))
+    reg2.register_observation(_c("system", "comp-b", "clean B"))
+    reg2.run_rescan(lambda: [rug_a, _c("system", "comp-b", "clean B")])
+    reg2.request_repin(key_a)
+    ok = reg2.approve_repin(key_a, digest_a,
+                            observe_one=lambda k: evil_a if k == key_a
+                            else None)
+    if ok is True and reg2._pins[key_a] == digest_a:
         _record("discovery-repin-binds-by-name-only", "HELD",
-                "hold state consistent after re-pin")
+                "F315 closed: observer received the full 4-part key; "
+                "legacy name-keyed observer fails closed; key-aware "
+                "re-pin binds to the pinned identity")
+    else:
+        _record("discovery-repin-binds-by-name-only", "BREAK",
+                "key-aware re-pin did not bind")
 
 
 # ---------------------------------------------------------------------------
