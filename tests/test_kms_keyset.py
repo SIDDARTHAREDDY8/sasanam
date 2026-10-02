@@ -11,12 +11,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gov import kms_keyset as kk
 from gov.kms import FakeKmsProvider, KmsError
 
+# Wave-286 lane 4 (F329): the configuration pin is a keyed MAC; every
+# keyset in these tests shares one test pin key.
+_TEST_PIN = os.urandom(32)
+
 
 def _ks(*kids):
     kids = kids or ("k1", "k2")
     provider = FakeKmsProvider(list(kids))
     ks = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
-                          primary_key_id=kids[0], provider_name="fake")
+                          primary_key_id=kids[0], provider_name="fake", pin_key=_TEST_PIN)
     for kid in kids[1:]:
         ks.add_key(kid, provider_name="fake")
     return ks, provider
@@ -26,7 +30,8 @@ class TestKeysetSchema(unittest.TestCase):
     def test_new_requires_declared_template(self):
         with self.assertRaises(kk.KeysetError) as c:
             kk.KmsKeyset.new(template_name="NOPE/v9", primary_key_id="k1",
-                             provider_name="fake")
+                             provider_name="fake",
+                             pin_key=_TEST_PIN)
         self.assertEqual(c.exception.code, "keyset-bad-template")
 
     def test_template_name_must_carry_version(self):
@@ -37,7 +42,7 @@ class TestKeysetSchema(unittest.TestCase):
     def test_digest_stable_and_pinned(self):
         ks, _ = _ks()
         d1 = ks.to_dict()["keyset_digest"]
-        ks2 = kk.KmsKeyset.from_dict(ks.to_dict())
+        ks2 = kk.KmsKeyset.from_dict(ks.to_dict(), pin_key=_TEST_PIN)
         self.assertEqual(ks2.to_dict()["keyset_digest"], d1)
 
     def test_tampered_digest_refused(self):
@@ -45,16 +50,16 @@ class TestKeysetSchema(unittest.TestCase):
         doc = ks.to_dict()
         doc["primary_key_id"] = "k2"
         with self.assertRaises(kk.KeysetError) as c:
-            kk.KmsKeyset.from_dict(doc)
+            kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
         self.assertEqual(c.exception.code, "keyset-verify-failed")
 
     def test_duplicate_key_id_refused(self):
         ks, _ = _ks()
         doc = ks.to_dict()
         doc["keys"].append(dict(doc["keys"][0]))
-        doc = kk.KmsKeyset._repin(doc)
+        doc = kk.KmsKeyset._repin(doc, _TEST_PIN)
         with self.assertRaises(kk.KeysetError) as c:
-            kk.KmsKeyset.from_dict(doc)
+            kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
         self.assertEqual(c.exception.code, "keyset-duplicate-key")
 
     def test_add_duplicate_key_refused(self):
@@ -66,7 +71,8 @@ class TestKeysetSchema(unittest.TestCase):
     def test_unknown_key_status(self):
         self.assertEqual(kk.KmsKeyset.new(
             template_name="KMS-ENVELOPE/v1", primary_key_id="k1",
-            provider_name="fake").key_status("k1"), "enabled")
+            provider_name="fake",
+            pin_key=_TEST_PIN).key_status("k1"), "enabled")
         ks, _ = _ks()
         with self.assertRaises(kk.KeysetError) as c:
             ks.key_status("nope")
@@ -102,8 +108,8 @@ class TestLifecycle(unittest.TestCase):
         # broken audit chain like every other mutating op.
         ks, provider = _ks()
         ks._doc["audit_chain"][0]["reason"] = "forged"
-        doc = kk.KmsKeyset._repin(ks.to_dict())
-        ks2 = kk.KmsKeyset.from_dict(doc)
+        doc = kk.KmsKeyset._repin(ks.to_dict(), _TEST_PIN)
+        ks2 = kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
         with self.assertRaises(kk.KeysetError) as c:
             ks2.verify_key(provider, "k1")
         self.assertEqual(c.exception.code, "keyset-verify-failed")
@@ -230,7 +236,8 @@ class TestCeremony(unittest.TestCase):
         doc["ceremony"] = {"phase": "rolling-out", "new_key_id": None,
                            "attempts": 0}
         with self.assertRaises(kk.KeysetError) as c:
-            kk.KmsKeyset.from_dict(kk.KmsKeyset._repin(doc))
+            kk.KmsKeyset.from_dict(kk.KmsKeyset._repin(doc, _TEST_PIN),
+                                      pin_key=_TEST_PIN)
         self.assertEqual(c.exception.code, "keyset-ceremony-incomplete")
 
     def test_promote_does_not_resurrect_destroyed_old_primary(self):
@@ -242,7 +249,8 @@ class TestCeremony(unittest.TestCase):
         for k in doc["keys"]:
             if k["key_id"] == "k1":
                 k["status"] = "destroyed"
-        ks2 = kk.KmsKeyset.from_dict(kk.KmsKeyset._repin(doc))
+        ks2 = kk.KmsKeyset.from_dict(kk.KmsKeyset._repin(doc, _TEST_PIN),
+                                      pin_key=_TEST_PIN)
         ks2.begin_rotation("k3", provider_name="fake")
         ks2.roll_out(provider)
         ks2.promote(reason="test")
@@ -265,7 +273,7 @@ class TestCeremony(unittest.TestCase):
     def test_ceremony_survives_serialization(self):
         ks, _ = self._rot()
         ks.begin_rotation("k3", provider_name="fake")
-        ks2 = kk.KmsKeyset.from_dict(ks.to_dict())
+        ks2 = kk.KmsKeyset.from_dict(ks.to_dict(), pin_key=_TEST_PIN)
         self.assertEqual(ks2.ceremony_state()["phase"], "rolling-out")
         self.assertEqual(ks2.ceremony_state()["new_key_id"], "k3")
 
@@ -277,8 +285,8 @@ class TestAuditChain(unittest.TestCase):
         self.assertTrue(ks.verify_chain())
         doc = ks.to_dict()
         doc["audit_chain"][0]["reason"] = "forged"
-        doc = kk.KmsKeyset._repin(doc)
-        self.assertFalse(kk.KmsKeyset.from_dict(doc).verify_chain())
+        doc = kk.KmsKeyset._repin(doc, _TEST_PIN)
+        self.assertFalse(kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN).verify_chain())
 
     def test_mutation_refuses_on_broken_chain(self):
         ks, _ = _ks()
@@ -286,6 +294,90 @@ class TestAuditChain(unittest.TestCase):
         with self.assertRaises(kk.KeysetError) as c:
             ks.disable_key("k2", reason="x")
         self.assertEqual(c.exception.code, "keyset-verify-failed")
+
+
+class TestPinKeyContract(unittest.TestCase):
+    """Wave-286 lane 4 (F329): the configuration pin is a keyed MAC."""
+
+    def test_new_requires_pin_key(self):
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
+                             primary_key_id="k1", provider_name="fake")
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
+                             primary_key_id="k1", provider_name="fake",
+                             pin_key=b"short")
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+
+    def test_from_dict_requires_pin_key(self):
+        ks, _ = _ks()
+        doc = ks.to_dict()
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset.from_dict(doc)
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+
+    def test_from_dict_wrong_key_refused(self):
+        ks, _ = _ks()
+        doc = ks.to_dict()
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset.from_dict(doc, pin_key=os.urandom(32))
+        self.assertEqual(c.exception.code, "keyset-verify-failed")
+
+    def test_repin_requires_pin_key(self):
+        ks, _ = _ks()
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset._repin(ks.to_dict())
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+
+    def test_repin_with_key_round_trips(self):
+        ks, _ = _ks()
+        ks.disable_key("k2", reason="x")
+        doc = kk.KmsKeyset._repin(ks.to_dict(), _TEST_PIN)
+        ks2 = kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
+        self.assertEqual(ks2.key_status("k2"), "disabled")
+        self.assertTrue(ks2.verify_chain())
+
+    def test_forgery_without_key_undetectable_no_more(self):
+        # The F329 attack: flip a status, wipe the chain. Without the
+        # pin key the document cannot be re-pinned, and the stale pin
+        # fails closed at load.
+        ks, _ = _ks()
+        doc = ks.to_dict()
+        doc["keys"][1]["status"] = "destroyed"
+        doc["audit_chain"] = []
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
+        self.assertEqual(c.exception.code, "keyset-verify-failed")
+
+    def test_mac_is_keyed(self):
+        # Same document under two keys pins differently: the pin is not
+        # a plain function of the document.
+        ks, _ = _ks()
+        d1 = ks.to_dict()["keyset_digest"]
+        ks_b = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
+                                primary_key_id="k1", provider_name="fake",
+                                pin_key=os.urandom(32))
+        self.assertNotEqual(ks_b.to_dict()["keyset_digest"], d1)
+
+    def test_generate_and_load_pin_key(self):
+        import tempfile
+        d = tempfile.mkdtemp(prefix="w286-test-")
+        path = os.path.join(d, "pin.key")
+        key = kk.generate_pin_key(path)
+        self.assertEqual(len(key), 32)
+        self.assertEqual(kk.load_pin_key(path), key)
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.generate_pin_key(path)
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+        with open(path, "wb") as fh:
+            fh.write(b"too short")
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.load_pin_key(path)
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
+        with self.assertRaises(kk.KeysetError) as c:
+            kk.load_pin_key(os.path.join(d, "missing.key"))
+        self.assertEqual(c.exception.code, "keyset-pin-key-invalid")
 
 
 class TestTemplates(unittest.TestCase):

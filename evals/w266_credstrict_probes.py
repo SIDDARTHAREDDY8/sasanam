@@ -53,7 +53,7 @@ else:
 # Enforced at import in module mode; the taxonomy_pin probe reports
 # the state in both modes (stub mode pre-build legitimately BREAKs).
 if IMPL == "module":
-    assert len(decision_codes.TAXONOMY) == 1641, "taxonomy pin 1588"  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+    assert len(decision_codes.TAXONOMY) == 1660, "taxonomy pin 1588"  # Wave-271 merge: pin 1372 -> 1411 (+39 codes: 6 ptgrant-* + 7 replay-* + 8 rsl-* + 14 gatehard-* + 4 imgtext-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
 
 PROBES = []
 
@@ -420,7 +420,7 @@ def taxonomy_pin():
         os.path.dirname(os.path.abspath(__file__))),
         "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(credential-strict-[a-z-]+)\'', src)
-    if len(decision_codes.TAXONOMY) != 1641:
+    if len(decision_codes.TAXONOMY) != 1660:
         return "BREAK(pin %d)" % len(decision_codes.TAXONOMY)
     if sorted(set(lits)) != sorted(lits) or len(lits) != 4:
         return "BREAK(literals %r)" % (lits,)

@@ -461,6 +461,20 @@ ALLOWED_HMAC_SITES = {
         "envelope header MAC at seal; key = per-bundle fresh data key",
     ("gov/bundle_envelope.py", "open_envelope", 0):
         "envelope header MAC re-verification; key = unwrapped data key (refuses on mismatch)",
+    # gov/kms_keyset.py (wave-286 lane 4, F329): the keyset content pin
+    # is a keyed MAC (HMAC-SHA256) under a DEPLOYMENT-HELD 32-byte pin
+    # key. The key is never defaulted, never hard-coded, never derived
+    # in-repo: it is created by generate_pin_key (0600, atomic, refuses
+    # overwrite) and loaded by load_pin_key (size-checked, LOUD); new /
+    # from_dict / _repin REQUIRE it and refuse LOUD and coded
+    # (keyset-pin-key-invalid) without it. The MAC is domain-separated
+    # (_PIN_LABEL = "sasanam-kms-keyset/pin-v1:") and covers the
+    # canonical keyset config (keys/statuses/primary/template/ceremony/
+    # audit-head). A writer holding only the keyset document cannot
+    # recompute the pin; a stale pin fails closed at load via
+    # hmac.compare_digest (keyset-verify-failed).
+    ("gov/kms_keyset.py", "KmsKeyset._mac_for", 0):
+        "keyset content pin MAC; key = deployment-held 32-byte pin key (0600 file, explicit pass, no default)",
 }
 
 

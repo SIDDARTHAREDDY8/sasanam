@@ -27,6 +27,9 @@ Re-pins at the public seams:
   F316-F324 (OPEN) -- w284_redteam_probes.py: 10 BREAK expected-open.
 
 New findings filed (all LOW, OPEN): F325-F330.
+Wave-286 lane 4 closed F329 + F330 (keyed-MAC keyset pin; immutable
+CompiledPolicy + live-digest gate); their probes assert the fixed
+contract. F325-F328 remain OPEN (expected-open).
 
 $0 spend, synthetic/local, deterministic (fixed fixtures, no wall-clock
 equality assertions). Stdlib only, no in-repo git subprocesses.
@@ -58,7 +61,8 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-284 merge: pin 1587 -> 1621.
-TAXONOMY_PIN = 1641
+# Wave-286 merge: pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
+TAXONOMY_PIN = 1660
 
 _results = []
 
@@ -84,7 +88,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1641/1641/0 sorted")
+    _record("pin-taxonomy", "HELD", "%d/%d/0 sorted" % (len(lits), len(lits)))
 
 
 # ---------------------------------------------------------------------------
@@ -232,12 +236,14 @@ def p_f326_rotate_scope():
 
 def p_f327_ceremony_keyerror():
     from gov import kms_keyset as kk
+    pin_key = os.urandom(32)
     ks = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
-                          primary_key_id="k", provider_name="fake")
+                          primary_key_id="k", provider_name="fake",
+                          pin_key=pin_key)
     doc = ks.to_dict()
     doc["ceremony"] = {"phase": "none"}
     try:
-        kk.KmsKeyset.from_dict(doc)
+        kk.KmsKeyset.from_dict(doc, pin_key=pin_key)
     except KeyError as e:
         return _record("f327-ceremony-keyerror", "BREAK",
                        "raw KeyError %r escapes -- expected coded "
@@ -261,7 +267,8 @@ def p_f328_promote_demotes_successor():
     from gov import kms_keyset as kk
     from gov.kms import FakeKmsProvider
     ks = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
-                          primary_key_id="key-a", provider_name="fake")
+                          primary_key_id="key-a", provider_name="fake",
+                          pin_key=os.urandom(32))
     prov = FakeKmsProvider(["key-a", "key-b"])
     ks.begin_rotation("key-b", provider_name="fake")
     ks.roll_out(prov)
@@ -278,41 +285,48 @@ def p_f328_promote_demotes_successor():
 
 
 # ---------------------------------------------------------------------------
-# F329 (LOW): the keyset content pin is self-contained and recomputable
-# via the public _repin -- a read-write attacker flips statuses and wipes
-# the audit chain, recomputes the pin, and from_dict accepts with a valid
-# chain. The module claims out-of-band edits are detectable; they are not
-# against malicious writers (unlike sandbox_policy's external pin store).
+# F329 (LOW) -- CLOSED by wave-286 lane 4: the keyset content pin is now a
+# keyed MAC (HMAC-SHA256) under a deployment-held pin key. A writer
+# holding only the document cannot recompute it: the keyless _repin
+# refuses LOUD (keyset-pin-key-invalid) and a stale pin fails closed at
+# load (keyset-verify-failed).
 # ---------------------------------------------------------------------------
 
 def p_f329_pin_self_forgeable():
     from gov import kms_keyset as kk
+    pin_key = os.urandom(32)
     ks = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
-                          primary_key_id="k", provider_name="fake")
+                          primary_key_id="k", provider_name="fake",
+                          pin_key=pin_key)
     ks.add_key("key-b", "fake")
     doc = ks.to_dict()
     doc["keys"][1]["status"] = "destroyed"
     doc["audit_chain"] = []
-    doc = kk.KmsKeyset._repin(doc)
+    # The attacker holds the document but NOT the pin key.
     try:
-        evil = kk.KmsKeyset.from_dict(doc)
+        forged = kk.KmsKeyset._repin(doc)
     except Exception as e:  # noqa: BLE001
         return _record("f329-pin-self-forgeable", "HELD",
-                       "forgery refused: %s"
+                       "keyless pin recompute refused LOUD: %s"
+                       % getattr(e, "code", type(e).__name__))
+    try:
+        evil = kk.KmsKeyset.from_dict(forged, pin_key=pin_key)
+    except Exception as e:  # noqa: BLE001
+        return _record("f329-pin-self-forgeable", "HELD",
+                       "forgery refused at load: %s"
                        % getattr(e, "code", type(e).__name__))
     if evil.verify_chain():
         return _record("f329-pin-self-forgeable", "BREAK",
                        "status forgery + audit-trail wipe accepted at load "
-                       "with verify_chain() == True -- pin recomputed via "
-                       "public _repin")
+                       "with verify_chain() == True")
     _record("f329-pin-self-forgeable", "HELD", "chain verification caught it")
 
 
 # ---------------------------------------------------------------------------
-# F330 (LOW): CompiledPolicy is mutable after the pin check. check_policy_use
-# compares the compile-time cached digest string and never recomputes it
-# from the live object, so mutating _rule_denies after the gate flips
-# enforcement (kill -> allow) while bind's re-check still passes.
+# F330 (LOW) -- CLOSED by wave-286 lane 4: CompiledPolicy is immutable
+# after compilation (frozen attributes), and check_policy_use recomputes
+# the digest from the live object, so a post-check mutation is either
+# blocked at the source or caught as sandbox-policy-drift.
 # ---------------------------------------------------------------------------
 
 def p_f330_policy_mutable_after_pin():
@@ -327,7 +341,14 @@ def p_f330_policy_mutable_after_pin():
     pins = sp.load_pins(pinpath)
     sp.check_policy_use(p, pins)
     before = p.decide("execve", {})
-    p._rule_denies.discard("execve")
+    try:
+        p._rule_denies.discard("execve")
+    except Exception as e:  # noqa: BLE001
+        return _record("f330-policy-mutable-after-pin", "HELD",
+                       "post-check mutation blocked (immutable): %s"
+                       % type(e).__name__)
+    # If a mutation somehow succeeded, the gate recomputes the digest
+    # from the live object and must refuse with sandbox-policy-drift.
     try:
         b = sp.bind(p, pins, enforced_namespaces=set())
     except Exception as e:  # noqa: BLE001

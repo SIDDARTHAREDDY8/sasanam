@@ -48,7 +48,9 @@ protects.
 """
 
 import hashlib
+import hmac
 import json
+import os
 import re
 import secrets
 
@@ -56,6 +58,13 @@ from .kms import KmsError, _utcnow
 
 #: Document format tag. Bumped only for breaking schema changes.
 KEYSET_FORMAT = "sasanam-kms-keyset/v1"
+
+#: Pin-key size: the ``keyset_digest`` pin is an HMAC-SHA256 under a
+#: 256-bit deployment-held key (see F329).
+PIN_KEY_BYTES = 32
+
+#: Domain separation label for the configuration pin MAC.
+_PIN_LABEL = b"sasanam-kms-keyset/pin-v1:"
 
 #: Tink's KeyStatusType vocabulary, adapted.
 STATUSES = ("enabled", "disabled", "destroyed")
@@ -93,6 +102,116 @@ def _validate_key_id(key_id):
     if not isinstance(key_id, str) or not _KEY_ID_RE.match(key_id):
         raise KeysetError("keyset-unknown-key",
                           "invalid key id %r" % (key_id,))
+
+
+def _validate_pin_key(pin_key):
+    """The pin key is a deployment-held 256-bit secret. It is REQUIRED
+    (never defaulted): ``new``/``from_dict``/``_repin`` refuse LOUD and
+    coded without it, so a caller can never silently fall back to an
+    unkeyed pin."""
+    if not isinstance(pin_key, (bytes, bytearray)) or \
+            len(pin_key) != PIN_KEY_BYTES:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin_key must be %d bytes, got %r"
+                          % (PIN_KEY_BYTES,
+                             type(pin_key).__name__))
+    return bytes(pin_key)
+
+
+def generate_pin_key(path):
+    """Create a fresh random pin key and persist it (0600, atomic).
+
+    Refuses LOUD (``keyset-pin-key-invalid``) if the path already exists
+    -- a pin key is a trust anchor and is never silently overwritten.
+    Returns the key bytes."""
+    if not isinstance(path, str) or not path:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key path must be a non-empty string")
+    if os.path.exists(path):
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key file %r already exists: refusing to "
+                          "overwrite a trust anchor" % (path,))
+    directory = os.path.dirname(os.path.abspath(path))
+    os.makedirs(directory, exist_ok=True)
+    key = secrets.token_bytes(PIN_KEY_BYTES)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(key)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key write failed for %r" % (path,))
+    os.replace(tmp, path)
+    return key
+
+
+def load_pin_key(path):
+    """Load a persisted pin key. Refuses LOUD (``keyset-pin-key-invalid``)
+    on any problem: missing/unreadable file or wrong key size."""
+    if not isinstance(path, str) or not path:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key path must be a non-empty string")
+    try:
+        with open(path, "rb") as handle:
+            key = handle.read()
+    except OSError as exc:
+        raise KeysetError("keyset-pin-key-invalid",
+                          "pin key file %r unreadable: %s" % (path, exc))
+    return _validate_pin_key(key)
+
+
+#: Sentinel distinguishing "key absent" from an explicit None value in
+#: the ceremony sub-document (F327).
+_MISSING = object()
+
+
+def _validate_ceremony(ceremony):
+    """Fail-closed shape check for the rotation-ceremony sub-document.
+
+    Called by :meth:`KmsKeyset._parse` (before the pin is recomputed)
+    and by :meth:`KmsKeyset._repin`: every malformed ceremony shape --
+    a missing or non-mapping ceremony, an unknown phase, a missing or
+    wrongly typed ``new_key_id`` slot, a missing attempt counter on an
+    in-progress phase -- refuses with a coded ``keyset-*`` KeysetError
+    (F327). The pin builder indexes ``ceremony["new_key_id"]``
+    directly; it must never see a raw KeyError at this seam.
+    """
+    if not isinstance(ceremony, dict):
+        raise KeysetError("keyset-ceremony-incomplete",
+                          "ceremony must be a mapping, got %r"
+                          % (type(ceremony).__name__,))
+    phase = ceremony.get("phase")
+    if phase not in CEREMONY_PHASES:
+        raise KeysetError("keyset-ceremony-incomplete",
+                          "unknown ceremony phase %r" % (phase,))
+    new_key_id = ceremony.get("new_key_id", _MISSING)
+    if phase in ("rolling-out", "roll-out-failed", "verified"):
+        # An in-progress ceremony must name its successor; a phase
+        # without a new_key_id is a malformed document, refused coded
+        # (never a raw KeyError downstream). roll_out also reads the
+        # attempt counter, so its absence is malformed too.
+        if not isinstance(new_key_id, str) or not new_key_id:
+            raise KeysetError("keyset-ceremony-incomplete",
+                              "ceremony phase %r names no successor"
+                              % (phase,))
+        attempts = ceremony.get("attempts", _MISSING)
+        if not isinstance(attempts, int):
+            raise KeysetError("keyset-ceremony-incomplete",
+                              "ceremony phase %r has malformed attempts %r"
+                              % (phase, attempts))
+    elif new_key_id is _MISSING or not (new_key_id is None
+                                        or isinstance(new_key_id, str)):
+        # A settled ceremony still carries a well-formed successor slot:
+        # None or a string. A missing slot or a wrong type is malformed
+        # (F327: the pin builder indexes this slot directly).
+        raise KeysetError("keyset-ceremony-incomplete",
+                          "ceremony phase %r has malformed new_key_id"
+                          % (phase,))
 
 
 class KeyTemplate:
@@ -166,19 +285,34 @@ class KmsKeyset:
     The document is data: ``to_dict``/``from_dict`` round-trip through
     a JSON mapping the deployment persists (0600, like the envelope
     keyring file). ``keyset_digest`` pins the configuration
-    (keys/statuses/primary/template/ceremony/audit-head) so any
-    out-of-band edit is detectable.
+    (keys/statuses/primary/template/ceremony/audit-head) as a keyed MAC
+    (HMAC-SHA256) under a deployment-held pin key: any out-of-band edit
+    is detectable by a holder of the key, and the pin cannot be
+    recomputed without it (F329).
+
+    Trust model (honest): the pin key lives in a separate 0600 file
+    (see :func:`generate_pin_key`/:func:`load_pin_key`). A writer who
+    holds only the keyset document -- not the pin key -- cannot forge
+    a valid pin. A holder of the pin key is the authorized operator and
+    can re-pin; that is the intended use of :meth:`_repin`, never a
+    back door for untrusted input.
     """
 
-    def __init__(self, doc):
-        self._doc = self._parse(doc)
+    def __init__(self, doc, pin_key):
+        self._pin_key = _validate_pin_key(pin_key)
+        self._doc = self._parse(doc, self._pin_key)
 
     # -- construction -------------------------------------------------
 
     @classmethod
     def new(cls, *, template_name, primary_key_id, provider_name,
-            created_utc=None):
-        """Create a keyset with a single enabled primary key."""
+            pin_key=None, created_utc=None):
+        """Create a keyset with a single enabled primary key.
+
+        ``pin_key`` is REQUIRED (a 256-bit deployment-held secret): the
+        configuration pin is a keyed MAC, so creating a keyset without
+        the key refuses LOUD and coded (``keyset-pin-key-invalid``)."""
+        pin_key = _validate_pin_key(pin_key)
         template = TEMPLATES.get(template_name)
         if template is None:
             raise KeysetError("keyset-bad-template",
@@ -201,6 +335,7 @@ class KmsKeyset:
             "audit_chain": [],
         }
         ks = cls.__new__(cls)
+        ks._pin_key = pin_key
         ks._doc = doc
         ks._audit("keyset-created",
                   {"key_id": primary_key_id,
@@ -211,7 +346,7 @@ class KmsKeyset:
     # -- parsing (fail-closed) -----------------------------------------
 
     @classmethod
-    def _parse(cls, doc):
+    def _parse(cls, doc, pin_key):
         if not isinstance(doc, dict):
             raise KeysetError("keyset-unknown-key",
                               "keyset document must be a mapping")
@@ -254,51 +389,51 @@ class KmsKeyset:
         # post-incident states (emergency mint-stop; terminal). The
         # document stays parseable; operations refuse with coded
         # refusals (wrap under a non-enabled primary is refused).
-        ceremony = doc.get("ceremony") or {}
-        if ceremony.get("phase") not in CEREMONY_PHASES:
-            raise KeysetError("keyset-ceremony-incomplete",
-                              "unknown ceremony phase %r"
-                              % (ceremony.get("phase"),))
-        if ceremony.get("phase") in ("rolling-out", "roll-out-failed",
-                                     "verified"):
-            # An in-progress ceremony must name its successor; a phase
-            # without a new_key_id is a malformed document, refused
-            # coded (never a raw KeyError downstream).
-            if not isinstance(ceremony.get("new_key_id"), str) or \
-                    not ceremony.get("new_key_id"):
-                raise KeysetError("keyset-ceremony-incomplete",
-                                  "ceremony phase %r names no successor"
-                                  % (ceremony.get("phase"),))
+        # The ceremony shape is validated wholesale before the pin
+        # is recomputed, so a malformed ceremony refuses coded here
+        # instead of crashing the pin builder with a raw KeyError
+        # (F327).
+        _validate_ceremony(doc.get("ceremony"))
         chain = doc.get("audit_chain")
         if not isinstance(chain, list):
             raise KeysetError("keyset-unknown-key",
                               "audit_chain must be a list")
-        want = cls._digest_for(doc)
-        if doc.get("keyset_digest") != want:
+        want = cls._mac_for(doc, pin_key)
+        got = doc.get("keyset_digest")
+        if not isinstance(got, str) or not hmac.compare_digest(got, want):
             raise KeysetError("keyset-verify-failed",
                               "keyset_digest mismatch: the document was "
-                              "edited out of band")
+                              "edited out of band (or the wrong pin key "
+                              "was used)")
         return doc
 
     @classmethod
-    def from_dict(cls, doc):
+    def from_dict(cls, doc, pin_key=None):
         """Parse a persisted document. Fail-closed on any structural
-        problem or digest mismatch. (The inner audit chain is verified
-        separately via :meth:`verify_chain`; every mutating operation
-        checks it first.)"""
-        return cls(json.loads(json.dumps(doc)))
+        problem or pin mismatch. ``pin_key`` is REQUIRED: the
+        configuration pin is a keyed MAC and cannot be verified without
+        the deployment-held key (F329). (The inner audit chain is
+        verified separately via :meth:`verify_chain`; every mutating
+        operation checks it first.)"""
+        pin_key = _validate_pin_key(pin_key)
+        return cls(json.loads(json.dumps(doc)), pin_key)
 
     @staticmethod
-    def _digest_for(doc):
-        """The configuration pin. Covers keys/statuses/primary/
-        template/ceremony/audit-head; wall-clock ``at`` fields are
-        excluded by construction (see module docstring)."""
+    def _mac_for(doc, pin_key):
+        """The configuration pin: HMAC-SHA256 over the canonical config,
+        keyed by the deployment-held pin key.
+
+        Covers keys/statuses/primary/template/ceremony/audit-head;
+        wall-clock ``at`` fields are excluded by construction (see module
+        docstring). Unlike the pre-F329 unkeyed digest, the MAC cannot be
+        recomputed by a writer holding only the document -- out-of-band
+        edits are detectable by any holder of the pin key."""
         keys = [{"key_id": e["key_id"],
                  "provider_name": e["provider_name"],
                  "status": e["status"]} for e in doc["keys"]]
         head = (doc["audit_chain"][-1]["digest"]
                 if doc["audit_chain"] else _GENESIS_DIGEST)
-        return _digest_of({"format": doc["format"],
+        body = _canonical({"format": doc["format"],
                            "template": doc["template"],
                            "keys": keys,
                            "primary_key_id": doc["primary_key_id"],
@@ -306,18 +441,30 @@ class KmsKeyset:
                                         "new_key_id": doc["ceremony"]
                                         ["new_key_id"]},
                            "audit_head": head})
+        return hmac.new(pin_key, _PIN_LABEL + body,
+                        hashlib.sha256).hexdigest()
 
     @classmethod
-    def _repin(cls, doc):
+    def _repin(cls, doc, pin_key=None):
         """Recompute ``keyset_digest`` for an honestly edited document.
-        Used internally and by tests constructing fixtures; never
-        called on untrusted input."""
+
+        ``pin_key`` is REQUIRED: recomputing the pin without the
+        deployment-held key refuses LOUD and coded
+        (``keyset-pin-key-invalid``). This is the F329 fix -- the public
+        helper can no longer serve a forger holding only the document.
+        The ceremony shape is validated first so a malformed document
+        refuses with a coded ``keyset-*`` KeysetError (F327) instead of
+        crashing the pin builder with a raw KeyError.
+        Never called on untrusted input."""
+        pin_key = _validate_pin_key(pin_key)
         doc = json.loads(json.dumps(doc))
-        doc["keyset_digest"] = cls._digest_for(doc)
+        _validate_ceremony(doc.get("ceremony"))
+        doc["keyset_digest"] = cls._mac_for(doc, pin_key)
         return doc
 
     def _repin_doc(self):
-        self._doc["keyset_digest"] = self._digest_for(self._doc)
+        self._doc["keyset_digest"] = self._mac_for(self._doc,
+                                                   self._pin_key)
 
     def to_dict(self):
         return json.loads(json.dumps(self._doc))
@@ -613,8 +760,14 @@ class KmsKeyset:
         # Demotion never resurrects: a destroyed old primary stays
         # destroyed; otherwise it winds down to disabled (auditable,
         # never deleted).
+        # F328: never demote the successor into a mint-stop. When the
+        # old primary was destroyed mid-ceremony naming the in-flight
+        # successor (destroy_key reassigns primary_key_id), old_primary
+        # IS new_key_id; demoting it would "complete" the ceremony with
+        # a disabled primary. Skipping the wind-down here is exact: the
+        # successor stays enabled and the ceremony completes honestly.
         old_entry = self._entry(old_primary)
-        if old_entry["status"] != "destroyed":
+        if old_primary != new_key_id and old_entry["status"] != "destroyed":
             old_entry["status"] = "disabled"
         self._doc["primary_key_id"] = new_key_id
         ceremony["phase"] = "complete"

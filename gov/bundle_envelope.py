@@ -35,7 +35,9 @@ What this module adds:
   any single listed recipient can unwrap (no Shamir N-of-M here).
 * the re-keying ceremony: ``rotate_envelope`` (fresh data key) and
   ``update_wraps`` (same data key, new recipient set), both chained
-  into the audit log via the ``set_emit`` sink.
+  into the audit log via the ``set_emit`` sink. All three sealing
+  paths enforce the policy's ``bundle_scope`` creation rule
+  (``recipient-policy-invalid``).
 
 CRYPTOGRAPHY, STATED HONESTLY (not AES-GCM):
 
@@ -573,6 +575,20 @@ def _seal_with_key(bundle_bytes, bundle_id, recipients, signer_seed,
     return envelope
 
 
+def _check_scope_covers(policy, bundle_id):
+    """Enforce the creation rule: the policy's ``bundle_scope`` must
+    cover the bundle id ("*" covers everything). Refuses LOUD with the
+    coded ``recipient-policy-invalid`` emission -- the same contract
+    ``seal_envelope`` holds. Every re-sealing path (seal, rotate,
+    update_wraps) calls this, so a scope check can never silently drift
+    out of one of them again."""
+    scope = policy.get("bundle_scope", "*")
+    if scope != "*" and not bundle_id.startswith(scope):
+        _fail(POLICY_INVALID,
+              "bundle_id %r is outside the policy scope %r"
+              % (bundle_id, scope))
+
+
 def seal_envelope(bundle_bytes, *, bundle_id, policy, signer_seed,
                   custody_wrap=None):
     """Seal a bundle for the policy's recipients.
@@ -586,11 +602,7 @@ def seal_envelope(bundle_bytes, *, bundle_id, policy, signer_seed,
     recipients = _check_policy(policy)
     # Creation-rule analog: the policy's bundle_scope must cover the
     # bundle id ("*" covers everything).
-    scope = policy.get("bundle_scope", "*")
-    if scope != "*" and not bundle_id.startswith(scope):
-        _fail(POLICY_INVALID,
-              "bundle_id %r is outside the policy scope %r"
-              % (bundle_id, scope))
+    _check_scope_covers(policy, bundle_id)
     data_key = secrets.token_bytes(32)
     envelope = _seal_with_key(bytes(bundle_bytes), bundle_id, recipients,
                               bytes(signer_seed), data_key,
@@ -833,12 +845,18 @@ def rotate_envelope(envelope, *, recipient_id, x25519_priv=None,
 
     The plaintext bundle is unchanged; the old data key is discarded.
     The ceremony holder must hold the original envelope signer seed
-    (in addition to an authorized recipient credential).
+    (in addition to an authorized recipient credential). The new
+    policy's ``bundle_scope`` must cover the bundle id (same
+    creation-rule contract as ``seal_envelope``); a non-covering
+    policy is refused LOUD with ``recipient-policy-invalid``.
     """
     _check_policy(policy)
     plaintext = _open_for_rekey(envelope, recipient_id, x25519_priv,
                                 custody_unwrap, signer_seed)
     recipients = _check_policy(policy)
+    # Creation-rule analog, same contract as seal_envelope: the new
+    # policy's bundle_scope must cover the bundle being re-sealed.
+    _check_scope_covers(policy, envelope["bundle_id"])
     new_key = secrets.token_bytes(32)
     new_envelope = _seal_with_key(
         plaintext, envelope["bundle_id"], recipients,
@@ -862,12 +880,18 @@ def update_wraps(envelope, *, recipient_id, x25519_priv=None,
     un-read bytes. The ceremony is audited either way.
 
     The ceremony holder must hold the original envelope signer seed
-    (in addition to an authorized recipient credential).
+    (in addition to an authorized recipient credential). The new
+    policy's ``bundle_scope`` must cover the bundle id (same
+    creation-rule contract as ``seal_envelope``); a non-covering
+    policy is refused LOUD with ``recipient-policy-invalid``.
     """
     _check_envelope_shape(envelope)
     recipients = _check_policy(new_policy)
     plaintext = _open_for_rekey(envelope, recipient_id, x25519_priv,
                                 custody_unwrap, signer_seed)
+    # Creation-rule analog, same contract as seal_envelope: the new
+    # policy's bundle_scope must cover the bundle being re-sealed.
+    _check_scope_covers(new_policy, envelope["bundle_id"])
     # Recover the current data key to re-wrap it (not re-encrypt).
     wrap = next(w for w in envelope["wraps"]
                 if w["recipient_id"] == recipient_id)

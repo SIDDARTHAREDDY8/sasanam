@@ -7861,6 +7861,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['incident'],
         "reverify_steps": ['check-id-exists'],
     },
+    'inclusion-receipt-malformed': {
+        "domain": 'receipt',
+        "code": 'inclusion-receipt-malformed',
+        "human": 'receipt: the inclusion receipt fails the envelope grammar '
+                 '(unknown format tag, bad field types, index out of range); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'ingest-admit': {
         "domain": 'ingest',
         "code": 'ingest-admit',
@@ -8474,6 +8485,19 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'keyset-pin-key-invalid': {
+        "domain": 'kms',
+        "code": 'keyset-pin-key-invalid',
+        "human": 'kms master-key keyset: pin-key problem -- the keyed-MAC '
+                 'pin key is missing, the wrong size, or its file is '
+                 'unreadable (the keyset_digest pin can neither be '
+                 'recomputed nor verified without the deployment-held '
+                 'pin key)',
+        "severity": 'low',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+
     'keyset-primary-not-enabled': {
         "domain": 'kms',
         "code": 'keyset-primary-not-enabled',
@@ -8751,6 +8775,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['manifest', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'manifest-regex-unsafe': {
+        "domain": 'manifest',
+        "code": 'manifest-regex-unsafe',
+        "human": 'attack manifest: a matcher/extractor regex was refused '
+                 'at load: static analysis found nested-quantifier '
+                 'ambiguity (a ReDoS shape); fail-closed, the pattern '
+                 'never reaches the matching engine',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'manifest-selection-invalid': {
         "domain": 'manifest',
         "code": 'manifest-selection-invalid',
@@ -11305,6 +11341,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'receipt-fork-detected': {
+        "domain": 'receipt',
+        "code": 'receipt-fork-detected',
+        "human": 'receipt: two validly-signed tree heads name the same log '
+                 'position with different roots -- fork proven; denounced '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'receipt-format-mismatch': {
         "domain": 'authorization_receipt',
         "code": 'receipt-format-mismatch',
@@ -11313,6 +11360,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'receipt-inclusion-mismatch': {
+        "domain": 'receipt',
+        "code": 'receipt-inclusion-mismatch',
+        "human": 'receipt: the inclusion path does not chain the claimed '
+                 'bundle digest to the signed tree root; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'receipt-leaf-mismatch': {
+        "domain": 'receipt',
+        "code": 'receipt-leaf-mismatch',
+        "human": 'receipt: the tile leaf at the claimed index is not the '
+                 'claimed bundle digest (log store disagrees with the '
+                 'receipt); refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'receipt-malformed': {
         "domain": 'authorization_receipt',
         "code": 'receipt-malformed',
@@ -11385,6 +11453,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['receipt', 'verdict-record', 'observation', 'digest'],
         "reverify_steps": ['rebind-backlink', 'recompute-decision-digest', 'replay-effect-classify'],
     },
+    'receipt-policy-mismatch': {
+        "domain": 'receipt',
+        "code": 'receipt-policy-mismatch',
+        "human": 'receipt: the witness cosigning on the receipt does not '
+                 'satisfy the pinned witness policy (wrong policy id or '
+                 'under-quorum); refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'receipt-signature-invalid': {
+        "domain": 'receipt',
+        "code": 'receipt-signature-invalid',
+        "human": 'receipt: the operator (or witness) signature over the '
+                 'signed binding does not verify; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'receipt_unverifiable': {
         "domain": 'platform',
         "code": 'receipt_unverifiable',
@@ -14309,6 +14398,127 @@ TAXONOMY = {
         "evidence_kinds_required": ['rating', 'digest'],
         "reverify_steps": ['recompute-digest'],
     },
+    'toolcall-audit-would-deny': {
+        "domain": 'toolcall',
+        "code": 'toolcall-audit-would-deny',
+        "human": 'toolcall: audit rollout mode -- the call would have been '
+                 'denied; recorded as prospective evidence, not enforced',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-call-denied': {
+        "domain": 'toolcall',
+        "code": 'toolcall-call-denied',
+        "human": 'toolcall: a DENY rule matched the call (tool, operation, '
+                 'caller binding, and arg constraints under fail-closed '
+                 'under-specification semantics); the call was denied',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-caller-out-of-scope': {
+        "domain": 'toolcall',
+        "code": 'toolcall-caller-out-of-scope',
+        "human": 'toolcall: the caller is not covered by the policy '
+                 'selector; no decision is available from this policy; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-custom-denied': {
+        "domain": 'toolcall',
+        "code": 'toolcall-custom-denied',
+        "human": 'toolcall: the CUSTOM rule external authorizer denied the '
+                 'call (or failed closed); the custom decision point can '
+                 'only tighten, never loosen',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-exception-suppressed': {
+        "domain": 'toolcall',
+        "code": 'toolcall-exception-suppressed',
+        "human": 'toolcall: the DENY alert was suppressed under a live '
+                 'governed exception (SKIPPED with the exception digest, '
+                 'never PASSED); the verdict stays DENY',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-no-allow': {
+        "domain": 'toolcall',
+        "code": 'toolcall-no-allow',
+        "human": 'toolcall: no rule allowed the call; default deny '
+                 '(deliberate divergence from Istio: Sasanam is fail-closed)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-no-covering-exception': {
+        "domain": 'toolcall',
+        "code": 'toolcall-no-covering-exception',
+        "human": 'toolcall: suppression was requested but no live governed '
+                 'exception covers the scope; a DENY verdict cannot be '
+                 'suppressed ad-hoc; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-policy-drift': {
+        "domain": 'toolcall',
+        "code": 'toolcall-policy-drift',
+        "human": 'toolcall: the compiled policy document no longer matches '
+                 'its pin; refused fail-closed -- re-review and re-pin '
+                 'before deciding',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-policy-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-policy-invalid',
+        "human": 'toolcall: the policy document failed schema validation '
+                 '(format, selector, mode, rule actions, arg matchers, '
+                 'custom authorizer registration); refused fail-closed at '
+                 'compile time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-policy-unpinned': {
+        "domain": 'toolcall',
+        "code": 'toolcall-policy-unpinned',
+        "human": 'toolcall: a decision was attempted under a tool-call '
+                 'policy with no committed pin; refused fail-closed -- '
+                 'policies decide only under pinned, reviewable documents',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-unauthenticated-caller': {
+        "domain": 'toolcall',
+        "code": 'toolcall-unauthenticated-caller',
+        "human": 'toolcall: the caller identity was not authenticated; '
+                 'authorization is never evaluated without identity '
+                 '(identity-before-authorization layering); refused '
+                 'fail-closed at the authn layer',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'transaction-expired': {
         "domain": 'transaction',
         "code": 'transaction-expired',

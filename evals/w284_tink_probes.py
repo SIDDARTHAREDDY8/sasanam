@@ -47,12 +47,16 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g284-tink")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-283 merge pin 1587 -> 1595 (+8 keyset-* codes).
-TAXONOMY_PIN = 1641  # Wave-284 lane 8: +8 keyset-* (tink ADAPT).; Wave-284 lane 8: pin 1587 -> 1595 (+8 keyset-*).; Wave-284 merge: pin 1595 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+TAXONOMY_PIN = 1660  # Wave-284 lane 8: +8 keyset-* (tink ADAPT).; Wave-284 lane 8: pin 1587 -> 1595 (+8 keyset-*).; Wave-284 merge: pin 1595 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 lane 4: pin 1641 -> 1642 (+1 keyset-pin-key-invalid).
 
 _RESULTS = []
 
 PLUGIN_META = ("guardrail-evidence", "direct", "held-vs-expected")
 PROBE_METADATA = {}
+
+# Wave-286 lane 4 (F329): the configuration pin is a keyed MAC; every
+# keyset in this battery shares one test pin key.
+_TEST_PIN = os.urandom(32)
 
 
 def _record(probe_id, verdict, note):
@@ -106,7 +110,7 @@ def _new_keyset(kk):
     provider = FakeKmsProvider(["master-a", "master-b", "master-c"])
     ks = kk.KmsKeyset.new(template_name="KMS-ENVELOPE/v1",
                           primary_key_id="master-a",
-                          provider_name="fake")
+                          provider_name="fake", pin_key=_TEST_PIN)
     ks.add_key("master-b", provider_name="fake")
     return ks, provider
 
@@ -128,7 +132,7 @@ def p_keyset_schema():
         bad = dict(doc)
         bad["keyset_digest"] = "0" * 64
         try:
-            kk.KmsKeyset.from_dict(bad)
+            kk.KmsKeyset.from_dict(bad, pin_key=_TEST_PIN)
         except Exception:
             pass
         else:
@@ -137,9 +141,9 @@ def p_keyset_schema():
         # Fail-closed parse: unknown status refuses.
         bad2 = json.loads(json.dumps(doc))
         bad2["keys"][0]["status"] = "sometimes"
-        bad2 = kk.KmsKeyset._repin(bad2)  # re-digest honestly
+        bad2 = kk.KmsKeyset._repin(bad2, _TEST_PIN)  # re-digest honestly
         try:
-            kk.KmsKeyset.from_dict(bad2)
+            kk.KmsKeyset.from_dict(bad2, pin_key=_TEST_PIN)
         except Exception:
             pass
         else:
@@ -148,9 +152,9 @@ def p_keyset_schema():
         # Fail-closed parse: duplicate key ids refuse.
         bad3 = json.loads(json.dumps(doc))
         bad3["keys"].append(dict(bad3["keys"][0]))
-        bad3 = kk.KmsKeyset._repin(bad3)
+        bad3 = kk.KmsKeyset._repin(bad3, _TEST_PIN)
         try:
-            kk.KmsKeyset.from_dict(bad3)
+            kk.KmsKeyset.from_dict(bad3, pin_key=_TEST_PIN)
         except Exception:
             pass
         else:
@@ -161,9 +165,9 @@ def p_keyset_schema():
         bad5 = json.loads(json.dumps(doc))
         bad5["ceremony"] = {"phase": "rolling-out", "new_key_id": None,
                             "attempts": 0}
-        bad5 = kk.KmsKeyset._repin(bad5)
+        bad5 = kk.KmsKeyset._repin(bad5, _TEST_PIN)
         try:
-            kk.KmsKeyset.from_dict(bad5)
+            kk.KmsKeyset.from_dict(bad5, pin_key=_TEST_PIN)
         except kk.KeysetError as e:
             if e.code != "keyset-ceremony-incomplete":
                 return _record("keyset-schema", "BREAK",
@@ -178,9 +182,9 @@ def p_keyset_schema():
         # and minting under it refuses with a coded refusal.
         bad4 = json.loads(json.dumps(doc))
         bad4["keys"][0]["status"] = "disabled"
-        bad4 = kk.KmsKeyset._repin(bad4)
+        bad4 = kk.KmsKeyset._repin(bad4, _TEST_PIN)
         try:
-            ks_disabled = kk.KmsKeyset.from_dict(bad4)
+            ks_disabled = kk.KmsKeyset.from_dict(bad4, pin_key=_TEST_PIN)
         except Exception as e:  # noqa: BLE001
             return _record("keyset-schema", "BREAK",
                            "disabled primary refused at parse: %r" % (e,))
@@ -197,7 +201,7 @@ def p_keyset_schema():
             return _record("keyset-schema", "BREAK",
                            "disabled primary minted")
         # Round trip preserves the digest.
-        ks2 = kk.KmsKeyset.from_dict(doc)
+        ks2 = kk.KmsKeyset.from_dict(doc, pin_key=_TEST_PIN)
         if ks2.to_dict()["keyset_digest"] != doc["keyset_digest"]:
             return _record("keyset-schema", "BREAK",
                            "digest not stable across round trip")
@@ -398,7 +402,7 @@ def p_ceremony_half_finished_visible():
             return _record("ceremony-visible", "BREAK",
                            "half-finished ceremony not visible: %r" % (st,))
         # Ceremony survives a serialize/parse round trip (restart-safe).
-        ks2 = kk.KmsKeyset.from_dict(ks.to_dict())
+        ks2 = kk.KmsKeyset.from_dict(ks.to_dict(), pin_key=_TEST_PIN)
         if ks2.ceremony_state()["phase"] != "rolling-out":
             return _record("ceremony-visible", "BREAK",
                            "ceremony state lost across persistence")
@@ -428,7 +432,7 @@ def p_templates():
         try:
             kk.KmsKeyset.new(template_name="NOT-A-TEMPLATE/v9",
                              primary_key_id="master-a",
-                             provider_name="fake")
+                             provider_name="fake", pin_key=_TEST_PIN)
         except kk.KeysetError as e:
             if e.code != "keyset-bad-template":
                 return _record("templates", "BREAK",
@@ -501,8 +505,8 @@ def p_audit_chaining():
         # outer digest stays valid, so only the inner chain can catch it.
         tampered = json.loads(json.dumps(ks.to_dict()))
         tampered["audit_chain"][1]["reason"] = "forged"
-        tampered = kk.KmsKeyset._repin(tampered)
-        ks_bad = kk.KmsKeyset.from_dict(tampered)
+        tampered = kk.KmsKeyset._repin(tampered, _TEST_PIN)
+        ks_bad = kk.KmsKeyset.from_dict(tampered, pin_key=_TEST_PIN)
         if ks_bad.verify_chain():
             return _record("audit-chaining", "BREAK",
                            "tampered chain verifies")

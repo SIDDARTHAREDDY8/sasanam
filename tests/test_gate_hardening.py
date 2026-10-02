@@ -385,7 +385,7 @@ class TestTaxonomy(unittest.TestCase):
         src = open(path).read()
         lits = re.findall(r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]',
                           src)
-        self.assertEqual(len(lits), 1641)  # Wave-279 lane 2: pin 1493 -> 1494 (+1 evbundle-contract-refused); prior Wave-275 lane D: pin 1485 -> 1485.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).
+        self.assertEqual(len(lits), 1660)  # Wave-279 lane 2: pin 1493 -> 1494 (+1 evbundle-contract-refused); prior Wave-275 lane D: pin 1485 -> 1485.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
         self.assertEqual(len(set(lits)), len(lits))
         gh = sorted(c for c in set(lits) if c.startswith("gatehard-"))
         self.assertEqual(len(gh), 14)

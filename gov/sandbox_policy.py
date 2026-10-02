@@ -49,10 +49,12 @@ against the isolation the executor can actually enforce, returning a
 """
 
 import hashlib
+import hmac
 import json
 import os
 import re
 import sys
+from types import MappingProxyType
 
 SCHEMA_VERSION = 1
 
@@ -518,6 +520,14 @@ def _validate_syscalls(value):
     }
 
 
+def _freeze_filter(node):
+    """Recursively convert a parsed filter (nested tuples) into nested
+    lists so the normalized policy document stays JSON-serializable."""
+    if isinstance(node, (tuple, list)):
+        return [_freeze_filter(item) for item in node]
+    return node
+
+
 class CompiledPolicy:
     """A validated, normalized, digest-pinned sandbox policy.
 
@@ -525,7 +535,32 @@ class CompiledPolicy:
     function: "allow", "deny", or "kill". ``digest`` is the sha256 over
     the canonical normalized document -- the identity the pin store
     and the audit log use.
+
+    IMMUTABLE after compilation (F330): every attribute is a frozen
+    container and ``__setattr__``/``__delattr__`` refuse once the
+    constructor finishes, so a post-pin-check in-process mutation can
+    never flip enforcement while a stale digest still matches. The
+    use-time gate (:func:`check_policy_use`) additionally recomputes
+    the digest from the live object instead of trusting the cached
+    string, so even a freeze-bypassing edit is caught as
+    ``sandbox-policy-drift``.
     """
+
+    def __setattr__(self, name, value):
+        if getattr(self, "_frozen", False):
+            raise SandboxPolicyError(
+                "sandbox-policy-invalid",
+                "CompiledPolicy is immutable after compilation: "
+                "refusing to set %r" % (name,))
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        if getattr(self, "_frozen", False):
+            raise SandboxPolicyError(
+                "sandbox-policy-invalid",
+                "CompiledPolicy is immutable after compilation: "
+                "refusing to delete %r" % (name,))
+        object.__delattr__(self, name)
 
     def __init__(self, doc):
         _require_dict(doc, "policy")
@@ -547,34 +582,57 @@ class CompiledPolicy:
                 "sandbox-policy-invalid",
                 "unknown policy sections: %s" % (", ".join(unknown),))
         self.policy_id = policy_id
-        self.namespaces = _validate_namespaces(doc.get("namespaces", {}))
-        self.rlimits = _validate_int_map(doc.get("rlimits", {}), RLIMITS,
-                                         "rlimits")
-        self.budgets = _validate_int_map(doc.get("budgets", {}), BUDGETS,
-                                         "budgets")
-        self.mounts = _validate_mounts(doc.get("mounts", {}))
+        self.namespaces = MappingProxyType(
+            _validate_namespaces(doc.get("namespaces", {})))
+        self.rlimits = MappingProxyType(
+            _validate_int_map(doc.get("rlimits", {}), RLIMITS, "rlimits"))
+        self.budgets = MappingProxyType(
+            _validate_int_map(doc.get("budgets", {}), BUDGETS, "budgets"))
+        self.mounts = MappingProxyType(
+            {section: tuple(paths)
+             for section, paths in
+             _validate_mounts(doc.get("mounts", {})).items()})
         syscalls = _validate_syscalls(doc.get("syscalls", {}))
         self.default = syscalls["default"]
-        self.allow = syscalls["allow"]
-        self.deny = syscalls["deny"]
-        self.rules = syscalls["rules"]
-        self._rule_allows = syscalls["_rule_allows"]
-        self._rule_denies = set(syscalls["_rule_denies"])
+        self.allow = frozenset(syscalls["allow"])
+        self.deny = frozenset(syscalls["deny"])
+        self.rules = tuple(syscalls["rules"])
+        self._rule_allows = MappingProxyType(
+            {name: tuple(filters)
+             for name, filters in syscalls["_rule_allows"].items()})
+        self._rule_denies = frozenset(syscalls["_rule_denies"])
         self.digest = _digest_of(self._normalized())
+        object.__setattr__(self, "_frozen", True)
 
     def _normalized(self):
+        # Plain JSON-able structures: the frozen containers above
+        # (frozenset/MappingProxyType) are converted back so the digest
+        # stays a pure function of the policy content.
+        #
+        # The derived rule sets (_rule_denies/_rule_allows) are covered
+        # too, not just the source rule strings: decide() reads the
+        # derived sets, so a freeze-bypassing in-process edit of a
+        # derived set must change the live digest (F330). They are
+        # deterministic functions of ``rules`` for honest objects, so
+        # this adds no false drift.
         return {
             "policy_schema_version": SCHEMA_VERSION,
             "policy_id": self.policy_id,
-            "namespaces": self.namespaces,
-            "rlimits": self.rlimits,
-            "budgets": self.budgets,
-            "mounts": self.mounts,
+            "namespaces": dict(self.namespaces),
+            "rlimits": dict(self.rlimits),
+            "budgets": dict(self.budgets),
+            "mounts": {section: list(paths)
+                       for section, paths in self.mounts.items()},
             "syscalls": {
                 "default": self.default,
-                "allow": self.allow,
-                "deny": self.deny,
-                "rules": self.rules,
+                "allow": sorted(self.allow),
+                "deny": sorted(self.deny),
+                "rules": list(self.rules),
+                "_rule_denies": sorted(self._rule_denies),
+                "_rule_allows": {
+                    name: [_freeze_filter(f) for f in filters]
+                    for name, filters in sorted(self._rule_allows.items())
+                },
             },
         }
 
@@ -725,7 +783,12 @@ def load_pins(path):
 def check_policy_use(policy, pins):
     """Use-time gate: the policy's digest must equal its committed pin.
 
-    Returns the digest. Raises ``SandboxPolicyRefused`` with
+    The digest is RECOMPUTED from the live object (never the cached
+    ``policy.digest`` string): a post-check in-process mutation -- even
+    one that bypassed the compile-time freeze -- changes the live
+    digest and is caught here as ``sandbox-policy-drift`` (F330).
+
+    Returns the live digest. Raises ``SandboxPolicyRefused`` with
     ``sandbox-policy-unpinned`` (no pin) or ``sandbox-policy-drift``
     (digest mismatch, however small the diff). A sandbox never runs
     under a policy that fails this gate.
@@ -748,13 +811,14 @@ def check_policy_use(policy, pins):
         raise SandboxPolicyError(
             "sandbox-policy-invalid",
             "pin for %r is not a digest string" % (policy.policy_id,))
-    if pinned != policy.digest:
+    live = _digest_of(policy._normalized())
+    if not hmac.compare_digest(live, pinned):
         raise SandboxPolicyRefused(
             "sandbox-policy-drift",
             "policy %r drifted from its pin (live %s..., pinned %s...): "
             "refusing to run under a changed policy"
-            % (policy.policy_id, policy.digest[:12], pinned[:12]))
-    return policy.digest
+            % (policy.policy_id, live[:12], pinned[:12]))
+    return live
 
 
 # ---------------------------------------------------------------------------

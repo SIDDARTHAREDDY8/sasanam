@@ -41,7 +41,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g285-exc")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-285 lane 8: pin 1621 -> 1632 (+11 exception-* codes; checkov ADAPT).
-TAXONOMY_PIN = 1641  # Wave-285 lane 8: pin 1621 -> 1632 (+11 exception-*).
+TAXONOMY_PIN = 1660  # Wave-285 lane 8: pin 1621 -> 1632 (+11 exception-*).; Wave-286 merge: pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
 
 _RESULTS = []
 

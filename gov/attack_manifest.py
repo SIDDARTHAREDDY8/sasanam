@@ -101,6 +101,14 @@ class SelectionInvalid(ManifestError):
     code = "manifest-selection-invalid"
 
 
+class RegexUnsafe(ManifestError):
+    """A matcher/extractor regex was refused at load: static analysis
+    found nested-quantifier ambiguity (a ReDoS shape). Fail-closed at
+    load -- the pattern never reaches the matching engine."""
+
+    code = "manifest-regex-unsafe"
+
+
 class SignatureInvalid(ManifestError):
     """An Ed25519 template signature failed verification (tamper or
     wrong key). Fail-closed."""
@@ -346,6 +354,552 @@ def _eval_dsl(node, ctx):
 
 
 # ---------------------------------------------------------------------------
+# Regex safety gate (F325). Load-time refusal of backtracking-prone
+# patterns.
+#
+# Maximum group-nesting depth for the pattern parser, mirroring the
+# DSL parser's _MAX_NEST_DEPTH: deeper nesting is refused with the
+# coded RegexUnsafe error rather than risking an uncaught
+# RecursionError.
+_RX_MAX_NEST = 64
+# ``re.compile`` accepts any syntactically valid pattern, including
+# nested-quantifier shapes like ``^(a+)+$`` whose backtracking is
+# exponential in the input length (17.34 s on 29 bytes, ~1.85x/byte).
+# Unsigned templates run freely at target="isolated", so the attacker
+# model is real and availability of the template-evaluation worker is
+# at stake. This gate parses each regex into a small AST and refuses
+# -- with the coded manifest-regex-unsafe refusal -- any pattern
+# where a repetition is applied to a nullable, ambiguous, or
+# self-overlapping operand:
+#
+#   * nullable operand: ``(a*)*`` -- empty iterations repartition.
+#   * ambiguous operand: ``(a|a)+`` -- the operand itself matches one
+#     string two ways.
+#   * self-overlapping operand: ``(a+)+`` -- the operand matches
+#     strings of different lengths whose cut points overlap
+#     (mid(X) ∩ first(X) != {}), so X·X repartitions; fixed-length
+#     operands (``(\d{4})+``) are exempt because their iteration
+#     boundaries are forced.
+#
+# The analysis is deliberately conservative (True-biased): exotic but
+# safe shapes such as ``(a|ab)+`` or ``(ab|ac)+`` are refused too. The
+# module docstring tells template authors to restructure (flatten the
+# nesting or pin the repetition); a refused pattern is a loud,
+# actionable load-time error, never a silent behavior change. What the
+# gate does NOT do: bound run-time matching (patterns that pass the
+# gate are at most polynomial in the input length, which the isolated
+# target's fixture sizes already bound).
+#
+# Nodes: ("lit", ch) | ("any",) | ("class", frozenset) | ("eps",) |
+# ("opaque",) | ("look", inner) | ("seq", [...]) | ("alt", [...]) |
+# ("rep", node, lo, hi) with hi=None for unbounded. Character sets use
+# None as the ANY sentinel (".", \D, \S, \W, [^...]).
+# ---------------------------------------------------------------------------
+
+_RX_SIMPLE_ESCAPES = {
+    "n": "\n", "t": "\t", "r": "\r", "f": "\f", "v": "\v",
+    "a": "\a", "0": "\0",
+}
+_RX_DIGITS = frozenset("0123456789")
+_RX_SPACE = frozenset(" \t\n\r\f\v")
+_RX_WORD = frozenset(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+
+
+class _RegexParser(object):
+    """Minimal regex parser: just enough of the pattern language to
+    find repetition-over-ambiguous-operand shapes. The pattern already
+    passed re.compile, so malformed input cannot arrive here."""
+
+    def __init__(self, pattern):
+        self.s = pattern
+        self.n = len(pattern)
+        self.pos = 0
+        self._depth = 0
+
+    def parse(self):
+        node = self._alt()
+        # re.compile accepted the pattern, so the whole string parses.
+        return node
+
+    def _peek(self):
+        return self.s[self.pos] if self.pos < self.n else ""
+
+    def _alt(self):
+        branches = [self._seq()]
+        while self._peek() == "|":
+            self.pos += 1
+            branches.append(self._seq())
+        return branches[0] if len(branches) == 1 else ("alt", branches)
+
+    def _seq(self):
+        items = []
+        while self.pos < self.n and self._peek() not in "|)":
+            items.append(self._quant())
+        if not items:
+            return ("eps",)
+        return items[0] if len(items) == 1 else ("seq", items)
+
+    def _quant(self):
+        node = self._atom()
+        c = self._peek()
+        if c == "*":
+            lo, hi = 0, None
+            self.pos += 1
+        elif c == "+":
+            lo, hi = 1, None
+            self.pos += 1
+        elif c == "?":
+            lo, hi = 0, 1
+            self.pos += 1
+        elif c == "{":
+            m = re.match(r"\{(\d+)(?:,(\d*)?)?\}", self.s[self.pos:])
+            if not m:
+                return node  # a literal brace, not a quantifier
+            self.pos += m.end()
+            lo = int(m.group(1))
+            if "," not in m.group(0):
+                hi = lo
+            elif m.group(2):
+                hi = int(m.group(2))
+            else:
+                hi = None
+        else:
+            return node
+        if self._peek() in "?+":
+            # Lazy "?" or possessive "+" (3.11+): neither changes the
+            # worst-case shape materially; consume and ignore.
+            self.pos += 1
+        return ("rep", node, lo, hi)
+
+    def _atom(self):
+        c = self._peek()
+        if c == "(":
+            return self._group()
+        if c == "[":
+            return self._class()
+        if c == ".":
+            self.pos += 1
+            return ("any",)
+        if c == "\\":
+            return self._escape()
+        if c in "^$":
+            self.pos += 1
+            return ("eps",)
+        self.pos += 1
+        return ("lit", c)
+
+    def _expect(self, want):
+        if self._peek() != want:
+            # Unreachable for re.compile-accepted patterns; fail
+            # closed rather than mis-parse.
+            raise RegexUnsafe("regex: unexpected %r, wanted %r"
+                              % (self._peek(), want))
+        self.pos += 1
+
+    def _group(self):
+        # Depth-capped like the DSL parser's _MAX_NEST_DEPTH: a
+        # pattern that nests too deeply is refused with the coded
+        # RegexUnsafe error, never an uncaught RecursionError (the
+        # re module itself accepts deeper nesting than this parser
+        # can recurse).
+        self._depth += 1
+        if self._depth > _RX_MAX_NEST:
+            raise RegexUnsafe("regex: groups nested too deeply")
+        try:
+            return self._group_inner()
+        finally:
+            self._depth -= 1
+
+    def _group_inner(self):
+        self.pos += 1  # (
+        if self._peek() == "?":
+            self.pos += 1
+            c = self._peek()
+            if c == ":":
+                self.pos += 1
+                node = self._alt()
+                self._expect(")")
+                return node
+            if c == "P":
+                self.pos += 1
+                if self._peek() == "<":
+                    self.pos += 1
+                    while self._peek() != ">":
+                        self.pos += 1
+                    self.pos += 1
+                    node = self._alt()
+                    self._expect(")")
+                    return node
+                # (?P=name): a backreference -- opaque.
+                while self._peek() != ")":
+                    self.pos += 1
+                self.pos += 1
+                return ("opaque",)
+            if c in "=!":
+                # (?=...) / (?!...): zero-width; the walk still
+                # descends into the body for nested repeats.
+                self.pos += 1
+                inner = self._alt()
+                self._expect(")")
+                return ("look", inner)
+            if c == "<":
+                # (?<=...) / (?<!...)
+                self.pos += 1
+                self._expect(self._peek())  # = or !
+                inner = self._alt()
+                self._expect(")")
+                return ("look", inner)
+            # (?i), (?i-m), (?i:...) -- flag groups.
+            while self._peek() not in ":)":
+                self.pos += 1
+            if self._peek() == ":":
+                self.pos += 1
+                node = self._alt()
+                self._expect(")")
+                return node
+            self.pos += 1
+            return ("eps",)
+        node = self._alt()
+        self._expect(")")
+        return node
+
+    def _escape(self):
+        self.pos += 1  # \
+        e = self._peek()
+        self.pos += 1
+        if e == "d":
+            return ("class", _RX_DIGITS)
+        if e == "s":
+            return ("class", _RX_SPACE)
+        if e == "w":
+            return ("class", _RX_WORD)
+        if e in "DSW":
+            return ("any",)
+        if e in "bB":
+            return ("eps",)  # word boundary (outside classes)
+        if e in "AZ":
+            return ("eps",)
+        if e.isdigit():
+            return ("opaque",)  # backreference
+        if e in _RX_SIMPLE_ESCAPES:
+            return ("lit", _RX_SIMPLE_ESCAPES[e])
+        return ("lit", e)  # escaped punctuation
+
+    def _class(self):
+        self.pos += 1  # [
+        if self._peek() == "^":
+            # A negated class matches (almost) anything: ANY.
+            while self._peek() != "]":
+                self.pos += 1
+            self.pos += 1
+            return ("any",)
+        chars = set()
+        first = True
+        while True:
+            c = self._peek()
+            if c == "]" and not first:
+                self.pos += 1
+                break
+            first = False
+            if c == "\\":
+                self.pos += 1
+                e = self._peek()
+                self.pos += 1
+                if e == "d":
+                    chars |= _RX_DIGITS
+                elif e == "s":
+                    chars |= _RX_SPACE
+                elif e == "w":
+                    chars |= _RX_WORD
+                elif e in "DSW":
+                    return ("any",)
+                elif e in _RX_SIMPLE_ESCAPES:
+                    chars.add(_RX_SIMPLE_ESCAPES[e])
+                else:
+                    chars.add(e)
+                continue
+            self.pos += 1
+            nxt = self.s[self.pos:self.pos + 2]
+            if nxt.startswith("-") and len(nxt) == 2 and nxt[1] != "]":
+                self.pos += 1
+                d = self._peek()
+                self.pos += 1
+                for o in range(ord(c), ord(d) + 1):
+                    chars.add(chr(o))
+            else:
+                chars.add(c)
+        return ("class", frozenset(chars))
+
+
+def _rx_overlap(a, b):
+    """Do two first/mid sets share a character? None (ANY) overlaps
+    everything -- True-biased."""
+    if a is None or b is None:
+        return True
+    return not a.isdisjoint(b)
+
+
+def _rx_nullable(n):
+    t = n[0]
+    if t in ("lit", "any", "class"):
+        return False
+    if t in ("eps", "look", "opaque"):
+        return True
+    if t == "seq":
+        return all(_rx_nullable(c) for c in n[1])
+    if t == "alt":
+        return any(_rx_nullable(c) for c in n[1])
+    if t == "rep":
+        return n[2] == 0 or _rx_nullable(n[1])
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_first(n):
+    """Possible first characters (None = ANY)."""
+    t = n[0]
+    if t == "lit":
+        return frozenset([n[1]])
+    if t in ("any", "opaque"):
+        return None
+    if t == "class":
+        return n[1]
+    if t in ("eps", "look"):
+        return frozenset()
+    if t == "seq":
+        out = set()
+        for c in n[1]:
+            f = _rx_first(c)
+            if f is None:
+                return None
+            out |= f
+            if not _rx_nullable(c):
+                break
+        return frozenset(out)
+    if t == "alt":
+        out = set()
+        for c in n[1]:
+            f = _rx_first(c)
+            if f is None:
+                return None
+            out |= f
+        return frozenset(out)
+    if t == "rep":
+        return _rx_first(n[1])
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_minlen(n):
+    t = n[0]
+    if t in ("lit", "any", "class"):
+        return 1
+    if t in ("eps", "look", "opaque"):
+        return 0
+    if t == "seq":
+        return sum(_rx_minlen(c) for c in n[1])
+    if t == "alt":
+        return min(_rx_minlen(c) for c in n[1])
+    if t == "rep":
+        return n[2] * _rx_minlen(n[1])
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_maxlen(n):
+    """None = unbounded."""
+    t = n[0]
+    if t in ("lit", "any", "class"):
+        return 1
+    if t in ("eps", "look"):
+        return 0
+    if t == "opaque":
+        return None
+    if t == "seq":
+        total = 0
+        for c in n[1]:
+            m = _rx_maxlen(c)
+            if m is None:
+                return None
+            total += m
+        return total
+    if t == "alt":
+        ms = [_rx_maxlen(c) for c in n[1]]
+        return None if any(m is None for m in ms) else max(ms)
+    if t == "rep":
+        _, x, lo, hi = n
+        if hi == 0:
+            return 0
+        m = _rx_maxlen(x)
+        if hi is None or m is None:
+            return None
+        return hi * m
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_fixed_len(n):
+    mn, mx = _rx_minlen(n), _rx_maxlen(n)
+    return mx is not None and mn == mx
+
+
+def _rx_can_nonempty(n):
+    m = _rx_maxlen(n)
+    return m is None or m >= 1
+
+
+def _rx_mid(n):
+    """Characters that can appear at match position >= 1 (None = ANY).
+    The repartition detector: a repeated operand X is dangerous when
+    mid(X) overlaps first(X)."""
+    t = n[0]
+    if t in ("lit", "any", "class", "eps", "look"):
+        return frozenset()
+    if t == "opaque":
+        return None
+    if t == "alt":
+        out = set()
+        for c in n[1]:
+            m = _rx_mid(c)
+            if m is None:
+                return None
+            out |= m
+        return frozenset(out)
+    if t == "seq":
+        cs = n[1]
+        out = set()
+        for i, c in enumerate(cs):
+            m = _rx_mid(c)
+            if m is None:
+                return None
+            out |= m
+            if i + 1 < len(cs) and any(_rx_can_nonempty(p)
+                                      for p in cs[:i + 1]):
+                f = _rx_first(cs[i + 1])
+                if f is None:
+                    return None
+                out |= f
+        return frozenset(out)
+    if t == "rep":
+        _, x, lo, hi = n
+        m = _rx_mid(x)
+        if m is None:
+            return None
+        out = set(m)
+        if hi is None or hi >= 2:
+            f = _rx_first(x)
+            if f is None:
+                return None
+            out |= f
+        return frozenset(out)
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_branch_overlap(a, b):
+    """Can two alternation branches match a common string?
+    True-biased over-approximation."""
+    if _rx_nullable(a) and _rx_nullable(b):
+        return True
+    if not _rx_overlap(_rx_first(a), _rx_first(b)):
+        return False
+    if _rx_fixed_len(a) and _rx_fixed_len(b):
+        return _rx_minlen(a) == _rx_minlen(b)
+    return True
+
+
+def _rx_repeat_dangerous(x):
+    """Is repeating x (>= 2 iterations possible) backtracking-prone?"""
+    if _rx_nullable(x):
+        # (a*)* -- empty iterations repartition arbitrarily.
+        return True
+    if _rx_ambiguous(x):
+        return True
+    if _rx_fixed_len(x):
+        # Fixed-length iterations have forced boundaries: linear.
+        return False
+    # Variable-length operand whose cut points overlap its starts:
+    # X.X repartitions (the (a+)+ shape).
+    return _rx_overlap(_rx_mid(x), _rx_first(x))
+
+
+def _rx_ambiguous(n):
+    t = n[0]
+    if t in ("lit", "any", "class", "eps"):
+        return False
+    if t == "opaque":
+        return True
+    if t == "look":
+        return _rx_ambiguous(n[1])
+    if t == "alt":
+        bs = n[1]
+        if any(_rx_ambiguous(b) for b in bs):
+            return True
+        if sum(1 for b in bs if _rx_nullable(b)) >= 2:
+            return True
+        for i in range(len(bs)):
+            for j in range(i + 1, len(bs)):
+                if _rx_branch_overlap(bs[i], bs[j]):
+                    return True
+        return False
+    if t == "seq":
+        cs = n[1]
+        if any(_rx_ambiguous(c) for c in cs):
+            return True
+        for i in range(len(cs) - 1):
+            a, b = cs[i], cs[i + 1]
+            if not _rx_can_nonempty(b):
+                continue
+            if _rx_nullable(a) and _rx_overlap(_rx_first(a),
+                                              _rx_first(b)):
+                # (a*)(a*): the empty match shifts the boundary.
+                return True
+            if (not _rx_fixed_len(a) and not _rx_fixed_len(b)
+                    and _rx_overlap(_rx_mid(a), _rx_first(b))):
+                # a+a: the boundary between a+ and a repartitions.
+                return True
+        return False
+    if t == "rep":
+        _, x, lo, hi = n
+        if hi == 0:
+            return False
+        if hi == 1:
+            # "?" / "{1}": no repetition, ambiguity of the operand.
+            return _rx_ambiguous(x)
+        return _rx_repeat_dangerous(x)
+    raise AssertionError("bad regex node %r" % (t,))  # pragma: no cover
+
+
+def _rx_check(n):
+    """Walk the pattern AST; raise RegexUnsafe on the first
+    backtracking-prone repetition."""
+    t = n[0]
+    if t == "rep":
+        _, x, lo, hi = n
+        _rx_check(x)
+        if hi == 0 or hi == 1:
+            return
+        if _rx_repeat_dangerous(x):
+            raise RegexUnsafe(
+                "regex has a backtracking-prone repetition "
+                "(nested/overlapping quantifiers): restructure the "
+                "pattern (flatten the nesting or pin the repetition)")
+        return
+    if t in ("seq", "alt"):
+        for c in n[1]:
+            _rx_check(c)
+    elif t == "look":
+        _rx_check(n[1])
+    # Leaves ("lit", "any", "class", "eps", "opaque") carry nothing.
+
+
+def _check_regex_safety(pattern, where):
+    """Parse ``pattern`` and refuse backtracking-prone shapes with the
+    coded manifest-regex-unsafe refusal. Called at load, after the
+    re.compile syntax check."""
+    try:
+        _rx_check(_RegexParser(pattern).parse())
+    except RegexUnsafe as e:
+        raise RegexUnsafe("%s: pattern %r refused: %s" % (where, pattern, e))
+
+
+# ---------------------------------------------------------------------------
 # Template validation + normalization
 # ---------------------------------------------------------------------------
 
@@ -400,6 +954,9 @@ def _validate_matcher(m, index):
         except re.error as e:
             raise TemplateMalformed("matcher %d: bad regex: %s"
                                     % (index, e))
+        # F325: a compilable pattern can still be exponentially slow
+        # (nested quantifiers). Refuse the ReDoS shape at load.
+        _check_regex_safety(pattern, "matcher %d" % (index,))
         out["pattern"] = pattern
     elif mtype == "binary":
         sig = m.get("signature")
@@ -453,6 +1010,9 @@ def _validate_extractor(e, index):
         except re.error as err:
             raise TemplateMalformed("extractor %d: bad regex: %s"
                                     % (index, err))
+        # F325: same ReDoS gate as matchers (finditer is equally
+        # exposed to nested-quantifier backtracking).
+        _check_regex_safety(pattern, "extractor %d" % (index,))
         group = e.get("group", 0)
         if (not isinstance(group, int) or isinstance(group, bool)
                 or group < 0 or group > compiled.groups):
