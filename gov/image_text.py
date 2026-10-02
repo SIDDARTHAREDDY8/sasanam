@@ -163,7 +163,7 @@ def provenance_of(channel):
 #     (b) no unbounded space-free repeat and char length <=
 #         _HOUSE_MAX_MATCH: the two .{0,N} wildcard patterns
 #         (evasion_normative_descriptive, 225 chars;
-#         evasion_verification_cost_framing, 114 chars). A match
+#         evasion_verification_cost_framing, 80 chars). A match
 #         straddling a gap then lies within _WINDOW_HALF chars of
 #         it.
 # A gap-straddling match of class (a) lies within _HOUSE_CHUNK_SPAN
@@ -210,7 +210,7 @@ _MAX_FILLER_OMISSIONS = 2
 
 #: Max match length in match-copy chars, over the house patterns
 #: WITHOUT an unbounded space-free repeat (the two .{0,N}
-#: wildcard patterns: 225 and 114 chars). A match of one of these
+#: wildcard patterns: 225 and 80 chars). A match of one of these
 #: straddling an omitted gap lies within _WINDOW_HALF chars of it.
 #: Guarded by TestF290BoundedScreening::test_house_wildcard_span_stable.
 _HOUSE_MAX_MATCH = 256
