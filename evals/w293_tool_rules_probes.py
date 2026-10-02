@@ -513,9 +513,10 @@ def _green_checks():
     # w288_f338_f339 (tool_call_policy): 0 BREAK expected (its pin was
     # repointed tree-wide with the lane).
     _run_battery("evals/w288_f338_f339_probes.py", 0, "w288f338f339")
-    # w292_redteam: 4 BREAK expected (F360 x4, open); its pin and its
-    # repin batteries were repointed tree-wide with the lane.
-    _run_battery("evals/w292_redteam_probes.py", 4, "w292redteam")
+    # w292_redteam: 0 BREAK expected on the composed tree (F360 closed by
+    # wave-293 lane 1; its pin and its repin batteries were repointed
+    # tree-wide with the lane).
+    _run_battery("evals/w292_redteam_probes.py", 0, "w292redteam")
 
 
 def main():

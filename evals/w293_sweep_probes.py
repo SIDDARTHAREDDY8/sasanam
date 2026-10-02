@@ -524,8 +524,8 @@ def p_repins():
     _run_battery("evals/w292_revocation_probes.py", 0, "w292-revocation")
     _run_battery("evals/w292_delegation_decay_probes.py", 0,
                  "w292-decay")
-    # F360 OPEN at base: 4 BREAK expected-open (F360x4).
-    _run_battery("evals/w292_redteam_probes.py", 4, "w292-redteam")
+    # F360 closed by wave-293 lane 1: 0 BREAK expected on the composed tree.
+    _run_battery("evals/w292_redteam_probes.py", 0, "w292-redteam")  # wave-293 merge: F360 closed
 
 
 def _green_checks():
