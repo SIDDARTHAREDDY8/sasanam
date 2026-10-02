@@ -255,11 +255,19 @@ def _sanitize_note(note):
     (outcome / tripwire bit) is preserved; only the credential-shaped
     content is withheld, with a visible placeholder (redaction is marked,
     never silent elision).
+
+    Detection routes through the ``secret_canonicalizer`` rule engine
+    (wave-283, gitleaks contract) OR-ed with the elicitation seam:
+    anything the old seam caught is still caught, and the broader
+    rule set (AWS/GitHub/Slack/JWT/private-key/decode layers) closes
+    the evasion gap.
     """
     if note is None:
         return None
     from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
-    if not _ec.credential_material_present(note):
+    from gov import secret_canonicalizer as _sc  # stdlib-only; the single seam
+    if not (_ec.credential_material_present(note)
+            or _sc.credential_material_present(note)):
         return note
     for prefix in (_REJECTION_PREFIX, _GUARD_ERROR_PREFIX):
         if note.startswith(prefix):

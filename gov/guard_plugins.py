@@ -37,13 +37,15 @@ with ``decision_effect="transform"`` on transform runs; the triad
 adapter maps plugin outcomes onto ``gov.tool_guardrails`` verdicts.
 
 F306-adjacent hygiene (F311 closed this wave): every plugin-authored
-rationale/detail is sanitized at the GuardChain emit funnel with the
-F306/F310 ``credential_material_present`` seam before it can reach an
-audit record. Verdicts (outcome / exception re-raise / transform
-digests) are preserved; only credential-shaped content is withheld,
-with a visible kind-preserving placeholder. The default guards never
-embed secrets in their own detail, and a third-party plugin that does
-can no longer land them in the audit log.
+rationale/detail is sanitized at the GuardChain emit funnel before it
+can reach an audit record. Detection is composed: the F306/F310
+``credential_material_present`` seam OR the wave-283
+``secret_canonicalizer`` rule engine (gitleaks contract). Verdicts
+(outcome / exception re-raise / transform digests) are preserved;
+only credential-shaped content is withheld, with a visible
+kind-preserving placeholder. The default guards never embed secrets
+in their own detail, and a third-party plugin that does can no longer
+land them in the audit log.
 """
 import copy
 import hashlib
@@ -51,6 +53,7 @@ import json
 import re
 
 from gov import guardrail_evidence as _ge
+from gov import secret_canonicalizer as _sc  # stdlib-only; no import cycle
 
 #: Hooks at the tool seam (Portkey's start -> beforeRequest ->
 #: afterRequest -> end, adapted).
@@ -64,6 +67,32 @@ TRANSFORM_RECORD_TYPE = "guard-plugin-transform"
 
 #: Cap for detail strings entering the audit log (log hygiene).
 _DETAIL_CAP = 2000
+
+#: The rule-engine detection seam (wave-283, gitleaks contract): every
+#: GuardChain emit funnel routes its credential-shape detection through
+#: it, composed with the elicitation seam -- the same composition as
+#: the F306 triad and F310 shield funnels.
+
+
+def _sanitize_plugin_rationale(rationale):
+    """Wave-283/F311: plugin rationales and transform details are
+    audit-bound. Credential-shaped plugin material must never reach
+    the log -- it is sanitized at the GuardChain emit funnel, keeping
+    the head prefix (exception type / plugin id) so an auditor still
+    sees what was withheld. Verdicts are preserved; only the
+    credential-shaped content is withheld, with a visible placeholder
+    (redaction is marked, never silent elision)."""
+    if not rationale:
+        return rationale
+    from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
+    if not (_ec.credential_material_present(rationale)
+            or _sc.credential_material_present(rationale)):
+        return rationale
+    head, sep, _ = rationale.partition(": ")
+    if sep:
+        return "%s: [credential material withheld]" % head
+    return "[guard-plugin evidence withheld: credential-shaped material]"
+
 
 #: Event-scope mapping for the guardrail-run seam (existing scopes
 #: only -- no new scope vocabulary).
@@ -80,35 +109,6 @@ def _capped(text):
     if len(text) > _DETAIL_CAP:
         text = text[:_DETAIL_CAP] + "...[truncated]"
     return text
-
-
-def _sanitize_plugin_evidence(text):
-    """F311: GuardChain's OWN evidence emission is audit-bound.
-
-    The guardrail-run records written by ``GuardChain._run_one`` and
-    the ``guard-plugin-transform`` records appended by ``run_hook``
-    carry plugin-authored detail verbatim. A third-party plugin
-    quoting credential-shaped payload material lands it in the audit
-    log -- the same defect class as F306's triad site and F310's
-    shield scopes. Neither fix covers this path, so the detail is
-    sanitized at the GuardChain emit funnel with the same
-    ``credential_material_present`` detection seam (the F306/F310
-    seam). The verdict (outcome / exception re-raise / transform
-    digests) is preserved; only the credential-shaped content is
-    withheld, with a visible kind-preserving placeholder (redaction
-    is marked, never silent elision). The exception-type prefix is
-    kept so an auditor still sees what was withheld. Clean detail
-    passes through verbatim (no over-redaction).
-    """
-    if not text:
-        return text
-    from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
-    if not _ec.credential_material_present(text):
-        return text
-    head, sep, _ = text.partition(": ")
-    if sep:
-        return "%s: [credential material withheld]" % head
-    return "[guard-plugin evidence withheld: credential-shaped material]"
 
 
 class GuardPluginError(ValueError):
@@ -432,7 +432,12 @@ class GuardChain:
                     "old_digest": old_digest,
                     "new_digest": new_digest,
                     "changed_keys": changed,
-                    "detail": _sanitize_plugin_evidence(outcome.detail),
+                    # F311/wave-283: span-level redaction through the
+                    # secret_canonicalizer seam -- kind-preserving
+                    # placeholders, raw credential-shaped detail never
+                    # reaches the record.
+                    "detail": _sc.sanitize(outcome.detail)[0]
+                    if outcome.detail else None,
                 })
         return ChainVerdict(True, current, transforms=transforms,
                             records=records)
@@ -457,8 +462,7 @@ class GuardChain:
                 "plugin:" + plugin.plugin_id, plugin.plugin_id,
                 mode="blocking", event_scope=scope,
                 outcome="intentional_block",
-                rationale=_sanitize_plugin_evidence(
-                    "PluginDeny: %s" % exc),
+                rationale=_sanitize_plugin_rationale("PluginDeny: %s" % exc),
                 input_bytes=input_bytes, labels=labels,
                 decision_effect="deny")
             return PluginOutcome("deny", detail=str(exc)), rec
@@ -467,32 +471,35 @@ class GuardChain:
                 "plugin:" + plugin.plugin_id, plugin.plugin_id,
                 mode="blocking", event_scope=scope,
                 outcome="technical_failure",
-                rationale=_sanitize_plugin_evidence(
+                rationale=_sanitize_plugin_rationale(
                     _capped("%s: %s" % (type(exc).__name__, exc))),
                 input_bytes=input_bytes, labels=labels)
             raise PluginTechnicalFailure(
                 plugin.plugin_id,
-                "%s: %s" % (type(exc).__name__, exc)) from exc
+                _sanitize_plugin_rationale(
+                    "%s: %s" % (type(exc).__name__, exc))) from exc
 
         if not isinstance(outcome, PluginOutcome):
             rec = self._writer.record(
                 "plugin:" + plugin.plugin_id, plugin.plugin_id,
                 mode="blocking", event_scope=scope,
                 outcome="technical_failure",
-                rationale=_sanitize_plugin_evidence(_capped(
+                rationale=_sanitize_plugin_rationale(_capped(
                     "plugin returned %r: plugins must return a "
                     "PluginOutcome" % (outcome,))),
                 input_bytes=input_bytes, labels=labels)
             raise PluginTechnicalFailure(
                 plugin.plugin_id,
-                "returned a non-verdict %r" % (outcome,))
+                _sanitize_plugin_rationale(
+                    "returned a non-verdict %r" % (outcome,)))
+
 
         if outcome.verdict == "deny":
             rec = self._writer.record(
                 "plugin:" + plugin.plugin_id, plugin.plugin_id,
                 mode="blocking", event_scope=scope,
                 outcome="intentional_block",
-                rationale=_sanitize_plugin_evidence(outcome.detail),
+                rationale=_sanitize_plugin_rationale(outcome.detail),
                 input_bytes=input_bytes, labels=labels,
                 decision_effect="deny")
             return outcome, rec
@@ -501,7 +508,7 @@ class GuardChain:
                 "plugin:" + plugin.plugin_id, plugin.plugin_id,
                 mode="blocking", event_scope=scope,
                 outcome="allow",
-                rationale=_sanitize_plugin_evidence(
+                rationale=_sanitize_plugin_rationale(
                     "transform: %s" % (outcome.detail or
                                        "payload rewritten")),
                 input_bytes=input_bytes, labels=labels,
@@ -511,7 +518,7 @@ class GuardChain:
             "plugin:" + plugin.plugin_id, plugin.plugin_id,
             mode="blocking", event_scope=scope,
             outcome="allow",
-            rationale=_sanitize_plugin_evidence(
+            rationale=_sanitize_plugin_rationale(
                 outcome.detail or "plugin passed"),
             input_bytes=input_bytes, labels=labels)
         return outcome, rec

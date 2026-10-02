@@ -63,11 +63,17 @@ def _sanitize_shield_rationale(rationale):
     credential-shaped content is withheld, with a visible placeholder
     (redaction is marked, never silent elision). The exception-type
     prefix is kept so an auditor still sees what was withheld.
+
+    Detection routes through the ``secret_canonicalizer`` rule engine
+    (wave-283, gitleaks contract) OR-ed with the elicitation seam, the
+    same composition as the F306 triad funnel.
     """
     if not rationale:
         return rationale
     from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
-    if not _ec.credential_material_present(rationale):
+    from gov import secret_canonicalizer as _sc  # stdlib-only; the single seam
+    if not (_ec.credential_material_present(rationale)
+            or _sc.credential_material_present(rationale)):
         return rationale
     head, sep, _ = rationale.partition(": ")
     if sep:
