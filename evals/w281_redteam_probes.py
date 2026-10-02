@@ -61,7 +61,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1563  # Wave-280 merge: 1495 -> 1541
+TAXONOMY_PIN = 1579  # Wave-280 merge: 1495 -> 1541
 
 _results = []
 
@@ -87,7 +87,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1563/1563/0 sorted")
+    _record("pin-taxonomy", "HELD", "1579/1579/0 sorted")
 
 
 def _make_run():

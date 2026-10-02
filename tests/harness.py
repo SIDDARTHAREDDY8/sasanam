@@ -307,7 +307,14 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
              credential_manifest=None, precommit_gate=None,
              trifecta_floor=False, memory_firewall=None,
              lineage_tracker=None, erosion_monitor=None,
-             memory_actgate=None):
+             memory_actgate=None,
+             # Wave-282 lane 4 (snyk/agent-scan ADAPT): the
+             # deployment's discovery-scan registry + attribution
+             # maps + sandboxed change-time observation. Default
+             # None = pre-wave-282 behavior, zero behavior change.
+             discovery_scan=None, discovery_tool_map=None,
+             discovery_mcp_map=None, discovery_observe_one=None,
+             discovery_pin_path=None):
     """Build one isolated governance run: fresh temp dir, policy, log,
     approval queue, executor, and harness-minted identities.
 
@@ -400,6 +407,14 @@ def make_run(policy_path=None, ledger_path=None, principal_registry=None,
                             # pre-wave-173 behavior, zero behavior
                             # change.
                             memory_actgate=memory_actgate,
+                            # Wave-282 lane 4 (snyk/agent-scan ADAPT):
+                            # discovery-driven tool-definition
+                            # registry; None = not installed.
+                            discovery_scan=discovery_scan,
+                            discovery_tool_map=discovery_tool_map,
+                            discovery_mcp_map=discovery_mcp_map,
+                            discovery_observe_one=discovery_observe_one,
+                            discovery_pin_path=discovery_pin_path,
                             # Wave-85: the harness deliberately exercises
                             # the raw (pre-wave-74/75) pipeline — no
                             # policy_store, no delegation_context — so

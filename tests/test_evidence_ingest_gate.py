@@ -224,8 +224,8 @@ class TestTaxonomyPin(unittest.TestCase):
         codes = re.findall(
             r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
         dups = [c for c, n in Counter(codes).items() if n > 1]
-        self.assertEqual(len(codes), 1563)
-        self.assertEqual(len(set(codes)), 1563)
+        self.assertEqual(len(codes), 1579)
+        self.assertEqual(len(set(codes)), 1579)
         self.assertEqual(dups, [])
         ingest = sorted(c for c in codes if c.startswith("ingest-"))
         self.assertEqual(len(ingest), 9)

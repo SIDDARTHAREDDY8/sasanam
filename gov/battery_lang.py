@@ -24,6 +24,14 @@ This module provides:
   grading_result) plus a sealed evidence envelope via
   ``gov.battery_envelope`` for the envelope-eligible probes.
 
+Atomic test manifests (``sasanam-atomic-manifest/1``, appended below) add
+the adversary-test discipline: stable GUID replay identity, typed
+input_arguments validated before the run, dependency self-check with
+auto-remediation, and a guaranteed cleanup_command that runs even on
+failure. Composition, not duplication: the atomic layer reuses this
+module's closed-vocabulary refusal style, canonical digests, and the
+EXPECTED_VOCAB executor contract.
+
 Deterministic and stdlib-only. No in-repo git subprocesses. The manifest is
 the contract: eval replaying a manifest must reproduce the committed
 expected verdicts; any drift is a product or pin regression, never an
@@ -32,8 +40,10 @@ eval-side reinterpretation.
 
 import hashlib
 import importlib
+import inspect
 import json
 import os
+import re
 
 # ---------------------------------------------------------------------------
 # Closed vocabularies (promptfoo ADAPT: plugins = what, strategies = how,
@@ -508,3 +518,588 @@ def _seal_rows(manifest, rows, envelope_path):
         )
     envelope = builder.seal()
     return be.emit_envelope(envelope_path, envelope)
+
+
+# ---------------------------------------------------------------------------
+# Atomic test manifests (atomic-red-team ADAPT, wave-282 lane 5).
+#
+# Mechanism provenance: redcanaryco/atomic-red-team (MIT; the name is
+# trademarked -- pattern, not brand). An atomic test is a committed,
+# replayable break manifest:
+#   - auto_generated_guid  -> stable replay identity (atomic_guid)
+#   - input_arguments      -> typed, validated BEFORE the run
+#   - dependencies         -> prereq self-check + get_prereq
+#                             auto-remediation (the manifest proves its own
+#                             preconditions; no "assumed clean environment")
+#   - executor{command, cleanup_command, elevation_required}
+#                          -> the break plus a GUARANTEED cleanup_command,
+#                             the hygiene primitive the real-sandboxing
+#                             stream needs between break runs
+# plus the validate-atomics.yml CI schema gate (validate_atomic_spec),
+# enforced at registration and at committed-manifest load.
+#
+# Executors are Python callables here (deterministic, $0, no network), not
+# shell commands. The executor contract is (verdict, note) with verdict in
+# EXPECTED_VOCAB -- composition with the battery language above.
+#
+# Deliberate choices (documented, not defects):
+# - Atomic runs do NOT write to the HMAC audit log. Their evidence is the
+#   machine-readable rows (atomic_rows) plus the committed manifest. The
+#   audit log carries product decisions; the harness carries test runs.
+# - The committed manifest binds guid -> spec_digest, where the digest
+#   covers the serializable shape AND every callable's source. Swapping a
+#   callable while keeping the shape changes the digest and refuses at
+#   bind time (atomic-guid-collision). Callables must therefore be real
+#   functions with retrievable source (fail-closed at registration).
+# - Cleanup guards the executor's effects and runs even when the executor
+#   raises. A dependency that fails before the executor runs refuses LOUD
+#   with no cleanup (nothing was set up); the failed remediation's trace
+#   rides the refusal detail. A test whose cleanup fails is LOUD
+#   (AtomicCleanupError), never silent.
+# - bool is not int (the F295 lesson): type validation is strict.
+# ---------------------------------------------------------------------------
+
+ATOMIC_MANIFEST_FORMAT = "sasanam-atomic-manifest/1"
+ATOMIC_ARG_TYPES = ("str", "int", "float", "bool", "enum")
+
+_GUID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class AtomicError(Exception):
+    """Fail-closed atomic refusal. ``code`` is a registered atomic-*
+    decision code; ``detail`` is human context (never a secret)."""
+
+    def __init__(self, code, detail=""):
+        super(AtomicError, self).__init__(
+            "%s%s" % (code, (": %s" % detail) if detail else ""))
+        self.code = code
+        self.detail = detail
+
+
+class AtomicCleanupError(AtomicError):
+    """Cleanup itself failed: LOUD, never silent. ``outcome`` carries the
+    executor outcome the cleanup was guarding."""
+
+    def __init__(self, detail="", outcome=None):
+        super(AtomicCleanupError, self).__init__(
+            "atomic-cleanup-failed", detail)
+        self.outcome = dict(outcome) if isinstance(outcome, dict) else {}
+
+
+def _atomic_refuse(code, detail=""):
+    raise AtomicError(code, detail)
+
+
+def _atomic_callable_source(fn, what):
+    name = getattr(fn, "__name__", repr(fn))
+    if not callable(fn):
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s %r is not callable" % (what, name))
+    try:
+        src = inspect.getsource(fn)
+    except (OSError, TypeError):
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s %r has no retrievable source "
+                       "(manifest binding requires real functions)"
+                       % (what, name))
+    if not isinstance(src, str) or not src.strip():
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s %r has empty source" % (what, name))
+    return src
+
+
+def _validate_arg_decl(aname, adecl):
+    if not isinstance(aname, str) or not aname.strip():
+        _atomic_refuse("atomic-spec-invalid",
+                       "argument name must be a non-empty string")
+    if not isinstance(adecl, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "argument %r declaration must be a dict" % (aname,))
+    atype = adecl.get("type")
+    if atype not in ATOMIC_ARG_TYPES:
+        _atomic_refuse("atomic-spec-invalid",
+                       "argument %r type %r not in %s"
+                       % (aname, atype, "/".join(ATOMIC_ARG_TYPES)))
+    norm = {"type": atype}
+    if atype == "enum":
+        choices = adecl.get("choices")
+        if (not isinstance(choices, list) or not choices
+                or any(not isinstance(c, str) for c in choices)):
+            _atomic_refuse("atomic-spec-invalid",
+                           "argument %r enum needs a non-empty choices "
+                           "list of str" % (aname,))
+        norm["choices"] = list(choices)
+    elif "choices" in adecl:
+        _atomic_refuse("atomic-spec-invalid",
+                       "argument %r: choices only valid for enum"
+                       % (aname,))
+    if "default" in adecl:
+        _check_arg_value(aname, atype, norm.get("choices"),
+                         adecl["default"], "default")
+        norm["default"] = adecl["default"]
+    desc = adecl.get("description", "")
+    if not isinstance(desc, str):
+        _atomic_refuse("atomic-spec-invalid",
+                       "argument %r description must be str" % (aname,))
+    norm["description"] = desc
+    return norm
+
+
+def _validate_dependency(dep, index):
+    if not isinstance(dep, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "dependency %d must be a dict" % index)
+    dname = dep.get("name")
+    if not isinstance(dname, str) or not dname.strip():
+        _atomic_refuse("atomic-spec-invalid",
+                       "dependency %d needs a non-empty name" % index)
+    _atomic_callable_source(dep.get("prereq"),
+                            "dependency %r prereq" % dname)
+    get_prereq = dep.get("get_prereq")
+    if get_prereq is not None:
+        _atomic_callable_source(get_prereq,
+                                "dependency %r get_prereq" % dname)
+    desc = dep.get("description", "")
+    if not isinstance(desc, str):
+        _atomic_refuse("atomic-spec-invalid",
+                       "dependency %r description must be str" % (dname,))
+    return {"name": dname, "description": desc,
+            "prereq": dep["prereq"], "get_prereq": get_prereq}
+
+
+def validate_atomic_spec(spec):
+    """CI schema gate: validate an atomic test spec (fail-closed).
+
+    Returns the normalized spec (guid filled in when absent). Every
+    refusal carries a registered atomic-* decision code.
+    """
+    if not isinstance(spec, dict):
+        _atomic_refuse("atomic-spec-invalid", "spec must be a dict")
+    name = spec.get("name")
+    if not isinstance(name, str) or not name.strip():
+        _atomic_refuse("atomic-spec-invalid",
+                       "spec needs a non-empty name")
+    description = spec.get("description", "")
+    if not isinstance(description, str):
+        _atomic_refuse("atomic-spec-invalid",
+                       "description must be a string")
+    args = spec.get("input_arguments", {})
+    if not isinstance(args, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "input_arguments must be a dict")
+    norm_args = {}
+    for aname, adecl in args.items():
+        norm_args[aname] = _validate_arg_decl(aname, adecl)
+    deps = spec.get("dependencies", [])
+    if not isinstance(deps, list):
+        _atomic_refuse("atomic-spec-invalid",
+                       "dependencies must be a list")
+    norm_deps = [_validate_dependency(d, i) for i, d in enumerate(deps)]
+    ex = spec.get("executor")
+    if not isinstance(ex, dict):
+        _atomic_refuse("atomic-spec-invalid", "executor must be a dict")
+    _atomic_callable_source(ex.get("run"), "executor.run")
+    cleanup = ex.get("cleanup")
+    if cleanup is not None:
+        _atomic_callable_source(cleanup, "executor.cleanup")
+    elevation = ex.get("elevation_required", False)
+    if not isinstance(elevation, bool):
+        _atomic_refuse("atomic-spec-invalid",
+                       "executor.elevation_required must be bool")
+    guid = spec.get("guid")
+    if guid is not None and (
+            not isinstance(guid, str) or not _GUID_RE.match(guid)):
+        _atomic_refuse("atomic-spec-invalid",
+                       "guid must be 64 hex chars")
+    norm = {
+        "name": name,
+        "description": description,
+        "input_arguments": norm_args,
+        "dependencies": norm_deps,
+        "executor": {"run": ex["run"], "cleanup": cleanup,
+                     "elevation_required": elevation},
+    }
+    norm["guid"] = guid or hashlib.sha256(
+        _canonical(_atomic_serializable(norm))).hexdigest()
+    # Normalization marker: set ONLY here. _ensure_atomic_spec trusts a
+    # dict as already-normalized iff it carries this marker -- a raw dict
+    # that merely contains a "guid" key is still schema-gated. (Guard
+    # against programmer error, not a trust boundary: a caller can forge
+    # the marker, but only by reaching into this module's privates.)
+    norm["_atomic_normalized"] = True
+    return norm
+
+
+def _check_arg_value(aname, atype, choices, value, role):
+    """Strict typed check (bool is not int). Refuses atomic-arg-refused."""
+    ok = False
+    if atype == "str":
+        ok = isinstance(value, str)
+    elif atype == "bool":
+        ok = isinstance(value, bool)
+    elif atype == "int":
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    elif atype == "float":
+        ok = (isinstance(value, float)
+              or (isinstance(value, int) and not isinstance(value, bool)))
+    elif atype == "enum":
+        ok = isinstance(value, str) and value in (choices or [])
+    if not ok:
+        _atomic_refuse("atomic-arg-refused",
+                       "%s %r=%r does not satisfy type %r"
+                       % (role, aname, value, atype))
+    return True
+
+
+def _ensure_atomic_spec(spec):
+    if isinstance(spec, dict) and spec.get("_atomic_normalized") is True:
+        return spec
+    return validate_atomic_spec(spec)
+
+
+def validate_atomic_args(spec, args):
+    """Validate caller args against the declared input_arguments.
+
+    Unknown args refused; wrong types refused; missing args take their
+    defaults; missing required args refused. Returns the validated dict.
+    Nothing runs before this passes.
+    """
+    norm = _ensure_atomic_spec(spec)
+    if not isinstance(args, dict):
+        _atomic_refuse("atomic-arg-refused", "args must be a dict")
+    decls = norm["input_arguments"]
+    for aname in args:
+        if aname not in decls:
+            _atomic_refuse("atomic-arg-refused",
+                           "unknown argument %r" % (aname,))
+    validated = {}
+    for aname, adecl in decls.items():
+        if aname in args:
+            _check_arg_value(aname, adecl["type"], adecl.get("choices"),
+                             args[aname], "argument")
+            validated[aname] = args[aname]
+        elif "default" in adecl:
+            validated[aname] = adecl["default"]
+        else:
+            _atomic_refuse("atomic-arg-refused",
+                           "missing required argument %r" % (aname,))
+    return validated
+
+
+def _atomic_serializable(spec):
+    """The shape the guid binds: everything except the callables."""
+    return {
+        "name": spec["name"],
+        "description": spec["description"],
+        "input_arguments": spec["input_arguments"],
+        "dependencies": [
+            {"name": d["name"], "description": d["description"],
+             "has_remediation": d["get_prereq"] is not None}
+            for d in spec["dependencies"]
+        ],
+        "executor": {
+            "elevation_required": spec["executor"]["elevation_required"],
+            "has_cleanup": spec["executor"]["cleanup"] is not None,
+        },
+    }
+
+
+def atomic_guid(spec):
+    """Stable replay identity of the serializable test shape."""
+    norm = _ensure_atomic_spec(spec)
+    return hashlib.sha256(
+        _canonical(_atomic_serializable(norm))).hexdigest()
+
+
+def _atomic_callable_digest(fn):
+    return hashlib.sha256(
+        _atomic_callable_source(fn, "callable").encode("utf-8")).hexdigest()
+
+
+def atomic_spec_digest(spec):
+    """Full drift digest: serializable shape + every callable's source."""
+    norm = _ensure_atomic_spec(spec)
+    fns = [d["prereq"] for d in norm["dependencies"]]
+    fns += [d["get_prereq"] for d in norm["dependencies"]
+            if d["get_prereq"] is not None]
+    fns.append(norm["executor"]["run"])
+    if norm["executor"]["cleanup"] is not None:
+        fns.append(norm["executor"]["cleanup"])
+    body = {"spec": _atomic_serializable(norm),
+            "callables": sorted(_atomic_callable_digest(fn) for fn in fns)}
+    return hashlib.sha256(_canonical(body)).hexdigest()
+
+
+def register_atomic(registry, spec):
+    """Register an atomic test (the CI gate runs here too).
+
+    The guid is the identity: re-registering the identical spec is
+    idempotent; registering a DIFFERENT spec under an existing guid
+    refuses atomic-guid-collision. Returns the guid.
+    """
+    if not isinstance(registry, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "registry must be a dict")
+    norm = validate_atomic_spec(spec)
+    guid = norm["guid"]
+    digest = atomic_spec_digest(norm)
+    if guid in registry:
+        if registry[guid]["spec_digest"] != digest:
+            _atomic_refuse("atomic-guid-collision",
+                           "guid %s... already registered with a "
+                           "different spec (was %r, now %r)"
+                           % (guid[:12], registry[guid]["spec"]["name"],
+                              norm["name"]))
+        return guid
+    registry[guid] = {"spec": norm, "spec_digest": digest}
+    return guid
+
+
+def _run_dependencies(norm):
+    """Prereq self-check + get_prereq auto-remediation per dependency.
+
+    A dependency that stays unsatisfied refuses LOUD
+    (atomic-dependency-refused) -- never a silent skip.
+    """
+    results = []
+    for dep in norm["dependencies"]:
+        dname = dep["name"]
+        try:
+            first_ok = bool(dep["prereq"]())
+        except Exception as exc:  # noqa: BLE001 -- prereq must not kill run
+            _atomic_refuse("atomic-dependency-refused",
+                           "prereq %r raised: %r" % (dname, exc))
+        remediated = False
+        final_ok = first_ok
+        if not first_ok and dep["get_prereq"] is not None:
+            try:
+                remediated = bool(dep["get_prereq"]())
+            except Exception as exc:  # noqa: BLE001
+                _atomic_refuse("atomic-dependency-refused",
+                               "get_prereq %r raised: %r" % (dname, exc))
+            try:
+                final_ok = bool(dep["prereq"]())
+            except Exception as exc:  # noqa: BLE001
+                _atomic_refuse("atomic-dependency-refused",
+                               "prereq %r raised on re-check: %r"
+                               % (dname, exc))
+        results.append({"name": dname, "prereq_ok": first_ok,
+                        "remediated": remediated, "final_ok": final_ok})
+        if not final_ok:
+            _atomic_refuse("atomic-dependency-refused",
+                           "dependency %r unsatisfied (prereq_ok=%s, "
+                           "remediated=%s)" % (dname, first_ok, remediated))
+    return results
+
+
+def _run_cleanup(norm, ctx, outcome):
+    """Guaranteed cleanup: runs even when the executor raised. A cleanup
+    that itself fails raises AtomicCleanupError LOUD (never silent)."""
+    fn = norm["executor"]["cleanup"]
+    if fn is None:
+        return "absent"
+    try:
+        fn(dict(ctx), dict(outcome))
+    except Exception as exc:  # noqa: BLE001 -- cleanup must be LOUD
+        raise AtomicCleanupError(
+            "cleanup for %r raised: %r -- LOUD, never silent"
+            % (norm["name"], exc),
+            outcome=dict(outcome))
+    return "ok"
+
+
+def run_atomic(spec, args, *, registry=None, elevation_granted=False):
+    """Run one atomic test.
+
+    Order: validate args -> elevation declaration -> dependency
+    self-check (+ auto-remediation) -> executor -> GUARANTEED cleanup.
+    ``spec`` is a spec dict or a registered guid (with ``registry``).
+    Returns a result dict; dependency failure refuses LOUD; cleanup
+    failure raises AtomicCleanupError LOUD carrying the executor outcome.
+    """
+    if isinstance(spec, str):
+        if not isinstance(registry, dict) or spec not in registry:
+            _atomic_refuse("atomic-spec-invalid",
+                           "unknown atomic guid %r" % (spec,))
+        norm = registry[spec]["spec"]
+    elif isinstance(spec, dict):
+        norm = _ensure_atomic_spec(spec)
+    else:
+        _atomic_refuse("atomic-spec-invalid",
+                       "spec must be a dict or a guid string")
+    validated = validate_atomic_args(norm, args)
+    if norm["executor"]["elevation_required"] and not elevation_granted:
+        _atomic_refuse("atomic-elevation-required",
+                       "test %r declares elevation_required; pass "
+                       "elevation_granted=True to assert the privilege"
+                       % (norm["name"],))
+    dep_results = _run_dependencies(norm)
+    ctx = dict(validated)
+    outcome = {"verdict": "executor-error",
+               "note": "executor did not run",
+               "executor_verdict": None, "executor_note": ""}
+    try:
+        try:
+            ret = norm["executor"]["run"](dict(ctx))
+        except Exception as exc:  # noqa: BLE001 -- recorded, cleanup still runs
+            outcome = {"verdict": "executor-error",
+                       "note": "executor raised %r" % (exc,),
+                       "executor_verdict": None, "executor_note": ""}
+        else:
+            if (isinstance(ret, (list, tuple)) and len(ret) == 2
+                    and ret[0] in EXPECTED_VOCAB):
+                outcome = {"verdict": "ok", "executor_verdict": ret[0],
+                           "executor_note": str(ret[1])[:400]}
+            else:
+                outcome = {"verdict": "executor-error",
+                           "note": "executor returned %r outside the "
+                                   "(verdict, note) contract" % (ret,),
+                           "executor_verdict": None, "executor_note": ""}
+    finally:
+        # Guaranteed: the executor never returns without the cleanup
+        # having run (or having failed LOUD).
+        cleanup = _run_cleanup(norm, ctx, outcome)
+    return {
+        "guid": norm["guid"],
+        "name": norm["name"],
+        "verdict": outcome["verdict"],
+        "executor_verdict": outcome.get("executor_verdict"),
+        "executor_note": outcome.get("executor_note",
+                                     outcome.get("note", "")),
+        "cleanup": cleanup,
+        "dep_results": dep_results,
+        "arg_digest": hashlib.sha256(
+            _canonical(validated)).hexdigest(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Committed atomic manifests (the drift contract).
+# ---------------------------------------------------------------------------
+
+def generate_atomic_manifest(registry):
+    """Committed manifest: per-test guid -> spec_digest bindings."""
+    if not isinstance(registry, dict) or not registry:
+        _atomic_refuse("atomic-spec-invalid",
+                       "registry must be a non-empty dict")
+    tests = []
+    for guid in sorted(registry):
+        entry = registry[guid]
+        spec = entry["spec"]
+        tests.append({
+            "guid": guid,
+            "name": spec["name"],
+            "spec_digest": entry["spec_digest"],
+            "arg_schema": spec["input_arguments"],
+            "dependencies": [
+                {"name": d["name"],
+                 "has_remediation": d["get_prereq"] is not None}
+                for d in spec["dependencies"]],
+            "elevation_required":
+                spec["executor"]["elevation_required"],
+            "has_cleanup": spec["executor"]["cleanup"] is not None,
+        })
+    return {"format": ATOMIC_MANIFEST_FORMAT, "tests": tests}
+
+
+def _validate_atomic_manifest_dict(manifest):
+    """Schema-validate a parsed atomic manifest dict (the CI gate).
+
+    Shared by load_atomic_manifest (file path) and bind_atomic_manifest
+    (in-memory dict): bind never trusts a hand-built dict.
+    """
+    if not isinstance(manifest, dict):
+        _atomic_refuse("atomic-spec-invalid", "manifest must be an object")
+    if manifest.get("format") != ATOMIC_MANIFEST_FORMAT:
+        _atomic_refuse("atomic-spec-invalid",
+                       "format %r != %r" % (manifest.get("format"),
+                                            ATOMIC_MANIFEST_FORMAT))
+    tests = manifest.get("tests")
+    if not isinstance(tests, list) or not tests:
+        _atomic_refuse("atomic-spec-invalid",
+                       "tests must be a non-empty list")
+    seen = set()
+    for i, t in enumerate(tests):
+        if not isinstance(t, dict):
+            _atomic_refuse("atomic-spec-invalid",
+                           "test %d must be an object" % i)
+        for key in ("guid", "name", "spec_digest"):
+            if not t.get(key) or not isinstance(t.get(key), str):
+                _atomic_refuse("atomic-spec-invalid",
+                               "test %d missing non-empty %r" % (i, key))
+        if (not _GUID_RE.match(t["guid"])
+                or not _GUID_RE.match(t["spec_digest"])):
+            _atomic_refuse("atomic-spec-invalid",
+                           "test %d guid/spec_digest must be 64 hex" % i)
+        if t["guid"] in seen:
+            _atomic_refuse("atomic-spec-invalid",
+                           "duplicate guid %r" % t["guid"])
+        seen.add(t["guid"])
+    return manifest
+
+
+def load_atomic_manifest(path):
+    """Load + schema-validate a committed atomic manifest (the CI gate)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError) as exc:
+        _atomic_refuse("atomic-spec-invalid",
+                       "unreadable manifest: %s" % exc)
+    return _validate_atomic_manifest_dict(manifest)
+
+
+def bind_atomic_manifest(registry, manifest):
+    """Bind a committed manifest to a live registry (drift detection).
+
+    Every manifest guid must be registered and its live spec_digest must
+    match the committed one; any drift refuses atomic-guid-collision.
+    Returns the bound guids.
+    """
+    if not isinstance(registry, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "registry must be a dict")
+    manifest = _validate_atomic_manifest_dict(manifest)
+    bound = []
+    for t in manifest.get("tests", []):
+        guid = t["guid"]
+        if guid not in registry:
+            _atomic_refuse("atomic-spec-invalid",
+                           "manifest references unregistered guid %s..."
+                           % guid[:12])
+        live = atomic_spec_digest(registry[guid]["spec"])
+        if live != t["spec_digest"]:
+            _atomic_refuse("atomic-guid-collision",
+                           "guid %s... drifted: the committed spec no "
+                           "longer matches the registered test" % guid[:12])
+        bound.append(guid)
+    return bound
+
+
+def atomic_rows(results):
+    """Machine-readable evidence rows for atomic runs.
+
+    Composition with the battery-language rows shape: the harness working
+    (verdict ok + cleanup ok/absent) grades PASS; the product verdict
+    (executor_verdict HELD/BREAK/...) rides along as data, not as the
+    grade -- a BREAKing atomic test is a successful run.
+    """
+    rows = []
+    for res in results:
+        if not isinstance(res, dict) or "guid" not in res:
+            _atomic_refuse("atomic-spec-invalid",
+                           "atomic_rows needs run_atomic result dicts")
+        grading = ("PASS" if res.get("verdict") == "ok"
+                   and res.get("cleanup") in ("ok", "absent")
+                   else "FAIL")
+        rows.append({
+            "atomic_guid": res["guid"],
+            "name": res.get("name", ""),
+            "executor_verdict": res.get("executor_verdict"),
+            "cleanup": res.get("cleanup"),
+            "grading_result": grading,
+            "note_digest": hashlib.sha256(
+                str(res.get("executor_note", "")).encode("utf-8")
+            ).hexdigest(),
+        })
+    return rows

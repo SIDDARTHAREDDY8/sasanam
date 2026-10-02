@@ -92,6 +92,7 @@ from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
 from . import skill_watch as _skill_watch
+from . import discovery_scan as _discovery_scan
 # F191 (wave-174): audio-carrier classification for the approval-path
 # binding (perceptual channels in tool args ride the queue packet).
 from . import audio_carrier as _audio_carrier
@@ -1093,7 +1094,32 @@ class ToolExecutor:
                  # (check_reconstructed_intent returns a quiet verdict
                  # without touching anything; note_read_output does not
                  # buffer chunks).
-                 reconstruction_seam=None):
+                 reconstruction_seam=None,
+                 # Discovery-driven tool-definition registry (wave-282
+                 # lane 4, snyk/agent-scan ADAPT): hash-pinned
+                 # observations of discovered tool definitions +
+                 # scheduled re-scan (drift = fail-closed hold). A
+                 # gov.discovery_scan.ToolDefinitionRegistry,
+                 # constructed by the deployment in the operator trust
+                 # domain. Appended LAST so no existing positional
+                 # caller can misalign. Opt-in: None (default) =
+                 # pre-wave-282 behavior, zero behavior change.
+                 # discovery_tool_map={tool_name: (scope, agent_host,
+                 # component_id)} wins for attribution;
+                 # discovery_mcp_map={server_id: (scope, agent_host,
+                 # component_id)} attributes the mcp_server framing
+                 # kwarg; discovery_observe_one(tool_name) is the
+                 # deployment's sandboxed change-time observation.
+                 # discovery_pin_path optionally names the JSON pin
+                 # file (existing but corrupt refuses construction
+                 # LOUD; stored pins merge into the live registry at
+                 # construction). Pins persist automatically after each
+                 # run_discovery_scan().
+                 discovery_scan=None,
+                 discovery_tool_map=None,
+                 discovery_mcp_map=None,
+                 discovery_observe_one=None,
+                 discovery_pin_path=None):
         # Wave-196 lane C: the provisioner registry (None = legacy
         # issuance behavior) and the per-provisioner mint counters used
         # for max_mints_per_run budgets. Counters live per executor
@@ -1989,6 +2015,58 @@ class ToolExecutor:
                         "(unattributed: the policy decides)."
                         % (", ".join(_sw_map_sources[_sid]), _sid)),
                 })
+        # Wave-282 lane 4 (snyk/agent-scan ADAPT): discovery-driven
+        # tool-definition registry. Opt-in: None = pre-wave-282
+        # behavior, zero behavior change. When installed, call() runs
+        # the registry's change-time check (check_at_use) on the
+        # verdict path for every tool attributed by the deployment
+        # maps; a drifted/unverifiable/unregistered tool — or an
+        # observer error — DENIES the call fail-closed with a loud
+        # audit entry (policy_id "discovery-scan"), never a warning.
+        # A tool the registry never pinned is fail-closed (first
+        # sighting is never trusted silently): only the deployment's
+        # explicit absence from the maps ("unattributed") skips the
+        # check. Registry events (drift, unregistered, re-pin) are
+        # chained into the HMAC audit log carrying digests only,
+        # never definition content (redact-before-emit).
+        if discovery_scan is not None and not isinstance(
+                discovery_scan,
+                _discovery_scan.ToolDefinitionRegistry):
+            raise TypeError("discovery_scan must be a "
+                            "gov.discovery_scan.ToolDefinitionRegistry, "
+                            "got %r" % type(discovery_scan).__name__)
+        self._discovery_scan = discovery_scan
+        self._discovery_tool_map = dict(discovery_tool_map or {})
+        self._discovery_mcp_map = dict(discovery_mcp_map or {})
+        self._discovery_observe_one = discovery_observe_one
+        self._discovery_pin_path = (Path(discovery_pin_path)
+                                    if discovery_pin_path is not None
+                                    else None)
+        self._last_discovery_scan_at = None
+        if self._discovery_scan is not None:
+            _ds_log = self.log
+
+            def _ds_emit(event, _log=_ds_log):
+                entry = {"event": "discovery_scan"}
+                entry.update(event)
+                _log.append(entry)
+
+            self._discovery_scan.set_emit(_ds_emit)
+            if self._discovery_pin_path is not None \
+                    and self._discovery_pin_path.exists():
+                # Pin-file bootstrap: an existing pin file that fails
+                # validation refuses construction LOUD here (the
+                # skill_watch PinStore precedent: never silently start
+                # over a corrupt pin file). The stored pins are the
+                # last persisted truth: they merge into the live
+                # registry (live (re-)registrations win on overlap;
+                # quarantine unions, so an unresolved drift hold
+                # survives the restart). The deployment may also
+                # load+merge itself before construction;
+                # merge_stored is idempotent.
+                _ds_stored = _discovery_scan.RegistryStore(
+                    str(self._discovery_pin_path)).load()
+                self._discovery_scan.merge_stored(_ds_stored)
         self._trajectory = _tool_continuity.TrajectoryReverifier(
             checkpoint_every=trajectory_checkpoint_every)
         # S2 (K-018): hard budget accrual. Tokens/spend accrue on the
@@ -10499,6 +10577,88 @@ class ToolExecutor:
                         "policy_id": "skill-watch",
                         "seq": _sw_entry["seq"]}
 
+        # Wave-282 lane 4 (snyk/agent-scan ADAPT): discovery-driven
+        # tool-definition check on the verdict path, AFTER the
+        # skill-watch gate, BEFORE anything executes. When a
+        # discovery registry is installed and this tool attributes to
+        # a discovered component, the registry's hold binds here (the
+        # guard-hook half: diff at change time, not just at scan
+        # time). A tool quarantined by the scheduled re-scan is
+        # ALWAYS denied; when the deployment installed
+        # discovery_observe_one, the change-time diff additionally
+        # re-observes the single tool's definition and denies on
+        # drift/unobservability. A drifted, unobservable, or
+        # unregistered tool — or ANY observer/attribution error —
+        # DENIES the call fail-closed (loud audit entry, no
+        # execution): drift is evidence of compromise, so the hold
+        # stands until a governed re-pin. Unattributed tools (the
+        # deployment's explicit opt-out) are NOT refused here: the
+        # policy's own unknown-tool handling decides those (the
+        # tool-inventory gate precedent). Without
+        # discovery_observe_one the deployment runs scheduled-scan
+        # mode only: the re-scan quarantine still binds and an
+        # attributed-but-never-pinned tool is quarantined
+        # fail-closed, but no per-call re-observation happens.
+        if self._discovery_scan is not None:
+            try:
+                _ds_triple = _discovery_scan.discovery_key_for_tool(
+                    tool, tool_to_component=self._discovery_tool_map,
+                    mcp_server=mcp_server,
+                    mcp_server_to_component=self._discovery_mcp_map)
+                if _ds_triple is None:
+                    _ds_ok, _ds_code, _ds_detail = True, "ok", \
+                        "unattributed"
+                else:
+                    _ds_key = (_ds_triple[0], _ds_triple[1],
+                               _ds_triple[2], tool)
+                    if self._discovery_observe_one is None:
+                        # Scheduled-scan-only mode: the re-scan
+                        # quarantine binds, and an attributed tool
+                        # with no pin is quarantined fail-closed
+                        # (first sighting is never trusted silently
+                        # -- the F143 precedent). The change-time
+                        # diff needs an observer; without one, the
+                        # pin-membership check is the whole gate.
+                        (_ds_ok, _ds_code,
+                         _ds_detail) = self._discovery_scan.scan_only_check(
+                            _ds_key)
+                    else:
+                        (_ds_ok, _ds_code,
+                         _ds_detail) = self._discovery_scan.check_at_use(
+                            _ds_key,
+                            observe_one=self._discovery_observe_one)
+                _ds_err = None
+            except Exception as e:  # noqa: BLE001 - fail closed, loud
+                _ds_ok, _ds_code, _ds_detail = False, \
+                    "discovery-result-malformed", "registry-error"
+                # Type name only: the exception text could carry
+                # definition content, which must never reach the
+                # audit log (redact-before-emit).
+                _ds_err = type(e).__name__
+            if not _ds_ok:
+                _ds_reason = (
+                    "Refusing to act: tool %r failed discovery-scan "
+                    "definition verification (%s: %s%s); held out of "
+                    "the grant graph pending governed re-pin "
+                    "(wave-282 discovery-scan: drift = fail-closed "
+                    "hold)."
+                    % (tool, _ds_code, _ds_detail,
+                       (": %s" % _ds_err) if _ds_err is not None
+                       else ""))
+                _ds_entry = self.log.append(_base({
+                    "decision": "denied",
+                    "policy_id": "discovery-scan",
+                    "flag": _ds_code.replace("-", "_"),
+                    "matched_rules": [],
+                    "tool": tool,
+                    "discovery_check": _ds_code,
+                    "reason": _ds_reason,
+                }))
+                return {"status": "denied",
+                        "reason": _ds_entry["reason"],
+                        "policy_id": "discovery-scan",
+                        "seq": _ds_entry["seq"]}
+
         # S3 (K-041) wired wave-39: S3-GAP-1 closed. An unrated mutating
         # tool must never execute on a policy allow alone — the forced
         # require_approval downgrades an allow to queued human review.
@@ -11545,6 +11705,63 @@ class ToolExecutor:
         report = self._skill_watch.verify_all()
         self._last_skill_sweep_at = time.time()
         self.persist_skill_pins()
+        return report
+
+    def persist_discovery_pins(self):
+        """Persist discovery definition pins (atomic JSON).
+
+        No-op when no registry or no pin path is configured. Raises
+        RegistryStoreError LOUD on write failure -- a deployment
+        that cannot persist its pins must know, not silently run on
+        memory-only pins that a restart would forget.
+        """
+        if self._discovery_scan is None \
+                or self._discovery_pin_path is None:
+            return None
+        return _discovery_scan.RegistryStore(
+            str(self._discovery_pin_path)).save(self._discovery_scan)
+
+    def run_discovery_scan(self, observe):
+        """Run the scheduled discovery re-scan (the periodic trigger).
+
+        This tree has no in-process scheduler: the DEPLOYMENT's
+        scheduler/heartbeat calls this method (recommended: every
+        300s, the ``skill_watch`` sweep interval). ``observe`` is the
+        deployment's sandboxed discovery function returning the
+        currently observed components. The scan re-hashes every
+        discovered tool definition and diffs against pins: drift ->
+        fail-closed hold (quarantine), first sighting -> hold until
+        pinned. Chains a ``discovery_scan_completed`` event into the
+        audit log (carrying the coverage matrix), persists pins, and
+        returns the report dict.
+
+        Pins persist automatically after each scan; the deployment
+        reloads them at startup via ``RegistryStore.load()`` (the
+        executor also merges the stored pins into the live registry
+        at construction when ``discovery_pin_path`` names an
+        existing file).
+
+        On drift the tool is quarantined: its calls are denied at
+        use time (see the call() gate) until a governed
+        ``request_repin`` + ``approve_repin`` lifts the quarantine.
+        There is no silent auto-update, ever.
+        """
+        if self._discovery_scan is None:
+            return {"checked": 0, "clean": [], "drifted": [],
+                    "unregistered": [], "withdrawn": [], "held": [],
+                    "coverage_matrix": {},
+                    "registry": "not-installed"}
+        report = self._discovery_scan.run_rescan(observe)
+        self._last_discovery_scan_at = time.time()
+        self.persist_discovery_pins()
+        self.log.append({
+            "event": "discovery_scan_completed",
+            "run_id": self.run_id,
+            "report": {k: (len(v) if isinstance(v, list) else v)
+                       for k, v in report.items()
+                       if k != "coverage_matrix"},
+            "coverage_matrix": report["coverage_matrix"],
+        })
         return report
 
     def execute_approved(self):

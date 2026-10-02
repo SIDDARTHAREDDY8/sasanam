@@ -31,7 +31,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-pyrit")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1563  # Wave-280 merge: 1495 -> 1541. This lane adds no codes.
+TAXONOMY_PIN = 1579  # Wave-280 merge: 1495 -> 1541. This lane adds no codes.
 
 _RESULTS = []
 

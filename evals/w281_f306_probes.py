@@ -49,7 +49,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1563  # Wave-280 merge: 1495 + 13 battery-lang + 1 ephemeral + 32 shields
+TAXONOMY_PIN = 1579  # Wave-280 merge: 1495 + 13 battery-lang + 1 ephemeral + 32 shields
 
 SECRET = "password= hunter2-hunter2-x9"
 

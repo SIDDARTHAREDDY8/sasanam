@@ -44,6 +44,43 @@ EVENT_SCOPES = ("pre_call", "during_call", "post_call", "tool_call",
 OUTCOMES = ("allow", "intentional_block", "advisory_flagged",
             "technical_failure")
 
+# F310: the shield emission scopes. The shield registry records each
+# shield run's detail verbatim through ``run_guardrail`` with no secret
+# ban of its own (a DLP-style shield quoting the offending argument
+# lands the credential in the record rationale -- the same defect class
+# as F306's triad site). The shared funnel sanitizes credential-shaped
+# rationale text for these scopes before any emit. Non-shield scopes
+# keep their exact rationale contract (their callers own their ban).
+_SHIELD_SCOPES = ("input_shield", "output_shield")
+
+
+def _sanitize_shield_rationale(rationale):
+    """F310: shield-run evidence is audit-bound. A credential-shaped
+    shield detail or crash note must never reach the log -- the shield
+    emission path has no elicitation-style secret ban, so the rationale
+    is sanitized at the ``run_guardrail`` emit funnel. The verdict
+    (outcome / exception re-raise) is preserved; only the
+    credential-shaped content is withheld, with a visible placeholder
+    (redaction is marked, never silent elision). The exception-type
+    prefix is kept so an auditor still sees what was withheld.
+    """
+    if not rationale:
+        return rationale
+    from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
+    if not _ec.credential_material_present(rationale):
+        return rationale
+    head, sep, _ = rationale.partition(": ")
+    if sep:
+        return "%s: [credential material withheld]" % head
+    return "[guardrail evidence withheld: credential-shaped material]"
+
+
+def _shield_rationale(raw, event_scope):
+    """Apply the F310 sanitize gate at the shield emission site."""
+    if event_scope in _SHIELD_SCOPES:
+        return _sanitize_shield_rationale(raw)
+    return raw
+
 # Fields owned by this module. The audit log adds reserved chain
 # metadata (seq, ts, prev_hash, MACs, ...) around them; digest
 # verification below only covers these fields so log-bookkeeping never
@@ -269,7 +306,8 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
         rec = writer.record(
             guardrail_id, guardrail_name, mode=mode,
             event_scope=event_scope, outcome=outcome,
-            rationale="%s: %s" % (type(exc).__name__, exc),
+            rationale=_shield_rationale(
+                "%s: %s" % (type(exc).__name__, exc), event_scope),
             input_bytes=input_bytes, duration_ms=_elapsed_ms(),
             labels=labels)
         if mode in ("advisory", "logging_only"):
@@ -279,7 +317,8 @@ def run_guardrail(writer, *, guardrail_id, guardrail_name, mode="blocking",
         rec = writer.record(
             guardrail_id, guardrail_name, mode=mode,
             event_scope=event_scope, outcome="technical_failure",
-            rationale="%s: %s" % (type(exc).__name__, exc),
+            rationale=_shield_rationale(
+                "%s: %s" % (type(exc).__name__, exc), event_scope),
             input_bytes=input_bytes, duration_ms=_elapsed_ms(),
             labels=labels)
         if mode == "logging_only":

@@ -11,7 +11,7 @@ Red-first: on base every probe BREAKs (gov.access_requests absent).
 After the fix: state-machine refuses illegal transitions fail-closed,
 expired requests cannot be decided, grants mint only from APPROVED
 requests with TTL = max_duration, every transition is an HMAC-chained
-access-request-event joined by join_key, and the taxonomy pin is 1563.
+access-request-event joined by join_key, and the taxonomy pin is 1569.
 
 Pattern lineage: gravitational/teleport `api/` module contract shapes
 (Apache-2.0 -- mechanism only; the AGPLv3 engine is off-limits; no
@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-teleport")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1563  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).
+TAXONOMY_PIN = 1579  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).
 
 _RESULTS = []
 

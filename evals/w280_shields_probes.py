@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w280-shields")
 os.environ.setdefault("TMPDIR", "/var/tmp/g280-shields")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1563  # Wave-279 merge pin. This lane adds NO decision codes.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1579  # Wave-279 merge pin. This lane adds NO decision codes.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 
 _RESULTS = []
 

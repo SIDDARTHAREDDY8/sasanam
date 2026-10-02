@@ -480,7 +480,8 @@ _CATEGORY_KIND = {
 
 
 def derive_grants(*, verified_manifest, grant_policy, approval,
-                  decision_id, registry, approval_records=None):
+                  decision_id, registry, approval_records=None,
+                  ratify_report=None):
     """Mint the GrantSet for one tool call.
 
     ``verified_manifest`` is the manifest dict as verified by
@@ -570,6 +571,22 @@ def derive_grants(*, verified_manifest, grant_policy, approval,
 
     capabilities = []
     delegation_allowlist = set()
+
+    # Wave-282 (ratify ADAPT): admission-before-binding. When the caller
+    # supplies a ratification report for this manifest's subject, the
+    # tool is bound into the grant graph ONLY if the report ratifies it.
+    # Absent means the legacy path (unchanged): this hook is opt-in.
+    if ratify_report is not None:
+        from gov.ratify import check_admission, RatifyError
+        try:
+            check_admission(tool=skill_id, report=ratify_report)
+        except RatifyError as e:
+            registry.refuse(decision_id=decision_id,
+                            reason=e.code,
+                            detail={"skill_id": skill_id})
+            raise GrantRefused(
+                "skill %r not ratified (%s): refusing to bind into the "
+                "grant graph" % (skill_id, e.code))
     for category, labels in declared.items():
         if category not in _CATEGORY_KIND:
             registry.refuse(decision_id=decision_id,

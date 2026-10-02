@@ -1061,6 +1061,99 @@ TAXONOMY = {
         "evidence_kinds_required": ['assessment', 'pack', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'atomic-arg-refused': {
+        "domain": 'atomic',
+        "code": 'atomic-arg-refused',
+        "human": 'atomic test: caller args failed typed validation before '
+                 'the run -- unknown argument, wrong type (bool is not int), '
+                 'missing required argument, or enum outside choices; '
+                 'refused fail-closed before any executor ran',
+        "severity": 'medium',
+        "evidence_kinds_required": ['atomic-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'atomic-cleanup-failed': {
+        "domain": 'atomic',
+        "code": 'atomic-cleanup-failed',
+        "human": 'atomic test: the guaranteed cleanup_command raised; '
+                 'raised LOUD as AtomicCleanupError carrying the executor '
+                 'outcome -- a cleanup failure is never silent',
+        "severity": 'high',
+        "evidence_kinds_required": ['atomic-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'atomic-dependency-refused': {
+        "domain": 'atomic',
+        "code": 'atomic-dependency-refused',
+        "human": 'atomic test: a dependency prereq self-check failed and '
+                 'auto-remediation did not establish it; refused LOUD '
+                 'instead of silently skipping the test',
+        "severity": 'medium',
+        "evidence_kinds_required": ['atomic-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'atomic-elevation-required': {
+        "domain": 'atomic',
+        "code": 'atomic-elevation-required',
+        "human": 'atomic test: the executor declares elevation_required '
+                 'but the run did not assert elevation_granted; refused '
+                 'fail-closed rather than running unprivileged',
+        "severity": 'medium',
+        "evidence_kinds_required": ['atomic-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'atomic-guid-collision': {
+        "domain": 'atomic',
+        "code": 'atomic-guid-collision',
+        "human": 'atomic test: a guid already registered with a different '
+                 'spec, or a committed manifest whose spec_digest no longer '
+                 'matches the registered test; replay identity drift '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['atomic-manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'atomic-spec-invalid': {
+        "domain": 'atomic',
+        "code": 'atomic-spec-invalid',
+        "human": 'atomic test: the spec or committed manifest failed the '
+                 'CI schema gate -- malformed shape, unknown arg type, '
+                 'non-callable executor/dependency, or unreadable manifest; '
+                 'refused before any run',
+        "severity": 'high',
+        "evidence_kinds_required": ['atomic-manifest'],
+        "reverify_steps": ['recompute'],
+    },
+    'attackpath-duplicate-node': {
+        "domain": 'policy',
+        "code": 'attackpath-duplicate-node',
+        "human": 'attack-path auditor: a node id is already registered in '
+                 'the grant graph; the duplicate registration is refused, '
+                 'never merged',
+        "severity": 'low',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attackpath-unknown-edge-type': {
+        "domain": 'policy',
+        "code": 'attackpath-unknown-edge-type',
+        "human": 'attack-path auditor: an edge names a type outside the '
+                 'closed vocabulary {granted_to, delegated_by, approved, '
+                 'checked}; refused fail-closed, never widened implicitly',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'attackpath-unknown-node': {
+        "domain": 'policy',
+        "code": 'attackpath-unknown-node',
+        "human": 'attack-path auditor: an edge or marking references an '
+                 'unregistered node id, or a node id is malformed; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
     'attenuation-expired': {
         "domain": 'attenuation',
         "code": 'attenuation-expired',
@@ -4808,6 +4901,26 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration'],
         "reverify_steps": ['recompute'],
     },
+    'discovery-definition-drift': {
+        "domain": 'discovery-scan',
+        "code": 'discovery-definition-drift',
+        "human": 'a discovered tool definition drifted from its hash pin '
+                 '(rug pull / unauthorized change); the tool is held out '
+                 'of the grant graph fail-closed until a governed re-pin',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discovery-definition-unregistered': {
+        "domain": 'discovery-scan',
+        "code": 'discovery-definition-unregistered',
+        "human": 'a discovered tool has no definition pin (first '
+                 'sighting); the discovery plane is untrusted, so the '
+                 'tool is held fail-closed until first pinned',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
     'discovery-identity-mismatch': {
         "domain": 'mcp-discovery',
         "code": 'discovery-identity-mismatch',
@@ -4823,6 +4936,16 @@ TAXONOMY = {
         "code": 'discovery-result-malformed',
         "human": 'a discovery result or pin set is malformed; refused '
                  'fail-closed, never silently admitted',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'discovery-scope-unknown': {
+        "domain": 'discovery-scan',
+        "code": 'discovery-scope-unknown',
+        "human": 'a discovery observation named a scope outside the '
+                 'closed system/user/project/extension vocabulary; '
+                 'refused fail-closed, never silently mapped',
         "severity": 'medium',
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
@@ -10581,6 +10704,47 @@ TAXONOMY = {
                  'nothing with no record is an audit-trail hole, refused',
         "severity": 'medium',
         "evidence_kinds_required": ['screen-verdict'],
+        "reverify_steps": ['recompute'],
+    },
+    'ratify-admission-unverifiable': {
+        "domain": 'ratify',
+        "code": 'ratify-admission-unverifiable',
+        "human": 'ratification: the admission gate was given no ratification '
+                 'report, or a malformed one; nothing binds into the grant '
+                 'graph on unverifiable metadata -- refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['ratification-report'],
+        "reverify_steps": ['recompute'],
+    },
+    'ratify-policy-unsatisfied': {
+        "domain": 'ratify',
+        "code": 'ratify-policy-unsatisfied',
+        "human": 'ratification: the per-artifact-type any/all policy rollup '
+                 'did not satisfy the deployment policy; the nested report '
+                 'tree records which verifier or combinator failed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ratification-report'],
+        "reverify_steps": ['recompute'],
+    },
+    'ratify-unratified-tool-refused': {
+        "domain": 'ratify',
+        "code": 'ratify-unratified-tool-refused',
+        "human": 'ratification: a tool whose metadata did not ratify (or a '
+                 'report naming a different subject) was refused binding '
+                 'into the grant graph -- admission before binding, '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['ratification-report'],
+        "reverify_steps": ['recompute'],
+    },
+    'ratify-verifier-error': {
+        "domain": 'ratify',
+        "code": 'ratify-verifier-error',
+        "human": 'ratification: a verifier raised technically instead of '
+                 'returning a report; recorded as a technical error and '
+                 'rolled up as verification failure -- never a silent pass',
+        "severity": 'medium',
+        "evidence_kinds_required": ['ratification-report'],
         "reverify_steps": ['recompute'],
     },
     'receipt-expired': {
