@@ -62,7 +62,7 @@ except ImportError:
     pa = None
     _HAVE_PA = False
 
-TAXONOMY_PIN = 1579  # Wave-280 merge pin 1541; this lane adds 2 codes.
+TAXONOMY_PIN = 1581  # Wave-280 merge pin 1541; this lane adds 2 codes.; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []

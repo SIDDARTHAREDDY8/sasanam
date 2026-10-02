@@ -33,7 +33,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-casbin")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1579  # Wave-280 merge 1545 + 4 casbin-* codes.
+TAXONOMY_PIN = 1581  # Wave-280 merge 1545 + 4 casbin-* codes.; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _RESULTS = []
 

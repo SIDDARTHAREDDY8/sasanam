@@ -39,7 +39,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w282-bloodhound")
 os.environ.setdefault("TMPDIR", "/var/tmp/g282-bloodhound")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1579  # Wave-282 lane 7: 1563 -> 1566 (+3 attackpath-*).
+TAXONOMY_PIN = 1581  # Wave-282 lane 7: 1563 -> 1566 (+3 attackpath-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _RESULTS = []
 

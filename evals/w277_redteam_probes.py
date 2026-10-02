@@ -75,7 +75,7 @@ from gov import decoy_grants as dg                    # noqa: E402
 import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 
-TAXONOMY_PIN = 1579  # Wave-276 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1581  # Wave-276 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []

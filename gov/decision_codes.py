@@ -6334,6 +6334,30 @@ TAXONOMY = {
         "evidence_kinds_required": ['refusal-record'],
         "reverify_steps": ['recompute'],
     },
+    'finding-illegal-transition': {
+        "domain": 'policy',
+        "code": 'finding-illegal-transition',
+        "human": 'finding lifecycle: the requested state transition is not '
+                 'in the closed transition table, or the target state '
+                 'requires evidence that was not supplied (verified/ '
+                 'mitigated require red-first evidence by reference; '
+                 'false_positive/risk_accepted require a triage note); '
+                 'refused, state unchanged',
+        "severity": 'low',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'finding-sla-breached': {
+        "domain": 'policy',
+        "code": 'finding-sla-breached',
+        "human": 'finding lifecycle: an open finding passed its '
+                 'per-severity wave SLA (HIGH 1 wave, MEDIUM 2 waves, '
+                 'LOW 3 waves); the breach is raised loudly instead of '
+                 'silently aging',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
     'gate-exception-malformed': {
         "domain": 'gate',
         "code": 'gate-exception-malformed',

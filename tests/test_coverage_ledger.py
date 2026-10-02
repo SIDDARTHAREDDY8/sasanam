@@ -23,7 +23,7 @@ sys.path.insert(0, REPO)
 import gov.coverage_ledger as cl  # noqa: E402
 from gov import decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 1579  # Wave-275 lane D: pin 1485 -> 1485 (+5 coverage-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1581  # Wave-275 lane D: pin 1485 -> 1485 (+5 coverage-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 T0 = "2026-10-01T12:00:00+00:00"
 T1 = "2026-10-01T13:00:00+00:00"

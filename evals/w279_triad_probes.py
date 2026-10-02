@@ -30,7 +30,7 @@ from keyfixture import provision_test_key  # noqa: E402
 
 provision_test_key()
 
-TAXONOMY_PIN = 1579  # Wave-279 lane 4 (triad): pin 1493 -> 1494 (+1 code: tool-guardrail-tripwire).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1581  # Wave-279 lane 4 (triad): pin 1493 -> 1494 (+1 code: tool-guardrail-tripwire).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 RESULTS = []
 ERRORS = []

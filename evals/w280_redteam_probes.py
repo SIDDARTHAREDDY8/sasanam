@@ -68,7 +68,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1579  # Wave-279 merge: 1493 -> 1495 (+evbundle-contract-refused, +tool-guardrail-tripwire); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1581  # Wave-279 merge: 1493 -> 1495 (+evbundle-contract-refused, +tool-guardrail-tripwire); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _results = []
 

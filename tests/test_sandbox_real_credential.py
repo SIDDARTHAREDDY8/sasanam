@@ -201,7 +201,7 @@ class TestDecisionCode(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["domain"], "sandbox")
         self.assertEqual(entry["severity"], "high")
-        self.assertEqual(len(dc.TAXONOMY), 1579)  # Wave-273 lane H: +1 sandbox-*; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+        self.assertEqual(len(dc.TAXONOMY), 1581)  # Wave-273 lane H: +1 sandbox-*; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
 
 
 if __name__ == "__main__":

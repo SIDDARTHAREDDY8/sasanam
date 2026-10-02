@@ -38,7 +38,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-portkey")
 os.environ.setdefault("TMPDIR", "/var/tmp/g281-portkey")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1579  # Wave-280 merge pin 1541 -> 1551 (+10 guardplugin-*).
+TAXONOMY_PIN = 1581  # Wave-280 merge pin 1541 -> 1551 (+10 guardplugin-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _RESULTS = []
 

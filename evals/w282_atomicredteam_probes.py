@@ -31,7 +31,7 @@ import tempfile
 os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1579  # Wave-282 lane 5: pin 1563 -> 1569 (+6 atomic-*).
+TAXONOMY_PIN = 1581  # Wave-282 lane 5: pin 1563 -> 1569 (+6 atomic-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _RESULTS = []
 

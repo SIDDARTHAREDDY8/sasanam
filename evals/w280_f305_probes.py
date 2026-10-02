@@ -62,7 +62,7 @@ os.makedirs(_TMP, exist_ok=True)
 
 from harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 1579  # Wave-279 merge. No new codes for F305.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
+TAXONOMY_PIN = 1581  # Wave-279 merge. No new codes for F305.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 
 def _held(name, note):

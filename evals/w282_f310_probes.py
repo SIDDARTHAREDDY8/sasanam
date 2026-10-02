@@ -42,7 +42,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1579  # Wave-281 merge: 1541 -> 1563
+TAXONOMY_PIN = 1581  # Wave-281 merge: 1541 -> 1563; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
 
 _results = []
 
