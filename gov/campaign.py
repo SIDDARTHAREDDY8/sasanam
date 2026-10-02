@@ -738,7 +738,8 @@ def campaign_summary(path):
     }
 
 
-def replay_campaign(path, registry, *, evidence_path=None):
+def replay_campaign(path, registry, *, evidence_path=None,
+                    approve_fn=None, elevation_granted=False):
     """Deterministic re-run of a recorded campaign (read-only w.r.t.
     the original evidence).
 
@@ -748,9 +749,17 @@ def replay_campaign(path, registry, *, evidence_path=None):
     list of diff dicts; empty means identical. A verdict-drift entry
     is the regression signal (the attack-ledger replay precedent).
 
-    Manual-approve campaigns replay with an always-approve stub (a
-    human decision cannot be replayed); the stub is named in the
-    returned meta entry.
+    F318 trust contract (fail-closed, never silent):
+    - the evidence chain is verified via ``verify_campaign_records``
+      BEFORE anything executes; an unverified file is refused LOUD
+      (``CampaignError``) and no replay evidence is produced;
+    - a recorded ``manual_approve: true`` is NEVER replayed with an
+      always-approve stub. Replaying a human approval requires a
+      caller-supplied ``approve_fn`` (the human is re-prompted); without
+      one the replay is refused LOUD;
+    - the elevation bit comes from the CALLER (``elevation_granted``),
+      never from the evidence file. A file bit that disagrees with the
+      caller's decision is noted in the returned diffs, not honored.
     """
     records = read_campaign_records(path)
     starts = [r for r in records if r["record_type"] == "campaign-start"]
@@ -758,6 +767,23 @@ def replay_campaign(path, registry, *, evidence_path=None):
         raise CampaignError("evidence %r has no campaign-start" % (path,))
     start = starts[0]
     old_steps = [r for r in records if r["record_type"] == "campaign-step"]
+
+    # F318: the evidence chain is the replay's trust root. Refuse an
+    # unverified file LOUD before anything executes -- and before any
+    # replay evidence file is created.
+    if not verify_campaign_records(records):
+        raise CampaignError(
+            "replay refused: evidence chain does not verify for %r" % (path,))
+
+    # F318: a recorded human approval cannot be replayed. Without a
+    # caller-supplied approval to re-prompt, refuse LOUD -- never
+    # silently downgrade to always-approve.
+    want_manual = bool(start.get("manual_approve"))
+    if want_manual and not callable(approve_fn):
+        raise CampaignError(
+            "replay refused: campaign-start records manual_approve=true; "
+            "pass a caller-supplied approve_fn to re-prompt the human, "
+            "refusing the silent always-approve downgrade")
 
     if evidence_path is None:
         import tempfile
@@ -778,16 +804,23 @@ def replay_campaign(path, registry, *, evidence_path=None):
         args_map=start.get("args_map", {}),
         evidence_path=evidence_path,
         max_steps=start.get("max_steps", 50),
-        manual_approve=False,
-        approve_fn=lambda name: True,
-        elevation_granted=start.get("elevation_granted", False),
+        manual_approve=want_manual,
+        approve_fn=approve_fn,
+        # F318: the elevation bit comes from the caller, never from the
+        # evidence file.
+        elevation_granted=bool(elevation_granted),
     )
     new_steps = [r for r in read_campaign_records(evidence_path)
                  if r["record_type"] == "campaign-step"]
     diffs = []
-    if start.get("manual_approve"):
+    if want_manual:
         diffs.append({"kind": "replay-note",
-                      "note": "manual_approve replayed with always-approve"})
+                      "note": "manual_approve re-prompted via "
+                              "caller-supplied approve_fn"})
+    if bool(start.get("elevation_granted")) != bool(elevation_granted):
+        diffs.append({"kind": "replay-note",
+                      "note": "elevation bit from evidence ignored; "
+                              "caller decision governs"})
     for i, (old, new) in enumerate(zip(old_steps, new_steps)):
         if old["atomic_guid"] != new["atomic_guid"]:
             diffs.append({"step_index": i, "kind": "order-drift",

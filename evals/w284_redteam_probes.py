@@ -689,7 +689,12 @@ def f_sc_decode_printability_evasion():
 
 
 def f_cp_replay_unverified_evidence():
-    """F318: replay_campaign must not execute unverified evidence."""
+    """F318: replay_campaign must not execute unverified evidence.
+
+    Wave-285 repoint (fixed behavior): the forged start is refused LOUD
+    by replay_campaign before anything executes. A CampaignError with
+    no steps written is the expected HELD.
+    """
     import json
     from gov import campaign as cp, battery_lang as bl
     sys.path.insert(0, os.path.join(REPO, "evals"))
@@ -716,9 +721,23 @@ def f_cp_replay_unverified_evidence():
         _record("cp-replay-unverified-evidence", "ERROR",
                 "verify did not reject the forged start")
         return
-    cp.replay_campaign(evil, reg,
-                       evidence_path=os.path.join(d, "re.jsonl"))
-    steps = [r for r in cp.read_campaign_records(os.path.join(d, "re.jsonl"))
+    out = os.path.join(d, "re.jsonl")
+    try:
+        cp.replay_campaign(evil, reg, evidence_path=out)
+    except cp.CampaignError:
+        steps = []
+        if os.path.exists(out):
+            steps = [r for r in cp.read_campaign_records(out)
+                     if r["record_type"] == "campaign-step"]
+        if steps:
+            _record("cp-replay-unverified-evidence", "BREAK",
+                    "F318: refusal raised but %d step(s) still executed"
+                    % len(steps))
+        else:
+            _record("cp-replay-unverified-evidence", "HELD",
+                    "unverified evidence refused loud; nothing executed")
+        return
+    steps = [r for r in cp.read_campaign_records(out)
              if r["record_type"] == "campaign-step"]
     if steps:
         _record("cp-replay-unverified-evidence", "BREAK",
