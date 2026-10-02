@@ -667,11 +667,147 @@ def _validate_dependency(dep, index):
             "prereq": dep["prereq"], "get_prereq": get_prereq}
 
 
+# ---------------------------------------------------------------------------
+# Wave-283 (Caldera ADAPT): requires / produces / fact_parser.
+#
+# Caldera's chaining primitive: an ability declares ``requirements``
+# (required relationships of facts that must hold before the ability
+# runs) and facts are harvested from output by ``parsers``. Here the
+# atomic spec declares them; gov/campaign.py interprets them against
+# its typed FactStore. Validation is fail-closed with
+# atomic-spec-invalid (a registered code -- no taxonomy change).
+# ---------------------------------------------------------------------------
+
+_FACT_TRAIT_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+_FACT_TYPES = ("str", "bool", "int", "float", "enum")
+_REQUIRE_OPS = ("exists", "eq", "ne", "gt", "gte", "lt", "lte", "in")
+_PRODUCES_ON = ("break", "held", "always")
+
+
+def _validate_fact_trait(trait, what):
+    if not isinstance(trait, str) or not _FACT_TRAIT_RE.match(trait):
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: trait %r must be dotted lowercase "
+                       "(2+ segments, e.g. tool.file_write.available)"
+                       % (what, trait))
+    return trait
+
+
+def _validate_requirement(req, index):
+    what = "requirement %d" % index
+    if not isinstance(req, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s must be a dict" % what)
+    fact = _validate_fact_trait(req.get("fact"), what)
+    op = req.get("op")
+    if op not in _REQUIRE_OPS:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: op %r not in %s"
+                       % (what, op, "/".join(_REQUIRE_OPS)))
+    norm = {"fact": fact, "op": op}
+    if op == "exists":
+        if "value" in req:
+            _atomic_refuse("atomic-spec-invalid",
+                           "%s: op 'exists' takes no value" % what)
+        return norm
+    if "value" not in req:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: op %r needs a value" % (what, op))
+    value = req["value"]
+    if op in ("gt", "gte", "lt", "lte"):
+        if (not isinstance(value, (int, float))
+                or isinstance(value, bool)):
+            _atomic_refuse("atomic-spec-invalid",
+                           "%s: op %r needs a numeric value, got %r"
+                           % (what, op, value))
+    elif op == "in":
+        if (not isinstance(value, list) or not value
+                or any(isinstance(v, (dict, list)) or v is None
+                       for v in value)):
+            _atomic_refuse("atomic-spec-invalid",
+                           "%s: op 'in' needs a non-empty list of "
+                           "scalars" % what)
+    elif not isinstance(value, (str, bool, int, float)) or value is None:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: op %r needs a scalar value, got %r"
+                       % (what, op, value))
+    norm["value"] = value
+    return norm
+
+
+def _validate_requires(requires):
+    if not isinstance(requires, list):
+        _atomic_refuse("atomic-spec-invalid",
+                       "requires must be a list")
+    return [_validate_requirement(r, i) for i, r in enumerate(requires)]
+
+
+def _validate_produces_entry(entry, index):
+    what = "produces entry %d" % index
+    if not isinstance(entry, dict):
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s must be a dict" % what)
+    fact = _validate_fact_trait(entry.get("fact"), what)
+    ftype = entry.get("type")
+    if ftype not in _FACT_TYPES:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: type %r not in %s"
+                       % (what, ftype, "/".join(_FACT_TYPES)))
+    norm = {"fact": fact, "type": ftype}
+    if ftype == "enum":
+        choices = entry.get("choices")
+        if (not isinstance(choices, list) or not choices
+                or any(not isinstance(c, str) for c in choices)):
+            _atomic_refuse("atomic-spec-invalid",
+                           "%s: enum needs a non-empty choices list of "
+                           "str" % what)
+        norm["choices"] = list(choices)
+    elif "choices" in entry:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: choices only valid for enum" % what)
+    if "value" not in entry:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s needs a value" % what)
+    # Strict typed check, spec-time code (mirrors _check_arg_value:
+    # bool is not int).
+    _check_arg_value(fact, ftype, norm.get("choices"), entry["value"],
+                     "produces", code="atomic-spec-invalid")
+    norm["value"] = entry["value"]
+    on = entry.get("on", "break")
+    if on not in _PRODUCES_ON:
+        _atomic_refuse("atomic-spec-invalid",
+                       "%s: on %r not in %s"
+                       % (what, on, "/".join(_PRODUCES_ON)))
+    norm["on"] = on
+    return norm
+
+
+def _validate_produces(produces):
+    if not isinstance(produces, list):
+        _atomic_refuse("atomic-spec-invalid",
+                       "produces must be a list")
+    return [_validate_produces_entry(e, i) for i, e in enumerate(produces)]
+
+
+def _validate_fact_parser(parser):
+    if parser is None:
+        return None
+    _atomic_callable_source(parser, "fact_parser")
+    return parser
+
+
 def validate_atomic_spec(spec):
     """CI schema gate: validate an atomic test spec (fail-closed).
 
     Returns the normalized spec (guid filled in when absent). Every
     refusal carries a registered atomic-* decision code.
+
+    Wave-283 (Caldera ADAPT): specs may declare ``requires`` (Caldera
+    requirements -- declarative preconditions over the campaign fact
+    store gating eligibility), ``produces`` (facts the test establishes,
+    written to the store on a matching verdict), and an optional
+    ``fact_parser`` callable harvesting typed facts from the executor
+    outcome (Caldera parsers). All three are validated here.
     """
     if not isinstance(spec, dict):
         _atomic_refuse("atomic-spec-invalid", "spec must be a dict")
@@ -718,6 +854,9 @@ def validate_atomic_spec(spec):
         "dependencies": norm_deps,
         "executor": {"run": ex["run"], "cleanup": cleanup,
                      "elevation_required": elevation},
+        "requires": _validate_requires(spec.get("requires", [])),
+        "produces": _validate_produces(spec.get("produces", [])),
+        "fact_parser": _validate_fact_parser(spec.get("fact_parser")),
     }
     norm["guid"] = guid or hashlib.sha256(
         _canonical(_atomic_serializable(norm))).hexdigest()
@@ -730,8 +869,13 @@ def validate_atomic_spec(spec):
     return norm
 
 
-def _check_arg_value(aname, atype, choices, value, role):
-    """Strict typed check (bool is not int). Refuses atomic-arg-refused."""
+def _check_arg_value(aname, atype, choices, value, role,
+                     code="atomic-arg-refused"):
+    """Strict typed check (bool is not int). Refuses with ``code``.
+
+    ``code`` defaults to atomic-arg-refused (caller args at run time);
+    spec-time validation passes atomic-spec-invalid.
+    """
     ok = False
     if atype == "str":
         ok = isinstance(value, str)
@@ -745,7 +889,7 @@ def _check_arg_value(aname, atype, choices, value, role):
     elif atype == "enum":
         ok = isinstance(value, str) and value in (choices or [])
     if not ok:
-        _atomic_refuse("atomic-arg-refused",
+        _atomic_refuse(code,
                        "%s %r=%r does not satisfy type %r"
                        % (role, aname, value, atype))
     return True
@@ -787,8 +931,14 @@ def validate_atomic_args(spec, args):
 
 
 def _atomic_serializable(spec):
-    """The shape the guid binds: everything except the callables."""
-    return {
+    """The shape the guid binds: everything except the callables.
+
+    Wave-283: ``requires`` / ``produces`` are bound into the guid ONLY
+    when present, and ``fact_parser`` as a presence bit. Legacy specs
+    (no such keys) serialize byte-identically to before, so their guids
+    are stable across this change (pinned by the red-first battery).
+    """
+    shape = {
         "name": spec["name"],
         "description": spec["description"],
         "input_arguments": spec["input_arguments"],
@@ -802,6 +952,13 @@ def _atomic_serializable(spec):
             "has_cleanup": spec["executor"]["cleanup"] is not None,
         },
     }
+    if spec.get("requires"):
+        shape["requires"] = spec["requires"]
+    if spec.get("produces"):
+        shape["produces"] = spec["produces"]
+    if spec.get("fact_parser") is not None:
+        shape["has_fact_parser"] = True
+    return shape
 
 
 def atomic_guid(spec):
@@ -825,6 +982,8 @@ def atomic_spec_digest(spec):
     fns.append(norm["executor"]["run"])
     if norm["executor"]["cleanup"] is not None:
         fns.append(norm["executor"]["cleanup"])
+    if norm.get("fact_parser") is not None:
+        fns.append(norm["fact_parser"])
     body = {"spec": _atomic_serializable(norm),
             "callables": sorted(_atomic_callable_digest(fn) for fn in fns)}
     return hashlib.sha256(_canonical(body)).hexdigest()
