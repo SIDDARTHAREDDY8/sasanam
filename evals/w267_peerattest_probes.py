@@ -56,7 +56,7 @@ else:
 # probe reports the state in both modes (stub mode pre-build
 # legitimately BREAKs).
 if IMPL == "module":
-    assert len(decision_codes.TAXONOMY) == 1482, "taxonomy pin 1482"
+    assert len(decision_codes.TAXONOMY) == 1485, "taxonomy pin 1485"
 
 PROBES = []
 
@@ -606,7 +606,7 @@ def taxonomy_pin():
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "gov", "decision_codes.py")).read()
     lits = re.findall(r'"code": \'(federation-[a-z-]+)\'', src)
-    if len(decision_codes.TAXONOMY) != 1482:
+    if len(decision_codes.TAXONOMY) != 1485:
         return "BREAK(pin %d)" % len(decision_codes.TAXONOMY)
     new = [c for c in set(lits)
            if c.startswith("federation-attestation-")

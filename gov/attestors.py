@@ -199,6 +199,19 @@ def _canonical_entry(entry):
                       separators=(",", ":")).encode("utf-8")
 
 
+def _selector_value_equal(fact_value, selector_value):
+    """Type-strict selector equality (F295).
+
+    Python's ``==`` conflates bool and int (``True == 1``); a selector
+    is the binding between a ceremony-backed registration entry and the
+    environment facts, so the comparison must not cross types. Missing
+    facts surface as ``None``; a ``None`` selector value still matches a
+    missing fact exactly as before (both ``None``).
+    """
+    return (type(fact_value) is type(selector_value)
+            and fact_value == selector_value)
+
+
 class AttestedRegistry(object):
     """Declared registration entries: environment selectors bound to
     producer identities.
@@ -207,8 +220,9 @@ class AttestedRegistry(object):
     key. Every ``register_entry`` requires a claim-level ceremony: a
     signature over the canonical entry (without the ceremony
     envelope) by an authorized ceremony key. Entries are matched by
-    exact selector subset: an entry matches when every
-    ``selector`` key/value equals the collected fact.
+    exact, type-strict selector subset: an entry matches when every
+    ``selector`` key/value equals the collected fact with identical
+    type (bool is not int).
     """
 
     def __init__(self, *, ceremony_keys):
@@ -330,7 +344,7 @@ class AttestedRegistry(object):
         for entry in self._entries.values():
             if entry["attestor_id"] != attestor_id:
                 continue
-            if all(facts.get(k) == v
+            if all(_selector_value_equal(facts.get(k), v)
                    for k, v in entry["selector"].items()):
                 hits.append(entry)
         if not hits:

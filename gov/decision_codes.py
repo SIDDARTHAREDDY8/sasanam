@@ -3895,6 +3895,27 @@ TAXONOMY = {
         "evidence_kinds_required": ['journal', 'digest'],
         "reverify_steps": ['replay-chain'],
     },
+    'decoy-grant-not-issuable': {
+        "domain": 'tool_grant',
+        "code": 'decoy-grant-not-issuable',
+        "human": 'decoy grants: the issuer refused to mint a grant covering '
+                 'a registered decoy (honeypot) tool identifier; decoys are '
+                 'never legitimized',
+        "severity": 'high',
+        "evidence_kinds_required": ['grant', 'refusal-record'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
+    'decoy-grant-tripped': {
+        "domain": 'tool_grant',
+        "code": 'decoy-grant-tripped',
+        "human": 'decoy grants: a registered decoy (honeypot) tool was '
+                 'invoked at the enforcement seam; high-confidence '
+                 'prompt-injection evidence, denied fail-closed with an '
+                 'injection-evidence event for the audit log',
+        "severity": 'critical',
+        "evidence_kinds_required": ['grant', 'proof', 'refusal-record'],
+        "reverify_steps": ['verify-signature', 'recompute'],
+    },
     'delegatee_mismatch': {
         "domain": 'approval',
         "code": 'delegatee_mismatch',
@@ -9440,6 +9461,19 @@ TAXONOMY = {
                  'never raises',
         "severity": 'medium',
         "evidence_kinds_required": ['gate-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'provlabel-mixed-provenance': {
+        "domain": 'provlabel',
+        "code": 'provlabel-mixed-provenance',
+        "human": 'instruction-provenance labeling: a consequential action '
+                 'whose instruction-shaped drivers MIX below-bar and '
+                 'at/above-bar provenance (toxic-agent-flow shape: user '
+                 'instruction plus retrieved injection) is routed to '
+                 'approval with a distinct code -- the injection cannot '
+                 'piggyback on the user-shaped driver (F294)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-chain', 'action-request'],
         "reverify_steps": ['recompute'],
     },
     'provlabel-unresolvable-driver': {

@@ -47,7 +47,7 @@ from gov import ed25519 as _ed  # noqa: E402
 # decision codes -- ptgrant-jti-reused, ptgrant-max-calls-exhausted,
 # ptgrant-pop-invalid already exist). Counted on quoted source literals
 # per the wave-260 lesson.
-TAXONOMY_PIN = 1482  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1485  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -76,7 +76,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1482: 1482 unique literals"
+    return "HELD", "taxonomy pin 1485: 1485 unique literals"
 
 
 def _seed(i):

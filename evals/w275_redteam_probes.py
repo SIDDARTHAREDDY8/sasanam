@@ -7,7 +7,8 @@ retrieval_rail (TRANSFORM masking vs the transcript seam, chunk
 registry), decode_trust (trusted-path reachability, no-evidence
 refusal), attestors (selector matching predicate, ceremony gate).
 
-New defects found by this battery (filed 2026-10-01, OPEN at file time):
+New defects found by this battery (filed 2026-10-01; F292/F293/F294/F295
+all CLOSED wave-276):
   F292  image_text (MEDIUM): decode_trusted_image skips the house
         instruction-screening seam although its docstring promises
         "extraction and the house screening seam still run" (probes
@@ -56,7 +57,9 @@ import gov.attestors as at                             # noqa: E402
 import gov.image_text as it                            # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1482  # Wave-275 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1485  # Wave-276 F294 closure: +1 code
+# (provlabel-mixed-provenance). Value-only repoint; the pin still
+# counts raw "code" literals in gov/decision_codes.py.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -81,7 +84,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1482: 1482 unique literals"
+    return "HELD", "taxonomy pin 1485: 1485 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -204,8 +207,9 @@ def rr03_relabel_refused():
 def pv01_piggyback_allowed():
     """Toxic-flow shape: a USER_DIRECT instruction-shaped driver plus a
     RETRIEVED_UNTRUSTED instruction-shaped injection driver on a
-    consequential action. max() lets the injection piggyback -- the
-    action is silently allowed. BREAK pins the defect."""
+    consequential action. Wave-276: mixed provenance now routes to
+    approval with provlabel-mixed-provenance (F294 CLOSED). HELD pins
+    the fix."""
     lab = prov.IngressLabeler()
     user_u = prov.label_user_direct(
         lab, "get the summary of this issue and file it")
@@ -220,6 +224,9 @@ def pv01_piggyback_allowed():
     if d.allowed and not d.routed_to_approval:
         return ("BREAK", "toxic-flow shape silently allowed "
                 "(max-of-drivers legitimizes the injection)")
+    if d.code != "provlabel-mixed-provenance":
+        return ("BREAK", "routed but code %r, want the distinct "
+                "provlabel-mixed-provenance (F294 regression)" % (d.code,))
     return ("HELD", "mixed-provenance drivers routed to approval "
             "(code=%r)" % (d.code,))
 
@@ -311,20 +318,26 @@ def rv02_combine_precedence():
 
 
 _PROBES = [
-    ("pin-taxonomy-1482", "HELD", _pin_check),
-    # decode_trust / image_text: F292.
-    ("dt09-trusted-skips-screen", "BREAK", dt09_trusted_skips_screen),
+    ("pin-taxonomy-1485", "HELD", _pin_check),
+    # decode_trust / image_text: F292 (closed wave-276 lane f292: trusted
+    # path now routes through screen_image_text; re-pinned BREAK->HELD).
+    ("dt09-trusted-skips-screen", "HELD", dt09_trusted_skips_screen),
     ("dt09b-screen-refuses", "HELD", dt09b_screen_refuses),
     ("dt10-no-evidence-refused", "HELD", dt10_no_evidence_refused),
-    # retrieval_rail: F293.
-    ("rr01-transform-advisory", "BREAK", rr01_transform_advisory),
-    ("rr02-assemble-unmasked", "BREAK", rr02_assemble_unmasked),
+    # retrieval_rail: F293 (closed wave-276 lane f293: assemble() is now
+    # the enforcement seam; TRANSFORM/BLOCK verdicts applied per chunk;
+    # re-pinned BREAK->HELD).
+    ("rr01-transform-advisory", "HELD", rr01_transform_advisory),
+    ("rr02-assemble-unmasked", "HELD", rr02_assemble_unmasked),
     ("rr03-relabel-refused", "HELD", rr03_relabel_refused),
-    # instruction_provenance: F294.
-    ("pv01-piggyback-allowed", "BREAK", pv01_piggyback_allowed),
+    # instruction_provenance: F294 (CLOSED wave-276: mixed-provenance
+    # drivers now route with provlabel-mixed-provenance; pv01 flips
+    # BREAK -> HELD per the close-when criteria).
+    ("pv01-piggyback-allowed", "HELD", pv01_piggyback_allowed),
     ("pv01b-injection-alone-refused", "HELD", pv01b_injection_alone_refused),
-    # attestors: F295.
-    ("at01-bool-int-conflation", "BREAK", at01_bool_int_conflation),
+    # attestors: F295 (closed wave-276 lane f295: selector matching is
+    # type-strict; re-pinned BREAK->HELD).
+    ("at01-bool-int-conflation", "HELD", at01_bool_int_conflation),
     ("at01b-exact-match", "HELD", at01b_exact_match),
     # rail_verdict defenses.
     ("rv01-adapter-unknown-word", "HELD", rv01_adapter_unknown_word),

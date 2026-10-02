@@ -177,6 +177,11 @@ class RetrievedTranscript(object):
     ordered list of {"chunk_id", "label", "body"} dicts. ``render()``
     marks every segment with its label for the approver; it never
     returns a bare concatenation.
+
+    Direct construction bypasses rail enforcement -- only
+    :func:`assemble` screens chunks and applies TRANSFORM/BLOCK
+    verdicts. Construct this class directly only with already-enforced
+    chunks.
     """
 
     def __init__(self, chunks):
@@ -206,9 +211,32 @@ class RetrievedTranscript(object):
 
 
 def assemble(items):
-    """Assemble retrieved chunks into a transcript. Every item must be a
-    :class:`RetrievedChunk`; bare strings refuse
-    ``rail-merge-contract-violated`` -- provenance is never merged away."""
+    """Assemble retrieved chunks into a transcript, ENFORCING the rail's
+    stage contract (F293 closure, wave-276).
+
+    Every item must be a :class:`RetrievedChunk`; bare strings refuse
+    ``rail-merge-contract-violated`` -- provenance is never merged away.
+
+    Enforcement: each chunk is screened by the rail and its verdict is
+    applied before the transcript is built, so a TRANSFORM verdict is
+    load-bearing rather than advisory:
+
+    - ALLOW: the chunk enters the transcript unchanged.
+    - TRANSFORM: the chunk enters with ``verdict.transformed_text`` as
+      its body -- the masked placeholder reaches the approver rendering,
+      never the masked bytes. The chunk keeps its chunk_id, label,
+      source and turn_id so the masking stays traceable to the
+      quarantined original; a masked chunk is transcript-scoped and must
+      not be re-registered (the ChunkRegistry binds the ingress bytes).
+    - BLOCK: assembly refuses with the verdict's code, fail-closed. A
+      caller that staged first can filter BLOCKed chunks via the
+      per-chunk verdicts and assemble the remainder.
+
+    The screening is authoritative: assemble takes no caller-supplied
+    verdicts, because a forged ALLOW would reintroduce the advisory gap
+    this closes. Screening is deterministic, so a stage-then-assemble
+    pipeline screens twice with identical results.
+    """
     items = list(items)
     for item in items:
         if not isinstance(item, RetrievedChunk):
@@ -216,7 +244,23 @@ def assemble(items):
                     "assemble accepts only RetrievedChunk, got %s; "
                     "merging bare strings drops provenance"
                     % type(item).__name__)
-    return RetrievedTranscript(items)
+    rail = RetrievalRail()
+    enforced = []
+    for chunk in items:
+        verdict = rail.screen_chunk(chunk)
+        if verdict.outcome == RV.BLOCK:
+            _refuse(verdict.code,
+                    "assemble refuses chunk %r: the stage BLOCKed it "
+                    "(%s); filter BLOCKed chunks via the per-chunk "
+                    "verdicts before assembling"
+                    % (chunk.chunk_id, verdict.code))
+        if verdict.outcome == RV.TRANSFORM:
+            enforced.append(RetrievedChunk(
+                chunk.chunk_id, verdict.transformed_text, chunk.label,
+                chunk.source, chunk.turn_id))
+        else:
+            enforced.append(chunk)
+    return RetrievedTranscript(enforced)
 
 
 class RetrievalRail(object):
@@ -227,6 +271,12 @@ class RetrievalRail(object):
     where per_chunk is the list of RailVerdicts in input order and
     stage_verdict is their fail-closed combination (BLOCK > TRANSFORM >
     ALLOW). Labels of "unknown" are BLOCKed, never trusted.
+
+    The verdicts are enforced at the transcript seam: :func:`assemble`
+    re-screens authoritatively and applies each per-chunk verdict, so a
+    TRANSFORM placeholder (not the masked bytes) is what the transcript
+    renders. The verdict objects returned here are for audit and for
+    callers that need to filter BLOCKed chunks before assembling.
     """
 
     def __init__(self, stage_name="retrieval"):

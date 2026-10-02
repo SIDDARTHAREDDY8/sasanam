@@ -55,7 +55,7 @@ sys.path.insert(0, REPO)
 
 import re  # noqa: E402
 
-TAXONOMY_PIN = 1482  # Wave-275 lane D: pin 1482 -> 1482 (+5 coverage-*).
+TAXONOMY_PIN = 1485  # Wave-275 lane D: pin 1485 -> 1485 (+5 coverage-*).
 
 RESULTS = []
 

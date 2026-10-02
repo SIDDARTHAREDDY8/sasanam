@@ -97,6 +97,7 @@ import re
 #: decision-code taxonomy.
 EXPECTED_CODES = (
     "provlabel-approval-required",
+    "provlabel-mixed-provenance",
     "provlabel-unresolvable-driver",
     "provlabel-malformed",
 )
@@ -374,8 +375,13 @@ def grant_check(req, labeler, require_provenance=Label.USER_DIRECT):
     Rule: a consequential action whose driving instruction provenance
     is entirely below ``require_provenance`` is NOT silently executed --
     it is routed to approval with the provenance chain surfaced and the
-    coded decision ``provlabel-approval-required``. Read-only actions
-    are provenance-advisory only (data plane, as today).
+    coded decision ``provlabel-approval-required``. A driver set that
+    MIXES below-bar and at/above-bar instruction-shaped drivers (the
+    toxic-agent-flow shape: a user instruction plus a retrieved
+    injection) is likewise routed, with the distinct coded decision
+    ``provlabel-mixed-provenance``, so the injection cannot piggyback
+    on the user's authority. Read-only actions are provenance-advisory
+    only (data plane, as today).
     """
     if not isinstance(req, ActionRequest):
         _refuse("provlabel-malformed", "req must be an ActionRequest")
@@ -425,10 +431,29 @@ def grant_check(req, labeler, require_provenance=Label.USER_DIRECT):
             best = min(best, parent.label)
         return best
 
-    best = max(effective_label(u) for u in instr_units)
+    ranked = [(u, effective_label(u)) for u in instr_units]
+    best = max(label for _, label in ranked)
+    worst = min(label for _, label in ranked)
     chain = []
     for u in instr_units:
         chain.extend(labeler.chain(u))
+    if worst < require_provenance <= best:
+        # Mixed provenance: an instruction-shaped driver below the bar
+        # rides with one at/above it (the toxic-agent-flow shape: user
+        # instruction + retrieved injection). The old max-of-drivers
+        # rule silently allowed this; route to approval with a
+        # distinct code so the approver sees the below-bar driver in
+        # the surfaced chain. F294.
+        below = sorted({label_name(label)
+                        for _, label in ranked
+                        if label < require_provenance})
+        return Decision(
+            False, True, "provlabel-mixed-provenance",
+            "instruction-shaped drivers span the provenance bar "
+            "(below-bar: %s; required: %s); approval required with "
+            "provenance surfaced"
+            % (", ".join(below), label_name(require_provenance)),
+            chain)
     if best >= require_provenance:
         return Decision(True, False, None,
                         "driven by %s; meets provenance requirement"

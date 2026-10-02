@@ -566,7 +566,13 @@ def decode_trusted_image(image_bytes, evidence):
             % type(image_bytes).__name__)
     data = bytes(image_bytes)
     _dt.require_trust(evidence, data, scope=IMAGE_TRUST_SCOPE)
-    record = extract_image_text(data)
+    # F292: the docstring promises the house screening seam runs on the
+    # trusted path (provenance is not benignity), so route through
+    # screen_image_text, not extract_image_text. Screening refuses
+    # fail-closed: hostile-but-verified bytes come back
+    # imgtext-reassembled-instruction-detected; the full extraction
+    # record is preserved under the "extraction" key.
+    record = screen_image_text(data)
     record["trust_evidence"] = evidence.as_dict()
     return record
 

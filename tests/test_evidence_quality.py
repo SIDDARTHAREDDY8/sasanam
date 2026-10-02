@@ -23,10 +23,10 @@ from gov import evidence_quality as eq  # noqa: E402
 
 class TestTaxonomy(unittest.TestCase):
     def test_pin(self):
-        self.assertEqual(len(decision_codes.TAXONOMY), 1482)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(decision_codes.TAXONOMY), 1485)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
     def test_pin_unique(self):
-        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1482)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(set(decision_codes.TAXONOMY)), 1485)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
     def test_codes_resolve(self):
         for code in ("evidence-quality-evidence-malformed",

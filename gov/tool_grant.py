@@ -62,6 +62,7 @@ import hashlib
 import json
 import re
 
+from gov import decoy_grants
 from gov import ed25519
 
 GRANT_TYPE = "https://sasanam.dev/mcp_tool_call"
@@ -72,7 +73,7 @@ _PROOF_SKEW_S = 60
 _MAX_LIFETIME_S = 3600
 
 # ---------------------------------------------------------------------------
-# Decision codes (ptgrant domain; merged taxonomy pin 1482)
+# Decision codes (ptgrant domain; merged taxonomy pin 1485)
 # ---------------------------------------------------------------------------
 
 PTGRANT_CODES = [
@@ -119,6 +120,28 @@ class GrantError(Exception):
         super().__init__("%s: %s" % (code, detail))
         self.code = code
         self.detail = detail
+
+
+# ---------------------------------------------------------------------------
+# Decoy-grant defaults (wave-276)
+# ---------------------------------------------------------------------------
+# The decoy canary is ON by default: omitting ``decoy_registry`` selects
+# the default registry (gov.decoy_grants.DEFAULT_DECOY_TOOLS). Passing
+# ``decoy_registry=None`` explicitly disables decoy handling (legacy,
+# byte-identical behavior). A deployment whose real tools collide with
+# decoy names disables or customizes the registry -- a loud, conscious
+# choice, never a silent one.
+_DECOY_DEFAULT = object()
+_DEFAULT_DECOY_REGISTRY = decoy_grants.DecoyRegistry()
+
+
+def _resolve_decoy_registry(decoy_registry):
+    """Map the decoy_registry kwarg to None | DecoyRegistry."""
+    if decoy_registry is None:
+        return None
+    if decoy_registry is _DECOY_DEFAULT:
+        return _DEFAULT_DECOY_REGISTRY
+    return decoy_registry
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +335,8 @@ class Issuer:
     ``mandate_lookup(mandate_id)`` returns ``{"version": int}`` or None.
     """
 
-    def __init__(self, iss, issuer_seed, mandate_lookup):
+    def __init__(self, iss, issuer_seed, mandate_lookup,
+                 decoy_registry=_DECOY_DEFAULT):
         if iss != GRANT_ISSUER:
             raise GrantError("ptgrant-issuer-unknown",
                              "issuer %r is not %r" % (iss, GRANT_ISSUER))
@@ -322,6 +346,11 @@ class Issuer:
         self._seed = bytes(issuer_seed)
         self._pub = ed25519.publickey(self._seed)
         self._mandate_lookup = mandate_lookup
+        # Wave-276 decoy grants: the canary is ON by default (omitted ->
+        # default registry). ``decoy_registry=None`` explicitly disables
+        # the mint refusal. The issuer never mints for decoy identifiers
+        # unless the deployment consciously opts out.
+        self._decoy_registry = _resolve_decoy_registry(decoy_registry)
 
     @property
     def issuer_pub(self):
@@ -397,6 +426,14 @@ class Issuer:
                              "proof_pub must be the 32-byte workload proof key")
         self._check_mandate(mandate_id, mandate_version)
         self._check_details(details)
+        if self._decoy_registry is not None:
+            for d in details:
+                ident = d.get("identifier") if isinstance(d, dict) else None
+                if self._decoy_registry.is_decoy_identifier(ident):
+                    raise GrantError(
+                        decoy_grants.DECOY_MINT_REFUSAL_CODE,
+                        "identifier %r is a registered decoy: "
+                        "grants for decoy tools are never minted" % (ident,))
         if (not isinstance(lifetime_s, int) or isinstance(lifetime_s, bool)
                 or not 1 <= lifetime_s <= _MAX_LIFETIME_S):
             raise GrantError("ptgrant-grant-malformed",
@@ -702,13 +739,22 @@ def _deny(code, detail, checked):
 def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
             now, usage_store, mandate_version_provider, link_verifier,
             request_context=None, check_registry_pin=False,
-            max_context_bytes=4096):
+            max_context_bytes=4096, decoy_registry=_DECOY_DEFAULT):
     """Gateway enforcement, post-parse. Never raises; fail-closed verdicts.
 
-    Check order: shape/signature -> registry pin (v2, opt-in) -> issuer ->
+    Check order: shape/signature -> decoy trip (canary ON by default: the
+    attempt itself is the signal, regardless of grant coverage) ->
+    registry pin (v2, opt-in) -> issuer ->
     aud -> time -> PoP/cnf -> mandate version -> detail selection ->
     request context (v2, opt-in) -> arg_bounds -> attenuation ->
     supply chain -> nonce replay -> budget.
+
+    ``decoy_registry``: a ``gov.decoy_grants.DecoyRegistry``. Omitted ->
+    the default registry (canary on). ``None`` -> decoy handling
+    disabled (byte-identical to the pre-decoy tree). When the invoked
+    tool is a registered decoy, enforcement denies with the coded
+    ``decoy-grant-tripped`` verdict and attaches the injection-evidence
+    event (``verdict["decoy_trip"]``) for the gateway's audit writer.
 
     v2 kwargs are backward-compatible: with the defaults (``request_context``
     unset, ``check_registry_pin`` False) behavior is byte-identical to v1.
@@ -723,6 +769,28 @@ def enforce(grant, *, proof, issuer_pub, server_name, server_uri, tool, args,
     if not ok:
         return _deny(code, "grant invalid", checked)
     body = _body
+
+    # Wave-276 decoy grants: the canary is ON by default (omitted kwarg
+    # -> default registry; None -> explicitly disabled). A decoy
+    # invocation is high-confidence injection evidence no matter what the
+    # accompanying grant claims -- no legitimate workflow ever touches a
+    # decoy, and the issuer never mints for one (so a grant purporting to
+    # cover a decoy is stale or malicious). Trip before any other check:
+    # the attempt itself is the signal, and the verdict stays fail-closed
+    # with the evidence event attached for the gateway's audit writer.
+    decoy_registry = _resolve_decoy_registry(decoy_registry)
+    if decoy_registry is not None:
+        trip = decoy_registry.check_invocation(server_name, tool)
+        if trip is not None:
+            checked.append("decoy:tripped")
+            verdict = _deny(
+                decoy_grants.DECOY_TRIP_CODE,
+                "decoy tool %r invoked: injection canary tripped" % (tool,),
+                checked)
+            verdict["decoy_trip"] = decoy_grants.trip_event(
+                trip, server_name=server_name, tool=tool,
+                grant_jti=body.get("jti"))
+            return verdict
 
     # v2 (wave-271, opt-in): zedtoken-style registry pin. The grant's signed
     # body carries the predicate-registry content hash under which it was
@@ -944,13 +1012,17 @@ def grant_status(grant, *, issuer_pub, now, usage_store):
 # ---------------------------------------------------------------------------
 
 def make_ptgrant_provider(*, issuer_pub, server_name, server_uri, now_fn,
-                          usage_store, mandate_version_provider, link_verifier):
+                          usage_store, mandate_version_provider, link_verifier,
+                          decoy_registry=_DECOY_DEFAULT):
     """Return a ``(pid, request) -> (allowed, reason)`` CUSTOM provider.
 
     The request contract: ``request`` is a dict with ``grant`` (the PTG),
     ``proof`` (fresh per-call PoP proof), ``tool`` and ``args``. A provider
     deny decides immediately; a provider allow continues to the ALLOW
     bucket (it is not itself a grant) -- see authorization_combine.
+
+    ``decoy_registry`` follows the enforce() default discipline (omitted
+    -> default registry; None -> disabled).
     """
 
     def _provider(pid, request):
@@ -961,7 +1033,8 @@ def make_ptgrant_provider(*, issuer_pub, server_name, server_uri, now_fn,
                 tool=request["tool"], args=request["args"], now=now_fn(),
                 usage_store=usage_store,
                 mandate_version_provider=mandate_version_provider,
-                link_verifier=link_verifier)
+                link_verifier=link_verifier,
+                decoy_registry=decoy_registry)
         except Exception as exc:  # noqa: BLE001 -- provider never raises
             return False, "ptgrant provider error: %r" % (exc,)
         if verdict["ok"]:
@@ -993,12 +1066,16 @@ _UNREACHABLE = object()
 def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
                      tool, args, request_context, caller_cred, now,
                      usage_store, mandate_version_provider, link_verifier,
-                     max_context_bytes=4096, verdict_cache=None):
+                     max_context_bytes=4096, verdict_cache=None,
+                     decoy_registry=_DECOY_DEFAULT):
     """v2 gateway single-call evaluation. Never raises; fail-closed verdicts.
 
     Gateway meta-check order:
       caller scope (data-plane) -> mandate store reachability ->
       full enforce() with check_registry_pin=True and the request context.
+
+    ``decoy_registry`` follows the enforce() default discipline (omitted
+    -> default registry, canary on; None -> disabled).
 
     The mandate version is fetched ONCE per call; the pinned value is what
     enforce() re-checks, so a mandate bump landing mid-call cannot serve a
@@ -1054,9 +1131,13 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
 
     # F278: the deny-cache key binds every input that participates in
     # the verdict -- grant, PROOF (identity), args, request_context,
-    # mandate version, registry hash, caller scopes. A deny cached for
+    # mandate version, registry hash, caller scopes, and the decoy
+    # registry (a deny cached without the canary is never served to a
+    # call with the canary on, and vice versa). A deny cached for
     # one proof/context is never served to a different proof/context.
     ctx_view = request_context if request_context is not None else {}
+    decoy_key = _resolve_decoy_registry(decoy_registry)
+    decoy_key = None if decoy_key is None else decoy_key.names
     cache_key = None
     if verdict_cache is not None:
         try:
@@ -1069,7 +1150,7 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
                          predicate_registry_hash(),
                          tuple(sorted(s for s in scopes
                                       if isinstance(s, str))),
-                         pdigest, cdigest)
+                         pdigest, cdigest, decoy_key)
         except Exception:  # noqa: BLE001 -- unserializable shapes skip caching
             cache_key = None
         if cache_key is not None:
@@ -1088,7 +1169,8 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
                       link_verifier=link_verifier,
                       request_context=ctx_view,
                       check_registry_pin=True,
-                      max_context_bytes=max_context_bytes)
+                      max_context_bytes=max_context_bytes,
+                      decoy_registry=decoy_registry)
     verdict["checked"] = checked + verdict.get("checked", [])
     if (verdict_cache is not None and cache_key is not None
             and verdict.get("ok") is False):
@@ -1099,7 +1181,8 @@ def evaluate_request(grant, *, proof, issuer_pub, server_name, server_uri,
 def evaluate_batch(items, *, grant, issuer_pub, server_name, server_uri,
                    now, usage_store, mandate_version_provider,
                    link_verifier, caller_cred, max_tools_per_request=8,
-                   max_context_bytes=4096, verdict_cache=None):
+                   max_context_bytes=4096, verdict_cache=None,
+                   decoy_registry=_DECOY_DEFAULT):
     """Evaluate a batch of tool calls. Returns
     ``{"snapshot": {...} or None, "verdicts": [verdict, ...]}``.
 
@@ -1149,7 +1232,8 @@ def evaluate_batch(items, *, grant, issuer_pub, server_name, server_uri,
             mandate_version_provider=_pinned_provider,
             link_verifier=link_verifier,
             max_context_bytes=max_context_bytes,
-            verdict_cache=verdict_cache))
+            verdict_cache=verdict_cache,
+            decoy_registry=decoy_registry))
     return {"snapshot": snapshot, "verdicts": verdicts}
 
 

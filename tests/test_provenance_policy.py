@@ -408,10 +408,10 @@ class OfflineBundleAdapterTests(unittest.TestCase):
 class TaxonomyTests(unittest.TestCase):
     def test_pin_and_codes(self):
         n = len(dc.TAXONOMY)
-        self.assertEqual(n, 1482)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(n, 1485)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
         for c in pp.CODES:
             self.assertIn(c, dc.TAXONOMY)
-        self.assertEqual(len(set(dc.TAXONOMY)), 1482)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
+        self.assertEqual(len(set(dc.TAXONOMY)), 1485)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).
 
 
 if __name__ == "__main__":
