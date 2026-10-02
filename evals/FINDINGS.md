@@ -8081,7 +8081,25 @@ F329, F330) / 7 HELD / 0 ERROR.
 
 **Close-when criteria:** (1) both seams refuse with coded `AnchorError` (new or existing `anchor-*` codes); (2) probes `f331-uncoded-render-sig`/`f331-uncoded-logroot-file` flip to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-286 independent red-team).
+**Status: CLOSED** (closed 2026-10-02, wave-287 lane 1; filing remains recorded above).
+
+**Closure record (wave-287 lane 1):** every public seam of
+`gov/evidence_anchor.py` was probed red-first (9 defect probes BREAK on
+the pristine base) and now refuses LOUD with a coded `AnchorError` --
+no new decision codes; existing `anchor-*` codes reused:
+`render_checkpoint` validates each sig entry (non-hex / non-dict /
+missing-key / non-string sigs refuse `anchor-checkpoint-invalid`),
+`_render_body` validates the root is bytes and `witness_policy_id` is a
+string (`anchor-checkpoint-invalid`), `TransparencyLog.__init__` guards
+`os.makedirs` (file-as-`log_root` refuses `anchor-log-corrupt`;
+environmental OSErrors also refuse coded rather than escaping), and
+`verify_inclusion` guards non-bytes leaf/root (`anchor-inclusion-mismatch`).
+Battery `evals/w287_f331_probes.py`: base 9 defect BREAKs -> fixed
+0 BREAK / 15 HELD / 0 ERROR (staging and `env -u
+GOV_DEPLOYMENT_MODE`; depth-1 green checks w285_tessera + w286_receipts
+0 BREAK). w286_redteam F331 probes flip to HELD. Units
+test_evidence_anchor + test_decision_codes + test_finding_lifecycle
+75/75 OK. Taxonomy pin unchanged 1660/1660/0/sorted.
 
 ## F332: whitespace-only justification satisfies the mandatory-justification control in gov/governed_exceptions.py (LOW)
 
@@ -8095,7 +8113,7 @@ F329, F330) / 7 HELD / 0 ERROR.
 
 **Close-when criteria:** (1) `grant` refuses whitespace-only (and blank-equivalent) justifications with a coded refusal (e.g. strip-then-length check); (2) probe `f332-whitespace-justification` flips to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-286 independent red-team).
+**Status: CLOSED** (2026-10-02, wave-287 lane 2): `ExceptionStore.grant` in `gov/governed_exceptions.py` now applies the `MIN_JUSTIFICATION_CHARS` (20) floor to the STRIPPED justification (fail-closed reading: the floor measures meaningful content, not raw bytes). Whitespace-only (20 spaces, tab/newline/space mixes) and sub-20-stripped justifications refuse LOUD with the existing coded `exception-justification-missing`; legitimate padded justifications still grant (no over-refusal). The digest and stored record keep the raw text (no digest-semantics change); zero-width-space padding is explicitly out of scope (documented). Verification: `evals/w287_f332_probes.py` 3 BREAK (defects reproduced on pristine base) → **0 BREAK / 7 HELD / 0 ERROR** (staging and `env -u GOV_DEPLOYMENT_MODE`); `w286_redteam` F332 probe → HELD (F331×2/F333 remain BREAK, other lanes' work); unit `test_governed_exceptions` 27/27, `test_exception_ttl` + `test_policy_exception` 48/48; `w285_exceptions` 0 BREAK. Taxonomy pin unchanged (1660/1660/0/sorted, no new codes).
 
 ## F333: WitnessPolicy accepts duplicate public keys under distinct key ids -- one witness satisfies a quorum of N (LOW)
 
@@ -8109,6 +8127,116 @@ F329, F330) / 7 HELD / 0 ERROR.
 
 **Close-when criteria:** (1) `WitnessPolicy` refuses duplicate public keys across key ids with a coded `anchor-witness-quorum-failed` refusal (or canonicalizes by key); (2) probe `f333-dup-witness-keys` flips to HELD; (3) adjacent batteries stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-286 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-286 independent red-team; closed 2026-10-02, wave-287 lane 3).
 
-Next free finding: **F334**. **Open findings: F331, F332, F333.** (F311 filed 2026-10-02, wave-282 independent red-team (GuardChain transform/deny/PluginDeny evidence echoes credential-shaped plugin details; same defect class as F306/F310, different emission site), closed 2026-10-02, wave-283 lane 1; F312 filed 2026-10-02, wave-283 independent red-team (forged _atomic_normalized marker skips atomic schema validation; bare KeyError escapes), closed 2026-10-02, wave-284 lane 1; F313 filed 2026-10-02, wave-283 independent red-team (failing audit emit silently drops discovery drift events), closed 2026-10-02, wave-284 lane 1; F314 filed 2026-10-02, wave-283 independent red-team (untrusted | in tool name bricks the pin store), closed 2026-10-02, wave-284 lane 1; F315 filed 2026-10-02, wave-283 independent red-team (re-pin binds by tool name only; same-name shadow lifts the wrong hold), closed 2026-10-02, wave-284 lane 1; F316 filed 2026-10-02, wave-284 independent red-team (close_old_findings fail-open on missing reproduced), closed 2026-10-02, wave-285 lane 2; F317 filed 2026-10-02, wave-284 independent red-team (decode-layer evasion), closed 2026-10-02, wave-285 lane 3; F318 filed 2026-10-02, wave-284 independent red-team (replay executes unverified evidence; silent manual_approve downgrade), closed 2026-10-02, wave-285 lane 1; F319 filed 2026-10-02, wave-284 independent red-team (campaign evidence emission echo), closed 2026-10-02, wave-285 lane 3; F320 filed 2026-10-02, wave-284 independent red-team (pack report duplication), closed 2026-10-02, wave-285 lane 4; F321 filed 2026-10-02, wave-284 independent red-team (identity-collision shadowing), closed 2026-10-02, wave-285 lane 4; F322 filed 2026-10-02, wave-284 independent red-team (severity-blind dedup), closed 2026-10-02, wave-285 lane 4; F323 filed 2026-10-02, wave-284 independent red-team (md-import default-verified), closed 2026-10-02, wave-285 lane 4; F324 filed 2026-10-02, wave-284 independent red-team (produces always fires on ERROR), closed 2026-10-02, wave-285 lane 2; F325-F330 filed 2026-10-02, wave-285 independent red-team (all LOW: F325 ReDoS in attack_manifest matchers/extractors, F326 bundle rekey ceremonies skip bundle_scope, F327 from_dict ceremony raw KeyError, F328 promote demotes successor into mint-stop, F329 keyset pin self-forgeable via public _repin, F330 CompiledPolicy mutable after pin check); w285_redteam battery: 8 BREAK expected-open (F325-F330), rest HELD; wave-285 merge: taxonomy pin 1621 -> 1641 (+1 campaign-produces-suppressed +1 inventory-identity-collision +7 anchor-* +11 exception-*); F316-F324 CLOSED (red-first audit on the composed tree: w285_f324_f316 0 BREAK/13 HELD, w285_f318 0 BREAK/6 HELD, w285_f317_f319 0 BREAK/16 HELD, w285_f320_f323 0 BREAK/10 HELD; w284_redteam 0 BREAK/all HELD); F325-F330 OPEN; F325 closed 2026-10-02, wave-286 lane 1 (load-time ReDoS AST gate, coded manifest-regex-unsafe; w286_f325 0 BREAK / 12 HELD); F326 closed 2026-10-02, wave-286 lane 2 (bundle_scope enforced on re-seal, coded recipient-policy-invalid; w286_f326 0 BREAK / 9 HELD); F327/F328 closed 2026-10-02, wave-286 lane 3 (coded ceremony validation, promote skip on old==new; w286_f327_f328 0 BREAK / 14 HELD); F329/F330 closed 2026-10-02, wave-286 lane 4 (keyed HMAC pin, CompiledPolicy immutable + live-digest gate; w286_f329_f330 0 BREAK / 9 HELD); F331-F333 filed 2026-10-02, wave-286 independent red-team (all LOW: F331 uncoded exceptions in evidence_anchor seams, F332 whitespace justification, F333 duplicate witness keys satisfy quorum); w286_redteam battery: 4 BREAK expected-open (F331-F333), rest HELD; wave-286 merge: taxonomy pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*))
+**Closure record:** `WitnessPolicy.__init__` (gov/evidence_anchor.py) now tracks seen public-key material across key ids and refuses LOUD with coded `anchor-witness-quorum-failed` when the same 32-byte key is pinned under more than one key id. Refusal-at-construction (not canonicalization): the receipts module's `_cosign` validates `isinstance(witness_policy, WitnessPolicy)`, so the shared root covers `gov/evidence_receipt.py` witness cosigning too — a duplicate-key policy can never be constructed on either path. Verified red-first: evals/w287_f333_probes.py 2 BREAK / 3 HELD on base -> 0 BREAK / 7 HELD / 0 ERROR (staging + clean env, depth-1 green checks w285_tessera and w286_receipts all-HELD); the w286_redteam `f333-dup-witness-keys` probe flips to HELD (`duplicate-key policy refused: anchor-witness-quorum-failed`); units tests.test_evidence_anchor + tests.test_evidence_receipt + tests.test_decision_codes 79/79 OK; taxonomy pin unchanged 1660/1660/0/sorted (no new codes). Residual (not filed): post-construction in-process mutation of `policy.witnesses` is not guarded — same in-process threat class as F330's pre-fix state; construction is the documented trust boundary.
+
+## F334: suppress_with_exception binds the exception scope by caller discipline, not to the denied alert (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f334-scope-not-bound`).
+
+**Defect:** `suppress_with_exception` (`gov/tool_call_policy.py`) takes the exception `scope` as a free caller parameter and never binds it to the suppressed alert. The docstring states the scope value "must name the denied tool or the policy", but the code only checks `scope[0] in ("tool", "policy")` and exact-matches the scope against the store -- it never verifies that a `("tool", X)` scope names the denied alert's tool or that a `("policy", P)` scope names the compiled policy. Repro on the wave-286 base: DENY decision for tool-b; live exception granted for `("tool", "tool-a")`; `suppress_with_exception(comp, alert_hash, store, "CHECK", ("tool", "tool-a"))` records the tool-b alert as SKIPPED under the tool-a exception digest (action=SKIPPED, verdict=DENY, `suppressed_alert_identity` = tool-b's hash, `scope` = tool-a). A confused or compromised deployment attributes tool-b's accepted risk to tool-a's approval. The alert lookup is already "best effort" by identity hash; the binding check is simply absent.
+
+**Severity rationale:** LOW. The verdict stays DENY (no enforcement bypass); the mismatch is visible in the suppression record (`scope` vs `suppressed_alert`), so an auditor can spot it. But it silently voids the scope-binding promise that makes governed exceptions least-privilege: the module is the last line of defense for binding accepted risk to the specific tool/policy the approver approved, and it performs no check.
+
+**Close-when criteria:** (1) `suppress_with_exception` refuses LOUD with a coded refusal when a `("tool", X)` scope does not name the suppressed alert's tool, or a `("policy", P)` scope does not name the compiled policy; (2) probe `f334-scope-not-bound` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F335: uncoded exceptions escape the keyset pin-key custody seams (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probes `f335-pinkey-stale-tmp`, `f335-pinkey-malformed-doc`).
+
+**Defect:** the wave-286 keyed-pin hardening (`gov/kms_keyset.py`) left raw builtins escaping at the key-custody seams, breaking the repo's coded-refusal contract (F327/F331 class). (a) `generate_pin_key`: a stale `<path>.tmp` raises raw `FileExistsError` -- the `os.open(..., O_EXCL)` sits outside the try/except that wraps failures as coded `keyset-pin-key-invalid` -- and the path is never created, so every subsequent call fails identically: generation for that path is permanently bricked until the tmp file is manually removed. (b) `_repin`/`from_dict` on malformed documents: non-ASCII `keyset_digest` raises raw `TypeError` from `hmac.compare_digest`; an audit entry lacking `digest` raises raw `KeyError` from `_mac_for` (runs before the pin comparison); a non-mapping audit entry raises raw `TypeError`; `_repin` on docs missing `keys`/`audit_chain`/`format` raises raw `KeyError` (only the missing-ceremony case is caught coded via `_validate_ceremony`). All cases refuse (fail-closed on the data), but operator tooling branching on `KeysetError.code` crashes instead of handling a coded refusal.
+
+**Severity rationale:** LOW. No forgery path (every case refuses); fail-closed on the data. But the uncoded crash on (a) is an operational DoS with manual-cleanup recovery, and (b) re-opens the exact F327-class seam the wave-286 lane closed.
+
+**Close-when criteria:** (1) `generate_pin_key` wraps the stale-tmp case in a coded `keyset-pin-key-invalid` refusal (and either cleans up or reports the bricking loudly); malformed documents refuse with coded `keyset-verify-failed`/`keyset-ceremony-incomplete` at every `_repin`/`from_dict` seam; (2) probes `f335-pinkey-stale-tmp`/`f335-pinkey-malformed-doc` flip to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F336: load_pin_key silently loads a world-readable pin key (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f336-pinkey-perms`).
+
+**Defect:** `load_pin_key` (`gov/kms_keyset.py`) size-checks the key file but performs no permission check: a 0600-generated key file `chmod 644`'d (copy, backup restore, umask slip) loads silently with the round-trip intact. The module's own trust model (class docstring) says "the pin key lives in a separate 0600 file" -- nothing enforces the precondition at load. The deployment then believes the pin is a deployment-held secret while it is world-readable on the host.
+
+**Severity rationale:** LOW. Hygiene fail-open, not a forgery: the threat model assumes the operator guards the file. But the module could cheaply verify its own precondition and report LOUD instead of silently accepting a weakened posture.
+
+**Close-when criteria:** (1) `load_pin_key` refuses LOUD (coded) when the key file is group/other-readable, or documents the deliberate non-check with a rationale; (2) probe `f336-pinkey-perms` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F337: bind_receipt signs anchor tuples it never re-verifies (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f337-bind-no-reverify`).
+
+**Defect:** `bind_receipt` (`gov/evidence_receipt.py`) fail-fasts the operator seed (checkpoint operator-signature check) and the witness quorum at issuance, but never re-verifies that `anchored["inclusion_proof"]` chains `anchored["bundle_digest"]` to the checkpoint root. A fabricated anchor dict (digest swapped to an unrelated-but-valid digest) produces a fully operator-signed receipt whose payload confirms the swapped digest. `verify_receipt_offline` fails closed (`receipt-inclusion-mismatch`), so no false acceptance is possible -- the impact is issuance-side confusion: a corrupted/buggy anchor pipeline (or confused caller holding the operator seed) mints operator-signed receipts that every auditor will reject, and the failure surfaces only at audit time instead of at issuance where the module's own fail-fast philosophy already checks the seed and the quorum.
+
+**Severity rationale:** LOW. No false acceptance (verify fails closed); an external attacker without the operator seed cannot reach this (wrong seed refuses at bind). But it is inconsistent with the module's documented issuance-time checks and turns a pipeline bug into signed-but-dead receipts.
+
+**Close-when criteria:** (1) `bind_receipt` re-verifies the inclusion proof (digest -> root) before signing and refuses LOUD with a coded refusal on mismatch; (2) probe `f337-bind-no-reverify` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F338: DENY arg carve-outs evaded by explicit null / wrong-typed args (MEDIUM)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f338-deny-null-arg`).
+
+**Defect:** `_args_satisfy` (`gov/tool_call_policy.py`) with `deny_semantics=True` treats a *missing* arg key as a match (fail-closed, documented) but requires a *present* arg to satisfy its matcher -- and `_match_value` returns False for `None`/non-string values. With a "broad ALLOW + narrow DENY carve-out" policy, `{"cmd": "rm -rf /"}` -> DENY and `{}` (missing) -> DENY, but `{"cmd": None}` -> **ALLOW**, `{"cmd": 5}` -> ALLOW, `{"cmd": ["rm -rf /"]}` -> ALLOW. Same for `regex`/`prefix`/`any_of` carve-outs (`path=None` dodges `^/etc/.*`). The documented "fail-closed on under-specification" guarantee holds only for key-absence, not for the wire-equivalent null -- and null is what common JSON serializers emit for unset optionals, so benign callers silently opt out of the carve-out too. Repro on the wave-286 base via `compile_policy` + `decide` (probe in battery).
+
+**Severity rationale:** MEDIUM. Defeats an explicit DENY rule using only caller-controlled args, and the caller is the authorization module's primary threat actor. Bounded end-to-end by the tool's own None-handling, but the authorization contract is violated at the seam: the module's core promise is broken by a one-token change (omit -> null).
+
+**Close-when criteria:** (1) under DENY semantics, null/ill-typed arg values are treated as missing (fail-closed match), or matchers explicitly refuse them coded; (2) probe `f338-deny-null-arg` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F339: ReDoS residual in tool_call_policy is independently exploitable -- the F325 gate is not routed (MEDIUM)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f339-toolpolicy-redos`).
+
+**Defect:** `gov/tool_call_policy.py` documents regex backtracking as a "residual", but the residual is caller-triggerable and the in-tree defense is not wired in: the module has zero references to `_check_regex_safety`/`attack_manifest` (grep-verified); `_validate_arg_matchers` enforces only `MAX_REGEX_LEN=256` + `re.compile`. Caller-controlled arg values pass through `re.fullmatch` at decide time, so the *caller* (the actual threat-model attacker for an authorization module, not just a malicious operator) hangs the deciding thread: operator-plausible pattern `^([a-z]+)*$` with input `"a"*n+"!"` measured 0.00s/0.11s/2.44s at n=15/20/25 (exponential; ~30 chars never returns). The F325 gate in `gov/attack_manifest.py` *would* refuse exactly this pattern class ("nested/overlapping quantifiers") -- the defense exists in-tree but isn't routed.
+
+**Severity rationale:** MEDIUM. Availability-only, but the attacker is the governed caller itself (the primary threat actor), the target is the authorization decision path, and the fix is wiring an existing in-tree gate -- a genuine coverage miss of F325's closure, not a new unknown-unknown.
+
+**Close-when criteria:** (1) arg-matcher regexes pass through the F325 `_check_regex_safety` gate (or equivalent) at compile time, refusing the dangerous pattern class coded; (2) probe `f339-toolpolicy-redos` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F340: CompiledToolPolicy is not frozen; the pin is verified only at bind() time (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f340-policy-not-frozen`).
+
+**Defect:** unlike the F330-frozen sandbox `CompiledPolicy`, `CompiledToolPolicy._doc` is a mutable dict and `PolicyBinding.decide()` never re-checks the pin. Post-bind, `binding._compiled._doc["mode"] = "audit"` silently converts enforcement to evidence-only (would-deny -> ALLOW) while the binding still presents the enforce-time pin; neutering a DENY rule and planting an ALLOW rule flips DENY -> ALLOW, and the drifted decision is logged in the binding's audit trail with no drift indication. `bind()` on the mutated object correctly refuses (`toolcall-policy-drift`) -- the check exists, but only at bind time. Repro on the wave-286 base (probe in battery).
+
+**Severity rationale:** LOW. Requires in-process reference access (malicious CUSTOM authorizer, compromised plugin); the deployment process is the trust boundary and such an attacker has easier paths. Still a genuine gap between the documented "bound to a pin" guarantee and the implementation.
+
+**Close-when criteria:** (1) `_doc` frozen (F330 pattern: MappingProxyType/frozen attrs) or the pin re-verified per `decide()`; (2) probe `f340-policy-not-frozen` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F341: suppression record misstates the verdict for audit-mode would-denys (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f341-auditmode-verdict`).
+
+**Defect:** `suppress_with_exception` (`gov/tool_call_policy.py`) hardcodes the suppression record as `"verdict": "DENY"` with message "DENY verdict stands". Suppressing an audit-mode would-deny alert -- whose actual decision was ALLOW (nothing was denied; audit mode doesn't enforce) -- produces a record claiming a denial was suppressed under exception. An auditor reading the suppression record concludes a denied call was accepted-risk-suppressed when the call was in fact allowed. Repro on the wave-286 base (probe in battery).
+
+**Severity rationale:** LOW. No enforcement impact (audit mode enforces nothing anyway); purely evidence dishonesty in the audit trail. But the suppression record is sold as accepted-risk evidence -- misstating the verdict it covers corrupts exactly what the record is for.
+
+**Close-when criteria:** (1) the suppression record derives its verdict from the actual alert/decision instead of hardcoding DENY; (2) probe `f341-auditmode-verdict` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+## F342: uncoded TypeError escapes tool_call_policy public seams (LOW)
+
+**Cells:** wave-287 independent red-team, 2026-10-02. Standing regression pins: `evals/w287_redteam_probes.py` (probe `f342-uncoded-typeerror`).
+
+**Defect:** the module's "all refusals are coded `ToolCallPolicyError`" contract is violated by fail-closed crashes: `decide(caller, None, "run")` raises raw `TypeError` ("expected string or bytes-like object"), as do mixed-type arg keys (json `sort_keys` `TypeError`) and non-string tools. All fail closed, but a deployment catching only `ToolCallPolicyError` sees an unexpected exception type -- the F327/F331/F335 class at another seam.
+
+**Severity rationale:** LOW. Fail-closed; contract/robustness violation only, no bypass.
+
+**Close-when criteria:** (1) ill-typed public inputs refuse with coded `ToolCallPolicyError`; (2) probe `f342-uncoded-typeerror` flips to HELD; (3) adjacent batteries stay green.
+
+**Status: OPEN** (filed 2026-10-02, wave-287 independent red-team).
+
+Next free finding: **F343**. **Open findings: F334, F335, F336, F337, F338, F339, F340, F341, F342.** (F311 filed 2026-10-02, wave-282 independent red-team (GuardChain transform/deny/PluginDeny evidence echoes credential-shaped plugin details; same defect class as F306/F310, different emission site), closed 2026-10-02, wave-283 lane 1; F312 filed 2026-10-02, wave-283 independent red-team (forged _atomic_normalized marker skips atomic schema validation; bare KeyError escapes), closed 2026-10-02, wave-284 lane 1; F313 filed 2026-10-02, wave-283 independent red-team (failing audit emit silently drops discovery drift events), closed 2026-10-02, wave-284 lane 1; F314 filed 2026-10-02, wave-283 independent red-team (untrusted | in tool name bricks the pin store), closed 2026-10-02, wave-284 lane 1; F315 filed 2026-10-02, wave-283 independent red-team (re-pin binds by tool name only; same-name shadow lifts the wrong hold), closed 2026-10-02, wave-284 lane 1; F316 filed 2026-10-02, wave-284 independent red-team (close_old_findings fail-open on missing reproduced), closed 2026-10-02, wave-285 lane 2; F317 filed 2026-10-02, wave-284 independent red-team (decode-layer evasion), closed 2026-10-02, wave-285 lane 3; F318 filed 2026-10-02, wave-284 independent red-team (replay executes unverified evidence; silent manual_approve downgrade), closed 2026-10-02, wave-285 lane 1; F319 filed 2026-10-02, wave-284 independent red-team (campaign evidence emission echo), closed 2026-10-02, wave-285 lane 3; F320 filed 2026-10-02, wave-284 independent red-team (pack report duplication), closed 2026-10-02, wave-285 lane 4; F321 filed 2026-10-02, wave-284 independent red-team (identity-collision shadowing), closed 2026-10-02, wave-285 lane 4; F322 filed 2026-10-02, wave-284 independent red-team (severity-blind dedup), closed 2026-10-02, wave-285 lane 4; F323 filed 2026-10-02, wave-284 independent red-team (md-import default-verified), closed 2026-10-02, wave-285 lane 4; F324 filed 2026-10-02, wave-284 independent red-team (produces always fires on ERROR), closed 2026-10-02, wave-285 lane 2; F325-F330 filed 2026-10-02, wave-285 independent red-team (all LOW: F325 ReDoS in attack_manifest matchers/extractors, F326 bundle rekey ceremonies skip bundle_scope, F327 from_dict ceremony raw KeyError, F328 promote demotes successor into mint-stop, F329 keyset pin self-forgeable via public _repin, F330 CompiledPolicy mutable after pin check); w285_redteam battery: 8 BREAK expected-open (F325-F330), rest HELD; wave-285 merge: taxonomy pin 1621 -> 1641 (+1 campaign-produces-suppressed +1 inventory-identity-collision +7 anchor-* +11 exception-*); F316-F324 CLOSED (red-first audit on the composed tree: w285_f324_f316 0 BREAK/13 HELD, w285_f318 0 BREAK/6 HELD, w285_f317_f319 0 BREAK/16 HELD, w285_f320_f323 0 BREAK/10 HELD; w284_redteam 0 BREAK/all HELD); F325-F330 OPEN; F325 closed 2026-10-02, wave-286 lane 1 (load-time ReDoS AST gate, coded manifest-regex-unsafe; w286_f325 0 BREAK / 12 HELD); F326 closed 2026-10-02, wave-286 lane 2 (bundle_scope enforced on re-seal, coded recipient-policy-invalid; w286_f326 0 BREAK / 9 HELD); F327/F328 closed 2026-10-02, wave-286 lane 3 (coded ceremony validation, promote skip on old==new; w286_f327_f328 0 BREAK / 14 HELD); F329/F330 closed 2026-10-02, wave-286 lane 4 (keyed HMAC pin, CompiledPolicy immutable + live-digest gate; w286_f329_f330 0 BREAK / 9 HELD); F331-F333 filed 2026-10-02, wave-286 independent red-team (all LOW: F331 uncoded exceptions in evidence_anchor seams, F332 whitespace justification, F333 duplicate witness keys satisfy quorum); w286_redteam battery: 4 BREAK expected-open (F331-F333), rest HELD; wave-286 merge: taxonomy pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*); F334 filed 2026-10-02, wave-287 independent red-team (LOW: suppress_with_exception scope not bound to the denied alert); F335 filed 2026-10-02, wave-287 independent red-team (LOW: uncoded exceptions on keyset pin-key custody seams); F336 filed 2026-10-02, wave-287 independent red-team (LOW: load_pin_key silently loads world-readable key); F337 filed 2026-10-02, wave-287 independent red-team (LOW: bind_receipt signs anchor tuples it never re-verifies); F338 filed 2026-10-02, wave-287 independent red-team (MEDIUM: DENY arg carve-outs evaded by explicit null/wrong-typed args); F339 filed 2026-10-02, wave-287 independent red-team (MEDIUM: ReDoS residual in tool_call_policy independently exploitable, F325 gate not routed); F340 filed 2026-10-02, wave-287 independent red-team (LOW: CompiledToolPolicy not frozen, pin checked only at bind); F341 filed 2026-10-02, wave-287 independent red-team (LOW: suppression record misstates verdict for audit-mode would-denys); F342 filed 2026-10-02, wave-287 independent red-team (LOW: uncoded TypeError escapes tool_call_policy seams); w287_redteam battery: 10 BREAK expected-open (F334-F342), rest HELD; F331 closed 2026-10-02, wave-287 lane 1 (coded AnchorError refusals at all public seams; w287_f331 0 BREAK / 15 HELD); F332 closed 2026-10-02, wave-287 lane 2 (stripped-content justification floor, coded exception-justification-missing; w287_f332 0 BREAK / 7 HELD); F333 closed 2026-10-02, wave-287 lane 3 (duplicate witness keys refused LOUD at WitnessPolicy construction, coded anchor-witness-quorum-failed; w287_f333 0 BREAK / 7 HELD); wave-287 merge: taxonomy pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*))

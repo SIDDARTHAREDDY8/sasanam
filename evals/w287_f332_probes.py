@@ -1,0 +1,187 @@
+"""Wave-287 lane 2 battery: close F332 (LOW).
+
+F332: ExceptionStore.grant accepted a 20-space (or tab/newline-mix)
+justification: the mandatory-justification control ("a justification
+must say something") was satisfied by whitespace. The fix strips
+justification and applies the 20-char floor to the STRIPPED content
+(fail-closed reading: the floor measures meaningful content), refusing
+coded `exception-justification-missing`.
+
+Base: wave-286 push 8c811375d504371c448d6440b6f80ce9622eb0b45
+(verified via git rev-parse HEAD before work).
+
+Run:
+  mkdir -p /var/tmp/g287-f332 && TMPDIR=/var/tmp/g287-f332 \
+    ~/workspace/.gov-venv/bin/python evals/w287_f332_probes.py
+Also standalone (clean env):
+  env -u GOV_DEPLOYMENT_MODE TMPDIR=/var/tmp/g287-f332b \
+    ~/workspace/.gov-venv/bin/python evals/w287_f332_probes.py
+"""
+
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+# Wave-95 lesson: module-level staging default.
+os.environ.setdefault("GOV_DEPLOYMENT_MODE", "staging")
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+for _p in (REPO, os.path.join(REPO, "tests")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
+SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
+
+# Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*).
+TAXONOMY_PIN = 1684
+
+_results = []
+
+
+def _record(pid, verdict, note):
+    _results.append((pid, verdict, note))
+
+
+def _literals():
+    import re
+    with open(os.path.join(REPO, "gov", "decision_codes.py"),
+              encoding="utf-8") as fh:
+        src = fh.read()
+    return re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
+
+
+def p_taxonomy_pin():
+    lits = _literals()
+    if len(lits) != TAXONOMY_PIN:
+        return _record("pin-taxonomy", "BREAK",
+                       "taxonomy pin drift: %d literals, want %d"
+                       % (len(lits), TAXONOMY_PIN))
+    if len(set(lits)) != len(lits):
+        return _record("pin-taxonomy", "BREAK", "duplicate literals")
+    if lits != sorted(lits):
+        return _record("pin-taxonomy", "BREAK", "literals unsorted")
+    _record("pin-taxonomy", "HELD", "1684/1684/0 sorted")
+
+
+def _store():
+    from gov import governed_exceptions as ge
+    reg = ge.CheckRegistry()
+    reg.register("CKV_AWS_1", "bucket acl", "s3", "high",
+                 rationale="public bucket acl check rationale",
+                 resource_types=("aws_s3_bucket",))
+    st = ge.ExceptionStore(reg)
+    st.set_approvers(["alice"])
+    return ge, st
+
+
+def _grant_kwargs(justification):
+    now = time.time()
+    return dict(check_id="CKV_AWS_1",
+                scope=("resource", "aws_s3_bucket.x"),
+                justification=justification, approver="alice",
+                expiry_ts=now + 3600, created_at=now)
+
+
+def _expect_refused(pid, justification, must_code):
+    ge, st = _store()
+    try:
+        st.grant(**_grant_kwargs(justification))
+    except ge.GovernExceptionError as e:
+        if e.code == must_code:
+            return _record(pid, "HELD",
+                           "refused with coded %s" % (e.code,))
+        return _record(pid, "BREAK",
+                       "refused but wrong code %r, want %r"
+                       % (e.code, must_code))
+    _record(pid, "BREAK", "whitespace justification accepted -- F332 open")
+
+
+def p_f332_spaces():
+    _expect_refused("f332-20-spaces", " " * 20,
+                    "exception-justification-missing")
+
+
+def p_f332_ws_mix():
+    # >= 20 chars of pure whitespace mix: genuinely exercises the defect.
+    _expect_refused("f332-ws-mix", "\t \n  \t\n  \n    \t  \n " * 2,
+                    "exception-justification-missing")
+
+
+def p_f332_sub20_stripped():
+    # 19 meaningful chars + padding: fail-closed reading measures the
+    # stripped content, so this must still be refused.
+    _expect_refused("f332-19-stripped", "   " + "x" * 19 + "   ",
+                    "exception-justification-missing")
+
+
+def _expect_granted(pid, justification):
+    ge, st = _store()
+    try:
+        exc = st.grant(**_grant_kwargs(justification))
+    except ge.GovernExceptionError as e:
+        return _record(pid, "BREAK",
+                       "legitimate justification refused: %s" % (e.code,))
+    _record(pid, "HELD", "granted: %s..." % (exc.digest[:8],))
+
+
+def p_f332_legit():
+    _expect_granted(
+        "f332-legit-20",
+        "Risk accepted: internal bucket, no PII, expires soon.")
+
+
+def p_f332_legit_padded():
+    # No over-refusal: meaningful content with incidental padding grants.
+    _expect_granted(
+        "f332-legit-padded",
+        "  Risk accepted: internal bucket, no PII, expires soon.  ")
+
+
+def _green_checks():
+    if SKIP_GREEN:
+        return
+    for rel in ("evals/w285_exceptions_probes.py",):
+        path = os.path.join(REPO, rel)
+        d = tempfile.mkdtemp(prefix="w287-green-")
+        try:
+            proc = subprocess.run(
+                [sys.executable, path], capture_output=True, text=True,
+                timeout=600,
+                env=dict(os.environ, GOV_SKIP_GREEN="1", TMPDIR=d,
+                         GOV_RUN_ROOT=os.path.join(d, "gov-run")))
+        except Exception as e:  # noqa: BLE001
+            _record(os.path.basename(rel), "ERROR", "green check: %r" % (e,))
+            continue
+        out = proc.stdout + proc.stderr
+        import re as _re
+        m = _re.search(r"(\d+)\s+BREAK", out)
+        nbreak = int(m.group(1)) if m else -1
+        if nbreak != 0:
+            _record(os.path.basename(rel), "BREAK",
+                    "green check: %d BREAK (expected 0)" % nbreak)
+        else:
+            _record(os.path.basename(rel), "HELD",
+                    "green check: 0 BREAK as expected")
+
+
+def main():
+    p_taxonomy_pin()
+    p_f332_spaces()
+    p_f332_ws_mix()
+    p_f332_sub20_stripped()
+    p_f332_legit()
+    p_f332_legit_padded()
+    _green_checks()
+
+    nbreak = sum(1 for _, v, _ in _results if v == "BREAK")
+    nheld = sum(1 for _, v, _ in _results if v == "HELD")
+    nerr = sum(1 for _, v, _ in _results if v == "ERROR")
+    for pid, verdict, note in _results:
+        print("  [%s] %s: %s" % (verdict, pid, note))
+    print("w287_f332: %d BREAK / %d HELD / %d ERROR" % (nbreak, nheld, nerr))
+
+
+if __name__ == "__main__":
+    main()

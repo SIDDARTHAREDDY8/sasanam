@@ -278,14 +278,17 @@ class FindingsMdTest(unittest.TestCase):
         # independent red team, closed at the wave-285 merge (lanes 1-4);
         # F325-F330 filed OPEN by the wave-285 independent red team,
         # closed at the wave-286 merge (lanes 1-4); F331-F333 filed OPEN
-        # by the wave-286 independent red team.
+        # by the wave-286 independent red team; F331-F333 closed at the
+        # wave-287 merge (lanes 1-3); F334-F342 filed OPEN by the wave-287
+        # independent red team.
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
                     "F324", "F325", "F326", "F327", "F328", "F329",
-                    "F330"):
+                    "F330", "F331", "F332", "F333"):
             self.assertEqual(reg.get(num).state, "verified")
-        for num in ("F331", "F332", "F333"):
+        for num in ("F334", "F335", "F336", "F337", "F338", "F339",
+                    "F340", "F341", "F342"):
             self.assertEqual(reg.get(num).state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")

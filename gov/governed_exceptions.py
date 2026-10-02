@@ -53,6 +53,7 @@ BASELINE_FORMAT = "sasanam-exception-baseline/v1"
 MAX_EXCEPTION_TTL_SECONDS = 90 * 24 * 3600
 
 #: Minimum justification length: a justification must say something.
+#: Wave-287 (F332): the floor applies to the STRIPPED content -- see grant.
 MIN_JUSTIFICATION_CHARS = 20
 
 #: Closed scope vocabulary (checkov suppressions are resource-scoped).
@@ -371,11 +372,17 @@ class ExceptionStore:
             _deny(UNAPPROVED_APPROVER,
                   "cannot grant exception: approver %r is not an approved "
                   "exception approver" % (approver,))
+        # Wave-287 (F332): the floor measures MEANINGFUL content -- strip
+        # first so whitespace-only (or blank-equivalent) justifications
+        # cannot satisfy the mandatory-justification control. The digest
+        # and stored record keep the raw text; only the check is stripped.
         if (not isinstance(justification, str)
-                or len(justification) < MIN_JUSTIFICATION_CHARS):
+                or len(justification.strip()) < MIN_JUSTIFICATION_CHARS):
             _deny(JUSTIFICATION_MISSING,
                   "cannot grant exception: justification is mandatory "
-                  "(>= %d chars)" % (MIN_JUSTIFICATION_CHARS,))
+                  "and must say something (>= %d meaningful chars, "
+                  "ignoring surrounding whitespace)"
+                  % (MIN_JUSTIFICATION_CHARS,))
         try:
             norm_scope = _normalize_scope(scope)
         except GovernExceptionError as e:

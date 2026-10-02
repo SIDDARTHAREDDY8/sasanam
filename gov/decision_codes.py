@@ -10634,6 +10634,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['release', 'approval-record', 'signature'],
         "reverify_steps": ['verify-signature', 'replay-chain'],
     },
+    'provenance-artifact-mismatch': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-artifact-mismatch',
+        "human": 'evidence provenance: the provenance claim is about a '
+                 'different artifact digest than the one being anchored '
+                 'or graphed; claims never transfer across artifacts',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+
     'provenance-builder-refused': {
         "domain": 'provenance-policy',
         "code": 'provenance-builder-refused',
@@ -10645,6 +10656,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['provenance-statement'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-builder-untrusted': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-builder-untrusted',
+        "human": 'evidence provenance: the claim builder id is not in '
+                 'the auditor-pinned allowlist (a validly-signed claim '
+                 'from a foreign builder still refuses); claims are '
+                 'checked, not made true',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+
     'provenance-chain-class-mismatch': {
         "domain": 'provenance',
         "code": 'provenance-chain-class-mismatch',
@@ -10682,6 +10705,51 @@ TAXONOMY = {
         "evidence_kinds_required": ['provenance-receipt'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-envelope-malformed': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-envelope-malformed',
+        "human": 'evidence provenance: the provenance envelope or claim '
+                 'failed structural validation; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'provenance-material-unmarked': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-material-unmarked',
+        "human": 'evidence provenance: a build material carries no '
+                 'explicit completeness marking (must be verified or '
+                 'unverified); the honesty discipline is enforced, not '
+                 'assumed',
+        "severity": 'low',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'provenance-material-unverified': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-material-unverified',
+        "human": 'evidence provenance: a build material is marked '
+                 'unverified and the verifier did not opt in to '
+                 'unverified materials; unverified inputs are loud, '
+                 'never silent',
+        "severity": 'low',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'provenance-missing': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-missing',
+        "human": 'evidence provenance: no provenance envelope was '
+                 'supplied at a provenance-gated anchor; missing '
+                 'provenance never anchors silently',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'provenance-policy-vacuous': {
         "domain": 'provenance-policy',
         "code": 'provenance-policy-vacuous',
@@ -10693,6 +10761,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration'],
         "reverify_steps": ['recompute'],
     },
+    'provenance-signature-invalid': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-signature-invalid',
+        "human": 'evidence provenance: the provenance envelope signature '
+                 'does not verify under the auditor-pinned builder key; '
+                 'unsigned-is-not-evidence, refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+
     'provenance-source-refused': {
         "domain": 'provenance-policy',
         "code": 'provenance-source-refused',
@@ -14616,6 +14695,193 @@ TAXONOMY = {
         "evidence_kinds_required": ['trust-config', 'signature', 'digest'],
         "reverify_steps": ['recompute'],
     },
+    'trustvec-appraisal-contraindicated': {
+        "domain": 'trustvec',
+        "code": 'trustvec-appraisal-contraindicated',
+        "human": 'trust-vector appraisal: require_affirmed refused -- one or '
+                 'more trust-vector dimensions are contraindicated; a live '
+                 'governed exception can never upgrade a contraindication',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-appraisal-insufficient': {
+        "domain": 'trustvec',
+        "code": 'trustvec-appraisal-insufficient',
+        "human": 'trust-vector appraisal: require_affirmed refused -- the '
+                 'vector is insufficient (unendorsed dimensions) and no '
+                 'exception store was offered to accept the risk',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-endorsement-not-independent': {
+        "domain": 'trustvec',
+        "code": 'trustvec-endorsement-not-independent',
+        "human": 'trust-vector appraisal: an endorsement was sourced from '
+                 'the evidence producer itself; endorsements must be '
+                 'separately sourced or the verifier trusts the producer',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-evidence-invalid': {
+        "domain": 'trustvec',
+        "code": 'trustvec-evidence-invalid',
+        "human": 'trust-vector appraisal: evidence failed the scheme claim '
+                 'grammar (missing/extra claims, wrong types) or a malformed '
+                 'EAR/appraise-hook output was rejected; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-no-covering-exception': {
+        "domain": 'trustvec',
+        "code": 'trustvec-no-covering-exception',
+        "human": 'trust-vector appraisal: the vector is insufficient and no '
+                 'live governed exception covers the appraisal policy; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['digest', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-policy-drift': {
+        "domain": 'trustvec',
+        "code": 'trustvec-policy-drift',
+        "human": 'trust-vector appraisal: the appraisal policy digest '
+                 'drifted from its pin; refused fail-closed -- re-review '
+                 'and re-pin before appraising',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-policy-invalid': {
+        "domain": 'trustvec',
+        "code": 'trustvec-policy-invalid',
+        "human": 'trust-vector appraisal: the appraisal-policy document '
+                 'failed validation (format, policy id, scheme binding, '
+                 'trust anchors); refused fail-closed at compile time',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-policy-unpinned': {
+        "domain": 'trustvec',
+        "code": 'trustvec-policy-unpinned',
+        "human": 'trust-vector appraisal: appraisal attempted under a '
+                 'policy with no committed pin; refused fail-closed -- '
+                 'appraisal decides only under pinned, reviewable policy',
+        "severity": 'high',
+        "evidence_kinds_required": ['pin', 'refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-scheme-duplicate': {
+        "domain": 'trustvec',
+        "code": 'trustvec-scheme-duplicate',
+        "human": 'trust-vector appraisal: a scheme id was registered twice; '
+                 'the duplicate registration was refused (no silent '
+                 'replacement of the appraisal plugin)',
+        "severity": 'low',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'trustvec-scheme-unknown': {
+        "domain": 'trustvec',
+        "code": 'trustvec-scheme-unknown',
+        "human": 'trust-vector appraisal: evidence named an unregistered '
+                 'attestation scheme; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'tsa-gentime-backdated': {
+        "domain": 'tsa',
+        "code": 'tsa-gentime-backdated',
+        "human": 'tsa: the token genTime predates the auditor first-observed '
+                 'ledger entry for this tree head; possible backdated time '
+                 'forgery',
+        "severity": 'high',
+        "evidence_kinds_required": ['token', 'ledger'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-gentime-in-future': {
+        "domain": 'tsa',
+        "code": 'tsa-gentime-in-future',
+        "human": 'tsa: the token genTime is beyond the allowed future skew; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-gentime-invalid': {
+        "domain": 'tsa',
+        "code": 'tsa-gentime-invalid',
+        "human": 'tsa: the token genTime is missing, non-integer, or not '
+                 'positive; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-imprint-mismatch': {
+        "domain": 'tsa',
+        "code": 'tsa-imprint-mismatch',
+        "human": 'tsa: the token imprint does not match the recomputed '
+                 'imprint over the operator signature; the token is not '
+                 'bound to this checkpoint or receipt',
+        "severity": 'high',
+        "evidence_kinds_required": ['token', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-nonce-mismatch': {
+        "domain": 'tsa',
+        "code": 'tsa-nonce-mismatch',
+        "human": 'tsa: the token nonce does not match the expected request '
+                 'nonce; possible replay',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-signature-invalid': {
+        "domain": 'tsa',
+        "code": 'tsa-signature-invalid',
+        "human": 'tsa: the TSA signature does not verify under the pinned '
+                 'TSA public key; possible tampering or time forgery',
+        "severity": 'high',
+        "evidence_kinds_required": ['token', 'key-reference'],
+        "reverify_steps": ['recompute'],
+    },
+
+
+    'tsa-token-malformed': {
+        "domain": 'tsa',
+        "code": 'tsa-token-malformed',
+        "human": 'tsa: the timestamp token or issuance request is malformed; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['token'],
+        "reverify_steps": ['recompute'],
+    },
+
     'ttl_extended': {
         "domain": 'approval',
         "code": 'ttl_extended',

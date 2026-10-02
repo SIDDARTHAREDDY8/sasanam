@@ -48,7 +48,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g286-toolpolicy")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-286 lane 8: pin 1652 -> 1652 (+11 toolcall-* codes).
-TAXONOMY_PIN = 1660
+TAXONOMY_PIN = 1684
 
 _RESULTS = []
 

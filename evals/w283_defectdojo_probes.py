@@ -44,7 +44,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g283-defectdojo")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-283 lane 5: 1579 -> 1581 (+2 finding-* codes).
-TAXONOMY_PIN = 1660  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660 (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
+TAXONOMY_PIN = 1684  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).; Wave-284 lane 1: pin 1587 -> 1588 (+1 discovery-emit-failed).; Wave-284 merge: pin 1588 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*).
 
 _RESULTS = []
 
@@ -405,16 +405,19 @@ def p_findings_md_load():
     # at the wave-285 merge (lanes 1-4); F325-F330 filed OPEN by the
     # wave-285 independent red team, closed at the wave-286 merge
     # (lanes 1-4); F331-F333 filed OPEN by the wave-286 independent
-    # red team.
+    # red team; F331-F333 closed at the wave-287 merge (lanes 1-3);
+    # F334-F342 filed OPEN by the wave-287 independent red team.
     for num in ("F316", "F317", "F318", "F319", "F320",
                 "F321", "F322", "F323", "F324", "F325", "F326",
-                "F327", "F328", "F329", "F330"):
+                "F327", "F328", "F329", "F330",
+                "F331", "F332", "F333"):
         ent = reg.get(num)
         if ent is None or ent.state != "verified":
             return _record("p-findings-md-load", "BREAK",
                            "%s parsed as %r, want 'verified'"
                            % (num, None if ent is None else ent.state))
-    for num in ("F331", "F332", "F333"):
+    for num in ("F334", "F335", "F336", "F337", "F338",
+                "F339", "F340", "F341", "F342"):
         ent = reg.get(num)
         if ent is None or ent.state != "open":
             return _record("p-findings-md-load", "BREAK",
@@ -437,8 +440,8 @@ def p_findings_md_load():
         return _record("p-findings-md-load", "BREAK",
                        "malformed identity hashes: %r" % bad[:3])
     _record("p-findings-md-load", "HELD",
-            "%d FINDINGS.md entries parsed; F311-F330 closed, "
-            "F331-F333 open, F310/F309/F306 closed"
+            "%d FINDINGS.md entries parsed; F311-F333 closed, "
+            "F334-F342 open, F310/F309/F306 closed"
             % len(reg.all()))
 
 

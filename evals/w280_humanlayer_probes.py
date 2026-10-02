@@ -545,7 +545,7 @@ def probe_taxonomy_pin():
             return _broken(name, "duplicate code literals")
         if literals != sorted(literals):
             return _broken(name, "codes not sorted")
-        if len(literals) != 1660:
+        if len(literals) != 1684:
             return _broken(name, "pin moved: %d literals" % len(literals))
         return _held(name, "1588/1588/0 sorted")
     except Exception as exc:  # noqa: BLE001

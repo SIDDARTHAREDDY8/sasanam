@@ -210,13 +210,20 @@ def verify_inclusion(leaf_hash, proof, root):
         _fail(INCLUSION_MISMATCH, "proof index out of range")
     if any(len(s) != 32 for s in siblings):
         _fail(INCLUSION_MISMATCH, "proof hash is not 32 bytes")
-    h = bytes(leaf_hash)
+    try:
+        h = bytes(leaf_hash)
+    except (TypeError, ValueError):
+        _fail(INCLUSION_MISMATCH, "leaf hash is not bytes")
     if len(h) != 32:
         _fail(INCLUSION_MISMATCH, "leaf hash is not 32 bytes")
+    try:
+        root_bytes = bytes(root)
+    except (TypeError, ValueError):
+        _fail(INCLUSION_MISMATCH, "proof root is not bytes")
     computed, rest = _verify_level(m, n, h, siblings)
     if rest:
         _fail(INCLUSION_MISMATCH, "proof longer than tree size allows")
-    return computed == bytes(root)
+    return computed == root_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -239,10 +246,21 @@ _ORIGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}$")
 
 
 def _render_body(body):
+    # Public-seam validation lives in render_checkpoint; _render_body is
+    # also called internally with machine-built bodies. Keep the helper
+    # strict so any caller-supplied garbage fails coded, not raw.
+    try:
+        root_bytes = bytes(body["root"])
+    except (TypeError, ValueError):
+        _fail(CHECKPOINT_INVALID, "checkpoint body root is not bytes")
+    wpid = body["witness_policy_id"]
+    if not isinstance(wpid, str):
+        _fail(CHECKPOINT_INVALID, "checkpoint witness_policy_id is not "
+                                  "a string")
     lines = [body["origin"], str(body["size"]),
-             base64.b64encode(bytes(body["root"])).decode("ascii"),
+             base64.b64encode(root_bytes).decode("ascii"),
              str(body["timestamp"]),
-             "witness_policy: " + body["witness_policy_id"]]
+             "witness_policy: " + wpid]
     return "\n".join(lines) + "\n"
 
 
@@ -255,9 +273,22 @@ def render_checkpoint(body, sigs):
                   "checkpoint body missing field %r" % field)
     note = _render_body(body) + "\n"
     for sig in sigs:
-        # C2SP signed-note lines carry base64 signatures.
-        raw = base64.b64encode(bytes.fromhex(sig["sig"])).decode("ascii")
-        note += "\u2014 %s %s\n" % (sig["keyid"], raw)
+        # C2SP signed-note lines carry base64 signatures. Every
+        # caller-supplied sig entry is validated LOUD: non-hex,
+        # non-dict, or missing keys refuse anchor-checkpoint-invalid
+        # instead of escaping raw ValueError/KeyError/TypeError (F331).
+        try:
+            if not isinstance(sig, dict):
+                raise TypeError("sig entry must be a dict")
+            kid = sig["keyid"]
+            shex = sig["sig"]
+            if not isinstance(kid, str) or not isinstance(shex, str):
+                raise TypeError("sig keyid/sig must be strings")
+            raw = base64.b64encode(bytes.fromhex(shex)).decode("ascii")
+        except (TypeError, KeyError, ValueError, binascii.Error):
+            _fail(CHECKPOINT_INVALID,
+                  "checkpoint signature entry malformed")
+        note += "\u2014 %s %s\n" % (kid, raw)
     return note
 
 
@@ -351,7 +382,9 @@ class WitnessPolicy:
     chars). ``quorum`` is the number of DISTINCT witnesses that must
     cosign a checkpoint for it to verify. Key ids are pinned by the
     AUDITOR out-of-band; this module cannot distribute them (see the
-    threat model in the module docstring).
+    threat model in the module docstring). Duplicate public keys across
+    key ids are refused LOUD (``anchor-witness-quorum-failed``): one key
+    pinned twice must not satisfy a quorum of 2.
     """
 
     def __init__(self, policy_id, witnesses, quorum):
@@ -362,6 +395,7 @@ class WitnessPolicy:
         if not isinstance(witnesses, dict) or not witnesses:
             _fail(WITNESS_QUORUM_FAILED,
                   "witness policy needs a non-empty witness map")
+        seen_keys = set()
         for kid, pub in witnesses.items():
             if not isinstance(kid, str) or not _POLICY_ID_RE.match(kid):
                 _fail(WITNESS_QUORUM_FAILED,
@@ -374,6 +408,17 @@ class WitnessPolicy:
             if len(raw) != 32:
                 _fail(WITNESS_QUORUM_FAILED,
                       "witness %r public key is not 32 bytes" % (kid,))
+            # F333: a quorum of DISTINCT witnesses requires DISTINCT keys.
+            # The same public key pinned under two key ids let one
+            # compromised key satisfy a quorum of 2. Refuse LOUD instead
+            # of letting a misconfigured (or attacker-influenced) policy
+            # silently void the quorum's compromise-threshold promise.
+            if pub in seen_keys:
+                _fail(WITNESS_QUORUM_FAILED,
+                      "witness public key is pinned under more than one "
+                      "key id (%r): quorum requires distinct keys"
+                      % (kid,))
+            seen_keys.add(pub)
         if not isinstance(quorum, int) or isinstance(quorum, bool) \
                 or quorum < 1 or quorum > len(witnesses):
             _fail(WITNESS_QUORUM_FAILED,
@@ -562,7 +607,17 @@ class TransparencyLog:
             seed = bytes(signer_seed)
             if len(seed) != 32:
                 _fail(CHECKPOINT_INVALID, "signer seed is not 32 bytes")
-        os.makedirs(os.path.join(log_root, "tile", "data"), exist_ok=True)
+        try:
+            os.makedirs(os.path.join(log_root, "tile", "data"), exist_ok=True)
+        except NotADirectoryError:
+            _fail(LOG_CORRUPT,
+                  "log_root %r is not a directory" % (log_root,))
+        except OSError:
+            # Environmental (permissions, read-only fs): still refuse
+            # coded rather than let a platform exception escape the
+            # public constructor (F331).
+            _fail(LOG_CORRUPT,
+                  "log_root %r is not usable" % (log_root,))
         self._root = log_root
         self._origin = origin
         self._keyid = signer_keyid
@@ -784,7 +839,8 @@ def _check_digest(digest):
                              "chars")
 
 
-def anchor(log, bundle_digest, witness_policy=None, witness_seeds=None):
+def anchor(log, bundle_digest, witness_policy=None, witness_seeds=None,
+           provenance_gate=None):
     """Anchor a bundle digest; return the anchor receipt.
 
     The receipt is ``{"bundle_digest","log_index","inclusion_proof",
@@ -794,8 +850,20 @@ def anchor(log, bundle_digest, witness_policy=None, witness_seeds=None):
     PublicationAwaiter requirement). Witness cosigning is applied when
     ``witness_policy`` is given; ``witness_seeds`` maps witness key id
     -> 32-byte seed.
+
+    ``provenance_gate`` is an optional callable ``gate(bundle_digest)``
+    invoked AFTER digest validation and BEFORE the entry is sequenced:
+    it raises (loudly, with its own machine code) when the bundle may
+    not be anchored -- e.g. gov/evidence_provenance.py's
+    provenance-gated anchor. A refused bundle leaves no log entry. The
+    gate is additive: callers without one see no behavior change.
     """
     _check_digest(bundle_digest)
+    if provenance_gate is not None:
+        if not callable(provenance_gate):
+            _fail(CHECKPOINT_INVALID,
+                  "provenance_gate must be callable")
+        provenance_gate(bundle_digest)  # raises LOUD on refusal
     if witness_policy is not None and \
             not isinstance(witness_policy, WitnessPolicy):
         _fail(WITNESS_QUORUM_FAILED, "witness_policy must be a "
@@ -814,18 +882,20 @@ def anchor(log, bundle_digest, witness_policy=None, witness_seeds=None):
 
 
 def anchor_bundle(log, envelope, witness_policy=None,
-                  witness_seeds=None):
+                  witness_seeds=None, provenance_gate=None):
     """Anchor a sealed bundle envelope (gov/bundle_envelope.py).
 
     The anchor leaf is ``envelope_digest(envelope)`` -- the bundle's
     content identity -- so the receipt binds the exact sealed bytes.
+    ``provenance_gate`` is passed through to ``anchor`` (see there).
     """
     from gov import bundle_envelope as _be
     if not isinstance(envelope, dict):
         _fail(LEAF_MISMATCH, "envelope must be a dict")
     return anchor(log, _be.envelope_digest(envelope),
                   witness_policy=witness_policy,
-                  witness_seeds=witness_seeds)
+                  witness_seeds=witness_seeds,
+                  provenance_gate=provenance_gate)
 
 
 def verify_receipt(receipt, log_pubkey, witness_policy=None,
