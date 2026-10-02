@@ -45,7 +45,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # No new decision codes in this lane: campaign refusals are
 # ValueError-family (CampaignError); atomic requires/produces validation
 # reuses the registered atomic-spec-invalid code.
-TAXONOMY_PIN = 1579  # Wave-282 merge: 1563 -> 1579 (+16 codes).
+TAXONOMY_PIN = 1587  # Wave-282 merge: 1563 -> 1579 (+16 codes).; Wave-283 merge: pin 1579 -> 1587 (+6 inventory-*).
 
 _RESULTS = []
 

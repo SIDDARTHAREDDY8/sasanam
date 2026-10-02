@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 1581  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+PIN = 1587  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32

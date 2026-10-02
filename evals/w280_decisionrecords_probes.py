@@ -33,7 +33,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w280-decisionrecords")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1581  # Wave-279 merge. New decision codes only if needed.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-279 merge. New decision codes only if needed.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _RESULTS = []
 

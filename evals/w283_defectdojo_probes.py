@@ -44,7 +44,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g283-defectdojo")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-283 lane 5: 1579 -> 1581 (+2 finding-* codes).
-TAXONOMY_PIN = 1581  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _RESULTS = []
 

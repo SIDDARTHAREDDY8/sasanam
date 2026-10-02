@@ -30,7 +30,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w279-guardev")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1581  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-279 merge pin was 1495 (1493 + evbundle-contract-refused + tool-guardrail-tripwire); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _RESULTS = []
 

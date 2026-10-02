@@ -28,7 +28,7 @@ os.environ.setdefault("GOV_LOG_KEY", secrets.token_hex(32))
 os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w281-teleport")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-TAXONOMY_PIN = 1581  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-281 lane 5: pin 1541 -> 1546 (+5 access-request-*).; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _RESULTS = []
 

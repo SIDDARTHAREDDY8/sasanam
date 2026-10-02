@@ -60,7 +60,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1581  # Wave-281 lane 2: 1541 -> 1542 (+provlabel-omitted-driver, F307); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-281 lane 2: 1541 -> 1542 (+provlabel-omitted-driver, F307); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 _results = []
 
@@ -89,7 +89,7 @@ def p_taxonomy_pin():
     if "provlabel-omitted-driver" not in lits:
         return _record("pin-taxonomy", "BREAK",
                        "provlabel-omitted-driver not registered")
-    _record("pin-taxonomy", "HELD", "1579/1579/0 sorted")
+    _record("pin-taxonomy", "HELD", "1587/1587/0 sorted")
 
 
 def _make_run():

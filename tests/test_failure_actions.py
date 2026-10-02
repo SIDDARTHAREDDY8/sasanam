@@ -345,7 +345,7 @@ class EvidenceQualitySeamTest(unittest.TestCase):
     def test_taxonomy_pin_unchanged(self):
         # Wave-261 lane 2 adds no decision codes: failures re-raise
         # the FailResult's own machine code.
-        self.assertEqual(len(dc.TAXONOMY), 1581)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+        self.assertEqual(len(dc.TAXONOMY), 1587)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
 
 
 if __name__ == "__main__":

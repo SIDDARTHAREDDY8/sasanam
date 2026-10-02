@@ -159,7 +159,7 @@ class SubscriberRefusalTests(unittest.TestCase):
 class TaxonomyPinTests(unittest.TestCase):
     def test_pin(self):
         # Wave-260 lane 1: pin -> 1085 (+5 poldist-* codes).
-        self.assertEqual(len(decision_codes.TAXONOMY), 1581)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1587)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
         for code in ("poldist-bundle-malformed", "poldist-signature-missing",
                      "poldist-signature-mismatch", "poldist-topic-cross",
                      "poldist-version-rollback"):

@@ -45,7 +45,7 @@ from gov import ed25519  # noqa: E402
 # ptgrant-caller-unauthorized, ptgrant-context-oversize,
 # ptgrant-mandate-unreachable, ptgrant-predicate-hash-mismatch).
 # Asserted lane-locally; the merge coordinator repoints at merge.
-TAXONOMY_PIN = 1581; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587; Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).  # Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 
 NEW_CODES = [
     "ptgrant-arg-attribute-missing",

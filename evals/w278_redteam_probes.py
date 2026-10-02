@@ -95,7 +95,7 @@ import gov.egress_refs as er                         # noqa: E402
 import gov.coverage_ledger as cl                      # noqa: E402
 import gov.rekor_v2_witness as rw                     # noqa: E402
 
-TAXONOMY_PIN = 1581  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).
+TAXONOMY_PIN = 1587  # Wave-277 merge pin; this battery adds no codes.; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*); Wave-283 lane 5: pin 1579 -> 1581 (+2 finding-*).; Wave-283 merge: pin 1581 -> 1587 (+6 inventory-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -122,7 +122,7 @@ def _pin_check():
         return "BREAK", "duplicate code literals in taxonomy"
     if literals != sorted(literals):
         return "BREAK", "taxonomy literals not sorted"
-    return "HELD", "taxonomy pin 1579: 1541 unique sorted literals"
+    return "HELD", "taxonomy pin 1587: 1541 unique sorted literals"
 
 
 # ---------------------------------------------------------------------------
