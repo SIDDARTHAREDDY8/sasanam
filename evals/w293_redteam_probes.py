@@ -43,7 +43,7 @@ Re-pins at the public seams:
       ob-pubkey-hex-uncoded, ob-manifest-enveloped-uncoded,
       ob-ledger-line-uncoded, ob-manifest-json-uncoded).
 
-New finding filed from F361 with severity label and falsifiable
+New finding filed from F364 with severity label and falsifiable
 close-when criteria.
 
 $0 spend, synthetic/local, deterministic (fixed fixtures, no wall-clock
@@ -366,7 +366,7 @@ def _provenance_envelope(revocation_required=()):
 
 
 def p_rvc_provenance_demand_coverage_gap():
-    # F361: the policy demands ("cred-001", "cred-002") but the gate
+    # F364: the policy demands ("cred-001", "cred-002") but the gate
     # only covers ("cred-001",). verify_provenance returns True --
     # the demand for cred-002 is silently dropped instead of refusing
     # coded "revocation-status-unverifiable".
@@ -384,7 +384,7 @@ def p_rvc_provenance_demand_coverage_gap():
                        "under-covering gate refuses coded")
     if ok is True:
         return _record("rvc-provenance-demand-coverage-gap", "BREAK",
-                       "F361: demand for cred-002 silently dropped; "
+                       "F364: demand for cred-002 silently dropped; "
                        "gate coverage is not bound to the policy demand")
     _record("rvc-provenance-demand-coverage-gap", "BREAK",
             "unexpected non-True return: %r" % (ok,))
