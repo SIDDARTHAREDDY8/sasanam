@@ -66,6 +66,7 @@ from .rekor_anchor import (
     _r6962_verify_proof,
 )
 from . import rekor_v2_witness as _rvw
+from . import bundle_vsa as _bvsa
 
 BUNDLE_FORMAT = "evidence-bundle.v2"
 SUBMISSION_FORMAT = "evidence-submission.v2"
@@ -139,7 +140,10 @@ def build_artifact(body):
 
 
 def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
-                  intent_digest, ca_public_key, verify_time):
+                  intent_digest, ca_public_key, verify_time,
+                  vsa_issuer=None, vsa_policy_id=None,
+                  vsa_verified_level=None, vsa_ttl_seconds=None,
+                  vsa_input_attestations=None, vsa_issued_at=None):
     """Seal an evidence artifact: chain-then-bind the producer's
     signature, then build the signature attestation.
 
@@ -158,6 +162,22 @@ def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
     to re-verify the ceremony at verification time), and the
     ``cert_digest`` join key. The issuance attestation itself stays in
     the audit log (see ``find_issuance_attestation``).
+
+    Per-bundle VSA (wave-279): ``vsa_issuer`` is an optional
+    ``gov.provenance_policy.VSAIssuer`` (the sealer identity; key
+    custody stays with the caller). When provided, the seal issues one
+    signed Verification Summary Attestation over the artifact digest
+    (policy = the seal-time verification actually run, evaluation
+    time = now, receipts = the seal's own signature attestation
+    trust-labeled platform-supplied unless the caller supplies
+    ``vsa_input_attestations``) and files it under the sealed
+    record's ``"vsa"`` key. When omitted (the default) the record is
+    byte-identical to the unwired behavior -- no key is minted, no
+    signature is fabricated. ``vsa_policy_id`` /
+    ``vsa_verified_level`` / ``vsa_ttl_seconds`` / ``vsa_issued_at``
+    default to the ``gov.bundle_vsa`` seals (``sasanam-evidence-seal/v1``
+    etc.); a VSA issuance failure raises and the bundle is NOT
+    sealed -- a seal must never ship a broken summary.
     """
     if not isinstance(artifact_signature, (bytes, bytearray)) \
             or len(artifact_signature) != 64:
@@ -176,11 +196,30 @@ def seal_evidence(*, artifact_body, cert, artifact_signature, approval_id,
     attestation = make_signature_attestation(
         cert, digest, base64.b64encode(bytes(artifact_signature))
         .decode("ascii"))
-    return {"kind": BUNDLE_FORMAT,
-            "artifact": artifact,
-            "signature_attestation": attestation,
-            "cert": cert,
-            "cert_digest": cert_digest(cert)}
+    sealed = {"kind": BUNDLE_FORMAT,
+              "artifact": artifact,
+              "signature_attestation": attestation,
+              "cert": cert,
+              "cert_digest": cert_digest(cert)}
+    if vsa_issuer is not None:
+        receipts = vsa_input_attestations
+        if receipts is None:
+            receipts = _bvsa.bundle_input_attestations(attestation)
+        vsa = _bvsa.issue_bundle_vsa(
+            issuer=vsa_issuer, bundle_digest=digest,
+            policy_id=(vsa_policy_id
+                       if vsa_policy_id is not None
+                       else _bvsa.DEFAULT_POLICY_ID),
+            verified_level=(vsa_verified_level
+                            if vsa_verified_level is not None
+                            else _bvsa.DEFAULT_VERIFIED_LEVEL),
+            input_attestations=receipts,
+            issued_at=vsa_issued_at,
+            ttl_seconds=(vsa_ttl_seconds
+                         if vsa_ttl_seconds is not None
+                         else _bvsa.DEFAULT_TTL_SECONDS))
+        sealed = _bvsa.attach_bundle_vsa(sealed, vsa)
+    return sealed
 
 
 def find_issuance_attestation(*, audit_log_path, cert_digest):
@@ -1152,7 +1191,10 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
                     approval_id, intent_digest, audit_log_path,
                     ca_public_key, verify_time, transparency_log=None,
                     now=None, rekor_v2_witness=None,
-                    witness_signature_b64=None, witness_pubkey_pem=None):
+                    witness_signature_b64=None, witness_pubkey_pem=None,
+                    vsa_issuer=None, vsa_policy_id=None,
+                    vsa_verified_level=None, vsa_ttl_seconds=None,
+                    vsa_input_attestations=None, vsa_issued_at=None):
     """Seal an evidence artifact and submit it to the transparency log.
 
     Order: seal (chain-then-binding; ``evcert-*`` failures propagate),
@@ -1174,13 +1216,25 @@ def submit_evidence(*, artifact_body, cert, artifact_signature,
     filed under the submission's ``"witnesses"`` metadata; the
     primary local anchor is unchanged, and any witness failure
     degrades to a ``"failed"`` record without raising.
+
+    Per-bundle VSA (wave-279): ``vsa_issuer`` (a
+    ``gov.provenance_policy.VSAIssuer``) and the ``vsa_*`` options are
+    threaded into the seal -- see ``seal_evidence``. With no issuer
+    (the default) the submission is byte-identical to the unwired
+    behavior.
     """
     sealed = seal_evidence(artifact_body=artifact_body, cert=cert,
                            artifact_signature=artifact_signature,
                            approval_id=approval_id,
                            intent_digest=intent_digest,
                            ca_public_key=ca_public_key,
-                           verify_time=verify_time)
+                           verify_time=verify_time,
+                           vsa_issuer=vsa_issuer,
+                           vsa_policy_id=vsa_policy_id,
+                           vsa_verified_level=vsa_verified_level,
+                           vsa_ttl_seconds=vsa_ttl_seconds,
+                           vsa_input_attestations=vsa_input_attestations,
+                           vsa_issued_at=vsa_issued_at)
     find_issuance_attestation(audit_log_path=audit_log_path,
                              cert_digest=sealed["cert_digest"])
     digest = sealed["artifact"]["artifact_digest"]
@@ -1278,7 +1332,10 @@ def submit_evidence_with_producer_claim(
         identity_token, identity_issuer_public_key, producer_registry,
         requested_scope, claim_public_key,
         transparency_log=None, now=None, rekor_v2_witness=None,
-        witness_signature_b64=None, witness_pubkey_pem=None):
+        witness_signature_b64=None, witness_pubkey_pem=None,
+        vsa_issuer=None, vsa_policy_id=None,
+        vsa_verified_level=None, vsa_ttl_seconds=None,
+        vsa_input_attestations=None, vsa_issued_at=None):
     """Claim-path submission: the evidence-cert ceremony MUST
     establish producer authorization BEFORE the transparency log sees
     the digest.
@@ -1303,6 +1360,10 @@ def submit_evidence_with_producer_claim(
     ``rekor_v2_witness`` / ``witness_signature_b64`` /
     ``witness_pubkey_pem``; the env flag ``GOV_REKOR_V2_WITNESS`` is
     the master switch; flag-off returns the exact historical record.
+
+    Per-bundle VSA (wave-279): ``vsa_issuer`` and the ``vsa_*``
+    options thread into the seal -- see ``seal_evidence``; with no
+    issuer the record is byte-identical to the unwired behavior.
     """
     now_s = _now_int(now)
     # (1) The ceremony: token -> producer, registry -> scope.
@@ -1322,7 +1383,13 @@ def submit_evidence_with_producer_claim(
                            approval_id=approval_id,
                            intent_digest=intent_digest,
                            ca_public_key=ca_public_key,
-                           verify_time=verify_time)
+                           verify_time=verify_time,
+                           vsa_issuer=vsa_issuer,
+                           vsa_policy_id=vsa_policy_id,
+                           vsa_verified_level=vsa_verified_level,
+                           vsa_ttl_seconds=vsa_ttl_seconds,
+                           vsa_input_attestations=vsa_input_attestations,
+                           vsa_issued_at=vsa_issued_at)
     issuance = find_issuance_attestation(
         audit_log_path=audit_log_path,
         cert_digest=sealed["cert_digest"])
