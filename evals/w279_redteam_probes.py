@@ -75,7 +75,7 @@ from gov import battery_envelope as be  # noqa: E402
 from gov import egress_refs as er  # noqa: E402
 from harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 1493
+TAXONOMY_PIN = 1495  # Wave-279 merge: 1493 -> 1495 (+1 evbundle-contract-refused, +1 tool-guardrail-tripwire)
 
 
 def _held(name, note):
@@ -117,7 +117,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1493: 1493 unique literals"
+    return "HELD", "taxonomy pin 1495: 1495 unique literals"
 
 
 # ---------------------------------------------------------------------------
@@ -504,7 +504,7 @@ def f301_oversized_under_budget_refused():
 # (c) Evidence envelope: self-consistent forgery (documented residual).
 # ---------------------------------------------------------------------------
 
-def _forge_envelope(battery_path, samples, taxonomy_pin=1493):
+def _forge_envelope(battery_path, samples, taxonomy_pin=1495):
     """Hand-forge a fully self-consistent envelope (public primitives only).
 
     Anyone holding this module's public functions can mint an envelope
@@ -1088,7 +1088,9 @@ def repin_f300_unwired():
     The F294 mixed-provenance routing holds at the module seam, but no
     shipped authorization path reaches grant_check's distinct decision,
     and attach_to_approval_record is never invoked by product code.
-    Must still BREAK (open finding F300).
+    Re-pinned HELD at the wave-279 merge: F300 closed (ToolExecutor.call()
+    routes through grant_check when context is installed; queue() stamps
+    the rendered provenance section MAC-bound).
     """
     govdir = os.path.join(REPO, "gov")
     callers = []
@@ -1326,7 +1328,7 @@ PROBES = [
     ("rekor-garbage-witness-record", "RESIDUAL", rekor_garbage_witness_record),
     ("rekor-raising-witness-degrades", "HELD", rekor_raising_witness_degrades),
     # (g) re-pins
-    ("repin-f300-unwired", "BREAK", repin_f300_unwired),
+    ("repin-f300-unwired", "HELD", repin_f300_unwired),  # F300 CLOSED wave-279 (wired via approvals.py + executor.py; re-pinned at merge)
     ("repin-f292-trusted-screens", "HELD", repin_f292_trusted_screens),
     ("repin-f293-transform-enforced", "HELD", repin_f293_transform_enforced),
     ("repin-f294-mixed-routed", "HELD", repin_f294_mixed_routed),

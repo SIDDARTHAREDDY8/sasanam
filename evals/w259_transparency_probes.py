@@ -37,7 +37,7 @@ from gov import decision_codes  # noqa: E402  (taxonomy pin below)
 from gov import ed25519 as _ed  # noqa: E402
 from gov import transparency_log as tl  # noqa: E402
 
-TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1495  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 assert len(decision_codes.TAXONOMY) == TAXONOMY_PIN, (
     "taxonomy drift: expected %d, got %d"

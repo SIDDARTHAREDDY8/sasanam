@@ -18,7 +18,7 @@ from gov import image_text  # noqa: E402
 
 # Lane-local pin: 1411 (wave-270 merge) + 4 imgtext-* codes. The merge
 # coordinator owns the global pin; this lane asserts its own delta.
-TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1495  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 EXPECTED_CODES = (
     "imgtext-malformed",

@@ -67,7 +67,7 @@ import gov.sentinel_substitution as sent          # noqa: E402
 import gov.ed25519 as _ed                         # noqa: E402
 from gov.signing import Ed25519Signer             # noqa: E402
 
-TAXONOMY_PIN = 1494  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
+TAXONOMY_PIN = 1495  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -96,7 +96,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1494: 1494 unique literals"
+    return "HELD", "taxonomy pin 1495: 1495 unique literals"
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ from gov.decision_codes import TAXONOMY  # noqa: E402
 APPROVAL = "a" * 32
 INTENT = "d" * 64
 
-LANE_PIN = 1494  # Wave-279 lane 2: 1493 + evbundle-contract-refused
+LANE_PIN = 1495  # Wave-279 lane 2: 1493 + evbundle-contract-refused
 
 
 def _count_code_literals():

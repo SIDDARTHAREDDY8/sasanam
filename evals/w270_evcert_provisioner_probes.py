@@ -42,7 +42,7 @@ POP_DOMAIN = b"evcert-pop-v1"
 NOW = 1790860000
 ARC = "1.3.6.1.4.1.99999"
 PROV_OID = ARC + ".1.40"
-TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1495  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 
 def _keypair(seed_byte):
@@ -407,7 +407,7 @@ def p11_taxonomy_pin(tmpdir):
     if entry is None or entry.get("domain") != "evcert" \
             or entry.get("severity") != "medium":
         return "ERROR", "registry entry wrong: %r" % (entry,)
-    return "HELD", "1494 literals, new code unique, domain/severity exact"
+    return "HELD", "1495 literals, new code unique, domain/severity exact"
 
 
 PROBES = [

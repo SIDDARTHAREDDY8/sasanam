@@ -2,7 +2,7 @@
 
 Attacks the public seams of gov/bundle_delivery.py break-first: every
 red probe asserts the attack is REFUSED with the exact coded refusal.
-Controls assert the honest paths still work. Pin 1494 (wave-279 lane 2:
+Controls assert the honest paths still work. Pin 1495 (wave-279 lane 2:
 1493 + 1 new code: evbundle-contract-refused).
 """
 import hashlib
@@ -23,7 +23,7 @@ from gov.bundle_refresh import (BundleRefresher, FetchNotFound, RefreshError,
                                 seal_role)
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1495  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 FUTURE = (datetime.now(timezone.utc)
           + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")

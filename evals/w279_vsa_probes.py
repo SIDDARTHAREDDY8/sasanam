@@ -69,7 +69,7 @@ except ImportError:
     bvsa = None  # noqa: F821
     _VSA_MODULE = False
 
-TAXONOMY_PIN = 1493  # Wave-278 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1495  # Wave-279 merge pin; this battery adds no codes (merge: +2 from sibling lanes: evbundle-contract-refused, tool-guardrail-tripwire).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -235,7 +235,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1493: 1493 unique literals"
+    return "HELD", "taxonomy pin 1495: 1495 unique literals"
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +508,7 @@ def _p11_claim_path_threading():
 
 
 _PROBES = [
-    ("pin-taxonomy-1493", "HELD", _pin_check),
+    ("pin-taxonomy-1495", "HELD", _pin_check),
     ("vsa01-module-seam", "HELD", _p01_module),
     ("vsa02-seal-carries-vsa", "HELD", _p02_seal_carries_vsa),
     ("vsa03-forged-signature", "HELD", _p03_forged_signature),

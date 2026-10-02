@@ -416,10 +416,11 @@ def probe_no_new_decision_codes():
     name = "no-new-decision-codes"
     try:
         from gov import decision_codes as dc  # noqa: E402
-        if len(dc.TAXONOMY) != 1493:
-            return _broken(name, "taxonomy pin moved: %d (lane must not "
-                           "add decision codes)" % len(dc.TAXONOMY))
-        return _held(name, "pin stays 1493; no new refusal idioms")
+        if len(dc.TAXONOMY) != 1495:
+            return _broken(name, "taxonomy pin moved: %d (lane adds no "
+                           "decision codes; wave-279 merge pin is 1495)"
+                           % len(dc.TAXONOMY))
+        return _held(name, "pin stays 1495; no new refusal idioms")
     except Exception as exc:  # noqa: BLE001
         return _error(name, repr(exc))
 
