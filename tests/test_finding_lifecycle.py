@@ -291,7 +291,13 @@ class FindingsMdTest(unittest.TestCase):
         # F352-F355 filed OPEN by the wave-290 independent red team;
         # F352 closed 2026-10-02, wave-291 lane 1 (F345-class audit-sink
         # isolation in ceremony_binding._emit_event; w291_f352
-        # 0 BREAK / 9 HELD, full sink inventory re-verified).
+        # 0 BREAK / 9 HELD, full sink inventory re-verified);
+        # F353+F355 closed 2026-10-02, wave-291 lane 2 (producer
+        # binding via ceremony_binding); F354 closed 2026-10-02,
+        # wave-291 lane 3 (admission-registry freeze); F356 filed OPEN
+        # 2026-10-02 by the wave-291 independent red team
+        # (execute_rebuild never self-validates: malformed -> bare
+        # KeyError; unknown op silently passes bytes through).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
@@ -299,10 +305,10 @@ class FindingsMdTest(unittest.TestCase):
                     "F330", "F331", "F332", "F333", "F334", "F335",
                     "F336", "F337", "F338", "F339", "F340", "F341",
                     "F342", "F343", "F344", "F345", "F346", "F347", "F348",
-                    "F349", "F350", "F351", "F352"):
+                    "F349", "F350", "F351", "F352", "F353", "F354",
+                    "F355"):
             self.assertEqual(reg.get(num).state, "verified")
-        for num in ("F353", "F354", "F355"):
-            self.assertEqual(reg.get(num).state, "open")
+        self.assertEqual(reg.get("F356").state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")
         self.assertGreaterEqual(len(reg.all()), 200)
