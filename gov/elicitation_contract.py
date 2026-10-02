@@ -89,7 +89,19 @@ DEFAULT_ACCEPT_REASON = (
 
 
 class ElicitationError(ValueError):
-    """Every elicitation refusal raises this (a ValueError)."""
+    """Every elicitation refusal raises this (a ValueError).
+
+    ``remediation`` optionally carries the deterministic remediation
+    outcome (``gov/remediation.py`` -- wave-279 lane 6) attached by the
+    refusal seam: ``{failure_class, action, retry_permitted, ...}``.
+    It is None when the error was raised outside a classified seam
+    (e.g. contract-level validation). Additive only: every existing
+    ``ElicitationError(message)`` call site keeps working unchanged.
+    """
+
+    def __init__(self, message, remediation=None):
+        super(ElicitationError, self).__init__(message)
+        self.remediation = remediation
 
 
 # ---------------------------------------------------------------------------
