@@ -287,7 +287,9 @@ def digest_of(body):
     """SHA-256 hex digest of the canonical delegation body bytes."""
     try:
         raw = _canonical(body)
-    except TypeError:
+    except (TypeError, ValueError):
+        # F359 caught TypeError (non-JSON-serializable); F363 adds
+        # ValueError (circular structures) -- both refuse coded.
         raise DelegationMalformed(
             "delegation body must be JSON-serializable")
     return hashlib.sha256(raw).hexdigest()

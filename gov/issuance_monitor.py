@@ -276,7 +276,13 @@ def verify_monitor_report(envelope, monitor_pubkey_hex):
         _fail(MISISSUANCE, "monitor public key is not hex")
     if len(pub) != 32:
         _fail(MISISSUANCE, "monitor public key is not 32 bytes")
-    ok = _ed25519.verify(pub, _canonical(report),
+    try:
+        canonical = _canonical(report)
+    except (TypeError, ValueError):
+        # F362: a circular structure makes json.dumps raise uncoded;
+        # refuse coded instead.
+        _fail(MISISSUANCE, "monitor report is not JSON-canonicalizable")
+    ok = _ed25519.verify(pub, canonical,
                          bytes.fromhex(sig_hex))
     if ok is not True:
         _fail(MISISSUANCE,

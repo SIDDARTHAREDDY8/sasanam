@@ -420,7 +420,14 @@ def verify_credential(envelope, registry_pubkey_hex):
         _fail(STATUS_UNVERIFIABLE, "registry public key is not hex")
     if len(pub) != 32:
         _fail(STATUS_UNVERIFIABLE, "registry public key is not 32 bytes")
-    ok = _ed25519.verify(pub, _canonical(credential),
+    try:
+        canonical = _canonical(credential)
+    except (TypeError, ValueError):
+        # F361: a circular structure or mixed-type keys make
+        # json.dumps raise uncoded; refuse coded instead.
+        _fail(STATUS_UNVERIFIABLE,
+              "credential is not JSON-canonicalizable")
+    ok = _ed25519.verify(pub, canonical,
                          bytes.fromhex(sig_hex))
     if ok is not True:
         _fail(STATUS_UNVERIFIABLE,
@@ -453,7 +460,14 @@ def verify_status_response(envelope, registry_pubkey_hex):
         _fail(STATUS_UNVERIFIABLE, "registry public key is not hex")
     if len(pub) != 32:
         _fail(STATUS_UNVERIFIABLE, "registry public key is not 32 bytes")
-    ok = _ed25519.verify(pub, _canonical(status),
+    try:
+        canonical = _canonical(status)
+    except (TypeError, ValueError):
+        # F361: a circular structure or mixed-type keys make
+        # json.dumps raise uncoded; refuse coded instead.
+        _fail(STATUS_UNVERIFIABLE,
+              "status response is not JSON-canonicalizable")
+    ok = _ed25519.verify(pub, canonical,
                          bytes.fromhex(sig_hex))
     if ok is not True:
         _fail(STATUS_UNVERIFIABLE,
