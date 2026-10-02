@@ -15139,6 +15139,41 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-predicate-budget': {
+        "domain": 'toolcall',
+        "code": 'toolcall-predicate-budget',
+        "human": 'toolcall: a Conditional rule predicate exhausted its '
+                 'evaluation budget (over-bound AST or too many evaluation '
+                 'steps); the predicate never evaluates -- refused '
+                 'fail-closed, never silently truncated',
+        "severity": 'medium',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-predicate-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-predicate-invalid',
+        "human": 'toolcall: a Conditional rule predicate spec was malformed '
+                 'or ill-typed (unknown builtin, arity or type mismatch, '
+                 'non-bool result, bad const) or failed at evaluation; the '
+                 'rule never compiles -- refused fail-closed at compile time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-predicate-undeclared-field': {
+        "domain": 'toolcall',
+        "code": 'toolcall-predicate-undeclared-field',
+        "human": 'toolcall: a Conditional rule predicate referenced a field '
+                 'outside its declared predicate environment; undeclared '
+                 'fields do not exist -- refused fail-closed at compile time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'toolcall-regex-unsafe': {
         "domain": 'toolcall',
         "code": 'toolcall-regex-unsafe',

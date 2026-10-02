@@ -11,8 +11,12 @@ Mechanisms adapted:
   compiled rule set BEFORE it executes. A tool declared ``Init`` may only
   be called first in a session; a ``Child`` tool only directly after its
   named parent; after a ``Terminal`` tool nothing may follow; a
-  ``Conditional`` tool only when its named predicate holds over
-  (history, context flags).
+  ``Conditional`` tool only when its predicate holds over the session
+  history: either a named predicate (``when`` -- ``flag`` / ``history``
+  kinds) or an inline expression predicate (``predicate`` -- a bounded,
+  side-effect-free spec compiled by ``gov/rule_predicates.py`` at
+  rule-set compile time, evaluated against declared session-history
+  fields at check time).
 * Closed inventory -- binding a rule set closes the tool inventory:
   undeclared tools do not exist; a call to an undeclared tool refuses
   coded ``toolcall-sequence-violated``.
@@ -297,7 +301,48 @@ def _compile_predicates(predicates, inventory):
     return compiled
 
 
-def _compile_rules(rules, inventory, predicates):
+def _compile_predicate_env(declared):
+    """Compile a rule-set ``predicate_env`` declaration (subset discipline).
+
+    Delegates to gov/rule_predicates.py; any violation refuses LOUD with
+    coded ``toolcall-rule-compile-invalid`` (or the predicate's own
+    undeclared-field code, which is preserved).
+    """
+    from gov import rule_predicates
+    try:
+        return rule_predicates.compile_predicate_env(declared)
+    except rule_predicates.PredicateError as exc:
+        if exc.code == rule_predicates.PREDICATE_UNDECLARED_FIELD:
+            raise ToolRuleError(
+                "tool-call rule set refused: %s" % (exc,),
+                code=exc.code)
+        _refuse_compile("predicate_env invalid: %s" % (exc,))
+
+
+def _compile_inline_predicate(pspec, predicate_env, where):
+    """Compile a Conditional rule's inline ``predicate`` spec.
+
+    The spec is CHECKed against the rule set's declared predicate
+    environment at rule-set compile time (cel-go two-phase discipline).
+    Fail-closed: ``toolcall-predicate-undeclared-field`` keeps its own
+    code; every other predicate compile violation surfaces as coded
+    ``toolcall-rule-compile-invalid``. Returns the FROZEN canonical AST
+    dict for the entry (digestable); the executable CompiledPredicate is
+    rebuilt deterministically from it by CompiledToolRuleSet.
+    """
+    from gov import rule_predicates
+    try:
+        compiled = rule_predicates.compile_predicate(pspec, predicate_env)
+    except rule_predicates.PredicateError as exc:
+        if exc.code == rule_predicates.PREDICATE_UNDECLARED_FIELD:
+            raise ToolRuleError(
+                "tool-call rule set refused: %s: %s" % (where, exc),
+                code=exc.code)
+        _refuse_compile("%s: predicate spec invalid: %s" % (where, exc))
+    return dict(compiled.ast)
+
+
+def _compile_rules(rules, inventory, predicates, predicate_env):
     if not isinstance(rules, list):
         _refuse_compile("rules must be a list; got %r" % (type(rules),))
     if len(rules) > MAX_RULES:
@@ -333,11 +378,26 @@ def _compile_rules(rules, inventory, predicates):
             entry = {"kind": kind, "tool": tool, "parent": parent}
         else:  # Conditional
             when = rule.get("when")
-            if when not in predicates:
-                _refuse_compile("%s references undeclared predicate %r"
-                                % (where, when))
-            allowed = {"kind", "tool", "when"}
-            entry = {"kind": kind, "tool": tool, "when": when}
+            pspec = rule.get("predicate")
+            if (when is None) == (pspec is None):
+                _refuse_compile(
+                    "%s: a Conditional rule carries exactly one of 'when' "
+                    "(named predicate) or 'predicate' (inline predicate "
+                    "spec)" % (where,))
+            if pspec is not None:
+                # Inline bounded predicate (wave-295 lane 3): CHECKed at
+                # rule-set compile time against the declared predicate
+                # environment; evaluated at check time against session
+                # history. Additive -- 'when' rules are unchanged.
+                past = _compile_inline_predicate(pspec, predicate_env, where)
+                allowed = {"kind", "tool", "predicate"}
+                entry = {"kind": kind, "tool": tool, "predicate": past}
+            else:
+                if when not in predicates:
+                    _refuse_compile("%s references undeclared predicate %r"
+                                    % (where, when))
+                allowed = {"kind", "tool", "when"}
+                entry = {"kind": kind, "tool": tool, "when": when}
         for key in rule:
             if key not in allowed:
                 _refuse_compile("%s has unknown key %r" % (where, key))
@@ -355,7 +415,8 @@ def compile_rule_set(doc):
         _refuse_compile("rule set must be a dict; got %r"
                         % (type(doc),))
     for key in doc:
-        if key not in ("format", "name", "tools", "rules", "predicates"):
+        if key not in ("format", "name", "tools", "rules", "predicates",
+                       "predicate_env"):
             _refuse_compile("unknown top-level key %r" % (key,))
     if doc.get("format") != RULE_SET_FORMAT:
         _refuse_compile("format must be %r; got %r"
@@ -374,11 +435,14 @@ def compile_rule_set(doc):
         inventory.append(tool)
     inventory = frozenset(inventory)
     predicates = _compile_predicates(doc.get("predicates", {}), inventory)
-    rules = _compile_rules(doc.get("rules", []), inventory, predicates)
+    predicate_env = _compile_predicate_env(doc.get("predicate_env"))
+    rules = _compile_rules(doc.get("rules", []), inventory, predicates,
+                           predicate_env)
     frozen = _freeze({
         "name": name,
         "tools": tuple(sorted(inventory)),
         "predicates": predicates,
+        "predicate_env": predicate_env,
         "rules": tuple(rules),
     })
     return CompiledToolRuleSet(frozen)
@@ -399,6 +463,22 @@ class CompiledToolRuleSet:
         # severs every mutable alias.)
         self._doc = _freeze(frozen_doc)
         self.digest = _digest(self._doc)
+        # Inline expression predicates (wave-295 lane 3): rebuilt
+        # DETERMINISTICALLY from the frozen AST stored in the rule entry,
+        # so the executable predicate can never disagree with the
+        # digest-covered document.
+        self._expr_predicates = self._build_expr_predicates()
+
+    def _build_expr_predicates(self):
+        from gov import rule_predicates
+        raw_env = self._doc.get("predicate_env")
+        env = dict(raw_env) if raw_env else None
+        table = {}
+        for i, rule in enumerate(self._doc["rules"]):
+            if "predicate" in rule:
+                table[i] = rule_predicates.compile_predicate(
+                    rule["predicate"], env)
+        return table
 
     @property
     def name(self):
@@ -441,7 +521,7 @@ class CompiledToolRuleSet:
                     if entry["tool"] == pred["tool"])
         return count >= pred["min_calls"]
 
-    def _rule_satisfied(self, rule, history, context_flags):
+    def _rule_satisfied(self, index, rule, history, context_flags):
         kind = rule["kind"]
         if kind == "Init":
             return not history
@@ -451,8 +531,28 @@ class CompiledToolRuleSet:
             # The terminating call itself is always allowed; the session
             # closes AFTER it (checked below).
             return True
-        # Conditional
-        return self._predicate_holds(rule["when"], history, context_flags)
+        # Conditional: named predicate ('when') or inline expression
+        # predicate ('predicate', wave-295 lane 3).
+        if "when" in rule:
+            return self._predicate_holds(rule["when"], history, context_flags)
+        return self._expr_predicate_holds(index, rule, history)
+
+    def _expr_predicate_holds(self, index, rule, history):
+        """Evaluate a Conditional rule's inline predicate.
+
+        False evaluates to a coded ``toolcall-sequence-violated`` at the
+        call site (below); evaluation failures keep their own LOUD codes
+        (budget / invalid) -- they are never coerced into a pass.
+        """
+        from gov import rule_predicates
+        cpred = self._expr_predicates[index]
+        fields = rule_predicates.session_fields(history)
+        try:
+            return bool(cpred.evaluate(fields))
+        except rule_predicates.PredicateError as exc:
+            code = exc.code or rule_predicates.PREDICATE_INVALID
+            raise ToolRuleError("tool-call refused: inline predicate "
+                                "evaluation failed: %s" % (exc,), code=code)
 
     def _terminal_tools(self):
         return frozenset(rule["tool"] for rule in self._doc["rules"]
@@ -526,12 +626,13 @@ class CompiledToolRuleSet:
 
         # 5. Per-tool rules (OR across rules of the same tool; a declared
         #    tool with no rules is unconstrained beyond the inventory).
-        tool_rules = [rule for rule in self._doc["rules"]
+        tool_rules = [(i, rule)
+                      for i, rule in enumerate(self._doc["rules"])
                       if rule["tool"] == tool]
-        if tool_rules and not any(self._rule_satisfied(rule, history,
+        if tool_rules and not any(self._rule_satisfied(i, rule, history,
                                                         context_flags)
-                                  for rule in tool_rules):
-            kinds = sorted(set(rule["kind"] for rule in tool_rules))
+                                  for i, rule in tool_rules):
+            kinds = sorted(set(rule["kind"] for _, rule in tool_rules))
             self._refuse_sequence(
                 "tool %r violates its declared rules %s at history "
                 "length %d" % (tool, kinds, len(history)))
