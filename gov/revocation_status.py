@@ -82,6 +82,7 @@ import re
 import time
 
 from gov import ed25519 as _ed25519
+from gov import key_succession as _key_succession
 
 CREDENTIAL_FORMAT = "sasanam-revocable-credential/1"
 STATUS_FORMAT = "sasanam-revocation-status/1"
@@ -181,6 +182,13 @@ class RevocationRegistry:
         self.registry_id = registry_id
         self._seed = bytes(seed)
         self._entries = {}
+        # Additive wave-293 wiring: a key-succession ceremony for the
+        # REGISTRY's own signing key (None until begin_key_rotation).
+        # The registry's credential-level rotate() already implements
+        # the same phased rule (successor issued first, predecessor
+        # retired after); this applies the ceremony to the registry
+        # key itself.
+        self._key_rotation = None
 
     def registry_pubkey_hex(self):
         return _ed25519.publickey(self._seed).hex()
@@ -269,6 +277,73 @@ class RevocationRegistry:
                     {"old_rid": old_rid, "new_rid": new_rid,
                      "registry_id": self.registry_id})
         return new_credential, self.check_status(old_rid, issued_at)
+
+    # -- registry-key succession (additive wave-293 wiring) ----------
+
+    def _rotation_state(self):
+        rot = self._key_rotation
+        if rot is None:
+            _fail("revocation-refused",
+                  "no key-succession ceremony in progress for this "
+                  "registry: call begin_key_rotation first")
+        return rot
+
+    def begin_key_rotation(self, new_seed):
+        """Begin a key-succession ceremony for the REGISTRY's own
+        signing key (none -> preparing). The successor key is
+        declared; the current registry key stays authoritative.
+        Returns the ``KeySuccession`` ceremony. A second begin while
+        a ceremony is in progress refuses ``revocation-refused``."""
+        if not isinstance(new_seed, bytes) or len(new_seed) != 32:
+            _fail(STATUS_UNVERIFIABLE,
+                  "successor registry seed must be 32 raw bytes")
+        if self._key_rotation is not None:
+            _fail("revocation-refused",
+                  "a key-succession ceremony is already in progress "
+                  "for this registry")
+        succession = _key_succession.KeySuccession(
+            self.registry_id, self.registry_pubkey_hex())
+        succession.begin(_ed25519.publickey(new_seed).hex(),
+                         old_seed=self._seed)
+        # The declaration is begin + announce: the successor is
+        # announced in a signed record while the current key stays
+        # authoritative. advance_key_rotation then moves to completing.
+        succession.announce(old_seed=self._seed)
+        self._key_rotation = {
+            "succession": succession,
+            "old_seed": bytes(self._seed),
+            "new_seed": bytes(new_seed),
+        }
+        return succession
+
+    def advance_key_rotation(self, overlap_window_seconds):
+        """prepared -> completing for the registry key. From here, new
+        registry material is signed by the SUCCESSOR key; the old key
+        verifies only in-flight material inside the mandatory bounded
+        overlap window. Returns the ``KeySuccession`` ceremony."""
+        rot = self._rotation_state()
+        rot["succession"].advance(old_seed=rot["old_seed"],
+                                  overlap_window_seconds=
+                                  overlap_window_seconds)
+        # New issuances are successor-signed during completing.
+        self._seed = bytes(rot["new_seed"])
+        return rot["succession"]
+
+    def finalize_key_rotation(self):
+        """completing -> completed for the registry key. The old
+        registry key is retired; its later use refuses LOUD as a
+        revocation event. Returns the ``KeySuccession`` ceremony."""
+        rot = self._rotation_state()
+        rot["succession"].finalize(old_seed=rot["old_seed"])
+        self._seed = bytes(rot["new_seed"])
+        return rot["succession"]
+
+    @property
+    def key_succession(self):
+        """The in-progress ``KeySuccession`` ceremony for the registry
+        key, or None."""
+        rot = self._key_rotation
+        return None if rot is None else rot["succession"]
 
     def revoke(self, rid, reason):
         """Mark an rid revoked. Idempotent: revoking an already-revoked

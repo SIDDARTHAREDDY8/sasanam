@@ -8778,6 +8778,51 @@ TAXONOMY = {
         "evidence_kinds_required": ['digest'],
         "reverify_steps": ['recompute'],
     },
+    'keysuccession-invalid-transition': {
+        "domain": 'keysuccession',
+        "code": 'keysuccession-invalid-transition',
+        "human": 'key-succession ceremony: invalid transition -- a '
+                 'transition record with a bad signature, a tampered body, '
+                 'a replayed record, a double begin, or material signed by '
+                 'a key the ceremony has not authorized (e.g. the successor '
+                 'key before completing, or a signature under neither key); '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keysuccession-phase-skipped': {
+        "domain": 'keysuccession',
+        "code": 'keysuccession-phase-skipped',
+        "human": 'key-succession ceremony: phase skip refused -- every '
+                 'transition moves exactly one phase forward '
+                 '(none -> preparing -> prepared -> completing -> '
+                 'completed); skipping a phase is refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keysuccession-retired-reuse': {
+        "domain": 'keysuccession',
+        "code": 'keysuccession-retired-reuse',
+        "human": 'key-succession ceremony: reuse of the retired old key '
+                 'refused LOUD -- a revocation EVENT, not an authentication '
+                 'failure (old key used after the overlap window closed or '
+                 'after the ceremony completed)',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'keysuccession-window-missing': {
+        "domain": 'keysuccession',
+        "code": 'keysuccession-window-missing',
+        "human": 'key-succession ceremony: entering completing without a '
+                 'bounded overlap window refused -- the window is mandatory '
+                 '(1s .. 30 days); there is no unbounded overlap',
+        "severity": 'high',
+        "evidence_kinds_required": ['digest'],
+        "reverify_steps": ['recompute'],
+    },
     'kid-ambiguity': {
         "domain": 'agent_card',
         "code": 'kid-ambiguity',
