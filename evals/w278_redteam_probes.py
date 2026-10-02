@@ -13,13 +13,20 @@ Attacks the NEW wave-277 code at the public API, in priority order:
     ``grant_check``, and ``attach_to_approval_record`` is never invoked,
     so the approver never sees the provenance chain the F294 closure
     promises. NEW finding F300 (MEDIUM), probe ``f300-unwired`` BREAKs;
+    (UPDATE wave-279: F300 CLOSED -- ToolExecutor.call() now routes
+    consequential approval-queued actions through grant_check when
+    provenance context is installed, and ApprovalQueue.queue() stamps
+    the rendered provenance section MAC-bound for provlabel-*
+    decisions; f300-unwired re-pinned to HELD.)
 (d) F299 re-pin (CLOSED wave-278 -- probe ``f299-float-eternal`` HELD);
 (e) F292-F295 closure re-pins (expected HELD).
 (f) Rekor v2 witness wiring (wave-278 rekorwire lane wired it into
     ``gov/evidence_bundle_v2.py`` -- probe ``rekor-wired-with-contract``
     asserts the wiring surface is flag-gated and minimal).
 
-New defect found by this battery (filed 2026-10-01, OPEN at file time):
+New defect found by this battery (filed 2026-10-01, OPEN at file time;
+  CLOSED wave-279 -- see the (c) update above and the f300-unwired
+  re-pin comment):
   F300  instruction_provenance (MEDIUM): the F294 mixed-provenance
         closure holds at the module seam, but the module is unwired --
         zero product callers. ``grep -rln instruction_provenance
@@ -583,7 +590,7 @@ PROBES = [
      rekor_attach_skipped_never_raises),
     ("rekor-wired-with-contract", "HELD", rekor_wired_with_contract),  # wave-278 merge: supersedes the old not-wired property (rekorwire lane wired it); asserts the wiring surface is flag-gated and minimal
     # F300: unwired F294 closure (NEW finding)
-    ("f300-unwired", "BREAK", f300_unwired),
+    ("f300-unwired", "HELD", f300_unwired),  # F300 CLOSED wave-279: ToolExecutor.call() routes consequential approval-queued actions through instruction_provenance.grant_check when provenance context is installed (set_instruction_provenance), and ApprovalQueue.queue() stamps the rendered provenance section MAC-bound for provlabel-* decisions; the source scan now finds product callers in gov/executor.py
     # F299 re-pin (OPEN)
     ("f299-float-eternal", "HELD", f299_float_eternal),  # F299 CLOSED wave-278 (float now rolls windows)
     # F292-F295 closure re-pins

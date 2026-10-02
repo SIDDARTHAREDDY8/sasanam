@@ -82,6 +82,7 @@ from . import artifacts as _artifacts
 from . import intent_slice as _intent_slice
 from . import revoke as _revoke
 from . import delegation_tokens as _delegation_tokens
+from . import instruction_provenance as _instruction_provenance
 from . import drift as _drift
 from . import framing as _framing
 from . import egress_content as _egress_content
@@ -2114,6 +2115,17 @@ class ToolExecutor:
         # the judge is inert (verdict None, queueing unchanged).
         self._intent_user_turns = None
 
+        # Wave-279 (F300): opt-in instruction-provenance context. The
+        # executor never sees content ingress on its own; the
+        # harness/operator registers labeled content units via
+        # set_instruction_provenance() (an IngressLabeler built from
+        # operator-supplied {text, label, carrier} triples). When set,
+        # queued approvals for consequential actions carry the
+        # MAC-bound instruction_provenance section rendered by
+        # grant_check/render_provenance_section; when unset the seam
+        # is inert (no section, queueing unchanged).
+        self._prov_labeler = None
+
         # Wave-130 (row-11 goal registry): per-run registry of declared
         # agent goals with deterministic conflict detection. Opt-in:
         # with no registrations the detector is inert (zero behavior
@@ -3360,6 +3372,59 @@ class ToolExecutor:
             self._intent_user_turns = None
         else:
             self._intent_user_turns = [str(t) for t in user_turns]
+
+    def set_instruction_provenance(self, units):
+        """Wave-279 (F300): opt-in instruction-provenance context.
+
+        ``units``: list of ``{"text", "label", "carrier"}`` dicts, or
+        None to clear. ``label`` must be one of
+        ``instruction_provenance.AUTHORITY_ORDER`` ("SYSTEM" ...
+        "RETRIEVED_UNTRUSTED"); anything else is refused LOUD
+        (ValueError) -- an unknown label never silently degrades to
+        RETRIEVED_UNTRUSTED, since a mislabeled user turn would route
+        honest actions to approval and a mislabeled injection would
+        launder authority.
+
+        Returns the list of registered unit ids (the ids a plan trace
+        passes as ``provenance_driving_units`` on ``call()``). The
+        IngressLabeler is run-scoped and never persists labels across
+        runs. Clearing (None) makes the seam inert.
+        """
+        if units is None:
+            self._prov_labeler = None
+            return None
+        if not isinstance(units, (list, tuple)):
+            raise ValueError(
+                "set_instruction_provenance() refused: units must be a list of "
+                "{\"text\", \"label\", \"carrier\"} dicts or None")
+        labeler = _instruction_provenance.IngressLabeler()
+        ids = []
+        for i, u in enumerate(units):
+            if not isinstance(u, dict):
+                raise ValueError(
+                    "set_instruction_provenance() refused: unit %d must be a dict, "
+                    "got %s" % (i, type(u).__name__))
+            text = u.get("text")
+            label = u.get("label")
+            carrier = u.get("carrier", "")
+            if not isinstance(text, str):
+                raise ValueError(
+                    "set_instruction_provenance() refused: unit %d text must be str"
+                    % (i,))
+            if label not in _instruction_provenance.AUTHORITY_ORDER:
+                raise ValueError(
+                    "set_instruction_provenance() refused: unit %d label must be one "
+                    "of %s, got %r" % (
+                        i, _instruction_provenance.AUTHORITY_ORDER, label))
+            if not isinstance(carrier, str):
+                raise ValueError(
+                    "set_instruction_provenance() refused: unit %d carrier must be "
+                    "str" % (i,))
+            unit = labeler.ingest(
+                text, _instruction_provenance.label_rank(label), carrier)
+            ids.append(unit.unit_id)
+        self._prov_labeler = labeler
+        return ids
 
     def record_intent_turn(self, principal, message, verdict=None):
         """Wave-134 (row-7 cross-run intent): record one user turn in
@@ -5027,6 +5092,70 @@ class ToolExecutor:
                 prior_actions=prior)
         except Exception:  # noqa: BLE001 - judge never breaks queueing
             return None
+
+    def _provenance_grant_decision(self, tool, args, driving_units):
+        """Wave-279 (F300): run the instruction-provenance grant seam
+        for a candidate action. Returns ``(req, decision)`` -- the
+        ``ActionRequest`` and the ``grant_check`` ``Decision`` -- or
+        ``(None, None)`` when the seam is inert (no provenance context
+        installed, or no drivers supplied).
+
+        Fail-closed, loud, never raises: routed decisions
+        (``provlabel-*``) carry the full provenance chain for the
+        approver; malformed framing degrades to a loud
+        ``provlabel-malformed`` routed decision; an unexpected internal
+        error is audit-chained best-effort and likewise degrades to a
+        loud routed ``provlabel-malformed`` decision (the approver
+        sees the failure -- a silent drop would hide it).
+        """
+        if self._prov_labeler is None:
+            return None, None
+        if not driving_units:
+            return None, None
+        req = _instruction_provenance.ActionRequest(
+            tool, args if isinstance(args, dict) else {}, True, ())
+
+        def _malformed(detail):
+            decision = _instruction_provenance.Decision(
+                False, True, "provlabel-malformed", detail)
+            return req, decision
+
+        try:
+            if (not isinstance(driving_units, (list, tuple))
+                    or not all(isinstance(u, str)
+                               for u in driving_units)):
+                return _malformed(
+                    "provenance_driving_units framing was not a list of "
+                    "unit-id strings (got %r); the plan trace is "
+                    "unverifiable -- approval required"
+                    % (type(driving_units).__name__,))
+            req = _instruction_provenance.ActionRequest(
+                tool, args if isinstance(args, dict) else {},
+                True, tuple(driving_units))
+            decision = _instruction_provenance.grant_check(
+                req, self._prov_labeler)
+        except _instruction_provenance.ProvenanceError as e:
+            return _malformed(
+                "provenance seam input malformed: %s -- approval "
+                "required" % (e,))
+        except Exception as e:  # noqa: BLE001 - fail closed, loud
+            try:
+                self.log.append({
+                    "event": "instruction_provenance_error",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "decision": "error",
+                    "policy_id": "instruction-provenance",
+                    "reason": ("instruction-provenance seam raised "
+                               "unexpectedly: %s" % (e,)),
+                })
+            except Exception:
+                pass
+            return _malformed(
+                "provenance seam raised unexpectedly (%s: %s) -- "
+                "approval required" % (type(e).__name__, e))
+        return req, decision
 
     def _recent_action_steps(self, limit=20):
         """Wave-129: the run's recent tool calls as intent-slice steps,
@@ -9419,6 +9548,21 @@ class ToolExecutor:
 
         # Framing kwargs are agent-supplied metadata, never trusted inputs.
         justification = kwargs.pop("justification", None)
+        # Wave-279 (F300): the plan-trace contract for the
+        # instruction-provenance seam -- content-unit ids from the
+        # operator-installed IngressLabeler that drove this call.
+        # Popped here so it never reaches tool args; unresolvable or
+        # malformed ids route to approval (fail-closed), never to
+        # silent execution.
+        prov_driving_units = kwargs.pop("provenance_driving_units", None)
+        # Wave-279 (F300): run the instruction-provenance grant seam
+        # EARLY, before the policy verdict dispatches. A routed
+        # decision (provlabel-*) forces the action to the approval
+        # queue even when the policy engine would allow it -- the
+        # toxic-agent-flow shape is never silently executed. (None,
+        # None) when the seam is inert: zero behavior change.
+        prov_req, prov_decision = self._provenance_grant_decision(
+            tool, kwargs, prov_driving_units)
         on_behalf_of = kwargs.pop("on_behalf_of", None)
         delegated_by = kwargs.pop("delegated_by", None)
         # Wave-92 (stream C): MCP server attribution is a framing hint
@@ -10710,6 +10854,26 @@ class ToolExecutor:
                     }
             return _decision_trace_cache["trace"]
 
+        # Wave-279 (F300): provenance-forced queueing. When the
+        # instruction-provenance grant seam routed this action
+        # (provlabel-*), it queues for a human even if the policy
+        # engine allowed it: the toxic-agent-flow shape (user
+        # instruction + retrieved injection) is never silently
+        # executed. The policy's allow verdict is replaced by a
+        # require_approval decision naming the provenance seam, and
+        # the rendered section below stamps the chain on the record.
+        if (prov_decision is not None
+                and prov_decision.routed_to_approval
+                and prov_decision.code
+                and decision.effect == "allow"):
+            decision = PolicyDecision(
+                "require_approval",
+                "instruction-provenance routed this action to approval: "
+                "%s" % (prov_decision.reason,),
+                policy_id="instruction-provenance",
+                flag=prov_decision.code,
+                matched_rules=[])
+
         if decision.effect == "allow":
             # F162 (HIGH): charge the per-class tempo wire at this
             # execution boundary, BEFORE the side effect. A trip
@@ -11074,6 +11238,22 @@ class ToolExecutor:
             _reconintent_banner = (
                 _reconintent.preview_banner(
                     _reconintent_verdict) + " ")
+        # Wave-279 (F300): the instruction-provenance grant seam's
+        # rendered section ({"text", "code"}), stamped MAC-bound on the
+        # record -- the approver-facing consent surface the F294
+        # closure promises. Rendered here from the early grant
+        # decision, with the SAME redacted args that will execute
+        # (F12: the section never sees unredacted secrets). Inert
+        # (None) when the seam allowed the action or was never armed.
+        _prov_section = None
+        if (prov_decision is not None
+                and prov_decision.routed_to_approval
+                and prov_decision.code):
+            prov_req.args = (dict(redacted_args)
+                             if isinstance(redacted_args, dict) else {})
+            _prov_section = (
+                _instruction_provenance.render_provenance_section(
+                    prov_req, prov_decision))
         approval_id = self.approvals.queue(
             approval_action, decision, provenance,
             # F12: the preview is built from the SAME redacted args that
@@ -11153,7 +11333,12 @@ class ToolExecutor:
             # The bytes themselves are NOT attached: they would be
             # stale by approval time.
             skill_id=_skill_id,
-            skill_attested_digest=_sw_attested_digest)
+            skill_attested_digest=_sw_attested_digest,
+            # Wave-279 (F300): the instruction-provenance grant seam's
+            # rendered section ({"text", "code"}), MAC-bound from birth
+            # -- the approver-facing consent surface. None when the
+            # seam is inert or allowed the action.
+            instruction_provenance=_prov_section)
         entry = self.log.append(_base({
             "decision": "queued_pending",
             "policy_id": decision.policy_id,

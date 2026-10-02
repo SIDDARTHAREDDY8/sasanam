@@ -352,6 +352,21 @@ _SECURITY_PAYLOAD_FIELDS = (
     # automatically after the upgrade - queued items must be decided
     # or drained before upgrading.
     "delegation_receipt",
+    # Wave-279 (F300): the instruction-provenance section
+    # ({"text", "code"} rendered by
+    # gov.instruction_provenance.render_provenance_section) is
+    # integrity-bound from birth alongside the other authority fields.
+    # It is the approver-facing consent surface the F294 closure
+    # promises (the GitHub MCP lesson): stripping the section after
+    # queueing would let a tampered record hide the below-bar driver
+    # the approver saw at queue time -- post-queue section laundering
+    # breaks the MAC and is refused, never silently re-MACed.
+    # FAIL-CLOSED UPGRADE (same precedent as F34/F38/R11/D1/wave-24/
+    # F101/F103/H3): records queued BEFORE this change do not carry
+    # this field, so their digests fail verification automatically
+    # after the upgrade -- queued items must be decided or drained
+    # before upgrading.
+    "instruction_provenance",
     # Wave-173 (ceremony timing): the review-timing triple is
     # integrity-bound at decision time. A doctored latency (or opened/
     # resolved timestamps rewritten after the fact) breaks the MAC --
@@ -3306,7 +3321,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
               matched_rules=None, tool_digest=None, deferred_effect=None,
               capability_verdict=None, intent_slice_verdict=None,
               skill_id=None, skill_attested_digest=None,
-              delegation_receipt=None):
+              delegation_receipt=None, instruction_provenance=None):
         """Store a pending approval; returns the approval id.
 
         ``action`` carries tool, redacted args, the agent's
@@ -3447,6 +3462,36 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                        _delegation_tokens.RECEIPT_VERSION))
             delegation_receipt = json.loads(json.dumps(
                 delegation_receipt, sort_keys=True, default=str))
+        # Wave-279 (F300): the instruction-provenance section stamped
+        # by the executor when instruction-provenance context is
+        # installed. Shape is the
+        # gov.instruction_provenance.render_provenance_section
+        # {"text", "code"} mapping -- validated fail-closed here so a
+        # malformed caller-supplied shape never reaches the MAC-bound
+        # record. (Content trust: the section is rendered by the
+        # executor from the grant seam's own decision, the same trust
+        # posture as intent_slice_verdict -- direct queue() callers are
+        # the executor and the queue's own synthetic paths, never the
+        # agent.) None for the pre-wiring path and for records queued
+        # with no provenance context installed.
+        if instruction_provenance is not None:
+            if not isinstance(instruction_provenance, dict):
+                raise ValueError(
+                    "queue() refused: instruction_provenance must be a "
+                    "{\"text\", \"code\"} dict or None, got %s"
+                    % type(instruction_provenance).__name__)
+            _ip_text = instruction_provenance.get("text")
+            _ip_code = instruction_provenance.get("code")
+            if not isinstance(_ip_text, str):
+                raise ValueError(
+                    "queue() refused: instruction_provenance[\"text\"] "
+                    "must be str, got %s" % type(_ip_text).__name__)
+            if _ip_code is not None and not isinstance(_ip_code, str):
+                raise ValueError(
+                    "queue() refused: instruction_provenance[\"code\"] "
+                    "must be str or None, got %s"
+                    % type(_ip_code).__name__)
+            instruction_provenance = {"text": _ip_text, "code": _ip_code}
         # F42: every authority field below comes from the authenticated
         # caller object or the queue itself — never from action[].
         record = {
@@ -3534,6 +3579,11 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
             # None for direct (non-delegated) calls — never ambiguous,
             # never omitted.
             "delegation_receipt": delegation_receipt,
+            # Wave-279 (F300): the instruction-provenance section
+            # ({"text", "code"}), MAC-bound via _SECURITY_PAYLOAD_FIELDS.
+            # None when no provenance context is installed or the grant
+            # seam allowed the action (advisory-only) -- never omitted.
+            "instruction_provenance": instruction_provenance,
             "deferred_effect": (json.loads(json.dumps(
                 deferred_effect, sort_keys=True, default=str))
                 if deferred_effect is not None else None),
