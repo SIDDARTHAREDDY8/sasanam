@@ -194,8 +194,8 @@ class TestAttach(unittest.TestCase):
     def test_env_config_path(self):
         import tempfile
         digest, sig, pem = _material()
-        path = os.path.join(tempfile.mkdtemp(dir="/var/tmp/g277-rekor"),
-                            "sc.json")
+        path = os.path.join(tempfile.mkdtemp(dir=tempfile.gettempdir()),
+                            "sc.json")  # wave-279 merge: was hardcoded to the wave-277 gate TMPDIR /var/tmp/g277-rekor (deleted); use the process TMPDIR
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(_doc(), fh)
         saved = os.environ.get("GOV_REKOR_V2_SIGNING_CONFIG")

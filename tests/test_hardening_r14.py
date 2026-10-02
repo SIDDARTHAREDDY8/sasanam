@@ -395,7 +395,7 @@ class TestF63MalformedLogLines(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             with mock.patch.object(atk, "_run_demo",
                                    side_effect=RuntimeError("boom")):
-                rc = atk.main()
+                rc = atk.main([])  # wave-279 merge: pass argv explicitly; main() reads sys.argv[1:] when argv is None, so the test's verdict depended on the runner's argv (rc 2 under unittest)
         out = buf.getvalue()
         self.assertEqual(rc, 1)
         results = [l for l in out.splitlines()
