@@ -99,8 +99,9 @@ MAX_REGEX_LEN = 256
 #: Closed verdict vocabulary.
 VERDICTS = frozenset({"ALLOW", "DENY"})
 
-#: Closed rejection-layer vocabulary (Istio identity-first layering).
-REJECTION_LAYERS = frozenset({"authn", "authz", "custom"})
+#: Closed rejection-layer vocabulary (Istio identity-first layering, plus
+#: the declared-sequence layer from gov/tool_rules.py).
+REJECTION_LAYERS = frozenset({"authn", "authz", "custom", "sequence"})
 
 #: Record type for per-decision alert evidence.
 ALERT_RECORD_TYPE = "toolcall-policy-alert"
@@ -579,6 +580,26 @@ class CompiledToolPolicy:
         self._doc = _freeze(copy.deepcopy(doc))
         self.digest = _digest(self._doc)
         self._alerts = []
+        # Opt-in declared-sequence layer (gov/tool_rules.py): None until
+        # bind_rule_set is called. Stored beside the policy, not inside
+        # _doc, so binding a rule set never changes the policy pin.
+        self._tool_rule_set = None
+
+    def bind_rule_set(self, rule_set):
+        """Opt-in: bind a compiled tool-rule set to this policy.
+
+        From then on every :meth:`decide` also runs the declared-sequence
+        checker (after the authn layer): sequence violations and
+        secret-shaped args surface as coded ``toolcall-sequence-violated``
+        / ``toolcall-secret-in-args`` DENY decisions at this same seam.
+        With no rule set bound, ``decide`` behaves exactly as before.
+        """
+        from gov import tool_rules as _tool_rules
+        if not isinstance(rule_set, _tool_rules.CompiledToolRuleSet):
+            _refuse("bind_rule_set needs a CompiledToolRuleSet; got %r"
+                    % (type(rule_set),))
+        self._tool_rule_set = rule_set
+        return rule_set
 
     @property
     def name(self):
@@ -657,7 +678,8 @@ class CompiledToolPolicy:
         return CallDecision("DENY", rule_index, rejection_layer, alert,
                             code, [])
 
-    def decide(self, caller, tool, operation, args=None, now=None):
+    def decide(self, caller, tool, operation, args=None, now=None,
+               history=None, context_flags=None):
         """Decide one tool call. No ad-hoc skip: suppression routes only
         through :func:`suppress_with_exception` with a governed exception.
 
@@ -665,6 +687,15 @@ class CompiledToolPolicy:
         -> ALLOW. Deliberate divergence from Istio: no matching rule means
         DENY (Sasanam is fail-closed; Istio's "no ALLOW policies => allow"
         optimizes for traffic flow, not containment).
+
+        When a tool-rule set is bound (see :meth:`bind_rule_set`), the
+        declared-sequence checker runs right after the authn layer --
+        before CUSTOM/DENY/ALLOW -- so a sequence violation or
+        secret-shaped args can never be rescued by a permissive policy
+        rule. ``history`` is the session's prior tool calls (list of
+        dicts with a ``tool`` key); ``context_flags`` feeds Conditional
+        flag predicates. Both default to empty (no constraint beyond the
+        rules themselves).
         """
         # F342: ill-typed public inputs refuse LOUD with a coded refusal
         # instead of crashing uncoded (fnmatch TypeError) or silently
@@ -687,6 +718,24 @@ class CompiledToolPolicy:
                     "decide args keys must be strings; got %r" % (_key,),
                     code=INVALID_CALL)
         identity = self._check_caller(caller)
+        # Declared-sequence layer (opt-in): a bound rule set closes the
+        # tool inventory and enforces the Init/Child/Terminal/Conditional
+        # grammar plus the secret-shape gate. Violations refuse LOUD and
+        # coded at this same seam; audit mode records them as would-deny
+        # like every other layer (no silent pass, no special casing).
+        if self._tool_rule_set is not None:
+            try:
+                self._tool_rule_set.check_call(tool, args,
+                                               history if history is not None
+                                               else (),
+                                               context_flags)
+            except Exception as e:  # noqa: BLE001 -- the checker only
+                # raises coded ToolRuleError; anything else is still a
+                # coded refusal, never an uncoded escape (F351 class).
+                code = getattr(e, "code", None) \
+                    or "toolcall-sequence-violated"
+                return self._deny(None, None, identity, tool, operation,
+                                  args, code, "sequence", message=str(e))
         self._audit_rules(identity, tool, operation, args)
 
         near_misses = []
@@ -776,7 +825,8 @@ class PolicyBinding:
         self.pin = pin
         self._decisions = []
 
-    def decide(self, caller, tool, operation, args=None, now=None):
+    def decide(self, caller, tool, operation, args=None, now=None,
+               history=None, context_flags=None):
         # F340: re-verify the pin against the LIVE document on every
         # decision. The frozen _doc blocks item mutation at the source;
         # this catches even a freeze-bypassing wholesale replacement
@@ -790,8 +840,19 @@ class PolicyBinding:
                 "document no longer matches its pin; re-review and "
                 "re-pin before deciding",
                 code=POLICY_DRIFT)
+        if history is None and \
+                getattr(self._compiled, "_tool_rule_set", None) is not None:
+            # The binding IS the session: derive the sequence history
+            # from this binding's ALLOW decisions (a DENY means the tool
+            # never executed, so denied calls are not history).
+            history = [
+                {"tool": d["alert"]["tool"]} for d in self._decisions
+                if d.get("verdict") == "ALLOW"
+                and isinstance(d.get("alert"), dict)
+                and isinstance(d["alert"].get("tool"), str)]
         decision = self._compiled.decide(caller, tool, operation, args,
-                                         now=now)
+                                         now=now, history=history,
+                                         context_flags=context_flags)
         self._decisions.append(decision.to_dict())
         return decision
 

@@ -47,7 +47,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g284-tink")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-283 merge pin 1587 -> 1595 (+8 keyset-* codes).
-TAXONOMY_PIN = 1723  # Wave-284 lane 8: +8 keyset-* (tink ADAPT).; Wave-284 lane 8: pin 1587 -> 1595 (+8 keyset-*).; Wave-284 merge: pin 1595 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 lane 4: pin 1641 -> 1642 (+1 keyset-pin-key-invalid).; Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*)
+TAXONOMY_PIN = 1726  # Wave-284 lane 8: +8 keyset-* (tink ADAPT).; Wave-284 lane 8: pin 1587 -> 1595 (+8 keyset-*).; Wave-284 merge: pin 1595 -> 1621 (+1 discovery-emit-failed +4 manifest-* +7 guac-graph-* +8 envelope-*/recipient-policy +6 sandbox-policy-* +8 keyset-*).; Wave-286 lane 4: pin 1641 -> 1642 (+1 keyset-pin-key-invalid).; Wave-289 merge: pin 1700 -> 1706 (+6 challenge-*); Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
 
 _RESULTS = []
 

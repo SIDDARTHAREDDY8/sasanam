@@ -15021,6 +15021,43 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-rule-compile-invalid': {
+        "domain": 'toolcall',
+        "code": 'toolcall-rule-compile-invalid',
+        "human": 'toolcall: a declared tool-rule set document failed '
+                 'compile-time validation (unknown kind, undeclared tool '
+                 'or predicate reference, malformed shape); the rule set '
+                 'never compiles -- refused fail-closed at compile time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-secret-in-args': {
+        "domain": 'toolcall',
+        "code": 'toolcall-secret-in-args',
+        "human": 'toolcall: a tool call carried a secret-shaped value in '
+                 'its args (bounded secret-shape pattern set, or a '
+                 'secret-shaped arg name with a non-empty value); secrets '
+                 'travel via typed context, never tool args -- refused '
+                 'fail-closed before the call executes',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
+    'toolcall-sequence-violated': {
+        "domain": 'toolcall',
+        "code": 'toolcall-sequence-violated',
+        "human": 'toolcall: a tool call violated the bound declared '
+                 'sequence grammar (Init/Child/Terminal/Conditional) or '
+                 'named a tool outside the closed inventory; undeclared '
+                 'tools do not exist -- refused fail-closed at decide time',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'toolcall-unauthenticated-caller': {
         "domain": 'toolcall',
         "code": 'toolcall-unauthenticated-caller',

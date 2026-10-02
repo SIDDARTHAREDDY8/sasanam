@@ -41,7 +41,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1723  # Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*)
+TAXONOMY_PIN = 1726  # Wave-292 lane 3: pin 1715 -> 1719 (+4 delegation-*); Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
 
 _results = []
 
@@ -77,7 +77,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1723/1723/0 sorted")
+    _record("pin-taxonomy", "HELD", "1726/1726/0 sorted")
 
 
 # ---------------------------------------------------------------------------

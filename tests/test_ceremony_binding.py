@@ -255,8 +255,8 @@ class TestErrorConvention(unittest.TestCase):
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "gov", "decision_codes.py"), encoding="utf-8").read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
-        self.assertEqual(len(lits), 1723)
-        self.assertEqual(len(set(lits)), 1723)
+        self.assertEqual(len(lits), 1726)
+        self.assertEqual(len(set(lits)), 1726)
         self.assertEqual(lits, sorted(lits))
 
 

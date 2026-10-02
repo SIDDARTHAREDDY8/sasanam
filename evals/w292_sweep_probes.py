@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from gov import delegation_chain as dc  # noqa: E402
 from gov import evidence_provenance as ep  # noqa: E402
 
-TAXONOMY_PIN = 1723  # Wave-291 merge: pin 1710 -> 1715 (+5 delegation-*)
+TAXONOMY_PIN = 1726  # Wave-291 merge: pin 1710 -> 1715 (+5 delegation-*); Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated, secret-in-args, rule-compile-invalid)
 
 _SEED = bytes(32)
 _ANCHOR = "ab" * 32

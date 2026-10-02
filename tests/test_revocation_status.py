@@ -1,6 +1,6 @@
 """Unit tests for gov/revocation_status.py and gov/issuance_monitor.py.
 
-Wave-292 lane 2: pin 1723 -> 1723 (+4 revocation-*/issuance-*).
+Wave-292 lane 2: pin 1726 -> 1726 (+4 revocation-*/issuance-*).
 """
 
 import unittest
