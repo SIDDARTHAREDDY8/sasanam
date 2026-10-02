@@ -51,7 +51,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-285 merge: pin 1621 -> 1641 (+1 campaign-produces-suppressed,
 # +1 inventory-identity-collision, +7 anchor-*, +11 exception-*).
-TAXONOMY_PIN = 1710
+TAXONOMY_PIN = 1715
 
 _results = []
 

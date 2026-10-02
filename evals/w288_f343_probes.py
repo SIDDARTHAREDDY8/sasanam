@@ -54,7 +54,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-288 merge pin; this lane adds no decision codes.
-TAXONOMY_PIN = 1710
+TAXONOMY_PIN = 1715
 
 _results = []
 

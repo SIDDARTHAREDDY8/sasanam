@@ -355,6 +355,12 @@ def verify_posture(record, operator_pubkey_hex, *, expected_nonce=None,
         _fail(INVALID_SHAPE,
               "operator_pubkey_hex must be a 64-hex Ed25519 public key")
 
+    # F355: a non-hex signature string would raise a raw ValueError from
+    # bytes.fromhex. Refuse LOUD and coded before touching hex decode.
+    if not _is_hex(signature, 128):
+        _fail(SIGNATURE_INVALID,
+              "signature must be a 128-hex Ed25519 signature")
+
     sig_structure = _sig_structure(protected, payload)
     ok = _ed25519.verify(bytes.fromhex(operator_pubkey_hex),
                         sig_structure, bytes.fromhex(signature))

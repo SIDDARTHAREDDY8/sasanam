@@ -270,7 +270,7 @@ class TestTaxonomy(unittest.TestCase):
     def test_pin(self):
         # Wave-288 lane 7: pin 1684 -> 1691 (+7 admission-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*)
         import gov.decision_codes as dc
-        self.assertEqual(len(dc.TAXONOMY), 1710)
+        self.assertEqual(len(dc.TAXONOMY), 1715)
 
 
 if __name__ == "__main__":

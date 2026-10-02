@@ -24,6 +24,25 @@ spec text is read, copied, imported, or vendored):
 * **Invocation receipts.** :meth:`DelegationVerifier.verify` mints a
   signed receipt per verified invocation, shaped for evidence
   bundles (same discipline as mandate receipts).
+* **Proof-of-possession invocation (wave-291, zcap narrowing).**
+  A delegation names the audience *key*; :meth:`verify_invocation`
+  demands that the presenter prove possession of the leaf's audience
+  key by signing a verifier-supplied challenge with it
+  (``POP_DOMAIN``). No proof (or a proof by the wrong key) is a
+  loud coded refusal -- the verifier never treats possession as
+  assumed.
+* **Ceremony binding (wave-291).** A delegation minted inside a
+  ceremony may carry the verifier's challenge nonce
+  (``ceremony_nonce``); verification with an expected ceremony nonce
+  refuses ``delegation-ceremony-mismatch`` when any hop binds a
+  different ceremony (or none). Narrowing is enforced at each hop
+  cryptographically at verification, never in policy code.
+* **Bounded root policy (wave-291).** A verifier may pin, per trust
+  anchor, the maximal capabilities a root delegation may grant
+  (``root_policy``). A root grant exceeding its anchor's bound
+  refuses ``delegation-root-exceeds-policy``. The root remains the
+  trust assumption (like a CA) -- the policy bounds it, it does not
+  derive it.
 * **Capabilities are ``{with, can}`` pairs (UCAN-shaped).**
   ``with`` names the resource namespace (a prefix hierarchy:
   ``fs:/docs`` sits under ``fs:/``); ``can`` names the granted
@@ -68,9 +87,20 @@ the seen set or re-verify the full chain from the journal).
 
 Honest residuals: the trust anchors and the verifier's receipt
 signing seed are deployment-owned (no key ceremony here);
-``audience`` is a recorded intent, not a proof of presentation;
-replay/seen state is in-memory per verifier instance; the verifier
-sees the action's ``{with, can}`` shape, never the action payload.
+``audience`` is a recorded intent, not a proof of presentation --
+use :meth:`DelegationVerifier.verify_invocation` when presentation
+must be proven; replay/seen state is in-memory per verifier
+instance; the verifier sees the action's ``{with, can}`` shape, never
+the action payload. Wave-291 honest limitations: a compromised
+intermediate key is the compromised-host class (the chain still
+verifies; the narrowing proof only shows what was authorized, not
+who holds the keys); the root policy is the trust anchor (an anchor
+without a policy entry is unbounded-but-trusted -- the CA-like
+assumption); the PoP challenge is verifier-supplied and must be
+fresh (a stale challenge replays against the same chain only within
+its validity window); without an ``expected_ceremony_nonce`` the
+verifier performs no ceremony checks (documented verifier
+discipline, same class as the runtime-posture nonce rule).
 """
 
 import hashlib
@@ -82,9 +112,15 @@ from . import ed25519
 
 DELEGATION_TYPE = "delegation.ucan.1"
 RECEIPT_TYPE = "delegation.receipt.1"
+INVOCATION_RECEIPT_TYPE = "delegation.invocation-receipt.1"
 
 SIGN_DOMAIN = b"gov-delegation-sign/v1\x00"
 RECEIPT_DOMAIN = b"gov-delegation-receipt/v1\x00"
+POP_DOMAIN = b"gov-delegation-pop/v1\x00"
+
+_POP_CHALLENGE_MIN = 16
+_POP_CHALLENGE_MAX = 1024
+_CEREMONY_NONCE_HEX_MIN = 16  # 64 bits of verifier challenge
 
 _PUB_HEX_LEN = 64
 _SIG_HEX_LEN = 128
@@ -147,6 +183,38 @@ class DelegationWouldWiden(DelegationError):
     # Reuses the existing taxonomy code: the semantics are exactly
     # "the delegation would widen scope".
     code = "delegation-would-widen"
+
+
+class DelegationInvocationNotProven(DelegationError):
+    """Raised by verify_invocation when the presenter declines to
+    prove possession of the leaf audience key (no challenge or no
+    signature supplied). Possession is never assumed."""
+    code = "delegation-invocation-not-proven"
+
+
+class DelegationInvocationAudienceMismatch(DelegationError):
+    """Raised by verify_invocation when the proven key is not the
+    leaf delegation's audience."""
+    code = "delegation-invocation-audience-mismatch"
+
+
+class DelegationPopSignatureInvalid(DelegationError):
+    """Raised by verify_invocation when the proof-of-possession
+    signature is malformed or fails to verify."""
+    code = "delegation-pop-signature-invalid"
+
+
+class DelegationCeremonyMismatch(DelegationError):
+    """Raised when a delegation minted for one ceremony is presented
+    for verification under a different expected ceremony nonce, or a
+    hop carries no ceremony binding while one is expected."""
+    code = "delegation-ceremony-mismatch"
+
+
+class DelegationRootExceedsPolicy(DelegationError):
+    """Raised when a root delegation grants capabilities not covered
+    by the anchor's pinned root-policy bound."""
+    code = "delegation-root-exceeds-policy"
 
 
 def _canonical(obj):
@@ -227,6 +295,38 @@ def _caps_covered(child_caps, parent_caps):
                for c in child_caps)
 
 
+def _check_ceremony_nonce(nonce):
+    """Validate an optional ceremony challenge nonce.
+
+    None means "minted outside any ceremony". Otherwise the nonce is
+    the verifier-supplied challenge in hex, at least 64 bits (16 hex
+    chars, mirroring the RFC 9711 floor used by ceremony_binding).
+    Returns the lowercase hex string or None."""
+    if nonce is None:
+        return None
+    if not isinstance(nonce, str) or len(nonce) < _CEREMONY_NONCE_HEX_MIN:
+        raise DelegationMalformed(
+            "ceremony_nonce must be a hex string of at least 16 chars "
+            "(64-bit verifier challenge) or None")
+    if len(nonce) % 2 != 0 or \
+            not all(c in "0123456789abcdefABCDEF" for c in nonce):
+        raise DelegationMalformed(
+            "ceremony_nonce must be a hex string")
+    return nonce.lower()
+
+
+def _check_expected_ceremony_nonce(nonce):
+    """Validate an expected ceremony nonce supplied at verification."""
+    if nonce is None:
+        return None
+    checked = _check_ceremony_nonce(nonce)
+    if checked is None:
+        raise DelegationMalformed(
+            "expected_ceremony_nonce must be a non-empty hex string "
+            "or None")
+    return checked
+
+
 def _seal_body(body):
     """Validate the body shape; returns the normalized body."""
     if not isinstance(body, dict):
@@ -250,6 +350,7 @@ def _seal_body(body):
     nonce = body.get("nonce")
     if not isinstance(nonce, str) or not nonce:
         raise DelegationMalformed("nonce must be a non-empty string")
+    ceremony_nonce = _check_ceremony_nonce(body.get("ceremony_nonce"))
     return {
         "type": DELEGATION_TYPE,
         "issuer": issuer,
@@ -259,6 +360,7 @@ def _seal_body(body):
         "not_after": body["not_after"],
         "nonce": nonce,
         "parent_digest": parent_digest,
+        "ceremony_nonce": ceremony_nonce,
     }
 
 
@@ -280,8 +382,10 @@ def delegate(seed, held, request):
     capabilities the issuer holds (None for a root grant from the
     issuer's own authority). ``request``: dict with ``audience``
     (64-hex pubkey), ``capabilities``, ``not_before``/``not_after``,
-    optional ``nonce``, and ``parent`` (a sealed parent delegation
-    or None for a root).
+    optional ``nonce``, optional ``ceremony_nonce`` (the verifier's
+    challenge in hex, >= 64 bits, binding the delegation to the
+    ceremony it is minted for), and ``parent`` (a sealed parent
+    delegation or None for a root).
     """
     if not isinstance(seed, (bytes, bytearray)) or len(seed) != 32:
         raise DelegationMalformed("seed must be 32 bytes")
@@ -309,6 +413,7 @@ def delegate(seed, held, request):
         nonce = secrets.token_hex(16)
     if not isinstance(nonce, str) or not nonce:
         raise DelegationMalformed("nonce must be a non-empty string")
+    ceremony_nonce = _check_ceremony_nonce(request.get("ceremony_nonce"))
     issuer = ed25519.publickey(bytes(seed)).hex()
     body = {
         "type": DELEGATION_TYPE,
@@ -319,6 +424,7 @@ def delegate(seed, held, request):
         "not_after": request["not_after"],
         "nonce": nonce,
         "parent_digest": parent_digest,
+        "ceremony_nonce": ceremony_nonce,
     }
     sig = ed25519.sign(bytes(seed),
                        SIGN_DOMAIN + _canonical(body)).hex()
@@ -332,9 +438,15 @@ class DelegationVerifier(object):
     (64-hex). An empty list refuses every chain. ``seed``: optional
     32-byte Ed25519 seed used to sign invocation receipts; when None
     the receipt carries ``signature: None`` (documented, not silent).
+    ``root_policy``: optional dict mapping an anchor's 64-hex pubkey
+    to the maximal capabilities list that anchor's root delegations
+    may grant. A root grant exceeding its anchor's bound refuses
+    ``delegation-root-exceeds-policy``; anchors without a policy
+    entry are unbounded-but-trusted (the root is the trust
+    assumption, like a CA).
     """
 
-    def __init__(self, trust_anchors, seed=None):
+    def __init__(self, trust_anchors, seed=None, root_policy=None):
         if not isinstance(trust_anchors, (list, tuple)):
             raise DelegationMalformed(
                 "trust_anchors must be a list of 64-hex pubkeys")
@@ -347,8 +459,21 @@ class DelegationVerifier(object):
                  len(seed) != 32):
             raise DelegationMalformed(
                 "verifier seed must be 32 bytes or None")
+        if root_policy is not None:
+            if not isinstance(root_policy, dict):
+                raise DelegationMalformed(
+                    "root_policy must be a dict of anchor pubkey to "
+                    "capabilities or None")
+            checked = {}
+            for anchor, caps in root_policy.items():
+                if not _is_hex(anchor, _PUB_HEX_LEN):
+                    raise DelegationMalformed(
+                        "root_policy anchor must be 64 hex chars")
+                checked[anchor] = _check_capabilities(caps)
+            root_policy = checked
         self._anchors = set(trust_anchors)
         self._seed = bytes(seed) if seed is not None else None
+        self._root_policy = root_policy
         self._seen = set()
 
     def _verify_signature(self, body, sig_hex):
@@ -363,13 +488,30 @@ class DelegationVerifier(object):
             raise DelegationSignatureInvalid(
                 "delegation signature failed to verify")
 
-    def verify(self, chain, action, now=None):
-        """Verify a (chain, action) presentation.
+    def _check_ceremony(self, body, i, expected):
+        """Fail closed on ceremony confusion (wave-291).
 
-        ``chain``: non-empty list of sealed delegations, root first.
-        ``action``: ``{"with": <resource>, "can": <action>}``.
-        Returns a signed invocation receipt on success; raises a
-        machine-coded :class:`DelegationError` otherwise.
+        With no expected ceremony the verifier performs no ceremony
+        checks (documented verifier discipline). With one, every hop
+        must carry exactly the expected challenge nonce: a hop minted
+        for another ceremony, or minted for no ceremony, refuses
+        ``delegation-ceremony-mismatch``.
+        """
+        if expected is None:
+            return
+        hop_nonce = body.get("ceremony_nonce")
+        if hop_nonce is None or hop_nonce.lower() != expected.lower():
+            raise DelegationCeremonyMismatch(
+                "hop %d is not bound to the expected ceremony; "
+                "cross-ceremony replay refused fail-closed" % i)
+
+    def _verify_chain(self, chain, action, now, expected_ceremony_nonce):
+        """The full chain-verification order.
+
+        Returns ``(bodies, receipt)``. Type -> structure -> parent
+        digest -> custody binding -> signature -> root trust -> root
+        policy -> ceremony -> attenuation -> time window -> action
+        coverage -> replay.
         """
         now = _check_now(time.time() if now is None else now)
         if not isinstance(chain, list) or not chain:
@@ -385,6 +527,8 @@ class DelegationVerifier(object):
         if not isinstance(act_can, str) or not act_can:
             raise DelegationMalformed(
                 "action 'can' must be a non-empty string")
+        expected_ceremony_nonce = _check_expected_ceremony_nonce(
+            expected_ceremony_nonce)
 
         bodies = []
         prev_digest = None
@@ -417,12 +561,22 @@ class DelegationVerifier(object):
                 if body["issuer"] not in self._anchors:
                     raise DelegationRootUntrusted(
                         "root issuer is not in the trust anchors")
+                if self._root_policy is not None and \
+                        body["issuer"] in self._root_policy:
+                    if not _caps_covered(
+                            body["capabilities"],
+                            self._root_policy[body["issuer"]]):
+                        raise DelegationRootExceedsPolicy(
+                            "root delegation grants capabilities not "
+                            "covered by the anchor's root policy; "
+                            "unbounded root power refused fail-closed")
             else:
                 if not _caps_covered(body["capabilities"],
                                      bodies[-1]["capabilities"]):
                     raise DelegationAttenuationInverted(
                         "hop %d grants capabilities not covered by "
                         "its parent" % i)
+            self._check_ceremony(body, i, expected_ceremony_nonce)
             if not body["not_before"] <= now <= body["not_after"]:
                 raise DelegationExpired(
                     "hop %d is outside its validity window" % i)
@@ -443,14 +597,18 @@ class DelegationVerifier(object):
             raise DelegationReplay(
                 "this (chain, action) was already verified")
         self._seen.add(replay_key)
+        return bodies, prev_digest, act_with, act_can, now
 
+    def _mint_receipt(self, receipt_type, chain_digest, act_with,
+                      act_can, now, extra):
         receipt = {
-            "type": RECEIPT_TYPE,
-            "chain_digest": prev_digest,
+            "type": receipt_type,
+            "chain_digest": chain_digest,
             "action": {"with": act_with, "can": act_can},
             "verified_at": now,
             "decision": "ok",
         }
+        receipt.update(extra)
         if self._seed is not None:
             receipt["signature"] = ed25519.sign(
                 self._seed,
@@ -458,3 +616,113 @@ class DelegationVerifier(object):
         else:
             receipt["signature"] = None
         return receipt
+
+    def verify(self, chain, action, now=None,
+               expected_ceremony_nonce=None):
+        """Verify a (chain, action) presentation.
+
+        ``chain``: non-empty list of sealed delegations, root first.
+        ``action``: ``{"with": <resource>, "can": <action>}``.
+        ``expected_ceremony_nonce``: optional verifier-supplied
+        challenge the chain's delegations must be bound to.
+        Returns a signed invocation receipt on success; raises a
+        machine-coded :class:`DelegationError` otherwise.
+        """
+        _, prev_digest, act_with, act_can, verified_now = \
+            self._verify_chain(chain, action, now,
+                               expected_ceremony_nonce)
+        return self._mint_receipt(RECEIPT_TYPE, prev_digest, act_with,
+                                  act_can, verified_now, {})
+
+    def _pop_signing_bytes(self, invoker_pubkey_hex, pop_challenge,
+                           leaf_digest):
+        return POP_DOMAIN + _canonical({
+            "invoker": invoker_pubkey_hex,
+            "challenge": bytes(pop_challenge).hex(),
+            "chain_digest": leaf_digest,
+        })
+
+    def verify_invocation(self, chain, action, *, invoker_pubkey_hex,
+                          pop_challenge, pop_signature_hex, now=None,
+                          expected_ceremony_nonce=None):
+        """Verify a (chain, action) invocation WITH proof of
+        possession of the leaf audience key.
+
+        The invoker proves key possession -- without revealing the
+        key -- by signing ``pop_challenge`` (verifier-supplied fresh
+        bytes) under the audience key, over bytes bound to this exact
+        chain (``POP_DOMAIN`` + invoker + challenge hex + leaf
+        digest). Order: invocation inputs -> chain structure (leaf
+        audience must name the invoker) -> proof of possession ->
+        full chain verification (which records the replay mark only
+        after a valid proof).
+
+        Raises machine-coded :class:`DelegationError`:
+        ``delegation-invocation-not-proven`` (no challenge or no
+        signature presented), ``delegation-invocation-audience-
+        mismatch``, ``delegation-pop-signature-invalid``, and every
+        code ``verify`` can raise. Returns a signed
+        ``delegation.invocation-receipt.1`` on success.
+        """
+        if not _is_hex(invoker_pubkey_hex, _PUB_HEX_LEN):
+            raise DelegationMalformed(
+                "invoker_pubkey_hex must be 64 hex chars")
+        if pop_challenge is None or pop_signature_hex is None:
+            raise DelegationInvocationNotProven(
+                "no proof of possession presented; possession of the "
+                "leaf audience key is never assumed")
+        if isinstance(pop_challenge, (bytes, bytearray)):
+            challenge = bytes(pop_challenge)
+        else:
+            raise DelegationMalformed(
+                "pop_challenge must be bytes")
+        if not _POP_CHALLENGE_MIN <= len(challenge) <= _POP_CHALLENGE_MAX:
+            raise DelegationMalformed(
+                "pop_challenge must be %d-%d bytes"
+                % (_POP_CHALLENGE_MIN, _POP_CHALLENGE_MAX))
+        if not isinstance(chain, list) or not chain:
+            raise DelegationMalformed(
+                "chain must be a non-empty list")
+        # Structure first: the leaf audience must name the invoker
+        # before any proof is even examined.
+        leaf_body, _ = _check_sealed(chain[-1])
+        if leaf_body["audience"] != invoker_pubkey_hex.lower():
+            raise DelegationInvocationAudienceMismatch(
+                "the proven key is not the leaf delegation's "
+                "audience; invocation by a non-holder refused "
+                "fail-closed")
+        leaf_digest = digest_of(leaf_body)
+        if not _is_hex(pop_signature_hex, _SIG_HEX_LEN):
+            raise DelegationPopSignatureInvalid(
+                "pop signature must be 128 hex chars")
+        try:
+            pop_sig = bytes.fromhex(pop_signature_hex)
+            pop_pub = bytes.fromhex(invoker_pubkey_hex)
+        except ValueError:
+            raise DelegationPopSignatureInvalid(
+                "pop signature or invoker key is not valid hex")
+        if ed25519.verify(
+                pop_pub,
+                self._pop_signing_bytes(invoker_pubkey_hex, challenge,
+                                        leaf_digest),
+                pop_sig) is not True:
+            raise DelegationPopSignatureInvalid(
+                "proof-of-possession signature failed to verify")
+        # Proof is valid; now the full chain checks (which also
+        # record the replay mark -- only reached after a valid
+        # proof).
+        _, prev_digest, act_with, act_can, verified_now = \
+            self._verify_chain(chain, action, now,
+                               expected_ceremony_nonce)
+        return self._mint_receipt(
+            INVOCATION_RECEIPT_TYPE, prev_digest, act_with, act_can,
+            verified_now,
+            {"invoker": invoker_pubkey_hex,
+             "pop_challenge": challenge.hex()})
+
+    def receipt(self, *args, **kwargs):
+        """Convenience alias kept for the mandate-embedding seam.
+
+        Delegates to :meth:`verify`.
+        """
+        return self.verify(*args, **kwargs)

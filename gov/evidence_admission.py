@@ -281,7 +281,13 @@ def pin_admission_policy(policy_id, digest, pinpath):
 
 def load_admission_pins(pinpath):
     with open(pinpath, encoding="utf-8") as fh:
-        pins = json.load(fh)
+        # F354: a malformed pin file must refuse LOUD with a coded code,
+        # not leak an uncoded JSONDecodeError. A missing pin file still
+        # raises FileNotFoundError (setup-time, fail-closed) -- unchanged.
+        try:
+            pins = json.load(fh)
+        except json.JSONDecodeError:
+            _fail(POLICY_INVALID, "pin store is not valid JSON")
     if not isinstance(pins, dict):
         _fail(POLICY_INVALID, "pin store is corrupt")
     return pins

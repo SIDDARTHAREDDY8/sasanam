@@ -79,8 +79,19 @@ def set_emit(emit):
 
 
 def _emit_event(event):
-    if _emit is not None:
-        _emit(event)
+    """Emit an audit event to the installed sink. A broken audit sink
+    must never break ceremony issuance or verification: the sink
+    failure is isolated (the failure mode is recorded in this
+    docstring/comment, not the event -- the same trade-off as
+    ``gov/timestamp_authority.py`` and ``gov/evidence_provenance.py``),
+    never the sink's raw exception type escaping at a public seam
+    (F352)."""
+    if _emit is None:
+        return
+    try:
+        _emit(dict(event))
+    except Exception:
+        pass
 
 
 def _canonical(obj):
@@ -246,6 +257,12 @@ def verify_binding(record, operator_pubkey_hex, *, expected_nonce=None,
         _fail(INVALID_SHAPE,
               "operator_pubkey_hex must be a 64-hex Ed25519 public key")
 
+    # F355: a non-hex signature string would raise a raw ValueError from
+    # bytes.fromhex. Refuse LOUD and coded before touching hex decode.
+    if not _is_hex(signature, 128):
+        _fail(SIGNATURE_INVALID,
+              "signature must be a 128-hex Ed25519 signature")
+
     sig_structure = _sig_structure(protected, payload)
     ok = _ed25519.verify(bytes.fromhex(operator_pubkey_hex),
                         sig_structure, bytes.fromhex(signature))
@@ -288,6 +305,24 @@ def verify_binding(record, operator_pubkey_hex, *, expected_nonce=None,
 # Composition: anchoring the (content digest + challenge) tuple
 # ---------------------------------------------------------------------------
 
+def _require_leaf_keys(payload):
+    """Extract the (content_digest, nonce, purpose) tuple for anchoring.
+
+    F353: direct indexing raised an uncoded KeyError on a shape-valid
+    but keyless payload. All three tuple members are refused LOUD with
+    coded challenge-invalid-shape when absent or non-string.
+    """
+    values = []
+    for key in ("content_digest", "challenge_nonce", "challenge_purpose"):
+        value = payload.get(key)
+        if not isinstance(value, str) or not value:
+            _fail(INVALID_SHAPE,
+                  "record payload must bind a non-empty %r for "
+                  "ceremony anchoring" % (key,))
+        values.append(value)
+    return values[0], values[1], values[2]
+
+
 def ceremony_leaf(record):
     """The anchor leaf: the tuple's content identity.
 
@@ -296,10 +331,11 @@ def ceremony_leaf(record):
     ceremony the evidence was minted for, not just the content.
     """
     protected, payload, _ = _require_record_shape(record)
+    content_digest, nonce, purpose = _require_leaf_keys(payload)
     return _digest({
-        "content_digest": payload["content_digest"],
-        "challenge_nonce": payload["challenge_nonce"],
-        "challenge_purpose": payload["challenge_purpose"],
+        "content_digest": content_digest,
+        "challenge_nonce": nonce,
+        "challenge_purpose": purpose,
     })
 
 

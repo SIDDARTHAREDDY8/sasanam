@@ -135,6 +135,17 @@ class VerifyTest(unittest.TestCase):
         self.assertIn(cm.exception.code,
                       ("posture-invalid-shape", "posture-signature-invalid"))
 
+    def test_nonhex_signature_refused_coded(self):
+        # F355: a non-hex signature string must refuse LOUD with a
+        # coded refusal, never a raw ValueError from bytes.fromhex.
+        rec, seed = _issue()
+        pub = _ed25519.publickey(seed).hex()
+        evil = json.loads(json.dumps(rec))
+        evil["signature"] = "not-hex!!"
+        with self.assertRaises(rp.PostureError) as cm:
+            rp.verify_posture(evil, pub)
+        self.assertEqual(cm.exception.code, "posture-signature-invalid")
+
     def test_malformed_shape_refused(self):
         with self.assertRaises(rp.PostureError) as cm:
             rp.verify_posture("not-a-dict", "00" * 64)

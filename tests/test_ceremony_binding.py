@@ -153,6 +153,25 @@ class TestVerifyBinding(unittest.TestCase):
         with self.assertRaises(cb.CeremonyError) as cm:
             cb.verify_binding(tampered, pub)
         self.assertEqual(cm.exception.code, "challenge-signature-invalid")
+    def test_nonhex_signature_refused_coded(self):
+        # F355: a non-hex signature string must refuse LOUD with a
+        # coded refusal, never a raw ValueError from bytes.fromhex.
+        seed, pub = _op()
+        rec = _issue(seed)
+        rec["signature"] = "not-hex!!"
+        with self.assertRaises(cb.CeremonyError) as cm:
+            cb.verify_binding(rec, pub)
+        self.assertEqual(cm.exception.code, "challenge-signature-invalid")
+
+    def test_short_hex_signature_refused_coded(self):
+        # Edge: well-formed hex of the wrong length is a forged
+        # signature, not a crash.
+        seed, pub = _op()
+        rec = _issue(seed)
+        rec["signature"] = "ab"
+        with self.assertRaises(cb.CeremonyError) as cm:
+            cb.verify_binding(rec, pub)
+        self.assertEqual(cm.exception.code, "challenge-signature-invalid")
 
 
 class TestAnchorComposition(unittest.TestCase):
@@ -162,6 +181,15 @@ class TestAnchorComposition(unittest.TestCase):
         log = TransparencyLog(tempfile.mkdtemp(prefix="challenge-unit-"),
                               "unit-origin", "log-key", signer_seed=log_seed)
         return log, log_pub
+
+    def test_keyless_payload_leaf_refuses_coded(self):
+        # F353: a shape-valid-but-keyless payload must refuse LOUD
+        # with a coded refusal, never a raw KeyError.
+        rec = {"ceremony_format": cb.CEREMONY_FORMAT,
+               "protected": {}, "payload": {}, "signature": "00"}
+        with self.assertRaises(cb.CeremonyError) as cm:
+            cb.ceremony_leaf(rec)
+        self.assertEqual(cm.exception.code, "challenge-invalid-shape")
 
     def test_anchor_leaf_binds_nonce_and_purpose(self):
         seed, _ = _op()
@@ -227,8 +255,8 @@ class TestErrorConvention(unittest.TestCase):
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "gov", "decision_codes.py"), encoding="utf-8").read()
         lits = re.findall(r'"code":\s*\'([a-z][a-z0-9-_.]*)\'', src)
-        self.assertEqual(len(lits), 1710)
-        self.assertEqual(len(set(lits)), 1710)
+        self.assertEqual(len(lits), 1715)
+        self.assertEqual(len(set(lits)), 1715)
         self.assertEqual(lits, sorted(lits))
 
 

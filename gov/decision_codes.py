@@ -4502,6 +4502,17 @@ TAXONOMY = {
         "evidence_kinds_required": ['capability-attestation'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-ceremony-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-ceremony-mismatch',
+        "human": 'signed delegation chain: a hop is bound to a different '
+                 'ceremony than the expected challenge nonce (or carries '
+                 'no ceremony binding while one is expected); cross-'
+                 'ceremony replay refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-chain-broken': {
         "domain": 'delegation-freshness',
         "code": 'delegation-chain-broken',
@@ -4574,6 +4585,26 @@ TAXONOMY = {
                                     'freshness-timestamp'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-invocation-audience-mismatch': {
+        "domain": 'delegation',
+        "code": 'delegation-invocation-audience-mismatch',
+        "human": 'signed delegation invocation: the proven key is not the '
+                 'leaf delegation\'s audience; invocation by a non-holder '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-invocation-not-proven': {
+        "domain": 'delegation',
+        "code": 'delegation-invocation-not-proven',
+        "human": 'signed delegation invocation: no proof of possession of '
+                 'the leaf audience key was presented; possession is never '
+                 'assumed; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-malformed': {
         "domain": 'delegation',
         "code": 'delegation-malformed',
@@ -4613,12 +4644,32 @@ TAXONOMY = {
         "evidence_kinds_required": ['delegation', 'signature'],
         "reverify_steps": ['recompute'],
     },
+    'delegation-pop-signature-invalid': {
+        "domain": 'delegation',
+        "code": 'delegation-pop-signature-invalid',
+        "human": 'signed delegation invocation: the proof-of-possession '
+                 'signature is malformed or fails to verify against the '
+                 'invoker key; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation', 'signature'],
+        "reverify_steps": ['recompute'],
+    },
     'delegation-replay': {
         "domain": 'delegation',
         "code": 'delegation-replay',
         "human": 'signed delegation chain: the same (chain, action) '
                  'invocation was already verified; the second '
                  'presentation is a replay; refused',
+        "severity": 'high',
+        "evidence_kinds_required": ['delegation'],
+        "reverify_steps": ['recompute'],
+    },
+    'delegation-root-exceeds-policy': {
+        "domain": 'delegation',
+        "code": 'delegation-root-exceeds-policy',
+        "human": 'signed delegation chain: a root delegation grants '
+                 'capabilities not covered by the trust anchor\'s pinned '
+                 'root policy; unbounded root power refused fail-closed',
         "severity": 'high',
         "evidence_kinds_required": ['delegation'],
         "reverify_steps": ['recompute'],

@@ -45,7 +45,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-286 lane 1: pin 1641 -> 1642 (+1 manifest-regex-unsafe, F325 gate).
-TAXONOMY_PIN = 1710
+TAXONOMY_PIN = 1715
 
 _results = []
 

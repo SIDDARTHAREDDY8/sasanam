@@ -43,7 +43,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-288 lane 3: pin 1684 -> 1685 (+1 toolcall-regex-unsafe).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*)
-TAXONOMY_PIN = 1710
+TAXONOMY_PIN = 1715
 
 _results = []
 
