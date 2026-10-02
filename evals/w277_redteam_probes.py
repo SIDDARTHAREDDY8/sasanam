@@ -426,7 +426,7 @@ def _screen_one(url, policy):
 
 
 def eg03_quad_still_breaks():
-    """F296 (OPEN): 4x-encoded token still allowed; server recovers."""
+    """F296 (CLOSED wave-277): 4x-encoded token refused via decode-to-stability."""
     secret = "ab/cd/ef_gh-12"
     pol = _egress_policy_for(secret)
     enc = secret
@@ -449,7 +449,7 @@ def _qsrc():
 
 
 def cl01_dup_still_breaks():
-    """F297 (OPEN): duplicate denominator still inflates."""
+    """F297 (CLOSED wave-277): duplicate denominator deduplicated."""
     L = cl.CoverageLedger()
     L.record_technique("t1", "FULL", sources=dict(_qsrc()))
     L.record_technique("t2", "FULL", sources=dict(_qsrc()))
@@ -464,20 +464,22 @@ def cl01_dup_still_breaks():
 
 
 def cl02_future_still_breaks():
-    """F298 (OPEN): future-dated score still bricks the logbook."""
+    """F298 (CLOSED wave-277): future-dated score refused fail-closed; later honest appends work."""
     L = cl.CoverageLedger()
     L.record_technique("tx", "FULL", sources=dict(_qsrc()))
-    L.score("tx", 5, proof_method="redteam",
-            scored_at="2999-06-01T00:00:00+00:00")
+    try:
+        L.score("tx", 5, proof_method="redteam",
+                scored_at="2999-06-01T00:00:00+00:00")
+        return ("BREAK", "F298 still open: future-dated score accepted")
+    except cl.CoverageLedgerError as exc:
+        if "future-dated" not in str(exc):
+            return "ERROR", "unexpected refusal: %s" % str(exc)[:60]
     try:
         L.score("tx", 4, proof_method="redteam",
                 scored_at="2026-10-01T12:00:00+00:00")
-        return "HELD", "F298 fixed (later score accepted)"
+        return "HELD", "F298 fixed (future refused; later honest append OK)"
     except Exception as exc:
-        if "backdated" in str(exc):
-            return ("BREAK", "F298 still open: logbook bricked "
-                    "(%s)" % str(exc)[:50])
-        return "ERROR", "unexpected: %s" % str(exc)[:60]
+        return "ERROR", "later honest append refused: %s" % str(exc)[:60]
 
 
 PROBES = [
@@ -494,9 +496,9 @@ PROBES = [
     ("pv-single-user-allowed", "HELD", pv_single_user_allowed),
     ("at-bool-int-distinct", "HELD", at_bool_int_distinct),
     ("codes-new-in-taxonomy", "HELD", codes_new_in_taxonomy),
-    ("eg03-quad-still-breaks", "BREAK", eg03_quad_still_breaks),
-    ("cl01-dup-still-breaks", "BREAK", cl01_dup_still_breaks),
-    ("cl02-future-still-breaks", "BREAK", cl02_future_still_breaks),
+    ("eg03-quad-still-breaks", "HELD", eg03_quad_still_breaks),
+    ("cl01-dup-still-breaks", "HELD", cl01_dup_still_breaks),
+    ("cl02-future-still-breaks", "HELD", cl02_future_still_breaks),
 ]
 
 
