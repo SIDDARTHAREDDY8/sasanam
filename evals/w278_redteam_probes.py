@@ -13,8 +13,11 @@ Attacks the NEW wave-277 code at the public API, in priority order:
     ``grant_check``, and ``attach_to_approval_record`` is never invoked,
     so the approver never sees the provenance chain the F294 closure
     promises. NEW finding F300 (MEDIUM), probe ``f300-unwired`` BREAKs;
-(d) F299 re-pin (OPEN -- probe ``f299-float-eternal`` BREAKs);
+(d) F299 re-pin (CLOSED wave-278 -- probe ``f299-float-eternal`` HELD);
 (e) F292-F295 closure re-pins (expected HELD).
+(f) Rekor v2 witness wiring (wave-278 rekorwire lane wired it into
+    ``gov/evidence_bundle_v2.py`` -- probe ``rekor-wired-with-contract``
+    asserts the wiring surface is flag-gated and minimal).
 
 New defect found by this battery (filed 2026-10-01, OPEN at file time):
   F300  instruction_provenance (MEDIUM): the F294 mixed-provenance
