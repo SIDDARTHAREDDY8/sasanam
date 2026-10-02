@@ -743,10 +743,61 @@ class VSAIssuer(object):
     def public_key_hex(self):
         return self._pub.hex()
 
+    #: Trust labels for VSA input attestations (wave-279; the SLSA
+    #: labeling discipline): every attested receipt field is labeled
+    #: agent-supplied (untrusted) or platform-supplied (trusted).
+    #: Nothing unlabeled is ever signed.
+    INPUT_TRUST_LABELS = frozenset(("agent-supplied",
+                                    "platform-supplied"))
+
+    @classmethod
+    def check_input_attestations(cls, input_attestations):
+        """Validate the trust-labeled input-attestation list.
+
+        Returns the list unchanged. Refuses (ValueError) any entry
+        that is not ``{"kind", "digest" (64 hex), "trust"}`` with an
+        explicit, known trust label -- the issuer never guesses a
+        label.
+        """
+        if input_attestations is None:
+            return []
+        if not isinstance(input_attestations, (list, tuple)):
+            raise ValueError(
+                "input_attestations must be a list of receipt dicts")
+        checked = []
+        for entry in input_attestations:
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    "input_attestation entries must be dicts")
+            kind = entry.get("kind")
+            if not isinstance(kind, str) or not kind:
+                raise ValueError(
+                    "input_attestation entry needs a non-empty kind")
+            if _as_hex64(entry.get("digest"), "input digest") is None:
+                raise ValueError(
+                    "input_attestation entry needs a 64-hex digest")
+            if entry.get("trust") not in cls.INPUT_TRUST_LABELS:
+                raise ValueError(
+                    "input_attestation entry needs an explicit trust "
+                    "label in %s (got %r)"
+                    % (sorted(cls.INPUT_TRUST_LABELS),
+                       entry.get("trust")))
+            checked.append({"kind": kind,
+                            "digest": entry["digest"].lower(),
+                            "trust": entry["trust"]})
+        return checked
+
     def issue(self, subject_digest, policy_id, verified_level,
-              issued_at, ttl_seconds):
+              issued_at, ttl_seconds, input_attestations=None):
         """Issue a VSA dict, signed. ``ttl_seconds`` bounds the
-        credential's life; the policy additionally caps age."""
+        credential's life; the policy additionally caps age.
+
+        ``input_attestations`` (wave-279) is the bundle's receipts:
+        trust-labeled ``{"kind", "digest", "trust"}`` entries,
+        validated by :meth:`check_input_attestations` and signed as
+        part of the VSA body. Omitted (None) keeps the historical
+        body byte-identical.
+        """
         digest = _as_hex64(subject_digest, "subject digest")
         if digest is None:
             raise ValueError("subject_digest must be 64 hex chars")
@@ -757,6 +808,7 @@ class VSAIssuer(object):
             raise ValueError("policy_id must be a non-empty string")
         if not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be a positive int")
+        receipts = self.check_input_attestations(input_attestations)
         body = {
             "format": VSA_FORMAT,
             "subject": {"digest": {"sha256": digest}},
@@ -766,6 +818,8 @@ class VSAIssuer(object):
             "issued_at": float(issued_at),
             "expires_at": float(issued_at) + ttl_seconds,
         }
+        if input_attestations is not None:
+            body["input_attestations"] = receipts
         sig = _ed25519.sign(self._seed,
                             _VSA_DOMAIN + canonical_bytes(body))
         body["signature"] = {"key_id": self._pub.hex(),
