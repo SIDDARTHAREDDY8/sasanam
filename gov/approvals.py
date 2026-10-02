@@ -4509,11 +4509,50 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         Raises ``elicitation_contract.ElicitationError`` (a
         ValueError) on every refusal; returns ``(record, log_entry)``
         like decide().
+
+        Wave-279 lane 6: every refusal is classified by the
+        deterministic approval remediation taxonomy
+        (``gov/remediation.py`` -- ADAPT of guardrails-ai's
+        ``OnFailAction``). The audit entry carries a ``remediation``
+        sub-record ``{failure_class, action, retry_permitted,
+        budget_remaining, steps, note}`` and the raised
+        ``ElicitationError`` carries the same outcome as
+        ``.remediation``. Refusal BEHAVIOR is unchanged (same events,
+        same exceptions, same budget discipline, fail-closed
+        throughout): the ad-hoc error path is now a coded, auditable
+        remediation outcome instead.
         """
         from gov import elicitation_contract as _ec
+        from gov import remediation as _rem
         request_id = _ec.new_request_id()
 
-        def _refuse(event, note, record=None, **extra):
+        def _refuse(event, note, record=None,
+                    failure_class=_rem.FAILURE_PRECHECK, action=None,
+                    **extra):
+            try:
+                _outcome = _rem.classify(
+                    failure_class,
+                    action=action,
+                    budget_remaining=(
+                        _ec.reprompts_remaining(record)
+                        if record is not None else None),
+                    context={"event": event,
+                             "approval_id": approval_id,
+                             "response": response,
+                             "decided_by": decided_by})
+            except Exception:
+                # The refusal stands regardless; classification must
+                # never turn a refusal into a decision.
+                _outcome = {"failure_class": "unknown-failure",
+                            "action": "refrain",
+                            "retry_permitted": False,
+                            "proceed": False,
+                            "repaired_value": None,
+                            "budget_remaining": None,
+                            "steps": [],
+                            "note": "remediation classification "
+                            "failed; fail closed"}
+            _exc = _ec.ElicitationError(note, remediation=_outcome)
             try:
                 _entry = {
                     "event": event,
@@ -4528,6 +4567,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     "decided_by": decided_by,
                     "related_agent": (record or {}).get("agent_id"),
                     "reason": note,
+                    "remediation": _outcome,
                 }
                 _entry.update(extra)
                 self._log(_entry)
@@ -4535,14 +4575,15 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 # The refusal stands regardless; a logging outage must
                 # not turn a refusal into a decision.
                 pass
-            raise _ec.ElicitationError(note)
+            raise _exc
 
         # 1. Tri-state vocabulary.
         if response not in _ec.ELICITATION_RESPONSES:
             _refuse("elicitation_refused",
                     "unknown elicitation response %r: must be one of "
                     "%s" % (response,
-                            "/".join(_ec.ELICITATION_RESPONSES)))
+                            "/".join(_ec.ELICITATION_RESPONSES)),
+                    failure_class=_rem.FAILURE_VOCABULARY_UNKNOWN)
 
         # 2. Record lookup.
         target = None
@@ -4552,7 +4593,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 break
         if target is None:
             _refuse("elicitation_refused",
-                    "elicitation attempted on unknown approval id")
+                    "elicitation attempted on unknown approval id",
+                    failure_class=_rem.FAILURE_LOOKUP)
 
         # 3. decide()'s pre-checks, via the same internal helpers --
         # pending + separation of duties + integrity digest + packet
@@ -4598,7 +4640,9 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 else _ec.DEFAULT_RATIONALE_SCHEMA)
         except _ec.ElicitationError as _exc:
             _refuse("elicitation_refused",
-                    "rationale schema rejected: %s" % (_exc,), target)
+                    "rationale schema rejected: %s" % (_exc,), target,
+                    failure_class=_rem.FAILURE_SCHEMA_INVALID,
+                    action=_rem.EXCEPTION)
         if response == "decline":
             if not isinstance(rationale, dict) or not rationale:
                 _refuse(
@@ -4606,7 +4650,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     "decline requires a non-empty schema-valid "
                     "rationale: the elicitation contract refuses "
                     "reasonless rejections",
-                    target)
+                    target,
+                    failure_class=_rem.FAILURE_RATIONALE_MISSING)
         if rationale is not None:
             try:
                 _ec.validate_rationale(rationale, _schema)
@@ -4614,7 +4659,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 _refuse("elicitation_refused",
                         "rationale failed schema validation: %s"
                         % (_exc,),
-                        target)
+                        target,
+                        failure_class=_rem.FAILURE_SCHEMA_INVALID)
 
         # 5. Secret ban: the server MUST NOT traffic secrets over the
         # elicitation channel. Fail closed -- the response is REFUSED,
@@ -4630,6 +4676,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                     "record stays pending, and the value is withheld "
                     "from this log (never echo secrets)",
                     target,
+                    failure_class=_rem.FAILURE_SECRET_DETECTED,
                     rationale_keys=sorted(rationale.keys()))
 
         # 6. Re-prompt budget: only well-formed elicitations reach
@@ -4647,6 +4694,7 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "fail-closed, the record keeps its current state"
                 % (_attempts, approval_id, _ec.MAX_ELICITATIONS),
                 target,
+                failure_class=_rem.FAILURE_BUDGET_EXHAUSTED,
                 elicitation_attempts=_attempts)
         _burned = _attempts + 1
 
