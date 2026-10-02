@@ -610,7 +610,7 @@ def _c_pin(mod):
                  "prodauth-token-expired", "prodauth-token-invalid")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 8 and once:
-        return ("HELD", "1493 literals, unique, 0 dups, 8 new exactly once")
+        return ("HELD", "1494 literals, unique, 0 dups, 8 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

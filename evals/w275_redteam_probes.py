@@ -57,7 +57,7 @@ import gov.attestors as at                             # noqa: E402
 import gov.image_text as it                            # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1493  # Wave-276 F294 closure: +1 code
+TAXONOMY_PIN = 1494  # Wave-276 F294 closure: +1 code
 # (provlabel-mixed-provenance). Value-only repoint; the pin still
 # counts raw "code" literals in gov/decision_codes.py.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -84,7 +84,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1493: 1493 unique literals"
+    return "HELD", "taxonomy pin 1494: 1493 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):

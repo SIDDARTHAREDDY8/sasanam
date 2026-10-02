@@ -355,8 +355,8 @@ class TestTaxonomyPin(unittest.TestCase):
                   encoding="utf-8") as fh:
             src = fh.read()
         literals = re.findall(r'"code": \'([^\']*)\'', src)
-        self.assertEqual(len(literals), 1493)
-        self.assertEqual(len(set(literals)), 1493)
+        self.assertEqual(len(literals), 1494)
+        self.assertEqual(len(set(literals)), 1494)
         for code in ("ceremony-v2-already-consumed",
                      "ceremony-v2-ambiguous-resume",
                      "ceremony-v2-malformed",

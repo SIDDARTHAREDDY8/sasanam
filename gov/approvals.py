@@ -4444,7 +4444,8 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         return target, entry
 
     def elicit_decision(self, approval_id, response, rationale=None,
-                        decided_by="human-operator", rationale_schema=None):
+                        decided_by="human-operator", rationale_schema=None,
+                        guardrails=None):
         """Wave-278 lane 5: tri-state elicitation decision.
 
         Thin seam over the elicitation contract
@@ -4456,6 +4457,27 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
         terminal disposition to the existing paths. ``decide()``
         itself is untouched: its behavior is byte-identical for all
         current callers.
+
+        ``guardrails`` (wave-279): optional list of
+        ``gov.tool_guardrails.ToolInputGuardrail`` evaluated over the
+        queued (tool, args) as step 3b, AFTER the pre-checks and BEFORE
+        any contract validation. The triad outcome composes with the
+        tri-state contract:
+
+        * ``allow()`` -- the elicitation proceeds untouched;
+        * ``reject_content(message)`` -- deny WITHOUT killing the run:
+          the elicitation is forced to a decline whose rationale is
+          the guard's message (validated against the rationale schema
+          like any decline rationale, chained into the audit log
+          through decide()'s existing reason logging). The decider
+          sees the refusal as a decision and can adapt;
+        * ``raise_exception()`` (or a crashing guard -- a
+          guard-internal error fails closed as a halt) -- LOUD
+          fail-closed refusal with the distinct coded verdict
+          ``tool-guardrail-tripwire``, audited before the raise.
+
+        Additive: ``guardrails=None`` (default) leaves every path
+        byte-identical.
 
         ``response`` must be exactly ``"accept"`` | ``"decline"`` |
         ``"cancel"``. ``rationale`` is a flat dict validated against
@@ -4589,6 +4611,36 @@ class ApprovalQueue(ApprovalQueueRiskMixin):
                 "elicitation refused: the decision packet failed "
                 "re-verification (tampered after display)",
                 target)
+
+        # 3b. Tool guardrails (wave-279, optional): per-approval input
+        # guardrails over the queued (tool, args) -- the
+        # allow/reject_content/raise_exception triad from
+        # gov.tool_guardrails, evaluated AFTER the pre-checks and BEFORE
+        # contract validation, so a guard verdict is itself governed by
+        # the rationale schema + secret ban below. Each guard run emits
+        # its tripwire record into the audit log via self._log.
+        if guardrails is not None:
+            from gov import tool_guardrails as _tg
+            _gdata = _tg.ToolInputGuardrailData(
+                tool_name=target.get("tool"),
+                tool_arguments=dict(target.get("args") or {}))
+            try:
+                _gverdict = _tg.run_input_guardrails(
+                    guardrails, _gdata,
+                    emit=lambda _rec: self._log(_rec))
+            except _tg.ToolGuardrailTripwireTriggered as _gxc:
+                _refuse("tool-guardrail-tripwire",
+                        "tool guardrail halted the elicitation: %s"
+                        % (_gxc,), target)
+            if _gverdict.outcome == "reject_content":
+                # Deny WITHOUT killing the run: force a decline whose
+                # rationale is the guard's message. Step 4 validates it
+                # against the rationale schema like any other decline
+                # rationale (fail-closed), step 5's secret ban still
+                # applies, and decide() chains it into the audit log.
+                response = "decline"
+                rationale = {"reason": _gverdict.message,
+                             "category": "policy"}
 
         # 4. Rationale schema + contract. Failed validation refuses
         # WITHOUT burning the re-prompt budget.

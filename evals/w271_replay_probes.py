@@ -490,7 +490,7 @@ def _c_pin(mod):
                  "replay-unverifiable-tool-digest")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 7 and once:
-        return ("HELD", "1493 literals, unique, 0 dups, 7 new exactly once")
+        return ("HELD", "1494 literals, unique, 0 dups, 7 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

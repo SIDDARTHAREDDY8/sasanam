@@ -50,7 +50,7 @@ else:
 # substring (wave-260: dict dedup hides double-inserted blocks; the
 # bare substring also matches 2 helper-function occurrences in
 # decision_codes.py). The merge coordinator owns the global pin.
-TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 
 def _pin_check():
@@ -67,7 +67,7 @@ def _pin_check():
     missing = [c for c in _CEREMONY_V2_CODES if c not in literals]
     if missing:
         return "BREAK", "ceremony-v2 codes missing: %r" % (missing,)
-    return "HELD", "taxonomy pin 1493: 1493 unique literals, 11 ceremony-v2-* present"
+    return "HELD", "taxonomy pin 1494: 1493 unique literals, 11 ceremony-v2-* present"
 
 
 _CEREMONY_V2_CODES = (

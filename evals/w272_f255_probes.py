@@ -41,7 +41,7 @@ if REPO_ROOT not in sys.path:
 from gov import bundle_scan as _bs  # noqa: E402
 from gov import skill_admission as _sa  # noqa: E402
 
-TAXONOMY_PIN = 1493  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1494  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 SINK_CODE = "bundlescan-rce-global"
 UNKNOWN_CODE = "bundlescan-unknown-global"
