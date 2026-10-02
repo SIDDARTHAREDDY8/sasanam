@@ -8703,6 +8703,33 @@ close-when for arbitrary encodings that does not demand the impossible
 
 **Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
 
+**Closure record (2026-10-02, wave-295 lane 1):**
+- `_scan_value` is now tristate: True = secret found, False = fully
+  scanned and clean, None = scan could not complete within the declared
+  bounds (nesting deeper than `MAX_SECRET_DEPTH`, or bytes left to scan
+  after the 64KB budget is exhausted). A None outcome is never treated
+  as clean.
+- `check_call` refuses fail-closed with the new code
+  `toolcall-secret-scan-incomplete` when the scan is incomplete
+  (documented choice: the refusal reason is genuinely different from a
+  detected secret -- unevaluatable, not found -- so operators can
+  distinguish a tripped tripwire from a missed scan). A detected secret
+  still refuses `toolcall-secret-in-args`.
+- New battery `evals/w295_f365_probes.py`: base 4 BREAK / 8 HELD
+  (the two defect probes, a deep-clean-but-unevaluatable probe, and the
+  1743 pin) -> fixed 0 BREAK / 12 HELD / 0 ERROR under staging and
+  `env -u GOV_DEPLOYMENT_MODE`; depth-1 green checks
+  `w293_tool_rules` and `w294_redteam` green (F365 probes flipped to
+  HELD; only stale lane-local pin/repin BREAKs remain pending the merge
+  repoint).
+- Taxonomy 1742 -> 1743 (+1 `toolcall-secret-scan-incomplete`, at its
+  true sorted position); raw literals 1743/1743/0 sorted.
+- All three close-when criteria met. Adjacent batteries green.
+- Residuals unchanged: base64-encoded PEM and split-across-values
+  secrets still evade the bounded pattern set (inherent, documented,
+  not falsifiable).
+- **Status: CLOSED.**
+
 ## F366: key_succession.advance(record=...) is not atomic -- a malformed advance record poisons the ceremony (LOW)
 
 **Cells:** wave-294 independent red-team, 2026-10-02. Standing regression pins:
@@ -8744,7 +8771,7 @@ stay green.
 
 **Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
 
-Next free finding: **F367**. **Open findings: F365, F366.** (F364 filed
+Next free finding: **F367**. **Open findings: F366.** (F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;

@@ -416,7 +416,7 @@ def probe_no_new_decision_codes():
     name = "no-new-decision-codes"
     try:
         from gov import decision_codes as dc  # noqa: E402
-        if len(dc.TAXONOMY) != 1742:
+        if len(dc.TAXONOMY) != 1743:  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
             return _broken(name, "taxonomy pin moved: %d (wave-280 merge pin was 1541; wave-281 lane 9 adds 10 guardplugin-*)"
                            % len(dc.TAXONOMY))
         return _held(name, "pin stays 1579; no new refusal idioms")

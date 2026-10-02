@@ -40,7 +40,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-286 merge: pin 1641 -> 1660; Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*) (+1 manifest-regex-unsafe
 # +1 keyset-pin-key-invalid +6 receipt-* +11 toolcall-*). This lane adds
 # no decision codes: the fix reuses existing anchor-* codes.
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _results = []
 

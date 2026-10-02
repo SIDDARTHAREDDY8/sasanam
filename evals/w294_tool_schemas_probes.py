@@ -45,7 +45,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-294 lane 4: pin 1730 -> 1734 (+4 toolcall-schema-*).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 try:
     from gov import tool_schemas as TS

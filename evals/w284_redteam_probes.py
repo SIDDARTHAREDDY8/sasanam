@@ -61,7 +61,7 @@ import w283_redteam_probes as _W283  # noqa: E402
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-283 merge: pin 1579 -> 1587 (+2 finding-* +6 inventory-*).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _results = []
 

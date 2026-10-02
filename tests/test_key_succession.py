@@ -371,8 +371,8 @@ class DecisionCodeTest(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(__file__), "..",
                                 "gov", "decision_codes.py")).read()
         codes = _re.findall(r"\"code\":\s*'([a-z][a-z0-9-_.]*)'", src)
-        self.assertEqual(len(codes), 1742)
-        self.assertEqual(len(set(codes)), 1742)
+        self.assertEqual(len(codes), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
+        self.assertEqual(len(set(codes)), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
         self.assertEqual(codes, sorted(codes))
 
 

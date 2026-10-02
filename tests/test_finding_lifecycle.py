@@ -310,7 +310,7 @@ class FindingsMdTest(unittest.TestCase):
         # parse exceptions on corrupt bundle files); F360 closed
         # 2026-10-02, wave-293 lane 1 (all four parse sites refuse
         # coded OfflineBundleError; w293_f360 0 BREAK / 10 HELD;
-        # w292_redteam 0 BREAK; taxonomy pin 1742 unchanged);
+        # w292_redteam 0 BREAK; taxonomy pin 1743 unchanged);
         # F361-F363 filed then closed 2026-10-02, wave-293 lane 6
         # (uncoded-exception sweep of wave-292 modules: revocation_status
         # verify seams, verify_monitor_report, digest_of circular
@@ -322,7 +322,7 @@ class FindingsMdTest(unittest.TestCase):
         # F364 closed 2026-10-02, wave-294 lane 1 (gate coverage bound
         # to the policy demand: uncovered demand refuses coded
         # revocation-status-unverifiable; w294_f364 0 BREAK / 8 HELD;
-        # w293_redteam 0 BREAK; taxonomy pin 1742 unchanged).
+        # w293_redteam 0 BREAK; taxonomy pin 1743 unchanged).
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",

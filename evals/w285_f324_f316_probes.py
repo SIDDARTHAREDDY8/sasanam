@@ -38,7 +38,7 @@ from gov import finding_lifecycle as fl
 from _w284_helpers import raising_spec
 
 # Wave-285 lane 2: pin 1621 -> 1622 (+1 campaign-produces-suppressed).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 
 def _check(name, fn):

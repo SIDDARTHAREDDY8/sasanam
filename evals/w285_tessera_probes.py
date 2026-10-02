@@ -45,7 +45,7 @@ os.environ.setdefault("TMPDIR", "/var/tmp/g285-tessera")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Wave-285 lane 7: pin 1621 -> 1628 (+7 anchor-* codes).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _RESULTS = []
 

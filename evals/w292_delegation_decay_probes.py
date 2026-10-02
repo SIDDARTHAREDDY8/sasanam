@@ -57,7 +57,7 @@ from gov import ed25519  # noqa: E402
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _results = []
 
@@ -150,7 +150,7 @@ def p_taxonomy_pin():
             ok = False
     # delegation-expired is reused, not re-minted (lane-6 precedent).
     if ok:
-        _record("pin-taxonomy", "HELD", "1742/1742/0 sorted")
+        _record("pin-taxonomy", "HELD", "1743/1743/0 sorted")
     else:
         _record("pin-taxonomy", "BREAK",
                 "taxonomy pin mismatch: %d literals" % len(codes))

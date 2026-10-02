@@ -51,7 +51,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-290 merge: pin 1706 -> 1710 (+4 provenance-rebuild-*). No new
 # codes minted here (existing challenge/posture codes reused).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _results = []
 
@@ -86,7 +86,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1742/1742/0 sorted")
+    _record("pin-taxonomy", "HELD", "1743/1743/0 sorted")
 
 
 # ---------------------------------------------------------------------------

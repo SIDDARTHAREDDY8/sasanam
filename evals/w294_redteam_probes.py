@@ -38,7 +38,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
         sys.path.insert(0, _p)
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
-TAXONOMY_PIN = 1742  # Wave-293 merge: 1723 + 3 toolcall-* + 4 keysuccession-*
+TAXONOMY_PIN = 1743  # Wave-293 merge: 1723 + 3 toolcall-* + 4 keysuccession-*; Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 _RESULTS = []
 

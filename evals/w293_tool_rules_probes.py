@@ -43,7 +43,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-293 lane 2: pin 1723 -> 1726 (+3 toolcall-*: sequence-violated,
 # secret-in-args, rule-compile-invalid).
-TAXONOMY_PIN = 1742
+TAXONOMY_PIN = 1743  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
 
 try:
     from gov import tool_rules as TR

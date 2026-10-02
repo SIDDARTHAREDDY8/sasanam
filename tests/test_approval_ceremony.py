@@ -355,8 +355,8 @@ class TestTaxonomyPin(unittest.TestCase):
                   encoding="utf-8") as fh:
             src = fh.read()
         literals = re.findall(r'"code": \'([^\']*)\'', src)
-        self.assertEqual(len(literals), 1742)
-        self.assertEqual(len(set(literals)), 1742)
+        self.assertEqual(len(literals), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
+        self.assertEqual(len(set(literals)), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
         for code in ("ceremony-v2-already-consumed",
                      "ceremony-v2-ambiguous-resume",
                      "ceremony-v2-malformed",

@@ -22,8 +22,11 @@ Mechanisms adapted:
   silently changing decisions under a still-valid digest.
 * Secret-shape gate -- secret-looking arg VALUES (bounded pattern set)
   and secret-shaped arg NAMES carrying non-empty values refuse coded
-  ``toolcall-secret-in-args``; secrets travel via typed context, never
-  tool args.
+  ``toolcall-secret-in-args``; args whose secret scan cannot complete
+  within the declared bounds (nesting depth 4 / 64KB scan budget)
+  refuse coded ``toolcall-secret-scan-incomplete`` (F365) -- the bounds
+  are fail-closed, never silently allow. Secrets travel via typed
+  context, never tool args.
 
 Composition, not duplication:
 * This module decides SEQUENCE (may this call happen now, in this
@@ -77,6 +80,7 @@ MAX_SECRET_DEPTH = 4
 #: Decision-code vocabulary (registered in gov/decision_codes.py).
 SEQUENCE_VIOLATED = "toolcall-sequence-violated"
 SECRET_IN_ARGS = "toolcall-secret-in-args"
+SCAN_INCOMPLETE = "toolcall-secret-scan-incomplete"
 RULE_COMPILE_INVALID = "toolcall-rule-compile-invalid"
 
 __all__ = [
@@ -165,14 +169,32 @@ _SECRET_NAME_RE = re.compile(
 
 
 def _scan_value(value, depth, budget):
-    """True iff a secret-shaped string occurs in value (bounded walk)."""
-    if depth > MAX_SECRET_DEPTH or budget[0] <= 0:
-        return False
+    """Scan value for secret-shaped strings (bounded walk).
+
+    Returns True if a secret-shaped string is found, False if the value
+    was FULLY scanned and is clean, and None if the scan could not
+    complete within the declared bounds (nesting deeper than
+    MAX_SECRET_DEPTH, or bytes left to scan after the 64KB budget is
+    exhausted). A None outcome is never treated as clean: the caller
+    refuses fail-closed, because unevaluatable input must not be
+    silently allowed (F365).
+    """
+    if depth > MAX_SECRET_DEPTH:
+        # Structure continues beyond the scan bound: its content is
+        # unevaluatable, not clean.
+        return None
     if isinstance(value, str):
+        if budget[0] <= 0:
+            # Bytes remain to scan but no budget: unevaluatable.
+            return None
+        truncated = len(value) > budget[0]
         chunk = value[:budget[0]]
         budget[0] -= len(chunk)
-        return _SECRET_VALUE_RE.search(chunk) is not None
+        if _SECRET_VALUE_RE.search(chunk) is not None:
+            return True
+        return None if truncated else False
     if isinstance(value, dict):
+        incomplete = False
         for key, item in value.items():
             if isinstance(key, str) and _SECRET_NAME_RE.match(key):
                 if item is None:
@@ -185,18 +207,28 @@ def _scan_value(value, depth, budget):
                 # name is still secret-shaped (fail-closed).
                 if item != [] and item != {} and item != ():
                     return True
-            if _scan_value(item, depth + 1, budget):
+            sub = _scan_value(item, depth + 1, budget)
+            if sub is True:
                 return True
-        return False
+            if sub is None:
+                incomplete = True
+        return None if incomplete else False
     if isinstance(value, (list, tuple)):
+        incomplete = False
         for item in value:
-            if _scan_value(item, depth + 1, budget):
+            sub = _scan_value(item, depth + 1, budget)
+            if sub is True:
                 return True
-        return False
+            if sub is None:
+                incomplete = True
+        return None if incomplete else False
     return False
 
 
 def _args_carry_secret(args):
+    """Tristate secret scan of args: True = secret found, False = fully
+    scanned and clean, None = scan incomplete within the declared bounds
+    (fail-closed at the caller)."""
     return _scan_value(args, 0, [MAX_SECRET_SCAN_BYTES])
 
 
@@ -433,7 +465,8 @@ class CompiledToolRuleSet:
         tool, secret-shaped args, sequence violation, or an input the
         grammar cannot evaluate (fail-closed: the declaration is
         closed-world) -- raises coded :class:`ToolRuleError`
-        (``toolcall-sequence-violated`` / ``toolcall-secret-in-args``).
+        (``toolcall-sequence-violated`` / ``toolcall-secret-in-args`` /
+        ``toolcall-secret-scan-incomplete``).
         """
         # 1. Input shape (fail-closed: unevaluatable input violates the
         #    closed declaration).
@@ -460,11 +493,25 @@ class CompiledToolRuleSet:
 
         # 2. Secret-shape gate (before sequence: data-leak prevention is
         #    the tighter bound; order is deterministic and documented).
-        if _args_carry_secret(args):
+        #    The scan is tristate: a secret FOUND refuses coded
+        #    toolcall-secret-in-args; a scan that could NOT COMPLETE
+        #    within the declared bounds (depth 4 / 64KB budget) refuses
+        #    coded toolcall-secret-scan-incomplete -- unevaluatable input
+        #    is fail-closed, never silently allowed (F365).
+        scan = _args_carry_secret(args)
+        if scan is True:
             raise ToolRuleError(
                 "tool-call refused: secret-shaped value in args for tool "
                 "%r; secrets travel via typed context, never tool args"
                 % (tool,), code=SECRET_IN_ARGS)
+        if scan is None:
+            raise ToolRuleError(
+                "tool-call refused: the secret-shape scan of the args for "
+                "tool %r could not complete within its declared bounds "
+                "(nesting depth %d / %d-byte scan budget); unevaluatable "
+                "input is refused fail-closed"
+                % (tool, MAX_SECRET_DEPTH, MAX_SECRET_SCAN_BYTES),
+                code=SCAN_INCOMPLETE)
 
         # 3. Closed inventory: undeclared tools do not exist.
         if tool not in self._doc["tools"]:

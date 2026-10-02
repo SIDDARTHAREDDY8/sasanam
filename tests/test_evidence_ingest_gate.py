@@ -224,8 +224,8 @@ class TestTaxonomyPin(unittest.TestCase):
         codes = re.findall(
             r'"code":\s*[\'"]([a-z][a-z0-9-_.]*)[\'"]', src)
         dups = [c for c, n in Counter(codes).items() if n > 1]
-        self.assertEqual(len(codes), 1742)
-        self.assertEqual(len(set(codes)), 1742)
+        self.assertEqual(len(codes), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
+        self.assertEqual(len(set(codes)), 1743)  # Wave-295 lane 1: pin 1742 -> 1743 (+1 toolcall-secret-scan-incomplete)
         self.assertEqual(dups, [])
         ingest = sorted(c for c in codes if c.startswith("ingest-"))
         self.assertEqual(len(ingest), 9)

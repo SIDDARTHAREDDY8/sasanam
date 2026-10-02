@@ -15223,6 +15223,20 @@ TAXONOMY = {
         "reverify_steps": ['recompute'],
     },
 
+    'toolcall-secret-scan-incomplete': {
+        "domain": 'toolcall',
+        "code": 'toolcall-secret-scan-incomplete',
+        "human": 'toolcall: the secret-shape scan of a tool call\'s args '
+                 'could not complete within its declared bounds (nesting '
+                 'depth 4 / 64KB scan budget); unevaluatable input is '
+                 'refused fail-closed rather than silently allowed, so the '
+                 'documented scan bound cannot serve as a bypass -- '
+                 'refused fail-closed before the call executes',
+        "severity": 'high',
+        "evidence_kinds_required": ['refusal-record'],
+        "reverify_steps": ['recompute'],
+    },
+
     'toolcall-sequence-violated': {
         "domain": 'toolcall',
         "code": 'toolcall-sequence-violated',
