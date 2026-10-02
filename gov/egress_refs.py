@@ -406,28 +406,43 @@ def _relay_inner_target(query):
     return None
 
 
-# Decode rounds for the digest leg: single- and double-encoded tokens
-# are defeated; decoding stops early once stable (F289).
-_DECODE_ROUNDS = 3
+# Decode work budget for the digest leg (F296): decoding runs to
+# stability (the attacker's server decodes to stability), and each
+# round costs O(len). The budget caps cumulative work so hostile
+# nesting depth cannot DoS the seam (F290 lesson); benign refs
+# stabilize in 1-2 rounds, far under budget. Exhaustion fails closed.
+_DECODE_WORK_BUDGET = 65536
 
 
 def _canon_text(text, plus):
-    """Bounded iterative percent-decode to the server-side view.
+    """Percent-decode to the server-side (stable) view.
 
     ``plus=True`` uses form-query semantics (``unquote_plus``: ``+``
     means space); ``plus=False`` uses ``unquote`` (``+`` is literal).
-    Decodes repeatedly until the value stops changing or the round cap
-    is hit, so double-encoding cannot re-arm (F289). Never raises."""
+    Decodes repeatedly until the value stops changing -- the attacker's
+    collection server decodes to stability, so any round cap below
+    stability leaves an evasion gap (F296: 4x encoding defeated the old
+    3-round cap while staying under the size budget).
+
+    Termination and cost: ``unquote``/``unquote_plus`` never lengthen
+    the string, so stability is always reached; cumulative decode work
+    is capped at ``_DECODE_WORK_BUDGET`` characters. Returns None when
+    the stable view cannot be reached within budget -- a fail-closed
+    signal the caller must refuse on. Never raises.
+    """
     try:
         cur = text or ""
         decode = (urllib.parse.unquote_plus if plus
                   else urllib.parse.unquote)
-        for _ in range(_DECODE_ROUNDS):
+        work = 0
+        while True:
             nxt = decode(cur)
+            work += len(cur)
             if nxt == cur:
-                break
+                return cur
+            if work > _DECODE_WORK_BUDGET:
+                return None
             cur = nxt
-        return cur
     except Exception:  # noqa: BLE001 -- never raise
         return text or ""
 
@@ -465,20 +480,28 @@ def _data_shaped(query, fragment, policy):
     view is the server-side view the digest list must be compared
     against. Query decoding uses form semantics (``unquote_plus``),
     fragment decoding uses ``unquote`` (``+`` is literal in fragments).
-    Decoding is bounded-iterative (default 3 rounds) so single- AND
-    double-encoded tokens cannot re-arm; it stops early when stable.
-    The size leg stays on the RAW query/fragment: percent-encoding
-    only inflates, so raw is the conservative (never smaller) view."""
-    dec_q = _canon_text(query, plus=True)
-    dec_f = _canon_text(fragment, plus=False)
-    tokens = _payload_tokens(dec_q, dec_f)
-    hit = _digest_matches(tokens, policy)
-    if hit is not None:
-        return "sensitive digest match in ref payload"
+    Decoding runs to STABILITY -- the attacker's server decodes to
+    stability, so any round cap below stability is an evasion gap (F296);
+    cumulative decode work is capped and exhaustion fails closed.
+    The size leg stays on the RAW query/fragment and is evaluated
+    FIRST: percent-encoding only inflates, so raw is the conservative
+    (never smaller) view, and refusing oversized raws up front keeps
+    decode work bounded even before the work budget applies."""
     if len(query) + len(fragment) > policy.max_ref_payload_chars:
         return ("ref payload %d chars over budget %d"
                 % (len(query) + len(fragment),
                    policy.max_ref_payload_chars))
+    dec_q = _canon_text(query, plus=True)
+    dec_f = _canon_text(fragment, plus=False)
+    if dec_q is None or dec_f is None:
+        # The server-side (stable) view is unreachable within the
+        # decode work budget: fail closed rather than screening a
+        # partially-decoded view the digest leg could miss (F296).
+        return "ref payload undecodable within budget (fail-closed)"
+    tokens = _payload_tokens(dec_q, dec_f)
+    hit = _digest_matches(tokens, policy)
+    if hit is not None:
+        return "sensitive digest match in ref payload"
     return None
 
 

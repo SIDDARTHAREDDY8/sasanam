@@ -35,7 +35,7 @@ except Exception:  # red phase: module not written yet
     decision_codes = None
     HAVE_MODULE = False
 
-TAXONOMY_PIN = 1485  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 # pin 1177 -> 1186 (+9 callback-*).
 
 EXPECTED_CALLBACK_CODES = (

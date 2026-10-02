@@ -23,7 +23,7 @@ sys.path.insert(0, REPO)
 import gov.coverage_ledger as cl  # noqa: E402
 from gov import decision_codes as dc  # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-275 lane D: pin 1485 -> 1485 (+5 coverage-*).
+TAXONOMY_PIN = 1486  # Wave-275 lane D: pin 1485 -> 1485 (+5 coverage-*).
 
 T0 = "2026-10-01T12:00:00+00:00"
 T1 = "2026-10-01T13:00:00+00:00"
@@ -228,6 +228,17 @@ class EmissionTest(unittest.TestCase):
         self.assertEqual(rep["mode"], "monitor")
         self.assertIn("t1", rep["techniques"])
         self.assertEqual(rep["techniques"]["t1"]["score"], 3)
+
+    def test_duplicate_denominator_deduplicated_f297(self):
+        # F297: a repeated technique id must not inflate the percentage.
+        led = _ledger_with_scored()
+        rep = led.emit_coverage(denominator=["t1", "t1", "t1", "t2"],
+                                proof_method="x")
+        self.assertEqual(rep["denominator"], 2)
+        self.assertEqual(rep["duplicates_removed"], 2)
+        self.assertEqual(rep["covered"], 1)
+        self.assertAlmostEqual(rep["percentage"], 50.0)
+        self.assertEqual(list(rep["techniques"].keys()), ["t1", "t2"])
 
     def test_declare_prevention_always_refused(self):
         led = _ledger_with_scored()

@@ -3622,6 +3622,18 @@ TAXONOMY = {
         "evidence_kinds_required": ['audit-record'],
         "reverify_steps": ['recompute'],
     },
+    'coverage-refused-future-dated-entry': {
+        "domain": 'coverage',
+        "code": 'coverage-refused-future-dated-entry',
+        "human": 'coverage ledger: a score entry dated more than the '
+                 'clock-skew tolerance in the future was refused; a '
+                 'far-future stamp would brick the logbook, since every '
+                 'later honest append would refuse as backdated '
+                 'relative to it',
+        "severity": 'medium',
+        "evidence_kinds_required": ['audit-record'],
+        "reverify_steps": ['recompute'],
+    },
     'coverage-refused-monitor-implies-prevention': {
         "domain": 'coverage',
         "code": 'coverage-refused-monitor-implies-prevention',

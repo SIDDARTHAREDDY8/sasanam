@@ -67,7 +67,7 @@ import gov.sentinel_substitution as sent          # noqa: E402
 import gov.ed25519 as _ed                         # noqa: E402
 from gov.signing import Ed25519Signer             # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
+TAXONOMY_PIN = 1486  # Wave-274 merge: pin 1458 -> 1477 (+3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -96,7 +96,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1485: 1485 unique literals"
+    return "HELD", "taxonomy pin 1486: 1486 unique literals"
 
 
 # ---------------------------------------------------------------------------
@@ -741,14 +741,19 @@ _PROBES = [
     # (id, expected, fn)
     ("pin-taxonomy", "HELD", _pin_check),
     # egress_refs: F288 / F289 (closed 2026-10-01, wave-275 lane A).
+    # ASI: ASI02
     ("eg01-scheme-relative-bypass", "HELD",
      eg01_scheme_relative_bypass),
+    # ASI: ASI02
     ("eg02-pct-encoded-digest-evasion", "HELD",
      eg02_pct_encoded_digest_evasion),
+    # ASI: ASI02
     ("eg03-relay-leg-decodes-inner", "HELD",
      eg03_relay_leg_decodes_inner),
+    # ASI: ASI02
     ("eg04-absolute-direct-token-refused", "HELD",
      eg04_absolute_direct_token_refused),
+    # ASI: ASI02
     ("eg05-relative-ref-stays-allowed", "HELD",
      eg05_relative_ref_stays_allowed),
     # image_text: F290 (closed wave-275).
@@ -764,19 +769,26 @@ _PROBES = [
     ("gh04-monitor-never-denies", "HELD",
      gh04_monitor_never_denies),
     # sandbox real-credential boundary screen.
+    # ASI: ASI05
     ("sb01-oracle-contract", "HELD",
      sb01_oracle_contract),
+    # ASI: ASI05
     ("sb02-boundary-refuses-real-env", "HELD",
      sb02_boundary_refuses_real_env),
+    # ASI: ASI05
     ("sb03-vault-shaped-non-oracle-rejected", "HELD",
      sb03_vault_shaped_non_oracle_rejected),
     # bundle_delivery: delegations + expired bootstrap.
+    # ASI: ASI03
     ("bd01-terminating-shadow-refused", "HELD",
      bd01_terminating_shadow_refused),
+    # ASI: ASI03
     ("bd02-delegation-cycle-refused", "HELD",
      bd02_delegation_cycle_refused),
+    # ASI: ASI03
     ("bd03-expired-bootstrap-single-hop", "HELD",
      bd03_expired_bootstrap_single_hop),
+    # ASI: ASI03
     ("bd04-expired-bootstrap-rollback-refused", "HELD",
      bd04_expired_bootstrap_rollback_refused),
     # evidence_fanout: backpressure accounting.
@@ -787,10 +799,13 @@ _PROBES = [
     ("fo03-priority-bypass-reliable", "HELD",
      fo03_priority_bypass_reliable),
     # tool_grant v2: F278 deny-cache binding, F285 ceremony.
+    # ASI: ASI02
     ("tg01-deny-cache-binds-proof", "HELD",
      tg01_deny_cache_binds_proof),
+    # ASI: ASI02
     ("tg02-deny-cache-binds-context", "HELD",
      tg02_deny_cache_binds_context),
+    # ASI: ASI03
     ("tg03-exchange-holder-seed-ceremony", "HELD",
      tg03_exchange_holder_seed_ceremony),
 ]

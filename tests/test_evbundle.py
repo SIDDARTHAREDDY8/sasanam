@@ -488,9 +488,9 @@ class TaxonomyTests(unittest.TestCase):
         with open(dc.__file__, encoding="utf-8") as f:
             src = f.read()
         literals = re.findall(r'"code": \'([^\']+)\'', src)
-        self.assertEqual(len(literals), 1485)
-        self.assertEqual(len(set(literals)), 1485)  # zero duplicates
-        self.assertEqual(len(dc.TAXONOMY), 1485)
+        self.assertEqual(len(literals), 1486)
+        self.assertEqual(len(set(literals)), 1486)  # zero duplicates
+        self.assertEqual(len(dc.TAXONOMY), 1486)
         for code, _sev in EXPECTED_EVBUNDLE_CODES:
             self.assertEqual(src.count("\"code\": '%s'" % code), 1,
                              "code literal %s must appear exactly once"

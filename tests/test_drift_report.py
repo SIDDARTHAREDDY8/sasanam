@@ -2,7 +2,7 @@
 
 Conventions: explicit `now` everywhere (drift_report is deterministic
 given now); module-level staging default is not needed (no deployment
-gate in this module); pin 1485 = 1477 (wave-274 merge) + 5 new codes (coverage-*)
+gate in this module); pin 1486 = 1477 (wave-274 merge) + 5 new codes (coverage-*)
 (3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
 """
 
@@ -20,7 +20,7 @@ if REPO not in sys.path:
 from gov import drift_report as dr  # noqa: E402
 from gov import gate_hardening as gh  # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 _NOW = 1700000000
 

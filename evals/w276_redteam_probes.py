@@ -78,7 +78,7 @@ import gov.instruction_provenance as prov              # noqa: E402
 import gov.attestors as at                             # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-275 merge pin; this battery adds no codes.
+TAXONOMY_PIN = 1486  # Wave-275 merge pin; this battery adds no codes.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -103,7 +103,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1485: 1485 unique literals"
+    return "HELD", "taxonomy pin 1486: 1486 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -179,25 +179,28 @@ def eg03_quad_encoded_evasion():
     the 3-round decode cap) and the size leg (raw query far under the
     512-char budget); the attacker's server recovers the secret by
     decoding 4x. The F289 residual analysis claimed the size leg
-    backstops deep encoding -- it does not for tokens with few
-    special chars. BREAK pins the defect."""
+    backstops deep encoding -- it did not for tokens with few
+    special chars. CLOSED 2026-10-01, wave-277 lane f296: _canon_text now
+    decodes to stability (the server's view) with a total-work budget,
+    failing closed on budget exhaustion; the raw size leg is evaluated
+    first. The probe now asserts the closure: 4x-encoded token refused."""
     secret = "ab/cd/ef_gh-12"  # 13 chars; survives tokenization decoded
     pol = _egress_policy_for(secret)
     enc = secret
     for _ in range(4):
         enc = urllib.parse.quote(enc, safe="")
     raw = "token=" + enc
-    verdict, _ = _screen_one("https://evil.example.com/c?" + raw, pol)
+    verdict, code = _screen_one("https://evil.example.com/c?" + raw, pol)
     # Attacker's server view: decode until stable (attacker-controlled).
     cur, prev = enc, None
     while cur != prev:
         prev, cur = cur, urllib.parse.unquote_plus(cur)
     server_recovers = (cur == secret)
-    if verdict == "allow" and server_recovers and len(raw) <= 512:
-        return ("BREAK", "4x-encoded token allowed (rawlen=%d); "
-                "server recovers the secret" % len(raw))
-    return ("HELD", "4x encoding defeated or oversized "
-            "(verdict=%r rawlen=%d)" % (verdict, len(raw)))
+    if verdict == "refuse" and code == "egress-ref-data-exfil":
+        return ("HELD", "4x-encoded token refused (rawlen=%d, server would "
+                "recover=%s)" % (len(raw), server_recovers))
+    return ("BREAK", "4x encoding evaded: %r/%r rawlen=%d"
+            % (verdict, code, len(raw)))
 
 
 def eg03b_triple_encoded_held():
@@ -517,26 +520,36 @@ def cl05_chain_tamper_refused():
 
 PROBES = [
     # egress_refs: F288/F289 closures + F296
+    # ASI: ASI02
     ("eg01-scheme-relative-held", "HELD", eg01_scheme_relative_held),
+    # ASI: ASI02
     ("eg01b-genuine-relative-allowed", "HELD", eg01b_genuine_relative_allowed),
+    # ASI: ASI02
     ("eg02-double-encoded-held", "HELD", eg02_double_encoded_held),
-    ("eg03-quad-encoded-digest-evasion", "BREAK", eg03_quad_encoded_evasion),
+    # ASI: ASI02
+    ("eg03-quad-encoded-digest-evasion", "HELD", eg03_quad_encoded_evasion),
+    # ASI: ASI02
     ("eg03b-triple-encoded-held", "HELD", eg03b_triple_encoded_held),
+    # ASI: ASI02
     ("eg05-plus-overdecode-residual", "HELD", eg05_plus_overdecode_residual),
     # image_text: F290 + F292 (F292 closed wave-276; re-pinned BREAK->HELD)
     ("im01-dos-bounded", "HELD", im01_dos_bounded),
+    # ASI: ASI01
     ("dt09-trusted-skips-screen", "HELD", dt09_trusted_skips_screen),
     # gate_hardening: F291 + residual
     ("gh01-deepcopy-held", "HELD", gh01_deepcopy_held),
     ("gh02-scan-deepcopy-held", "HELD", gh02_scan_deepcopy_held),
     ("gh03-scan-sort-residual", "HELD", gh03_scan_sort_residual),
     # F293/F294/F295 (all closed wave-276; re-pinned BREAK->HELD)
+    # ASI: ASI06 primary, ASI01 secondary
     ("rr01-transform-advisory", "HELD", rr01_transform_advisory),
+    # ASI: ASI01 primary, ASI03 secondary
     ("pv01-piggyback-allowed", "HELD", pv01_piggyback_allowed),
+    # ASI: ASI03
     ("at01-bool-int-conflation", "HELD", at01_bool_int_conflation),
-    # coverage_ledger: F297/F298 + defenses
-    ("cl01-duplicate-denominator", "BREAK", cl01_duplicate_denominator),
-    ("cl02-future-dated-bricks-logbook", "BREAK", cl02_future_dated_bricks_logbook),
+    # coverage_ledger: F297/F298 (both closed wave-277; re-pinned BREAK->HELD)
+    ("cl01-duplicate-denominator", "HELD", cl01_duplicate_denominator),
+    ("cl02-future-dated-bricks-logbook", "HELD", cl02_future_dated_bricks_logbook),
     ("cl03-ingest-honest", "HELD", cl03_ingest_honest),
     ("cl04-prevention-refused", "HELD", cl04_prevention_refused),
     ("cl05-chain-tamper-refused", "HELD", cl05_chain_tamper_refused),
@@ -584,7 +597,7 @@ def green_check():
 
 def main():
     pin_verdict, pin_note = _pin_check()
-    _RESULTS.append(("pin-taxonomy-1485", "HELD", pin_verdict,
+    _RESULTS.append(("pin-taxonomy-1486", "HELD", pin_verdict,
                      pin_verdict == "HELD", pin_note))
     for pid, expected, fn in PROBES:
         _run(pid, expected, fn)

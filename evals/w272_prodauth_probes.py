@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 1485  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32
@@ -610,7 +610,7 @@ def _c_pin(mod):
                  "prodauth-token-expired", "prodauth-token-invalid")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 8 and once:
-        return ("HELD", "1485 literals, unique, 0 dups, 8 new exactly once")
+        return ("HELD", "1486 literals, unique, 0 dups, 8 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

@@ -36,7 +36,11 @@ append without a key -- the fallback is this module's decision, not its).
 ``verify_chain`` re-computes every link; rewritten history refuses
 ``coverage-logbook-chain-broken``. Entries are timestamp-monotonic: a
 score dated earlier than the previous entry refuses
-``coverage-refused-backdated-entry``.
+``coverage-refused-backdated-entry``; a score dated more than
+``MAX_FUTURE_SKEW`` (5 minutes) in the future refuses
+``coverage-refused-future-dated-entry`` -- a far-future stamp would
+otherwise brick the logbook, since every later honest append would
+refuse as backdated relative to it (F298).
 
 Visibility is recorded independently of detection: a technique may be
 FULLY visible and score 0 (monitor-but-count sees it and counts it, but
@@ -63,7 +67,7 @@ tests; ``utcnow_iso`` only fills the default).
 
 import copy
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import chained_store as _cs
 from .keys import NoKeyConfiguredError
@@ -101,8 +105,20 @@ _CHAIN_DOMAIN = "coverage-ledger"
 REFUSED_NO_DENOMINATOR = "coverage-refused-no-denominator"
 REFUSED_NO_PROOF_METHOD = "coverage-refused-no-proof-method"
 REFUSED_BACKDATED_ENTRY = "coverage-refused-backdated-entry"
+REFUSED_FUTURE_DATED_ENTRY = "coverage-refused-future-dated-entry"
 REFUSED_MONITOR_IMPlIES_PREVENTION = "coverage-refused-monitor-implies-prevention"
 CHAIN_BROKEN = "coverage-logbook-chain-broken"
+
+# Clock-skew tolerance for score timestamps. A stamp modestly in the
+# future is accepted (operator/automation clock skew), but a stamp
+# beyond this bound is refused fail-closed with
+# coverage-refused-future-dated-entry: a single far-future stamp would
+# otherwise brick the technique's logbook (F298), since every later
+# honest append would refuse as "backdated" relative to it, with no
+# recovery API. The tolerance is deliberately small -- scoring "now"
+# is the normal case, and a loud refusal beats a silently poisoned
+# evidence pipeline.
+MAX_FUTURE_SKEW = timedelta(minutes=5)
 
 
 class CoverageLedgerError(Exception):
@@ -203,8 +219,13 @@ class CoverageLedger:
 
         ``scored_at`` must be timezone-aware ISO-8601 (malformed values
         are a ValueError); a stamp earlier than the previous entry
-        refuses ``coverage-refused-backdated-entry``. ``note`` is
-        optional free-text metadata covered by the entry's digest.
+        refuses ``coverage-refused-backdated-entry``; a stamp more than
+        ``MAX_FUTURE_SKEW`` in the future refuses
+        ``coverage-refused-future-dated-entry`` (F298 -- a far-future
+        stamp would otherwise brick the logbook, since every later
+        honest append would refuse as backdated relative to it).
+        ``note`` is optional free-text metadata covered by the entry's
+        digest.
         """
         tid = str(technique_id)
         if tid not in self._techniques:
@@ -219,6 +240,12 @@ class CoverageLedger:
                 "a score entry must name its proof method")
         stamp = _parse_ts(scored_at) if scored_at is not None \
             else _parse_ts(utcnow_iso())
+        if stamp > _parse_ts(utcnow_iso()) + MAX_FUTURE_SKEW:
+            raise CoverageLedgerError(
+                REFUSED_FUTURE_DATED_ENTRY,
+                "scored_at %s is more than %s in the future; refused -- "
+                "a far-future stamp would brick the logbook (F298)"
+                % (stamp.isoformat(), MAX_FUTURE_SKEW))
         book = self._techniques[tid]["logbook"]
         if book and stamp < _parse_ts(book[-1]["scored_at"]):
             raise CoverageLedgerError(
@@ -407,6 +434,10 @@ class CoverageLedger:
         ``qualified_exclusions`` -- never silently counted, never silently
         dropped. The report always carries ``prevents: False``: this
         ledger is monitor-mode and never claims prevention.
+
+        The denominator is deduplicated (first-occurrence order kept)
+        before counting: a repeated technique id is one technique, and
+        the number removed is reported as ``duplicates_removed``.
         """
         if not denominator or isinstance(denominator, str) \
                 or not isinstance(denominator, (list, tuple)):
@@ -420,6 +451,21 @@ class CoverageLedger:
                 REFUSED_NO_PROOF_METHOD,
                 "a coverage percentage requires its proof method")
         denominator = [str(t) for t in denominator]
+        # F297: deduplicate the denominator at the honesty boundary. A
+        # programmatically-built denominator (e.g. merging two technique
+        # lists) can repeat a technique id; counting each occurrence
+        # independently silently inflates the percentage, which is the
+        # dishonest evidence artifact this module exists to prevent.
+        # First-occurrence order is preserved so the detail mapping is
+        # stable; the count removed is reported, never silently dropped.
+        seen = set()
+        unique_denominator = []
+        for tid in denominator:
+            if tid not in seen:
+                seen.add(tid)
+                unique_denominator.append(tid)
+        duplicates_removed = len(denominator) - len(unique_denominator)
+        denominator = unique_denominator
         covered = []
         visible_not_detected = []
         uncovered = []
@@ -466,6 +512,7 @@ class CoverageLedger:
                 "techniques": detail,
                 "covered": len(covered),
                 "denominator": total,
+                "duplicates_removed": duplicates_removed,
                 "percentage": 100.0 * len(covered) / total,
                 "proof_method": proof_method.strip(),
                 "visible_not_detected": visible_not_detected,

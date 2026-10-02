@@ -2,7 +2,7 @@
 
 Attacks the public seams of gov/bundle_delivery.py break-first: every
 red probe asserts the attack is REFUSED with the exact coded refusal.
-Controls assert the honest paths still work. Pin 1485 (wave-273 merge:
+Controls assert the honest paths still work. Pin 1486 (wave-273 merge:
 1443 + 15 new codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 """
 import hashlib
@@ -23,7 +23,7 @@ from gov.bundle_refresh import (BundleRefresher, FetchNotFound, RefreshError,
                                 seal_role)
 from gov.signing import Ed25519Signer
 
-TAXONOMY_PIN = 1485  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
+TAXONOMY_PIN = 1486  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).
 
 FUTURE = (datetime.now(timezone.utc)
           + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -201,7 +201,7 @@ class TestDecisionCode(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry["domain"], "sandbox")
         self.assertEqual(entry["severity"], "high")
-        self.assertEqual(len(dc.TAXONOMY), 1485)  # Wave-273 lane H: +1 sandbox-*
+        self.assertEqual(len(dc.TAXONOMY), 1486)  # Wave-273 lane H: +1 sandbox-*
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@ sys.path.insert(0, REPO)
 
 import gov.instruction_provenance as prov              # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-276: +1 code (provlabel-mixed-provenance)
+TAXONOMY_PIN = 1486  # Wave-276: +1 code (provlabel-mixed-provenance)
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 _RESULTS = []
@@ -67,7 +67,7 @@ def _pin_check():
         return "BREAK", "duplicate code literals in taxonomy"
     if "provlabel-mixed-provenance" not in literals:
         return "BREAK", "provlabel-mixed-provenance missing from taxonomy"
-    return "HELD", "taxonomy pin 1485: 1485 unique literals"
+    return "HELD", "taxonomy pin 1486: 1486 unique literals"
 
 
 def _toxic_lab():
@@ -193,7 +193,7 @@ def f294f_wrapped_injection_still_routed():
 
 
 _PROBES = [
-    ("pin-taxonomy-1485", "HELD", _pin_check),
+    ("pin-taxonomy-1486", "HELD", _pin_check),
     ("f294a-piggyback-routed", "HELD", f294a_piggyback_routed),
     ("f294b-injection-alone-routed", "HELD", f294b_injection_alone_routed),
     ("f294c-user-alone-allowed", "HELD", f294c_user_alone_allowed),

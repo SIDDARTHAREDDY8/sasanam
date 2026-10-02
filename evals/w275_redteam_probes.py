@@ -57,7 +57,7 @@ import gov.attestors as at                             # noqa: E402
 import gov.image_text as it                            # noqa: E402
 import gov.ed25519 as _ed                              # noqa: E402
 
-TAXONOMY_PIN = 1485  # Wave-276 F294 closure: +1 code
+TAXONOMY_PIN = 1486  # Wave-276 F294 closure: +1 code
 # (provlabel-mixed-provenance). Value-only repoint; the pin still
 # counts raw "code" literals in gov/decision_codes.py.
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
@@ -84,7 +84,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1485: 1485 unique literals"
+    return "HELD", "taxonomy pin 1486: 1486 unique literals"
 
 
 def _png_bytes(keyword=b"Title", text=b"hello"):
@@ -318,26 +318,36 @@ def rv02_combine_precedence():
 
 
 _PROBES = [
-    ("pin-taxonomy-1485", "HELD", _pin_check),
+    ("pin-taxonomy-1486", "HELD", _pin_check),
     # decode_trust / image_text: F292 (closed wave-276 lane f292: trusted
     # path now routes through screen_image_text; re-pinned BREAK->HELD).
+    # ASI: ASI01
     ("dt09-trusted-skips-screen", "HELD", dt09_trusted_skips_screen),
+    # ASI: ASI01
     ("dt09b-screen-refuses", "HELD", dt09b_screen_refuses),
+    # ASI: ASI03
     ("dt10-no-evidence-refused", "HELD", dt10_no_evidence_refused),
     # retrieval_rail: F293 (closed wave-276 lane f293: assemble() is now
     # the enforcement seam; TRANSFORM/BLOCK verdicts applied per chunk;
     # re-pinned BREAK->HELD).
+    # ASI: ASI06 primary, ASI01 secondary
     ("rr01-transform-advisory", "HELD", rr01_transform_advisory),
+    # ASI: ASI06 primary, ASI01 secondary
     ("rr02-assemble-unmasked", "HELD", rr02_assemble_unmasked),
+    # ASI: ASI06
     ("rr03-relabel-refused", "HELD", rr03_relabel_refused),
     # instruction_provenance: F294 (CLOSED wave-276: mixed-provenance
     # drivers now route with provlabel-mixed-provenance; pv01 flips
     # BREAK -> HELD per the close-when criteria).
+    # ASI: ASI01 primary, ASI03 secondary
     ("pv01-piggyback-allowed", "HELD", pv01_piggyback_allowed),
+    # ASI: ASI01 primary, ASI03 secondary
     ("pv01b-injection-alone-refused", "HELD", pv01b_injection_alone_refused),
     # attestors: F295 (closed wave-276 lane f295: selector matching is
     # type-strict; re-pinned BREAK->HELD).
+    # ASI: ASI03
     ("at01-bool-int-conflation", "HELD", at01_bool_int_conflation),
+    # ASI: ASI03
     ("at01b-exact-match", "HELD", at01b_exact_match),
     # rail_verdict defenses.
     ("rv01-adapter-unknown-word", "HELD", rv01_adapter_unknown_word),

@@ -22,7 +22,7 @@ from gov import egress_refs as er  # noqa: E402
 
 # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10
 # bundle-delivery-* + 4 egress-ref-*).
-TAXONOMY_PIN = 1485
+TAXONOMY_PIN = 1486
 
 EXPECTED_CODES = (
     "egress-ref-data-exfil",
@@ -273,6 +273,28 @@ class TestF288F289Closures(unittest.TestCase):
             self.assertIsInstance(out, str)
             out = er._canon_text(bad, plus=False)
             self.assertIsInstance(out, str)
+
+    def test_canon_text_decode_to_stability_f296(self):
+        # F296: _canon_text must decode to stability (the attacker's
+        # server decodes to stability), not stop at a fixed round cap.
+        import urllib.parse
+        secret = "ab/cd/ef_gh-12"
+        enc = secret
+        for _ in range(5):
+            enc = urllib.parse.quote(enc, safe="")
+        self.assertEqual(er._canon_text(enc, plus=True), secret)
+        self.assertEqual(er._canon_text(enc, plus=False), secret)
+        # Absurd nesting depth fails closed (None) quickly, not slowly.
+        deep = "a/b"
+        for _ in range(2000):
+            deep = urllib.parse.quote(deep, safe="")
+        import time
+        t0 = time.time()
+        out = er._canon_text(deep, plus=True)
+        self.assertIsNone(out)
+        self.assertLess(time.time() - t0, 5.0)
+        # Never raises on hostile shapes, even at budget exhaustion.
+        self.assertIsInstance(er._canon_text(deep, plus=False) or "", str)
 
 
 class TestNeverRaises(unittest.TestCase):
