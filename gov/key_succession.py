@@ -379,10 +379,20 @@ class KeySuccession:
             self._check_replay(record)
         self._expect_phase("prepared", "advance")
         if record is not None:
+            # F366: validate the overlap window BEFORE the record is
+            # applied. A well-signed advance record with a missing or
+            # out-of-bounds window refused coded AFTER the phase had
+            # already moved to "completing", leaving the ceremony in a
+            # state unreachable via the seed path or from_records.
+            # The window is now checked first, so a malformed record
+            # leaves the ceremony at "prepared".
+            inner = record.get("record") \
+                if isinstance(record, dict) else None
+            window = inner.get("overlap_window_seconds") \
+                if isinstance(inner, dict) else None
+            _check_window(window)
             envelope = self._apply_record(record, "prepared",
                                           "completing")
-            window = envelope["record"].get("overlap_window_seconds")
-            _check_window(window)
             self._overlap_window = window
             self.overlap_window_seconds = window
             self._completing_at = envelope["record"]["declared_at"]

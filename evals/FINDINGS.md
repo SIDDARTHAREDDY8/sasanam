@@ -8769,9 +8769,27 @@ advance record leaves the ceremony at "prepared" with no mutation;
 (probe `ks-from-records-atomic` stays HELD); (4) adjacent batteries
 stay green.
 
-**Status: OPEN** (filed 2026-10-02, wave-294 independent red-team).
+**Status: CLOSED** (filed 2026-10-02, wave-294 independent red-team;
+closed 2026-10-02, wave-295 lane 2). **Closure record:** the record
+path of `KeySuccession.advance` now extracts
+`overlap_window_seconds` from the envelope and calls `_check_window`
+BEFORE `_apply_record`, so a malformed advance record refuses coded
+`keysuccession-window-missing` without mutating the ceremony (phase
+stays "prepared", no window stashed, no `advance_record`, no digest
+marked seen). New red-first battery `evals/w295_f366_probes.py`: 8
+probes -- missing window coded / no poisoning (missing +
+out-of-bounds) / no state leaked / path agreement with `from_records`
+/ seed path still refuses clean / valid record still advances /
+ceremony reusable after a failed advance. On the pristine base, the
+battery showed the poisoning (phase "completing" with
+`_overlap_window = None`, and the ceremony then unrecoverably refused
+a later valid advance as phase-skipped); the fixed tree is 0 BREAK.
+`w294_redteam` flips from 3 BREAK to 2 BREAK (F365's two secret-scan
+probes still OPEN), `w293_key_succession` 0 BREAK. No new decision
+codes; taxonomy pin unchanged at 1742 (raw literals verified).
+Commit made locally with trailer; lane 2 reports and stops.
 
-Next free finding: **F367**. **Open findings: F366.** (F364 filed
+Next free finding: **F367**. **Open findings: none.** (F364 filed
 2026-10-02, wave-293 independent red-team as F361, renumbered F361->F364
 at the wave-293 merge -- the wave-293 sweep lane filed F361-F363 first
 at ~19:53 UTC and keeps them per the wave-272 earliest-filed rule;
