@@ -1288,7 +1288,7 @@ PROBES = [
     ("f299-nonfinite-fresh", "HELD", f299_nonfinite_fresh),
     ("f299-negative-zero-parity", "HELD", f299_negative_zero_parity),
     ("f299-float-int-parity", "HELD", f299_float_int_parity),
-    ("f299-eviction-mixed-types", "BREAK", f299_eviction_mixed_types),
+    ("f299-eviction-mixed-types", "HELD", f299_eviction_mixed_types),  # F304 closed wave-280: eviction orders by monotonic touch sequence (total), not raw now
     # (b) F301 wall-proxy L7 leg
     ("f301-absolute-https-denied", "HELD", f301_absolute_https_denied),
     ("f301-uppercase-scheme-denied", "HELD", f301_uppercase_scheme_denied),

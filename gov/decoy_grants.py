@@ -297,7 +297,13 @@ class TripFatigueTracker:
         self._window_s = window_s
         self._full_per_window = full_events_per_window
         self._max_keys = max_keys
-        # key -> [window_id, count, last_touched_now]
+        # key -> [window_id, count, touch_seq]. The touch sequence is a
+        # monotonic per-call counter (call order), NOT the raw `now`
+        # value: `now` may be any hostile type (None, bool, nan, str)
+        # with no total ordering, so ordering eviction by the raw value
+        # raises TypeError on mixed stores (F304). A sequence is always
+        # total; "oldest-touched" keeps its call-order meaning.
+        self._touch_seq = 0
         self._store = {}
 
     def _window_of(self, now):
@@ -338,14 +344,17 @@ class TripFatigueTracker:
         rec = self._store.get(key)
         if rec is None or window is None or rec[0] != window:
             if rec is None and len(self._store) >= self._max_keys:
-                # Bounded store: evict the oldest-touched entry.
+                # Bounded store: evict the oldest-touched entry by touch
+                # sequence (always total ints; never the raw `now`, which
+                # has no total ordering across hostile types -- F304).
                 oldest = min(self._store.items(),
                              key=lambda kv: kv[1][2])[0]
                 del self._store[oldest]
-            rec = [window, 0, now]
+            rec = [window, 0, None]  # touch seq stamped once below
             self._store[key] = rec
         rec[1] += 1
-        rec[2] = now
+        rec[2] = self._touch_seq
+        self._touch_seq += 1
         count = rec[1]
         if count <= self._full_per_window:
             return {"emit_full": True, "window_count": count,
