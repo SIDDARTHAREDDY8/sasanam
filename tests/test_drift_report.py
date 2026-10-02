@@ -2,7 +2,7 @@
 
 Conventions: explicit `now` everywhere (drift_report is deterministic
 given now); module-level staging default is not needed (no deployment
-gate in this module); pin 1541 = 1493 (wave-278 merge) + 1 new code (evbundle-contract-refused)
+gate in this module); pin 1563 = 1541 (wave-280 merge) + 22 new codes (wave-281 lanes)
 (3 provlabel-* + 8 rail-* + 3 decodetrust-* + 5 attestor-*).
 """
 
@@ -20,7 +20,7 @@ if REPO not in sys.path:
 from gov import drift_report as dr  # noqa: E402
 from gov import gate_hardening as gh  # noqa: E402
 
-TAXONOMY_PIN = 1541  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+TAXONOMY_PIN = 1563  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 
 _NOW = 1700000000
 

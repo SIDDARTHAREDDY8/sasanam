@@ -5094,11 +5094,12 @@ class ToolExecutor:
             return None
 
     def _provenance_grant_decision(self, tool, args, driving_units):
-        """Wave-279 (F300): run the instruction-provenance grant seam
-        for a candidate action. Returns ``(req, decision)`` -- the
-        ``ActionRequest`` and the ``grant_check`` ``Decision`` -- or
-        ``(None, None)`` when the seam is inert (no provenance context
-        installed, or no drivers supplied).
+        """Wave-279 (F300) + wave-281 (F307): run the
+        instruction-provenance grant seam for a candidate action.
+        Returns ``(req, decision)`` -- the ``ActionRequest`` and the
+        ``grant_check`` ``Decision`` -- or ``(None, None)`` when the
+        seam is inert (no provenance context installed, or no units
+        installed).
 
         Fail-closed, loud, never raises: routed decisions
         (``provlabel-*``) carry the full provenance chain for the
@@ -5107,33 +5108,59 @@ class ToolExecutor:
         error is audit-chained best-effort and likewise degrades to a
         loud routed ``provlabel-malformed`` decision (the approver
         sees the failure -- a silent drop would hide it).
+
+        Wave-281 (F307): the driving units are derived SERVER-SIDE
+        from the operator-installed labeler -- never trusted from the
+        agent's plan-trace kwarg verbatim. The agent's kwarg may only
+        NARROW the installed set, and every narrowing is audit-logged
+        (never silent). When the narrowed set no longer routes while
+        the full installed set does, the plan trace dropped a
+        routing-relevant driver (the plan-trace omission attack): the
+        seam routes LOUD with ``provlabel-omitted-driver`` and the
+        server-side provenance chain, so an installed
+        injection-shaped driver can never be narrowed away silently.
         """
         if self._prov_labeler is None:
             return None, None
-        if not driving_units:
+        labeler = self._prov_labeler
+        installed = labeler.installed_unit_ids()
+        if not installed:
             return None, None
-        req = _instruction_provenance.ActionRequest(
-            tool, args if isinstance(args, dict) else {}, True, ())
+        args_dict = args if isinstance(args, dict) else {}
 
         def _malformed(detail):
+            req = _instruction_provenance.ActionRequest(
+                tool, args_dict, True, ())
             decision = _instruction_provenance.Decision(
                 False, True, "provlabel-malformed", detail)
             return req, decision
 
-        try:
-            if (not isinstance(driving_units, (list, tuple))
-                    or not all(isinstance(u, str)
-                               for u in driving_units)):
-                return _malformed(
-                    "provenance_driving_units framing was not a list of "
-                    "unit-id strings (got %r); the plan trace is "
-                    "unverifiable -- approval required"
-                    % (type(driving_units).__name__,))
+        def _grant(units):
             req = _instruction_provenance.ActionRequest(
-                tool, args if isinstance(args, dict) else {},
-                True, tuple(driving_units))
-            decision = _instruction_provenance.grant_check(
-                req, self._prov_labeler)
+                tool, args_dict, True, tuple(units))
+            return req, _instruction_provenance.grant_check(req, labeler)
+
+        try:
+            if driving_units is None:
+                # No plan-trace claim: the candidate driver set is the
+                # full server-side installed set (F307 -- the agent
+                # cannot dodge the seam by omitting the kwarg).
+                claimed = installed
+            else:
+                if (not isinstance(driving_units, (list, tuple))
+                        or not all(isinstance(u, str)
+                                   for u in driving_units)):
+                    return _malformed(
+                        "provenance_driving_units framing was not a list of "
+                        "unit-id strings (got %r); the plan trace is "
+                        "unverifiable -- approval required"
+                        % (type(driving_units).__name__,))
+                claimed = tuple(driving_units)
+            req_server, dec_server = _grant(installed)
+            if set(claimed) == set(installed):
+                req_agent, dec_agent = req_server, dec_server
+            else:
+                req_agent, dec_agent = _grant(claimed)
         except _instruction_provenance.ProvenanceError as e:
             return _malformed(
                 "provenance seam input malformed: %s -- approval "
@@ -5155,7 +5182,44 @@ class ToolExecutor:
             return _malformed(
                 "provenance seam raised unexpectedly (%s: %s) -- "
                 "approval required" % (type(e).__name__, e))
-        return req, decision
+
+        if set(claimed) != set(installed):
+            # The plan trace narrowed the server-side set. Logged and
+            # auditable -- narrowing is never silent (F307 close-when).
+            try:
+                self.log.append({
+                    "event": "instruction_provenance_narrowing",
+                    "run_id": self.run_id,
+                    "agent_id": "system",
+                    "role": "system",
+                    "tool": tool,
+                    "decision": "narrowed",
+                    "policy_id": "instruction-provenance",
+                    "reason": (
+                        "the plan trace narrowed the operator-installed "
+                        "driver set (installed=%d, claimed=%d, omitted=%s); "
+                        "server-side verdict %s, narrowed verdict %s"
+                        % (len(installed), len(claimed),
+                           sorted(set(installed) - set(claimed)),
+                           dec_server.code, dec_agent.code)),
+                })
+            except Exception:
+                pass
+        if dec_server.routed_to_approval and not dec_agent.routed_to_approval:
+            # F307: the narrowing dropped a routing-relevant driver --
+            # the plan-trace omission attack. Route LOUD with the
+            # server-side chain; never silently allow.
+            decision = _instruction_provenance.Decision(
+                False, True, "provlabel-omitted-driver",
+                "the plan trace narrowed the operator-installed driver "
+                "set and the narrowed set no longer routes while the "
+                "full installed set does (omitted drivers: %s) -- an "
+                "installed injection-shaped driver cannot be narrowed "
+                "away silently; approval required"
+                % (sorted(set(installed) - set(claimed)),),
+                dec_server.provenance_chain)
+            return req_server, decision
+        return req_agent, dec_agent
 
     def _recent_action_steps(self, limit=20):
         """Wave-129: the run's recent tool calls as intent-slice steps,
@@ -9548,12 +9612,15 @@ class ToolExecutor:
 
         # Framing kwargs are agent-supplied metadata, never trusted inputs.
         justification = kwargs.pop("justification", None)
-        # Wave-279 (F300): the plan-trace contract for the
-        # instruction-provenance seam -- content-unit ids from the
+        # Wave-279 (F300) + wave-281 (F307): the plan-trace contract for
+        # the instruction-provenance seam -- content-unit ids from the
         # operator-installed IngressLabeler that drove this call.
         # Popped here so it never reaches tool args; unresolvable or
         # malformed ids route to approval (fail-closed), never to
-        # silent execution.
+        # silent execution. F307: the kwarg is ADVISORY ONLY -- the
+        # seam derives the driver set server-side from the installed
+        # labeler; the kwarg may only narrow (audit-logged), and
+        # narrowing away a routing-relevant driver routes LOUD.
         prov_driving_units = kwargs.pop("provenance_driving_units", None)
         # Wave-279 (F300): run the instruction-provenance grant seam
         # EARLY, before the policy verdict dispatches. A routed

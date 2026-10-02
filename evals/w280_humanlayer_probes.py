@@ -46,8 +46,9 @@ Break shapes pinned here (all must report HELD on the lane tree):
   (i) vanished record: a request whose approval record is destroyed
       mid-wait raises fail-closed (ValueError) -- never a fake
       TIMED_OUT;
-  (j) taxonomy pin 1541/1541 raw literals sorted, 0 duplicates
-      (no new decision codes needed by this lane).
+  (j) taxonomy pin 1563/1541 raw literals sorted, 0 duplicates
+      (no new decision codes needed by this lane; later lanes repoint
+      the pin value-only).
 
 $0 spend, synthetic/local, deterministic (fixed fixtures; timeouts are
 short but the waits always resolve before the deadline). Stdlib only,
@@ -544,9 +545,9 @@ def probe_taxonomy_pin():
             return _broken(name, "duplicate code literals")
         if literals != sorted(literals):
             return _broken(name, "codes not sorted")
-        if len(literals) != 1541:
+        if len(literals) != 1563:
             return _broken(name, "pin moved: %d literals" % len(literals))
-        return _held(name, "1541/1541/0 sorted")
+        return _held(name, "1563/1563/0 sorted")
     except Exception as exc:  # noqa: BLE001
         return _error(name, "raised %r" % (exc,))
 

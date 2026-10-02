@@ -160,6 +160,10 @@ _NON_CODES = frozenset([
     # reasons (drop-accounting labels in `dropped_by_reason`, not refusal
     # codes).
     "enqueue", "recover", "anchor-job", "retry",
+    # Wave-281 merge: gov/pending_approvals.py digest-helper error-message
+    # prefixes (function names in human ValueError messages, not decision
+    # codes).
+    "args_digest", "proposal_digest_of",
 ])
 
 

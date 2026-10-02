@@ -271,6 +271,59 @@ TAXONOMY = {
         "evidence_kinds_required": ['negative-record', 'signature', 'revocation-registry'],
         "reverify_steps": ['recompute'],
     },
+    'access-request-duplicate-review-refused': {
+        "domain": 'access-request',
+        "code": 'access-request-duplicate-review-refused',
+        "human": 'access request: the same reviewer attempted to vote '
+                 'twice on one request; each reviewer votes at most once; '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['access-request', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'access-request-grant-refused': {
+        "domain": 'access-request',
+        "code": 'access-request-grant-refused',
+        "human": 'access request: an ephemeral grant was minted from a '
+                 'request that is not APPROVED; grants exist only as '
+                 'reissued identity from approved requests, never as '
+                 'standing capabilities; refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['access-request', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'access-request-reviewer-ineligible': {
+        "domain": 'access-request',
+        "code": 'access-request-reviewer-ineligible',
+        "human": 'access request: a reviewer outside the declared '
+                 'suggested-reviewer set attempted to vote; refused '
+                 'fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['access-request', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'access-request-self-review-refused': {
+        "domain": 'access-request',
+        "code": 'access-request-self-review-refused',
+        "human": 'access request: the requestor attempted to review '
+                 'their own request; self-approval is blocked because the '
+                 'requestor lacks the review verb on their own request; '
+                 'refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['access-request', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
+    'access-request-terminal-refused': {
+        "domain": 'access-request',
+        "code": 'access-request-terminal-refused',
+        "human": 'access request: a review, decision, or grant was '
+                 'attempted on a request that is no longer PENDING '
+                 '(APPROVED, DENIED, or read-time EXPIRED); terminal '
+                 'states are final; refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['access-request', 'audit-log'],
+        "reverify_steps": ['recompute'],
+    },
     'action-binding-tampered': {
         "domain": 'typed_action',
         "code": 'action-binding-tampered',
@@ -2466,6 +2519,46 @@ TAXONOMY = {
         "human": 'memory: the declared carrier does not match the actual bytes',
         "severity": 'medium',
         "evidence_kinds_required": ['memory', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
+    'casbin-conf-invalid': {
+        "domain": 'policy',
+        "code": 'casbin-conf-invalid',
+        "human": 'casbin PERM: the CONF text is malformed (unknown section, '
+                 'bad definition, unknown policy_effect form); refused '
+                 'fail-closed at compile',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'casbin-enforce-error-fail-closed': {
+        "domain": 'policy',
+        "code": 'casbin-enforce-error-fail-closed',
+        "human": 'casbin PERM: a matcher or request-shape error failed the '
+                 'whole enforcement closed to deny; never raised, never '
+                 'allowed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'casbin-policy-shadowed': {
+        "domain": 'policy',
+        "code": 'casbin-policy-shadowed',
+        "human": 'casbin PERM: a policy row can never decide (exact '
+                 'duplicate, or shadowed/contradicted by an earlier row); '
+                 'refused fail-closed at load',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
+        "reverify_steps": ['recompute'],
+    },
+    'casbin-unknown-matcher-function': {
+        "domain": 'policy',
+        "code": 'casbin-unknown-matcher-function',
+        "human": 'casbin PERM: the matcher names a function outside the '
+                 'audited builtin set {g, keyMatch, keyMatch2, regexMatch, '
+                 'ipMatch}; refused fail-closed at compile',
+        "severity": 'medium',
+        "evidence_kinds_required": ['trust-record'],
         "reverify_steps": ['recompute'],
     },
     'ceremony-bad-signature': {
@@ -6461,6 +6554,100 @@ TAXONOMY = {
         "evidence_kinds_required": ['grant', 'delegation', 'signature', 'store'],
         "reverify_steps": ['recompute'],
     },
+    'guardplugin-bad-hook': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-hook',
+        "human": 'guard plugin: declaration named a hook outside '
+                 'before_tool_call / after_tool_call / start / end; '
+                 'refused at declaration time',
+        "severity": 'low',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-bad-id': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-id',
+        "human": 'guard plugin: declaration used an empty or non-string '
+                 'plugin id; refused at declaration time',
+        "severity": 'low',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-bad-params': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-params',
+        "human": 'guard plugin: declaration params are not JSON-serializable '
+                 'or a default guard is misconfigured; refused fail-closed',
+        "severity": 'low',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-bad-run': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-run',
+        "human": 'guard plugin: the declared run handler is not callable; '
+                 'refused at declaration time',
+        "severity": 'low',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-bad-transform': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-transform',
+        "human": 'guard plugin: a transform outcome carried a non-dict '
+                 'payload; treated as a technical failure and refused '
+                 'fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-bad-verdict': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-bad-verdict',
+        "human": 'guard plugin: a handler returned a non-verdict; treated '
+                 'as a technical failure and refused fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-denied': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-denied',
+        "human": 'guard plugin: a plugin returned deny (or raised its '
+                 'declared PluginDeny); the guarded action is refused',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-duplicate-id': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-duplicate-id',
+        "human": 'guard plugin: a plugin id was registered twice; '
+                 'refused at registration time (no shadowing)',
+        "severity": 'low',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-error-refused': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-error-refused',
+        "human": 'guard plugin: a plugin errored technically; the error is '
+                 'structurally a deny -- recorded as technical_failure, '
+                 'never as a policy block, and refused LOUDLY fail-closed',
+        "severity": 'high',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
+    'guardplugin-unknown-id': {
+        "domain": 'guardplugin',
+        "code": 'guardplugin-unknown-id',
+        "human": 'guard plugin: an attach list named a plugin id the '
+                 'registry never declared; refused fail-closed before any '
+                 'plugin ran',
+        "severity": 'medium',
+        "evidence_kinds_required": ['guardrail-run'],
+        "reverify_steps": ['recompute'],
+    },
     'guest-budget-amplified': {
         "domain": 'guest-budget',
         "code": 'guest-budget-amplified',
@@ -8633,6 +8820,28 @@ TAXONOMY = {
         "evidence_kinds_required": ['jail-policy', 'measurement'],
         "reverify_steps": ['recompute'],
     },
+    'pending-approval-resume-refused': {
+        "domain": 'approval',
+        "code": 'pending-approval-resume-refused',
+        "human": 'durable pending-approval ledger: the resume was refused '
+                 'fail-closed -- unknown approval id, already-decided '
+                 'record, expired wait horizon, or malformed resume value; '
+                 'a refused resume never executes',
+        "severity": 'medium',
+        "evidence_kinds_required": ['approval', 'ledger'],
+        "reverify_steps": ['recompute'],
+    },
+    'pending-approval-snapshot-tampered': {
+        "domain": 'approval',
+        "code": 'pending-approval-snapshot-tampered',
+        "human": 'durable pending-approval ledger: the parked snapshot '
+                 'bytes no longer match the parked digest (recomputed '
+                 'evidence disagrees with the claim); refuse-to-resume, '
+                 'the record stays parked and never executes',
+        "severity": 'critical',
+        "evidence_kinds_required": ['approval', 'ledger', 'digest'],
+        "reverify_steps": ['recompute'],
+    },
     'permit-binding-mismatch': {
         "domain": 'permit',
         "code": 'permit-binding-mismatch',
@@ -9891,6 +10100,20 @@ TAXONOMY = {
                  'instruction plus retrieved injection) is routed to '
                  'approval with a distinct code -- the injection cannot '
                  'piggyback on the user-shaped driver (F294)',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-chain', 'action-request'],
+        "reverify_steps": ['recompute'],
+    },
+    'provlabel-omitted-driver': {
+        "domain": 'provlabel',
+        "code": 'provlabel-omitted-driver',
+        "human": 'instruction-provenance labeling: the agent plan trace '
+                 'narrowed the operator-installed driver set and the '
+                 'narrowed set no longer routes while the full installed '
+                 'set does (F307 plan-trace omission) -- routed to '
+                 'approval loud with the server-side chain; an installed '
+                 'injection-shaped driver can never be narrowed away '
+                 'silently',
         "severity": 'medium',
         "evidence_kinds_required": ['provenance-chain', 'action-request'],
         "reverify_steps": ['recompute'],

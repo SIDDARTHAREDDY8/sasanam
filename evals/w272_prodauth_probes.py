@@ -40,7 +40,7 @@ os.environ.setdefault("GOV_LOG_KEY_EPOCH", "w272-prodauth")
 
 # -- spec-pinned protocol constants (NOT imported from the module)
 NOW = 1791000000  # fixed test clock
-PIN = 1541  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+PIN = 1563  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 7: pin 1541 -> 1545 (+4 casbin-*)
 ISSUER = "https://issuer.example.com"
 ARC = "1.3.6.1.4.1.99999"
 APPROVAL = "a" * 32
@@ -610,7 +610,7 @@ def _c_pin(mod):
                  "prodauth-token-expired", "prodauth-token-invalid")]
     once = all(codes.count(c) == 1 for c in new)
     if len(new) == 8 and once:
-        return ("HELD", "1541 literals, unique, 0 dups, 8 new exactly once")
+        return ("HELD", "1563 literals, unique, 0 dups, 8 new exactly once")
     return ("BREAK", "new-code literal problem: %r" % (new,))
 
 

@@ -86,6 +86,12 @@ Machine codes (domain ``provlabel``, all in the taxonomy):
   (no label on record); approval required with the gap surfaced.
 - ``provlabel-malformed`` -- the seam input is not the expected shape;
   refused fail-closed, never raises.
+- ``provlabel-omitted-driver`` -- the agent's plan trace narrowed the
+  operator-installed driver set and the narrowed set no longer routes
+  while the full installed set does (F307: plan-trace omission). The
+  narrowing is audit-logged and the action routes to approval loud --
+  an installed injection-shaped driver can never be narrowed away
+  silently.
 
 Stdlib only. Deterministic.
 """
@@ -98,6 +104,7 @@ import re
 EXPECTED_CODES = (
     "provlabel-approval-required",
     "provlabel-mixed-provenance",
+    "provlabel-omitted-driver",
     "provlabel-unresolvable-driver",
     "provlabel-malformed",
 )
@@ -258,6 +265,17 @@ class IngressLabeler(object):
     def unit(self, unit_id):
         """Return the recorded unit, or None when unresolvable."""
         return self._units.get(unit_id)
+
+    def installed_unit_ids(self):
+        """All operator-installed unit ids, in installation order.
+
+        Wave-281 (F307): the server-side driver derivation reads this,
+        never the agent's plan-trace kwarg. The labeler is installed
+        by the operator via ``set_instruction_provenance``; the agent
+        never holds a handle to it, so this enumeration is
+        server-side by construction.
+        """
+        return tuple(self._units.keys())
 
     def chain(self, unit):
         """Full provenance chain, least-recent first (parents before

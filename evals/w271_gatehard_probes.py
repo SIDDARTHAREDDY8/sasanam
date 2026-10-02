@@ -40,7 +40,7 @@ NOW = 1791000000  # fixed test clock (2026-10-01-ish)
 # grep -o '"code": ' overcounts; quoted-literal extraction is canonical).
 import re as _re  # noqa: E402
 
-TAXONOMY_PIN = 1541  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+TAXONOMY_PIN = 1563  # Wave-273 merge: pin 1443 -> 1458 (+15 codes: 1 sandbox-* + 10 bundle-delivery-* + 4 egress-ref-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 _GATEHARD_CODES = (
     "gatehard-monitor-would-deny",
     "gatehard-policy-denied",
@@ -471,7 +471,7 @@ def _c5():
 def _c6():
     lits = _quoted_literals(os.path.join(_REPO, "gov", "decision_codes.py"))
     if not _require_real():
-        return len(lits) == 1541, len(lits)
+        return len(lits) == 1563, len(lits)
     missing = [c for c in _GATEHARD_CODES if lits.count(c) != 1]
     dups = [c for c in set(lits) if lits.count(c) > 1]
     return (len(lits) == TAXONOMY_PIN and not missing and not dups,

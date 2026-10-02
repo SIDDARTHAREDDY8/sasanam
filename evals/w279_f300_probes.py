@@ -170,19 +170,29 @@ def f300b_below_bar_only():
 
 
 def f300c_user_only_driver():
-    """User-only driver -> grant_check allows; no provenance section is
-    stamped and the record is unchanged from the pre-wiring shape."""
+    """F307 (2026-10-02): the user-only-driver shape with an installed
+    injection-shaped unit is the plan-trace omission attack -- it now
+    routes LOUD with provlabel-omitted-driver instead of silently
+    allowing. (The F300-era pin asserting silent allow encoded the
+    vulnerability; the F307 close-when mandates this flip.) The honest
+    narrow-down -- no routing-relevant driver omitted -- still allows;
+    see evals/w281_f307_probes.py f307-honest-narrow."""
     ex, queue, ident = _mk()
     ids = _set_provenance(ex)
     if ids is None:
         return "BREAK", "F300: set_instruction_provenance missing (unwired)"
     user_id, _inj_id = ids
     _r, rec = _queue_write(ex, ident, drivers=[user_id])
-    if rec.get("instruction_provenance") is not None:
-        return "BREAK", ("grant_check allowed the action but a provenance "
-                         "section was stamped anyway -- the wiring must "
-                         "not change the allowed path")
-    return "HELD", "user-only driver: no section, product path unchanged"
+    section = rec.get("instruction_provenance")
+    if section is None or \
+            section.get("code") != "provlabel-omitted-driver":
+        return "BREAK", ("F307: user-only plan trace with an installed "
+                         "injection did not route loud with "
+                         "provlabel-omitted-driver (section=%r) -- the "
+                         "omission attack still passes silently"
+                         % (section,))
+    return "HELD", ("user-only driver with installed injection routes loud "
+                    "with provlabel-omitted-driver (F307)")
 
 
 def f300d_inert_without_context():
@@ -253,15 +263,18 @@ def f300g_unresolvable_driver():
 
 
 def f300h_no_new_codes():
-    """The wiring invents no new decision codes: the provlabel code set
-    is exactly the four taxonomy codes the module shipped with."""
+    """The provlabel code set is exactly the taxonomy codes the module
+    ships: the four F300 codes plus provlabel-omitted-driver (F307,
+    2026-10-02 -- the omission route needs its own machine code;
+    taxonomy pin moved 1541 -> 1542)."""
     import gov.instruction_provenance as ip
     want = ("provlabel-approval-required", "provlabel-mixed-provenance",
-            "provlabel-unresolvable-driver", "provlabel-malformed")
+            "provlabel-omitted-driver", "provlabel-unresolvable-driver",
+            "provlabel-malformed")
     if tuple(ip.EXPECTED_CODES) != want:
         return "BREAK", ("EXPECTED_CODES changed: %r -- new codes need a "
                          "taxonomy pin change" % (ip.EXPECTED_CODES,))
-    return "HELD", "no new codes: provlabel set unchanged"
+    return "HELD", "provlabel set pinned (4 F300 codes + F307 omitted-driver)"
 
 
 def f300i_queue_refuses_bad_section():
@@ -322,8 +335,12 @@ def f300j_forced_queue_on_allow_path():
 
 
 def f300k_allow_path_unchanged_when_not_routed():
-    """User-only drivers on the allow path -> grant_check allows, the
-    call executes normally (the seam changes nothing when not routed)."""
+    """F307 (2026-10-02): user-only drivers on the allow path while an
+    injection-shaped unit is installed is the plan-trace omission
+    attack through the real call() path -- the call is forced to the
+    approval queue with a provlabel-omitted-driver section, never
+    silently executed. (The F300-era pin asserting execution encoded
+    the vulnerability; the F307 close-when mandates the flip.)"""
     ex, queue, ident = _mk()
     ids = _set_provenance(ex)
     if ids is None:
@@ -331,10 +348,17 @@ def f300k_allow_path_unchanged_when_not_routed():
     user_id, _inj_id = ids
     r = ex.call(ident, "write_file", path="note2.txt", content="hello",
                 provenance_driving_units=[user_id])
-    if r.get("status") != "executed":
-        return "BREAK", ("user-driven allow-path call did not execute "
-                         "(status=%r) -- the seam over-routed" % (r,))
-    return "HELD", "allow path unchanged when the grant seam allows"
+    if r.get("status") not in ("queued", "approval_queued"):
+        return "BREAK", ("F307: omission attack on the allow path executed "
+                         "silently (status=%r) -- the seam did not route "
+                         "loud" % (r,))
+    rec = ex.approvals.pending()[-1]
+    section = rec.get("instruction_provenance")
+    if section is None or section.get("code") != "provlabel-omitted-driver":
+        return "BREAK", ("forced queue missing the omitted-driver section "
+                         "(section=%r)" % (section,))
+    return "HELD", ("allow-path omission forced to approval with "
+                    "provlabel-omitted-driver (F307)")
 
 
 PROBES = [

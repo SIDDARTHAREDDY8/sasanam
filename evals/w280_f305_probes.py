@@ -62,7 +62,7 @@ os.makedirs(_TMP, exist_ok=True)
 
 from harness import make_run  # noqa: E402
 
-TAXONOMY_PIN = 1541  # Wave-279 merge. No new codes for F305.
+TAXONOMY_PIN = 1563  # Wave-279 merge. No new codes for F305.; Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 
 
 def _held(name, note):
@@ -100,7 +100,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1541: 1541 unique literals"
+    return "HELD", "taxonomy pin 1563: 1563 unique literals"
 
 
 # ---------------------------------------------------------------------------

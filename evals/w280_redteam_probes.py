@@ -68,7 +68,7 @@ provision_test_key()
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
-TAXONOMY_PIN = 1541  # Wave-279 merge: 1493 -> 1495 (+evbundle-contract-refused, +tool-guardrail-tripwire)
+TAXONOMY_PIN = 1563  # Wave-279 merge: 1493 -> 1495 (+evbundle-contract-refused, +tool-guardrail-tripwire); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 
 _results = []
 
@@ -94,7 +94,7 @@ def p_taxonomy_pin():
         return _record("pin-taxonomy", "BREAK", "duplicate literals")
     if lits != sorted(lits):
         return _record("pin-taxonomy", "BREAK", "literals unsorted")
-    _record("pin-taxonomy", "HELD", "1541/1541/0 sorted")
+    _record("pin-taxonomy", "HELD", "1563/1563/0 sorted")
 
 
 def _make_run():

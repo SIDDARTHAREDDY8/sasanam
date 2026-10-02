@@ -31,7 +31,7 @@ sys.path.insert(0, REPO)
 
 from gov import coverage_ledger as cl  # noqa: E402
 
-TAXONOMY_PIN = 1541  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+TAXONOMY_PIN = 1563  # Wave-277 F298 lane: pin 1485 -> 1486 (+1 coverage-refused-future-dated-entry); Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*); Wave-281 lane 9: pin 1541 -> 1551 (+10 guardplugin-*)
 
 GREEN_SKIP = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -56,7 +56,7 @@ def _pin_check():
                 % (len(literals), TAXONOMY_PIN))
     if len(set(literals)) != len(literals):
         return "BREAK", "duplicate code literals in taxonomy"
-    return "HELD", "taxonomy pin 1541: 1541 unique literals"
+    return "HELD", "taxonomy pin 1563: 1563 unique literals"
 
 
 def _qsrc():

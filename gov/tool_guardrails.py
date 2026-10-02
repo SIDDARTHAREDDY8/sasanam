@@ -47,7 +47,11 @@ What this does NOT do (honest boundaries):
   with the tri-state elicitation contract;
 * output_info is capped for log hygiene: callers must never put secrets
   in guard evidence (a long value is truncated, not elided -- truncation
-  is visible, redaction is not enforcement).
+  is visible). As defense-in-depth (F306), every emitted record passes
+  through ``_sanitize_note``: credential-shaped evidence is replaced
+  with a visible ``[credential material withheld]`` placeholder before
+  the record reaches the log -- the verdict is preserved, the secret
+  never lands.
 
 Stdlib only. Deterministic: no clock, no randomness, no I/O, no env
 reads. The audit log binds its own timestamps at append time.
@@ -235,6 +239,34 @@ def _evidence_string(output_info):
     return text
 
 
+# Evidence-note prefixes, hoisted so producers and the F306 sanitizer
+# share them: a note-format change cannot silently degrade
+# kind-preservation to the generic fallback.
+_REJECTION_PREFIX = "rejection: "
+_GUARD_ERROR_PREFIX = "guard_error: "
+
+
+def _sanitize_note(note):
+    """F306: guard evidence is audit-bound. A credential-shaped message or
+    output_info must never reach the log -- the step-3b emit precedes the
+    step-5 elicitation secret ban, so evidence is sanitized at the emit
+    funnel (and the crash-tripwire exception carries only the sanitized
+    note, since the caller's refusal record interpolates it). The verdict
+    (outcome / tripwire bit) is preserved; only the credential-shaped
+    content is withheld, with a visible placeholder (redaction is marked,
+    never silent elision).
+    """
+    if note is None:
+        return None
+    from gov import elicitation_contract as _ec  # lazy: keep stdlib core import-free
+    if not _ec.credential_material_present(note):
+        return note
+    for prefix in (_REJECTION_PREFIX, _GUARD_ERROR_PREFIX):
+        if note.startswith(prefix):
+            return "%s[credential material withheld]" % prefix
+    return "[guard evidence withheld: credential-shaped material]"
+
+
 def _record_for(guard, data, outcome, tripwire, note=None):
     return {
         "event": "tool_guardrail_run",
@@ -243,10 +275,11 @@ def _record_for(guard, data, outcome, tripwire, note=None):
         "phase": guard.phase,
         "outcome": outcome,
         "tripwire_triggered": tripwire,
-        "output_info": note if note is not None
-        else _evidence_string(getattr(data, "tool_arguments", None)
-                              if guard.phase == "input" else
-                              getattr(data, "output", None)),
+        "output_info": _sanitize_note(
+            note if note is not None
+            else _evidence_string(getattr(data, "tool_arguments", None)
+                                  if guard.phase == "input" else
+                                  getattr(data, "output", None))),
     }
 
 
@@ -273,16 +306,19 @@ def _run_guards(guardrails, data, emit, expected_phase):
             raise
         except Exception as exc:
             # Guard-internal error: fail closed as a tripwire halt.
-            # The crash is evidence, never a pass-through.
-            emit(_record_for(
-                guard, data, "raise_exception", True,
-                note="guard_error: %s: %s"
-                % (type(exc).__name__, exc)))
+            # The crash is evidence, never a pass-through. F306: the
+            # crash text is guard evidence too -- sanitize it once and
+            # let the exception carry only the sanitized note, so the
+            # caller's refusal record (approvals.py step 3b interpolates
+            # the exception into its audit note) cannot echo a secret.
+            _crash_note = _sanitize_note(
+                _GUARD_ERROR_PREFIX + "%s: %s" % (type(exc).__name__, exc))
+            emit(_record_for(guard, data, "raise_exception", True,
+                             note=_crash_note))
             raise ToolGuardrailTripwireTriggered(
-                "tool guardrail %r failed (%s: %s): failing closed"
-                % (guard.name, type(exc).__name__, exc),
-                output_info="guard_error: %s: %s"
-                % (type(exc).__name__, exc))
+                "tool guardrail %r failed: %s; failing closed"
+                % (guard.name, _crash_note),
+                output_info=_crash_note)
         if not isinstance(result, ToolGuardrailFunctionOutput):
             raise ValueError(
                 "tool guardrail %r returned %r: guards must return one "
@@ -297,7 +333,7 @@ def _run_guards(guardrails, data, emit, expected_phase):
             # stays quiet.
             emit(_record_for(
                 guard, data, "reject_content", False,
-                note="rejection: %s" % result.message))
+                note=_REJECTION_PREFIX + "%s" % result.message))
             return ToolGuardrailRunVerdict(outcome="reject_content",
                                            message=result.message,
                                            tripwire_triggered=False)

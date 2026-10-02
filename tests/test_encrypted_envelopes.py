@@ -36,7 +36,7 @@ class EnvelopeContracts(unittest.TestCase):
 
     def test_taxonomy_pin(self):
         # Wave-258 merge: pin -> 1080.
-        self.assertEqual(len(decision_codes.TAXONOMY), 1541)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
+        self.assertEqual(len(decision_codes.TAXONOMY), 1563)  # Wave-270 merge: pin 1325 -> 1344 (+19 ptgrant-*: 2 ifc-* + 11 ceremony-v2-* + 19 ptgrant-* + 1 evcert-provisioner-policy-violated + 6 bundlescan-* + 8 evbundle-*).; Wave-280 merge: pin 1495 -> 1541 (+13 battery-lang-* +1 delegation-ephemeral-grant-refused +32 shield/evaltask-*)
         for c in ("envelope-malformed", "envelope-open-refused",
                   "envelope-recipient-refused", "envelope-seal-refused",
                   "envelope-version-unknown"):
