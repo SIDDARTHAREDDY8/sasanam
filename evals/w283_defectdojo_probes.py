@@ -391,10 +391,16 @@ def p_findings_md_load():
         os.path.abspath(__file__))), "evals", "FINDINGS.md")
     reg = fl.load_findings_md(path)
     got = reg.get("F311")
-    if got is None or got.state != "open":
+    if got is None or got.state != "verified":
         return _record("p-findings-md-load", "BREAK",
-                       "F311 not parsed as open: %r"
+                       "F311 not parsed as closed: %r"
                        % (None if got is None else got.state))
+    for num in ("F312", "F313", "F314", "F315"):
+        ent = reg.get(num)
+        if ent is None or ent.state != "open":
+            return _record("p-findings-md-load", "BREAK",
+                           "%s parsed as %r, want 'open'"
+                           % (num, None if ent is None else ent.state))
     for num, want in (("F310", "verified"), ("F309", "verified"),
                       ("F306", "verified"), ("F94", "verified")):
         ent = reg.get(num)
@@ -412,7 +418,8 @@ def p_findings_md_load():
         return _record("p-findings-md-load", "BREAK",
                        "malformed identity hashes: %r" % bad[:3])
     _record("p-findings-md-load", "HELD",
-            "%d FINDINGS.md entries parsed; F311 open, F310/F309/F306 closed"
+            "%d FINDINGS.md entries parsed; F311 closed, F312-F315 open, "
+            "F310/F309/F306 closed"
             % len(reg.all()))
 
 
@@ -437,12 +444,13 @@ def _green_checks():
     if proc.returncode != 0:
         _record("green-w282-redteam", "ERROR",
                 "green check exit=%d: %s" % (proc.returncode, out[-300:]))
-    elif len(breaks) != 2 or not all("f311-" in b for b in breaks):
+    elif breaks:
         _record("green-w282-redteam", "BREAK",
-                "expected exactly the two F311 BREAKs; got %s" % (breaks[:5],))
+                "expected 0 BREAKs (F311 closed at the wave-283 merge); got %s"
+                % (breaks[:5],))
     else:
         _record("green-w282-redteam", "HELD",
-                "green: exit 0, exactly the 2 expected-open F311 BREAKs")
+                "green: exit 0, 0 BREAKs (F311 closure holds on the merge)")
 
 
 def main():
