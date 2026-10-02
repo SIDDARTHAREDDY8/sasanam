@@ -44,7 +44,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # No new decision codes: F344 reuses trustvec-evidence-invalid, F345
 # swallows per the timestamp_authority precedent.
-TAXONOMY_PIN = 1706
+TAXONOMY_PIN = 1710
 
 _results = []
 

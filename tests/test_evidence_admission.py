@@ -144,29 +144,104 @@ class TestAdmit(unittest.TestCase):
 
 
 class TestAtRisk(unittest.TestCase):
-    def _store(self):
+    def _store(self, grant=False, policy_id="adm-u"):
         reg = ge.CheckRegistry()
         reg.register(ap.ACCEPT_RISK_CHECK_ID, "admission accept risk",
                      "admission", "medium", "accept at operator risk",
                      ["admission-policy"])
         store = ge.ExceptionStore(reg)
         store.set_approvers(["ops"])
+        if grant:
+            now = time.time()
+            store.grant(ap.ACCEPT_RISK_CHECK_ID, ("policy", policy_id),
+                        "accepting at risk for this test run",
+                        "ops", now + 3600, now)
         return store
 
-    def test_at_risk_needs_refuse_decision(self):
+    def _refuse_err(self, fails):
         pol = ap.compile_policy(_doc())
-        dec = {"verdict": "ADMIT", "policy_id": "adm-u",
-               "floor_failed": [], "decision_digest": "x" * 64}
         with self.assertRaises(ap.AdmissionError) as cm:
-            ap.admit_at_risk(dec, self._store(), now=time.time())
-        self.assertEqual(cm.exception.code, "admission-exception-refused")
+            ap.admit(_ev("provenance"), pol, _full(fails=fails))
+        return cm.exception
 
-    def test_at_risk_needs_live_exception(self):
+    def test_at_risk_rejects_synthesized_dict(self):
+        # F349: a caller-synthesized refuse dict can never reach the
+        # floor gate.
         dec = {"verdict": "REFUSE", "policy_id": "adm-u",
                "floor_failed": [], "decision_digest": "x" * 64}
         with self.assertRaises(ap.AdmissionError) as cm:
-            ap.admit_at_risk(dec, self._store(), now=time.time())
+            ap.admit_at_risk(dec, self._store(grant=True), now=time.time())
         self.assertEqual(cm.exception.code, "admission-exception-refused")
+
+    def test_at_risk_rejects_error_without_decision(self):
+        err = ap.AdmissionError("refused", code="admission-refused")
+        with self.assertRaises(ap.AdmissionError) as cm:
+            ap.admit_at_risk(err, self._store(grant=True), now=time.time())
+        self.assertEqual(cm.exception.code, "admission-exception-refused")
+
+    def test_at_risk_needs_live_exception(self):
+        err = self._refuse_err(fails=("provenance-present",))
+        self.assertEqual(err.code, "admission-refused")
+        with self.assertRaises(ap.AdmissionError) as cm:
+            ap.admit_at_risk(err, self._store(), now=time.time())
+        self.assertEqual(cm.exception.code, "admission-exception-refused")
+
+    def test_at_risk_accepts_with_live_exception(self):
+        err = self._refuse_err(fails=("provenance-present",))
+        rec = ap.admit_at_risk(err, self._store(grant=True),
+                               now=time.time())
+        self.assertEqual(rec["verdict"], "ADMIT-AT-RISK")
+        self.assertIn("exception_digest", rec)
+        self.assertEqual(rec["floor_failed"], [])
+
+    def test_at_risk_floor_never_exceptioned(self):
+        # F349: the floor-failed state is mechanism-bound -- the gate
+        # reads the registered record admit() produced.
+        err = self._refuse_err(fails=("signature-valid",))
+        self.assertEqual(err.code, "admission-integrity-floor-violated")
+        with self.assertRaises(ap.AdmissionError) as cm:
+            ap.admit_at_risk(err, self._store(grant=True), now=time.time())
+        self.assertEqual(cm.exception.code, "admission-exception-refused")
+
+    def test_at_risk_tampered_decision_still_refuses(self):
+        # Post-hoc mutation of the error-carried record must not move
+        # the floor gate: the registry copy is authoritative.
+        err = self._refuse_err(fails=("signature-valid",))
+        err.decision["floor_failed"] = []
+        with self.assertRaises(ap.AdmissionError) as cm:
+            ap.admit_at_risk(err, self._store(grant=True), now=time.time())
+        self.assertEqual(cm.exception.code, "admission-exception-refused")
+
+
+class TestRegistryImmutability(unittest.TestCase):
+    def test_checks_entries_immutable(self):
+        # F348: the registry is frozen at import; in-process mutation
+        # must raise instead of silently removing the floor.
+        with self.assertRaises(TypeError):
+            ap.CHECKS["signature-valid"] = "tampered"
+        with self.assertRaises(TypeError):
+            del ap.CHECKS["signature-valid"]
+
+    def test_floor_still_enforced(self):
+        pol = ap.compile_policy(_doc())
+        with self.assertRaises(ap.AdmissionError) as cm:
+            ap.admit(_ev("provenance"), pol,
+                     _full(fails=("digest-binds",)))
+        self.assertEqual(cm.exception.code,
+                         "admission-integrity-floor-violated")
+
+    def test_rebound_registry_fails_closed(self):
+        # F348: even rebinding the module attribute must fail closed,
+        # never skip the floor.
+        saved = ap.CHECKS
+        try:
+            ap.CHECKS = {}
+            pol = ap.compile_policy(_doc())
+            with self.assertRaises(ap.AdmissionError) as cm:
+                ap.admit(_ev("provenance"), pol, {})
+            self.assertEqual(cm.exception.code, "admission-check-failed")
+        finally:
+            ap.CHECKS = saved
 
 
 class TestPins(unittest.TestCase):
@@ -195,7 +270,7 @@ class TestTaxonomy(unittest.TestCase):
     def test_pin(self):
         # Wave-288 lane 7: pin 1684 -> 1691 (+7 admission-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*)
         import gov.decision_codes as dc
-        self.assertEqual(len(dc.TAXONOMY), 1706)
+        self.assertEqual(len(dc.TAXONOMY), 1710)
 
 
 if __name__ == "__main__":

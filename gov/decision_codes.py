@@ -10971,6 +10971,52 @@ TAXONOMY = {
         "evidence_kinds_required": ['policy-declaration'],
         "reverify_steps": ['recompute'],
     },
+
+    'provenance-rebuild-invalid': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-rebuild-invalid',
+        "human": 'evidence provenance: the re-derivation recipe is malformed '
+                 'or cannot deterministically reproduce the artifact digest '
+                 '(bad grammar, undeclared input, budget violation, '
+                 'non-terminal-hash); non-deterministic recipes can never '
+                 're-derive, refused fail-closed at registration',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-rebuild-mismatch': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-rebuild-mismatch',
+        "human": 'evidence provenance: re-deriving the artifact digest from '
+                 'the signed re-derivation recipe and the supplied materials '
+                 'disagrees with the claimed artifact digest; treat as '
+                 'possible tampering and escalate',
+        "severity": 'critical',
+        "evidence_kinds_required": ['provenance-claim', 'material-bytes'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-rebuild-missing': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-rebuild-missing',
+        "human": 'evidence provenance: the verifier demanded re-derivation '
+                 '(strict builder policy) but the claim carries no '
+                 're-derivation recipe; a claim that cannot be re-derived '
+                 'refuses under a strict policy',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
+    'provenance-rebuild-transform-unknown': {
+        "domain": 'evidence-provenance',
+        "code": 'provenance-rebuild-transform-unknown',
+        "human": 'evidence provenance: the re-derivation recipe names a '
+                 'transform outside the closed deterministic allowlist; '
+                 'recipes describe, they never execute unlisted code, '
+                 'refused fail-closed',
+        "severity": 'medium',
+        "evidence_kinds_required": ['provenance-claim'],
+        "reverify_steps": ['recompute'],
+    },
     'provenance-signature-invalid': {
         "domain": 'evidence-provenance',
         "code": 'provenance-signature-invalid',

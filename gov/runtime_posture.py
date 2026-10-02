@@ -20,6 +20,11 @@ Honest limitations (documented, not hidden):
   * Endorsement quality bounds the appraisal vector: an endorsement slot
     is a reference to an anchor-log position, not inline trust. An empty
     or low-quality endorsement can only ever grade ``insufficient``.
+    Endorsement independence (slots must be separately sourced from the
+    record's producer) is enforced at BOTH issuance and verification,
+    against the producer identity bound in the signed payload (F350).
+    Records minted before the producer binding carry no ``producer_id``
+    and are refused.
   * Freshness comes from gov/timestamp_authority.py tokens, which a
     record may reference via ``tsa_token``. This module has no clock of
     its own and invents no timestamping.
@@ -80,8 +85,18 @@ def set_emit(emit):
 
 
 def _emit_event(event):
-    if _emit is not None:
-        _emit(event)
+    """Emit an audit event to the installed sink. A broken audit sink
+    must never break posture issuance or verification: the sink failure
+    is isolated (the failure mode is recorded in this docstring/comment,
+    not the event -- the same trade-off as ``gov/timestamp_authority.py``
+    and ``gov/evidence_provenance.py``), never the sink's raw exception
+    type escaping at a public seam (F346)."""
+    if _emit is None:
+        return
+    try:
+        _emit(dict(event))
+    except Exception:
+        pass
 
 
 def _canonical(obj):
@@ -264,9 +279,13 @@ def issue_posture(*, operator_seed, operator_keyid, eat_nonce, submods,
         "kid": operator_keyid,
         "posture_format": POSTURE_FORMAT,
     }
+    # F350: the producer identity is part of the signed payload. A
+    # verifier can therefore re-check endorsement independence at
+    # verify time; independence is no longer issuance-only.
     payload = {
         "v": _POSTURE_VERSION,
         "eat_nonce": nonce_hex,
+        "producer_id": producer_id,
         "submods": submods,
         "software_id": software_id,
         "config_digest": config_digest.lower(),
@@ -319,7 +338,12 @@ def verify_posture(record, operator_pubkey_hex, *, expected_nonce=None,
     Checks, in order: shape -> signature (``ok is not True`` refuses) ->
     nonce (>= 64 bits, and equal to ``expected_nonce`` when given, which
     binds the record to the appraisal request) -> submod entries ->
-    endorsement slots (every claim has a separately-sourced slot).
+    endorsement slots (every claim has a separately-sourced slot), where
+    the independence check uses the ``producer_id`` BOUND IN THE SIGNED
+    PAYLOAD (F350) -- a record whose producer is missing, or whose
+    endorsements are self-sourced, refuses coded. Records minted before
+    the producer binding was added carry no ``producer_id`` and are
+    refused as malformed: the binding is fail-closed, not best-effort.
 
     ``now`` is accepted for interface symmetry with the TSA module and
     is currently unused: this module performs no time checks of its own
@@ -357,7 +381,18 @@ def verify_posture(record, operator_pubkey_hex, *, expected_nonce=None,
     _check_software_id(payload.get("software_id"))
     _check_config_digest(payload.get("config_digest"))
     _check_submods(payload.get("submods"))
-    _check_endorsements(payload.get("endorsements"), producer_id=None)
+    # F350: endorsement independence is enforced on the VERIFY path
+    # against the producer identity bound in the signed payload. A
+    # hand-built operator-signed self-endorsed record (the F350 finding)
+    # cannot pass: producer missing -> INVALID_SHAPE, self-sourced slot
+    # -> ENDORSEMENT_NOT_INDEPENDENT.
+    producer_id = payload.get("producer_id")
+    if not isinstance(producer_id, str) or not producer_id:
+        _fail(INVALID_SHAPE,
+              "record payload must bind a non-empty producer_id "
+              "(records minted before the F350 producer binding are "
+              "refused)")
+    _check_endorsements(payload.get("endorsements"), producer_id)
     return payload
 
 
@@ -426,8 +461,14 @@ def as_appraisal_evidence(record, producer_id):
         _fail(INVALID_SHAPE, "record must be an issued posture record")
     if not isinstance(producer_id, str) or not producer_id:
         _fail(INVALID_SHAPE, "producer_id must be a non-empty string")
-    payload = record["payload"]
+    payload = record.get("payload")
+    # F351b class: endorsements.get on a non-dict raises a raw
+    # AttributeError; payload.get on a non-dict the same. Refuse coded.
+    if not isinstance(payload, dict):
+        _fail(INVALID_SHAPE, "record must carry a payload mapping")
     endorsements = payload.get("endorsements", {})
+    if not isinstance(endorsements, dict):
+        _fail(ENDORSEMENT_MISSING, "endorsements must be a mapping")
     # Map record-internal claim names to the scheme's claim grammar.
     mapping = {
         "software_id": ("software_id", payload.get("software_id")),
@@ -440,9 +481,21 @@ def as_appraisal_evidence(record, producer_id):
         if not isinstance(slot, dict):
             _fail(ENDORSEMENT_MISSING,
                   "claim %r lacks an endorsement slot" % (record_name,))
+        source_id = slot.get("source_id")
+        if not isinstance(source_id, str) or not source_id:
+            _fail(INVALID_SHAPE,
+                  "endorsement slot %r needs a source_id string"
+                  % (record_name,))
+        # F351c class: a hand-mutated record can carry non-JSON values
+        # whose digest raises a raw TypeError. Refuse coded.
+        try:
+            expected_value = _digest(value)
+        except (TypeError, ValueError):
+            _fail(SUBMOD_INVALID,
+                  "claim %r value is not JSON-serializable" % (record_name,))
         out.append({
             "claim_name": scheme_name,
-            "expected_value": _digest(value),
-            "source_id": slot["source_id"],
+            "expected_value": expected_value,
+            "source_id": source_id,
         })
     return (_digest(record), SCHEME_ID, out)

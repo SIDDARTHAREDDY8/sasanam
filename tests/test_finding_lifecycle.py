@@ -283,16 +283,22 @@ class FindingsMdTest(unittest.TestCase):
         # independent red team; F334-F342 closed at the wave-288 merge
         # (lanes 1-4); F343-F345 filed OPEN by the wave-288 independent
         # red team, closed at the wave-289 merge (lanes 1-2); F346-F351
-        # filed OPEN by the wave-289 independent red team.
+        # filed OPEN by the wave-289 independent red team; F346-F347
+        # closed by the wave-290 lane 1 (F345-class sink isolation),
+        # F348-F349 closed by the wave-290 lane 2 (CHECKS frozen,
+        # admit_at_risk error-only), F350-F351 closed by the wave-290
+        # lane 3 (producer_id binding + verify-time independence);
+        # F352-F355 filed OPEN by the wave-290 independent red team.
         self.assertEqual(reg.get("F311").state, "verified")
         for num in ("F312", "F313", "F314", "F315", "F316", "F317",
                     "F318", "F319", "F320", "F321", "F322", "F323",
                     "F324", "F325", "F326", "F327", "F328", "F329",
                     "F330", "F331", "F332", "F333", "F334", "F335",
                     "F336", "F337", "F338", "F339", "F340", "F341",
-                    "F342", "F343", "F344", "F345"):
+                    "F342", "F343", "F344", "F345", "F346", "F347", "F348",
+                    "F349", "F350", "F351"):
             self.assertEqual(reg.get(num).state, "verified")
-        for num in ("F346", "F347", "F348", "F349", "F350", "F351"):
+        for num in ("F352", "F353", "F354", "F355"):
             self.assertEqual(reg.get(num).state, "open")
         self.assertEqual(reg.get("F310").state, "verified")
         self.assertEqual(reg.get("F309").state, "verified")

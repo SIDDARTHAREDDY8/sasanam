@@ -41,10 +41,12 @@ job). Check outcomes are computed by the caller at the seam
 known evidence kinds); admission itself is pure policy application.
 """
 
+import copy
 import hashlib
 import hmac
 import json
 import os
+from types import MappingProxyType
 
 from gov import evidence_provenance as _prov
 
@@ -87,7 +89,15 @@ INTEGRITY_FLOOR = frozenset({"signature-valid", "digest-binds"})
 
 #: The named-check registry. Descriptions are human-readable; the floor
 #: column is machine-enforced at compile time.
-CHECKS = {
+#:
+#: F348: the registry is FROZEN at import (MappingProxyType) -- deleting
+#: or replacing entries in-process raised the floor silently (the old
+#: plain dict let ``del CHECKS["signature-valid"]`` remove the floor from
+#: the admit() loop entirely). As defense in depth, admit() also refuses
+#: LOUD when the registry no longer carries every INTEGRITY_FLOOR check
+#: (e.g. the module attribute was rebound), so registry tampering fails
+#: closed instead of skipping the floor.
+_CHECKS = {
     "signature-valid": "envelope/checkpoint signature verifies under "
                        "the pinned key",
     "digest-binds": "the claimed artifact digest binds to the artifact",
@@ -100,16 +110,24 @@ CHECKS = {
     "freshness": "the TSA token is fresh (genTime within the skew "
                  "bound)",
 }
+CHECKS = MappingProxyType(_CHECKS)
 
 
 class AdmissionError(Exception):
     """Loud admission failure. ``code`` is the machine-readable
-    failure mode."""
+    failure mode.
+
+    F349: when raised by :func:`admit` for a REFUSE verdict, the error
+    carries the refuse decision record admit() itself produced
+    (``err.decision``), registered in-process (see ``_REFUSE_REGISTRY``).
+    :func:`admit_at_risk` consumes that record -- never a
+    caller-synthesized dict."""
 
     def __init__(self, message, code):
         super(AdmissionError, self).__init__("%s: %s" % (code, message))
         self.code = code
         self.message = message
+        self.decision = None
 
 
 def _fail(code, detail):
@@ -276,6 +294,12 @@ def _check_policy_use(policy, pins):
     if pinned is None:
         _fail(POLICY_INVALID,
               "admission policy %r is not pinned" % (policy.policy_id,))
+    # F351d: hmac.compare_digest with a non-str pinned digest raises a
+    # raw TypeError. Refuse LOUD and coded before comparing.
+    if not isinstance(pinned, str):
+        _fail(POLICY_INVALID,
+              "admission policy %r pin is not a digest string"
+              % (policy.policy_id,))
     live = _digest(policy.doc)
     if not hmac.compare_digest(live, pinned):
         _fail(POLICY_INVALID,
@@ -367,6 +391,40 @@ def _decision(verdict, policy, scope_desc, level_rank, check_results,
     return record
 
 
+#: F349: in-process registry of refuse decisions produced by admit().
+#: admit() registers a private copy of every refuse decision at raise
+#: time; admit_at_risk only accepts decisions found here, so a
+#: caller-synthesized dict can never reach the floor gate. The registry
+#: copy (not the error-carried record) is authoritative, so post-hoc
+#: mutation of ``err.decision`` does not move the gate. Bounded to the
+#: most recent entries.
+_REFUSE_REGISTRY = {}
+_REFUSE_REGISTRY_MAX = 1024
+
+
+def _register_refuse(record):
+    digest = record.get("decision_digest")
+    if not isinstance(digest, str) or not digest:
+        return
+    _REFUSE_REGISTRY[digest] = copy.deepcopy(record)
+    while len(_REFUSE_REGISTRY) > _REFUSE_REGISTRY_MAX:
+        _REFUSE_REGISTRY.pop(next(iter(_REFUSE_REGISTRY)))
+
+
+def _refuse_decision(code, policy, scope_desc, scope_level, results,
+                     warnings, floor_failed, message):
+    """Build a REFUSE decision, register it in-process, and raise it on
+    the AdmissionError. The decision rides on the exception
+    (``err.decision``) so admit_at_risk consumes admit()'s own record --
+    the floor-failed state is mechanism-bound, never caller input."""
+    record = _decision("REFUSE", policy, scope_desc, scope_level, results,
+                       warnings, floor_failed=floor_failed)
+    _register_refuse(record)
+    err = AdmissionError(message, code=code)
+    err.decision = record
+    raise err
+
+
 def admit(evidence, policy, check_outcomes, pins=None):
     """Apply the admission policy to one evidence record.
 
@@ -377,6 +435,16 @@ def admit(evidence, policy, check_outcomes, pins=None):
     """
     if not isinstance(check_outcomes, dict):
         _fail(CHECK_FAILED, "check_outcomes must be a mapping")
+    # F348: the floor is enforced independently of the mutable CHECKS
+    # registry name. If the registry no longer carries every floor
+    # check (deleted entries, or the module attribute rebound), fail
+    # closed instead of silently running without the floor.
+    missing = [c for c in INTEGRITY_FLOOR if c not in CHECKS]
+    if missing:
+        _fail(CHECK_FAILED,
+              "admission check registry is missing floor check(s) %r: "
+              "refusing rather than admitting without the floor"
+              % (sorted(missing),))
     _check_policy_use(policy, pins)
     kind = _check_evidence_shape(evidence)
     found = _find_scope(policy, kind)
@@ -414,16 +482,20 @@ def admit(evidence, policy, check_outcomes, pins=None):
                 failures.append(check)
 
     if floor_failed:
-        _fail(FLOOR_VIOLATED,
-              "integrity floor check(s) %r failed for kind %r: refused; "
-              "the floor is never overridable"
-              % (sorted(floor_failed), kind))
+        _refuse_decision(
+            FLOOR_VIOLATED, policy, scope_desc, scope_level, results, [],
+            floor_failed,
+            "integrity floor check(s) %r failed for kind %r: refused; "
+            "the floor is never overridable"
+            % (sorted(floor_failed), kind))
 
     if strict_failures:
-        _fail(REFUSED,
-              "evidence kind %r refused: check(s) %r failed at their "
-              "effective strict level"
-              % (kind, sorted(strict_failures)))
+        _refuse_decision(
+            REFUSED, policy, scope_desc, scope_level, results, [],
+            floor_failed,
+            "evidence kind %r refused: check(s) %r failed at their "
+            "effective strict level"
+            % (kind, sorted(strict_failures)))
 
     if not failures:
         return _decision("ADMIT", policy, scope_desc, scope_level,
@@ -445,47 +517,71 @@ def admit(evidence, policy, check_outcomes, pins=None):
                          floor_failed=floor_failed)
 
     # STRICT (and anything else): refuse LOUD.
-    _fail(REFUSED,
-          "evidence kind %r refused at strict: failed check(s) %r"
-          % (kind, sorted(failures)))
+    _refuse_decision(
+        REFUSED, policy, scope_desc, scope_level, results, [],
+        floor_failed,
+        "evidence kind %r refused at strict: failed check(s) %r"
+        % (kind, sorted(failures)))
 
 
-def admit_at_risk(refuse_decision, exception_store, now=None):
+def admit_at_risk(admission_error, exception_store, now=None):
     """Accept a REFUSE decision at operator risk through a LIVE governed
     exception (check ``SAS_ADMISSION_ACCEPT_RISK``, scope
     ``("policy", policy_id)``). The decision record is UNCHANGED; the
     returned record carries the exception digest (SKIPPED-shaped, never
     an upgrade).
 
+    F349: the refusal must be the :class:`AdmissionError` that
+    :func:`admit` itself raised. Its decision record was registered
+    in-process at raise time, and the floor gate reads the REGISTERED
+    record -- never any caller-supplied field. A synthesized dict, an
+    error without a decision, or a decision admit() never produced all
+    refuse LOUD with ``admission-exception-refused``. Post-hoc mutation
+    of ``err.decision`` does not move the gate (the registry holds a
+    private copy).
+
     A refusal caused by the integrity floor can NEVER be accepted at
     risk -- it refuses LOUD with ``admission-exception-refused``.
     """
-    if not isinstance(refuse_decision, dict):
-        _fail(EXCEPTION_REFUSED, "refuse_decision must be a mapping")
-    if refuse_decision.get("verdict") != "REFUSE":
+    if not isinstance(admission_error, AdmissionError):
         _fail(EXCEPTION_REFUSED,
-              "admit_at_risk only applies to REFUSE decisions")
-    if refuse_decision.get("floor_failed"):
+              "admit_at_risk requires the AdmissionError raised by "
+              "admit(); a refusal decision cannot be synthesized")
+    decision = getattr(admission_error, "decision", None)
+    if not isinstance(decision, dict) or decision.get("verdict") != "REFUSE":
+        _fail(EXCEPTION_REFUSED,
+              "admit_at_risk only applies to REFUSE decisions raised "
+              "by admit()")
+    digest = decision.get("decision_digest")
+    registered = (_REFUSE_REGISTRY.get(digest)
+                  if isinstance(digest, str) else None)
+    if not isinstance(registered, dict):
+        _fail(EXCEPTION_REFUSED,
+              "this refusal decision was not produced by this process's "
+              "admit(): cannot accept it at risk")
+    if registered.get("floor_failed"):
         _fail(EXCEPTION_REFUSED,
               "the integrity floor failed (%r): no exception can ever "
               "admit evidence past the floor"
-              % (refuse_decision["floor_failed"],))
-    policy_id = refuse_decision.get("policy_id")
+              % (registered["floor_failed"],))
+    policy_id = registered.get("policy_id")
     if not policy_id:
         _fail(EXCEPTION_REFUSED,
               "refuse_decision carries no policy_id")
+    if exception_store is None or not hasattr(exception_store, "evaluate"):
+        _fail(EXCEPTION_REFUSED,
+              "exception_store must provide evaluate()")
     result = exception_store.evaluate(
         ACCEPT_RISK_CHECK_ID, ("policy", policy_id),
         lambda: False, now=now)
-    if result.get("status") != "SKIPPED":
+    if not isinstance(result, dict) or result.get("status") != "SKIPPED":
         _fail(EXCEPTION_REFUSED,
               "no live exception covers admission policy %r"
               % (policy_id,))
     record = {
         "verdict": "ADMIT-AT-RISK",
         "policy_id": policy_id,
-        "refused_decision_digest":
-            refuse_decision.get("decision_digest"),
+        "refused_decision_digest": digest,
         "exception_digest": result["exception_digest"],
         "floor_failed": [],
     }

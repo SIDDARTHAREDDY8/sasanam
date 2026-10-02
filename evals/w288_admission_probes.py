@@ -32,7 +32,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
 # Wave-287 merge: pin 1660 -> 1684 (+7 tsa-* +7 evidence-provenance +10 trustvec-*); Wave-288 lane 7: pin 1684 -> 1691 (+7 admission-*); Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*).; Wave-288 merge: pin 1684 -> 1700 (+16: 1 toolcall-exception-scope-mismatch +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-* +6 posture-*)
-TAXONOMY_PIN = 1706
+TAXONOMY_PIN = 1710
 
 _results = []
 
@@ -270,27 +270,27 @@ def p_exception_at_risk():
     store.set_approvers(["ops"])
     pol = ap.compile_policy(_policy_doc())
     # A non-floor refusal (strict scope, non-floor check fails). admit
-    # raises on REFUSE, so capture the refusal and build the decision
-    # record admit_at_risk consumes.
+    # raises on REFUSE carrying the decision it produced; admit_at_risk
+    # consumes that error (F349: the floor gate reads the registered
+    # record, never a caller-synthesized dict).
     try:
         ap.admit(_ev("provenance"), pol,
                  _full(fails=("provenance-present",)))
-    except Exception as e:  # noqa: BLE001
+    except ap.AdmissionError as e:
         if getattr(e, "code", None) != "admission-refused":
             return _record("exception-at-risk", "BREAK",
                            "expected admission-refused, got %s"
                            % (getattr(e, "code", type(e).__name__),))
+        refuse_err = e
     else:
         return _record("exception-at-risk", "BREAK",
                        "expected REFUSE, admission did not refuse")
-    dec = {"verdict": "REFUSE", "policy_id": "adm-test-1",
-           "floor_failed": [], "decision_digest": "x" * 64}
     import time as _t
     now = _t.time()
     store.grant(ap.ACCEPT_RISK_CHECK_ID, ("policy", "adm-test-1"),
                 "accepting at risk for this test run, operator review",
                 "ops", now + 3600, now)
-    r = ap.admit_at_risk(dec, store, now=now)
+    r = ap.admit_at_risk(refuse_err, store, now=now)
     if r["verdict"] != "ADMIT-AT-RISK" or "exception_digest" not in r:
         return _record("exception-at-risk", "BREAK",
                        "at-risk acceptance wrong: %r" % (r,))
@@ -314,17 +314,16 @@ def p_exception_cannot_override_floor():
     try:
         ap.admit(_ev("provenance"), pol,
                  _full(fails=("signature-valid",)))
-    except Exception as e:  # noqa: BLE001
+    except ap.AdmissionError as e:
+        # F349: pass the error admit() itself raised -- the floor gate
+        # reads the registered record, not the dict below.
         import time as _t
         now = _t.time()
         store.grant(ap.ACCEPT_RISK_CHECK_ID, ("policy", "adm-test-1"),
                     "accepting at risk for this test run, operator review",
                     "ops", now + 3600, now)
-        dec = {"verdict": "REFUSE", "policy_id": "adm-test-1",
-               "floor_failed": ["signature-valid"],
-               "decision_digest": "x" * 64}
         try:
-            ap.admit_at_risk(dec, store, now=now)
+            ap.admit_at_risk(e, store, now=now)
         except Exception as e2:  # noqa: BLE001
             code = getattr(e2, "code", type(e2).__name__)
             if code == "admission-exception-refused":

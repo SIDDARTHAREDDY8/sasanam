@@ -57,7 +57,7 @@ SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 # Wave-288 merge: pin 1684 -> 1700 (+1 toolcall-exception-scope-mismatch
 # +1 toolcall-regex-unsafe +1 toolcall-invalid-call +7 admission-*
 # +6 posture-*).
-TAXONOMY_PIN = 1706
+TAXONOMY_PIN = 1710  # wave-290 lane 6: 1706 -> 1710
 
 _results = []
 
@@ -214,7 +214,7 @@ def p_f346_posture_sink_uncoded():
 
     rp.set_emit(_boom)
     try:
-        _posture_parts()
+        rec, seed, pub = _posture_parts()
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code is None:
@@ -223,10 +223,14 @@ def p_f346_posture_sink_uncoded():
                            "(%s)" % type(e).__name__)
         return _record("f346-posture-sink", "HELD",
                        "sink failure refused coded: %s" % code)
+    except BaseException as e:  # noqa: BLE001
+        return _record("f346-posture-sink", "BREAK",
+                       "raising sink escaped as %s" % type(e).__name__)
+    else:
+        _record("f346-posture-sink", "HELD",
+                "sink failure isolated from issuance (F345 mechanism)")
     finally:
         rp.set_emit(None)
-    _record("f346-posture-sink", "BREAK",
-            "raising sink did not disturb issue_posture at all")
 
 
 def p_f346_posture_sink_ok():
@@ -265,7 +269,7 @@ def p_f347_receipt_sink_uncoded():
     anchored, seed = _anchor_parts()
     er.set_emit(_boom)
     try:
-        er.bind_receipt(anchored, seed)
+        receipt = er.bind_receipt(anchored, seed)
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code is None:
@@ -274,10 +278,14 @@ def p_f347_receipt_sink_uncoded():
                            "(%s)" % type(e).__name__)
         return _record("f347-receipt-sink", "HELD",
                        "sink failure refused coded: %s" % code)
+    except BaseException as e:  # noqa: BLE001
+        return _record("f347-receipt-sink", "BREAK",
+                       "raising sink escaped as %s" % type(e).__name__)
+    else:
+        _record("f347-receipt-sink", "HELD",
+                "sink failure isolated from issuance (F345 mechanism)")
     finally:
         er.set_emit(None)
-    _record("f347-receipt-sink", "BREAK",
-            "raising sink did not disturb bind_receipt at all")
 
 
 def p_f347_receipt_sink_ok():
@@ -325,8 +333,13 @@ def p_f348_checks_mutation_floor_bypass():
                        "mutation refused: %r"
                        % getattr(e, "code", type(e).__name__))
     finally:
-        adm.CHECKS.clear()
-        adm.CHECKS.update(saved)
+        # Post-F348 the registry is immutable (MappingProxyType): the
+        # restore is a no-op then. Keep the restore for the old dict.
+        try:
+            adm.CHECKS.clear()
+            adm.CHECKS.update(saved)
+        except (TypeError, AttributeError):
+            pass
     if rec.get("verdict") == "ADMIT" and not rec.get("floor_failed"):
         return _record("f348-checks-mutation", "BREAK",
                        "deleting floor checks from CHECKS bypassed the "

@@ -20,7 +20,27 @@ Claim shape (unsigned)::
                      "completeness": "verified" | "unverified"} ...],
       "invocation": {<opaque builder-declared build parameters>},
       "issued_at": <int unix time>,
+      "rebuild_recipe": <optional re-derivation recipe, inside the
+        signed bytes>,
     }
+
+A re-derivation recipe (``sasanam-rebuild/1``)::
+
+    {
+      "recipe_format": "sasanam-rebuild/1",
+      "inputs": [<material uri>, ...],     # subset of claim materials
+      "steps": [{"op": "concat", "order": [<uri>, ...]},
+                ...,
+                {"op": "sha256"}],          # terminal hash is mandatory
+    }
+
+The closed transform vocabulary is concat/sha256/hex/prefix/suffix/
+slice -- recipes describe, they never execute code. The verifier
+re-executes the recipe over verifier-supplied material bytes and the
+derived digest must equal the claimed artifact digest
+(``provenance-rebuild-mismatch`` on disagreement -- the oss-rebuild
+re-derivation pattern: evidence carries the procedure to reproduce
+the proof).
 
 Signed envelope::
 
@@ -52,6 +72,11 @@ Verifier-side policy (fail closed):
   ``provenance-missing`` when no provenance is supplied and
   ``provenance-artifact-mismatch`` when the claim is about a different
   artifact digest than the one being anchored.
+* ``require_rebuild=True`` (or a builder named in the policy's
+  ``rebuild_required`` set) demands re-derivation: missing recipe
+  refuses ``provenance-rebuild-missing``; a re-derived digest that
+  disagrees with the claimed artifact digest refuses
+  ``provenance-rebuild-mismatch`` (critical -- possible tampering).
 
 Composition:
 
@@ -79,6 +104,12 @@ THREAT MODEL (read this before trusting a provenance claim):
   witness-cosigned transparency log.
 * The auditor's pinned builder key set is the trust anchor. Key
   distribution is out-of-band; this module cannot solve it.
+* Re-derivation is software-side: a malicious builder with a pinned
+  key can lie in the recipe (minting valid provenance for a
+  dishonest build), and only DETECTION is the point -- the verifier
+  re-executes and refuses on mismatch. A non-deterministic build can
+  never re-derive: such recipes are refused at registration
+  (``provenance-rebuild-invalid``), never silently accepted.
 * Key reuse across builder ids is discouraged but not refused: there
   is no quorum here, so one key under two ids grants no extra power
   (unlike the F333 witness-quorum finding -- documented, not repeated).
@@ -188,9 +219,16 @@ class BuilderPolicy:
     allow). Key reuse across builder ids is discouraged (documented in
     the module docstring) but not refused: without a quorum there is
     no escalation.
+
+    ``rebuild_required`` names builder ids whose claims must re-derive
+    (strict builder policy): verification of their claims demands a
+    re-derivation recipe and refuses ``provenance-rebuild-missing``
+    without one. Empty by default -- re-derivation is opt-in per
+    builder, never a silent default that changes the admission
+    posture.
     """
 
-    def __init__(self, policy_id, builders):
+    def __init__(self, policy_id, builders, rebuild_required=()):
         if not isinstance(policy_id, str) or \
                 not _BUILDER_ID_RE.match(policy_id):
             _fail(ENVELOPE_MALFORMED, "policy id fails grammar")
@@ -215,6 +253,20 @@ class BuilderPolicy:
                 _fail(ENVELOPE_MALFORMED,
                       "builder %r public key is not 32 bytes" % (bid,))
             self.builders[bid] = pub.lower()
+        if not isinstance(rebuild_required, (list, tuple, set, frozenset)):
+            _fail(ENVELOPE_MALFORMED,
+                  "rebuild_required must be a sequence of builder ids")
+        req = set()
+        for bid in rebuild_required:
+            if not isinstance(bid, str) or not _BUILDER_ID_RE.match(bid):
+                _fail(ENVELOPE_MALFORMED,
+                      "rebuild_required builder id fails grammar: %r" %
+                      (bid,))
+            if bid not in self.builders:
+                _fail(ENVELOPE_MALFORMED,
+                      "rebuild_required names unknown builder %r" % (bid,))
+            req.add(bid)
+        self.rebuild_required = frozenset(req)
         self.policy_id = policy_id
 
     def pubkey_for(self, builder_id):
@@ -237,7 +289,8 @@ class BuilderPolicy:
 
 def make_provenance_claim(builder_id, keyid, artifact_digest,
                           materials, invocation=None, issued_at=None,
-                          artifact_kind="evidence-bundle"):
+                          artifact_kind="evidence-bundle",
+                          rebuild_recipe=None):
     """Build the unsigned provenance claim dict.
 
     ``materials`` is a list of ``{"uri","digest","completeness"}``;
@@ -245,6 +298,10 @@ def make_provenance_claim(builder_id, keyid, artifact_digest,
     ``verify_provenance`` (single enforcement point) -- this
     constructor only assembles. ``invocation`` is opaque
     builder-declared build parameters (kept inside the signed bytes).
+
+    ``rebuild_recipe`` (optional) is a re-derivation recipe validated
+    by ``check_rebuild_recipe`` at construction; it is stored inside
+    the claim, so the sealed signature covers it.
     """
     if not isinstance(builder_id, str) or \
             not _BUILDER_ID_RE.match(builder_id):
@@ -257,6 +314,9 @@ def make_provenance_claim(builder_id, keyid, artifact_digest,
     for mat in materials:
         if not isinstance(mat, dict):
             _fail(ENVELOPE_MALFORMED, "material must be a dict")
+    if rebuild_recipe is not None:
+        check_rebuild_recipe(rebuild_recipe,
+                             [m.get("uri") for m in materials])
     claim = {
         "claim_format": CLAIM_FORMAT,
         "builder": {"id": builder_id, "keyid": keyid},
@@ -266,6 +326,8 @@ def make_provenance_claim(builder_id, keyid, artifact_digest,
         "issued_at": issued_at if issued_at is not None
         else int(time.time()),
     }
+    if rebuild_recipe is not None:
+        claim["rebuild_recipe"] = rebuild_recipe
     return claim
 
 
@@ -330,11 +392,15 @@ def _check_claim_shape(claim):
     if not isinstance(issued, int) or isinstance(issued, bool) \
             or issued < 0:
         _fail(ENVELOPE_MALFORMED, "issued_at must be a non-negative int")
+    recipe = claim.get("rebuild_recipe")
+    if recipe is not None:
+        check_rebuild_recipe(recipe, [m["uri"] for m in materials])
     return bid
 
 
 def verify_provenance(envelope, builder_policy,
-                      allow_unverified_materials=False):
+                      allow_unverified_materials=False,
+                      require_rebuild=False, material_bytes=None):
     """Verify a provenance envelope LOUD. Returns True.
 
     Checks, in order: envelope shape -> claim shape (the honesty
@@ -345,7 +411,16 @@ def verify_provenance(envelope, builder_policy,
     informational) -> material markings: unmarked refuses
     ``provenance-material-unmarked``; ``unverified`` refuses
     ``provenance-material-unverified`` unless the verifier explicitly
-    opts in. Any failure raises ProvenanceError with its machine code.
+    opts in -> optional re-derivation. Any failure raises
+    ProvenanceError with its machine code.
+
+    ``require_rebuild=True`` (with ``material_bytes``) demands that
+    the claim's artifact digest re-derive from the signed recipe and
+    the supplied materials: missing recipe refuses
+    ``provenance-rebuild-missing``, disagreement refuses
+    ``provenance-rebuild-mismatch``. A builder named in the policy's
+    ``rebuild_required`` set triggers the same demand even without
+    the kwarg (strict builder policy).
     """
     if not isinstance(envelope, dict):
         _fail(ENVELOPE_MALFORMED, "envelope must be a dict")
@@ -385,6 +460,10 @@ def verify_provenance(envelope, builder_policy,
         _fail(SIGNATURE_INVALID,
               "provenance signature does not verify under the pinned "
               "builder key")
+    need_rebuild = bool(require_rebuild) or \
+        builder_id in builder_policy.rebuild_required
+    if need_rebuild:
+        _rederive_and_compare(claim, builder_policy, material_bytes)
     _emit({"event": "provenance-verified", "builder": builder_id,
            "artifact": claim["artifact"]["digest"],
            "digest": claim_digest(claim)})
@@ -395,7 +474,8 @@ def verify_provenance(envelope, builder_policy,
 # The anchor gate: provenance-gated anchoring.
 # ---------------------------------------------------------------------------
 
-def _gate_for(envelope, builder_policy, allow_unverified_materials):
+def _gate_for(envelope, builder_policy, allow_unverified_materials,
+              require_rebuild=False, material_bytes=None):
     """Build the ``provenance_gate`` callable for the anchor module.
 
     The gate verifies the envelope AND binds it to the digest being
@@ -406,7 +486,9 @@ def _gate_for(envelope, builder_policy, allow_unverified_materials):
     def gate(bundle_digest):
         verify_provenance(envelope, builder_policy,
                           allow_unverified_materials=
-                          allow_unverified_materials)
+                          allow_unverified_materials,
+                          require_rebuild=require_rebuild,
+                          material_bytes=material_bytes)
         claimed = envelope["provenance"]["artifact"]["digest"]
         if claimed != bundle_digest:
             _fail(ARTIFACT_MISMATCH,
@@ -419,7 +501,8 @@ def _gate_for(envelope, builder_policy, allow_unverified_materials):
 def anchor_bundle_gated(log, bundle_digest, provenance_envelope,
                         builder_policy, witness_policy=None,
                         witness_seeds=None,
-                        allow_unverified_materials=False):
+                        allow_unverified_materials=False,
+                        require_rebuild=False, material_bytes=None):
     """Anchor a bundle digest through the transparency log with the
     provenance gate armed.
 
@@ -429,6 +512,11 @@ def anchor_bundle_gated(log, bundle_digest, provenance_envelope,
     via ``gov/evidence_anchor.py``. The gate fires INSIDE ``anchor()``
     before the entry is sequenced: a refused bundle leaves no log
     entry. Returns the anchor receipt.
+
+    ``require_rebuild=True`` (with ``material_bytes``) additionally
+    demands re-derivation before sequencing: a strict builder policy
+    refuses anchoring when the artifact digest cannot be re-derived
+    from the signed recipe.
     """
     from gov import evidence_anchor as _ea
     if provenance_envelope is None:
@@ -436,9 +524,301 @@ def anchor_bundle_gated(log, bundle_digest, provenance_envelope,
               "provenance-gated anchor requires a provenance envelope; "
               "missing provenance never anchors silently")
     gate = _gate_for(provenance_envelope, builder_policy,
-                     allow_unverified_materials)
+                     allow_unverified_materials,
+                     require_rebuild=require_rebuild,
+                     material_bytes=material_bytes)
     return _ea.anchor(log, bundle_digest, witness_policy=witness_policy,
                       witness_seeds=witness_seeds, provenance_gate=gate)
+
+
+# ---------------------------------------------------------------------------
+# Re-derivation receipts: the oss-rebuild pattern (mechanism only, no
+# code lifted -- Apache-2.0, google/oss-rebuild).
+#
+# "Evidence carries the PROCEDURE to reproduce the proof" -- stronger
+# than "evidence carries its own verification contract". A provenance
+# claim MAY carry a bounded, auditable ``rebuild_recipe`` describing
+# how the artifact digest is deterministically re-derived from the
+# declared materials. The verifier re-executes the recipe over
+# verifier-supplied material bytes and compares the result to the
+# claimed artifact digest.
+#
+# Recipes DESCRIBE; they never execute code, fetch from the network,
+# or touch the host. The transform vocabulary is closed and pure:
+# concat/sha256/hex/prefix/suffix/slice. A recipe naming anything
+# else refuses ``provenance-rebuild-transform-unknown``. The recipe
+# lives INSIDE the signed claim, so a substituted recipe breaks the
+# builder signature before it ever reaches the interpreter.
+#
+# In the trust_vector verify/validate split, re-derivation IS the
+# validate half: signature checks are the verify half (done inside
+# verify_provenance), re-execution of the recipe is the validate half
+# (done here, and surfaced to appraisal via rebuild_receipt()).
+# ---------------------------------------------------------------------------
+
+REBUILD_RECIPE_FORMAT = "sasanam-rebuild/1"
+
+#: Closed deterministic transform vocabulary. Pure functions only;
+#: every transform is total over well-typed inputs.
+REBUILD_TRANSFORMS = ("concat", "sha256", "hex", "prefix", "suffix",
+                      "slice")
+
+#: Byte budgets: the verifier runs the recipe, so the recipe cannot
+#: demand unbounded work. A violation refuses
+#: ``provenance-rebuild-invalid`` (fail closed, never OOM).
+MAX_REBUILD_INPUT_BYTES = 16 * 1024 * 1024
+MAX_REBUILD_BUFFER_BYTES = 64 * 1024 * 1024
+MAX_REBUILD_STEPS = 64
+MAX_REBUILD_HEADER_BYTES = 4096
+
+#: Scheme id for the appraisal seam (claim_digest, scheme_id,
+#: endorsements) that gov/trust_vector.py consumes.
+REBUILD_SCHEME_ID = "provenance-rebuild/v1"
+
+REBUILD_INVALID = "provenance-rebuild-invalid"
+REBUILD_MISMATCH = "provenance-rebuild-mismatch"
+REBUILD_MISSING = "provenance-rebuild-missing"
+TRANSFORM_UNKNOWN = "provenance-rebuild-transform-unknown"
+
+
+def check_rebuild_recipe(recipe, material_uris):
+    """Validate a re-derivation recipe against the claim's materials.
+
+    ``material_uris`` is the set of URIs declared in the claim; every
+    recipe input must name one of them. Returns True. Refusals are
+    LOUD and coded: ``provenance-rebuild-transform-unknown`` for an
+    unlisted transform, ``provenance-rebuild-invalid`` for anything
+    else (a non-deterministic-by-construction recipe -- inputs that
+    cannot be named, unbounded work, a missing terminal hash -- can
+    never re-derive, so it is refused at registration).
+    """
+    if not isinstance(recipe, dict):
+        _fail(REBUILD_INVALID, "rebuild recipe must be a dict")
+    if recipe.get("recipe_format") != REBUILD_RECIPE_FORMAT:
+        _fail(REBUILD_INVALID,
+              "recipe_format must be %r" % (REBUILD_RECIPE_FORMAT,))
+    inputs = recipe.get("inputs")
+    if not isinstance(inputs, list) or not inputs:
+        _fail(REBUILD_INVALID, "recipe inputs must be a non-empty list")
+    known = set(material_uris or [])
+    for uri in inputs:
+        if not isinstance(uri, str) or uri not in known:
+            _fail(REBUILD_INVALID,
+                  "recipe input %r is not a declared material" % (uri,))
+    if len(set(inputs)) != len(inputs):
+        _fail(REBUILD_INVALID, "recipe inputs must be unique")
+    steps = recipe.get("steps")
+    if not isinstance(steps, list) or not steps or \
+            len(steps) > MAX_REBUILD_STEPS:
+        _fail(REBUILD_INVALID,
+              "recipe steps must be a non-empty list of at most %d" %
+              MAX_REBUILD_STEPS)
+    input_set = set(inputs)
+    for i, step in enumerate(steps):
+        _check_rebuild_step(step, i, input_set)
+    last = steps[-1]
+    if set(last) != {"op"} or last["op"] != "sha256":
+        _fail(REBUILD_INVALID,
+              "recipe must end with a terminal {\"op\": \"sha256\"} step: "
+              "the artifact digest is the sha256 hex of the recipe's "
+              "pre-image")
+    return True
+
+
+def _check_rebuild_step(step, i, inputs):
+    """Validate one recipe step. Grammar errors refuse
+    ``provenance-rebuild-invalid``; an op outside the closed vocabulary
+    refuses ``provenance-rebuild-transform-unknown``."""
+    label = "recipe step %d" % i
+    if not isinstance(step, dict):
+        _fail(REBUILD_INVALID, label + " must be a dict")
+    op = step.get("op")
+    if op not in REBUILD_TRANSFORMS:
+        _fail(TRANSFORM_UNKNOWN,
+              "%s names unknown transform %r" % (label, op))
+    if op == "concat":
+        if set(step) != {"op", "order"}:
+            _fail(REBUILD_INVALID, label + ": concat takes only 'order'")
+        order = step["order"]
+        if not isinstance(order, list) or not order:
+            _fail(REBUILD_INVALID,
+                  label + ": order must be a non-empty list")
+        for uri in order:
+            if not isinstance(uri, str) or uri not in inputs:
+                _fail(REBUILD_INVALID,
+                      label + ": order entry %r is not a declared recipe "
+                      "input" % (uri,))
+    elif op in ("prefix", "suffix"):
+        if set(step) != {"op", "bytes"}:
+            _fail(REBUILD_INVALID, label + ": %s takes only 'bytes'" % op)
+        raw = step["bytes"]
+        if not isinstance(raw, str) or not raw:
+            _fail(REBUILD_INVALID,
+                  label + ": bytes must be a non-empty hex string")
+        try:
+            blob = bytes.fromhex(raw)
+        except ValueError:
+            _fail(REBUILD_INVALID, label + ": bytes is not hex")
+        if len(blob) > MAX_REBUILD_HEADER_BYTES:
+            _fail(REBUILD_INVALID,
+                  label + ": header literal exceeds %d bytes" %
+                  MAX_REBUILD_HEADER_BYTES)
+    elif op == "slice":
+        if set(step) != {"op", "offset", "length"}:
+            _fail(REBUILD_INVALID,
+                  label + ": slice takes only offset/length")
+        off, ln = step["offset"], step["length"]
+        if not isinstance(off, int) or isinstance(off, bool) or off < 0:
+            _fail(REBUILD_INVALID,
+                  label + ": offset must be a non-negative int")
+        if not isinstance(ln, int) or isinstance(ln, bool) or ln <= 0:
+            _fail(REBUILD_INVALID,
+                  label + ": length must be a positive int")
+        if off + ln > MAX_REBUILD_BUFFER_BYTES:
+            _fail(REBUILD_INVALID,
+                  label + ": slice window exceeds the rebuild buffer "
+                  "budget")
+    else:  # sha256, hex: no parameters
+        if set(step) != {"op"}:
+            _fail(REBUILD_INVALID, label + ": %s takes no parameters" % op)
+    return True
+
+
+def execute_rebuild(recipe, material_bytes):
+    """Execute a validated recipe over verifier-supplied material bytes.
+
+    Returns the 32-byte digest (the recipe must end with a terminal
+    ``sha256`` step -- enforced by check_rebuild_recipe). The caller
+    must validate the recipe first; execution trusts nothing and still
+    bounds every operation (fail closed on budget violations).
+    """
+    total = 0
+    for uri in recipe["inputs"]:
+        blob = material_bytes.get(uri) \
+            if isinstance(material_bytes, dict) else None
+        if not isinstance(blob, (bytes, bytearray)):
+            _fail(REBUILD_INVALID,
+                  "material %r bytes were not supplied as bytes" % (uri,))
+        total += len(blob)
+        if total > MAX_REBUILD_INPUT_BYTES:
+            _fail(REBUILD_INVALID,
+                  "recipe inputs exceed the %d-byte input budget" %
+                  MAX_REBUILD_INPUT_BYTES)
+    buf = b""
+    for step in recipe["steps"]:
+        op = step["op"]
+        if op == "concat":
+            buf = b"".join(bytes(material_bytes[u])
+                           for u in step["order"])
+        elif op == "sha256":
+            buf = hashlib.sha256(buf).digest()
+        elif op == "hex":
+            buf = buf.hex().encode("ascii")
+        elif op == "prefix":
+            buf = bytes.fromhex(step["bytes"]) + buf
+        elif op == "suffix":
+            buf = buf + bytes.fromhex(step["bytes"])
+        elif op == "slice":
+            off, ln = step["offset"], step["length"]
+            if off + ln > len(buf):
+                _fail(REBUILD_INVALID,
+                      "slice window %d:%d exceeds the %d-byte buffer" %
+                      (off, off + ln, len(buf)))
+            buf = buf[off:off + ln]
+        if len(buf) > MAX_REBUILD_BUFFER_BYTES:
+            _fail(REBUILD_INVALID,
+                  "rebuild buffer exceeds the %d-byte budget" %
+                  MAX_REBUILD_BUFFER_BYTES)
+    return buf
+
+
+def _rederive_and_compare(claim, builder_policy, material_bytes):
+    """Re-derive the artifact digest and compare it to the claim.
+
+    The recipe must already be trusted (it lives inside the signed
+    claim; the caller verifies the signature first). Returns the
+    derived 64-hex digest; mismatch refuses
+    ``provenance-rebuild-mismatch`` (critical: recomputed evidence
+    disagrees with the claim).
+    """
+    recipe = claim.get("rebuild_recipe")
+    if recipe is None:
+        _fail(REBUILD_MISSING,
+              "the verifier demanded re-derivation but the claim "
+              "carries no re-derivation recipe")
+    check_rebuild_recipe(recipe, [m["uri"] for m in claim["materials"]])
+    derived = execute_rebuild(recipe, material_bytes).hex()
+    claimed = claim["artifact"]["digest"]
+    if derived != claimed:
+        _fail(REBUILD_MISMATCH,
+              "re-derived digest %s disagrees with the claimed artifact "
+              "digest %s" % (derived, claimed))
+    _emit({"event": "provenance-rebuild-verified",
+           "builder": claim["builder"]["id"],
+           "artifact": claimed,
+           "digest": claim_digest(claim),
+           "recipe": hashlib.sha256(_canonical(recipe)).hexdigest()})
+    return derived
+
+
+def verify_rebuild(envelope, builder_policy, material_bytes,
+                   allow_unverified_materials=False):
+    """Re-derive a claim's artifact digest LOUD. Returns the derived
+    64-hex digest.
+
+    Verifies the envelope first (fail closed: the recipe is only
+    trustworthy inside a builder-signed, allowlisted claim), then
+    re-executes the signed recipe over ``material_bytes`` (a dict
+    mapping material URI -> bytes) and refuses
+    ``provenance-rebuild-mismatch`` on disagreement. A claim with no
+    recipe refuses ``provenance-rebuild-missing`` -- use
+    ``verify_provenance`` when re-derivation is optional.
+    """
+    if not isinstance(envelope, dict):
+        _fail(ENVELOPE_MALFORMED, "envelope must be a dict")
+    if not isinstance(builder_policy, BuilderPolicy):
+        _fail(ENVELOPE_MALFORMED,
+              "builder_policy must be a BuilderPolicy")
+    verify_provenance(envelope, builder_policy,
+                      allow_unverified_materials=
+                      allow_unverified_materials)
+    return _rederive_and_compare(envelope["provenance"], builder_policy,
+                                 material_bytes)
+
+
+def rebuild_receipt(envelope, builder_policy, material_bytes,
+                    allow_unverified_materials=False):
+    """Build the appraisal-seam record for a verified re-derivation.
+
+    Returns ``{"claim_digest": ..., "scheme_id": "provenance-rebuild/v1",
+    "endorsement": {...}}`` -- the narrow (claim_digest, scheme_id,
+    endorsements) seam gov/trust_vector.py consumes. The endorsement
+    carries the re-derived digest, the builder, and the recipe digest:
+    an appraiser can re-run the recipe itself from the claim's
+    materials without trusting this receipt's word for it (the recipe
+    digest names exactly which procedure was executed).
+    """
+    if not isinstance(envelope, dict):
+        _fail(ENVELOPE_MALFORMED, "envelope must be a dict")
+    if not isinstance(builder_policy, BuilderPolicy):
+        _fail(ENVELOPE_MALFORMED,
+              "builder_policy must be a BuilderPolicy")
+    derived = verify_rebuild(envelope, builder_policy, material_bytes,
+                             allow_unverified_materials=
+                             allow_unverified_materials)
+    claim = envelope["provenance"]
+    return {
+        "claim_digest": claim_digest(claim),
+        "scheme_id": REBUILD_SCHEME_ID,
+        "endorsement": {
+            "builder_id": claim["builder"]["id"],
+            "builder_policy": builder_policy.policy_id,
+            "artifact_digest": claim["artifact"]["digest"],
+            "derived_digest": derived,
+            "recipe_digest": hashlib.sha256(
+                _canonical(claim["rebuild_recipe"])).hexdigest(),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------

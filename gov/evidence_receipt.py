@@ -121,8 +121,18 @@ def set_emit(emit):
 
 
 def _emit(event):
-    if _EMIT is not None:
+    """Emit an audit event to the installed sink. A broken audit sink
+    must never break receipt issuance or verification: the sink failure
+    is isolated (the failure mode is recorded in this docstring/comment,
+    not the event -- the same trade-off as ``gov/timestamp_authority.py``
+    and ``gov/evidence_provenance.py``), never the sink's raw exception
+    type escaping at a public seam (F347)."""
+    if _EMIT is None:
+        return
+    try:
         _EMIT(dict(event))
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +213,10 @@ def _check_operator_pubkey(operator_pubkey):
 
 
 def _operator_pubkey_from_seed(operator_seed):
+    # F351a: bytes(str) raises a raw TypeError. Refuse LOUD and coded
+    # before touching the value.
+    if not isinstance(operator_seed, (bytes, bytearray)):
+        _fail(MALFORMED, "operator_seed must be 32 bytes")
     seed = bytes(operator_seed)
     if len(seed) != 32:
         _fail(MALFORMED, "operator_seed must be 32 bytes")
@@ -352,6 +366,10 @@ def _cosign(sig_structure, policy, seeds, log_operator_keyid):
         if kid not in policy.witnesses:
             _fail(POLICY_MISMATCH,
                   "cosigning key %r is not a pinned witness" % (kid,))
+        # F351a class: bytes(str) raises a raw TypeError. Refuse coded.
+        if not isinstance(seed, (bytes, bytearray)):
+            _fail(POLICY_MISMATCH,
+                  "witness seed for %r is not 32 bytes" % (kid,))
         raw = bytes(seed)
         if len(raw) != 32:
             _fail(POLICY_MISMATCH,
