@@ -1034,7 +1034,9 @@ def _green(pid, battery, expect_break_ids=()):
 # On the wave-304 tree, the w304 red-team battery's expected-open BREAKs
 # are the two F387 probes (its footer-state is re-pinned to this lane's
 # footer by the standard cascade).
-W304_REDTEAM_BREAKS = ("F387-recv-event-drift", "F387-sleep-wakeat-drift")
+# Wave-305 merge: F387 closed by lane A (recv/sleep completed-path drift
+# refusal) — w304_redteam now reports 0 BREAKs on the merged tree.
+W304_REDTEAM_BREAKS = ()
 
 # The w303 closure batteries should be fully green on the wave-304 tree.
 W303_FOOTER_BREAK = ()
