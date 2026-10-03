@@ -56,7 +56,7 @@ from gov import memory_store as mst
 from gov import memory_reconcile as mrc
 from gov import ed25519 as _ed25519
 
-TAXONOMY_PIN = 1851  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+TAXONOMY_PIN = 1857  # Wave-301 merge pin 1812 (was 1802 at wave-300); this lane mints no codes.; Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 lane 4: pin 1820 -> 1822 (+2 workflow-saga-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

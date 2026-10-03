@@ -125,7 +125,7 @@ from gov.memory_actgate import ActGate  # noqa: E402
 from gov.memory_provenance import MemoryFirewall  # noqa: E402
 from gov.log import read_entries  # noqa: E402
 
-TAXONOMY_PIN = 1851  # Wave-307 merge pin; this lane files nothing, pin unchanged
+TAXONOMY_PIN = 1857  # Wave-307 merge pin; this lane files nothing, pin unchanged
 
 _results = []
 

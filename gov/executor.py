@@ -88,6 +88,7 @@ from . import framing as _framing
 from . import egress_content as _egress_content
 from . import detection_verdicts as _detection_verdicts
 from . import exchange_ledger as _exchange_ledger
+from . import approval_tokens as _approval_tokens  # wave-313 Row-7 step 3
 from . import rules_tiering as _rules_tiering
 from . import precommit as _precommit
 from . import tool_continuity as _tool_continuity
@@ -1287,6 +1288,14 @@ class ToolExecutor:
         # sweep refuses executions whose un-elevated reads were never
         # disclosed to the approver.
         self._memory_actgate = memory_actgate
+        # Wave-313 (Row 7 step 3): the process-local nonce ledger for
+        # capability/argument-bound approval tokens. The sweep verifies
+        # a record's token (when present) and consumes its nonce after
+        # the durable claim (mark_executed), so a token authorizes at
+        # most one execution. Cross-process at-most-once rides the
+        # queue lock plus the record-executed marking, like every other
+        # sweep check.
+        self._approval_token_store = _approval_tokens.TokenConsumeStore()
         # Wave-175 lane 1 (countersigned invocation receipts, R7 #7 Sigil
         # shape): resolve the executor's countersigning key. Fail-closed
         # two-tier:
@@ -13002,6 +13011,39 @@ class ToolExecutor:
                     "role": rec.get("role"),
                     "principal": _rec_identity.get("principal"),
                 })
+            # Wave-313 (Row 7 step 3): capability/argument-bound approval
+            # token. decide() mints the token and MAC-binds it on the
+            # record; the sweep re-verifies it here as an ADDITIONAL
+            # check -- seal, expiry, capability, argument binding, and
+            # replay against the nonce ledger. A token minted for
+            # (tool, args) never authorizes a different tool or
+            # different args, so a decomposed trajectory that reuses
+            # step 1's token for step 3's harmful variant is refused
+            # here. Records with no token (pre-wave-313 records, or any
+            # path that did not mint one) skip this check entirely --
+            # existing behavior is unchanged when no token is
+            # presented. The nonce is NOT consumed here: consumption
+            # happens after the durable claim (mark_executed) below, so
+            # a record refused by a later gate keeps its token
+            # unconsumed and retriable.
+            _ap_token = rec.get("approval_token")
+            _ap_token_body = None
+            if _ap_token is not None:
+                try:
+                    _ap_token_body = _approval_tokens.verify_token(
+                        _ap_token, capability=rec["tool"],
+                        args=rec["args"],
+                        consume_store=self._approval_token_store)
+                except _approval_tokens.ApprovalTokenError as e:
+                    _refuse("Approval %s refused: its capability/argument-"
+                            "bound approval token failed verification "
+                            "(%s: %s) -- the presented action does not "
+                            "match what the token authorizes; re-approval "
+                            "required." % (aid, e.code, e),
+                            "approval_token_invalid",
+                            policy_id="approval-token-execution-refused",
+                            extra={"code": e.code})
+                    continue
             # Write-ahead audit (fail-closed): the authorization is durably
             # logged BEFORE the side effect. If this append raises, the tool
             # is never touched.
@@ -13053,6 +13095,20 @@ class ToolExecutor:
             # entry above stays as the forensic marker that the
             # authorization was granted before the claim.
             self.approvals.mark_executed(aid)
+            # Wave-313 (Row 7 step 3): consume the approval token's
+            # nonce AFTER the durable claim, BEFORE the side effect.
+            # Ordering: verify-first (above) keeps a refused-later
+            # record retriable; consume-after-claim keeps a crashed
+            # sweep from double-consuming. The claim already guarantees
+            # at-most-once across processes; the nonce ledger adds the
+            # token-level guarantee. This cannot fail: the nonce was
+            # verified unconsumed above, in this process, under the
+            # queue lock, with no awaits in between -- a replay here
+            # would be an internal bug, and it must be loud, never a
+            # silent execution.
+            if _ap_token_body is not None:
+                self._approval_token_store.consume(
+                    _ap_token_body["nonce"])
             # F164 (HIGH): same ambient-reader binding as the direct
             # path -- the approval record carries the acting identity
             # (principal/run_id) for attribution, so approved read_file

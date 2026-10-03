@@ -36,7 +36,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-PIN = 1851  # Wave-300 merge pin 1802; wave-301 lane 5: pin 1802 -> 1804 (+2 workflow-routing-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*)
+PIN = 1857  # Wave-300 merge pin 1802; wave-301 lane 5: pin 1802 -> 1804 (+2 workflow-routing-*); wave-301 merge: 1812 (+10 workflow-*); Wave-302 merge: pin 1812 -> 1820 (+8 codes: 3 workflow-composed-* + 3 workflow-branch-* + 2 workflow-approval-*); Wave-303 merge: pin 1823 -> 1826 (+6 codes: 1 workflow-idempotency-caller-mismatch +2 workflow-saga-operator-unauthorized/resolution-invalid +3 authority-lifecycle-*); Wave-313 lane B: pin 1851 -> 1857 (+6 approval-token-*)
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
