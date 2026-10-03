@@ -111,12 +111,12 @@ def p_footer_state():
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
     # Wave-308 lane A: F391 CLOSED; footer open F396 / next F397.
-    if nxt != 397 or open_s != "F396":
+    if nxt != 398 or open_s != "F396, F397":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F397 open "
-                       "'F396')" % (nxt, open_s))
+                       "footer drift: next F%d open %r (want next F398 open "
+                       "'F396, F397')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer pins open F396 / next F397")
+            "footer pins open F396, F397 / next F398")
 
 
 def _chain_fx():
