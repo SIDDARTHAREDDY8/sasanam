@@ -401,6 +401,58 @@ def _closure_fingerprint(fn):
     return bound
 
 
+def _defaults_fingerprint(fn):
+    """Fingerprint default argument values, JSON-native only (F396).
+
+    ``__defaults__`` and ``__kwdefaults__`` are function-object state
+    outside ``__code__`` entirely: two fns with identical bytecode but
+    different default values (``def fn(i, c=client)`` over different
+    per-deployment clients) must not collide. JSON-native defaults are
+    bound by value -- they are stable across reconstruction from the
+    same source, so crash-recovery re-execution of the same plan keeps
+    its digest. A non-JSON-native ("exotic") default cannot be bound at
+    all, so the plan refuses ``WC_DEFINITION_INVALID`` (fail closed):
+    binding it by type name collides across instances of the same type
+    (the F395 break), and binding it by ``repr`` is unstable across
+    processes (memory addresses), which would break crash-recovery
+    re-execution. The check applies to nested structure too, because
+    ``_canon``'s ``default=str`` would otherwise bind a nested exotic's
+    ``repr`` silently. Positional defaults keep their positional order;
+    keyword-only defaults are sorted by name (dict insertion order is
+    already deterministic for a given source, but sorting removes any
+    doubt).
+    """
+    fname = getattr(fn, "__name__", fn)
+    pos = getattr(fn, "__defaults__", None) or ()
+    kw = getattr(fn, "__kwdefaults__", None) or {}
+    bound_pos = []
+    for i, value in enumerate(pos):
+        if _is_json_native(value):
+            bound_pos.append(value)
+        else:
+            _fail(WC_DEFINITION_INVALID,
+                  "composed plan fn %r has a non-JSON-native default "
+                  "value for positional arg %d (type %s): the plan "
+                  "digest binds default argument values by value, and "
+                  "exotic objects cannot be bound (fail closed; use "
+                  "JSON-native configuration values instead)"
+                  % (fname, i, type(value).__name__))
+    bound_kw = []
+    for key in sorted(kw):
+        value = kw[key]
+        if _is_json_native(value):
+            bound_kw.append([key, value])
+        else:
+            _fail(WC_DEFINITION_INVALID,
+                  "composed plan fn %r has a non-JSON-native default "
+                  "value for keyword-only arg %r (type %s): the plan "
+                  "digest binds default argument values by value, and "
+                  "exotic objects cannot be bound (fail closed; use "
+                  "JSON-native configuration values instead)"
+                  % (fname, key, type(value).__name__))
+    return {"pos": bound_pos, "kw": bound_kw}
+
+
 def _code_fingerprint(fn):
     """F393: bind a plan digest to the code of the unit's callable.
 
@@ -412,13 +464,20 @@ def _code_fingerprint(fn):
     (run, caller, digest, F390 name, F392 binding). The fingerprint
     binds the code object's bytecode, constants (recursively),
     referenced names and calling convention, plus JSON-native
-    closed-over values: stable across reconstruction from the same
-    source (crash-recovery re-execution of the same plan keeps its
-    digest), different for a different function body. Non-JSON-native
+    closed-over values and JSON-native default argument values: stable
+    across reconstruction from the same source (crash-recovery
+    re-execution of the same plan keeps its digest), different for a
+    different function body. Non-JSON-native
     ("exotic") closed-over values refuse ``WC_DEFINITION_INVALID``
     (F395): binding them by type name collides across instances of
     the same type, and binding them by ``repr`` is unstable across
-    processes. Callables
+    processes. Non-JSON-native default argument values refuse
+    ``WC_DEFINITION_INVALID`` the same way (F396): defaults are
+    function-object state outside ``__code__`` entirely, so two fns
+    with identical bytecode but different defaults would otherwise
+    share a plan digest; a type-name binding would collide exactly as
+    in F395, and a ``repr`` binding would break crash-recovery
+    stability. Callables
     without an introspectable code object (builtins,
     functools.partial, C extensions) refuse ``WC_DEFINITION_INVALID``:
     the digest must bind code, and uninspectable code cannot be bound
@@ -432,6 +491,7 @@ def _code_fingerprint(fn):
               % (getattr(fn, "__name__", fn),))
     inner = _code_fingerprint_inner(code)
     inner["closure"] = _closure_fingerprint(fn)
+    inner["defaults"] = _defaults_fingerprint(fn)
     return inner
 
 
