@@ -1,10 +1,12 @@
 """Unit tests for gov.evidence_verify_offline (wave-311 lane E).
 
 Seam-level coverage: taxonomy shape, canonical bytes, the trust-root
-pin, the 9-step pipeline (positive + typed negatives), transcript /
-machine-report rendering, the CLI contract, and the stdlib-only
-third-party acceptance script (run in a subprocess with no Sasanam
-import, fixtures in a tmp dir).
+pin, the 9-step pipeline (positive + typed negatives), the witness
+stage (log-backed entry: checkpoint-first verify, inclusion proof,
+body binding; all coded negatives), transcript / machine-report
+rendering, the CLI contract, and the stdlib-only third-party
+acceptance script (run in a subprocess with no Sasanam import,
+fixtures in a tmp dir).
 
 The vendored Ed25519 inside the acceptance script is pinned by
 contract in a fresh interpreter: a good signature verifies
@@ -119,8 +121,10 @@ def _good_bundle():
 
 
 class TestTaxonomyShape(unittest.TestCase):
-    def test_eleven_codes(self):
-        self.assertEqual(len(v.FAILURE_CODES), 11)
+    def test_sixteen_codes(self):
+        # Wave-312 adds the five WITNESS_* witness-stage codes (11 -> 16);
+        # the eleven base codes are unchanged and keep their slots.
+        self.assertEqual(len(v.FAILURE_CODES), 16)
 
     def test_exit_codes_and_categories(self):
         exits = {c["exit"] for c in v.FAILURE_CODES.values()}
@@ -430,6 +434,205 @@ class TestThirdPartyAccept(unittest.TestCase):
                               text=True, timeout=120)
         self.assertIn("ED25519_CONTRACT_OK",
                       proc.stdout, proc.stdout + proc.stderr)
+
+
+
+class TestWitnessStage(unittest.TestCase):
+    """Wave-312: the log-backed witness stage in the offline verifier.
+
+    Positive: seal a witness entry against a real WitnessLog, attach
+    it, and verify -- the witness step runs checkpoint-signature
+    first, then inclusion proof vs the checkpoint root, then entry
+    body binding. Negatives: every stage fails closed with its coded
+    refusal.
+    """
+
+    WIT_SEED = "77" * 32  # TEST-ONLY witness seed (see file header style)
+
+    def _clock(self, when=NOW):
+        return v.FixedClock("unit-clock", when)
+
+    def _wit(self, seed=WIT_SEED):
+        s = _signer(seed)
+
+        class _W(object):
+            pass
+        w = _W()
+        w.public_key = bytes.fromhex(s.pubkey_hex())
+        w.key_id = s.keyid()
+        w.sign = s.sign
+        return w
+
+    def _witness_bundle(self, t0=None, wit=None, policy_extra=None,
+                        valid_days=30):
+        ev = _signer(EV_SEED)
+        vb, bb = _good_bundle()
+        wit = wit or self._wit()
+        policy = _policy_doc([ev], [_signer(TSA_SEED)],
+                             NOW + timedelta(days=10))
+        policy["witness_log_keys"] = [{
+            "keyid": wit.key_id,
+            "pubkey_hex": wit.public_key.hex(),
+            "valid_for": {
+                "not_before": (NOW - timedelta(days=valid_days))
+                .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "not_after": (NOW + timedelta(days=valid_days))
+                .strftime("%Y-%m-%dT%H:%M:%SZ")}}]
+        if policy_extra:
+            policy.update(policy_extra)
+        vb["policy"] = _seal(v.canonical(policy), v.POLICY_PAYLOAD_TYPE,
+                             [_signer(ANCHOR_SEED)])
+        t0 = t0 if t0 is not None else int(NOW.timestamp())
+        return vb, bb, ev, wit, t0, policy
+
+    def _attach_entry(self, vb, ev, wit, wlog, t0, policy):
+        entry = v.seal_witness_entry(
+            wlog, wit,
+            artifact_digest=hashlib.sha256(BUNDLE_BYTES).hexdigest(),
+            signatures=vb["envelope"]["signatures"],
+            verified_keyids=[ev.keyid()],
+            policy_digest=hashlib.sha256(
+                v.canonical(policy)).hexdigest(),
+            integrated_time=t0)
+        vb = copy.deepcopy(vb)
+        vb["witness_entries"] = [entry]
+        return vb, entry
+
+    def test_witness_positive(self):
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle()
+        wlog = witness_log.WitnessLog(wit.public_key)
+        vb, _ = self._attach_entry(vb, ev, wit, wlog, t0, policy)
+        rep = v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(rep["status"], "VALID")
+        steps = [c["step"] for c in rep["checks"]]
+        self.assertEqual(steps,
+                         ["parse", "payloadType", "signature", "statement",
+                          "predicate", "digest", "subject", "policy",
+                          "witness", "transcript"])
+        self.assertIsNotNone(rep["witness"])
+        self.assertEqual(rep["witness"]["tree_size"], 1)
+        self.assertEqual(rep["witness"]["log_index"], 0)
+
+    def test_witness_tampered_checkpoint_signature(self):
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle()
+        wlog = witness_log.WitnessLog(wit.public_key)
+        vb, entry = self._attach_entry(vb, ev, wit, wlog, t0, policy)
+        sig = bytearray(base64.b64decode(
+            vb["witness_entries"][0]["checkpoint_signature"]))
+        sig[0] ^= 1
+        vb["witness_entries"][0]["checkpoint_signature"] = (
+            base64.b64encode(bytes(sig)).decode("ascii"))
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "WITNESS_CHECKPOINT_INVALID")
+        self.assertEqual(cm.exception.exit_code, 41)
+
+    def test_witness_tampered_inclusion_path(self):
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle()
+        wlog = witness_log.WitnessLog(wit.public_key)
+        # A second entry so the audit path is non-empty.
+        v.seal_witness_entry(
+            wlog, wit,
+            artifact_digest=hashlib.sha256(BUNDLE_BYTES).hexdigest(),
+            signatures=vb["envelope"]["signatures"],
+            verified_keyids=[ev.keyid()],
+            policy_digest=hashlib.sha256(
+                v.canonical(policy)).hexdigest(),
+            integrated_time=t0)
+        vb, entry = self._attach_entry(vb, ev, wit, wlog, t0, policy)
+        path = vb["witness_entries"][0]["inclusion_path"]
+        h = bytearray(bytes.fromhex(path[0]["hash"]))
+        h[0] ^= 1
+        path[0]["hash"] = bytes(h).hex()
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "WITNESS_INCLUSION_INVALID")
+        self.assertEqual(cm.exception.exit_code, 43)
+
+    def test_witness_entry_unbound_wrong_digest(self):
+        # The entry is sealed honestly (inclusion verifies) but for
+        # DIFFERENT artifact bytes -- the binding check catches it.
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle()
+        wlog = witness_log.WitnessLog(wit.public_key)
+        entry = v.seal_witness_entry(
+            wlog, wit,
+            artifact_digest=hashlib.sha256(b"other-bytes").hexdigest(),
+            signatures=vb["envelope"]["signatures"],
+            verified_keyids=[ev.keyid()],
+            policy_digest=hashlib.sha256(
+                v.canonical(policy)).hexdigest(),
+            integrated_time=t0)
+        vb = copy.deepcopy(vb)
+        vb["witness_entries"] = [entry]
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "WITNESS_ENTRY_UNBOUND")
+
+    def test_witness_key_not_in_policy(self):
+        # Bundle carries a witness entry but the signed policy pins no
+        # witness_log_keys at all.
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle()
+        del policy["witness_log_keys"]
+        vb["policy"] = _seal(v.canonical(policy), v.POLICY_PAYLOAD_TYPE,
+                             [_signer(ANCHOR_SEED)])
+        wlog = witness_log.WitnessLog(wit.public_key)
+        vb, _ = self._attach_entry(vb, ev, wit, wlog, t0, policy)
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "WITNESS_KEY_UNAVAILABLE")
+
+    def test_witness_future_checkpoint_refused(self):
+        from gov import witness_log
+        wit = self._wit()
+        vb, bb, ev, wit, t0, policy = self._witness_bundle(
+            t0=int(NOW.timestamp()) + 3600)
+        wlog = witness_log.WitnessLog(wit.public_key)
+        vb, _ = self._attach_entry(vb, ev, wit, wlog, t0, policy)
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "TEMPORAL_UNSATISFIED")
+
+    def test_witness_unknown_kind_still_refused(self):
+        vb, bb = _good_bundle()
+        vb = copy.deepcopy(vb)
+        vb["witness_entries"] = [{"kind": "witness-entry/future-kind"}]
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "UNSUPPORTED_BUNDLE_VERSION")
+
+    def test_witness_required_unmet(self):
+        vb, bb = _good_bundle()
+        vb = copy.deepcopy(vb)
+        policy = _policy_doc([_signer(EV_SEED)], [_signer(TSA_SEED)],
+                             NOW + timedelta(days=10))
+        policy["witness_required"] = True
+        vb["policy"] = _seal(v.canonical(policy), v.POLICY_PAYLOAD_TYPE,
+                             [_signer(ANCHOR_SEED)])
+        with self.assertRaises(v.VerificationError) as cm:
+            v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual(cm.exception.code, "WITNESS_REQUIRED_UNMET")
+        self.assertEqual(cm.exception.exit_code, 44)
+
+    def test_no_entries_no_witness_step(self):
+        # Bundles without witness evidence keep the exact 9-step
+        # transcript (lane-E regression pin).
+        vb, bb = _good_bundle()
+        rep = v.verify(bb, vb, time_source=self._clock())
+        self.assertEqual([c["step"] for c in rep["checks"]],
+                         ["parse", "payloadType", "signature", "statement",
+                          "predicate", "digest", "subject", "policy",
+                          "transcript"])
+        self.assertIsNone(rep["witness"])
 
 
 if __name__ == "__main__":

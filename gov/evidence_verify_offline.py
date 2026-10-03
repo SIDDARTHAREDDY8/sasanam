@@ -33,8 +33,13 @@ wave-310 lane B steal verdicts
   each observer timestamp is verified against ONLY its named
   authority's key and ONLY that authority's ``validFor`` window.
 * **Rekor v2 CLIENTS.md offline contract** (adapt): no network, no
-  online lookup; the witness-entry slot exists in the bundle but any
-  entry is refused coded until the witness step lands (the seam).
+  online lookup; log-backed witness entries (``sasanam-witness-log/v1``)
+  are verified checkpoint-first -- the checkpoint signature is checked
+  before any size/hash is parsed, root hash and tree size come ONLY
+  from the verified checkpoint, duplicated copies elsewhere are
+  ignored (sigstore-python#248), and the witness key travels inside
+  the SIGNED policy. Unknown witness entry kinds are still refused
+  coded.
 * **TUF rotation ceremony** (adapt): there is no TUF client in this
   verifier. Trust-root refresh is a reviewed ceremony outside the
   verifier: the new root's SHA-256 is pinned here. The verifier never
@@ -48,6 +53,11 @@ The 9-step pipeline (``verify``), in order:
 
     parse -> payloadType -> signature -> statement -> predicate ->
     digest -> subject -> policy -> transcript
+
+plus a conditional witness step between policy and transcript: it runs
+only when the bundle carries witness entries or the signed policy sets
+``witness_required``. Bundles without witness evidence keep the exact
+9-step transcript (existing verifiers and batteries are untouched).
 
 Trust flow note: the policy is authenticated (signature + expiry)
 BEFORE its trust material is used -- authentication precedes use --
@@ -113,6 +123,7 @@ def _load_ed25519():
 # Loaded after the exception classes below (the loader raises
 # InternalError on failure, so it must exist first).
 _ed25519 = None
+_wl = None
 
 
 def _init_ed25519():
@@ -120,6 +131,31 @@ def _init_ed25519():
     if _ed25519 is None:
         _ed25519 = _load_ed25519()
     return _ed25519
+
+
+def _load_witness_log():
+    """Load gov/witness_log.py by file path (same reason as above:
+    ``from gov import witness_log`` would execute ``gov/__init__.py``
+    and pull urllib into the import closure). witness_log is stdlib-only
+    (hashlib/json/base64), so the closure stays socket-free."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "witness_log.py")
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "sasanam_standalone_witness_log", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except Exception as exc:  # noqa: BLE001
+        raise InternalError("cannot load witness_log from %r: %s"
+                            % (path, exc))
+    return module
+
+
+def _witness_log():
+    global _wl
+    if _wl is None:
+        _wl = _load_witness_log()
+    return _wl
 
 __all__ = [
     "VERIFIER_ID",
@@ -148,12 +184,16 @@ __all__ = [
     "canonical",
     "pae",
     "seal_envelope",
+    "seal_witness_entry",
     "build_verification_bundle",
     "compiled_trust_root",
     "verify",
     "render_transcript",
     "machine_report",
     "main",
+    "WITNESS_ENTRY_KIND",
+    "WITNESS_ENTRY_BODY_KIND",
+    "WITNESS_ENTRY_API_VERSION",
 ]
 
 VERIFIER_ID = "sasanam-offline-verifier"
@@ -172,6 +212,15 @@ POLICY_PAYLOAD_TYPE = "application/vnd.sasanam.verification-policy+json"
 
 #: in-toto Statement v1 type URI.
 INTOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
+
+#: Wire kind of a log-backed witness entry in the verification bundle.
+WITNESS_ENTRY_KIND = "sasanam-witness-log/v1"
+
+#: Kind marker inside the witness entry body (the leaf preimage).
+WITNESS_ENTRY_BODY_KIND = "sasanam-witness-log"
+
+#: Entry body API version.
+WITNESS_ENTRY_API_VERSION = "0.0.1"
 
 # ---------------------------------------------------------------------------
 # Compiled-in trust root (synthetic test anchor -- see module docstring).
@@ -255,6 +304,27 @@ FAILURE_CODES = {
                   "inside its validFor window, bound to the artifact "
                   "digest",
     },
+    "WITNESS_CHECKPOINT_INVALID": {
+        "exit": EXIT_CRYPTO, "category": "crypto",
+        "reason": "a witness checkpoint failed verification: bad "
+                  "signature (checked FIRST, before any field is parsed), "
+                  "malformed checkpoint, logId not naming a policy "
+                  "witness key, or checkpoint time outside the key's "
+                  "validFor window at the checkpoint's time",
+        "remedy": "fetch the checkpoint from the pinned witness log; "
+                  "check that the policy's witness_log_keys pin the "
+                  "log's key with a covering validFor window",
+    },
+    "WITNESS_KEY_UNAVAILABLE": {
+        "exit": EXIT_CRYPTO, "category": "crypto",
+        "reason": "the bundle carries witness entries but the signed "
+                  "policy names no witness_log_keys to verify them "
+                  "against",
+        "remedy": "add the witness log's key (with its validFor "
+                  "window) to the signed policy's witness_log_keys; a "
+                  "witness entry without a policy-pinned key is not "
+                  "verifiable",
+    },
     # -- unsupported (42) --
     "UNSUPPORTED_PAYLOAD_TYPE": {
         "exit": EXIT_UNSUPPORTED, "category": "unsupported",
@@ -275,11 +345,11 @@ FAILURE_CODES = {
     "UNSUPPORTED_BUNDLE_VERSION": {
         "exit": EXIT_UNSUPPORTED, "category": "unsupported",
         "reason": "the bundle version is not understood, or the bundle "
-                  "carries witness entries this verifier build does not "
-                  "verify (witness step not landed)",
-        "remedy": "use a v1 bundle; witness entries are refused until "
-                  "the Rekor-pattern witness step lands (see the seam "
-                  "note in the module docstring)",
+                  "carries a witness entry kind this verifier does not "
+                  "support",
+        "remedy": "use a v1 bundle with sasanam-witness-log/v1 witness "
+                  "entries; unknown entry kinds are refused, never "
+                  "skipped",
     },
     # -- binding / consistency (43) --
     "STATEMENT_SHAPE_INVALID": {
@@ -298,6 +368,26 @@ FAILURE_CODES = {
         "remedy": "verify the exact artifact bytes the statement was "
                   "built over; never re-serialize the statement",
     },
+    "WITNESS_INCLUSION_INVALID": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "the witness inclusion proof does not verify the "
+                  "entry against the checkpoint's root hash (the root "
+                  "hash and tree size come ONLY from the verified "
+                  "checkpoint; duplicates elsewhere are ignored), or "
+                  "log_index is outside the checkpoint tree_size",
+        "remedy": "fetch a fresh inclusion proof from the witness log "
+                  "against a current signed checkpoint",
+    },
+    "WITNESS_ENTRY_UNBOUND": {
+        "exit": EXIT_BINDING, "category": "consistency",
+        "reason": "the witness entry's body does not bind this bundle: "
+                  "artifact digest, exact wire signatures, verified "
+                  "keyids, or policy digest mismatch, or the entry's "
+                  "integratedTime is incoherent with its checkpoint "
+                  "(CVE-2026-22703: never accept 'a valid entry' alone)",
+        "remedy": "witness the exact bundle being verified; an entry "
+                  "for another artifact cannot be transplanted",
+    },
     # -- policy / temporal (44) --
     "TEMPORAL_UNSATISFIED": {
         "exit": EXIT_POLICY, "category": "policy",
@@ -310,6 +400,16 @@ FAILURE_CODES = {
         "remedy": "re-issue the policy with the policy-signing key; "
                   "supply a named time source; refresh observer "
                   "timestamps within the policy's max age",
+    },
+    "WITNESS_REQUIRED_UNMET": {
+        "exit": EXIT_POLICY, "category": "policy",
+        "reason": "the signed policy requires witness evidence "
+                  "(witness_required) but the bundle carries no witness "
+                  "entry",
+        "remedy": "witness the bundle with the policy-pinned witness "
+                  "log, or re-issue the policy without "
+                  "witness_required; the requirement is never silently "
+                  "dropped",
     },
 }
 
@@ -346,6 +446,7 @@ class InternalError(Exception):
 
 
 _init_ed25519()
+_witness_log()
 
 
 # ---------------------------------------------------------------------------
@@ -522,8 +623,10 @@ def build_verification_bundle(envelope, policy_envelope, timestamps=(),
     ``envelope``: DSSE envelope over the in-toto statement.
     ``policy_envelope``: DSSE envelope over the signed policy.
     ``timestamps``: observer-timestamp tokens (may be empty).
-    ``witness_entries``: reserved for the witness step -- any entry is
-    refused coded by the verifier until that step lands.
+    ``witness_entries``: log-backed witness entries
+    (``sasanam-witness-log/v1``, see :func:`seal_witness_entry`); each
+    is verified checkpoint-first by :func:`verify`. Unknown entry kinds
+    are refused coded, never skipped.
     """
     for name, doc in (("envelope", envelope),
                       ("policy_envelope", policy_envelope)):
@@ -535,6 +638,92 @@ def build_verification_bundle(envelope, policy_envelope, timestamps=(),
         "policy": policy_envelope,
         "timestamps": list(timestamps),
         "witness_entries": list(witness_entries),
+    }
+
+
+def seal_witness_entry(witness_log, witness_signer, *, artifact_digest,
+                       signatures, verified_keyids, policy_digest,
+                       integrated_time=None):
+    """Append a witness entry for a verified bundle to the log.
+
+    Producer-side helper (the sealer that feeds :func:`verify`'s
+    witness stage). The caller must have ALREADY verified the envelope
+    (threshold signatures over the exact payload bytes): this function
+    binds the GIVEN values into the entry body, it does not re-verify
+    them.
+
+    ``witness_log``: a ``gov.witness_log.WitnessLog`` (loaded here by
+    file path, like the Ed25519 primitive). ``witness_signer``: the
+    log's witness key (``.public_key`` 32 bytes, ``.sign(bytes)``).
+    ``artifact_digest``: hex sha256 of the exact artifact bytes.
+    ``signatures``: the envelope's EXACT wire signature entries
+    (``[{"keyid", "sig"}, ...]`` as delivered). ``verified_keyids``:
+    the keyids that met the policy threshold. ``policy_digest``: hex
+    sha256 of the canonical policy document that authorized the keys
+    (binds WHICH policy). ``integrated_time``: unix seconds (default:
+    now, UTC).
+
+    The entry body (the Merkle leaf preimage) binds artifact digest +
+    exact wire signatures + verified keyids + policy digest
+    (CVE-2026-22703: artifact + signature + key, never "a valid entry"
+    alone). Returns the wire entry dict: kind, log_index, entry_body,
+    checkpoint, checkpoint_signature, inclusion_path.
+
+    Raises InternalError on bad inputs (producer bug, loud).
+    """
+    wl = _witness_log()
+    if witness_log.__class__.__name__ != "WitnessLog":
+        raise InternalError("witness_log must be a WitnessLog")
+    pub = getattr(witness_signer, "public_key", None)
+    if not isinstance(pub, (bytes, bytearray)) or len(pub) != 32:
+        raise InternalError("witness_signer public_key must be 32 bytes")
+    if not callable(getattr(witness_signer, "sign", None)):
+        raise InternalError("witness_signer needs .sign(bytes)")
+    if (not isinstance(artifact_digest, str) or len(artifact_digest) != 64
+            or any(c not in "0123456789abcdefABCDEF"
+                   for c in artifact_digest)):
+        raise InternalError("artifact_digest must be 64 hex chars")
+    if (not isinstance(signatures, list) or not signatures
+            or not all(isinstance(e, dict) for e in signatures)):
+        raise InternalError("signatures must be a non-empty list of "
+                            "wire entries")
+    if (not isinstance(verified_keyids, (list, tuple))
+            or not verified_keyids
+            or not all(isinstance(k, str) and k for k in verified_keyids)):
+        raise InternalError("verified_keyids must be a non-empty list "
+                            "of str")
+    if (not isinstance(policy_digest, str) or len(policy_digest) != 64
+            or any(c not in "0123456789abcdefABCDEF"
+                   for c in policy_digest)):
+        raise InternalError("policy_digest must be 64 hex chars")
+    if integrated_time is None:
+        integrated_time = int(datetime.now(timezone.utc).timestamp())
+    if (isinstance(integrated_time, bool)
+            or not isinstance(integrated_time, int)
+            or integrated_time < 0):
+        raise InternalError("integrated_time must be a non-negative int")
+    body = {
+        "apiVersion": WITNESS_ENTRY_API_VERSION,
+        "kind": WITNESS_ENTRY_BODY_KIND,
+        "spec": {
+            "artifactDigest": artifact_digest.lower(),
+            "signatures": signatures,
+            "verifiedKeyids": sorted(set(verified_keyids)),
+            "policyDigest": policy_digest.lower(),
+            "integratedTime": integrated_time,
+        },
+    }
+    leaf = wl.canonical_bytes(body)
+    index = witness_log.append(leaf)
+    sealed = witness_log.sealed_checkpoint(integrated_time, witness_signer)
+    proof = witness_log.inclusion_proof(index)
+    return {
+        "kind": WITNESS_ENTRY_KIND,
+        "log_index": index,
+        "entry_body": body,
+        "checkpoint": sealed["checkpoint"],
+        "checkpoint_signature": sealed["signature"],
+        "inclusion_path": proof["path"],
     }
 
 
@@ -753,6 +942,41 @@ def _check_policy_shape(doc):
     if not isinstance(rpt, str) or not rpt:
         raise VerificationError("POLICY_MALFORMED",
                                 detail="policy needs required_predicate_type")
+    # Witness-log keys (optional section; the Rekor-pattern witness
+    # step). Each key carries a validFor window, and the checkpoint's
+    # time is checked against the SIGNING key's window at the
+    # checkpoint's time (CVE-2026-24122 analogue; sigstore-rust PR #166
+    # authority isolation). A bundle carrying witness entries with no
+    # key pinned here refuses WITNESS_KEY_UNAVAILABLE.
+    witness_log_keys = {}
+    wlks = doc.get("witness_log_keys", [])
+    if not isinstance(wlks, list):
+        raise VerificationError("POLICY_MALFORMED",
+                                detail="witness_log_keys must be a list")
+    for wk in wlks:
+        if not isinstance(wk, dict):
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness log key must be an object")
+        kid = wk.get("keyid")
+        if not isinstance(kid, str) or not kid:
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="witness log key needs a keyid")
+        if kid in witness_log_keys:
+            raise VerificationError("POLICY_MALFORMED",
+                                    detail="duplicate witness log keyid %r"
+                                           % (kid,))
+        vf = wk.get("valid_for") if isinstance(wk.get("valid_for"), dict) \
+            else {}
+        witness_log_keys[kid] = {
+            "pubkey": _check_pubkey_hex(wk.get("pubkey_hex"),
+                                        "witness log key %s" % kid),
+            "not_before": _parse_time(vf.get("not_before"),
+                                      "policy.witness_log_key.valid_for",
+                                      "POLICY_MALFORMED"),
+            "not_after": _parse_time(vf.get("not_after"),
+                                     "policy.witness_log_key.valid_for",
+                                     "POLICY_MALFORMED"),
+        }
     rpc = doc.get("required_predicate_claims", [])
     if (not isinstance(rpc, list)
             or not all(isinstance(c, str) and c for c in rpc)):
@@ -785,6 +1009,7 @@ def _check_policy_shape(doc):
         "threshold": threshold,
         "evidence_keys": ev_keys,
         "authorities": authorities,
+        "witness_log_keys": witness_log_keys,
         "required_predicate_type": rpt,
         "required_predicate_claims": list(rpc),
         "min_timestamps": min_ts,
@@ -940,7 +1165,201 @@ def _verify_timestamps(tokens, policy, bundle_hexdigest, now):
 
 
 # ---------------------------------------------------------------------------
-# The 9-step pipeline.
+# Witness stage: checkpoint-first verification of log-backed entries.
+# ---------------------------------------------------------------------------
+
+def _verify_witness_entries(witness_entries, policy, bundle_hex,
+                            wire_signatures, verified_keyids,
+                            policy_digest, now, checks):
+    """Verify the bundle's log-backed witness entries.
+
+    The checkpoint-first contract, in order:
+
+    1. entry kind pin -- unknown kinds refuse UNSUPPORTED_BUNDLE_VERSION
+       (never silently skipped);
+    2. the signed policy must pin a witness key -- else
+       WITNESS_KEY_UNAVAILABLE;
+    3. the checkpoint SIGNATURE is verified FIRST, against the
+       policy-pinned key named by the checkpoint's logId;
+    4. tree_size/root_hash/timestamp are parsed ONLY from the verified
+       checkpoint -- duplicated copies anywhere else are IGNORED
+       (sigstore-python#248: an unpinned root hash verifies against any
+       log);
+    5. the checkpoint time is inside the signing key's validFor window
+       at the checkpoint's time (CVE-2026-24122 analogue) and not in
+       the future vs the observed time;
+    6. log_index bounds + Merkle inclusion proof against the
+       checkpoint's root hash;
+    7. entry-body binding: artifact digest + exact wire signatures +
+       verified keyids + policy digest (CVE-2026-22703: never accept "a
+       valid entry" alone).
+
+    Returns the witness info dict for the VSA-shaped report. Every
+    failure raises the typed VerificationError with the checks done so
+    far.
+    """
+    wl = _witness_log()
+
+    def _fail(code, **kw):
+        raise VerificationError(code, checks=checks, **kw)
+
+    if not witness_entries:
+        _fail("WITNESS_REQUIRED_UNMET",
+              expected=">= 1 witness entry (policy witness_required)",
+              actual="bundle carries no witness entries")
+    if len(witness_entries) != 1:
+        _fail("BUNDLE_MALFORMED",
+              detail="witness_entries: exactly one entry supported "
+                     "(multi-entry bundles are a documented residual), "
+                     "got %d" % len(witness_entries))
+    entry = witness_entries[0]
+    if not isinstance(entry, dict) or entry.get("kind") != WITNESS_ENTRY_KIND:
+        _fail("UNSUPPORTED_BUNDLE_VERSION",
+              expected=WITNESS_ENTRY_KIND,
+              actual=(entry.get("kind") if isinstance(entry, dict)
+                      else type(entry).__name__),
+              detail="unknown witness entry kind refused")
+
+    keys = policy["witness_log_keys"]
+    if not keys:
+        _fail("WITNESS_KEY_UNAVAILABLE",
+              detail="the bundle carries a witness entry but the signed "
+                     "policy names no witness_log_keys")
+    cp = entry.get("checkpoint")
+    log_id = cp.get("logId") if isinstance(cp, dict) else None
+    matched = None
+    for kid, key in keys.items():
+        if hashlib.sha256(key["pubkey"]).hexdigest() == log_id:
+            matched = (kid, key)
+            break
+    if matched is None:
+        _fail("WITNESS_CHECKPOINT_INVALID",
+              detail="checkpoint logId %r names no policy witness key"
+                     % (log_id,))
+    keyid, key = matched
+
+    # --- checkpoint signature FIRST, before parsing anything ---
+    try:
+        verified_cp = wl.verify_checkpoint(
+            {"checkpoint": cp,
+             "signature": entry.get("checkpoint_signature")},
+            key["pubkey"])
+    except wl.WitnessError as exc:
+        _fail("WITNESS_CHECKPOINT_INVALID",
+              detail="checkpoint rejected: [%s] %s" % (exc.code,
+                                                      exc.detail))
+    # --- sizes/hashes ONLY from the verified checkpoint ---
+    tree_size = verified_cp["treeSize"]
+    root_hash = bytes.fromhex(verified_cp["rootHash"])
+    cp_time = datetime.fromtimestamp(verified_cp["timestamp"],
+                                     tz=timezone.utc)
+    # Authority isolation (sigstore-rust PR #166): the window belongs
+    # to THIS key, checked at the checkpoint's time -- never "now".
+    if not (key["not_before"] <= cp_time <= key["not_after"]):
+        _fail("WITNESS_CHECKPOINT_INVALID",
+              expected="checkpoint time inside witness key validFor "
+                       "[%s, %s]" % (key["not_before"].isoformat(),
+                                     key["not_after"].isoformat()),
+              actual=cp_time.isoformat(),
+              detail="checkpoint outside the signing key's window at "
+                     "checkpoint time (CVE-2026-24122 analogue)")
+    if cp_time > now:
+        _fail("TEMPORAL_UNSATISFIED",
+              expected="checkpoint time <= observed time",
+              actual=cp_time.isoformat(),
+              detail="witness checkpoint timestamp in the future")
+
+    log_index = entry.get("log_index")
+    if (isinstance(log_index, bool) or not isinstance(log_index, int)
+            or log_index < 0 or log_index >= tree_size):
+        _fail("WITNESS_INCLUSION_INVALID",
+              expected="0 <= log_index < tree_size (%d)" % tree_size,
+              actual=repr(log_index))
+
+    body = entry.get("entry_body")
+    if not isinstance(body, dict):
+        _fail("WITNESS_ENTRY_UNBOUND",
+              detail="entry_body must be an object")
+    try:
+        leaf = wl.canonical_bytes(body)
+    except wl.WitnessError as exc:
+        _fail("WITNESS_ENTRY_UNBOUND",
+              detail="entry_body not canonical-serializable: [%s] %s"
+                     % (exc.code, exc.detail))
+    try:
+        wl.verify_inclusion(leaf, log_index, entry.get("inclusion_path"),
+                            tree_size, root_hash)
+    except wl.WitnessError as exc:
+        _fail("WITNESS_INCLUSION_INVALID",
+              detail="inclusion proof rejected: [%s] %s" % (exc.code,
+                                                            exc.detail))
+
+    # --- entry-body binding (CVE-2026-22703) ---
+    spec = body.get("spec")
+    if not isinstance(spec, dict):
+        _fail("WITNESS_ENTRY_UNBOUND", detail="entry_body.spec missing")
+    if (body.get("kind") != WITNESS_ENTRY_BODY_KIND
+            or body.get("apiVersion") != WITNESS_ENTRY_API_VERSION):
+        _fail("WITNESS_ENTRY_UNBOUND",
+              expected="%s/%s" % (WITNESS_ENTRY_BODY_KIND,
+                                  WITNESS_ENTRY_API_VERSION),
+              actual="%r/%r" % (body.get("kind"),
+                                body.get("apiVersion")))
+    if (not isinstance(spec.get("artifactDigest"), str)
+            or spec["artifactDigest"].lower() != bundle_hex.lower()):
+        _fail("WITNESS_ENTRY_UNBOUND",
+              expected="artifactDigest %s" % bundle_hex,
+              actual=repr(spec.get("artifactDigest")),
+              detail="entry does not bind this bundle's artifact digest")
+    try:
+        sig_match = (wl.canonical_bytes(spec.get("signatures"))
+                     == wl.canonical_bytes(wire_signatures))
+    except wl.WitnessError:
+        sig_match = False
+    if not sig_match:
+        _fail("WITNESS_ENTRY_UNBOUND",
+              detail="entry does not bind this bundle's exact wire "
+                     "signatures")
+    vk = spec.get("verifiedKeyids")
+    vk_ok = (isinstance(vk, list)
+             and all(isinstance(k, str) for k in vk)
+             and sorted(vk) == sorted(verified_keyids))
+    if not vk_ok:
+        _fail("WITNESS_ENTRY_UNBOUND",
+              expected="verifiedKeyids %r" % (sorted(verified_keyids),),
+              actual=repr(vk),
+              detail="entry does not bind the threshold-verified keys")
+    if (not isinstance(spec.get("policyDigest"), str)
+            or spec["policyDigest"].lower() != policy_digest.lower()):
+        _fail("WITNESS_ENTRY_UNBOUND",
+              expected="policyDigest %s" % policy_digest,
+              actual=repr(spec.get("policyDigest")),
+              detail="entry does not bind the authorizing policy")
+    it = spec.get("integratedTime")
+    if (isinstance(it, bool) or not isinstance(it, int) or it < 0
+            or it > verified_cp["timestamp"]):
+        _fail("WITNESS_ENTRY_UNBOUND",
+              expected="integratedTime <= checkpoint timestamp (%d)"
+                       % verified_cp["timestamp"],
+              actual=repr(it),
+              detail="entry time incoherent with its checkpoint "
+                     "(backdated)")
+
+    return {
+        "entries": 1,
+        "kind": WITNESS_ENTRY_KIND,
+        "log_id": verified_cp["logId"],
+        "witness_keyid": keyid,
+        "tree_size": tree_size,
+        "root_hash": verified_cp["rootHash"].lower(),
+        "log_index": log_index,
+        "integrated_time": _fmt_time(cp_time),
+        "time_source": "witness checkpoint (signed)",
+    }
+
+
+# ---------------------------------------------------------------------------
+# The pipeline (9 steps + conditional witness step).
 # ---------------------------------------------------------------------------
 
 def _fmt_time(dt):
@@ -1022,12 +1441,9 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
     witness_entries = vb.get("witness_entries", [])
     if not isinstance(witness_entries, list):
         _fail("BUNDLE_MALFORMED", detail="witness_entries must be a list")
-    if witness_entries:
-        # The seam: the witness step has not landed. Entries are
-        # refused coded, never silently ignored.
-        _fail("UNSUPPORTED_BUNDLE_VERSION",
-              detail="%d witness entr(ies) present; this verifier build "
-                     "does not verify witness entries" % len(witness_entries))
+    # The witness stage runs after the policy is authenticated (its
+    # keys come from the signed policy); unknown entry kinds are
+    # refused coded there, never silently skipped.
     _pass("parse", "bundle %s parsed (envelope + signed policy)" % BUNDLE_VERSION)
 
     # -- policy pre-pass: authentication precedes use --
@@ -1111,6 +1527,23 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
           "(authority-isolated)"
           % (policy["policy_id"], _fmt_time(policy["expires"]), n_ts))
 
+    # -- witness step (conditional): runs only when the bundle carries
+    # witness entries or the signed policy requires them. The 9 base
+    # steps above are unchanged otherwise.
+    witness_info = None
+    if witness_entries or policy["witness_required"]:
+        witness_info = _verify_witness_entries(
+            witness_entries, policy, bundle_hex,
+            vb["envelope"]["signatures"], verified_keyids,
+            policy_digest, now, checks)
+        _pass("witness",
+              "log-backed entry verified checkpoint-first: checkpoint "
+              "signature, inclusion proof vs checkpoint root, entry "
+              "bound to artifact digest + signatures + keys (log %s, "
+              "tree_size %d, index %d)"
+              % (witness_info["log_id"][:16], witness_info["tree_size"],
+                 witness_info["log_index"]))
+
     # -- step 9: transcript --
     report = {
         "status": "VALID",
@@ -1132,6 +1565,7 @@ def verify(bundle_bytes, verification_bundle, trust_root=None,
                          "verifiedKeyids": verified_keyids},
         "observerTimestamps": {"required": policy["min_timestamps"],
                                "verified": n_ts},
+        "witness": witness_info,
         "existenceOnly": bool(existence_only),
         "checks": checks,
     }
@@ -1161,6 +1595,12 @@ def render_transcript(report):
     lines.append("  policy: %s  expires: %s  sha256:%s"
                  % (report["policy"]["uri"], report["policy"]["expires"],
                     report["policy"]["digest"]["sha256"]))
+    if report.get("witness"):
+        w = report["witness"]
+        lines.append("  witness: log %s  tree_size %d  index %d  root %s  "
+                     "integrated %s"
+                     % (w["log_id"][:16], w["tree_size"], w["log_index"],
+                        w["root_hash"][:16], w["integrated_time"]))
     if report.get("existenceOnly"):
         lines.append("  NOTE: existence-only verification -- signature and "
                      "binding verified; predicate content NOT evaluated")
