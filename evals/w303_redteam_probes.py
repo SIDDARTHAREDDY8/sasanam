@@ -121,8 +121,8 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    want_open = "F389"  # wave-304 lane A: F385 CLOSED
-    if nxt != 390 or open_s != want_open:
+    want_open = "none"  # wave-304 lane A: F385 CLOSED
+    if nxt != 391 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
@@ -357,7 +357,8 @@ def p_f381amp_composed_foreign_replay():
         return _record("F381amp-composed-foreign-replay", "ERROR",
                        "poison did not stick: %s" % (replay.status,))
     try:
-        resolved = comp._resolve_replay(replay, "composed-unit")
+        resolved = comp._resolve_replay(replay, "composed-unit",
+                                     "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         code = getattr(e, "code", None)
         if code == "workflow-composed-replay-foreign":

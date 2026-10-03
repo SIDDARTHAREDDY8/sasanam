@@ -114,8 +114,8 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer pattern not found")
     nxt, open_s = int(matches[-1][0]), matches[-1][1]
-    want_open = "F389"
-    if nxt != 390 or open_s != want_open:
+    want_open = "none"
+    if nxt != 391 or open_s != want_open:
         return _record("footer-state", "BREAK",
                        "footer drift: next F%d open %r (want next F389 open %r)"
                        % (nxt, open_s, want_open))
@@ -294,7 +294,11 @@ def p_f387_detached_resolution_refused():
                       caller="mallory", authority_verifier=lambda **k: True,
                       at=AT)
     try:
-        resolved = comp._resolve_replay(replay, "composed-unit")
+        # F390: _resolve_replay now requires the expected step name; the
+        # detached check fires before it is used, so the value here is
+        # unreachable (documents the new signature).
+        resolved = comp._resolve_replay(replay, "composed-unit",
+                                        "fn:detached-probe")
     except Exception as e:  # noqa: BLE001
         if _refused_foreign(e):
             return _record("F388-detached-resolution-refused", "HELD",

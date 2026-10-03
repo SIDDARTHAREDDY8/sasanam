@@ -127,7 +127,10 @@ class F388ComposedReplayForeign(unittest.TestCase):
                               authority_verifier=PERMISSIVE, at=AT)
             assert replay.status == "replay", replay.status
             with self.assertRaises(wc.ComposedError) as ctx:
-                comp._resolve_replay(replay, "composed-unit")
+                # F390: expected_step_name required; the caller check
+                # fires before it is used.
+                comp._resolve_replay(replay, "composed-unit",
+                                     "fn:direct-caller")
             self.assertEqual(ctx.exception.code, FOREIGN_CODE)
             self.assertIn("mallory", str(ctx.exception))
         finally:
@@ -147,7 +150,9 @@ class F388ComposedReplayForeign(unittest.TestCase):
                           at=AT)
         assert replay.status == "replay", replay.status
         with self.assertRaises(wc.ComposedError) as ctx:
-            comp._resolve_replay(replay, "composed-unit")
+            # F390: expected_step_name required; the detached check fires
+            # before it is used.
+            comp._resolve_replay(replay, "composed-unit", "fn:detached")
         self.assertEqual(ctx.exception.code, FOREIGN_CODE)
 
     def test_legit_replay_still_resolves(self):

@@ -106,8 +106,8 @@ def p_footer_state():
     m_next = re.findall(r"Next free finding: \*\*(F\d+)\*\*", text)
     # Wave-303 merge footer: open F385,F386 / next F387.
     ok = (m_open and m_open[-1].strip()
-          == "F389"
-          and m_next and m_next[-1] == "F390")
+          == "none"
+          and m_next and m_next[-1] == "F391")
     _record("footer-state", "HELD" if ok else "BREAK",
             "want open F385,F386 / next free F387")
 

@@ -468,7 +468,7 @@ class WorkflowComposer:
             authority_verifier=self._authority_verifier(actor, at), at=at)
         return outcome
 
-    def _resolve_replay(self, outcome, op_class):
+    def _resolve_replay(self, outcome, op_class, expected_step_name):
         """Decision 2/5: an outer REPLAY resolves through the result_ref
         back to the workflow checkpoint; digest disagreement is a fork.
 
@@ -480,6 +480,16 @@ class WorkflowComposer:
         pair and refuses ``workflow-composed-replay-foreign``. A
         resolution attempted outside a composed execution has no run
         to bind to and refuses the same code.
+
+        F390: the pair must also be NATIVE to the replaying unit. The
+        ref's step must have been created by the unit now replaying
+        (checked via the step's recorded name against
+        ``expected_step_name``). A ref naming a different completed
+        step of the same run -- same run_id, same caller, valid digest
+        -- is foreign to this unit and refuses
+        ``workflow-composed-replay-foreign``. The step name is stored
+        in the workflow store (not attacker-controlled); the idempotency
+        record's ref alone cannot establish which unit created the step.
         """
         ctx = self._exec_ctx
         if ctx is None:
@@ -523,6 +533,12 @@ class WorkflowComposer:
             _fail(WC_DIVERGENT,
                   "idempotency record and workflow checkpoint disagree "
                   "on %r (%s): layers have forked" % (ref, op_class))
+        if step.get("name") != expected_step_name:
+            _fail(WC_REPLAY_FOREIGN,
+                  "idempotency replay references step %r (created by %r), "
+                  "but the replaying unit expects step %r (%s): foreign "
+                  "pair refused"
+                  % (ref, step.get("name"), expected_step_name, op_class))
         return step["outputs"]
 
     def _complete_unit(self, outcome, outputs, run_id, seq, at):
@@ -570,7 +586,9 @@ class WorkflowComposer:
                         "%s:action:%s" % (unit["idem_key"], step_id),
                         op_digest, ctx["actor"], ctx["at"])
                     if outcome.status == "replay":
-                        saved = self._resolve_replay(outcome, _OP_SAGA_ACTION)
+                        saved = self._resolve_replay(
+                            outcome, _OP_SAGA_ACTION,
+                            "saga:%s:%s" % (unit["name"], step_id))
                         return saved["result"], saved["payloads"]
                     # Decision 4: the evidence binding uses STABLE
                     # identifiers (run_id, unit, step_id) -- computable
@@ -619,7 +637,9 @@ class WorkflowComposer:
                         "%s:comp:%s" % (unit["idem_key"], step_id),
                         op_digest, ctx["actor"], ctx["at"])
                     if outcome.status == "replay":
-                        saved = self._resolve_replay(outcome, _OP_SAGA_COMP)
+                        saved = self._resolve_replay(
+                            outcome, _OP_SAGA_COMP,
+                            "saga-comp:%s:%s" % (unit["name"], step_id))
                         return saved["result"]
                     name = "saga-comp:%s:%s" % (unit["name"], step_id)
                     seq, outputs, _ = self._run_unit_step(
@@ -747,7 +767,9 @@ class WorkflowComposer:
                 _OP_SLIP_LEG, "%s:leg:%d" % (unit["idem_key"], idx),
                 op_digest, ctx["actor"], ctx["at"])
             if outcome.status == "replay":
-                saved = self._resolve_replay(outcome, _OP_SLIP_LEG)
+                saved = self._resolve_replay(
+                    outcome, _OP_SLIP_LEG,
+                    "slip:%s:leg:%d" % (unit["name"], idx))
                 # The receipt was already bound on first execution.
                 slip = self._advance_slip(slip, idx, seed,
                                           saved["_result_digest"],
@@ -818,7 +840,8 @@ class WorkflowComposer:
                                    ctx["actor"], ctx["at"])
         if outcome.status == "replay":
             return {"replayed": True,
-                    "outputs": self._resolve_replay(outcome, _OP_UNIT)}
+                    "outputs": self._resolve_replay(
+                        outcome, _OP_UNIT, "fn:%s" % unit["name"])}
         name = "fn:%s" % unit["name"]
         seq, outputs, _ = self._run_unit_step(
             ctx["run_id"], name, unit["fn"], dict(unit.get("inputs", {})),

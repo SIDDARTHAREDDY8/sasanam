@@ -130,13 +130,13 @@ def p_footer_state():
     if not matches:
         return _record("footer-state", "BREAK", "footer not parseable")
     nxt, open_s = int(matches[-1][0]), matches[-1][1].strip()
-    # wave-305 merge: F387 CLOSED; F389 OPEN
-    if nxt != 390 or open_s != "F389":
+    # wave-306 merge: F389/F390 CLOSED; footer open none / next F391
+    if nxt != 391 or open_s != "none":
         return _record("footer-state", "BREAK",
-                       "footer drift: next F%d open %r (want next F390 open "
-                       "'F389')" % (nxt, open_s))
+                       "footer drift: next F%d open %r (want next F391 open "
+                       "'none')" % (nxt, open_s))
     _record("footer-state", "HELD",
-            "footer open F389 / next F390")
+            "footer open none / next F391")
 
 
 AT = 1_700_000_000
@@ -492,7 +492,8 @@ def p_f388_foreign_run_refused():
                       "plan_digest": "x", "authority": auth,
                       "run": "other-run", "at": AT}
     try:
-        comp._resolve_replay(replay, "composed-unit")
+        comp._resolve_replay(replay, "composed-unit",
+                                     "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
             return _record("F388-foreign-run-refused", "HELD",
@@ -520,7 +521,8 @@ def p_f388_record_caller_foreign_refused():
                       "plan_digest": "x", "authority": auth,
                       "run": "victim", "at": AT}
     try:
-        comp._resolve_replay(replay, "composed-unit")
+        comp._resolve_replay(replay, "composed-unit",
+                                     "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
             return _record("F388-record-caller-foreign-refused", "HELD",
@@ -541,7 +543,8 @@ def p_f388_detached_context_refuses():
                        "poison did not stick")
     comp._exec_ctx = None
     try:
-        comp._resolve_replay(replay, "composed-unit")
+        comp._resolve_replay(replay, "composed-unit",
+                                     "fn:redteam-probe")
     except Exception as e:  # noqa: BLE001
         if getattr(e, "code", None) == "workflow-composed-replay-foreign":
             return _record("F388-detached-context-refuses", "HELD",

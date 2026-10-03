@@ -329,12 +329,30 @@ class BranchCoordinator:
         can re-validate liveness. The XID and the coordinator's public
         key are bound into the record; resume re-resolves the XID
         against this coordinator's live transactions and requires the
-        presented record to match the parked one exactly (F385)."""
+        presented record to match the parked one exactly (F385).
+
+        F389: lease-holdership is proved at suspend time. The fencing
+        token is the lease capability -- only the current holder knows
+        it -- so ``check_write`` is called BEFORE anything is parked:
+        a stale/foreign token refuses ``coord-lease-fencing`` and a
+        dead lease refuses ``coord-lease-expired``. Without this, anyone
+        who knows the xid could re-park a different suspension record
+        and clobber the legitimate holder's park (the F385 exact-record
+        match would then make the clobbering stick: the legitimate
+        holder's resume refuses ``workflow-branch-xid-mismatch``).
+        Re-suspending with the current token (the documented re-park
+        semantics) still works: the latest park wins."""
         txn = self._txn(xid)
         _check_ts(suspended_at, "suspended_at")
         if not isinstance(lease_manager, object) or \
                 not hasattr(lease_manager, "check_write"):
             _fail(MALFORMED, "lease_manager must expose check_write")
+        # F389: prove lease-holdership BEFORE parking. check_write is
+        # a pure authorization check (no mutation): it refuses
+        # coord-lease-fencing on a stale/foreign token and
+        # coord-lease-expired on a dead lease.
+        lease_manager.check_write(scope, fencing_token, holder_id,
+                                  checked_at=suspended_at)
         record = {
             "xid": xid,
             "scope": scope,
