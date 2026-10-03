@@ -84,6 +84,7 @@ for _p in (REPO, os.path.join(REPO, "tests")):
 
 sys.path.insert(0, os.path.join(REPO, "evals"))
 import green_check
+import probe_lines
 
 SKIP_GREEN = os.environ.get("GOV_SKIP_GREEN") == "1"
 
@@ -1531,13 +1532,16 @@ def _green_checks():
     green_check.check_battery(
         _rec, "green-w303_f390", "evals/w303_f390_probes.py",
         repo=REPO, expect_break_ids=())
-    # F395 OPEN: the w310 red-team battery's F395 probes still report
-    # BREAK (nested variant is new to this lane). Re-pinned to the
-    # lane footer.
+    # F395 CLOSED (wave-311 lane A): the w310 red-team battery's F395
+    # probes now assert the coded exotic-closure refusal; expect no
+    # BREAKs. Re-pinned to the lane footer. Wave-315 D6
+    # reconciliation: the w310 battery now emits canonical probe
+    # lines, so BREAK_ID_RE is enforced (it was vacuous on the old
+    # literal-[VERDICT] shape); the stale expected-BREAK list for
+    # the since-closed F395 was swept.
     green_check.check_battery(
         _rec, "green-w310_redteam", "evals/w310_redteam_probes.py",
-        repo=REPO, expect_break_ids=("F395-exotic-closure-fn",
-                                     "F395-exotic-closure-saga"))
+        repo=REPO, expect_break_ids=())
     # F394 CLOSED: the w310_f394 battery asserts the composer-API
     # re-drive; expect no BREAKs. Re-pinned to the lane footer.
     green_check.check_battery(
@@ -1622,9 +1626,7 @@ def main():
         for pid, fn in _PROBES:
             _safe(pid, fn)
         _green_checks()
-    for pid, verdict, note in _results:
-        first = note.splitlines()[0] if note else ""
-        print("[VERDICT] %s: %s: %s" % (verdict, pid, first))
+    probe_lines.emit(_results)
     brk = sum(1 for r in _results if r[1] == "BREAK")
     held = sum(1 for r in _results if r[1] == "HELD")
     err = sum(1 for r in _results if r[1] == "ERROR")

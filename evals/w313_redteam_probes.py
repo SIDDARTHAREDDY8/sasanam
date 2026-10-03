@@ -2579,14 +2579,15 @@ def _green_checks():
         _rec, "green-w303_f390", "evals/w303_f390_probes.py",
         repo=REPO, expect_break_ids=())
     # The wave-312 red-team battery itself (this lane's predecessor):
-    # its two F397 probes are expected BREAKs on this base (F397
-    # OPEN); everything else must hold. Its probe lines use the
-    # "[VERDICT] ..." shape, so BREAK_ID_RE captures no ids -- the
-    # parseable summary is the green signal.
+    # F397 CLOSED (wave-313 lane A): its two F397 probes now assert
+    # the coded stale-at refusal; expect no BREAKs. Wave-315 D6
+    # reconciliation: the w312 battery now emits canonical probe
+    # lines, so BREAK_ID_RE is enforced (it was vacuous on the old
+    # literal-[VERDICT] shape); the stale expected-BREAK list for
+    # the since-closed F397 was swept.
     green_check.check_battery(
         _rec, "green-w312_redteam", "evals/w312_redteam_probes.py",
-        repo=REPO,
-        expect_break_ids=("F397-stale-at-retry", "F397-stale-at-zero"))
+        repo=REPO, expect_break_ids=())
 
 
 # ------------------------------------------------------------------
